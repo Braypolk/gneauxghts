@@ -15,23 +15,18 @@ function createLoaders(): SettingsRefreshLoaders {
 }
 
 describe("refreshCoordinator", () => {
-  it("loads semantic state for search visibility", async () => {
+  it.each([
+    ["search", "loadSemanticState"],
+    ["vault", "loadVaultInfo"],
+    ["forgetting", "loadForgottenNotes"],
+  ] as const)("loads only the selected section for %s", async (section, selectedLoader) => {
     const loaders = createLoaders();
 
-    await refreshSettingsForVisibility("search", loaders);
+    await refreshSettingsForVisibility(section, loaders);
 
-    expect(loaders.loadSemanticState).toHaveBeenCalledTimes(1);
-    expect(loaders.loadSemanticStatus).not.toHaveBeenCalled();
-  });
-
-  it("routes each general section to the minimal loader set", async () => {
-    const loaders = createLoaders();
-
-    await refreshSettingsForVisibility("vault", loaders);
-    await refreshSettingsForVisibility("forgetting", loaders);
-
-    expect(loaders.loadVaultInfo).toHaveBeenCalledTimes(1);
-    expect(loaders.loadForgottenNotes).toHaveBeenCalledTimes(1);
+    for (const [name, loader] of Object.entries(loaders)) {
+      expect(loader).toHaveBeenCalledTimes(name === selectedLoader ? 1 : 0);
+    }
   });
 
   it("refreshes semantic status and forgotten notes after vault changes", async () => {

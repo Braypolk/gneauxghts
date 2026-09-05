@@ -486,12 +486,13 @@ export function createEditorLifecycleController({
 
   async function replaceEditorContentInPlaceForDocument(
     nextMarkdown: string,
-    document: NoteDraftState
+    document: NoteDraftState,
+    { resetUndoHistory = false }: { resetUndoHistory?: boolean } = {}
   ) {
     const cursorPosition: EditorViewState =
       loadViewStateForDocument(document) ?? { anchor: 0, head: 0 };
     const controller = getController();
-    if (controller?.runtime.markdown === nextMarkdown) {
+    if (!resetUndoHistory && controller?.runtime.markdown === nextMarkdown) {
       // The pane may have just remounted onto a document runtime that is
       // already live in a sibling pane (for example, chat -> previous note).
       // This is a pane-navigation event, not a document replacement: restore

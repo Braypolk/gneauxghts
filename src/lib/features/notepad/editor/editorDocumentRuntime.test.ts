@@ -7,6 +7,9 @@ import {
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
+import { createDocumentEditingService } from '../document/documentEditingService';
+import { createNoteDraftState } from '../state/noteStore';
+import { createEmptySessionSnapshot } from '../session/session';
 import {
   replaceEditorDocument,
   restoreCursorPosition
@@ -122,6 +125,35 @@ describe('EditorDocumentRuntime', () => {
     ]);
     expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
     expect(runtime.markdown).toBe('historical body');
+  });
+
+  it('clears undo on a properties-only Version Restore with an unchanged editor body', async () => {
+    const runtime = new EditorDocumentRuntime('body');
+    const fixture = pane(runtime, 'body', 4);
+    runtime.dispatchFromPane(fixture.controller, [
+      fixture.readState().update({ changes: { from: 4, insert: ' edit' } })
+    ]);
+    const snapshot = { ...createEmptySessionSnapshot(), bodyMarkdown: 'body edit' };
+    const document = createNoteDraftState(snapshot);
+    const editing = createDocumentEditingService({
+      isApplyingProgrammaticUpdate: () => false,
+      shouldSuppressAutosave: () => false,
+      resetPaneCommandAfterBodyInput: vi.fn(),
+      clearRecentlyForgotten: vi.fn(),
+      scheduleAutosave: vi.fn(),
+      scheduleSearch: vi.fn(),
+      scheduleRelated: vi.fn()
+    });
+    await editing.applySnapshot(document, snapshot, async (markdown) => {
+      runtime.replaceMarkdown(markdown, { flushHistory: true });
+    }, { resetUndoHistory: true });
+    expect(runtime.markdown).toBe('body edit');
+    expect(runtime.undo(fixture.controller.paneKey)).toBe(false);
+    runtime.dispatchFromPane(fixture.controller, [
+      fixture.readState().update({ changes: { from: 9, insert: '!' } })
+    ]);
+    expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
+    expect(runtime.markdown).toBe('body edit');
   });
 
   it('restores a reversed selection with a bounded fallback without changing the document', () => {

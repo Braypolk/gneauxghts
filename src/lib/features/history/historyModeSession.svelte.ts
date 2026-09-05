@@ -1,4 +1,5 @@
 import {
+  canExitHistoryMode,
   createInactiveHistoryModeState,
   transitionHistoryMode,
   type HistoricalDiff,
@@ -54,6 +55,7 @@ export class HistoryModeSession {
   #deps: HistoryModeSessionDeps;
   #nextRequestId = 1;
   #refreshPending = false;
+  #restoreCompletion: Promise<void> | null = null;
 
   constructor(deps: HistoryModeSessionDeps) {
     this.#deps = deps;
@@ -243,7 +245,22 @@ export class HistoryModeSession {
     this.#dispatch({ type: 'restoreCancelled' });
   };
 
+  waitForPendingRestore = async (): Promise<void> => {
+    await this.#restoreCompletion;
+  };
+
   confirmRestore = async (): Promise<void> => {
+    if (this.#restoreCompletion) return this.#restoreCompletion;
+    const completion = this.#commitRestore();
+    this.#restoreCompletion = completion;
+    try {
+      await completion;
+    } finally {
+      this.#restoreCompletion = null;
+    }
+  };
+
+  #commitRestore = async (): Promise<void> => {
     if (
       this.state.phase !== 'open' ||
       this.state.request !== null ||
@@ -480,6 +497,11 @@ export class HistoryModeSession {
   };
 
   synchronizeAfterLifecycleChange = async (): Promise<void> => {
+    if (this.state.phase === 'open' && this.state.request?.kind === 'restoreCommit') {
+      this.#refreshPending = true;
+      return;
+    }
+
     if (
       this.state.phase !== 'open' &&
       this.state.phase !== 'historyUnavailable' &&
@@ -500,13 +522,7 @@ export class HistoryModeSession {
   };
 
   exit = async (): Promise<void> => {
-    if (
-      this.state.phase === 'inactive' ||
-      this.state.phase === 'exiting' ||
-      this.state.phase === 'restoring'
-    ) {
-      return;
-    }
+    if (!canExitHistoryMode(this.state) || !('workspace' in this.state)) return;
     const workspace = this.state.workspace;
     this.#refreshPending = false;
     this.#dispatch({ type: 'exitStarted' });

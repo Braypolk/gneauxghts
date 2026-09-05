@@ -151,7 +151,8 @@ export function createDocumentPaneCoordinator<
 
   async function replaceDocumentContentInPlace(
     document: NoteDraftState,
-    nextMarkdown: string
+    nextMarkdown: string,
+    options: { resetUndoHistory?: boolean } = {}
   ): Promise<PaneEditorOperationResult> {
     const paneId = preferredEditorPane(document);
     if (!paneId) return 'unavailable';
@@ -159,7 +160,8 @@ export function createDocumentPaneCoordinator<
       paneId,
       nextMarkdown,
       document,
-      true
+      true,
+      options
     );
   }
 

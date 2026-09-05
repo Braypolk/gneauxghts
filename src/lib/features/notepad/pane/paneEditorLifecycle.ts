@@ -278,7 +278,8 @@ class PaneEditorSession<TPaneId extends string> {
   replaceContentInPlace(
     markdown: string,
     expectedDocument: NoteDraftState | null = null,
-    flushHistory = false
+    flushHistory = false,
+    options: { resetUndoHistory?: boolean } = {}
   ): Promise<PaneEditorOperationResult> {
     return this.#enqueue(async () => {
       if (this.#isDisposalRequested()) return 'disposed';
@@ -298,7 +299,8 @@ class PaneEditorSession<TPaneId extends string> {
       if (flushHistory && expectedDocument) {
         await lifecycle.replaceEditorContentInPlaceForDocument(
           markdown,
-          expectedDocument
+          expectedDocument,
+          options
         );
       } else {
         await lifecycle.replaceEditorContentInPlace(markdown);
@@ -423,12 +425,14 @@ export function createPaneEditorLifecycle<
     paneId: TPaneId,
     markdown: string,
     expectedDocument: NoteDraftState | null = null,
-    flushHistory = false
+    flushHistory = false,
+    options: { resetUndoHistory?: boolean } = {}
   ) {
     return getSession(paneId).replaceContentInPlace(
       markdown,
       expectedDocument,
-      flushHistory
+      flushHistory,
+      options
     );
   }
 

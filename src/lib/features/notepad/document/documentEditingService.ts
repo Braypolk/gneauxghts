@@ -105,11 +105,14 @@ export function createDocumentEditingService<TPaneId extends string>(
     applyMarkdownToRuntime: (markdown: string) => Promise<void>,
     {
       preserveDraft = false,
+      resetUndoHistory = false,
       autosave = false,
       scheduleDerived = true,
       immediateRelated = true
     }: {
       preserveDraft?: boolean;
+      /** Apply the runtime reset even if a restore changed only unmanaged properties. */
+      resetUndoHistory?: boolean;
       autosave?: boolean;
       scheduleDerived?: boolean;
       immediateRelated?: boolean;
@@ -119,7 +122,7 @@ export function createDocumentEditingService<TPaneId extends string>(
       applySessionSnapshotToDocument(document, snapshot, {
         preserveWorking: preserveDraft
       });
-    if (markdownChanged) {
+    if (markdownChanged || resetUndoHistory) {
       await applyRuntimeAtCurrentRevision(
         document,
         applyMarkdownToRuntime

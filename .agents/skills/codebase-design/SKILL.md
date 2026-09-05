@@ -9,17 +9,19 @@ Design **deep modules**: a lot of behaviour behind a small interface, placed at 
 
 ## Glossary
 
-Use these terms exactly: don't substitute "component," "service," "API," or "boundary." Consistent language is the whole point.
+Use this vocabulary to clarify design decisions, while preserving the
+repository's established domain language. Familiar terms such as service, API,
+and boundary are appropriate when their meaning is clear.
 
-**Module**: anything with an interface and an implementation. Deliberately scale-agnostic: a function, class, package, or tier-spanning slice. _Avoid_: unit, component, service.
+**Module**: anything with an interface and an implementation. Deliberately scale-agnostic: a function, class, package, or tier-spanning slice.
 
-**Interface**: everything a caller must know to use the module correctly: the type signature, but also invariants, ordering constraints, error modes, required configuration, and performance characteristics. _Avoid_: API, signature (too narrow, they refer only to the type-level surface).
+**Interface**: everything a caller must know to use the module correctly: the type signature, but also invariants, ordering constraints, error modes, required configuration, and performance characteristics.
 
 **Implementation**: what's inside a module, its body of code. Distinct from **Adapter**: a thing can be a small adapter with a large implementation (a Postgres repo) or a large adapter with a small implementation (an in-memory fake). Reach for "adapter" when the seam is the topic; "implementation" otherwise.
 
 **Depth**: leverage at the interface. The amount of behaviour a caller (or test) can exercise per unit of interface they have to learn. A module is **deep** when a large amount of behaviour sits behind a small interface, **shallow** when the interface is nearly as complex as the implementation.
 
-**Seam** _(Michael Feathers)_: a place where you can alter behaviour without editing in that place; the *location* at which a module's interface lives. Where to put the seam is its own design decision, distinct from what goes behind it. _Avoid_: boundary (overloaded with DDD's bounded context).
+**Seam** _(Michael Feathers)_: a place where you can alter behaviour without editing in that place; the *location* at which a module's interface lives. Where to put the seam is its own design decision, distinct from what goes behind it.
 
 **Adapter**: a concrete thing that satisfies an interface at a seam. Describes *role* (what slot it fills), not substance (what's inside).
 
@@ -62,7 +64,10 @@ When designing an interface, ask:
 - **Depth is a property of the interface, not the implementation.** A deep module can be internally composed of small, mockable, swappable parts; they just aren't part of the interface. A module can have **internal seams** (private to its implementation, used by its own tests) as well as the **external seam** at its interface.
 - **The deletion test.** Imagine deleting the module. If complexity vanishes, it was a pass-through. If complexity reappears across N callers, it was earning its keep.
 - **The interface is the test surface.** Callers and tests cross the same seam. If you want to test *past* the interface, the module is probably the wrong shape.
-- **One adapter means a hypothetical seam. Two adapters means a real one.** Don't introduce a seam unless something actually varies across it.
+- **Require a concrete benefit.** A seam can earn its place by hiding complexity,
+  protecting an invariant, or isolating an external dependency even with one
+  adapter. Add variation points for demonstrated needs, not imagined future
+  implementations.
 
 ## Designing for testability
 
@@ -80,7 +85,9 @@ Good interfaces make testing natural:
    }
    ```
 
-2. **Return results, don't produce side effects.**
+2. **Separate calculation from effects when it simplifies ownership.** Pure
+   calculations are easy to test; persistence and coordination modules may
+   legitimately own side effects. Preserve their consistency boundaries.
 
    ```typescript
    // Testable
@@ -106,7 +113,21 @@ Good interfaces make testing natural:
 
 - **Depth as ratio of implementation-lines to interface-lines** (Ousterhout): rewards padding the implementation. We use depth-as-leverage instead.
 - **"Interface" as the TypeScript `interface` keyword or a class's public methods**: too narrow: interface here includes every fact a caller must know.
-- **"Boundary"**: overloaded with DDD's bounded context. Say **seam** or **interface**.
+- **Vocabulary-driven refactors**: terminology alone is not evidence of a design
+  problem. Explain the caller burden or change risk before proposing a change.
+
+## Apply proportionately
+
+For a localized fix, inspect the relevant interface and preserve established
+ownership. Propose restructuring when it reduces a demonstrated caller burden,
+duplication, or consistency risk. Compare its cost with leaving the existing
+shape alone. Small adapters and explicit propagation through ownership layers
+can be justified; removing indirection is not an end in itself.
+
+Read the references below only when the task involves that design decision.
+Routine implementation needs neither alternative-design exercises nor a new
+abstraction. Finish when the requested behavior has a coherent home and the
+relevant invariants are verified.
 
 ## Going deeper
 

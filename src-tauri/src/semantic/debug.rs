@@ -300,11 +300,22 @@ mod tests {
     }
 
     #[test]
-    fn rss_profiling_enabled_respects_truthy_and_falsy_values() {
-        // This mutates a process-global env var; keep it isolated to one test and
-        // restore the prior value afterward so parallel tests are unaffected.
+    fn rss_profiling_respects_environment_and_disabled_sampling_is_a_noop() {
+        // Keep all assertions that depend on this process-global key in one test.
+        // Restore the caller's environment even if an assertion panics.
+        struct RestoreRssEnvironment(Option<std::ffi::OsString>);
+
+        impl Drop for RestoreRssEnvironment {
+            fn drop(&mut self) {
+                match &self.0 {
+                    Some(value) => std::env::set_var("GNEAUXGHTS_PROFILE_RSS", value),
+                    None => std::env::remove_var("GNEAUXGHTS_PROFILE_RSS"),
+                }
+            }
+        }
+
         let key = "GNEAUXGHTS_PROFILE_RSS";
-        let previous = std::env::var_os(key);
+        let _restore = RestoreRssEnvironment(std::env::var_os(key));
 
         std::env::remove_var(key);
         assert!(!rss_profiling_enabled(), "unset must be disabled");
@@ -324,16 +335,6 @@ mod tests {
         std::env::set_var(key, "true");
         assert!(rss_profiling_enabled(), "\"true\" must be enabled");
 
-        match previous {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
-    }
-
-    #[test]
-    fn sample_rss_is_noop_when_disabled() {
-        let key = "GNEAUXGHTS_PROFILE_RSS";
-        let previous = std::env::var_os(key);
         std::env::remove_var(key);
 
         let state = SemanticDebugState::new();
@@ -346,11 +347,6 @@ mod tests {
             snapshot.recent_events.is_empty(),
             "disabled sampling must not record an event"
         );
-
-        match previous {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
     }
 
     #[test]

@@ -53,7 +53,8 @@
     "stale",
     "ineligible",
     "missing",
-    "invalidRequest"
+    "invalidRequest",
+    "alreadyCurrent"
   ],
   "recoveryActions": [
     "retry",
@@ -91,6 +92,11 @@
     {
       "state": "invalidRequest",
       "message": "The history request is invalid.",
+      "recoveryAction": "correctRequest"
+    },
+    {
+      "state": "alreadyCurrent",
+      "message": "This revision already matches the note's current content. Choose a different revision.",
       "recoveryAction": "correctRequest"
     }
   ]

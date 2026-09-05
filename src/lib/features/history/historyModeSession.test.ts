@@ -1,4 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
+import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
+import { awaitPendingNoteSave, registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
 import { HistoryModeSession } from './historyModeSession.svelte';
 import type {
   HistoricalDiff,
@@ -695,4 +697,107 @@ describe('HistoryModeSession', () => {
       selectedDiff: refreshedCurrentDiff
     });
   });
+});
+
+describe('Version Restore workspace exclusion', () => {
+  it.each(['publication', 'adoption'] as const)('keeps the workspace inert until %s settles', async (stage) => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { session, deps } = setup({
+      restoreRevision: async () => {
+        if (stage === 'publication') await pending;
+        return restoreCommit;
+      },
+      adoptRestoredRevision: async () => {
+        if (stage === 'adoption') await pending;
+      }
+    });
+    await session.enter('notepad-pane-1');
+    await session.previewRestore();
+    const restore = session.confirmRestore();
+    await Promise.resolve();
+    await session.exit();
+    expect(session.isActive).toBe(true);
+    expect(deps.restoreWorkspace).not.toHaveBeenCalled();
+    release();
+    await restore;
+    await session.exit();
+    expect(session.isActive).toBe(false);
+  });
+
+  it('does not release workspace exclusion on a lifecycle notification during restore', async () => {
+    let release!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { session, deps } = setup({
+      restoreRevision: async () => {
+        await pending;
+        return restoreCommit;
+      }
+    });
+    await session.enter('notepad-pane-1');
+    await session.previewRestore();
+    const restore = session.confirmRestore();
+    vi.mocked(deps.readTarget).mockReturnValue(null);
+    await session.synchronizeAfterLifecycleChange();
+    await session.exit();
+    expect(session.isActive).toBe(true);
+    expect(deps.restoreWorkspace).not.toHaveBeenCalled();
+    release();
+    await restore;
+    await session.exit();
+    expect(session.isActive).toBe(false);
+  });
+});
+
+describe('Version Restore navigation barrier', () => {
+  it.each(['publication', 'adoption'] as const)(
+    'waits for %s before leaving the editor route',
+    async (stage) => {
+      let release!: () => void;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const { session, deps } = setup({
+        restoreRevision: async () => {
+          if (stage === 'publication') await pending;
+          return restoreCommit;
+        },
+        adoptRestoredRevision: async () => {
+          if (stage === 'adoption') await pending;
+        }
+      });
+      const unregister = registerPendingNoteSaveHandler(async () => {
+        await session.waitForPendingRestore();
+        await deps.flushWorkspace();
+      });
+      const navigate = vi.fn().mockResolvedValue(undefined);
+      const navigation = createNavigationCoordinator({
+        getCurrentPathname: () => '/',
+        normalizePathname: (path) => path,
+        flushPendingWork: awaitPendingNoteSave,
+        navigate
+      });
+      try {
+        await session.enter('notepad-pane-1');
+        await session.previewRestore();
+        const restore = session.confirmRestore();
+        const leaving = navigation.request('/settings');
+        await Promise.resolve();
+        await Promise.resolve();
+        expect(navigate).not.toHaveBeenCalled();
+        expect(deps.flushWorkspace).toHaveBeenCalledTimes(1);
+        release();
+        await Promise.all([restore, leaving]);
+        expect(navigate).toHaveBeenCalledWith('/settings');
+        expect(deps.flushWorkspace).toHaveBeenCalledTimes(2);
+      } finally {
+        release();
+        unregister();
+      }
+    }
+  );
 });

@@ -1738,6 +1738,7 @@ pub(crate) struct HistoryModeAccess<'a> {
 
 #[derive(Debug)]
 pub(crate) enum HistoryError {
+    AlreadyCurrent(String),
     Unavailable(String),
     Corrupt(String),
     Stale(String),
@@ -1748,7 +1749,8 @@ pub(crate) enum HistoryError {
 impl std::fmt::Display for HistoryError {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let cause = match self {
-            Self::Unavailable(cause)
+            Self::AlreadyCurrent(cause)
+            | Self::Unavailable(cause)
             | Self::Corrupt(cause)
             | Self::Stale(cause)
             | Self::Ineligible(cause)
@@ -2686,7 +2688,7 @@ impl HistoryModeAccess<'_> {
                 ));
             }
             if replacement_hash == current_hash {
-                return Err(HistoryError::Ineligible(
+                return Err(HistoryError::AlreadyCurrent(
                     "Selected revision already matches current authored content".to_string(),
                 ));
             }
@@ -3659,7 +3661,7 @@ impl<'a> NoteTimeline<'a> {
         &self,
         vault_root: &Path,
     ) -> Result<HistoryHealthReport, HistoryError> {
-        let result = (|| -> Result<HistoryHealthReport, String> {
+        let result = crate::state::with_note_file_mutation(|| -> Result<HistoryHealthReport, String> {
             let vault_root = require_active_vault_root(vault_root)?;
             {
                 let _operation = self.runtime.begin_operation()?;
@@ -3679,7 +3681,7 @@ impl<'a> NoteTimeline<'a> {
                 self.initialize_existing_notes(&vault_root)?;
             }
             self.history_health()
-        })();
+        });
         result.map_err(history_failure)
     }
 
@@ -10978,6 +10980,190 @@ mod tests {
             "Earlier body"
         );
         assert_eq!(access.revisions().unwrap().len(), 3);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+    #[test]
+    fn recovery_retry_waits_for_live_publication_before_and_after_markdown_write() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("retry-live-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("retry-live-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Retry race".into(),
+            "original".into(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        state
+            .note_timeline()
+            .initialize_existing_notes(notes.path())
+            .unwrap();
+        let path = PathBuf::from(created.path.unwrap());
+        let note_id = NoteIdentity::new(created.note_id.unwrap());
+        for published_before_retry in [false, true] {
+            std::thread::scope(|scope| {
+                let (started_tx, started_rx) = std::sync::mpsc::channel();
+                let (finished_tx, finished_rx) = std::sync::mpsc::channel();
+                let (outcome, completed_early) =
+                    crate::state::with_note_file_mutation(|| -> Result<_, String> {
+                        let prepared = state.note_timeline().prepare_revision_publication(
+                            MutationSource::Editor,
+                            &path,
+                            Some(&path),
+                            Some(&note_id),
+                            if published_before_retry {
+                                "third state"
+                            } else {
+                                "second state"
+                            },
+                        )?;
+                        let (canonical, intent) = prepared.into_parts();
+                        if published_before_retry {
+                            fs::write(&path, &canonical).unwrap();
+                        }
+                        let state = &state;
+                        let notes = &notes;
+                        scope.spawn(move || {
+                            started_tx.send(()).unwrap();
+                            let report = state.note_timeline().retry_history_recovery(notes.path());
+                            finished_tx.send(report).unwrap();
+                        });
+                        started_rx.recv().unwrap();
+                        let completed_early = finished_rx
+                            .recv_timeout(std::time::Duration::from_millis(100))
+                            .ok();
+                        if !published_before_retry {
+                            fs::write(&path, &canonical).unwrap();
+                        }
+                        let outcome = state.note_timeline().mutate(NoteMutation::editor(
+                            intent,
+                            path.clone(),
+                            None,
+                            canonical,
+                        ));
+                        Ok((outcome, completed_early))
+                    })
+                    .unwrap();
+                let was_early = completed_early.is_some();
+                let recovered = completed_early.unwrap_or_else(|| {
+                    finished_rx
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap()
+                });
+                assert!(recovered.is_ok());
+                assert!(
+                    !was_early,
+                    "Recovery must wait for the canonical writer to settle"
+                );
+                assert!(outcome.warning().is_none());
+            });
+        }
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        assert_eq!(
+            restarted
+                .note_timeline()
+                .open_history_mode(note_id)
+                .revisions()
+                .unwrap()
+                .len(),
+            3
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn settled_publications_do_not_retain_full_authored_copies() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("settled-intents-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("settled-intents-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let body = "retained body".repeat(10_000);
+        let mut path = None;
+        let mut note_id = None;
+        for _ in 0..16 {
+            let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Intent storage".into(),
+                body.clone(),
+                path.clone(),
+            )
+            .unwrap()
+            .session
+            .unwrap();
+            path = saved.path;
+            note_id = saved.note_id;
+        }
+        let path = PathBuf::from(path.unwrap());
+        let note_id = NoteIdentity::new(note_id.unwrap());
+        for _ in 0..8 {
+            crate::state::with_note_file_mutation(|| -> Result<(), String> {
+                let prepared = state.note_timeline().prepare_revision_publication(
+                    MutationSource::Editor,
+                    &path,
+                    Some(&path),
+                    Some(&note_id),
+                    &"unpublished".repeat(12_000),
+                )?;
+                prepared.into_parts().1.abandon()
+            })
+            .unwrap();
+        }
+        assert_eq!(
+            state
+                .note_timeline()
+                .open_history_mode(note_id.clone())
+                .revisions()
+                .unwrap()
+                .len(),
+            1
+        );
+        state
+            .note_timeline()
+            .compact_history_storage(16 * 1024 * 1024)
+            .unwrap();
+        let usage = state.note_timeline().history_storage_usage().unwrap();
+        assert!(
+            usage.allocated_bytes() - usage.reclaimable_bytes() < 512 * 1024,
+            "Identical and abandoned saves retained {} live bytes",
+            usage.allocated_bytes() - usage.reclaimable_bytes()
+        );
+        state.note_timeline().clean_close(notes.path()).unwrap();
+        let restarted = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let history = restarted.note_timeline().open_history_mode(note_id);
+        let revision = history.revisions().unwrap().remove(0);
+        assert_eq!(
+            history
+                .reconstruct(revision.identity())
+                .unwrap()
+                .body()
+                .trim(),
+            body
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

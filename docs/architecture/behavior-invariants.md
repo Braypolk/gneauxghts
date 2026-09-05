@@ -68,7 +68,11 @@ be another Version Restore. Forgotten and Missing notes must be recovered
 before ordinary timeline inspection or Version Restore, keeping lifecycle
 recovery distinct from authored-state replacement. The selected authored
 payload, including exact line endings and unmanaged-frontmatter whitespace, is
-preserved byte-for-byte.
+preserved byte-for-byte. Workspace exit stays unavailable, and route navigation
+waits, until publication and editor adoption finish. A properties-only restore
+also resets editor undo even when the rendered body is unchanged. Selecting
+content that is already current asks the user to choose another revision; it
+does not require lifecycle recovery.
 
 ## Documents, tasks, and persistence
 
@@ -121,7 +125,11 @@ Pending-intent recovery must succeed once per application state before its
 first history read or prepared write. It is not rerun after success by
 concurrent history reads or commits, which must never classify a live prepared
 intent as abandoned crash residue; a transient recovery failure remains
-retryable.
+retryable. Explicit recovery retry uses the same note-file mutation owner as
+canonical writers. Once an intent is finalized or abandoned, its full authored
+payload is retired atomically; correlation metadata remains available for
+idempotency and revision references. Schema migration retires existing terminal
+payloads while preserving pending recovery bytes.
 Managed metadata changes alone do not create Note Revisions.
 A managed note that predates history receives one Baseline Revision without a
 Markdown write. Its `knownSince` time says only when Gneauxghts first retained

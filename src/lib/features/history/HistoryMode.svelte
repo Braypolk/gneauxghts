@@ -5,6 +5,7 @@
     HistoryLifecycleRecord,
     HistoryModeState
   } from './historyModeMachine';
+  import { canExitHistoryMode } from './historyModeMachine';
   import HistoryDiff from './HistoryDiff.svelte';
   import HistoryEditingSession from './HistoryEditingSession.svelte';
   import HistoryRevisionSummary from './HistoryRevisionSummary.svelte';
@@ -110,7 +111,7 @@
     if (event.key !== 'Escape') return;
     event.preventDefault();
     event.stopImmediatePropagation();
-    void onExit();
+    if (canExitHistoryMode(historyState)) void onExit();
   }
 </script>
 
@@ -127,6 +128,7 @@
     <button
       type="button"
       class="mobile-touch-target inline-flex h-10 items-center gap-2 rounded-full bg-muted px-4 text-sm font-medium transition-colors hover:bg-accent"
+      disabled={!canExitHistoryMode(historyState)}
       onclick={() => void onExit()}
       aria-label="Back to workspace"
     >

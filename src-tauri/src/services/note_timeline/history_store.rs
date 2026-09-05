@@ -29,7 +29,7 @@ const HISTORY_DATABASE_FILE_NAME: &str = "history.sqlite3";
 const HISTORY_OBSERVATIONS_FILE_NAME: &str = "note-timeline-history-observations.json";
 pub(super) const HISTORY_FORMAT: &str = "sqlite-v1";
 pub(super) const INITIAL_HISTORY_GENERATION: u64 = 1;
-const HISTORY_SCHEMA_VERSION: u64 = 9;
+const HISTORY_SCHEMA_VERSION: u64 = 10;
 const AUTHORED_STATE_MAGIC: &[u8; 4] = b"NAS1";
 const LINE_DELTA_MAGIC: &[u8; 4] = b"NTL1";
 const CHECKPOINT_PAYLOAD_VERSION: i64 = 1;
@@ -1079,7 +1079,7 @@ pub(super) fn finalize_publication(
             if intent.3 == "prepared" {
                 connection
                     .execute(
-                        "UPDATE prepared_intents SET status = 'abandoned'
+                        "UPDATE prepared_intents SET status = 'abandoned', authored_payload = X''
                          WHERE intent_id = ?1 AND status = 'prepared'",
                         params![history_intent.as_str()],
                     )
@@ -1101,7 +1101,7 @@ pub(super) fn finalize_publication(
         if intent.3 == "prepared" {
             connection
                 .execute(
-                    "UPDATE prepared_intents SET status = 'abandoned'
+                    "UPDATE prepared_intents SET status = 'abandoned', authored_payload = X''
                      WHERE intent_id = ?1 AND status = 'prepared'",
                     params![history_intent.as_str()],
                 )
@@ -1129,7 +1129,7 @@ pub(super) fn abandon_publication(history_intent: &PreparedHistoryIntent) -> Res
     let connection = open_store()?;
     connection
         .execute(
-            "UPDATE prepared_intents SET status = 'abandoned'
+            "UPDATE prepared_intents SET status = 'abandoned', authored_payload = X''
              WHERE intent_id = ?1 AND status = 'prepared'",
             params![history_intent.as_str()],
         )
@@ -3536,7 +3536,7 @@ fn open_store() -> Result<Connection, String> {
                         migrate_schema_five_storage(&connection)?;
                     }
                     6 => authorize_legacy_portability_migration(&manifest)?,
-                    7 | 8 => {}
+                    7..=9 => {}
                     HISTORY_SCHEMA_VERSION => {}
                     _ => return Err("Note Timeline history store schema mismatch".to_string()),
                 }
@@ -3739,6 +3739,16 @@ fn open_store() -> Result<Connection, String> {
     }
     if matches!(schema, Some(5..=8)) {
         migrate_schema_nine_timeline_counts(&connection)?;
+    }
+    if matches!(schema, Some(5..=9)) {
+        // Terminal intents retain correlation metadata, not a second full-copy
+        // history. Pending payloads are still required for exact crash recovery.
+        connection.execute_batch(
+            "BEGIN IMMEDIATE;
+             UPDATE prepared_intents SET authored_payload = X'' WHERE status != 'prepared';
+             UPDATE history_metadata SET schema_version = 10 WHERE singleton = 1;
+             COMMIT;"
+        ).map_err(|error| format!("Retire settled Note Timeline intent payloads: {error}"))?;
     }
     configure_wal_bounds(&connection)?;
     let metadata = connection
@@ -3952,7 +3962,7 @@ fn migrate_schema_nine_timeline_counts(connection: &Connection) -> Result<(), St
     connection
         .execute(
             "UPDATE history_metadata SET schema_version = ?1 WHERE singleton = 1",
-            params![HISTORY_SCHEMA_VERSION],
+            params![9],
         )
         .map_err(|error| format!("Record Note Timeline paging migration: {error}"))?;
     Ok(())
@@ -4140,7 +4150,7 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
                 } else {
                     connection
                         .execute(
-                            "UPDATE prepared_intents SET status = 'abandoned'
+                            "UPDATE prepared_intents SET status = 'abandoned', authored_payload = X''
                              WHERE intent_id = ?1 AND status = 'prepared'",
                             params![intent_id],
                         )
@@ -4150,7 +4160,7 @@ fn recover_pending_with_connection(connection: &Connection) -> Result<(), String
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 connection
                     .execute(
-                        "UPDATE prepared_intents SET status = 'abandoned'
+                        "UPDATE prepared_intents SET status = 'abandoned', authored_payload = X''
                          WHERE intent_id = ?1 AND status = 'prepared'",
                         params![intent_id],
                     )
@@ -4283,7 +4293,7 @@ fn finalize_intent(
     if content_is_unchanged {
         transaction
             .execute(
-                "UPDATE prepared_intents SET status = 'finalized' WHERE intent_id = ?1",
+                "UPDATE prepared_intents SET status = 'finalized', authored_payload = X'' WHERE intent_id = ?1",
                 params![intent_id],
             )
             .map_err(|error| error.to_string())?;
@@ -4315,7 +4325,7 @@ fn finalize_intent(
     )?;
     transaction
         .execute(
-            "UPDATE prepared_intents SET status = 'finalized' WHERE intent_id = ?1",
+            "UPDATE prepared_intents SET status = 'finalized', authored_payload = X'' WHERE intent_id = ?1",
             params![intent_id],
         )
         .map_err(|error| error.to_string())?;
@@ -4557,6 +4567,86 @@ mod tests {
             Some("project: atlas\r\nstatus: active\r\n")
         );
         assert_eq!(state.body, "Body\r\n");
+    }
+
+    #[test]
+    fn terminal_intent_migration_preserves_pending_recovery_and_revision_foreign_keys() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("intent-migration-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("intent-migration-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let path = notes.path().join("Migration.md");
+        let original = "---\ngneauxghts:\n  id: migration-note\n  kind: note\n---\n\nOriginal";
+        let published = prepare_publication(
+            MutationSource::NoteCreation,
+            &path,
+            original,
+            PublicationIntentKind::Create,
+            None,
+        )
+        .unwrap();
+        fs::write(&path, original).unwrap();
+        finalize_publication(&published, MutationSource::NoteCreation, &path, original).unwrap();
+        let abandoned = prepare_publication(
+            MutationSource::Editor,
+            &path,
+            original,
+            PublicationIntentKind::Update,
+            None,
+        )
+        .unwrap();
+        abandon_publication(&abandoned).unwrap();
+        let updated = original.replace("Original", "Updated");
+        let pending = prepare_publication(
+            MutationSource::Editor,
+            &path,
+            &updated,
+            PublicationIntentKind::Update,
+            None,
+        )
+        .unwrap();
+        let connection = open_store().unwrap();
+        // A schema-nine fixture contains full terminal payloads. Pending bytes
+        // must survive migration because they are still crash-recovery evidence.
+        connection
+            .execute(
+                "UPDATE prepared_intents SET authored_payload = ?1 WHERE status != 'prepared'",
+                params![AuthoredState::from_canonical(original).encode()],
+            )
+            .unwrap();
+        connection
+            .execute("UPDATE history_metadata SET schema_version = 9", [])
+            .unwrap();
+        drop(connection);
+        let connection = open_store().unwrap();
+        let terminal_bytes: u64 = connection.query_row("SELECT SUM(LENGTH(authored_payload)) FROM prepared_intents WHERE status != 'prepared'", [], |row| row.get(0)).unwrap();
+        assert_eq!(terminal_bytes, 0);
+        let retained: Vec<u8> = connection
+            .query_row(
+                "SELECT authored_payload FROM prepared_intents WHERE intent_id = ?1",
+                params![pending.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(retained, AuthoredState::from_canonical(&updated).encode());
+        assert!(connection
+            .query_row("PRAGMA foreign_key_check", [], |_| Ok(()))
+            .optional()
+            .unwrap()
+            .is_none());
+        drop(connection);
+        fs::write(&path, &updated).unwrap();
+        recover_pending().unwrap();
+        recover_pending().unwrap();
+        let note_id = NoteIdentity::new("migration-note");
+        assert_eq!(revisions(&note_id).unwrap().len(), 2);
+        assert_eq!(
+            reconstruct_latest(&note_id).unwrap().body().trim(),
+            "Updated"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]

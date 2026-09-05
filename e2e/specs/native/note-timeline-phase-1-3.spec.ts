@@ -1,4 +1,4 @@
-import { mkdirSync, readdirSync, rmSync } from 'node:fs';
+import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import type { NoteSession } from '../../../src/lib/features/notepad/model/types';
@@ -389,6 +389,38 @@ describe('native Phase 1-3 Note Timeline integration', () => {
         (record): record is HistoryRevisionRecord => record.kind === 'revision'
       )?.source
     ).toBe('versionRestore');
+  });
+
+  it('clears editor undo when Version Restore changes only unmanaged properties', async () => {
+    const body = 'Same body across the properties-only restore';
+    const note = await saveVersions('Native properties restore', [
+      `---\nproject: original\n---\n\n${body}`,
+      '---\nproject: updated\n---\n\nDifferent body before editing'
+    ]);
+    const original = (await historyRecords(note.noteId))
+      .filter((record): record is HistoryRevisionRecord => record.kind === 'revision')
+      .at(-1)!;
+    await showNote(note);
+    await replaceEditorText(body);
+    await openHistory();
+    expect(readFileSync(note.path!, 'utf8')).toContain('project: updated');
+    await revealRevision(original.revisionId);
+    await $(`[data-revision-id="${original.revisionId}"]`).click();
+    await $('button=Preview complete replacement').click();
+    const preview = await $('[aria-label="Complete replacement preview"]');
+    await preview.waitForExist();
+    await preview.$('button=Confirm Version Restore').click();
+    const back = await $('button[aria-label="Back to workspace"]');
+    await browser.waitUntil(async () =>
+      (await back.isEnabled()) &&
+      (await $('[data-testid="history-mode"]').getText()).includes('Version restore')
+    );
+    expect(readFileSync(note.path!, 'utf8')).toContain('project: original');
+    await back.click();
+    await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
+    await $('[data-testid="note-editor"] .cm-content').click();
+    await browser.keys(['Meta', 'z', '\uE000']);
+    expect((await readNativeEditorState()).editor?.markdown).toBe(body);
   });
 
   it('discovers an external deletion, pages retained history, recovers safely, and keeps editing', async () => {

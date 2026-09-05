@@ -804,12 +804,13 @@
           const applied = await documents.replaceDocumentContentInPlace(
             restoredDocument,
             markdown,
+            { resetUndoHistory: true },
           );
           if (applied !== "applied") {
             throw new Error("The editor could not adopt the restored content.");
           }
         },
-        { autosave: false },
+        { autosave: false, resetUndoHistory: true },
       );
     },
     nameRevision: nameHistoryRevision,
@@ -1396,13 +1397,17 @@
         getPaneOrder: () => paneOrder,
         getActivePaneId: () => activePaneId,
         getPaneTitleInput,
-        closePane: commands.closePane,
+        closePane: async (paneId) => {
+          if (historyMode.isActive) return;
+          await commands.closePane(paneId);
+        },
         focusPaneAfterShortcut: commands.focusPaneAfterShortcut,
       }),
     registerPendingSaveHandler: () =>
-      registerPendingNoteSaveHandler(
-        workspacePersistence.flushAllForNavigation,
-      ),
+      registerPendingNoteSaveHandler(async () => {
+        await historyMode.waitForPendingRestore();
+        await workspacePersistence.flushAllForNavigation();
+      }),
     registerTransientMenuListeners: () =>
       transientUi.registerBridgeListeners((paneKey) =>
         paneKey in paneRuntimes ? (paneKey as PaneId) : null,

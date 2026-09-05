@@ -206,17 +206,17 @@ describe('architecture fitness: content operation machines', () => {
     expect(fields).toEqual(
       expect.arrayContaining(['machine'])
     );
-    expect(fields).not.toEqual(
-      expect.arrayContaining([
-        'controllerLifecycle',
-        'selectionOperation',
-        'requestOperation',
-        'isInitializing',
-        'isLoadingConversation',
-        'isSending',
-        'activity'
-      ])
-    );
+    for (const field of [
+      'controllerLifecycle',
+      'selectionOperation',
+      'requestOperation',
+      'isInitializing',
+      'isLoadingConversation',
+      'isSending',
+      'activity'
+    ]) {
+      expect(fields).not.toContain(field);
+    }
     expect(controller).toContain(
       'const request = this.machine.request'
     );

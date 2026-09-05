@@ -230,6 +230,12 @@ export function createInactiveHistoryModeState(): HistoryModeState {
   return { phase: 'inactive', entryError: null };
 }
 
+export function canExitHistoryMode(state: HistoryModeState): boolean {
+  return state.phase !== 'inactive' && state.phase !== 'exiting' &&
+    state.phase !== 'restoring' &&
+    !(state.phase === 'open' && state.request?.kind === 'restoreCommit');
+}
+
 function mergeRecords(
   current: HistoryModeRecord[],
   incoming: HistoryModeRecord[]
@@ -539,13 +545,7 @@ export function transitionHistoryMode(
         ? createInactiveHistoryModeState()
         : state;
     case 'exitStarted':
-      if (
-        state.phase === 'inactive' ||
-        state.phase === 'exiting' ||
-        state.phase === 'restoring'
-      ) {
-        return state;
-      }
+      if (!canExitHistoryMode(state) || !('workspace' in state)) return state;
       return { phase: 'exiting', workspace: state.workspace };
     case 'workspaceRestored':
       return state.phase === 'exiting'

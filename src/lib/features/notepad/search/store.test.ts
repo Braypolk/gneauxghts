@@ -19,20 +19,11 @@ vi.mock('$lib/features/notepad/search/search', () => ({
 }));
 
 describe('NotepadSearchStore', () => {
-  let scheduledSearchCallback: (() => void) | null = null;
-  const setTimeoutMock = vi.fn((callback: () => void) => {
-    scheduledSearchCallback = callback;
-    return 1;
-  });
-  const clearTimeoutMock = vi.fn();
-
   beforeEach(() => {
-    scheduledSearchCallback = null;
-    setTimeoutMock.mockClear();
-    clearTimeoutMock.mockClear();
+    vi.useFakeTimers();
     vi.stubGlobal('window', {
-      setTimeout: setTimeoutMock,
-      clearTimeout: clearTimeoutMock
+      setTimeout: globalThis.setTimeout,
+      clearTimeout: globalThis.clearTimeout
     });
     searchNotesMock.mockReset();
     listRecentFocusMock.mockReset();
@@ -42,6 +33,7 @@ describe('NotepadSearchStore', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.unstubAllGlobals();
   });
 
@@ -82,16 +74,24 @@ describe('NotepadSearchStore', () => {
       { notePath: '/vault/match.md', noteTitle: 'Match', sectionLabel: '', snippets: [] }
     ]);
 
+    store.handleSearchInput('f');
+    await vi.advanceTimersByTimeAsync(60);
+    store.handleSearchInput('fo');
+    await vi.advanceTimersByTimeAsync(60);
     store.handleSearchInput('foo');
-    expect(setTimeoutMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(119);
     expect(searchNotesMock).not.toHaveBeenCalled();
     expect(onSearchHighlightsChange).not.toHaveBeenCalled();
 
-    scheduledSearchCallback?.();
-    await Promise.resolve();
-    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(1);
 
     expect(searchNotesMock).toHaveBeenCalledTimes(1);
+    expect(searchNotesMock).toHaveBeenCalledWith('foo', {
+      currentPath: '/vault/current.md',
+      currentTitle: 'Current',
+      currentMarkdown: 'body'
+    });
+    expect(onSearchHighlightsChange).toHaveBeenCalledTimes(1);
     expect(onSearchHighlightsChange).toHaveBeenCalledWith({
       searchMode: 'all',
       searchQuery: 'foo',
@@ -194,17 +194,48 @@ describe('NotepadSearchStore', () => {
     expect(store.recentNotes[0].notePath).toBe('/vault/recent.md');
   });
 
-  it('clearSearch wipes the query, results, and clears any pending timer', () => {
-    const store = createStore();
+  it('clearSearch wipes existing results and cancels pending search and highlight work', async () => {
+    const onSearchHighlightsChange = vi.fn();
+    const store = createNotepadSearchStore({
+      getCurrentTitle: () => 'Current',
+      getCurrentMarkdown: () => 'body',
+      getCurrentPath: () => '/vault/current.md',
+      openSearchResult: vi.fn(async () => {}),
+      openRecentTask: vi.fn(async () => {}),
+      openNote: vi.fn(async () => {}),
+      onSearchHighlightsChange
+    });
+    searchNotesMock.mockResolvedValue([
+      { notePath: '/vault/match.md', noteTitle: 'Match', sectionLabel: '', snippets: [] }
+    ]);
+    store.handleSearchInput('previous');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(store.searchResults).toHaveLength(1);
+    searchNotesMock.mockClear();
+    onSearchHighlightsChange.mockClear();
+
     store.handleSearchInput('foo');
-    expect(setTimeoutMock).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(60);
 
     store.clearSearch();
 
     expect(store.searchQuery).toBe('');
     expect(store.searchResults).toEqual([]);
     expect(store.isSearching).toBe(false);
-    expect(clearTimeoutMock).toHaveBeenCalled();
+    expect(onSearchHighlightsChange).toHaveBeenCalledExactlyOnceWith({
+      searchMode: 'all',
+      searchQuery: '',
+      matchCase: false,
+      matchWholeWord: false
+    });
+    expect(vi.getTimerCount()).toBe(0);
+
+    await vi.advanceTimersByTimeAsync(120);
+
+    expect(searchNotesMock).not.toHaveBeenCalled();
+    expect(onSearchHighlightsChange).toHaveBeenCalledTimes(1);
+    expect(store.searchResults).toEqual([]);
+    expect(store.isSearching).toBe(false);
   });
 
   it('persists a pin and refreshes the search-focus collection', async () => {

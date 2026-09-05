@@ -12,6 +12,8 @@ export const config: Options.Testrunner = {
   capabilities: [
     {
       browserName: 'tauri',
+      // BiDi loses script contexts across startup navigation in the browser harness.
+      'wdio:enforceWebDriverClassic': true,
       'wdio:tauriServiceOptions': {
         mode: 'browser',
         devServerUrl

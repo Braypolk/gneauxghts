@@ -20,17 +20,19 @@ pub(crate) enum HistoryCommandErrorState {
     Ineligible,
     Missing,
     InvalidRequest,
+    AlreadyCurrent,
 }
 
 impl HistoryCommandErrorState {
     #[cfg(test)]
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 7] = [
         Self::Unavailable,
         Self::Corrupt,
         Self::Stale,
         Self::Ineligible,
         Self::Missing,
         Self::InvalidRequest,
+        Self::AlreadyCurrent,
     ];
 }
 
@@ -86,6 +88,10 @@ impl HistoryCommandError {
                 "The requested history item is no longer available.",
                 HistoryRecoveryAction::Refresh,
             ),
+            HistoryCommandErrorState::AlreadyCurrent => (
+                "This revision already matches the note's current content. Choose a different revision.",
+                HistoryRecoveryAction::CorrectRequest,
+            ),
             HistoryCommandErrorState::InvalidRequest => (
                 "The history request is invalid.",
                 HistoryRecoveryAction::CorrectRequest,
@@ -108,6 +114,7 @@ impl HistoryCommandError {
 
     pub(crate) fn from_history_error(operation: &str, error: HistoryError) -> Self {
         let (state, cause) = match error {
+            HistoryError::AlreadyCurrent(cause) => (HistoryCommandErrorState::AlreadyCurrent, cause),
             HistoryError::Unavailable(cause) => (HistoryCommandErrorState::Unavailable, cause),
             HistoryError::Corrupt(cause) => (HistoryCommandErrorState::Corrupt, cause),
             HistoryError::Stale(cause) => (HistoryCommandErrorState::Stale, cause),
@@ -622,6 +629,71 @@ mod tests {
             fixture["cursors"]["continuation"],
             serialize_contract(Some("opaque-timeline-cursor"))
         );
+    }
+
+    #[test]
+    fn matching_revision_restore_prescribes_a_different_revision_not_note_recovery() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("matching-restore-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = TestDir::new("matching-restore-notes");
+        set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(test_context())
+            .unwrap();
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &app.state(),
+            "Matching revision".into(),
+            "Already current".into(),
+            None,
+        )
+        .unwrap()
+        .session
+        .unwrap();
+        let note_id = created.note_id.unwrap();
+        let history = app.state::<AppState>();
+        let revisions = history
+            .note_timeline()
+            .open_history_mode(NoteIdentity::new(&note_id))
+            .revisions()
+            .unwrap();
+        let revision_id = revisions[0].identity().as_str().to_string();
+        let preview =
+            preview_note_revision_restore(app.state(), note_id.clone(), revision_id.clone())
+                .unwrap();
+        let error = restore_note_revision(
+            app.state(),
+            note_id.clone(),
+            revision_id,
+            preview.current_authored_content_hash().to_string(),
+            true,
+        )
+        .unwrap_err();
+        assert_eq!(
+            serialize_contract(error),
+            serde_json::json!({
+                "state": "alreadyCurrent",
+                "message": "This revision already matches the note's current content. Choose a different revision.",
+                "recoveryAction": "correctRequest"
+            })
+        );
+        assert_eq!(
+            history
+                .note_timeline()
+                .open_history_mode(NoteIdentity::new(note_id))
+                .revisions()
+                .unwrap()
+                .len(),
+            1
+        );
+        set_notes_root_override(None).unwrap();
     }
 
     #[test]

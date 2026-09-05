@@ -174,7 +174,8 @@ describe('documentPaneCoordinator', () => {
       'right',
       'updated tasks',
       target,
-      true
+      true,
+      {}
     );
   });
 

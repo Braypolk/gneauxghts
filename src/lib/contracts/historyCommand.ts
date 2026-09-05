@@ -30,6 +30,11 @@ const COMMAND_FAILURES = {
     state: 'invalidRequest',
     message: 'The history request is invalid.',
     recoveryAction: 'correctRequest'
+  },
+  alreadyCurrent: {
+    state: 'alreadyCurrent',
+    message: "This revision already matches the note's current content. Choose a different revision.",
+    recoveryAction: 'correctRequest'
   }
 } as const;
 

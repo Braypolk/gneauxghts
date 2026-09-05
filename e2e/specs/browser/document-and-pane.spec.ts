@@ -13,6 +13,7 @@ async function waitForNote(title: string) {
   await browser.waitUntil(async () => (await input.getValue()) === title, {
     timeoutMsg: `Expected active note title to become ${title}`
   });
+  await $('span=Loading editor').waitForExist({ reverse: true });
 }
 
 async function openRecentNote(title: string) {
@@ -102,13 +103,18 @@ describe('document and pane state-machine boundaries', () => {
   it('restores editor scroll after a note to chat to note lifecycle', async () => {
     const scroller = await $('[data-testid="note-editor"] .cm-scroller');
     await scroller.waitForDisplayed();
-    await browser.execute((element: HTMLElement) => {
-      element.scrollTop = Math.max(400, element.scrollHeight * 0.65);
-      element.dispatchEvent(new Event('scroll'));
-    }, scroller);
-    await browser.pause(100);
-    const before = await browser.execute((element: HTMLElement) => element.scrollTop, scroller);
-    expect(before).toBeGreaterThan(0);
+    let before = 0;
+    await browser.waitUntil(async () => {
+      await browser.execute((element: HTMLElement) => {
+        element.scrollTop = Math.max(400, element.scrollHeight * 0.65);
+        element.dispatchEvent(new Event('scroll'));
+      }, scroller);
+      // Initial cursor restoration can still settle after the editor mounts.
+      // Start the lifecycle check only once our scroll position survives it.
+      await browser.pause(100);
+      before = await browser.execute((element: HTMLElement) => element.scrollTop, scroller);
+      return before > 0;
+    }, { timeoutMsg: 'Expected the long note editor scroll position to settle' });
     const openChat = await $('button[aria-label="Open thought partner in this pane"]');
     await openChat.waitForClickable();
     await browser.execute((element: HTMLElement) => element.click(), openChat);
