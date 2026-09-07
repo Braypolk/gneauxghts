@@ -32,6 +32,8 @@ export function createWorkspacePersistenceService(
       deps.cancelPendingAutosave(document);
     }
 
+    // A queue can still be publishing while its shared buffer looks clean.
+    await awaitAllSaveQueues();
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const pending = documents.filter(
         (document) => !documentHasCleanBuffer(document)
@@ -61,7 +63,6 @@ export function createWorkspacePersistenceService(
   }
 
   return {
-    awaitAllSaveQueues,
     flushAllForNavigation
   };
 }

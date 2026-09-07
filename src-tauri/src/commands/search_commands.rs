@@ -17,9 +17,9 @@ use crate::{
         resolve_current_document, CurrentDocumentRequest,
     },
     state::{
-        db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
-        prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
-        write_state, NoteActivity,
+        db_load_note_activity, db_prune_recent_state, db_set_last_chat_location,
+        db_set_note_pinned, effective_open_count, prune_recent_note_ids, read_state,
+        resolve_note_id_from_path, validate_current_path, NoteActivity,
     },
     time::current_time_millis,
 };
@@ -267,8 +267,9 @@ pub(crate) fn list_recent_notes(
 
             let current_path = validate_current_path(current_path, &notes_dir)?;
             let mut persisted_state = read_state(&notes_dir)?;
+            let previous = persisted_state.clone();
             if prune_recent_note_ids(&mut persisted_state, &notes_dir) {
-                write_state(&notes_dir, &persisted_state)?;
+                db_prune_recent_state(&previous, &persisted_state)?;
             }
 
             state.ensure_interactive_index(
@@ -416,6 +417,7 @@ pub(crate) fn list_recent_focus(
 
             let current_path = validate_current_path(current_path, &notes_dir)?;
             let mut persisted_state = read_state(&notes_dir)?;
+            let previous = persisted_state.clone();
             let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
 
             state.ensure_interactive_index(
@@ -443,7 +445,7 @@ pub(crate) fn list_recent_focus(
 
             drop(index);
             if prune_changed {
-                write_state(&notes_dir, &persisted_state)?;
+                db_prune_recent_state(&previous, &persisted_state)?;
             }
 
             let last_chat =
@@ -1478,7 +1480,6 @@ mod current_content_delivery_tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = created.note_id.unwrap();
         let note_path = created.path.unwrap();

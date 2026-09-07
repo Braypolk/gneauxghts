@@ -282,6 +282,7 @@ export interface RevisionCitation {
   noteId: string;
   revisionId: string;
   atMillis: number;
+  timeEvidence?: import('$lib/types/history').RevisionTimeEvidence;
   source: import('$lib/features/history/historyModeMachine').HistoryMutationSource;
   currentExcerpt: string;
 }

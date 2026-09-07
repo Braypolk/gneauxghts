@@ -96,6 +96,9 @@ export function createPaneNavigationTransitionPipeline<
 >(deps: PaneNavigationTransitionPipelineDeps) {
   let nextOperationId = 0;
   const latestOperationByPane = new Map<TPaneId, number>();
+  // A last-editor check is valid only until its workspace mutation. Serialize
+  // departing leaves across panes; composite restoration delegates to them.
+  let departureTail = Promise.resolve();
 
   function outcome(
     operationId: number,
@@ -142,8 +145,24 @@ export function createPaneNavigationTransitionPipeline<
         latestOperationByPane.get(paneId) === operationId) &&
       (request.isCurrent?.(paneId) ?? true);
 
+    let releaseDeparture: (() => void) | undefined;
+    const release = () => {
+      releaseDeparture?.();
+      releaseDeparture = undefined;
+    };
+    if (request.departDocument) {
+      const precedingDeparture = departureTail;
+      departureTail = new Promise<void>((resolve) => { releaseDeparture = resolve; });
+      await precedingDeparture;
+    }
+
     try {
       await request.onResolved?.(paneId, operationId);
+      if (!isCurrent()) {
+        release();
+        await request.onStale?.(paneId);
+        return outcome(operationId, request, paneId, 'stale', phases);
+      }
       const guard =
         (await request.guard?.(paneId, operationId)) ??
         ({ status: 'allow' } as const);
@@ -164,6 +183,7 @@ export function createPaneNavigationTransitionPipeline<
         phases.push('document-departed');
       }
       if (!isCurrent()) {
+        release();
         await request.onStale?.(paneId);
         return outcome(
           operationId,
@@ -185,6 +205,7 @@ export function createPaneNavigationTransitionPipeline<
         phases.push('prepared');
       }
       if (!isCurrent()) {
+        release();
         await request.onStale?.(paneId);
         return outcome(
           operationId,
@@ -202,11 +223,14 @@ export function createPaneNavigationTransitionPipeline<
         phases.push('workspace-mutated');
       }
 
+      release();
+
       if (request.ensureEditors) {
         await deps.ensurePaneEditors();
         phases.push('editors-ensured');
       }
       if (!isCurrent()) {
+        release();
         await request.onStale?.(paneId);
         return outcome(
           operationId,
@@ -223,6 +247,7 @@ export function createPaneNavigationTransitionPipeline<
         phases.push('completed');
       }
       if (!isCurrent()) {
+        release();
         await request.onStale?.(paneId);
         return outcome(
           operationId,
@@ -246,6 +271,7 @@ export function createPaneNavigationTransitionPipeline<
         phases
       );
     } catch (error) {
+      release();
       await request.onFailed?.(paneId, error);
       return outcome(
         operationId,
@@ -255,6 +281,8 @@ export function createPaneNavigationTransitionPipeline<
         phases,
         { error }
       );
+    } finally {
+      release();
     }
   }
 

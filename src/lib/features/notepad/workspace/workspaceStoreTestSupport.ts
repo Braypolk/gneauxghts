@@ -1,4 +1,4 @@
-import type { NoteKey } from '$lib/features/notepad/document/documentState';
+import type { DocumentHandle } from '$lib/features/notepad/document/documentState';
 import type { PaneKind } from './paneTypes';
 import {
   WorkspaceStore,
@@ -8,7 +8,7 @@ import {
 export function createReadyPaneForTest(
   workspace: WorkspaceStore,
   paneId: NotepadPaneId,
-  noteKey: NoteKey,
+  documentHandle: DocumentHandle,
   kind: PaneKind = 'editor'
 ) {
   if (
@@ -26,7 +26,7 @@ export function createReadyPaneForTest(
   return workspace.completePaneCreation(
     paneId,
     membership.operationId,
-    noteKey,
+    documentHandle,
     kind
   );
 }

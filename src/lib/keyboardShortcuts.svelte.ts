@@ -9,6 +9,7 @@ export type KeyboardShortcutId =
   | 'navAtlas'
   | 'navSettings'
   | 'openThoughtPartner'
+  | 'showHistory'
   | 'openSplitPaneOptions'
   | 'openNewChatInSplit'
   | 'openPreviousNoteInSplit'
@@ -140,6 +141,13 @@ const shortcutDefinitionsBase = [
     description: 'Open the thought partner in the current pane.',
     group: 'workspace',
     defaultBinding: 'Meta+t'
+  },
+  {
+    id: 'showHistory',
+    label: 'Show History',
+    description: 'Show history for the note in the active editor pane.',
+    group: 'workspace',
+    defaultBinding: 'Meta+Shift+h'
   },
   {
     id: 'openSplitPaneOptions',

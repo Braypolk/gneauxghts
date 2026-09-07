@@ -1,3 +1,4 @@
+import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNotepadPersistenceController } from "./persistenceController";
 import {
@@ -5,8 +6,8 @@ import {
   type NoteDraftState,
 } from "$lib/features/notepad/state/noteStore";
 import type { SessionSnapshot } from "$lib/features/notepad/session/session";
+import type { NoteSession } from "$lib/features/notepad/model/types";
 import {
-  applySessionSnapshotToDocument,
   getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
@@ -15,6 +16,13 @@ import {
   updateDocumentMarkdown,
 } from "$lib/features/notepad/document/documentState";
 import { captureExternalSnapshotForTest } from "$lib/features/notepad/document/documentExternalSyncTestSupport";
+import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
+import { createDocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
+import {
+  bindNotepadStateToVault,
+  createFreshDraftNote,
+  createNotepadState
+} from "$lib/features/notepad/state/noteStore";
 
 function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return {
@@ -38,14 +46,52 @@ function dirtyNote(): NoteDraftState {
   });
 }
 
-function applySavedSnapshot(
-  note: NoteDraftState,
-  saved: SessionSnapshot,
-  { preserveDraft }: { preserveDraft: boolean },
+function committed(overrides: Partial<NoteSession> = {}): NoteSession {
+  return {
+    title: "Saved",
+    markdown: "saved body",
+    noteId: "note-id",
+    path: "/vault/Saved.md",
+    ...overrides,
+  };
+}
+
+function committedSnapshot(
+  overrides: Partial<SessionSnapshot> = {},
+): NoteSession {
+  const value = snapshot(overrides);
+  return {
+    title: value.title,
+    markdown: value.bodyMarkdown,
+    noteId: value.currentNoteId,
+    path: value.currentNotePath,
+    ...(value.commitWarning
+      ? { commitWarning: value.commitWarning }
+      : {}),
+  };
+}
+
+function editingServiceForState(
+  state: ReturnType<typeof createNotepadState>
 ) {
-  applySessionSnapshotToDocument(note, saved, {
-    preserveWorking: preserveDraft,
+  return createDocumentEditingService({
+    state,
+    isApplyingProgrammaticUpdate: () => false,
+    shouldSuppressAutosave: () => false,
+    isTitleEditing: () => false,
+    resetPaneCommandAfterBodyInput: vi.fn(),
+    clearRecentlyForgotten: vi.fn(),
+    clearSelectedRelatedText: vi.fn(),
+    scheduleAutosave: vi.fn(),
+    scheduleSearch: vi.fn(),
+    scheduleRelated: vi.fn(),
   });
+}
+
+function editingServiceFor(note: NoteDraftState) {
+  const state = createNotepadState(note);
+  bindNotepadStateToVault(state, "/vault");
+  return editingServiceForState(state);
 }
 
 describe("persistenceController", () => {
@@ -65,7 +111,7 @@ describe("persistenceController", () => {
   it("schedules autosave through the note queue and clears clean buffers", async () => {
     const note = dirtyNote();
     const saveNoteSession = vi.fn().mockResolvedValue(
-      snapshot({
+      committedSnapshot({
         title: "Draft",
         bodyMarkdown: "draft body",
         lastSavedTitle: "Draft",
@@ -75,13 +121,12 @@ describe("persistenceController", () => {
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession,
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     controller.scheduleAutosave(note);
     await vi.advanceTimersByTimeAsync(1000);
-    await controller.getNoteSaveQueue(note.key);
+    await controller.getNoteSaveQueue(note.handle);
 
     expect(saveNoteSession).toHaveBeenCalledWith(
       "Draft",
@@ -96,7 +141,7 @@ describe("persistenceController", () => {
     const note = dirtyNote();
     const saveNoteSession = vi.fn();
     const saveTaskNoteSession = vi.fn().mockResolvedValue(
-      snapshot({
+      committedSnapshot({
         title: "Draft",
         bodyMarkdown: "task body",
         lastSavedTitle: "Draft",
@@ -107,12 +152,10 @@ describe("persistenceController", () => {
       getDocumentSession: () => note,
       saveNoteSession,
       saveTaskNoteSession,
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
     let releaseBarrier!: () => void;
-    const barrier = controller.queueNoteOperation(
-      note,
+    const barrier = documentRegistry.ensure(note.handle).requestSave(
       () =>
         new Promise<void>((resolve) => {
           releaseBarrier = resolve;
@@ -138,22 +181,21 @@ describe("persistenceController", () => {
 
   it("does not apply save results after a deliberate invalidation", async () => {
     const note = dirtyNote();
-    let resolveSave!: (snapshot: SessionSnapshot) => void;
-    const savePromise = new Promise<SessionSnapshot>((resolve) => {
+    let resolveSave!: (snapshot: NoteSession) => void;
+    const savePromise = new Promise<NoteSession>((resolve) => {
       resolveSave = resolve;
     });
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession: vi.fn().mockReturnValue(savePromise),
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     const save = controller.enqueueSave(note);
     await vi.waitFor(() => expect(note.operation.kind).toBe("saving"));
     controller.invalidatePendingSaveResults(note);
     resolveSave(
-      snapshot({
+      committedSnapshot({
         title: "Draft",
         bodyMarkdown: "draft body",
         lastSavedTitle: "Draft",
@@ -177,8 +219,8 @@ describe("persistenceController", () => {
       lastSavedNoteId: null,
       lastSavedPath: null,
     });
-    let resolveSave!: (snapshot: SessionSnapshot) => void;
-    const savePromise = new Promise<SessionSnapshot>((resolve) => {
+    let resolveSave!: (snapshot: NoteSession) => void;
+    const savePromise = new Promise<NoteSession>((resolve) => {
       resolveSave = resolve;
     });
     const markNoteOpened = vi.fn().mockResolvedValue(undefined);
@@ -186,8 +228,7 @@ describe("persistenceController", () => {
       getDocumentSession: () => note,
       saveNoteSession: vi.fn().mockReturnValue(savePromise),
       markNoteOpened,
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     const save = controller.enqueueSave(note);
@@ -195,7 +236,7 @@ describe("persistenceController", () => {
     // User keeps typing while the disk write is in flight.
     updateDocumentMarkdown(note, "first line\nsecond line");
     resolveSave(
-      snapshot({
+      committedSnapshot({
         title: "first line",
         bodyMarkdown: "first line",
         currentNoteId: "note-id",
@@ -247,7 +288,7 @@ describe("persistenceController", () => {
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession: vi.fn().mockResolvedValue(
-        snapshot({
+        committedSnapshot({
           title: "New note",
           bodyMarkdown: "body",
           currentNoteId: "note-new",
@@ -259,8 +300,7 @@ describe("persistenceController", () => {
           commitWarning: warning,
         }),
       ),
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     await expect(controller.enqueueSave(note)).resolves.toBeUndefined();
@@ -300,7 +340,7 @@ describe("persistenceController", () => {
       lastSavedPath: null,
     });
     const saveNoteSession = vi.fn().mockResolvedValue(
-      snapshot({
+      committedSnapshot({
         title: "Background draft",
         bodyMarkdown: "body",
         currentNotePath: "/vault/Background draft.md",
@@ -312,8 +352,7 @@ describe("persistenceController", () => {
       saveNoteSession,
       markNoteOpened,
       isActiveNote: () => false,
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     await controller.enqueueSave(note);
@@ -340,14 +379,59 @@ describe("persistenceController", () => {
     const controller = createNotepadPersistenceController({
       getDocumentSession: () => note,
       saveNoteSession,
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     await controller.enqueueSave(note);
 
     expect(saveNoteSession).not.toHaveBeenCalled();
     expect(note.externalSync.kind).toBe("conflict");
+  });
+
+  it("retains a post-commit collision and never resubmits the completed write", async () => {
+    const established = dirtyNote();
+    updateDocumentMarkdown(established, "established dirty draft");
+    const state = createNotepadState(established);
+    bindNotepadStateToVault(state, "/vault");
+    const savingDraft = createFreshDraftNote(state);
+    updateDocumentMarkdown(savingDraft, "captured independent draft");
+    let resolveSave!: (snapshot: NoteSession) => void;
+    const saveNoteSession = vi.fn().mockImplementation(
+      () => new Promise<NoteSession>((resolve) => {
+        resolveSave = resolve;
+      })
+    );
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => savingDraft,
+      saveNoteSession,
+      documentEditing: editingServiceForState(state),
+    });
+
+    const save = controller.enqueueSave(savingDraft);
+    await vi.waitFor(() => expect(savingDraft.operation.kind).toBe("saving"));
+    updateDocumentMarkdown(savingDraft, "newer independent draft");
+    resolveSave(committed({
+      title: "captured independent draft",
+      markdown: "captured independent draft",
+      noteId: "note-id",
+      path: "/vault/Saved.md",
+    }));
+    await save;
+
+    expect(saveNoteSession).toHaveBeenCalledTimes(1);
+    expect(savingDraft.savedBaseline?.content.markdown).toBe(
+      "captured independent draft"
+    );
+    expect(savingDraft.working.markdown).toBe("newer independent draft");
+    expect(established.working.markdown).toBe("established dirty draft");
+    expect(savingDraft.canonicalCollision?.otherHandle).toBe(
+      established.handle
+    );
+    expect(savingDraft.operation.kind).toBe("idle");
+
+    await controller.enqueueSave(savingDraft);
+    expect(saveNoteSession).toHaveBeenCalledTimes(1);
+    expect(savingDraft.working.markdown).toBe("newer independent draft");
   });
 
   it("preserves dirty editor content when durable history preparation fails", async () => {
@@ -357,8 +441,7 @@ describe("persistenceController", () => {
       saveNoteSession: vi
         .fn()
         .mockRejectedValue(new Error("history preparation unavailable")),
-      rekeyNoteWithRuntime: (currentNote) => currentNote,
-      applySavedSnapshot,
+      documentEditing: editingServiceFor(note),
     });
 
     await expect(controller.enqueueSave(note)).rejects.toThrow(
@@ -373,4 +456,158 @@ describe("persistenceController", () => {
     expect(getDocumentMarkdown(note)).toBe("draft body");
     expect(controller.hasCleanBuffer(note)).toBe(false);
   });
+  it("starts the one real save before delayed serial observations and preserves a newer draft", async () => {
+    const note = dirtyNote();
+    let resolveSave!: (snapshot: NoteSession) => void;
+    let resolveObservation!: (value: import('$lib/contracts/historyReadiness').HistoryReadiness) => void;
+    const saveNoteSession = vi.fn().mockImplementation(() => new Promise<NoteSession>((resolve) => { resolveSave = resolve; }));
+    const loadHistoryReadiness = vi.fn().mockImplementation(() => new Promise((resolve) => { resolveObservation = resolve; }));
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note, saveNoteSession, loadHistoryReadiness,
+      documentEditing: editingServiceFor(note)
+    });
+    const saved = controller.enqueueSave(note);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saveNoteSession).toHaveBeenCalledTimes(1);
+    expect(loadHistoryReadiness).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(250);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(loadHistoryReadiness).toHaveBeenCalledTimes(1);
+    const readiness = { scope: 'runtime', revision: 0, noteId: 'note-id', state: 'targetVerificationPending' as const,
+      verifiedNotes: 1, totalNotes: 10, backgroundComplete: false, backgroundUnavailable: false };
+    resolveObservation(readiness);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(getDocumentStatusViewModel(note)).toMatchObject({ kind: 'busy', label: expect.stringContaining('checking this note') });
+    updateDocumentMarkdown(note, 'newer typing');
+    expect(controller.hasCleanBuffer(note)).toBe(false);
+    await vi.advanceTimersByTimeAsync(250);
+    resolveSave(committedSnapshot({ title: 'Draft', bodyMarkdown: 'draft body', lastSavedTitle: 'Draft', lastSavedMarkdown: 'draft body' }));
+    await saved;
+    resolveObservation(readiness);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(loadHistoryReadiness).toHaveBeenCalledTimes(2);
+    expect(note.operation).not.toHaveProperty('waitReason');
+    expect(getDocumentStatusViewModel(note)).toEqual({ kind: 'dirty', label: 'Unsaved changes' });
+    expect(getDocumentMarkdown(note)).toBe('newer typing');
+  });
+
+  it.each([
+    ['recoveryPending', 'recovery'],
+    ['targetVerificationPending', 'verification'],
+    ['unavailable', 'unavailable'],
+    ['corrupt', 'corrupt'],
+    ['ready', undefined],
+  ] as const)('presents %s as advisory progress without completing the save', async (state, waitReason) => {
+    const note = dirtyNote();
+    let resolveSave!: (value: NoteSession) => void;
+    const loadHistoryReadiness = vi.fn().mockResolvedValue({
+      scope: 'runtime', revision: 0, noteId: 'note-id', state,
+      verifiedNotes: 1, totalNotes: 1, backgroundComplete: true, backgroundUnavailable: false,
+    });
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession: () => new Promise((resolve) => { resolveSave = resolve; }),
+      loadHistoryReadiness, documentEditing: editingServiceFor(note),
+    });
+    const saved = controller.enqueueSave(note);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(note.operation).toMatchObject({ kind: 'saving', waitReason });
+    expect(note.operation).not.toHaveProperty('readiness');
+    expect(controller.hasCleanBuffer(note)).toBe(false);
+    expect(getDocumentStatusViewModel(note).kind).toBe('busy');
+    resolveSave(committed());
+    await saved;
+  });
+
+  it.each(['failure', 'warning'] as const)("observer failure never replaces the authoritative %s", async (outcome) => {
+    const note = dirtyNote();
+    let resolveSave!: (value: NoteSession) => void;
+    let rejectSave!: (error: Error) => void;
+    const loadHistoryReadiness = vi.fn().mockRejectedValue(new Error('observer offline'));
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note,
+      saveNoteSession: () => new Promise((resolve, reject) => { resolveSave = resolve; rejectSave = reject; }),
+      loadHistoryReadiness, documentEditing: editingServiceFor(note)
+    });
+    const saved = controller.enqueueSave(note);
+    const result = saved.catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(loadHistoryReadiness).toHaveBeenCalledTimes(1);
+    if (outcome === 'failure') {
+      rejectSave(new Error('Authoritative preparation failure'));
+      expect(await result).toBe('Authoritative preparation failure');
+      expect(getDocumentStatusViewModel(note)).toEqual({ kind: 'failed', label: 'Authoritative preparation failure' });
+      expect(controller.hasCleanBuffer(note)).toBe(false);
+    } else {
+      const commitWarning = { message: 'History capture pending', issues: [{ stage: 'historyFinalization', message: 'retry' }] };
+      resolveSave(committedSnapshot({ title: 'Draft', bodyMarkdown: 'draft body', lastSavedTitle: 'Draft', lastSavedMarkdown: 'draft body', commitWarning }));
+      await result;
+      expect(getDocumentStatusViewModel(note)).toMatchObject({ kind: 'warning', hasUnsavedChanges: false, repairAction: 'historySettings' });
+      expect(note.publication.warning).toEqual(commitWarning);
+    }
+    expect(note.operation).not.toHaveProperty('waitReason');
+  });
+
+  it.each(['scope', 'revision', 'noteId'] as const)('ignores a changed observation %s without changing the pending save', async (field) => {
+    const note = dirtyNote();
+    let resolveSave!: (value: NoteSession) => void;
+    const readiness = { scope: 'runtime', revision: 0, noteId: 'note-id', state: 'recoveryPending' as const,
+      verifiedNotes: 0, totalNotes: null, backgroundComplete: false, backgroundUnavailable: false };
+    const loadHistoryReadiness = vi.fn().mockResolvedValueOnce(readiness).mockResolvedValue({ ...readiness, [field]: field === 'revision' ? 1 : 'replacement' });
+    const controller = createNotepadPersistenceController({
+      getDocumentSession: () => note, saveNoteSession: () => new Promise((resolve) => { resolveSave = resolve; }),
+      loadHistoryReadiness, documentEditing: editingServiceFor(note)
+    });
+    const saved = controller.enqueueSave(note);
+    await vi.advanceTimersByTimeAsync(500);
+    expect(note.operation.kind).toBe('saving');
+    expect(controller.hasCleanBuffer(note)).toBe(false);
+    expect(note.operation).toMatchObject({ waitReason: field === 'noteId' ? 'recovery' : undefined });
+    expect(note.operation).not.toHaveProperty('readiness');
+    resolveSave(committed());
+    await saved;
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(loadHistoryReadiness).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([false, true])('new draft observes only recovery; navigation drains the newest assigned-ID save (failure=%s)', async (failFollowup) => {
+    const note = createNoteDraftState({ title: 'Draft', bodyMarkdown: 'first', currentNoteId: null, currentNotePath: null,
+      lastSavedTitle: '', lastSavedMarkdown: '', lastSavedNoteId: null, lastSavedPath: null });
+    let resolveFirst!: (value: NoteSession) => void;
+    let resolveSecond!: (value: NoteSession) => void;
+    let rejectSecond!: (error: Error) => void;
+    const saveNoteSession = vi.fn()
+      .mockImplementationOnce(() => new Promise((resolve) => { resolveFirst = resolve; }))
+      .mockImplementationOnce(() => new Promise((resolve, reject) => { resolveSecond = resolve; rejectSecond = reject; }))
+      .mockRejectedValue(new Error('History became unavailable'));
+    const readiness = { scope: 'runtime', revision: 0, noteId: null, state: 'recoveryPending' as const,
+      verifiedNotes: 0, totalNotes: null, backgroundComplete: false, backgroundUnavailable: false };
+    const loadHistoryReadiness = vi.fn().mockResolvedValueOnce(readiness).mockResolvedValue({ ...readiness, state: 'targetVerificationPending' });
+    const controller = createNotepadPersistenceController({ getDocumentSession: () => note, saveNoteSession, loadHistoryReadiness,
+      documentEditing: editingServiceFor(note) });
+    const first = controller.enqueueSave(note).catch((error: Error) => error.message);
+    await vi.advanceTimersByTimeAsync(250);
+    expect(getDocumentStatusViewModel(note)).toMatchObject({ historyWaiting: true, label: expect.stringContaining('recovering') });
+    await vi.advanceTimersByTimeAsync(250);
+    expect(getDocumentStatusViewModel(note)).toEqual({ kind: 'busy', label: 'Saving…' });
+    updateDocumentMarkdown(note, 'newest typing');
+    const coalesced = controller.enqueueSave(note).catch((error: Error) => error.message);
+    const workspace = createWorkspacePersistenceService({ getDocuments: () => [note], flushAllPaneCursorSaves: vi.fn(),
+      cancelPendingAutosave: controller.cancelPendingAutosave, enqueueSave: controller.enqueueSave });
+    const navigated = vi.fn();
+    const departure = workspace.flushAllForNavigation().then(navigated).catch((error: Error) => error.message);
+    resolveFirst(committedSnapshot({ title: 'Draft', bodyMarkdown: 'first', lastSavedTitle: 'Draft', lastSavedMarkdown: 'first' }));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(saveNoteSession).toHaveBeenNthCalledWith(2, 'Draft', 'newest typing', '/vault/Saved.md');
+    expect(getDocumentNoteId(note)).toBe('note-id'); expect(navigated).not.toHaveBeenCalled();
+    expect(controller.hasCleanBuffer(note)).toBe(false);
+    if (failFollowup) rejectSecond(new Error('History became unavailable'));
+    else resolveSecond(committedSnapshot({ title: 'Draft', bodyMarkdown: 'newest typing', lastSavedTitle: 'Draft', lastSavedMarkdown: 'newest typing' }));
+    await Promise.all([first, coalesced, departure]);
+    expect(getDocumentMarkdown(note)).toBe('newest typing');
+    expect(navigated).toHaveBeenCalledTimes(failFollowup ? 0 : 1);
+    expect(controller.hasCleanBuffer(note)).toBe(!failFollowup);
+    expect(note.operation).not.toHaveProperty('waitReason');
+  });
+
 });

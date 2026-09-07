@@ -184,7 +184,6 @@ mod tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = created.note_id.unwrap();
         let note_path = created.path.unwrap();

@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
-  applySessionSnapshotToDocument,
   createDocumentState,
   documentHasCleanBuffer,
   updateDocumentMarkdown,
-  type NoteKey
+  type DocumentHandle
 } from '$lib/features/notepad/document/documentState';
+import {
+  bindNotepadStateToVault,
+  createNotepadState
+} from '$lib/features/notepad/state/noteStore';
 import {
   createEmptySessionSnapshot
 } from '$lib/features/notepad/session/session';
@@ -40,7 +43,7 @@ function document(
       lastSavedNoteId: noteId,
       lastSavedPath: path
     },
-    `path:${path}`
+    `document:${noteId}`
   );
 }
 
@@ -49,14 +52,14 @@ describe('notepad task mutation adapter', () => {
     const referenced = document('note-1', '/vault/One.md');
     const unreferenced = document('note-2', '/vault/Two.md');
     const notes = {
-      [referenced.key]: referenced,
-      [unreferenced.key]: unreferenced
+      [referenced.handle]: referenced,
+      [unreferenced.handle]: unreferenced
     };
     const deps = {
-      listReferencedNoteKeys: () => [
-        referenced.key
+      listReferencedDocumentHandles: () => [
+        referenced.handle
       ],
-      getNoteByKey: (key: NoteKey) => notes[key] ?? null
+      getDocumentByHandle: (key: DocumentHandle) => notes[key] ?? null
     };
 
     expect(
@@ -101,8 +104,8 @@ describe('notepad task mutation adapter', () => {
     const enqueueSave = vi.fn(async () => undefined);
     const attributeTaskActionSave = vi.fn();
     const handler = createNotepadTaskMutationHandler({
-      listReferencedNoteKeys: () => [note.key],
-      getNoteByKey: () => note,
+      listReferencedDocumentHandles: () => [note.handle],
+      getDocumentByHandle: () => note,
       replaceMarkdown,
       replaceDocumentContentInPlace,
       enqueueSave,
@@ -159,11 +162,16 @@ describe('notepad task mutation adapter', () => {
       '- [ ] Trace me\n\nUnsaved local context'
     );
     const trace: string[] = [];
+    const state = createNotepadState(note);
+    bindNotepadStateToVault(state, '/vault');
     const editing = createDocumentEditingService({
+      state,
       isApplyingProgrammaticUpdate: () => false,
       shouldSuppressAutosave: () => false,
+      isTitleEditing: () => false,
       resetPaneCommandAfterBodyInput: vi.fn(),
       clearRecentlyForgotten: vi.fn(),
+      clearSelectedRelatedText: vi.fn(),
       scheduleAutosave: vi.fn(),
       scheduleSearch: vi.fn(),
       scheduleRelated: vi.fn()
@@ -176,15 +184,10 @@ describe('notepad task mutation adapter', () => {
       ) => {
         trace.push(`save:${markdown}`);
         return {
-          ...createEmptySessionSnapshot(),
           title,
-          bodyMarkdown: markdown,
-          currentNoteId: 'system-trace-note',
-          currentNotePath: currentPath,
-          lastSavedTitle: title,
-          lastSavedMarkdown: markdown,
-          lastSavedNoteId: 'system-trace-note',
-          lastSavedPath: currentPath
+          markdown,
+          noteId: 'system-trace-note',
+          path: currentPath
         };
       }
     );
@@ -193,20 +196,11 @@ describe('notepad task mutation adapter', () => {
         getDocumentSession: () => note,
         saveNoteSession,
         saveTaskNoteSession: saveNoteSession,
-        rekeyNoteWithRuntime: (current) => current,
-        applySavedSnapshot: (
-          current,
-          saved,
-          { preserveDraft }
-        ) => {
-          applySessionSnapshotToDocument(current, saved, {
-            preserveWorking: preserveDraft
-          });
-        }
+        documentEditing: editing
       });
     const handler = createNotepadTaskMutationHandler({
-      listReferencedNoteKeys: () => [note.key],
-      getNoteByKey: () => note,
+      listReferencedDocumentHandles: () => [note.handle],
+      getDocumentByHandle: () => note,
       replaceMarkdown: (
         target,
         markdown,
@@ -270,7 +264,7 @@ describe('notepad task mutation adapter', () => {
       );
       expect(note.operation.kind).toBe('idle');
     } finally {
-      documentRegistry.dispose(note.key);
+      documentRegistry.dispose(note.handle);
     }
   });
 });

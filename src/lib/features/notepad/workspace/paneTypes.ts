@@ -1,4 +1,4 @@
-import type { NoteKey } from '$lib/features/notepad/state/noteStore';
+import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 
 export type PaneKind = 'editor' | 'chat';
 
@@ -7,7 +7,7 @@ export interface WorkspacePaneState<
 > {
   paneId: TPaneId;
   kind: PaneKind;
-  noteKey: NoteKey;
+  documentHandle: DocumentHandle;
   /** Chat identity is independent from the retained context note. */
   chatConversationId: string | null;
 }

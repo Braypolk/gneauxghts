@@ -17,7 +17,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use tauri::{AppHandle, State};
+use tauri::{AppHandle, Manager, State};
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -449,9 +449,24 @@ pub(crate) fn chat_rename_conversation(
 }
 
 #[tauri::command]
-pub(crate) fn chat_archive_conversation(
-    service: State<'_, ChatService>,
-    state: State<'_, AppState>,
+pub(crate) async fn chat_archive_conversation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    conversation_id: String,
+    archived: bool,
+    retention_days: u32,
+) -> Result<Option<super::ForgottenNoteSummary>, String> {
+    super::on_app_worker(app.clone(), move |state| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        archive_conversation_with_state(&service, state, conversation_id, archived, retention_days)
+    })
+    .await?
+}
+
+pub(crate) fn archive_conversation_with_state(
+    service: &ChatService,
+    state: &AppState,
     conversation_id: String,
     archived: bool,
     retention_days: u32,
@@ -460,32 +475,38 @@ pub(crate) fn chat_archive_conversation(
         return Err("Restore forgotten chats from Settings → Forgotten Items".to_string());
     }
 
-    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
-    let snapshot = service.forgotten_folder_snapshot(&conversation_id)?;
-    if snapshot.archived {
-        return Ok(None);
-    }
-    let forgotten_root = crate::state::forgotten_notes_root(&notes_dir);
-    std::fs::create_dir_all(&forgotten_root).map_err(|error| error.to_string())?;
-    let forgotten_path = resolve_forgotten_target_path(&notes_dir, &snapshot.original_path);
-    let relocation = service.archive_conversation_folder(&conversation_id, &forgotten_path)?;
-    let forgotten_summary = match register_forgotten_chat_folder(
-        &notes_dir,
-        &snapshot.original_path,
-        &forgotten_path,
-        &snapshot.title,
-        &conversation_id,
-        retention_days,
-    ) {
-        Ok(summary) => summary,
-        Err(error) => {
-            let _ = service.restore_conversation_folder(
-                &conversation_id,
-                &forgotten_path,
-                &snapshot.original_path,
-            );
-            return Err(error);
+    let notes_dir = prepare_notes_dir_with_state(true, Some(state))?;
+    let Some((relocation, forgotten_summary)) = crate::state::with_note_file_mutation(|| {
+        let snapshot = service.forgotten_folder_snapshot(&conversation_id)?;
+        if snapshot.archived {
+            return Ok(None);
         }
+        let forgotten_root = crate::state::forgotten_notes_root(&notes_dir);
+        std::fs::create_dir_all(&forgotten_root).map_err(|error| error.to_string())?;
+        let forgotten_path = resolve_forgotten_target_path(&notes_dir, &snapshot.original_path);
+        let relocation = service.archive_conversation_folder(&conversation_id, &forgotten_path)?;
+        let forgotten_summary = match register_forgotten_chat_folder(
+            &notes_dir,
+            &snapshot.original_path,
+            &forgotten_path,
+            &snapshot.title,
+            &conversation_id,
+            retention_days,
+        ) {
+            Ok(summary) => summary,
+            Err(error) => {
+                let _ = service.restore_conversation_folder(
+                    &conversation_id,
+                    &forgotten_path,
+                    &snapshot.original_path,
+                );
+                return Err(error);
+            }
+        };
+        Ok(Some((relocation, forgotten_summary)))
+    })?
+    else {
+        return Ok(None);
     };
     for path in relocation.previous_paths {
         if let Err(error) = state.semantic.queue_delete_note(&path) {
@@ -494,7 +515,7 @@ pub(crate) fn chat_archive_conversation(
                 path.display()
             );
         }
-        if let Err(error) = remove_notes_index_entry(&state, &path) {
+        if let Err(error) = remove_notes_index_entry(state, &path) {
             eprintln!(
                 "chat projection derived-index removal failed for {}: {error}",
                 path.display()
@@ -1289,7 +1310,6 @@ pub(crate) fn chat_resolve_projection_conflict(
                 None,
             )?;
             let path = outcome
-                .session
                 .and_then(|session| session.path)
                 .ok_or_else(|| "Converted note was not published".to_string())?;
             let follow_up = service

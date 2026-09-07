@@ -1,6 +1,5 @@
 use crate::index::{build_indexed_note, AppState, IndexedNote};
 use std::{fs, path::Path, time::UNIX_EPOCH};
-use tauri::State;
 
 fn read_modified_millis(path: &Path) -> Result<u64, String> {
     let modified = fs::metadata(path)
@@ -14,10 +13,7 @@ fn read_modified_millis(path: &Path) -> Result<u64, String> {
     Ok(modified.min(u128::from(u64::MAX)) as u64)
 }
 
-pub(super) fn remove_notes_index_entry(
-    state: &State<'_, AppState>,
-    path: &Path,
-) -> Result<(), String> {
+pub(super) fn remove_notes_index_entry(state: &AppState, path: &Path) -> Result<(), String> {
     state.remove_note_indexes(path)
 }
 

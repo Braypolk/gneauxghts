@@ -225,14 +225,18 @@ pub fn run() {
             commands::get_vault_info,
             commands::list_vault_folders,
             commands::create_vault_folder,
-            commands::trust_and_migrate_legacy_note_timeline_history,
             commands::get_history_health,
+            commands::get_history_readiness,
             #[cfg(feature = "e2e-wdio")]
             commands::e2e_corrupt_history_store,
             #[cfg(feature = "e2e-wdio")]
             commands::e2e_flush_vault_watcher_path,
             commands::get_note_history_health,
             commands::history_commands::get_note_history_page,
+            commands::history_commands::get_note_history_context,
+            commands::history_commands::finalize_note_editing_window,
+            #[cfg(feature = "e2e-wdio")]
+            commands::history_commands::e2e_advance_window_clock,
             commands::history_commands::get_missing_note_history_page,
             commands::history_commands::get_note_history_revision,
             commands::history_commands::get_note_history_diff,
@@ -323,7 +327,6 @@ pub fn run() {
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,
-            commands::report_user_activity,
             commands::get_semantic_debug_metrics,
             commands::clear_semantic_debug_metrics,
             commands::rebuild_semantic_index,
@@ -359,12 +362,8 @@ pub fn run() {
                     if closed {
                         Ok(())
                     } else {
-                        state::vault_root()
-                            .and_then(|vault_root| {
-                                state.note_timeline()
-                                    .clean_close(&vault_root)
-                            })
-                            .map(|_| ())
+                        let vault_root = state::vault_root()?;
+                        state.note_timeline().clean_close(&vault_root)
                     }
                 });
                 if let Err(error) = clean_close {

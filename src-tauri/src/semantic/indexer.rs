@@ -137,7 +137,6 @@ impl PendingIndexState {
 
 pub(crate) enum WorkerSignal {
     Wake,
-    SetPaused { paused: bool },
 }
 
 #[derive(Clone)]
@@ -177,12 +176,6 @@ impl SemanticWorkQueue {
             .lock()
             .map(|mut pending| update(&mut pending))
             .map_err(|_| "Semantic pending state lock poisoned".to_string())
-    }
-
-    pub(crate) fn set_paused(&self, paused: bool) -> Result<(), String> {
-        self.signal_tx
-            .send(WorkerSignal::SetPaused { paused })
-            .map_err(|err| err.to_string())
     }
 
     pub(crate) fn release_initial_scan(
@@ -250,33 +243,24 @@ pub(crate) fn spawn_indexing_worker(
 }
 
 fn run_worker(context: IndexingWorkerContext, signal_rx: Receiver<WorkerSignal>) {
-    let mut paused = false;
-
     loop {
         match signal_rx.recv() {
-            Ok(WorkerSignal::SetPaused {
-                paused: next_paused,
-            }) => {
-                paused = next_paused;
-                update_runtime(&context.runtime, |state| {
-                    state.indexing_paused = next_paused;
-                });
-                if !paused {
-                    context.queue.clear_wake();
-                    process_pending_jobs(&context);
-                }
-            }
             Ok(WorkerSignal::Wake) => {
-                if paused {
-                    continue;
-                }
-
-                context.queue.clear_wake();
-                process_pending_jobs(&context);
+                handle_wake(&context);
             }
             Err(_) => return,
         }
     }
+}
+
+fn handle_wake(context: &IndexingWorkerContext) {
+    // A consumed wake always releases its coalescing flag. If work is paused,
+    // resume will request a fresh wake for anything that remains pending.
+    context.queue.clear_wake();
+    if context.background_gate.is_manually_paused().unwrap_or(true) {
+        return;
+    }
+    process_pending_jobs(context);
 }
 
 fn process_pending_jobs(context: &IndexingWorkerContext) {
@@ -300,6 +284,9 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
     let mut atlas_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     let mut label_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     loop {
+        if background_gate.is_manually_paused().unwrap_or(true) {
+            return;
+        }
         let batch = {
             let mut pending = match pending.lock() {
                 Ok(pending) => pending,
@@ -827,13 +814,11 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
                 if handled_edges {
                     state.edges_stale = false;
                 }
-                if !state.indexing_paused {
-                    state.health = if ann.needs_rebuild() || note_ann.needs_rebuild() {
-                        SemanticHealth::Stale
-                    } else {
-                        SemanticHealth::Fresh
-                    };
-                }
+                state.health = if ann.needs_rebuild() || note_ann.needs_rebuild() {
+                    SemanticHealth::Stale
+                } else {
+                    SemanticHealth::Fresh
+                };
                 state.retry_attempt = 0;
                 state.retry_exhausted = false;
             });
@@ -1933,12 +1918,12 @@ struct PreparedNoteContent {
 #[cfg(test)]
 mod tests {
     use super::{
-        atlas_failure_backoff, dirty_count_allows_incremental, extract_tags, merge_retry_batch,
-        process_full_scan, process_note_batch, process_pending_jobs, run_label_atlas_build,
-        run_structural_atlas_build, semantic_failure_backoff, ChatRecallExcerpt,
-        IndexingWorkerContext, PendingIndexState, PendingNoteMove, PendingNoteUpdate,
-        PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue, WorkerSignal,
-        EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
+        atlas_failure_backoff, dirty_count_allows_incremental, extract_tags, handle_wake,
+        merge_retry_batch, process_full_scan, process_note_batch, process_pending_jobs,
+        run_label_atlas_build, run_structural_atlas_build, semantic_failure_backoff,
+        ChatRecallExcerpt, IndexingWorkerContext, PendingIndexState, PendingNoteMove,
+        PendingNoteUpdate, PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue,
+        WorkerSignal, EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
     use crate::{note, semantic::chunking::chunk_markdown};
 
@@ -2028,6 +2013,79 @@ mod tests {
             debug,
             background_gate: Arc::new(BackgroundWorkGate::new()),
         }
+    }
+
+    #[test]
+    fn paused_wakes_release_coalescing_and_one_resume_drains_pending_work() {
+        let temp = TestDir::new("paused-worker-wake");
+        let semantic_dir = temp.path().join("semantic");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).expect("create notes");
+        let db_path = semantic_dir.join("semantic.sqlite3");
+        let connection = open_database(&db_path).expect("open database");
+        ensure_schema(&connection).expect("schema");
+        drop(connection);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("create ann"),
+        );
+        let note_ann = test_note_ann(&semantic_dir);
+        let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        let gate = Arc::new(BackgroundWorkGate::new());
+        let context = IndexingWorkerContext {
+            db_path,
+            notes_dir,
+            provider: Arc::new(MockEmbeddingProvider),
+            ann,
+            note_ann,
+            queue: queue.clone(),
+            index_revision: Arc::new(AtomicU64::new(0)),
+            runtime: Arc::new(Mutex::new(RuntimeState::default())),
+            debug: debug.clone(),
+            background_gate: gate.clone(),
+        };
+
+        gate.set_manually_paused(true).expect("pause indexing");
+        queue
+            .enqueue(|pending| pending.full_scan_requested = true)
+            .expect("enqueue scan while paused");
+        assert!(matches!(signals.recv(), Ok(WorkerSignal::Wake)));
+        handle_wake(&context);
+        assert!(queue.pending.lock().expect("pending").full_scan_requested);
+        assert_eq!(
+            debug
+                .snapshot()
+                .expect("paused metrics")
+                .metrics
+                .index_job_started_count,
+            0
+        );
+
+        // A rapid resume/pause consumes the first resume wake while leaving
+        // work pending. The final resume must be able to enqueue a fresh wake.
+        gate.set_manually_paused(false).expect("first resume");
+        queue.request_wake().expect("first resume wake");
+        gate.set_manually_paused(true).expect("pause again");
+        assert!(matches!(signals.recv(), Ok(WorkerSignal::Wake)));
+        handle_wake(&context);
+        assert!(queue.pending.lock().expect("pending").full_scan_requested);
+
+        gate.set_manually_paused(false).expect("final resume");
+        queue.request_wake().expect("final resume wake");
+        queue
+            .request_wake()
+            .expect("coalesce duplicate resume wake");
+        assert!(matches!(signals.recv(), Ok(WorkerSignal::Wake)));
+        assert!(signals.try_recv().is_err(), "resume wake should coalesce");
+        handle_wake(&context);
+
+        assert!(queue.pending.lock().expect("pending").is_empty());
+        let metrics = debug.snapshot().expect("completed metrics").metrics;
+        assert!(metrics.index_job_completed_count > 0);
+        assert_eq!(
+            metrics.index_job_started_count,
+            metrics.index_job_completed_count
+        );
     }
 
     #[test]

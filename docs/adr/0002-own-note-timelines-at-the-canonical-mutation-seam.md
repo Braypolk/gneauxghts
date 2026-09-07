@@ -4,9 +4,11 @@ status: accepted
 
 # Own note timelines at the canonical mutation seam
 
-Gneauxghts will treat a note's timeline as durable vault knowledge and place a deep `NoteTimeline` module around ordinary-note canonical mutation coordination. App-owned changes must durably prepare their timeline intent before Markdown publication, then finalize history and synchronize projections after publication; external changes enter through observation and reconciliation. Current Markdown remains the canonical current note, while the vault-owned history store selected by the vault manifest owns reconstructable historical states. SQLite is the first implementation, not part of the module's interface or a permanent portable-format commitment; see ADR 0004.
+Gneauxghts will treat a note's timeline as durable vault knowledge and place a deep `NoteTimeline` module around ordinary-note canonical mutation coordination. App-owned changes must durably prepare their timeline intent before Markdown publication, then durably capture history and synchronize projections after publication; external changes enter through observation and reconciliation. Current Markdown remains the canonical current note, while the vault-owned history store selected by the vault manifest owns reconstructable historical states. SQLite is the first implementation, not part of the module's interface or a permanent portable-format commitment; see ADR 0004.
 
 The module will expose a small mutation and observation interface plus role-limited handles for History Mode, Current-Content Provenance, and explicitly requested agent Version Restore proposals. Its implementation will store verified UTF-8 deltas between adaptive compressed checkpoints, use closed versioned domain types rather than a generic event platform, and hide reconstruction, provenance, identity repair, recovery, and storage policy from callers. Title and path changes are lifecycle state, not revision content, and therefore remain outside revision diffs.
+
+[ADR 0007](0007-retain-editor-history-at-editing-window-boundaries.md) supersedes the original immediate-per-commit revision granularity: ordinary Editor publications enter durable pending windows before immutable finalization. This preserves the mutation owner and mandatory preparation. The agent Version Restore proposal capability above remains deferred until its app-owned proposal path is implemented.
 
 ## Consequences
 

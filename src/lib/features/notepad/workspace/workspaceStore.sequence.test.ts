@@ -4,7 +4,7 @@ import {
   type NotepadPaneId
 } from './workspaceStore.svelte';
 import type {
-  NoteKey
+  DocumentHandle
 } from '$lib/features/notepad/document/documentState';
 import {
   createReadyPaneForTest,
@@ -14,9 +14,9 @@ import {
 const first = 'notepad-pane-1' as NotepadPaneId;
 const second = 'notepad-pane-2' as NotepadPaneId;
 const third = 'notepad-pane-3' as NotepadPaneId;
-const noteA = 'path:/vault/A.md' as NoteKey;
-const noteB = 'path:/vault/B.md' as NoteKey;
-const noteC = 'path:/vault/C.md' as NoteKey;
+const noteA = 'document:/vault/A.md' as DocumentHandle;
+const noteB = 'document:/vault/B.md' as DocumentHandle;
+const noteC = 'document:/vault/C.md' as DocumentHandle;
 
 interface WorkspaceCommand {
   label: string;
@@ -30,7 +30,7 @@ function snapshotWorkspace(workspace: WorkspaceStore) {
     panes: workspace.paneOrder.map((paneId) => ({
       ...workspace.getPaneState(paneId)
     })),
-    referencedNoteKeys: workspace.listReferencedNoteKeys(),
+    referencedDocumentHandles: workspace.listReferencedDocumentHandles(),
     memberships: [first, second, third].map((paneId) => ({
       paneId,
       state: workspace.getPaneMembership(paneId)
@@ -65,13 +65,13 @@ function assertWorkspaceInvariants(workspace: WorkspaceStore) {
     ...new Set(
       order.map(
         (paneId) =>
-          workspace.getPaneState(paneId).noteKey
+          workspace.getPaneState(paneId).documentHandle
       )
     )
   ];
   if (
     JSON.stringify(referenced) !==
-    JSON.stringify(workspace.listReferencedNoteKeys())
+    JSON.stringify(workspace.listReferencedDocumentHandles())
   ) {
     throw new Error(
       'referenced-note projection diverged from pane state'
@@ -151,22 +151,22 @@ const commands: WorkspaceCommand[] = [
   {
     label: 'reference:first:A',
     apply: (workspace) =>
-      workspace.setPaneNoteKey(first, noteA)
+      workspace.setPaneDocumentHandle(first, noteA)
   },
   {
     label: 'reference:second:A',
     apply: (workspace) =>
-      workspace.setPaneNoteKey(second, noteA)
+      workspace.setPaneDocumentHandle(second, noteA)
   },
   {
     label: 'reference:third:B',
     apply: (workspace) =>
-      workspace.setPaneNoteKey(third, noteB)
+      workspace.setPaneDocumentHandle(third, noteB)
   },
   {
     label: 'reference:replace:A:C',
     apply: (workspace) =>
-      workspace.replaceNoteKeyReferences(noteA, noteC)
+      workspace.replaceDocumentHandleReferences(noteA, noteC)
   },
   removeCommand(first),
   removeCommand(second),
@@ -188,7 +188,7 @@ describe('WorkspaceStore generated command sequences', () => {
           ];
           const workspace = new WorkspaceStore(
             first,
-            'draft:sequence-root'
+            'document:sequence-root'
           );
 
           for (const command of sequence) {
@@ -247,7 +247,7 @@ describe('WorkspaceStore generated command sequences', () => {
     ({ active, close, expected }) => {
       const workspace = new WorkspaceStore(
         first,
-        'draft:sequence-root'
+        'document:sequence-root'
       );
       createReadyPaneForTest(workspace, second, noteA, 'editor');
       createReadyPaneForTest(workspace, third, noteB, 'editor');

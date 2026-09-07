@@ -177,7 +177,6 @@ pub(crate) struct RelatedNotesResponse {
 }
 
 pub(super) struct RuntimeState {
-    indexing_paused: bool,
     indexing_in_progress: bool,
     current_job_label: Option<String>,
     last_indexed_at_millis: Option<u64>,
@@ -197,7 +196,6 @@ pub(super) struct RuntimeState {
 impl Default for RuntimeState {
     fn default() -> Self {
         Self {
-            indexing_paused: false,
             indexing_in_progress: false,
             current_job_label: None,
             last_indexed_at_millis: None,
@@ -228,9 +226,7 @@ impl RuntimeState {
 
     fn mark_query_failure(&mut self, error: &str) {
         self.last_error = Some(error.to_string());
-        if !self.indexing_paused {
-            self.health = SemanticHealth::Degraded;
-        }
+        self.health = SemanticHealth::Degraded;
     }
 }
 
@@ -850,14 +846,7 @@ impl SemanticState {
 
     pub(crate) fn pause_indexing(&self) -> Result<(), String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => {
-                state.background_gate.set_manually_paused(true);
-                if let Ok(mut runtime) = state.runtime.lock() {
-                    runtime.indexing_paused = true;
-                    runtime.health = SemanticHealth::Paused;
-                }
-                state.work_queue.set_paused(true)
-            }
+            SemanticStateInner::Active(state) => state.background_gate.set_manually_paused(true),
             SemanticStateInner::Disabled(_) => Ok(()),
         }
     }
@@ -865,38 +854,10 @@ impl SemanticState {
     pub(crate) fn resume_indexing(&self) -> Result<(), String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
-                state.background_gate.set_manually_paused(false);
-                if let Ok(mut runtime) = state.runtime.lock() {
-                    runtime.indexing_paused = false;
-                    runtime.health = if runtime.retry_exhausted {
-                        SemanticHealth::Degraded
-                    } else if state.ann.needs_rebuild() || state.note_ann.needs_rebuild() {
-                        SemanticHealth::Stale
-                    } else {
-                        SemanticHealth::Fresh
-                    };
-                }
-                state.work_queue.set_paused(false)
+                state.background_gate.set_manually_paused(false)?;
+                state.work_queue.request_wake()
             }
             SemanticStateInner::Disabled(_) => Ok(()),
-        }
-    }
-
-    pub(crate) fn report_user_activity(&self) {
-        if let SemanticStateInner::Active(state) = &self.inner {
-            state.background_gate.report_activity();
-        }
-    }
-
-    pub(crate) fn begin_foreground_activity(&self) {
-        if let SemanticStateInner::Active(state) = &self.inner {
-            state.background_gate.begin_foreground();
-        }
-    }
-
-    pub(crate) fn end_foreground_activity(&self) {
-        if let SemanticStateInner::Active(state) = &self.inner {
-            state.background_gate.end_foreground();
         }
     }
 
@@ -1139,6 +1100,7 @@ impl ActiveSemanticState {
         let model = self.provider.model_info();
         let ann_status = self.ann.status_snapshot();
         let note_ann_status = self.note_ann.status_snapshot();
+        let indexing_paused = self.background_gate.is_manually_paused()?;
         let runtime = self
             .runtime
             .lock()
@@ -1150,7 +1112,7 @@ impl ActiveSemanticState {
             model: model.clone(),
             platform_supported: true,
             disabled_reason: None,
-            indexing_paused: runtime.indexing_paused,
+            indexing_paused,
             indexing_in_progress: runtime.indexing_in_progress,
             indexed_notes,
             indexed_chunks,
@@ -1168,12 +1130,12 @@ impl ActiveSemanticState {
             last_error: runtime.last_error.clone().or(model.error.clone()),
             current_job_label: runtime.current_job_label.clone(),
             latest_job,
-            health: if runtime.indexing_paused {
+            health: if indexing_paused {
                 SemanticHealth::Paused
             } else {
                 runtime.health
             },
-            recovery_state: if runtime.indexing_paused {
+            recovery_state: if indexing_paused {
                 SemanticHealth::Paused.legacy_recovery_state().to_string()
             } else {
                 runtime.health.legacy_recovery_state().to_string()
@@ -1400,6 +1362,101 @@ fn spawn_ann_initialize_and_scan_in_background(context: AnnStartupContext) {
 #[cfg(test)]
 mod health_tests {
     use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct StatusEmbeddingProvider;
+
+    impl EmbeddingProvider for StatusEmbeddingProvider {
+        fn embed_texts(
+            &self,
+            texts: &[String],
+            _kind: EmbeddingInputKind,
+        ) -> Result<Vec<Vec<f32>>, String> {
+            Ok(vec![vec![0.0; 3]; texts.len()])
+        }
+
+        fn prepare(&self) -> Result<(), String> {
+            Ok(())
+        }
+
+        fn model_info(&self) -> ModelInfo {
+            ModelInfo {
+                id: "status-test".to_string(),
+                label: "Status Test".to_string(),
+                dimensions: 3,
+                runtime_binary_path: None,
+                model_path: None,
+                model_repo_id: "status-test".to_string(),
+                available: true,
+                loading: false,
+                ready: true,
+                status: "ready".to_string(),
+                error: None,
+            }
+        }
+
+        fn shutdown(&self) {}
+    }
+
+    struct StatusTestDir(PathBuf);
+
+    impl StatusTestDir {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!("gneauxghts-semantic-status-{unique}"));
+            fs::create_dir_all(&path).expect("create status test directory");
+            Self(path)
+        }
+    }
+
+    impl Drop for StatusTestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn active_status_state(
+        runtime: RuntimeState,
+    ) -> (
+        SemanticState,
+        std::sync::mpsc::Receiver<indexer::WorkerSignal>,
+        StatusTestDir,
+    ) {
+        let temp = StatusTestDir::new();
+        let db_path = temp.0.join("semantic.sqlite3");
+        let connection = open_database(&db_path).expect("open status database");
+        ensure_schema(&connection).expect("create status schema");
+        drop(connection);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(
+            AnnIndexState::new(temp.0.join("ann"), 3, debug.clone()).expect("create status ann"),
+        );
+        let note_ann = Arc::new(
+            NoteAnnIndexState::new(temp.0.join("note-ann"), 3, "status-test".to_string())
+                .expect("create status note ann"),
+        );
+        let (work_queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        let state = SemanticState {
+            inner: SemanticStateInner::Active(ActiveSemanticState {
+                db_path,
+                atlas_cache_dir: temp.0.join("atlas"),
+                settings: Arc::new(Mutex::new(SemanticSettings::default())),
+                provider: Arc::new(StatusEmbeddingProvider),
+                runtime: Arc::new(Mutex::new(runtime)),
+                debug,
+                ann,
+                note_ann,
+                work_queue,
+                index_revision: Arc::new(AtomicU64::new(0)),
+                related_query_cache: Mutex::new(Vec::new()),
+                background_gate: Arc::new(BackgroundWorkGate::new()),
+            }),
+        };
+        (state, signals, temp)
+    }
 
     #[test]
     fn legacy_local_only_setting_is_ignored_when_loading_saved_settings() {
@@ -1456,6 +1513,33 @@ mod health_tests {
         assert!(runtime.indexing_in_progress);
         assert!(pending.full_scan_requested);
         assert!(pending.automatic_rebuild_requested);
+    }
+
+    #[test]
+    fn paused_status_overlays_but_does_not_erase_retry_exhaustion() {
+        let (semantic, _signals, _temp) = active_status_state(RuntimeState {
+            health: SemanticHealth::Degraded,
+            retry_attempt: SEMANTIC_RETRY_MAX_ATTEMPTS,
+            retry_exhausted: true,
+            last_error: Some("repair failed".to_string()),
+            ..RuntimeState::default()
+        });
+
+        semantic.pause_indexing().expect("pause indexing");
+        let paused = semantic.get_status().expect("paused status");
+        assert!(paused.indexing_paused);
+        assert_eq!(paused.health, SemanticHealth::Paused);
+        assert_eq!(paused.recovery_state, "paused");
+        assert!(paused.retry_exhausted);
+        assert_eq!(paused.retry_attempt, SEMANTIC_RETRY_MAX_ATTEMPTS);
+
+        semantic.resume_indexing().expect("resume indexing");
+        let resumed = semantic.get_status().expect("resumed status");
+        assert!(!resumed.indexing_paused);
+        assert_eq!(resumed.health, SemanticHealth::Degraded);
+        assert_eq!(resumed.recovery_state, "stale");
+        assert!(resumed.retry_exhausted);
+        assert_eq!(resumed.last_error.as_deref(), Some("repair failed"));
     }
 
     #[test]

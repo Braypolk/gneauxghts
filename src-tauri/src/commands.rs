@@ -46,7 +46,28 @@ use task_commands::{
     set_note_hidden as set_note_hidden_impl, set_note_order as set_note_order_impl,
     set_task_hidden as set_task_hidden_impl, toggle_task_with_view as toggle_task_impl,
 };
-use tauri::State;
+use tauri::{Manager, State};
+
+/// Keep blocking domain work and state lookup off the IPC executor. The outer
+/// error is dispatch failure; each command retains its own domain error contract.
+async fn on_app_worker<R, T, E>(
+    app: tauri::AppHandle<R>,
+    operation: impl FnOnce(&AppState) -> Result<T, E> + Send + 'static,
+) -> Result<Result<T, E>, String>
+where
+    R: tauri::Runtime,
+    T: Send + 'static,
+    E: Send + 'static,
+{
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app
+            .try_state::<AppState>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        Ok(operation(&state))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
 
 /// Legacy "max age" parameter still passed to
 /// [`AppState::ensure_interactive_index`] for call-site compatibility.
@@ -241,7 +262,7 @@ fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
 
 fn prepare_notes_dir_with_state(
     cleanup_forgotten_notes: bool,
-    state: Option<&State<'_, AppState>>,
+    state: Option<&AppState>,
 ) -> Result<PathBuf, String> {
     let notes_dir = notes_root()?;
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
@@ -249,25 +270,29 @@ fn prepare_notes_dir_with_state(
         // The previous behaviour ran the full forgotten-note cleanup on every
         // save/open/list invocation. We now throttle to a background cadence
         // so common interactive commands no longer pay for it.
-        let state = state
-            .map(|state| state.inner())
-            .ok_or_else(|| "Forgotten-note cleanup requires application state".to_string())?;
+        let state =
+            state.ok_or_else(|| "Forgotten-note cleanup requires application state".to_string())?;
         maybe_run_forgotten_note_cleanup(&notes_dir, state)?;
     }
     Ok(notes_dir)
 }
 
 #[tauri::command]
-pub(crate) fn load_note_session(state: State<'_, AppState>) -> Result<NoteSession, String> {
-    // Foreground guard: while this IPC call is running the background
-    // index queue (cold-start prewarm + save-side projection) yields
-    // between per-note jobs so the SQLite state mutex stays free for
-    // `read_state_with_lookup` / `write_last_opened_and_recents`.
-    let _foreground_guard = state.foreground_guard();
-    // Forgotten-note cleanup is throttled to startup + a 5-minute background
-    // pass; the open path intentionally skips the per-call cleanup.
-    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
-    load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))
+pub(crate) async fn load_note_session<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<NoteSession, String> {
+    on_app_worker(app, move |state| {
+        // Foreground guard: while this IPC call is running the background
+        // index queue (cold-start prewarm + save-side projection) yields
+        // between per-note jobs so the SQLite state mutex stays free for
+        // `read_state_with_lookup` / `write_last_opened_and_recents`.
+        let _foreground_guard = state.foreground_guard();
+        // Background startup maintenance owns forgotten-note cleanup and recovery.
+        // Canonical session restoration never waits for that maintenance.
+        let notes_dir = prepare_notes_dir_with_state(false, Some(state))?;
+        load_note_session_from_notes_dir_with_state(&notes_dir, Some(state))
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -321,34 +346,43 @@ pub(crate) fn set_vault_directory(
     set_vault_directory_for_state(&state, path)
 }
 
+/// Cheap advisory observation: never resolve a path or authorize publication.
 #[tauri::command]
-pub(crate) fn trust_and_migrate_legacy_note_timeline_history(
+pub(crate) fn get_history_readiness(
     state: State<'_, AppState>,
-) -> history_commands::HistoryCommandResult<()> {
-    let root = vault_root().map_err(|error| {
-        history_commands::HistoryCommandError::unavailable(
-            "trust_and_migrate_legacy_note_timeline_history",
-            error,
-        )
-    })?;
+    note_id: Option<String>,
+) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryReadiness> {
+    let note = note_id.map(|id| crate::services::note_timeline::NoteIdentity::new(id.trim()));
+    if note.as_ref().is_some_and(|id| id.as_str().is_empty()) {
+        return Err(history_commands::HistoryCommandError::invalid_request(
+            "get_history_readiness",
+            "A supplied Note Identity must not be empty",
+        ));
+    }
     state
         .note_timeline()
-        .trust_and_migrate_legacy_history(&root)
+        .history_readiness(note.as_ref())
         .map_err(|error| {
             history_commands::HistoryCommandError::from_history_error(
-                "trust_and_migrate_legacy_note_timeline_history",
+                "get_history_readiness",
                 error,
             )
         })
 }
 
 #[tauri::command]
-pub(crate) fn get_history_health(
-    state: State<'_, AppState>,
+pub(crate) async fn get_history_health<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
-    state.note_timeline().history_health().map_err(|error| {
-        history_commands::HistoryCommandError::unavailable("get_history_health", error)
+    on_app_worker(app, move |state| {
+        state.note_timeline().history_health().map_err(|error| {
+            history_commands::HistoryCommandError::from_history_error("get_history_health", error)
+        })
     })
+    .await
+    .map_err(|error| {
+        history_commands::HistoryCommandError::unavailable("get_history_health", error)
+    })?
 }
 
 #[cfg(feature = "e2e-wdio")]
@@ -356,8 +390,8 @@ pub(crate) fn get_history_health(
 pub(crate) fn e2e_corrupt_history_store(
     state: State<'_, AppState>,
 ) -> Result<crate::services::note_timeline::HistoryHealthReport, String> {
-    crate::services::note_timeline::corrupt_history_store_for_test();
-    state.note_timeline().history_health()
+    crate::services::note_timeline::corrupt_history_store_for_test(&state);
+    state.note_timeline().history_health().map_err(Into::into)
 }
 
 #[cfg(feature = "e2e-wdio")]
@@ -370,67 +404,88 @@ pub(crate) fn e2e_flush_vault_watcher_path(
 }
 
 #[tauri::command]
-pub(crate) fn get_note_history_health(
-    state: State<'_, AppState>,
+pub(crate) async fn get_note_history_health<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     note_id: String,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::NoteHistoryHealth> {
-    if note_id.trim().is_empty() {
-        return Err(history_commands::HistoryCommandError::invalid_request(
-            "get_note_history_health",
-            "Note history health requires a Note Identity",
-        ));
-    }
-    state
-        .note_timeline()
-        .note_history_health(&crate::services::note_timeline::NoteIdentity::new(
-            note_id.trim(),
-        ))
-        .map_err(|error| {
-            history_commands::HistoryCommandError::unavailable("get_note_history_health", error)
-        })
+    on_app_worker(app, move |state| {
+        if note_id.trim().is_empty() {
+            return Err(history_commands::HistoryCommandError::invalid_request(
+                "get_note_history_health",
+                "Note history health requires a Note Identity",
+            ));
+        }
+        state
+            .note_timeline()
+            .note_history_health(&crate::services::note_timeline::NoteIdentity::new(
+                note_id.trim(),
+            ))
+            .map_err(|error| {
+                history_commands::HistoryCommandError::from_history_error(
+                    "get_note_history_health",
+                    error,
+                )
+            })
+    })
+    .await
+    .map_err(|error| {
+        history_commands::HistoryCommandError::unavailable("get_note_history_health", error)
+    })?
 }
 
 #[tauri::command]
-pub(crate) fn retry_history_recovery(
-    state: State<'_, AppState>,
+pub(crate) async fn retry_history_recovery<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
-    let root = vault_root().map_err(|error| {
+    on_app_worker(app, move |state| {
+        let root = vault_root().map_err(|error| {
+            history_commands::HistoryCommandError::unavailable("retry_history_recovery", error)
+        })?;
+        state
+            .note_timeline()
+            .retry_history_recovery(&root)
+            .map_err(|error| {
+                history_commands::HistoryCommandError::from_history_error(
+                    "retry_history_recovery",
+                    error,
+                )
+            })
+    })
+    .await
+    .map_err(|error| {
         history_commands::HistoryCommandError::unavailable("retry_history_recovery", error)
-    })?;
-    state
-        .note_timeline()
-        .retry_history_recovery(&root)
-        .map_err(|error| {
-            history_commands::HistoryCommandError::from_history_error(
-                "retry_history_recovery",
-                error,
-            )
-        })
+    })?
 }
 
 #[tauri::command]
-pub(crate) fn reset_corrupt_history(
-    state: State<'_, AppState>,
+pub(crate) async fn reset_corrupt_history<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     confirmed: bool,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryResetReceipt> {
-    if !confirmed {
-        return Err(history_commands::HistoryCommandError::invalid_request(
-            "reset_corrupt_history",
-            "Corrupt history reset requires explicit confirmation",
-        ));
-    }
-    let root = vault_root().map_err(|error| {
-        history_commands::HistoryCommandError::unavailable("reset_corrupt_history", error)
-    })?;
-    state
-        .note_timeline()
-        .reset_corrupt_history(&root, confirmed)
-        .map_err(|error| {
-            history_commands::HistoryCommandError::from_history_error(
+    on_app_worker(app, move |state| {
+        if !confirmed {
+            return Err(history_commands::HistoryCommandError::invalid_request(
                 "reset_corrupt_history",
-                error,
-            )
-        })
+                "Corrupt history reset requires explicit confirmation",
+            ));
+        }
+        let root = vault_root().map_err(|error| {
+            history_commands::HistoryCommandError::unavailable("reset_corrupt_history", error)
+        })?;
+        state
+            .note_timeline()
+            .reset_corrupt_history(&root, confirmed)
+            .map_err(|error| {
+                history_commands::HistoryCommandError::from_history_error(
+                    "reset_corrupt_history",
+                    error,
+                )
+            })
+    })
+    .await
+    .map_err(|error| {
+        history_commands::HistoryCommandError::unavailable("reset_corrupt_history", error)
+    })?
 }
 
 fn set_vault_directory_for_state(
@@ -470,34 +525,31 @@ fn set_vault_directory_for_state(
 }
 
 #[tauri::command]
-pub(crate) fn save_note(
-    state: State<'_, AppState>,
+pub(crate) async fn save_note<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let outcome = persist_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
-    let session = outcome
-        .session
-        .clone()
-        .ok_or_else(|| "Saved note session is missing".to_string())?;
-    Ok(session)
+    on_app_worker(app, move |state| {
+        let outcome = persist_note_session_with_outcome(state, title, markdown, current_path)?;
+        outcome.ok_or_else(|| "Saved note session is missing".to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
-pub(crate) fn save_task_note(
-    state: State<'_, AppState>,
+pub(crate) async fn save_task_note<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     title: String,
     markdown: String,
     current_path: Option<String>,
 ) -> Result<NoteSession, String> {
-    let outcome =
-        persist_task_note_session_with_outcome(&state, title.clone(), markdown, current_path)?;
-    let session = outcome
-        .session
-        .clone()
-        .ok_or_else(|| "Saved note session is missing".to_string())?;
-    Ok(session)
+    on_app_worker(app, move |state| {
+        let outcome = persist_task_note_session_with_outcome(state, title, markdown, current_path)?;
+        outcome.ok_or_else(|| "Saved note session is missing".to_string())
+    })
+    .await?
 }
 
 #[tauri::command]
@@ -576,27 +628,33 @@ pub(crate) fn set_note_order(
 }
 
 #[tauri::command]
-pub(crate) fn toggle_task(
-    state: State<'_, AppState>,
+pub(crate) async fn toggle_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let patch = toggle_task_impl(state.clone(), task_id, filter, show_hidden)?;
-    emit_task_note_changed(&state, &patch);
-    Ok(patch)
+    on_app_worker(app, move |state| {
+        let patch = toggle_task_impl(state, task_id, filter, show_hidden)?;
+        emit_task_note_changed(state, &patch);
+        Ok(patch)
+    })
+    .await?
 }
 
 #[tauri::command]
-pub(crate) fn delete_task(
-    state: State<'_, AppState>,
+pub(crate) async fn delete_task<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let patch = delete_task_impl(state.clone(), task_id, filter, show_hidden)?;
-    emit_task_note_changed(&state, &patch);
-    Ok(patch)
+    on_app_worker(app, move |state| {
+        let patch = delete_task_impl(state, task_id, filter, show_hidden)?;
+        emit_task_note_changed(state, &patch);
+        Ok(patch)
+    })
+    .await?
 }
 
 fn emit_task_note_changed(state: &AppState, patch: &TaskListGroupPatch) {
@@ -630,11 +688,6 @@ pub(crate) fn set_semantic_settings(
 #[tauri::command]
 pub(crate) fn get_semantic_status(state: State<'_, AppState>) -> Result<SemanticStatus, String> {
     state.semantic.get_status()
-}
-
-#[tauri::command]
-pub(crate) fn report_user_activity(state: State<'_, AppState>) {
-    state.semantic.report_user_activity();
 }
 
 #[tauri::command]
@@ -718,18 +771,24 @@ pub(crate) struct BootstrapAppPayload {
 }
 
 #[tauri::command]
-pub(crate) fn bootstrap_app(state: State<'_, AppState>) -> Result<BootstrapAppPayload, String> {
-    let notes_dir = prepare_notes_dir_with_state(true, Some(&state))?;
-    let note_session = load_note_session_from_notes_dir_with_state(&notes_dir, Some(&state))?;
-    let vault = current_vault_info()?;
-    let semantic_status = state.semantic.get_status()?;
-    let index_revision = state.semantic.current_index_revision();
-    Ok(BootstrapAppPayload {
-        vault,
-        note_session,
-        semantic_status,
-        index_revision,
+pub(crate) async fn bootstrap_app<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<BootstrapAppPayload, String> {
+    on_app_worker(app, move |state| {
+        let _foreground_guard = state.foreground_guard();
+        let notes_dir = prepare_notes_dir_with_state(false, Some(state))?;
+        let note_session = load_note_session_from_notes_dir_with_state(&notes_dir, Some(state))?;
+        let vault = current_vault_info()?;
+        let semantic_status = state.semantic.get_status()?;
+        let index_revision = state.semantic.current_index_revision();
+        Ok(BootstrapAppPayload {
+            vault,
+            note_session,
+            semantic_status,
+            index_revision,
+        })
     })
+    .await?
 }
 
 /// Bundled settings payload returned by `get_settings_view`. Replaces the
@@ -746,19 +805,24 @@ pub(crate) struct SettingsViewPayload {
 }
 
 #[tauri::command]
-pub(crate) fn get_settings_view(state: State<'_, AppState>) -> Result<SettingsViewPayload, String> {
-    let vault = current_vault_info()?;
-    let history_health = state.note_timeline().history_health()?;
-    let semantic_status = state.semantic.get_status()?;
-    let semantic_settings = state.semantic.get_settings()?;
-    let semantic_debug = state.semantic.debug_snapshot()?;
-    Ok(SettingsViewPayload {
-        vault,
-        history_health,
-        semantic_status,
-        semantic_settings,
-        semantic_debug,
+pub(crate) async fn get_settings_view<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<SettingsViewPayload, String> {
+    on_app_worker(app, move |state| {
+        let vault = current_vault_info()?;
+        let history_health = state.note_timeline().history_health()?;
+        let semantic_status = state.semantic.get_status()?;
+        let semantic_settings = state.semantic.get_settings()?;
+        let semantic_debug = state.semantic.debug_snapshot()?;
+        Ok(SettingsViewPayload {
+            vault,
+            history_health,
+            semantic_status,
+            semantic_settings,
+            semantic_debug,
+        })
     })
+    .await?
 }
 
 #[cfg(test)]
@@ -835,7 +899,7 @@ mod tests {
                 "Changed after switch",
             )
             .expect_err("vault switching must stop active-vault mutations");
-        assert!(error.contains("cleanly closed"));
+        assert!(error.to_string().contains("cleanly closed"));
         assert!(state.note_timeline().is_cleanly_closed().unwrap());
         crate::state::set_notes_root_override(None).unwrap();
     }

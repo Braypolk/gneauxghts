@@ -16,23 +16,29 @@ pub(crate) use config::{
 #[cfg(test)]
 pub(crate) fn ensure_vault_scaffold(vault_root: &std::path::Path) -> Result<VaultManifest, String> {
     crate::services::note_timeline::ensure_vault_scaffold(vault_root)
+        .map_err(|error| error.to_string())
 }
 #[allow(unused_imports)]
 pub(crate) use persistence::{
-    atomic_create_note, atomic_write_note, db_clear_last_opened_note, db_load_note_activity,
-    db_mark_note_opened, db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden,
-    db_set_note_order, db_set_note_pinned, db_touch_note_activity, derive_file_stem,
+    atomic_create_note, atomic_write_note, db_clear_last_opened_note, db_finish_forgetting,
+    db_forgotten_note_matches, db_insert_forgotten_note, db_load_note_activity,
+    db_mark_note_opened, db_prune_note_navigation, db_prune_recent_state,
+    db_record_session_restore, db_remove_forgotten_note, db_set_forgotten_original_path,
+    db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden, db_set_note_order,
+    db_set_note_pinned, db_touch_note_activity, derive_file_stem,
     derive_file_stem_from_title_and_markdown, effective_open_count, forgotten_note_retention_days,
-    is_forgotten_note_path, is_valid_note_path, persist_note_with_preparation,
-    prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
-    read_unpruned_state, resolve_note_id_from_path, resolve_note_path_by_id,
-    set_forgotten_note_retention_days, touch_recent_note_id, validate_current_path,
-    with_note_file_mutation, write_last_opened_and_recents, write_state, write_state_with_lookup,
-    write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
-    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    is_forgotten_note_path, is_valid_note_path, prepare_note_save, prune_recent_note_ids,
+    prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup, read_unpruned_state,
+    resolve_note_id_from_path, resolve_note_path_by_id, set_forgotten_note_retention_days,
+    touch_recent_note_id, validate_current_path, with_note_file_mutation, ForgottenItemKind,
+    NoteActivity, NoteIdLookup, NoteIdPathResolver, PersistedForgottenNote, PersistedState,
+    OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 #[cfg(test)]
-pub(crate) use persistence::{inject_note_publication_failure_once, persist_note};
+pub(crate) use persistence::{
+    inject_note_publication_failure_once, persist_note, write_last_opened_and_recents, write_state,
+    write_unpruned_state,
+};
 
 #[cfg(test)]
 mod tests {

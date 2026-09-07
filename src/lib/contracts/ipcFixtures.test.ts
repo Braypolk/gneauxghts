@@ -127,7 +127,7 @@ describe('Rust-owned IPC contract fixtures', () => {
         lastSavedNoteId: preparedResult.noteId as string,
         lastSavedPath: preparedResult.notePath as string
       },
-      'path:/vault/Tasks.md'
+      'document:tasks'
     );
     updateDocumentMarkdown(
       document,

@@ -7,7 +7,7 @@ describe('native Tauri lifecycle', () => {
     expect(await browser.getTitle()).toContain('Gneauxghts');
   });
 
-  it('restores stable geometry across an actual application restart', async () => {
+  it('preserves stable geometry across embedded driver reconnection', async () => {
     const target = { x: 140, y: 120, width: 980, height: 700 };
     await browser.setWindowRect(target.x, target.y, target.width, target.height);
     await browser.pause(150);

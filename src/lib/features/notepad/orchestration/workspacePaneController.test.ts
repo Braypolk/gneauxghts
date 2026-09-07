@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  findOpenDocument,
+  removeNoteIfUnreferenced,
   createNoteDraftState,
-  createNotepadState
+  createNotepadState,
+  upsertNote,
+  type PaneDocumentReferences
 } from '$lib/features/notepad/state/noteStore';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import {
+  documentCanLeaveWithoutCanonicalWrite,
+  documentHasUnresolvedConflict,
+  updateDocumentMarkdown
+} from '$lib/features/notepad/document/documentState';
+import { createDocumentDepartureController } from './documentDepartureController';
 import { createPaneNavigationTransitionPipeline } from './paneNavigationTransitionPipeline';
 import { createWorkspacePaneController } from './workspacePaneController';
 import {
@@ -28,7 +38,10 @@ function document(name = 'note') {
 
 function harness(
   overrides: {
-    prepareDeparture?: () => Promise<ReturnType<typeof document>>;
+    prepareDeparture?: (
+      paneId: PaneId,
+      note: ReturnType<typeof document>
+    ) => Promise<ReturnType<typeof document>>;
     disposePaneRuntime?: () => Promise<void>;
     retireWorkspacePane?: () => unknown;
     completeWorkspacePaneDisposal?: () => boolean;
@@ -37,6 +50,8 @@ function harness(
     getActivePaneId?: () => PaneId;
     createPane?: () => PaneId;
     getPaneDocument?: (paneId: PaneId) => ReturnType<typeof document>;
+    canLeaveDocument?: (note: ReturnType<typeof document>) => boolean;
+    removeUnreferencedNote?: (documentHandle: ReturnType<typeof document>['handle']) => boolean;
     loadRecentNotes?: () => Promise<unknown>;
     onDocumentLeaving?: (
       paneId: PaneId,
@@ -51,7 +66,7 @@ function harness(
     vi.fn(() => ({
       paneId: 'left',
       kind: 'editor',
-      noteKey: note.key,
+      documentHandle: note.handle,
       chatConversationId: null
     }));
   const disposePaneRuntime =
@@ -110,6 +125,9 @@ function harness(
       setStoredPaneKind: vi.fn(() => true),
       capturePaneLocation: () => null,
       getPaneCommandPaneId: () => null,
+      removeUnreferencedNote:
+        overrides.removeUnreferencedNote ?? (() => false),
+      canLeaveDocument: overrides.canLeaveDocument,
       documentDeparture: {
         prepare:
           overrides.prepareDeparture ??
@@ -163,6 +181,7 @@ function harness(
     } as never);
 
   return {
+    note,
     controller,
     retireWorkspacePane,
     disposePaneRuntime,
@@ -216,7 +235,7 @@ describe('workspace pane close lifecycle', () => {
         return {
           paneId: 'left',
           kind: 'editor',
-          noteKey: 'path:/vault/note.md',
+          documentHandle: 'document:note',
           chatConversationId: null
         };
       }),
@@ -238,6 +257,116 @@ describe('workspace pane close lifecycle', () => {
       'finalize'
     ]);
     expect(getMembership().kind).toBe('disposed');
+  });
+
+  it('blocks two dirty collision drafts, then closes a deliberately cleaned side without rewriting it', async () => {
+    const left = createNoteDraftState({
+      ...createEmptySessionSnapshot(),
+      title: 'Left',
+      bodyMarkdown: 'left baseline',
+      currentNoteId: 'left-id',
+      currentNotePath: '/vault/Shared.md',
+      lastSavedTitle: 'Left',
+      lastSavedMarkdown: 'left baseline',
+      lastSavedNoteId: 'left-id',
+      lastSavedPath: '/vault/Shared.md'
+    });
+    const right = createNoteDraftState({
+      ...createEmptySessionSnapshot(),
+      title: 'Right',
+      bodyMarkdown: 'right dirty draft',
+      currentNoteId: 'right-id',
+      currentNotePath: '/vault/Shared.md',
+      lastSavedTitle: 'Right',
+      lastSavedMarkdown: 'right baseline',
+      lastSavedNoteId: 'right-id',
+      lastSavedPath: '/vault/Shared.md'
+    });
+    const state = createNotepadState(left, '/vault');
+    upsertNote(state, right);
+    updateDocumentMarkdown(left, 'left dirty draft');
+    let paneOrder: PaneId[] = ['left', 'right'];
+    const paneDocuments = { left, right, extra: right };
+    const paneReferences: PaneDocumentReferences<PaneId> = {
+      getPaneState: (paneId) => ({
+        documentHandle: paneDocuments[paneId].handle
+      }),
+      setPaneDocumentHandle: () => undefined,
+      replaceDocumentHandleReferences: () => undefined,
+      isDocumentReferenced: (handle) =>
+        paneOrder.some(
+          (paneId) => paneDocuments[paneId].handle === handle
+        ),
+      listReferencedDocumentHandles: () =>
+        paneOrder.map((paneId) => paneDocuments[paneId].handle)
+    };
+    let releaseQueue!: () => void;
+    const pendingQueue = new Promise<void>((resolve) => {
+      releaseQueue = resolve;
+    });
+    const getNoteSaveQueue = vi.fn(() => pendingQueue);
+    const enqueueSave = vi.fn().mockResolvedValue(undefined);
+    const departure = createDocumentDepartureController<PaneId>({
+      getPaneDocument: (paneId) => paneDocuments[paneId],
+      hasOtherEditingPane: () => false,
+      finalizeWindow: vi.fn().mockResolvedValue(undefined),
+      flushAllPendingCursorSaves: vi.fn(),
+      cancelPendingAutosave: vi.fn(),
+      enqueueSave,
+      getNoteSaveQueue,
+      saveCursorPositionForPane: vi.fn(),
+      clearLastOpenedNote: vi.fn().mockResolvedValue(undefined)
+    });
+    const retireWorkspacePane = vi.fn(() => {
+      paneOrder = ['right'];
+      return {
+        paneId: 'left' as const,
+        kind: 'editor' as const,
+        documentHandle: left.handle,
+        chatConversationId: null
+      };
+    });
+    const removeUnreferencedNote = vi.fn((handle: typeof left.handle) =>
+      removeNoteIfUnreferenced(state, paneReferences, handle)
+    );
+    const { controller, getMembership } = harness({
+      getPaneOrder: () => paneOrder,
+      getPaneDocument: (paneId) => paneDocuments[paneId],
+      canLeaveDocument: (note) =>
+        !documentHasUnresolvedConflict(note) ||
+        documentCanLeaveWithoutCanonicalWrite(note),
+      prepareDeparture: departure.prepare,
+      retireWorkspacePane,
+      removeUnreferencedNote
+    });
+
+    await controller.closePane('left');
+
+    expect(getMembership().kind).toBe('ready');
+    expect(retireWorkspacePane).not.toHaveBeenCalled();
+    expect(enqueueSave).not.toHaveBeenCalled();
+
+    updateDocumentMarkdown(left, 'left baseline');
+    const close = controller.closePane('left');
+
+    await vi.waitFor(() => {
+      expect(getNoteSaveQueue).toHaveBeenCalledExactlyOnceWith(left.handle);
+    });
+    expect(retireWorkspacePane).not.toHaveBeenCalled();
+    expect(removeUnreferencedNote).not.toHaveBeenCalled();
+
+    releaseQueue();
+    await close;
+
+    expect(retireWorkspacePane).toHaveBeenCalledOnce();
+    expect(enqueueSave).not.toHaveBeenCalled();
+    expect(removeUnreferencedNote).toHaveBeenCalledWith(left.handle);
+    expect(state.documentsByHandle[left.handle]).toBeUndefined();
+    expect(right.canonicalCollision).toBeNull();
+    expect(findOpenDocument(state, {
+      noteId: 'right-id',
+      path: '/vault/Shared.md'
+    })).toBe(right);
   });
 });
 
@@ -283,7 +412,7 @@ describe('workspace pane split source', () => {
 
     expect(beginPaneCommand).toHaveBeenCalledWith(
       'extra',
-      notes.right.key,
+      notes.right.handle,
       'split',
       'right'
     );
@@ -293,16 +422,14 @@ describe('workspace pane split source', () => {
 describe('workspace pane document ownership', () => {
   it('identifies the exact pane whose editor is leaving for chat', async () => {
     const onDocumentLeaving = vi.fn();
-    const { controller } = harness({ onDocumentLeaving });
+    const { controller, note } = harness({ onDocumentLeaving });
 
     await controller.setPaneKind('right', 'chat');
 
     expect(onDocumentLeaving).toHaveBeenCalledOnce();
     expect(onDocumentLeaving).toHaveBeenCalledWith(
       'right',
-      expect.objectContaining({
-        key: 'path:/vault/note.md'
-      })
+      note
     );
   });
 });

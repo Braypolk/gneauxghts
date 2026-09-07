@@ -178,7 +178,6 @@ describe('SettingsStore actions', () => {
           timelineOrdinal: 1,
           timeKind: 'committed',
           modifiedAtMillis: null,
-          editingSessionId: null,
           revisionLabel: 'Before deletion',
           lineCount: 1,
           characterCount: 4

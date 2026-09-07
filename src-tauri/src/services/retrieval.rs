@@ -320,7 +320,6 @@ mod tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let note_path = created.path.unwrap();

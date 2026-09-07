@@ -10,12 +10,26 @@ use crate::{
     state::{notes_root, with_note_file_mutation},
 };
 use std::path::PathBuf;
-use tauri::State;
+use tauri::{Manager, State};
 
 #[tauri::command]
-pub(crate) fn commit_agent_proposal(
-    state: State<'_, AppState>,
-    service: State<'_, ChatService>,
+pub(crate) async fn commit_agent_proposal<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    proposal_id: String,
+    markdown: Option<String>,
+) -> Result<CommitNoteReviewResult, String> {
+    super::on_app_worker(app.clone(), move |state| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        commit_agent_proposal_with_state(state, &service, proposal_id, markdown)
+    })
+    .await?
+}
+
+pub(crate) fn commit_agent_proposal_with_state(
+    state: &AppState,
+    service: &ChatService,
     proposal_id: String,
     markdown: Option<String>,
 ) -> Result<CommitNoteReviewResult, String> {
@@ -121,7 +135,7 @@ pub(crate) fn commit_agent_proposal(
         }
         let (committed_markdown, history_intent) = prepared.into_parts();
         let synchronization =
-            synchronize_applied_change(&state, &result, history_intent, committed_markdown);
+            synchronize_applied_change(state, &result, history_intent, committed_markdown);
         result.note_id = Some(synchronization.note_id);
         result.commit_warning = synchronization.commit_warning;
         Ok(result)

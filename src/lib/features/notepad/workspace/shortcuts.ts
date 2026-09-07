@@ -8,6 +8,7 @@ export interface WorkspaceShortcutDeps<TPaneId extends string> {
   getActivePaneId: () => TPaneId;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   openThoughtPartner: () => Promise<void>;
+  showHistory: () => Promise<void>;
   openSplitPaneOptions: () => Promise<void>;
   openNewChatInSplit: () => Promise<void>;
   openPreviousNoteInSplit: () => Promise<void>;
@@ -98,6 +99,14 @@ export function createWorkspaceShortcutHandler<TPaneId extends string>(
       }
 
       await deps.openThoughtPartner();
+      return;
+    }
+
+    if (keyboardShortcutMatchesEvent(event, 'showHistory')) {
+      event.preventDefault();
+      if (!event.repeat) {
+        await deps.showHistory();
+      }
       return;
     }
 

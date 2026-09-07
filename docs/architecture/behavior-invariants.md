@@ -15,333 +15,214 @@ and content.
 ### Chat context and note navigation agree with visible content
 
 A chat beside an editor follows the nearest editor's current note. Without a
-visible editor, it uses its own retained note, which is also its route back to
+visible editor, it uses its retained note as context and as its route back to
 editing. The note body, path, and selection sent with a message come from that
 same resolved context.
 
 Generic note navigation targets the nearest editor when one exists. Otherwise
 it reuses the active retained-context pane and reveals its editor. Navigation
-always passes through the editor lifecycle before content synchronization is
-considered complete.
+always completes the editor lifecycle before reporting synchronized content.
 
 ### Pane changes retain a usable document route
 
 Changing an editor pane to chat retains its document as chat context and as the
-return target. Changing it back restores that document. Any pane may close
-while another remains, including in a chat-only workspace.
-
-After the active pane closes, the pane immediately to its right becomes active
-when present; otherwise the pane immediately to its left becomes active.
+return target. Changing it back restores that document. Any pane may close while
+another remains, including in a chat-only workspace. After the active pane
+closes, the pane to its right becomes active when present; otherwise the pane to
+its left becomes active.
 
 ### History browsing leaves the workspace untouched
 
-Entering global History Mode first flushes pending canonical note saves. A
-failed save leaves the user in the editor with a clear error. While history is
-open, the normal workspace remains mounted but inert: history is not a pane,
-does not create an editor runtime, and cannot change pane membership or Note
-Draft State. Exiting restores the captured active pane and focus while the
-mounted editors retain their selection and scroll. The selected historical
-revision remains pinned when newer timeline records arrive, and History Mode
-never survives an application restart. A forgotten note retains its complete
-timeline but cannot enter History Mode or expose timeline records until
-Forgotten-Note Recovery returns it to the active vault.
-An externally deleted note follows the same ordinary-access gate while it is
-Missing, but its retained timeline remains inspectable from recovery UI.
-History Mode entry awaits mandatory prepared-write recovery and integrity
-attestation through its read capability. Optional exhaustive health/storage
-checks during browsing are explicit actions; their absence never means history
-is verified. Restore and clear refresh diagnostics after mutation.
-A health result from an exited session cannot populate a later session.
-History Mode browsing and diff surfaces are read-only. It may add, edit, or
-remove a revision label and may clear retained history only after explicit
-confirmation through `NoteTimeline`; those metadata/history-retention actions
-never mutate canonical Markdown, pane membership, editor state, or Note Draft
-State. Complete Version Restore is the one authored-content mutation described
-below.
+History Mode is a global overlay, not a pane. Entry flushes pending saves and
+finalizes the inspected note's Editing Window; failure leaves the user in the
+editor with an actionable error. The mounted workspace remains inert and keeps
+pane membership, document state, editor resources, selection, and scroll. Exit
+restores the captured pane and focus. History Mode never survives restart.
+
+History pages and diffs are read-only. Revision labels and explicitly confirmed
+history clearing do not mutate Markdown or workspace state. Forgotten notes
+must be recovered before ordinary history access. Missing-note history remains
+available only through recovery UI. Every history read waits for required
+recovery and verification of its target; exhaustive vault diagnostics are a
+separate explicit action. Results from an exited session cannot populate a later
+session.
 
 ### Version Restore is complete, deliberate, and append-only
 
-History Mode may replace authored note content only through an explicit
-complete-replacement preview and confirmation. The preview is bound to the
-current authored-content hash; a concurrent canonical edit invalidates it.
-Confirmation restores the selected body and unmanaged frontmatter while
-preserving current Note Identity, title, path, creation time, lifecycle state,
-and other managed metadata semantics with a fresh update time. The mutation
-appends a Version Restore revision without removing intervening revisions or
-Lifecycle Events, and the editor begins a fresh undo history so reversal must
-be another Version Restore. Forgotten and Missing notes must be recovered
-before ordinary timeline inspection or Version Restore, keeping lifecycle
-recovery distinct from authored-state replacement. The selected authored
-payload, including exact line endings and unmanaged-frontmatter whitespace, is
-preserved byte-for-byte. Workspace exit stays unavailable, and route navigation
-waits, until publication and editor adoption finish. A properties-only restore
-also resets editor undo even when the rendered body is unchanged. Selecting
-content that is already current asks the user to choose another revision; it
-does not require lifecycle recovery.
+Version Restore requires a complete-replacement preview bound to the current
+authored-content hash and explicit confirmation. A concurrent edit invalidates
+the preview. The restore preserves managed identity and lifecycle metadata,
+retains the selected authored payload exactly, appends a new restore revision,
+and never removes intervening history. Every open editor for that document gets
+one fresh shared undo root; selection and scroll remain pane-owned. Unopened
+targets can be restored without creating or navigating a pane. Missing or
+forgotten notes must first cross their recovery flow.
 
 ## Documents, tasks, and persistence
 
 ### External changes never overwrite dirty local work
 
-Clean documents refresh everywhere they are displayed. A dirty document keeps
-its local content and the external snapshot or deletion until the user chooses
-how to resolve the conflict. Navigation and destructive note actions cannot
-orphan an unresolved conflict.
+Clean documents adopt external changes everywhere they are displayed. Dirty
+documents retain both local and external states until the user resolves the
+conflict, and navigation cannot orphan that conflict. Each distinct external
+state is durably recorded before it is applied; retry and restart replay the
+recorded observation rather than substituting newer disk bytes.
 
-Every distinct external state captured by the watcher or reconciliation is
-retained durably before history application. A transient history failure or
-process restart replays that exact snapshot before a newer observation,
-authored publication, or history read; recovery never substitutes whatever
-bytes happen to be on disk later.
+### Committed adoption belongs to the document boundary
+
+Save, Version Restore, accepted proposal, clean external refresh, and transient
+Forgotten-Note Recovery enter fixed-purpose document adoption methods. Callers
+do not choose identity, baseline, warning, rekey, runtime-reset, or refresh
+policy. Committed warnings are part of successful results and never authorize a
+second write. Eligible edits made after an operation began remain newer than the
+adopted baseline.
+
+Every open document has one immutable, process-local handle. Save, rename, and
+committed adoption may change durable identity and path but never replace the
+document object, shared editor root, timer, save queue, or pane references.
+Canonical identity/path lookup is vault-scoped and prevents duplicate opens.
+If a committed result collides with another independently dirty document, both
+remain open and later persistence is blocked; the completed write is not replayed.
+A participant that becomes clean may close after its existing queue settles,
+allowing the survivor to be reindexed without another canonical write.
 
 ### Task mutations respect dirty documents
 
 A task mutation targeting a dirty open note changes the open document and then
-uses ordinary persistence. It never writes behind the editor. If duplicate
-task text makes the intended task ambiguous, the mutation fails instead of
-guessing from stale positions.
+uses ordinary persistence. It never writes behind the editor. Ambiguous duplicate
+task text fails rather than guessing from stale positions.
 
-### Save completion has a consistency boundary
+### Save completion has one consistency boundary
 
-A successful save means canonical bytes and the required in-memory note
-catalog are committed, and its distinct user-authored state has one durable
-Note Revision. History intent is durably prepared before Markdown publication;
-a preparation failure publishes nothing. An opaque intent identity correlates
-that preparation with exact finalization, and the shared note-file mutation
-owner serializes preparation, publication, and finalization end to end. Task
-reads provide read-your-write consistency. Lexical and semantic indexing may
-finish later and cannot turn a completed canonical save into failure.
+A successful save means canonical Markdown, the required in-memory catalog, and
+durable history capture agree. Durable history preparation precedes publication;
+a preparation failure publishes nothing. Publication and finalization remain
+inside one timeline-owned operation. Target verification happens before file
+ownership and is rechecked under ownership, so one blocked note does not stall an
+already-ready note.
 
-If bytes were committed but a required projection degraded, the result carries
-the authoritative identity and a warning; callers do not retry the mutation.
-A history-finalization failure follows the same committed-warning rule and is
-completed idempotently from its prepared intent and authoritative Markdown.
-If authoritative Markdown cannot be read after publication, history remains
-pending and the committed result carries a warning; caller fallback bytes are
-never finalized as history truth.
-Finalization verifies both authored bytes and managed Note Identity, and the
-revision's committed time is issued by the app into the durable intent
-immediately before publication, so immediate finalization and restart recovery
-use the same app-owned time and later filesystem metadata cannot rewrite
-history. Known write failures and
-conflicts abandon their prepared intents immediately; recoverable pending
-state is reserved for uncertain post-publication finalization.
-Pending-intent recovery must succeed once per application state before its
-first history read or prepared write. It is not rerun after success by
-concurrent history reads or commits, which must never classify a live prepared
-intent as abandoned crash residue; a transient recovery failure remains
-retryable. Explicit recovery retry uses the same note-file mutation owner as
-canonical writers. Once an intent is finalized or abandoned, its full authored
-payload is retired atomically; correlation metadata remains available for
-idempotency and revision references. Schema migration retires existing terminal
-payloads while preserving pending recovery bytes.
-A prepared publication's in-memory base candidate may avoid checkpoint replay
-only when its authored-byte hash matches the exact retained base revision inside
-the append transaction. It cannot substitute a different canonical state as the
-history base. Crash recovery needs no candidate and reconstructs from the store.
-Cold attestation validates every retained payload and its hashes, including
-lineage continuity at checkpoints; previous verified bytes live only within the
-attestation pass.
-Managed metadata changes alone do not create Note Revisions.
-A managed note that predates history receives one Baseline Revision without a
-Markdown write. Its `knownSince` time says only when Gneauxghts first retained
-the state; introduction and last-change time remain unknown. A mutation that
-beats background initialization establishes the current canonical state as its
-baseline in the same durable preparation transaction before the new revision.
-Repeated scans, watcher races, interruption, and restart never duplicate that
-baseline. Initialization failures produce durable degraded progress and a
-typed failed state for any resolved Note Identity; a successful retry clears
-that note's failure.
-The vault-local manifest and selected history store must agree on Vault
-Identity, storage format, and generation. The app also remembers the greatest
-generation it has opened outside the vault, so a synchronized rollback of both
-vault-local records is not silently accepted. Development resets retain an
-operation and generation diagnostic outside the replacement timelines.
-A clean close stops admitting Note Timeline operations, waits for admitted
-work, settles prepared intent, checkpoints and truncates the SQLite WAL, and
-advances a durable clean-close watermark before reporting the vault portable.
-Failure at any step reports an error and never claims portability. Application
-exit and vault switch cross this seam first. The observing installation may
-recover its own open store and WAL after interruption, while a new installation
-rejects an open main-file-only copy. Store-instance changes, same-generation
-watermark rollback, and manifest/store/app-observation mismatches require
-explicit recovery. A pre-portability schema is never assigned a store-instance
-identity merely because its vault identity and generation match an old local
-observation; migration requires the explicit legacy-trust recovery command,
-and that one-shot authorization is cleared when migration records the instance.
-SHM remains ephemeral and is never required backup data.
-Clearing one Note Timeline atomically removes every previously readable record
-and establishes the current canonical authored state as a fresh Baseline
-Revision. A vault clear applies the same boundary independently to every active
-ordinary note without rewriting Markdown; missing and forgotten timelines stay
-retained. Permanent purge removes the complete timeline and all
-revision-dependent labels, citations, and rebuildable projections. Clear and
-purge leave only a versioned, prose-free deletion marker with stable scope,
-operation identity, time, and history generation. They become unreadable when
-their transaction commits, regardless of whether SQLite still has allocated
-pages. A whole-note purge durably prepares its deletion before atomically staging
-the canonical file under hidden vault data; pending deletion recovery uses that
-filesystem evidence before history reads and observation replay, and the purged
-Note Identity cannot acquire new records even when the original path is reused.
-Missing-note purge uses the same durable deletion boundary without staging or
-deleting an unrelated file that may have reused the missing note's old path.
-Allocated and reclaimable byte totals remain distinct, and physical compaction
-is separately budgeted across WAL checkpoint and incremental-vacuum work and
-never chooses what history to retain. Allocated totals include the live SQLite
-main file, WAL, and SHM sidecar; reclaimable totals include database freelist
-pages and checkpoint net reduction that the store can prove are reclaimable.
-The WAL autocheckpoint and retained-size limits keep normal persistent WAL
-allocation within the background pass budget; larger live WALs remain reported
-and are never truncated by a smaller pass.
-History health is observable without making current Markdown depend on the
-history store. Healthy, initializing, degraded, warning, unavailable, and
-corrupt states cross typed contracts; storage implementation errors do not
-become product concepts. Per-note diagnostics report readiness and logical
-retained usage. A retry settles pending observations, deletions, publication
-intents, and failed baselines without replaying an authoritative Markdown
-write.
+Once canonical bytes exist, their returned identity and path are authoritative.
+A later history or required-projection failure returns that committed result with
+a warning and is recovered idempotently without replaying the write. Known write
+failures abandon their intent. Uncertain post-publication work retains only the
+evidence required for recovery. Authoritative Markdown and managed Note Identity
+must match before history finalizes; caller fallback bytes are never history
+truth.
 
-Every history read or history-changing command failure crosses the frontend
-boundary as a closed Note Timeline state with stable recovery guidance.
-Storage paths, query text, database errors, and reconstruction details remain
-backend diagnostics and never become user-visible command errors.
+Readiness is observational, never write permission. A requested note is verified
+before use while unrelated histories and structural checks proceed in the
+background. Later discovered corruption blocks new publications globally until
+explicit reset. Retryable I/O and cancellation do not become corruption, and
+stale verification results cannot bless or poison replaced history. See
+[ADR 0006](../adr/0006-keep-history-preparation-mandatory-in-production.md) and
+[ADR 0008](../adr/0008-verify-target-note-history-before-background-coverage.md).
 
-An unavailable or corrupt history store can be reset only after explicit
-confirmation. Reset never rewrites current Markdown: it advances the history
-generation, removes the affected retained histories and their labels and
-citations, creates truthful Baseline Revisions from current notes, and keeps a
-prose-free reset diagnostic across restart. Before reset, the UI directs the
-user to make a cleanly closed vault backup.
-A failed pre-commit save leaves navigation in the editor and remains retryable.
-During synchronous reconciliation, a failed lexical projection retains the
-exact identity-resolved payload in retry state independent of catalog file
-signatures. Retry neither depends on another filesystem change nor repeats
-identity resolution. Per-path projection ordering and catalog generations make
-newest catalog state win in both lexical and task projections even when older
-projection work finishes later.
+### History lifecycle remains truthful
+
+Managed metadata changes alone do not create revisions. Existing notes receive
+one baseline without a Markdown write; its time states only when Gneauxghts first
+retained it. Races, retries, and restart cannot duplicate that baseline.
+
+Vault manifest, store metadata, and app-local observations must agree on vault,
+format, generation, store instance, and clean-close continuity. Clean close stops
+admission, cancels background verification, drains admitted work, settles durable
+recovery, finalizes Editing Windows, checkpoints the WAL, and only then reports
+portability. Failure never claims a portable close. Work stays bound to the vault
+and generation in which it was admitted.
+
+Clear, reset, and purge invalidate affected callbacks and retained evidence
+atomically. Clear replaces readable history with a truthful current baseline;
+purge removes the complete timeline without harming a different note that reused
+the old path. Confirmed reset is the only operation allowed to replace an
+unavailable or corrupt store, advances its generation, and never rewrites current
+Markdown. Logical deletion is distinct from later bounded physical reclamation.
+
+History errors cross the frontend as closed product states with stable recovery
+guidance. Database paths, queries, and diagnostic causes remain backend-only.
+Translating an error never starts another exhaustive scan.
 
 ### Note Identity follows the note
 
-A managed ordinary note keeps its identity when its authored content becomes
-empty, its path changes, it is forgotten or recovered, or it temporarily
-disappears and safely reattaches. A known path whose embedded managed identity
-is missing or damaged retains its catalog identity without rewriting the file
-during observation; repair is included in the original atomic publication of
-the next app-owned commit. Every canonical writer obtains those prepared bytes
-through `NoteTimeline`; identity repair is not duplicated in writer-specific
-code. Identity at an unrelated path is insufficient to
-reattach a Missing Note unless the watcher correlated that path change as a
-move or rename.
-
-An observed file whose embedded identity is already owned by another path is
-a distinct copy. The existing owner keeps the identity and the copy receives a
-new globally unique identity, independent of catalog refresh order. Revision
-and Lifecycle Event identities are opaque, globally unique domain values with
-operating-system random entropy and explicit predecessor relationships;
-database row IDs or insertion order never define timeline identity or lineage.
+A managed note keeps its identity through empty content, rename, move, forgetting,
+recovery, disappearance, and safe reattachment. Observation never repairs damaged
+Markdown metadata; the next app-owned commit performs that repair atomically.
+Identity at an unrelated path is a copy unless an operation correlated the move.
+A copied identity receives a new globally unique identity before projections see
+it. Revision and Lifecycle Event identities are opaque domain values, not database
+row IDs.
 
 ### Self-save suppression is operation-aware
 
-An app-owned write, move, or delete suppresses only the exact filesystem
-outcome it declared. Failed or uncommitted operations cannot hide later
-external changes, and a non-matching watcher event is external even inside a
-deduplication window.
+An app-owned write, move, or delete suppresses only its declared filesystem
+outcome. Failed or mismatched operations cannot hide later external changes.
 
 ### Semantic search preserves the last usable result
 
 A transient indexing failure keeps the last good result visible as stale.
-Automatic retries are bounded and cannot overwrite newer queued work. The UI
-distinguishes fresh, stale, rebuilding, and degraded states and offers an
-explicit retry.
+Retries are bounded and cannot overwrite newer work. The UI distinguishes fresh,
+stale, rebuilding, and degraded states and offers explicit retry.
+
+### Editing Windows preserve explicit boundaries
+
+Ordinary editor publications accumulate in a fixed, non-sliding five-minute
+window; finalization retains one immutable net change. Pending windows are not
+public revisions. Actions, lifecycle changes, explicit evidence requests, last
+editor departure, History Mode, and clean close provide earlier boundaries.
+Restart recovers and finalizes surviving work exactly once. The normative
+ordering, time-evidence, and receipt rules are in the
+[Editing Window contract](editing-window-contract.md) and the decision is in
+[ADR 0007](../adr/0007-retain-editor-history-at-editing-window-boundaries.md).
 
 ## Chat
 
 ### Provenance explains only current authored content
 
-Current-Content Provenance is available only through the allowed current-note
-capability. Exclusions win over an explicit allow list; missing, forgotten,
-and uncaptured canonical states cannot deliver retained prose. Output contains
-only current body, unmanaged properties, and title, with evidence identities
-and authoritative commit/observation times. Filesystem modification time never
-becomes introduction or last-change evidence.
+Ordinary chat may receive activity metadata and provenance for current eligible
+content, never removed historical prose. Evidence is derived from retained states
+and revalidated against current bytes, eligibility, and generation at delivery.
+Unprovable movement or retyping remains unknown. Temporal answers and revision
+citations do not re-enter later model context as historical prose.
 
-Unique correspondence between adjacent retained states preserves moved
-content. Ambiguous correspondence and text retyped after deletion receive new
-introduction evidence. Authored word edits, including Markdown delimiters,
-update affected ranges while unchanged words retain their evidence. Markdown
-parser context extends formatting changes across inline spans and multiline
-blocks, including headings and fenced code. Baselines
-and history clears establish `knownSince` with unknown prior introduction and
-change. Complete Version Restore retains selected lineage for returned ranges
-and records their new `restoredAt`; ranges still present retain their current
-lineage. Older restores without a selected-revision reference report unknown
-earlier lineage for returning ranges. Title provenance follows lifecycle
-predecessor order and ignores moves that preserve the filename title.
-
-### Chat activity and citations preserve the current-content boundary
-
-Activity and Current-Content Provenance enter chat only on demand. They reapply
-vault access, explicit turn grants, global exclusions, current eligibility, and
-canonical-byte checks. Activity answers carry current excerpts, revision counts,
-times, and Mutation Sources; removed prose and historical labels stay private.
-Revision Citations retain exact Note and Revision Identity and open that revision
-in global History Mode without navigating the invoking pane. Cleared, purged,
-missing, forgotten, excluded, or no-longer-current citation evidence is withheld
-when results or conversations are delivered, including branches. Earlier temporal
-answers remain visible in their transcript but are omitted from later model
-context and compaction; chat must obtain fresh current evidence.
+Revision Citation navigation binds directly to the cited Note and immutable
+Revision Identity, returns bounded surrounding history without walking every
+newer record, ignores obsolete requests, and restores the existing workspace.
 
 ### Interrupted runs preserve partial output
 
-A crash or interruption keeps the partial assistant message, marks it
-incomplete, and makes retry available after restart. Retry creates a traceable
-continuation without erasing the interrupted output.
+Completed assistant output remains visible after interruption. A retry creates a
+new correlated run while retaining the interrupted message and durable lineage;
+late events cannot resurrect a terminal run.
 
 ### Related context is explicit and repeatable
 
-Related notes may be suggested but do not enter model context until selected.
-At send time the backend resolves stable note identity, reapplies exclusion
-policy, rereads canonical content, bounds the excerpt, and stores its hash for
-that run. Global exclusion always wins.
-
-Retry reuses the stored context rather than running retrieval again. Context
-use and compaction are observable through provider-safe activity; raw model
-reasoning and tool arguments are not exposed.
+Related context is generated from explicit request inputs and stable scope rules.
+Retrying does not silently widen access or include removed historical prose.
 
 ### Draft chats expose their complete configuration
 
-Provider, model, reasoning effort, vault access, web, and attachment choices
-are available before a conversation is persisted. The first send applies the
-draft choices atomically. Settings supplies defaults for new chats; composer
-choices affect only the current conversation or draft.
-
-Provider and model remain separate choices, supported reasoning effort is
-validated for the selected model, and a model cannot change during an active
-response. Backend-resolved settings are the source of default model identity.
+A draft conversation presents the model, reasoning effort, web access, and
+attachment capabilities that will be used when its first message creates the
+durable conversation.
 
 ## Proposals
 
 ### One proposal review is editable
 
-At most one proposal is editable globally. Other pending proposals remain
-queued and durable, and unresolved proposals survive restart.
+Only the active validated review can edit its preview or decision state. Review
+state cannot silently rebind to another note or autosave unapproved content.
 
 ### Proposal recovery converges without duplicate writes
 
-If proposal content was persisted but its status update failed, recovery first
-verifies the target content or hash and then converges status to committed.
-Repeated recovery is idempotent and never reapplies content blindly.
+Accepting a proposal records enough evidence to recover durable proposal status
+after publication. Recovery never reapplies an already committed note mutation.
 
 ### App-owned commits advance the open-document baseline
 
-After a verified proposal commit, an open document adopts the committed
-Markdown as its saved baseline instead of treating the write as external.
-Local edits made after commit began remain dirty. If disk no longer matches the
-committed Markdown, ordinary external-conflict protection applies.
+A committed proposal result is adopted through the document boundary. Later local
+edits remain dirty; committed warnings remain visible; stale read-back enters the
+ordinary conflict flow.
 
 ### Proposal arrival does not navigate
 
-Receiving a proposal adds it to the pending queue without opening, activating,
-focusing, or repurposing a pane. If its target is already open and clean, review
-content may appear there without changing the active pane. Navigation begins
-only when the user explicitly chooses to review the target in an editor.
+Receiving or updating a proposal never changes the active pane or note. Navigation
+occurs only through an explicit user action.

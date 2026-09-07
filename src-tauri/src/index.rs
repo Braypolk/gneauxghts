@@ -91,21 +91,18 @@ impl ForegroundActivity {
 /// the save-side index queue) will yield between per-note units of work.
 pub(crate) struct ForegroundGuard {
     activity: Arc<ForegroundActivity>,
-    semantic: Arc<SemanticState>,
 }
 
 impl ForegroundGuard {
-    fn new(activity: Arc<ForegroundActivity>, semantic: Arc<SemanticState>) -> Self {
+    fn new(activity: Arc<ForegroundActivity>) -> Self {
         activity.in_flight.fetch_add(1, Ordering::AcqRel);
-        semantic.begin_foreground_activity();
-        Self { activity, semantic }
+        Self { activity }
     }
 }
 
 impl Drop for ForegroundGuard {
     fn drop(&mut self) {
         self.activity.in_flight.fetch_sub(1, Ordering::AcqRel);
-        self.semantic.end_foreground_activity();
     }
 }
 
@@ -161,6 +158,12 @@ impl AppState {
         semantic: SemanticState,
         events: crate::app::EventBus,
     ) -> Result<Self, String> {
+        // Resolve the selected-vault context before starting background workers.
+        let note_timeline = NoteTimelineRuntime::new(
+            NoteTimelineOwnerToken(()),
+            crate::state::vault_root()?,
+            crate::state::app_data_dir()?,
+        )?;
         let lexical = Arc::new(LexicalIndex::new()?);
         let foreground_activity = Arc::new(ForegroundActivity::default());
         let catalog_projection_retries =
@@ -180,7 +183,7 @@ impl AppState {
             background_index_queue,
             catalog_projection_retries,
             foreground_activity,
-            note_timeline: NoteTimelineRuntime::new(NoteTimelineOwnerToken(())),
+            note_timeline,
         })
     }
 
@@ -193,10 +196,7 @@ impl AppState {
     /// per-note units of work so the foreground call does not queue up
     /// behind the SQLite state mutex or the lexical writer.
     pub(crate) fn foreground_guard(&self) -> ForegroundGuard {
-        ForegroundGuard::new(
-            Arc::clone(&self.foreground_activity),
-            Arc::clone(&self.semantic),
-        )
+        ForegroundGuard::new(Arc::clone(&self.foreground_activity))
     }
 
     /// Snapshot accessor for the shared foreground-busy flag. Background
@@ -1964,6 +1964,9 @@ gneauxghts:
         // the prewarm — which enqueues it to the background queue. The
         // queue worker should observe `is_busy() == true` and yield
         // before processing, so the job stays unprocessed.
+        // Synchronize with an already-idle worker: the foreground guard must
+        // still win when it starts after the worker's initial activity check.
+        state.background_index_queue.wait_until_idle_for_test();
         let guard = state.foreground_guard();
         state
             .prewarm_notes_index(temp.path())

@@ -1,27 +1,19 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join, resolve } from 'node:path';
 import type { Options } from '@wdio/types';
 import { startVite, stopVite } from './support/viteServer';
 
 const binaryName = process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts';
-const scaleRun = process.env.GNEAUXGHTS_RELEASE_SCALE_RUN;
-const application = resolve('src-tauri', 'target', scaleRun ? 'release' : 'debug', binaryName);
-if (scaleRun) {
-  const marker = JSON.parse(readFileSync(join(scaleRun, 'run.json'), 'utf8'));
-  if (marker.kind !== 'gneauxghts-production-scale-v1' || !basename(scaleRun).startsWith('gneauxghts-timeline-run-')) {
-    throw new Error('Native scale tests require a disposable fixture clone');
-  }
-}
-const fixtureRoot = scaleRun ?? mkdtempSync(join(tmpdir(), 'gneauxghts-native-e2e-'));
-const appDataRoot = join(fixtureRoot, scaleRun ? 'data' : 'app-data');
+const application = resolve('src-tauri', 'target', 'debug', binaryName);
+const fixtureRoot = mkdtempSync(join(tmpdir(), 'gneauxghts-native-e2e-'));
+const appDataRoot = join(fixtureRoot, 'app-data');
 const documentsRoot = join(fixtureRoot, 'documents');
-const vaultRoot = scaleRun ? join(fixtureRoot, 'vault') : join(documentsRoot, 'vault');
+const vaultRoot = join(documentsRoot, 'vault');
 
 for (const path of [appDataRoot, documentsRoot, vaultRoot]) mkdirSync(path, { recursive: true });
 
 function cleanupFixture() {
-  if (scaleRun) return; // The fixture runner owns this disposable directory.
   if (
     dirname(fixtureRoot) !== tmpdir() ||
     !basename(fixtureRoot).startsWith('gneauxghts-native-e2e-')
@@ -33,7 +25,6 @@ function cleanupFixture() {
 
 export const config: Options.Testrunner = {
   runner: 'local',
-  ...(scaleRun ? { outputDir: join(scaleRun, 'logs') } : {}),
   specs: ['./specs/native/**/*.spec.ts'],
   maxInstances: 1,
   capabilities: [
@@ -46,8 +37,8 @@ export const config: Options.Testrunner = {
     'tauri',
     {
       driverProvider: 'embedded',
-      captureBackendLogs: Boolean(scaleRun),
-      captureFrontendLogs: Boolean(scaleRun),
+      captureBackendLogs: false,
+      captureFrontendLogs: false,
       embeddedPort: 4445,
       appArgs: [
         '--e2e-app-data-root',
@@ -66,12 +57,12 @@ export const config: Options.Testrunner = {
   waitforTimeout: 20_000,
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 1,
-  mochaOpts: { ui: 'bdd', timeout: scaleRun ? 900_000 : 90_000 },
+  mochaOpts: { ui: 'bdd', timeout: 90_000 },
   async onPrepare() {
     if (!existsSync(application)) {
       throw new Error(`Native E2E binary is missing: ${application}`);
     }
-    await startVite(scaleRun ? 'native-preview' : 'native', 1430);
+    await startVite('native', 1430);
   },
   async onComplete() {
     await stopVite();

@@ -1,4 +1,5 @@
 import type {
+  HistoricalDiff,
   HistoryLifecycleRecord,
   HistoryModeRecord,
   HistoryMutationSource,
@@ -29,12 +30,21 @@ export function historyCountLabel(value: number, singular: string) {
 }
 
 export function historyRevisionSummary(record: HistoryRevisionRecord) {
-  return `${historySourceLabels[record.source]} · ${historyCountLabel(record.lineCount, 'line')} · ${historyCountLabel(record.characterCount, 'character')}`;
+  const source = record.timeKind === 'editingWindow' ? 'Editing Window · Editor' : historySourceLabels[record.source];
+  return `${source} · ${historyCountLabel(record.lineCount, 'line')} · ${historyCountLabel(record.characterCount, 'character')}`;
 }
 
 export function historyRevisionTimeSummary(record: HistoryRevisionRecord) {
   const timestamp = formatHistoryTime(record.occurredAtMillis);
   switch (record.timeKind) {
+    case 'editingWindow': {
+      const evidence = record.timeEvidence;
+      if (evidence?.kind !== 'editingWindow') return 'Editing interval unavailable';
+      if (evidence.clockDiscontinuity) {
+        return `Time uncertain (clock changed) · first saved ${formatHistoryTime(evidence.firstWallMillis)}, last saved ${formatHistoryTime(evidence.lastWallMillis)} · wall-time range ${historyIntervalTimeSummary(evidence.minWallMillis, evidence.maxWallMillis)}`;
+      }
+      return `Saved ${historyIntervalTimeSummary(evidence.firstWallMillis, evidence.lastWallMillis)}`;
+    }
     case 'knownSince':
       return `Known since ${timestamp}`;
     case 'committed':
@@ -44,21 +54,12 @@ export function historyRevisionTimeSummary(record: HistoryRevisionRecord) {
   }
 }
 
-export function historySessionTimeSummary(
+export function historyIntervalTimeSummary(
   startedAtMillis: number,
   endedAtMillis: number
 ) {
   if (startedAtMillis === endedAtMillis) return formatHistoryTime(endedAtMillis);
   return `${formatHistoryTime(startedAtMillis)} – ${formatHistoryTime(endedAtMillis)}`;
-}
-
-export interface EditingSessionTimelineItem {
-  kind: 'editingSession';
-  sessionId: string;
-  source: HistoryMutationSource;
-  startedAtMillis: number;
-  endedAtMillis: number;
-  revisions: HistoryRevisionRecord[];
 }
 
 export interface StandaloneRevisionTimelineItem {
@@ -72,47 +73,23 @@ export interface LifecycleEventTimelineItem {
 }
 
 export type HistoryTimelineItem =
-  | EditingSessionTimelineItem
   | StandaloneRevisionTimelineItem
   | LifecycleEventTimelineItem;
 
 export function buildHistoryTimelineItems(
   records: HistoryModeRecord[]
 ): HistoryTimelineItem[] {
-  const items: HistoryTimelineItem[] = [];
+  return [...records].sort(compareHistoryRecordsNewestFirst).map(record =>
+    record.kind === 'lifecycleEvent'
+      ? { kind: 'lifecycleEvent', record }
+      : { kind: 'standaloneRevision', revision: record }
+  );
+}
 
-  for (const record of [...records].sort(compareHistoryRecordsNewestFirst)) {
-    if (record.kind === 'lifecycleEvent') {
-      items.push({ kind: 'lifecycleEvent', record });
-      continue;
-    }
-    if (record.editingSessionId === null) {
-      items.push({ kind: 'standaloneRevision', revision: record });
-      continue;
-    }
-
-    const previous = items.at(-1);
-    if (
-      previous?.kind === 'editingSession' &&
-      previous.sessionId === record.editingSessionId
-    ) {
-      previous.revisions.push(record);
-      previous.startedAtMillis = Math.min(
-        previous.startedAtMillis,
-        record.occurredAtMillis
-      );
-      continue;
-    }
-
-    items.push({
-      kind: 'editingSession',
-      sessionId: record.editingSessionId,
-      source: record.source,
-      startedAtMillis: record.occurredAtMillis,
-      endedAtMillis: record.occurredAtMillis,
-      revisions: [record]
-    });
-  }
-
-  return items;
+/** Counts the retained transition, including unmanaged property changes. */
+export function historyDiffSummary(diff: HistoricalDiff) {
+  const lines = [...diff.bodyLines, ...diff.propertiesLines];
+  const added = lines.filter(line => line.kind === 'added').length;
+  const removed = lines.filter(line => line.kind === 'removed').length;
+  return `${historyCountLabel(added, 'line')} added · ${historyCountLabel(removed, 'line')} removed`;
 }

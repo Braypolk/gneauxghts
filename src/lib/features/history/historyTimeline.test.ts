@@ -11,7 +11,6 @@ import type {
 function revision(
   revisionId: string,
   occurredAtMillis: number,
-  editingSessionId: string | null,
   source: HistoryRevisionRecord['source'] = 'editor',
   timelineOrdinal = occurredAtMillis
 ): HistoryRevisionRecord {
@@ -24,7 +23,6 @@ function revision(
     timelineOrdinal,
     timeKind: 'committed',
     modifiedAtMillis: null,
-    editingSessionId,
     revisionLabel: null,
     lineCount: 2,
     characterCount: 20
@@ -32,83 +30,61 @@ function revision(
 }
 
 function revisionIds(item: HistoryTimelineItem): string[] {
-  return item.kind === 'editingSession'
-    ? item.revisions.map((record) => record.revisionId)
-    : item.kind === 'standaloneRevision'
+  return item.kind === 'standaloneRevision'
       ? [item.revision.revisionId]
       : [];
 }
 
 describe('buildHistoryTimelineItems', () => {
-  it('orders records newest first while retaining every revision inside its Editing Session', () => {
-    const records: HistoryModeRecord[] = [
-      revision('revision-1', 1_000, 'revision-1'),
-      revision('revision-3', 3_000, 'revision-1'),
-      revision('revision-2', 2_000, 'revision-1')
-    ];
-
-    const items = buildHistoryTimelineItems(records);
-
-    expect(items).toHaveLength(1);
-    expect(items[0]).toMatchObject({
-      kind: 'editingSession',
-      sessionId: 'revision-1',
-      startedAtMillis: 1_000,
-      endedAtMillis: 3_000
-    });
-    expect(revisionIds(items[0])).toEqual([
-      'revision-3',
-      'revision-2',
-      'revision-1'
-    ]);
-  });
-
-  it('merges a live revision into the stable session and leaves boundaries standalone', () => {
-    const lifecycle: HistoryModeRecord = {
-      kind: 'lifecycleEvent',
-      recordId: 'event-1',
-      eventId: 'event-1',
-      eventKind: 'renamed',
-      occurredAtMillis: 3_000,
-      timelineOrdinal: 3_000,
-      previousPath: '/vault/Before.md',
-      path: '/vault/After.md'
+  it('keeps windows, actions, and external observations individually selectable in lineage order', () => {
+    const window: HistoryRevisionRecord = {
+      ...revision('window', 100), timeKind: 'editingWindow',
+      timeEvidence: {kind: 'editingWindow', version: 1, firstWallMillis: 20, lastWallMillis: 100, minWallMillis: 20, maxWallMillis: 100, clockDiscontinuity: false}
     };
+    const records: HistoryModeRecord[] = [
+      window, revision('external-1', 200, 'externalEdit'), revision('external-2', 201, 'externalEdit'),
+      revision('task', 300, 'taskAction'), revision('baseline', 0, 'baselineInitialization')
+    ];
+    const items = buildHistoryTimelineItems(records);
+    expect(items.every(item => item.kind === 'standaloneRevision')).toBe(true);
+    expect(items.map(revisionIds)).toEqual([['task'], ['external-2'], ['external-1'], ['window'], ['baseline']]);
+  });
+  it('uses lineage ordinals at timestamp ties and keeps lifecycle events separate', () => {
     const items = buildHistoryTimelineItems([
-      revision('revision-4', 4_000, 'revision-4'),
-      lifecycle,
-      revision('restore', 2_000, null, 'versionRestore'),
-      revision('revision-1', 1_000, 'revision-1')
+      revision('z-first', 1000, 'editor', 0), revision('a-last', 1000, 'editor', 2),
+      {kind: 'lifecycleEvent', recordId: 'event', eventId: 'event', eventKind: 'renamed', occurredAtMillis: 1000, timelineOrdinal: 1, previousPath: '/old.md', path: '/new.md'}
     ]);
+    expect(items.map(revisionIds)).toEqual([['a-last'], [], ['z-first']]);
+  });
+});
+describe('finalized Editing Windows', () => {
+  const window = {
+    ...revision('window-1', 3_000),
+    timeKind: 'editingWindow' as const,
+    timeEvidence: {
+      kind: 'editingWindow' as const, version: 1 as const,
+      firstWallMillis: 1_000, lastWallMillis: 3_000,
+      minWallMillis: 1_000, maxWallMillis: 3_000, clockDiscontinuity: false
+    }
+  };
 
-    expect(items.map((item) => item.kind)).toEqual([
-      'editingSession',
-      'lifecycleEvent',
-      'standaloneRevision',
-      'editingSession'
+  it('keeps every window directly selectable across action boundaries', () => {
+    const items = buildHistoryTimelineItems([
+      window,
+      { ...window, recordId: 'window-2', revisionId: 'window-2', timelineOrdinal: 4_000 },
+      revision('task', 5_000, 'taskAction')
     ]);
-    expect(revisionIds(items[2])).toEqual(['restore']);
-
-    const refreshed = buildHistoryTimelineItems([
-      revision('revision-5', 4_500, 'revision-4'),
-      revision('revision-4', 4_000, 'revision-4'),
-      lifecycle,
-      revision('restore', 2_000, null, 'versionRestore'),
-      revision('revision-1', 1_000, 'revision-1')
+    expect(items.map(item => item.kind)).toEqual([
+      'standaloneRevision', 'standaloneRevision', 'standaloneRevision'
     ]);
-    expect(refreshed[0]).toMatchObject({
-      kind: 'editingSession',
-      sessionId: 'revision-4'
-    });
-    expect(revisionIds(refreshed[0])).toEqual(['revision-5', 'revision-4']);
+    expect(items.map(revisionIds)).toEqual([['task'], ['window-2'], ['window-1']]);
   });
 
-  it('uses predecessor-derived ordinals instead of opaque identities at timestamp ties', () => {
-    const items = buildHistoryTimelineItems([
-      revision('z-first', 1_000, 'z-first', 'editor', 0),
-      revision('a-last', 1_000, 'a-last', 'editor', 1)
-    ]);
-
-    expect(items.map(revisionIds)).toEqual([['a-last'], ['z-first']]);
+  it('displays the interval and explicitly uncertain raw clock evidence without inventing a point', async () => {
+    const { formatHistoryTime, historyRevisionTimeSummary } = await import('./historyTimeline');
+    expect(historyRevisionTimeSummary(window)).toBe(`Saved ${formatHistoryTime(1_000)} – ${formatHistoryTime(3_000)}`);
+    const reversed = { ...window, timeEvidence: { ...window.timeEvidence, firstWallMillis: 3_000, lastWallMillis: 1_000, clockDiscontinuity: true } };
+    expect(historyRevisionTimeSummary(reversed)).toContain(`Time uncertain (clock changed) · first saved ${formatHistoryTime(3_000)}, last saved ${formatHistoryTime(1_000)}`);
+    expect(historyRevisionTimeSummary({ ...window, timeEvidence: undefined })).toBe('Editing interval unavailable');
   });
 });

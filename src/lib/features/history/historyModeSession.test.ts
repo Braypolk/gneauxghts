@@ -36,7 +36,6 @@ const firstPage: HistoryModePage = {
       timelineOrdinal: 1,
       timeKind: 'committed',
       modifiedAtMillis: null,
-      editingSessionId: 'revision-1',
       revisionLabel: null,
       lineCount: 1,
       characterCount: 10
@@ -80,6 +79,7 @@ const restoreCommit = {
 
 function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSession>[0]> = {}) {
   const deps: ConstructorParameters<typeof HistoryModeSession>[0] = {
+    finalizeWindow: vi.fn().mockResolvedValue(undefined),
     flushWorkspace: vi.fn().mockResolvedValue(undefined),
     captureWorkspace: vi.fn(() => workspace),
     readTarget: vi.fn(() => target),
@@ -87,6 +87,7 @@ function setup(overrides: Partial<ConstructorParameters<typeof HistoryModeSessio
     restoreEditorState: vi.fn(),
     restoreFocus: vi.fn(),
     loadPage: vi.fn().mockResolvedValue(firstPage),
+    loadContext: vi.fn().mockResolvedValue(firstPage),
     loadDiff: vi.fn().mockResolvedValue(revisionDiff),
     loadRestorePreview: vi.fn().mockResolvedValue(restorePreview),
     restoreRevision: vi.fn().mockResolvedValue(restoreCommit),
@@ -117,11 +118,24 @@ describe('HistoryModeSession', () => {
     expect(deps.loadDiagnostics).not.toHaveBeenCalled();
   });
 
+  it('refuses History entry when target finalization fails and retries that boundary', async () => {
+    const { session, deps } = setup({ finalizeWindow: vi.fn().mockRejectedValueOnce(new Error('seal failed')).mockResolvedValue(undefined) });
+    await session.enter('notepad-pane-1');
+    expect(deps.loadPage).not.toHaveBeenCalled();
+    expect(session.state.phase).toBe('inactive');
+    await session.enter('notepad-pane-1');
+    expect(deps.finalizeWindow).toHaveBeenCalledTimes(2);
+    expect(session.state.phase).toBe('open');
+  });
+
   it('crosses the save barrier before requesting role-limited history', async () => {
     const callOrder: string[] = [];
     const { session } = setup({
       flushWorkspace: vi.fn(async () => {
         callOrder.push('flush');
+      }),
+      finalizeWindow: vi.fn(async (noteId) => {
+        callOrder.push(`seal:${noteId}`);
       }),
       loadPage: vi.fn(async () => {
         callOrder.push('history');
@@ -131,7 +145,7 @@ describe('HistoryModeSession', () => {
 
     await session.enter('notepad-pane-1');
 
-    expect(callOrder).toEqual(['flush', 'history']);
+    expect(callOrder).toEqual(['flush', 'seal:note-1', 'history']);
     expect(session.state).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-1',
@@ -165,10 +179,12 @@ describe('HistoryModeSession', () => {
       error: 'History health could not be checked: offline' });
   });
 
-  it('names, edits, and removes the selected revision without changing its identity', async () => {
+  it('names the finalized current state after entry and edits labels without resealing any window', async () => {
     const { session, deps } = setup();
     await session.enter('notepad-pane-1');
 
+    expect(deps.flushWorkspace).toHaveBeenCalledOnce();
+    expect(deps.finalizeWindow).toHaveBeenCalledExactlyOnceWith('note-1');
     await session.nameRevision('revision-1', 'Milestone');
     expect(deps.nameRevision).toHaveBeenCalledWith('note-1', 'revision-1', 'Milestone');
     expect(session.state).toMatchObject({
@@ -179,6 +195,8 @@ describe('HistoryModeSession', () => {
 
     await session.removeRevisionName('revision-1');
     expect(deps.removeRevisionName).toHaveBeenCalledWith('note-1', 'revision-1');
+    expect(deps.flushWorkspace).toHaveBeenCalledOnce();
+    expect(deps.finalizeWindow).toHaveBeenCalledOnce();
     expect(session.state).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-1',
@@ -194,7 +212,6 @@ describe('HistoryModeSession', () => {
       source: 'versionRestore',
       occurredAtMillis: 20,
       timelineOrdinal: 2,
-      editingSessionId: null
     };
     const restoredPage = { records: [restoredRevision, ...firstPage.records], nextCursor: null };
     const restoredDiff = {
@@ -272,7 +289,6 @@ describe('HistoryModeSession', () => {
       source: 'versionRestore',
       occurredAtMillis: 15,
       timelineOrdinal: 2,
-      editingSessionId: null
     };
     const loadPage = vi
       .fn()
@@ -559,7 +575,6 @@ describe('HistoryModeSession', () => {
           timelineOrdinal: 2,
           timeKind: 'observed',
           modifiedAtMillis: null,
-          editingSessionId: 'revision-2',
           revisionLabel: null,
           lineCount: 2,
           characterCount: 20
@@ -610,7 +625,6 @@ describe('HistoryModeSession', () => {
           timelineOrdinal: 0,
           timeKind: 'committed',
           modifiedAtMillis: null,
-          editingSessionId: 'revision-2',
           revisionLabel: null,
           lineCount: 1,
           characterCount: 10
@@ -837,22 +851,27 @@ describe('Version Restore navigation barrier', () => {
 
 
 describe('Revision Citation entry', () => {
-  it('opens a cited revision beyond the first page without changing the invoking document', async () => {
+  it('seeks old citations in one bounded context request and pages without growing the viewport', async () => {
     const citedTarget = { noteId: 'note-other', noteTitle: 'Other', notePath: '/vault/Other.md' };
+    const context = { records: [{ ...firstPage.records[0], recordId: 'old', revisionId: 'old', timelineOrdinal: 0 }], nextCursor: 'older', previousCursor: 'newer' };
     const { session, deps } = setup({
-      loadPage: vi.fn()
-        .mockResolvedValueOnce({ ...firstPage, nextCursor: 'older' })
-        .mockResolvedValueOnce({ records: [{ ...firstPage.records[0], recordId: 'old', revisionId: 'old' }], nextCursor: null }),
+      loadContext: vi.fn().mockResolvedValueOnce(context).mockResolvedValueOnce({ ...firstPage, previousCursor: 'back' }),
       loadDiff: vi.fn().mockResolvedValue({ ...revisionDiff, revisionId: 'old' })
     });
     await session.enterCitation('chat-pane', citedTarget, 'old');
     expect(deps.flushWorkspace).toHaveBeenCalledOnce();
     expect(deps.readTarget).not.toHaveBeenCalled();
-    expect(deps.loadPage).toHaveBeenNthCalledWith(2, 'note-other', 'older');
-    expect(session.state).toMatchObject({ phase: 'open', target: citedTarget, selectedRevisionId: 'old' });
+    expect(deps.finalizeWindow).toHaveBeenCalledExactlyOnceWith('note-other');
+    expect(deps.loadPage).not.toHaveBeenCalled();
+    expect(deps.loadContext).toHaveBeenCalledExactlyOnceWith('note-other', 'old', null);
+    expect(session.state).toMatchObject({ phase: 'open', target: citedTarget, selectedRevisionId: 'old', records: context.records });
+    await session.loadMore();
+    expect(deps.loadContext).toHaveBeenLastCalledWith('note-other', 'old', 'older');
+    expect(session.state).toMatchObject({ records: firstPage.records, selectedRevisionId: 'old' });
     await session.exit();
     expect(deps.restoreWorkspace).toHaveBeenCalledWith(workspace);
   });
+
 });
 
 
@@ -862,7 +881,7 @@ it('keeps a citation target independent during lifecycle refresh and unavailable
   await session.synchronizeAfterLifecycleChange();
   expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'other' } });
   expect(deps.readTarget).not.toHaveBeenCalled();
-  vi.mocked(deps.loadPage).mockRejectedValueOnce(new Error('temporary failure'));
+  vi.mocked(deps.loadContext).mockRejectedValueOnce(new Error('temporary failure'));
   await session.refresh();
   expect(session.state.phase).toBe('historyUnavailable');
   await session.retry();
@@ -876,4 +895,112 @@ it('reports a cleared citation without substituting a newer revision or changing
   expect(session.state).toMatchObject({ phase: 'inactive', entryError: expect.stringContaining('no longer retained') });
   expect(deps.loadDiff).not.toHaveBeenCalled();
   expect(deps.restoreWorkspace).toHaveBeenCalledWith(workspace);
+});
+
+
+it.each([false, true])('queues reentry behind viewport restoration, including failed restoration (%s)', async (failed) => {
+  let finish!: () => void;
+  const pending = new Promise<void>(resolve => { finish = resolve; });
+  const { session, deps } = setup({ restoreEditorState: async () => {
+    await pending;
+    if (failed) throw new Error('restore unavailable');
+  } });
+  await session.enter('notepad-pane-1');
+  const exiting = session.exit();
+  await vi.waitFor(() => expect(session.state.phase).toBe('restoring'));
+  expect(session.isActive).toBe(false);
+  const first = session.enter('notepad-pane-1');
+  const duplicate = session.enter('notepad-pane-1');
+  expect(deps.captureWorkspace).toHaveBeenCalledTimes(1);
+  expect(deps.loadPage).toHaveBeenCalledTimes(1);
+  finish();
+  await Promise.all([exiting, first, duplicate]);
+  expect(session.state.phase).toBe('open');
+  expect(deps.captureWorkspace).toHaveBeenCalledTimes(2);
+  expect(deps.loadPage).toHaveBeenCalledTimes(2);
+  expect(deps.finalizeWindow).toHaveBeenCalledTimes(2);
+});
+
+
+it.each(['flush', 'finalize', 'context', 'diff'])('stops obsolete citation entry after %s without restoring a newer workspace', async (stage) => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const { session, deps } = setup();
+  const method = { flush: 'flushWorkspace', finalize: 'finalizeWindow', context: 'loadContext', diff: 'loadDiff' }[stage] as 'flushWorkspace' | 'finalizeWindow' | 'loadContext' | 'loadDiff';
+  if (method === 'loadContext') vi.mocked(deps.loadContext).mockImplementationOnce(async () => { await pending; return firstPage; });
+  else if (method === 'loadDiff') vi.mocked(deps.loadDiff).mockImplementationOnce(async () => { await pending; throw new Error('obsolete failure'); });
+  else vi.mocked(deps[method]).mockImplementationOnce(async () => { await pending; });
+  const old = session.enterCitation('chat', target, 'revision-1');
+  await vi.waitFor(() => expect(deps[method]).toHaveBeenCalledOnce());
+  await session.exit();
+  await session.enterCitation('chat', { ...target, noteId: 'new-note' }, 'revision-1');
+  const counts = { page: vi.mocked(deps.loadContext).mock.calls.length, diff: vi.mocked(deps.loadDiff).mock.calls.length, restore: vi.mocked(deps.restoreWorkspace).mock.calls.length };
+  release();
+  await old;
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'new-note' } });
+  expect(deps.loadContext).toHaveBeenCalledTimes(counts.page);
+  expect(deps.loadDiff).toHaveBeenCalledTimes(counts.diff);
+  expect(deps.restoreWorkspace).toHaveBeenCalledTimes(counts.restore);
+});
+
+
+it('keeps the citation viewport bounded when a neighboring selection is refreshed', async () => {
+  const neighbor = { ...firstPage.records[0], recordId: 'neighbor', revisionId: 'neighbor' };
+  const { session, deps } = setup({ loadContext: vi.fn()
+    .mockResolvedValueOnce(firstPage)
+    .mockResolvedValueOnce({ records: [neighbor], nextCursor: 'older', previousCursor: 'newer' })
+    .mockResolvedValue(firstPage), loadDiff: vi.fn().mockImplementation(async (_note, revisionId) => ({ ...revisionDiff, revisionId })) });
+  await session.enterCitation('chat', target, 'revision-1');
+  if (session.state.phase !== 'open') throw new Error('Expected open');
+  session.state.nextCursor = 'older';
+  await session.loadMore();
+  await session.selectRevision('neighbor');
+  await session.refresh();
+  expect(session.state).toMatchObject({ records: firstPage.records, selectedRevisionId: 'neighbor', selectedDiff: { revisionId: 'neighbor' } });
+  expect(deps.loadPage).not.toHaveBeenCalled();
+  await session.loadNewer();
+});
+
+it.each(['clear', 'restore'])('leaves citation coordinates after %s before later refresh', async (action) => {
+  const { session, deps } = setup({ loadPage: vi.fn().mockResolvedValue({ ...firstPage, records: [{ ...firstPage.records[0], recordId: 'revision-restored', revisionId: 'revision-restored' }] }), loadDiff: vi.fn().mockImplementation(async (_note, revisionId) => ({ ...revisionDiff, revisionId })) });
+  await session.enterCitation('chat', { ...target, noteId: 'cross-note' }, 'revision-1');
+  if (action === 'clear') await session.clearHistory();
+  else { await session.previewRestore(); await session.confirmRestore(); }
+  expect(session.state).toMatchObject({ phase: 'open', target: { citationRevisionId: undefined }, previousCursor: null });
+  await session.refresh();
+  expect(deps.loadContext).toHaveBeenCalledOnce();
+  expect(deps.loadPage).toHaveBeenCalledTimes(2);
+  await session.synchronizeAfterLifecycleChange();
+  vi.mocked(deps.loadPage).mockRejectedValueOnce(new Error('temporary failure'));
+  await session.refresh();
+  expect(session.state.phase).toBe('historyUnavailable');
+  await session.retry();
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'cross-note', fromCitation: true, citationRevisionId: undefined } });
+  expect(deps.readTarget).not.toHaveBeenCalled();
+});
+
+it('ignores duplicate citation entry while the existing entry is admitted', async () => {
+  let release!: () => void;
+  const { session, deps } = setup({ finalizeWindow: vi.fn(() => new Promise<void>(resolve => { release = resolve; })) });
+  const first = session.enterCitation('chat', target, 'revision-1');
+  await vi.waitFor(() => expect(deps.finalizeWindow).toHaveBeenCalledOnce());
+  await session.enterCitation('chat', { ...target, noteId: 'ignored' }, 'other');
+  release(); await first;
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'note-1' } });
+  expect(deps.captureWorkspace).toHaveBeenCalledOnce();
+});
+
+
+it('queues newer citation entry until failed-entry workspace restoration has settled', async () => {
+  let release!: () => void;
+  const pending = new Promise<void>(resolve => { release = resolve; });
+  const { session, deps } = setup({ loadContext: vi.fn().mockRejectedValueOnce(new Error('missing')).mockResolvedValue(firstPage), restoreWorkspace: vi.fn().mockImplementationOnce(() => pending) });
+  const old = session.enterCitation('chat', target, 'missing');
+  await vi.waitFor(() => expect(deps.restoreWorkspace).toHaveBeenCalledOnce());
+  const newer = session.enterCitation('chat', { ...target, noteId: 'new' }, 'revision-1');
+  expect(deps.captureWorkspace).toHaveBeenCalledOnce();
+  release(); await Promise.all([old, newer]);
+  expect(deps.restoreEditorState).toHaveBeenCalledOnce();
+  expect(deps.restoreFocus).toHaveBeenCalledOnce();
+  expect(session.state).toMatchObject({ phase: 'open', target: { noteId: 'new' } });
 });

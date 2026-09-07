@@ -1,5 +1,4 @@
 import { describe, expect, it, vi } from 'vitest';
-import { DocumentRegistry } from './documentRegistry';
 import { DocumentRuntime } from './documentRuntime';
 
 function deferred() {
@@ -12,7 +11,7 @@ function deferred() {
 
 describe('DocumentRuntime persistence', () => {
   it('keeps one running operation and only the latest pending operation', async () => {
-    const runtime = new DocumentRuntime('draft:runtime');
+    const runtime = new DocumentRuntime('document:runtime');
     const firstWrite = deferred();
     const operations: string[] = [];
 
@@ -38,19 +37,14 @@ describe('DocumentRuntime persistence', () => {
     expect(operations).toEqual(['first', 'latest']);
   });
 
-  it('preserves the exact runtime object when a draft receives its path key', () => {
-    const registry = new DocumentRegistry();
-    const runtime = registry.ensure('draft:runtime');
+  it('retains its immutable open-document handle for its whole lifetime', () => {
+    const runtime = new DocumentRuntime('document:runtime');
 
-    registry.transfer('draft:runtime', 'path:/vault/Runtime.md');
-
-    expect(registry.get('draft:runtime')).toBeNull();
-    expect(registry.get('path:/vault/Runtime.md')).toBe(runtime);
-    expect(runtime.noteKey).toBe('path:/vault/Runtime.md');
+    expect(runtime.documentHandle).toBe('document:runtime');
   });
 
   it('reports a failed drain and remains usable for a later save', async () => {
-    const runtime = new DocumentRuntime('draft:runtime');
+    const runtime = new DocumentRuntime('document:runtime');
     const failure = new Error('disk unavailable');
 
     await expect(

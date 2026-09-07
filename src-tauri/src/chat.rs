@@ -5924,6 +5924,16 @@ mod tests {
             note_id: "note-current".into(),
             revision_id: "revision-old".into(),
             at_millis: 15,
+            time_evidence: Some(
+                crate::services::note_timeline::RevisionTimeEvidence::EditingWindow {
+                    version: 1,
+                    first_wall_millis: 10,
+                    last_wall_millis: 15,
+                    min_wall_millis: 10,
+                    max_wall_millis: 15,
+                    clock_discontinuity: false,
+                },
+            ),
             source: crate::services::note_timeline::MutationSource::Editor,
             current_excerpt: "once-current secret".into(),
         };
@@ -5953,6 +5963,11 @@ mod tests {
                 .unwrap()
                 .revision_id,
             "revision-old"
+        );
+        let branched = service.branch_from_message(&assistant).unwrap();
+        assert_eq!(
+            serde_json::to_value(&branched.messages[1].sources[0].revision).unwrap(),
+            serde_json::to_value(&reloaded.messages[1].sources[0].revision).unwrap()
         );
         let history = normalized_rig_history(&reloaded.messages, "next-user", None).unwrap();
         assert!(!serde_json::to_string(&history)

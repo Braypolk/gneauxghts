@@ -1,31 +1,29 @@
-import type { NoteKey } from '$lib/features/notepad/state/noteStore';
+import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 import { DocumentRuntime } from '$lib/features/notepad/document/documentRuntime';
 
 /**
  * DocumentRegistry is a single per-note runtime map. It replaces the
  * collection of parallel maps that previously lived in runtimeStore.
  *
- * One DocumentRuntime is created lazily per NoteKey and owns all of its
- * runtime state (CodeMirror resources and save timers/queues). The registry
- * coordinates lookup, transfer (when a draft
- * is rekeyed to a saved path), and cleanup.
+ * One DocumentRuntime is created lazily per immutable DocumentHandle and owns
+ * all of its runtime state (CodeMirror resources and save timers/queues).
  */
 export class DocumentRegistry {
-  private _runtimes = new Map<NoteKey, DocumentRuntime>();
+  private _runtimes = new Map<DocumentHandle, DocumentRuntime>();
 
   /** Get or create the runtime for a note. */
-  ensure(noteKey: NoteKey): DocumentRuntime {
-    let runtime = this._runtimes.get(noteKey);
+  ensure(documentHandle: DocumentHandle): DocumentRuntime {
+    let runtime = this._runtimes.get(documentHandle);
     if (!runtime) {
-      runtime = new DocumentRuntime(noteKey);
-      this._runtimes.set(noteKey, runtime);
+      runtime = new DocumentRuntime(documentHandle);
+      this._runtimes.set(documentHandle, runtime);
     }
     return runtime;
   }
 
   /** Look up an existing runtime without creating one. */
-  get(noteKey: NoteKey): DocumentRuntime | null {
-    return this._runtimes.get(noteKey) ?? null;
+  get(documentHandle: DocumentHandle): DocumentRuntime | null {
+    return this._runtimes.get(documentHandle) ?? null;
   }
 
   /** Iterate over all runtimes (used for global flush sweeps). */
@@ -33,39 +31,12 @@ export class DocumentRegistry {
     return this._runtimes.values();
   }
 
-  /**
-   * Move runtime state from `oldKey` to `nextKey`. If a runtime already
-   * exists at `nextKey`, the old runtime's state is merged into it; otherwise
-   * the runtime is moved and re-keyed.
-   */
-  transfer(oldKey: NoteKey, nextKey: NoteKey): void {
-    if (oldKey === nextKey) return;
-
-    const oldRuntime = this._runtimes.get(oldKey);
-    if (!oldRuntime) return;
-
-    const existingNext = this._runtimes.get(nextKey);
-    if (existingNext) {
-      existingNext.adoptFrom(oldRuntime);
-      // Old runtime now empty; discard.
-      this._runtimes.delete(oldKey);
-      return;
-    }
-
-    // Preserve the runtime object itself. Timer callbacks and an active save
-    // drain close over this instance, so replacing it during a draft-to-path
-    // rekey would leave timer/queue bookkeeping attached to the old wrapper.
-    oldRuntime.rekey(nextKey);
-    this._runtimes.set(nextKey, oldRuntime);
-    this._runtimes.delete(oldKey);
-  }
-
   /** Dispose and remove the runtime for a note. */
-  dispose(noteKey: NoteKey): void {
-    const runtime = this._runtimes.get(noteKey);
+  dispose(documentHandle: DocumentHandle): void {
+    const runtime = this._runtimes.get(documentHandle);
     if (!runtime) return;
     runtime.dispose();
-    this._runtimes.delete(noteKey);
+    this._runtimes.delete(documentHandle);
   }
 }
 

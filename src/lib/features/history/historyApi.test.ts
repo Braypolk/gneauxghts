@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearNoteHistory,
+  finalizeNoteEditingWindow,
   getHistoryModeDiff,
   getHistoryModeDiagnostics,
   getHistoryModePage,
+  getHistoryModeContext,
   getHistoryModeRevision,
   nameHistoryRevision,
   previewHistoryRevisionRestore,
@@ -28,6 +30,12 @@ describe('historyApi', () => {
       cursor: 'cursor-1',
       limit: 30
     });
+  });
+
+  it('requests identity-bound context and opaque continuation through History Mode', async () => {
+    invoke.mockResolvedValue({ records: [], nextCursor: null, previousCursor: 'newer' });
+    await expect(getHistoryModeContext('note-1', 'old-revision', 'older')).resolves.toMatchObject({ previousCursor: 'newer' });
+    expect(invoke).toHaveBeenCalledWith('get_note_history_context', { noteId: 'note-1', revisionId: 'old-revision', cursor: 'older' });
   });
 
   it('requests one selected revision scoped to its note', async () => {
@@ -133,4 +141,14 @@ describe('historyApi', () => {
     });
     expect(invoke).toHaveBeenNthCalledWith(2, 'get_history_health');
   });
+});
+
+it('preserves window evidence and immutable selection through the target-only finalization API', async () => {
+  const record = { kind: 'revision', revisionId: 'window-1', timeKind: 'editingWindow',
+    timeEvidence: { kind: 'editingWindow', version: 1, firstWallMillis: 200, lastWallMillis: 100,
+      minWallMillis: 100, maxWallMillis: 200, clockDiscontinuity: true } };
+  invoke.mockReset().mockResolvedValueOnce(undefined).mockResolvedValueOnce({ records: [record], nextCursor: 'older' });
+  await finalizeNoteEditingWindow('note-1');
+  expect(await getHistoryModePage('note-1')).toEqual({ records: [record], nextCursor: 'older' });
+  expect(invoke).toHaveBeenNthCalledWith(1, 'finalize_note_editing_window', { noteId: 'note-1' });
 });

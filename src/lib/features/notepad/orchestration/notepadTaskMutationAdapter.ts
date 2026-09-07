@@ -6,12 +6,12 @@ import {
   getDocumentNoteId,
   getDocumentPath,
   type NoteDraftState,
-  type NoteKey
+  type DocumentHandle
 } from '$lib/features/notepad/document/documentState';
 
 export interface NotepadTaskMutationAdapterDeps {
-  listReferencedNoteKeys: () => NoteKey[];
-  getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
+  listReferencedDocumentHandles: () => DocumentHandle[];
+  getDocumentByHandle: (documentHandle: DocumentHandle) => NoteDraftState | null;
   replaceMarkdown: (
     document: NoteDraftState,
     markdown: string,
@@ -34,14 +34,14 @@ export interface NotepadTaskMutationAdapterDeps {
 export function findReferencedDocumentByIdentity(
   deps: Pick<
     NotepadTaskMutationAdapterDeps,
-    'listReferencedNoteKeys' | 'getNoteByKey'
+    'listReferencedDocumentHandles' | 'getDocumentByHandle'
   >,
   noteId: string,
   notePath: string
 ) {
   const referenced = deps
-    .listReferencedNoteKeys()
-    .map(deps.getNoteByKey)
+    .listReferencedDocumentHandles()
+    .map(deps.getDocumentByHandle)
     .filter(
       (document): document is NoteDraftState =>
         document !== null

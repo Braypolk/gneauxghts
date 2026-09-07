@@ -12,6 +12,7 @@ import {
   paneHasCapability
 } from '$lib/features/notepad/workspace/paneCapabilities';
 import { getDocumentPath } from '$lib/features/notepad/document/documentState';
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 
 export interface NotepadProposalAdapterDeps<TPaneId extends string> {
   maxVisiblePanes: number;
@@ -47,6 +48,7 @@ export interface NotepadProposalAdapterDeps<TPaneId extends string> {
     document: NoteDraftState;
     path: string;
     markdown: string;
+    commitWarning: CommittedMutationWarning | null;
   }) => Promise<void>;
 }
 

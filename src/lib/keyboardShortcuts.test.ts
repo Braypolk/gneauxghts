@@ -26,6 +26,18 @@ function keyboardEvent(
   } as KeyboardEvent;
 }
 
+describe('history shortcut', () => {
+  it('defaults to Cmd+Shift+H and honors a custom binding', () => {
+    const event = keyboardEvent('H', { metaKey: true, shiftKey: true });
+    expect(keyboardShortcutMatchesEvent(event, 'showHistory')).toBe(true);
+    const remapped = { ...defaultKeyboardShortcutBindings, showHistory: 'Alt+h' };
+    expect(keyboardShortcutMatchesEvent(event, 'showHistory', remapped)).toBe(false);
+    expect(keyboardShortcutMatchesEvent(
+      keyboardEvent('h', { altKey: true }), 'showHistory', remapped
+    )).toBe(true);
+  });
+});
+
 describe('editor link shortcut', () => {
   it('uses Cmd+K on macOS and Ctrl+K elsewhere', () => {
     expect(

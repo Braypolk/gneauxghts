@@ -22,6 +22,7 @@ function createDeps() {
     getActivePaneId: () => 'primary',
     getPaneTitleInput: () => null,
     openThoughtPartner: vi.fn().mockResolvedValue(undefined),
+    showHistory: vi.fn().mockResolvedValue(undefined),
     openSplitPaneOptions: vi.fn().mockResolvedValue(undefined),
     openNewChatInSplit: vi.fn().mockResolvedValue(undefined),
     openPreviousNoteInSplit: vi.fn().mockResolvedValue(undefined),
@@ -54,6 +55,7 @@ describe('workspace shortcuts', () => {
   });
 
   it.each([
+    ['h', 'showHistory'],
     ['n', 'openSplitPaneOptions'],
     ['t', 'openNewChatInSplit'],
     ['l', 'openPreviousNoteInSplit']

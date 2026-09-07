@@ -3,7 +3,7 @@ import type { NavLocation } from '$lib/features/notepad/navigation/locationMru';
 import {
   createFreshDraftNote,
   type NoteDraftState,
-  type NoteKey,
+  type DocumentHandle,
   type NotepadState
 } from '$lib/features/notepad/state/noteStore';
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
@@ -47,7 +47,7 @@ export interface WorkspacePaneControllerDeps<
   completeWorkspacePaneCreation: (
     paneId: TPaneId,
     operationId: number,
-    noteKey: NoteKey,
+    documentHandle: DocumentHandle,
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemoveWorkspacePane: (paneId: TPaneId) => boolean;
@@ -107,13 +107,13 @@ export interface WorkspacePaneControllerDeps<
   bumpLocationHistoryEpoch: () => void;
   beginPaneCommand: (
     paneId: TPaneId,
-    noteKey: NoteKey,
+    documentHandle: DocumentHandle,
     mode: 'split',
     sourcePaneId: TPaneId
   ) => void;
   resetPaneCommand: () => void;
   getPaneCommandPaneId: () => TPaneId | null;
-  removeUnreferencedNote: (noteKey: NoteKey) => void;
+  removeUnreferencedNote: (documentHandle: DocumentHandle) => boolean;
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   canLeaveDocument?: (document: NoteDraftState) => boolean;
   onNavigationBlocked?: () => void;
@@ -230,13 +230,13 @@ export function createWorkspacePaneController<
         deps.completeWorkspacePaneCreation(
           paneId,
           creationOperationId,
-          placeholderDraft.key,
+          placeholderDraft.handle,
           'editor'
         );
         creationCompleted = true;
         deps.beginPaneCommand(
           paneId,
-          sharedDocument.key,
+          sharedDocument.handle,
           'split',
           sourcePaneId
         );
@@ -265,10 +265,11 @@ export function createWorkspacePaneController<
   async function closePane(paneId: TPaneId) {
     let closingDocument: NoteDraftState;
     let closingLocation: NavLocation | null = null;
-    let orphanPlaceholderKey: NoteKey | null = null;
+    let orphanPlaceholderKey: DocumentHandle | null = null;
     let remainingPaneId: TPaneId | null = null;
     let closeOperationId: number | null = null;
     let workspaceRemoved = false;
+    let closingHadCanonicalCollision = false;
     let teardownPromise: Promise<void> | null = null;
     function teardownRemovedPane() {
       if (!workspaceRemoved) return Promise.resolve();
@@ -328,6 +329,8 @@ export function createWorkspacePaneController<
           };
         }
         closingDocument = deps.getPaneDocument(paneId);
+        closingHadCanonicalCollision =
+          closingDocument.canonicalCollision !== null;
         const remainingEditorsForDocument =
           deps.getPaneOrder().filter(
             (candidate) =>
@@ -336,8 +339,8 @@ export function createWorkspacePaneController<
                 deps.getPaneKind(candidate),
                 'edit-document'
               ) &&
-              deps.getPaneDocument(candidate).key ===
-                closingDocument.key
+              deps.getPaneDocument(candidate).handle ===
+                closingDocument.handle
           ).length;
         if (
           deps.canLeaveDocument?.(closingDocument) === false &&
@@ -378,7 +381,7 @@ export function createWorkspacePaneController<
         const wasPaneCommand =
           deps.getPaneCommandPaneId() === paneId;
         orphanPlaceholderKey = wasPaneCommand
-          ? closingDocument.key
+          ? closingDocument.handle
           : null;
         if (wasPaneCommand) deps.resetPaneCommand();
         // Capture live chat context before this editor leaves paneOrder.
@@ -407,8 +410,17 @@ export function createWorkspacePaneController<
       complete: async () => {
         await teardownRemovedPane();
         deps.paneCloseAnimation.release(paneId);
-        if (orphanPlaceholderKey) {
-          deps.removeUnreferencedNote(orphanPlaceholderKey);
+        if (
+          closingHadCanonicalCollision &&
+          deps.removeUnreferencedNote(closingDocument.handle)
+        ) {
+          cleanupNoteRuntime(closingDocument.handle);
+        }
+        if (
+          orphanPlaceholderKey &&
+          orphanPlaceholderKey !== closingDocument.handle &&
+          deps.removeUnreferencedNote(orphanPlaceholderKey)
+        ) {
           cleanupNoteRuntime(orphanPlaceholderKey);
         }
         if (!remainingPaneId) return;
@@ -501,8 +513,8 @@ export function createWorkspacePaneController<
                   deps.getPaneKind(candidate),
                   'edit-document'
                 ) &&
-                deps.getPaneDocument(candidate).key ===
-                  paneDocument.key
+                deps.getPaneDocument(candidate).handle ===
+                  paneDocument.handle
             ).length;
           if (remainingEditorsForDocument === 0) {
             deps.onNavigationBlocked?.();

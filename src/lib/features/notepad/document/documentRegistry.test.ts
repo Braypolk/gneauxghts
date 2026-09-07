@@ -1,53 +1,27 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import { DocumentRegistry } from './documentRegistry';
-import type { NoteKey } from '$lib/features/notepad/state/noteStore';
+import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 
-describe('DocumentRegistry transfer', () => {
-  it('preserves the canonical editor runtime when a draft receives a path key', () => {
+describe('DocumentRegistry stable handles', () => {
+  it('returns one runtime for one immutable open-document handle', () => {
     const registry = new DocumentRegistry();
-    const draftKey = 'draft:transfer-test' as NoteKey;
-    const pathKey = 'path:/vault/Transfer.md' as NoteKey;
-    const resources = registry.ensure(draftKey).ensureResources({
-      assetRootPath: null,
-      storePastedImage: async () => ({
-        fileName: 'unused',
-        filePath: 'unused'
-      })
-    });
-    resources.runtime.replaceMarkdown('history-bearing draft');
+    const handle = 'document:registry-test' as DocumentHandle;
 
-    registry.transfer(draftKey, pathKey);
+    const first = registry.ensure(handle);
+    const second = registry.ensure(handle);
 
-    expect(registry.get(draftKey)).toBeNull();
-    expect(registry.get(pathKey)?.resources()?.runtime).toBe(
-      resources.runtime
-    );
-    expect(resources.runtime.markdown).toBe('history-bearing draft');
+    expect(second).toBe(first);
+    expect(first.documentHandle).toBe(handle);
+    expect([...registry.values()]).toEqual([first]);
   });
 
-  it('keeps target resources and disposes detached source resources after a collision rebind', () => {
+  it('keeps independently opened document resources separate', () => {
     const registry = new DocumentRegistry();
-    const draftKey = 'draft:collision-test' as NoteKey;
-    const pathKey = 'path:/vault/Existing.md' as NoteKey;
-    const resourceOptions = {
-      assetRootPath: null,
-      storePastedImage: async () => ({
-        fileName: 'unused',
-        filePath: 'unused'
-      })
-    };
-    const source = registry
-      .ensure(draftKey)
-      .ensureResources(resourceOptions);
-    const target = registry
-      .ensure(pathKey)
-      .ensureResources(resourceOptions);
-    const destroySource = vi.spyOn(source, 'destroy');
+    const left = registry.ensure('document:left');
+    const right = registry.ensure('document:right');
 
-    registry.transfer(draftKey, pathKey);
-
-    expect(registry.get(pathKey)?.resources()).toBe(target);
-    expect(destroySource).toHaveBeenCalledOnce();
-    expect(registry.get(draftKey)).toBeNull();
+    expect(left).not.toBe(right);
+    expect(left.documentHandle).toBe('document:left');
+    expect(right.documentHandle).toBe('document:right');
   });
 });

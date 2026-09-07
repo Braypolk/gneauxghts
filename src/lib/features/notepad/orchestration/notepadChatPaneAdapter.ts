@@ -87,7 +87,7 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
     }
     const contextDocument = deps.getPaneDocument(contextPaneId);
     const retained = deps.getPaneDocument(paneId);
-    if (contextDocument.key === retained.key) {
+    if (contextDocument.handle === retained.handle) {
       return;
     }
     deps.setPaneDocument(paneId, contextDocument);

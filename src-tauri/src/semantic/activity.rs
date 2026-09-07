@@ -21,20 +21,21 @@ impl BackgroundWorkGate {
         }
     }
 
-    pub(crate) fn report_activity(&self) {
-        // Rebuilds run immediately; activity reporting is retained for callers
-        // that still notify the gate around interactive work.
+    pub(crate) fn set_manually_paused(&self, paused: bool) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Semantic background work gate lock poisoned".to_string())?;
+        state.manually_paused = paused;
+        self.changed.notify_all();
+        Ok(())
     }
 
-    pub(crate) fn begin_foreground(&self) {}
-
-    pub(crate) fn end_foreground(&self) {}
-
-    pub(crate) fn set_manually_paused(&self, paused: bool) {
-        if let Ok(mut state) = self.state.lock() {
-            state.manually_paused = paused;
-            self.changed.notify_all();
-        }
+    pub(crate) fn is_manually_paused(&self) -> Result<bool, String> {
+        self.state
+            .lock()
+            .map(|state| state.manually_paused)
+            .map_err(|_| "Semantic background work gate lock poisoned".to_string())
     }
 
     /// Expensive jobs still obey an explicit pause without waiting for idle.
@@ -56,35 +57,58 @@ impl BackgroundWorkGate {
 mod tests {
     use super::BackgroundWorkGate;
     use std::{
+        panic::{catch_unwind, AssertUnwindSafe},
         sync::{
             atomic::{AtomicBool, Ordering},
-            Arc,
+            mpsc, Arc,
         },
         thread,
         time::Duration,
     };
 
     #[test]
-    fn checkpoint_waits_only_while_manually_paused() {
+    fn pause_during_long_work_holds_the_next_checkpoint() {
         let gate = Arc::new(BackgroundWorkGate::new());
-        gate.set_manually_paused(true);
-        let started = Arc::new(AtomicBool::new(false));
+        let finished = Arc::new(AtomicBool::new(false));
+        let (first_checkpoint_tx, first_checkpoint_rx) = mpsc::channel();
+        let (continue_tx, continue_rx) = mpsc::channel();
         let worker_gate = gate.clone();
-        let worker_started = started.clone();
+        let worker_finished = finished.clone();
         let worker = thread::spawn(move || {
             worker_gate.checkpoint_manual_pause();
-            worker_started.store(true, Ordering::Release);
+            first_checkpoint_tx
+                .send(())
+                .expect("report first checkpoint");
+            continue_rx.recv().expect("continue long work");
+            worker_gate.checkpoint_manual_pause();
+            worker_finished.store(true, Ordering::Release);
         });
+
+        first_checkpoint_rx.recv().expect("first checkpoint");
+        gate.set_manually_paused(true).expect("pause gate");
+        continue_tx.send(()).expect("continue to paused checkpoint");
         thread::sleep(Duration::from_millis(40));
-        assert!(!started.load(Ordering::Acquire));
-        gate.set_manually_paused(false);
+        assert!(!finished.load(Ordering::Acquire));
+        gate.set_manually_paused(false).expect("resume gate");
         worker.join().expect("pause worker");
-        assert!(started.load(Ordering::Acquire));
+        assert!(finished.load(Ordering::Acquire));
     }
 
     #[test]
     fn checkpoint_returns_immediately_when_not_paused() {
         let gate = BackgroundWorkGate::new();
         gate.checkpoint_manual_pause();
+    }
+
+    #[test]
+    fn failed_pause_mutation_is_reported() {
+        let gate = BackgroundWorkGate::new();
+        let _ = catch_unwind(AssertUnwindSafe(|| {
+            let _state = gate.state.lock().expect("lock gate");
+            panic!("poison gate");
+        }));
+
+        assert!(gate.set_manually_paused(true).is_err());
+        assert!(gate.is_manually_paused().is_err());
     }
 }

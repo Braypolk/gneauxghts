@@ -184,14 +184,17 @@ pub(crate) fn read_state_with_lookup(
     Ok(state)
 }
 
+#[cfg(test)]
 pub(crate) fn write_state(notes_dir: &Path, state: &PersistedState) -> Result<(), String> {
     write_state_with_lookup(notes_dir, state, &NoteIdLookup::Disk)
 }
 
+#[cfg(test)]
 pub(crate) fn write_unpruned_state(state: &PersistedState) -> Result<(), String> {
     write_state_to_database(state)
 }
 
+#[cfg(test)]
 pub(crate) fn write_state_with_lookup(
     notes_dir: &Path,
     state: &PersistedState,
@@ -208,6 +211,7 @@ pub(crate) fn write_state_with_lookup(
 /// hidden, note_order, collapsed, and forgotten rows on every note switch).
 /// Used by `mark_note_opened` so rapid note switching does not contend on
 /// SQLite for state that did not change.
+#[cfg(test)]
 pub(crate) fn write_last_opened_and_recents(state: &PersistedState) -> Result<(), String> {
     with_state_database(|connection| write_last_opened_and_recents_to_connection(connection, state))
 }
@@ -253,6 +257,36 @@ pub(crate) fn db_mark_note_opened(note_id: &str) -> Result<(), String> {
         touch_recent_note_id(&mut state, note_id.to_string());
         write_last_opened_and_recents_to_connection(connection, &state)
     })
+}
+
+/// A delayed startup restore cannot replace a newer explicit note selection.
+pub(crate) fn db_record_session_restore(note_id: &str) -> Result<(), String> {
+    with_state_database(|connection| {
+        let mut state = read_state_from_database(connection)?;
+        if state.last_opened_note_id.as_deref() != Some(note_id) {
+            return Ok(());
+        }
+        touch_recent_note_id(&mut state, note_id.to_string());
+        write_last_opened_and_recents_to_connection(connection, &state)
+    })
+}
+
+pub(crate) fn db_prune_recent_state(
+    previous: &PersistedState,
+    pruned: &PersistedState,
+) -> Result<(), String> {
+    let mut removed = previous
+        .recent_note_ids
+        .iter()
+        .filter(|id| !pruned.recent_note_ids.contains(id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if previous.last_opened_note_id != pruned.last_opened_note_id {
+        if let Some(id) = &previous.last_opened_note_id {
+            removed.push(id.clone());
+        }
+    }
+    db_prune_note_navigation(&removed)
 }
 
 pub(crate) fn db_clear_last_opened_note() -> Result<(), String> {
@@ -385,14 +419,12 @@ pub(crate) fn persist_note(
     current_path: Option<&Path>,
 ) -> Result<Option<String>, String> {
     with_note_file_mutation(|| {
-        persist_note_locked(
-            notes_dir,
-            title,
-            markdown,
-            current_path,
-            |_path, markdown| Ok(markdown.to_string()),
-        )
-        .map(|published| published.map(|(path, _)| path))
+        if current_path.is_none() && title.trim().is_empty() && markdown.trim().is_empty() {
+            return Ok(None);
+        }
+        let (path, canonical) = prepare_note_save(notes_dir, title, markdown, current_path, None)?;
+        publish_note_save(&path, &canonical, current_path)?;
+        Ok(Some(path.to_string_lossy().into_owned()))
     })
 }
 
@@ -408,57 +440,13 @@ where
     operation()
 }
 
-pub(crate) fn persist_note_with_preparation<P, T>(
+pub(crate) fn prepare_note_save(
     notes_dir: &Path,
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
-    prepare: impl FnOnce(&Path, &str) -> Result<(String, P), String>,
-    abandon_after_publication_failure: impl FnOnce(P, String) -> String,
-    finalize: impl FnOnce(PathBuf, String, P) -> T,
-) -> Result<Option<(String, String, T)>, String> {
-    with_note_file_mutation(|| {
-        let mut prepared_context = None;
-        let publication = persist_note_locked(
-            notes_dir,
-            title,
-            markdown,
-            current_path,
-            |path, markdown| {
-                let (markdown, context) = prepare(path, markdown)?;
-                prepared_context = Some(context);
-                Ok(markdown)
-            },
-        );
-        let publication = match publication {
-            Ok(publication) => publication,
-            Err(publication_error) => {
-                if let Some(context) = prepared_context.take() {
-                    return Err(abandon_after_publication_failure(
-                        context,
-                        publication_error,
-                    ));
-                }
-                return Err(publication_error);
-            }
-        };
-        Ok(publication.map(|(path, markdown)| {
-            let context = prepared_context
-                .take()
-                .expect("published note has prepared timeline context");
-            let outcome = finalize(PathBuf::from(&path), markdown.clone(), context);
-            (path, markdown, outcome)
-        }))
-    })
-}
-
-fn persist_note_locked(
-    notes_dir: &Path,
-    title: &str,
-    markdown: &str,
-    current_path: Option<&Path>,
-    prepare: impl FnOnce(&Path, &str) -> Result<String, String>,
-) -> Result<Option<(String, String)>, String> {
+    fallback_identity: Option<&str>,
+) -> Result<(PathBuf, String), String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
     note::reject_chat_projection_write(&normalized_markdown)?;
     let existing_markdown = current_path
@@ -470,42 +458,38 @@ fn persist_note_locked(
         note::reject_chat_projection_write(existing_markdown)?;
     }
 
-    if title.trim().is_empty() && normalized_markdown.trim().is_empty() && current_path.is_none() {
-        let target_path =
-            resolve_target_path(notes_dir, title, &normalized_markdown, current_path)?;
-        let Some(target_path) = target_path else {
-            return Ok(None);
-        };
-
-        if let Some(existing_path) = current_path {
-            if existing_path != target_path && existing_path.exists() {
-                let expected_removal = crate::vault_watcher::record_expected_removal(existing_path);
-                fs::rename(existing_path, &target_path).map_err(|err| err.to_string())?;
-                expected_removal.commit();
-            }
-        }
-
-        let expected_write = crate::vault_watcher::record_expected_write(&target_path, "");
-        fs::write(&target_path, "").map_err(|err| err.to_string())?;
-        expected_write.commit();
-        return Ok(Some((
-            target_path.to_string_lossy().into_owned(),
-            String::new(),
-        )));
-    }
-
-    let prepared_markdown = note::prepare_note_markdown(
+    let mut prepared_markdown = note::prepare_note_markdown(
         &normalized_markdown,
         existing_markdown.as_deref(),
         Some(None),
     )?
     .0;
+    if let Some(identity) = fallback_identity {
+        let has_identity = [
+            &normalized_markdown,
+            existing_markdown.as_deref().unwrap_or(""),
+        ]
+        .iter()
+        .any(|markdown| {
+            note::parse_note(markdown)
+                .frontmatter
+                .managed
+                .is_some_and(|metadata| !metadata.id.trim().is_empty())
+        });
+        if !has_identity {
+            prepared_markdown = note::repair_managed_note_identity(&prepared_markdown, identity)?;
+        }
+    }
     let target_path = resolve_target_path(notes_dir, title, &prepared_markdown, current_path)?;
-    let Some(target_path) = target_path else {
-        return Ok(None);
-    };
-    let prepared_markdown = prepare(&target_path, &prepared_markdown)?;
+    Ok((target_path, prepared_markdown))
+}
 
+#[cfg(test)]
+fn publish_note_save(
+    target_path: &Path,
+    prepared_markdown: &str,
+    current_path: Option<&Path>,
+) -> Result<(), String> {
     if let Some(existing_path) = current_path {
         if existing_path != target_path && existing_path.exists() {
             let expected_removal = crate::vault_watcher::record_expected_removal(existing_path);
@@ -518,10 +502,7 @@ fn persist_note_locked(
         crate::vault_watcher::record_expected_write(&target_path, &prepared_markdown);
     atomic_write_note(&target_path, prepared_markdown.as_bytes())?;
     expected_write.commit();
-    Ok(Some((
-        target_path.to_string_lossy().into_owned(),
-        prepared_markdown,
-    )))
+    Ok(())
 }
 
 /// Publish a fully-written note in one rename. Keeping the temporary file next
@@ -702,11 +683,7 @@ fn resolve_target_path(
     title: &str,
     markdown: &str,
     current_path: Option<&Path>,
-) -> Result<Option<PathBuf>, String> {
-    if title.trim().is_empty() && markdown.trim().is_empty() {
-        return Ok(current_path.map(Path::to_path_buf));
-    }
-
+) -> Result<PathBuf, String> {
     let file_stem = derive_file_stem_from_title_and_markdown(title, markdown);
     let target_dir = current_path
         .and_then(Path::parent)
@@ -715,19 +692,19 @@ fn resolve_target_path(
     let preferred_path = target_dir.join(format!("{file_stem}.md"));
 
     if current_path.is_some_and(|path| path == preferred_path) || !preferred_path.exists() {
-        return Ok(Some(preferred_path));
+        return Ok(preferred_path);
     }
 
     if let Some(existing_path) = current_path {
         if existing_path.exists() && existing_path.file_name() == preferred_path.file_name() {
-            return Ok(Some(existing_path.to_path_buf()));
+            return Ok(existing_path.to_path_buf());
         }
     }
 
     for suffix in 2.. {
         let candidate = target_dir.join(format!("{file_stem} {suffix}.md"));
         if current_path.is_some_and(|path| path == candidate) || !candidate.exists() {
-            return Ok(Some(candidate));
+            return Ok(candidate);
         }
     }
 
@@ -1153,10 +1130,12 @@ fn read_ordered_string_column(connection: &Connection, query: &str) -> Result<Ve
     read_string_column(connection, query)
 }
 
+#[cfg(test)]
 fn write_state_to_database(state: &PersistedState) -> Result<(), String> {
     with_state_database(|connection| write_state_to_connection(connection, state))
 }
 
+#[cfg(test)]
 fn write_state_to_connection(
     connection: &mut Connection,
     state: &PersistedState,
@@ -1281,6 +1260,117 @@ fn write_state_to_connection(
     }
 
     transaction.commit().map_err(|err| err.to_string())
+}
+
+// Forgotten lifecycle bookkeeping is scoped to the exact staged record. No
+// database lock is held while NoteTimeline waits, publishes, or recovers files.
+fn forgotten_row_values(
+    note: &PersistedForgottenNote,
+) -> Result<Vec<rusqlite::types::Value>, String> {
+    use rusqlite::types::Value;
+    Ok(vec![
+        Value::Text(note.forgotten_path.clone()),
+        note.note_id.clone().map_or(Value::Null, Value::Text),
+        Value::Text(note.original_path.clone()),
+        Value::Text(note.title.clone()),
+        Value::Integer(to_i64(note.forgotten_at_millis)?),
+        Value::Integer(i64::from(note.purge_after_days)),
+        Value::Integer(to_i64(note.purge_at_millis)?),
+        Value::Text(note.kind.as_str().to_owned()),
+        note.conversation_id
+            .clone()
+            .map_or(Value::Null, Value::Text),
+    ])
+}
+
+const FORGOTTEN_ROW_MATCH: &str = "forgotten_path = ?1 AND note_id IS ?2 AND original_path = ?3
+    AND title = ?4 AND forgotten_at_millis = ?5 AND purge_after_days = ?6 AND purge_at_millis = ?7
+    AND kind = ?8 AND conversation_id IS ?9";
+
+pub(crate) fn db_insert_forgotten_note(note: &PersistedForgottenNote) -> Result<(), String> {
+    let values = forgotten_row_values(note)?;
+    with_state_database(|connection| {
+        connection.execute("INSERT INTO app_state_forgotten_notes
+            (forgotten_path, note_id, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis, kind, conversation_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", rusqlite::params_from_iter(values))
+            .map(|_| ()).map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn db_forgotten_note_matches(expected: &PersistedForgottenNote) -> Result<bool, String> {
+    let values = forgotten_row_values(expected)?;
+    with_state_database(|connection| {
+        connection.query_row(
+            &format!("SELECT EXISTS(SELECT 1 FROM app_state_forgotten_notes WHERE {FORGOTTEN_ROW_MATCH})"),
+            rusqlite::params_from_iter(values),
+            |row| row.get(0),
+        ).map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn db_remove_forgotten_note(expected: &PersistedForgottenNote) -> Result<bool, String> {
+    let values = forgotten_row_values(expected)?;
+    with_state_database(|connection| {
+        connection
+            .execute(
+                &format!("DELETE FROM app_state_forgotten_notes WHERE {FORGOTTEN_ROW_MATCH}"),
+                rusqlite::params_from_iter(values),
+            )
+            .map(|changed| changed == 1)
+            .map_err(|error| error.to_string())
+    })
+}
+
+pub(crate) fn db_set_forgotten_original_path(
+    expected: &PersistedForgottenNote,
+    path: &str,
+) -> Result<(), String> {
+    let mut values = forgotten_row_values(expected)?;
+    values.push(rusqlite::types::Value::Text(path.to_owned()));
+    with_state_database(|connection| {
+        let changed = connection.execute(&format!("UPDATE app_state_forgotten_notes SET original_path = ?10 WHERE {FORGOTTEN_ROW_MATCH}"), rusqlite::params_from_iter(values))
+            .map_err(|error| error.to_string())?;
+        if changed != 1 {
+            return Err("The forgotten item changed before recovery finished".to_string());
+        }
+        Ok(())
+    })
+}
+
+/// Remove only the observed IDs; a concurrent open of another note survives.
+pub(crate) fn db_prune_note_navigation(note_ids: &[String]) -> Result<(), String> {
+    with_state_database(|connection| {
+        let transaction = connection
+            .transaction()
+            .map_err(|error| error.to_string())?;
+        for note_id in note_ids {
+            transaction.execute("UPDATE app_state SET last_opened_note_id = NULL WHERE id = ?1 AND last_opened_note_id = ?2",
+                params![APP_STATE_SINGLETON_ID, note_id]).map_err(|error| error.to_string())?;
+            transaction
+                .execute(
+                    "DELETE FROM app_state_recent_note_ids WHERE note_id = ?1",
+                    [note_id],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        transaction.commit().map_err(|error| error.to_string())
+    })
+}
+
+/// Navigation changes follow canonical publication; failed preparation never
+/// needs to restore an old aggregate snapshot over another command's edits.
+pub(crate) fn db_finish_forgetting(note: &PersistedForgottenNote) -> Result<(), String> {
+    if let Some(note_id) = &note.note_id {
+        db_prune_note_navigation(std::slice::from_ref(note_id))?;
+    }
+    if let Some(conversation_id) = &note.conversation_id {
+        with_state_database(|connection| {
+            connection.execute("UPDATE app_state SET last_chat_conversation_id = NULL, last_chat_context_note_id = NULL, last_chat_context_note_path = NULL
+                WHERE id = ?1 AND last_chat_conversation_id = ?2", params![APP_STATE_SINGLETON_ID, conversation_id])
+                .map(|_| ()).map_err(|error| error.to_string())
+        })?;
+    }
+    Ok(())
 }
 
 // Row-scoped mutation helpers. These avoid the full DELETE + INSERT rewrite

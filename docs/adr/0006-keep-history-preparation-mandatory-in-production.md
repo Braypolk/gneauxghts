@@ -4,7 +4,16 @@ status: accepted
 
 # Keep history preparation mandatory in production
 
-The initial single-writer Note Timeline release keeps app-owned ordinary-note writes fail-closed when durable history preparation is unavailable. Controlled development failures demonstrate that preparation can reject a write without changing canonical Markdown, while failures after publication must return the committed result with a recoverable warning. Allowing an unversioned save would break the mandatory-history contract and make later reconstruction and Current-Content Provenance silently incomplete. The [release validation evidence](../architecture/note-timeline-release-validation.md) records the observations and their limits.
+The single-writer Note Timeline keeps app-owned ordinary-note writes fail-closed
+when durable history preparation is unavailable. Preparation can reject a write
+without changing canonical Markdown, while failures after publication return the
+committed result with a recoverable warning. Allowing a save without durable
+history capture would make reconstruction and Current-Content Provenance silently
+incomplete.
+
+[ADR 0007](0007-retain-editor-history-at-editing-window-boundaries.md)
+changes ordinary Editor retention to durable pending windows and boundary
+finalization. Preparation and recoverable capture remain mandatory.
 
 ## Consequences
 
@@ -14,4 +23,6 @@ The initial single-writer Note Timeline release keeps app-owned ordinary-note wr
 - No emergency save-without-history option, capture-disable switch, or automatic reset is introduced. External edits remain outside app-owned write admission and are captured through observation/reconciliation.
 - The evidence is deterministic fault injection and local scale testing, not production incident-rate data. Reopen this decision if field evidence shows persistent save blockage or unrecoverable draft loss despite actionable recovery. Any alternative must explicitly represent history gaps and preserve truthful provenance before it can replace this policy.
 
-This decides availability policy, not release readiness: every unresolved correctness or performance gate in the validation report still blocks release.
+This decides availability policy, not release readiness. Correctness and
+performance acceptance remain the responsibility of executable tests and release
+workflows.

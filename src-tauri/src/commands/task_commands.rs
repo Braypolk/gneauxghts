@@ -361,7 +361,7 @@ pub(super) fn set_note_order(
 }
 
 pub(crate) fn toggle_task_with_view(
-    state: State<'_, AppState>,
+    state: &AppState,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
@@ -376,7 +376,7 @@ pub(crate) fn toggle_task_with_view(
 }
 
 pub(crate) fn delete_task_with_view(
-    state: State<'_, AppState>,
+    state: &AppState,
     task_id: String,
     filter: TaskFilter,
     show_hidden: bool,
@@ -391,7 +391,7 @@ pub(crate) fn delete_task_with_view(
 }
 
 fn mutate_task_with_view(
-    state: State<'_, AppState>,
+    state: &AppState,
     task_id: String,
     mutation_kind: TaskMutationKind,
     filter: TaskFilter,
@@ -571,7 +571,6 @@ mod tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = crate::services::note_timeline::NoteIdentity::new(created.note_id.unwrap());
         let note_path = created.path.unwrap();

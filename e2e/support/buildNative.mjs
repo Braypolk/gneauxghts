@@ -1,13 +1,4 @@
-import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
-
-const optimized = process.argv.includes('--release');
-if (optimized) {
-  const frontend = spawnSync('pnpm', ['build'], {
-    env: { ...process.env, VITE_E2E_NATIVE: 'true' }, stdio: 'inherit'
-  });
-  if (frontend.status !== 0) process.exit(frontend.status ?? 1);
-}
 
 const e2eTauriConfig = {
   identifier: 'com.braypolkinghorne.gneauxghts-e2e',
@@ -15,9 +6,6 @@ const e2eTauriConfig = {
   // can resolve to an unrelated development server listening on IPv6.
   build: { devUrl: 'http://127.0.0.1:1430' },
   app: {
-    ...(optimized ? { windows: JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).app.windows.map(window => ({
-      ...window, backgroundThrottling: 'disabled'
-    })) } : {}),
     withGlobalTauri: true,
     security: {
       capabilities: [
@@ -45,7 +33,7 @@ const e2eTauriConfig = {
 
 const result = spawnSync(
   'cargo',
-  ['build', ...(optimized ? ['--release'] : []), '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e-wdio'],
+  ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e-wdio'],
   {
     cwd: process.cwd(),
     env: {

@@ -24,7 +24,7 @@ function persistedDocument(markdown = '- [ ] Ship it') {
     lastSavedNoteId: 'note-1',
     lastSavedPath: '/vault/Tasks.md'
   };
-  return createDocumentState(snapshot, 'path:/vault/Tasks.md');
+  return createDocumentState(snapshot, 'document:tasks');
 }
 
 describe('open document task mutation', () => {

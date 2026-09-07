@@ -6,7 +6,7 @@ import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte'
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type {
   NoteDraftState,
-  NoteKey
+  DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
 import {
@@ -28,7 +28,7 @@ export interface DocumentPaneCoordinatorDeps<
   getNavigationDocument: () => NoteDraftState;
   getNavigationPaneId: () => TPaneId;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
-  getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
+  getDocumentByHandle: (documentHandle: DocumentHandle) => NoteDraftState | null;
 }
 
 /**
@@ -41,7 +41,7 @@ export function createDocumentPaneCoordinator<
 >(deps: DocumentPaneCoordinatorDeps<TPaneId>) {
   const latestViewStateByPane = new Map<
     TPaneId,
-    { noteKey: NoteKey; position: EditorViewState }
+    { documentHandle: DocumentHandle; position: EditorViewState }
   >();
 
   function flushPaneCursorSave(
@@ -55,7 +55,7 @@ export function createDocumentPaneCoordinator<
     const document = deps.getPaneDocument(paneId);
     if (position) {
       latestViewStateByPane.set(paneId, {
-        noteKey: document.key,
+        documentHandle: document.handle,
         position
       });
     }
@@ -96,7 +96,7 @@ export function createDocumentPaneCoordinator<
     document: NoteDraftState = deps.getPaneDocument(paneId)
   ): Promise<void> {
     const captured = latestViewStateByPane.get(paneId);
-    const position = captured?.noteKey === document.key
+    const position = captured?.documentHandle === document.handle
       ? captured.position
       : undefined;
     await deps.paneLifecycle.saveCursorPosition(
@@ -182,10 +182,10 @@ export function createDocumentPaneCoordinator<
       'edit-document'
     ).filter(
       (paneId) =>
-        deps.getPaneDocument(paneId).key === nextNote.key
+        deps.getPaneDocument(paneId).handle === nextNote.handle
     );
 
-    if (previousNote.key === nextNote.key) {
+    if (previousNote.handle === nextNote.handle) {
       const paneId =
         preferredEditorPane(nextNote) ?? matching[0];
       if (paneId) {
@@ -208,9 +208,9 @@ export function createDocumentPaneCoordinator<
 
     if (
       cleanupPrevious &&
-      !deps.getNoteByKey(previousNote.key)
+      !deps.getDocumentByHandle(previousNote.handle)
     ) {
-      cleanupNoteRuntime(previousNote.key);
+      cleanupNoteRuntime(previousNote.handle);
     }
   }
 
@@ -231,7 +231,7 @@ export function createDocumentPaneCoordinator<
       return;
     }
 
-    if (previousNote.key === nextNote.key) {
+    if (previousNote.handle === nextNote.handle) {
       await deps.paneLifecycle.replaceContentInPlace(
         paneId,
         nextNote.working.markdown,
@@ -246,8 +246,8 @@ export function createDocumentPaneCoordinator<
       );
     }
 
-    if (!deps.getNoteByKey(previousNote.key)) {
-      cleanupNoteRuntime(previousNote.key);
+    if (!deps.getDocumentByHandle(previousNote.handle)) {
+      cleanupNoteRuntime(previousNote.handle);
     }
   }
 

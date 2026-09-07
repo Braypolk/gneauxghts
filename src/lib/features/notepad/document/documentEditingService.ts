@@ -1,32 +1,246 @@
 import {
-  applySessionSnapshotToDocument,
+  getDocumentMarkdown,
+  getDocumentNoteId,
+  getDocumentPath,
+  getDocumentTitle,
+  isDocumentOperationCurrent,
+  resolveConflictUsingExternal,
+  restoreTransientDraftToDocument,
   updateDocumentMarkdown,
   updateDocumentTitle,
   type NoteDraftState
 } from './documentState';
-import type { SessionSnapshot } from '$lib/features/notepad/session/session';
+import type { ForgottenNote } from '$lib/features/notepad/session/session';
+import type { NoteSession } from '$lib/features/notepad/model/types';
+import {
+  adoptCommittedDocument,
+  findOpenDocument,
+  synchronizeDocumentCanonicalLookup,
+  type NotepadState
+} from '$lib/features/notepad/state/noteStore';
+import { documentRegistry } from './documentRegistry';
+import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+
+export interface DocumentSaveCapture {
+  readonly document: NoteDraftState;
+  readonly operationToken: number;
+  readonly revision: number;
+  readonly title: string;
+  readonly markdown: string;
+  readonly noteId: string | null;
+  readonly path: string | null;
+}
+
+export type VersionRestoreAdoption =
+  | { kind: 'adopted'; document: NoteDraftState }
+  | { kind: 'notOpen' };
 
 export interface DocumentEditingServiceDeps<TPaneId extends string> {
+  state: NotepadState<TPaneId>;
   isApplyingProgrammaticUpdate: (document: NoteDraftState) => boolean;
   shouldSuppressAutosave: (document: NoteDraftState) => boolean;
+  isTitleEditing: (document: NoteDraftState) => boolean;
   resetPaneCommandAfterBodyInput: (
     paneId: TPaneId,
     nextMarkdown: string
   ) => void;
   clearRecentlyForgotten: () => void;
+  clearSelectedRelatedText: () => void;
   scheduleAutosave: (document: NoteDraftState) => void;
   scheduleSearch: () => void;
   scheduleRelated: (options?: { immediate?: boolean }) => void;
 }
 
 /**
- * Coordinates the persistable note projection with editor-driven mutations.
- * CodeMirror remains the canonical live document; this service is the sole
- * place where interaction code advances the note operation revision.
+ * Owns synchronization between the document model and its shared editor root.
+ * Saved baseline, live Markdown, and undo history remain distinct facts; this
+ * boundary applies operation-specific adoption policy across them.
  */
 export function createDocumentEditingService<TPaneId extends string>(
   deps: DocumentEditingServiceDeps<TPaneId>
 ) {
+  function refreshDerivedViews() {
+    deps.scheduleSearch();
+    deps.scheduleRelated({ immediate: true });
+  }
+
+  function resetCommittedRuntime(
+    document: NoteDraftState,
+    markdown: string
+  ) {
+    documentRegistry
+      .get(document.handle)
+      ?.resources()
+      ?.runtime.adoptCommittedMarkdown(markdown);
+  }
+
+  function restoreTransientRuntime(
+    document: NoteDraftState,
+    markdown: string
+  ) {
+    documentRegistry
+      .get(document.handle)
+      ?.resources()
+      ?.runtime.restoreTransientMarkdown(markdown);
+  }
+
+  function captureSave(document: NoteDraftState): DocumentSaveCapture {
+    return {
+      document,
+      operationToken: document.operation.token,
+      revision: document.operation.revision,
+      title: getDocumentTitle(document),
+      markdown: getDocumentMarkdown(document),
+      noteId: getDocumentNoteId(document),
+      path: getDocumentPath(document)
+    };
+  }
+
+  async function adoptSavedResult(
+    capture: DocumentSaveCapture,
+    committed: NoteSession
+  ): Promise<NoteDraftState | null> {
+    const document = capture.document;
+    if (
+      !isDocumentOperationCurrent(
+        document,
+        capture.operationToken
+      )
+    ) {
+      return null;
+    }
+    const preserveWorking =
+      document.operation.revision !== capture.revision ||
+      getDocumentTitle(document) !== capture.title ||
+      getDocumentMarkdown(document) !== capture.markdown ||
+      getDocumentNoteId(document) !== capture.noteId ||
+      getDocumentPath(document) !== capture.path ||
+      deps.isTitleEditing(document);
+    const previousMarkdown = getDocumentMarkdown(document);
+    adoptCommittedDocument(deps.state, document, committed, {
+      preserveWorking
+    });
+    if (getDocumentMarkdown(document) !== previousMarkdown) {
+      resetCommittedRuntime(
+        document,
+        document.working.markdown
+      );
+    }
+    return document;
+  }
+
+  async function adoptVersionRestore(
+    committed: NoteSession
+  ): Promise<VersionRestoreAdoption> {
+    if (!committed.noteId) {
+      throw new Error(
+        'The committed restore returned no Note Identity.'
+      );
+    }
+    const openDocument = findOpenDocument(deps.state, {
+      noteId: committed.noteId,
+      path: committed.path
+    });
+    if (!openDocument) {
+      return { kind: 'notOpen' };
+    }
+    const document = openDocument;
+    adoptCommittedDocument(deps.state, document, committed);
+    // A Version Restore is an authored boundary even when only unmanaged
+    // properties changed and the rendered body is byte-identical.
+    resetCommittedRuntime(document, committed.markdown);
+    deps.clearRecentlyForgotten();
+    deps.clearSelectedRelatedText();
+    refreshDerivedViews();
+    return { kind: 'adopted', document };
+  }
+
+  async function adoptAcceptedProposal(
+    document: NoteDraftState,
+    committed: NoteSession,
+    committedMarkdown: string,
+    commitWarning: CommittedMutationWarning | null
+  ) {
+    const authoritative = {
+      ...committed,
+      commitWarning: commitWarning ?? undefined
+    };
+    const preserveWorking =
+      getDocumentMarkdown(document) !== committedMarkdown ||
+      getDocumentTitle(document) !== committed.title;
+    const previousMarkdown = getDocumentMarkdown(document);
+    adoptCommittedDocument(deps.state, document, authoritative, {
+      preserveWorking
+    });
+    if (getDocumentMarkdown(document) !== previousMarkdown) {
+      resetCommittedRuntime(
+        document,
+        document.working.markdown
+      );
+    }
+    if (
+      preserveWorking &&
+      !deps.shouldSuppressAutosave(document)
+    ) {
+      deps.scheduleAutosave(document);
+    }
+    deps.clearRecentlyForgotten();
+    deps.clearSelectedRelatedText();
+    refreshDerivedViews();
+    return document;
+  }
+
+  async function adoptCleanExternalRefresh(
+    document: NoteDraftState,
+    committed: NoteSession
+  ) {
+    const previousMarkdown = getDocumentMarkdown(document);
+    adoptCommittedDocument(deps.state, document, committed);
+    if (getDocumentMarkdown(document) !== previousMarkdown) {
+      resetCommittedRuntime(
+        document,
+        document.working.markdown
+      );
+    }
+    deps.clearRecentlyForgotten();
+    deps.clearSelectedRelatedText();
+    refreshDerivedViews();
+    return document;
+  }
+
+  function restoreTransientForgotten(
+    document: NoteDraftState,
+    forgotten: ForgottenNote
+  ) {
+    const result = restoreTransientDraftToDocument(document, {
+      title: forgotten.title,
+      markdown: forgotten.bodyMarkdown
+    }, {
+      noteId: forgotten.currentNoteId,
+      path: forgotten.currentNotePath
+    });
+    synchronizeDocumentCanonicalLookup(deps.state, document);
+    restoreTransientRuntime(document, document.working.markdown);
+    if (!deps.shouldSuppressAutosave(document)) {
+      deps.scheduleAutosave(document);
+    }
+    deps.clearRecentlyForgotten();
+    deps.clearSelectedRelatedText();
+    refreshDerivedViews();
+    return result;
+  }
+
+  function resolveUsingExternal(
+    document: NoteDraftState,
+    conflictId: number
+  ) {
+    const resolved = resolveConflictUsingExternal(document, conflictId);
+    if (resolved) {
+      synchronizeDocumentCanonicalLookup(deps.state, document);
+    }
+    return resolved;
+  }
+
   async function applyRuntimeAtCurrentRevision(
     document: NoteDraftState,
     applyToRuntime: (markdown: string) => Promise<void>
@@ -99,58 +313,20 @@ export function createDocumentEditingService<TPaneId extends string>(
     return changed;
   }
 
-  async function applySnapshot(
-    document: NoteDraftState,
-    snapshot: SessionSnapshot,
-    applyMarkdownToRuntime: (markdown: string) => Promise<void>,
-    {
-      preserveDraft = false,
-      resetUndoHistory = false,
-      autosave = false,
-      scheduleDerived = true,
-      immediateRelated = true
-    }: {
-      preserveDraft?: boolean;
-      /** Apply the runtime reset even if a restore changed only unmanaged properties. */
-      resetUndoHistory?: boolean;
-      autosave?: boolean;
-      scheduleDerived?: boolean;
-      immediateRelated?: boolean;
-    } = {}
-  ) {
-    const { titleChanged, markdownChanged } =
-      applySessionSnapshotToDocument(document, snapshot, {
-        preserveWorking: preserveDraft
-      });
-    if (markdownChanged || resetUndoHistory) {
-      await applyRuntimeAtCurrentRevision(
-        document,
-        applyMarkdownToRuntime
-      );
-    }
-    if (
-      autosave &&
-      !deps.shouldSuppressAutosave(document)
-    ) {
-      deps.scheduleAutosave(document);
-    }
-    if (scheduleDerived) {
-      deps.scheduleSearch();
-      deps.scheduleRelated(
-        immediateRelated ? { immediate: true } : undefined
-      );
-    }
-    return { titleChanged, markdownChanged };
-  }
-
   function updateTitle(document: NoteDraftState, title: string): boolean {
     return updateDocumentTitle(document, title);
   }
 
   return {
+    captureSave,
+    adoptSavedResult,
+    adoptVersionRestore,
+    adoptAcceptedProposal,
+    adoptCleanExternalRefresh,
+    restoreTransientForgotten,
+    resolveUsingExternal,
     recordUserEdit,
     replaceMarkdown,
-    applySnapshot,
     updateTitle
   };
 }

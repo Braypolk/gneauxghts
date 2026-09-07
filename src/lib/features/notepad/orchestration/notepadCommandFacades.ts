@@ -6,7 +6,7 @@ import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte'
 import type { ForgottenNote } from '$lib/features/notepad/session/session';
 import type {
   NoteDraftState,
-  NoteKey,
+  DocumentHandle,
   NotepadState
 } from '$lib/features/notepad/state/noteStore';
 import type { WorkspaceStore, NotepadPaneId } from '$lib/features/notepad/workspace/workspaceStore.svelte';
@@ -36,7 +36,7 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   completePaneCreation: (
     paneId: TPaneId,
     operationId: number,
-    noteKey: NoteKey,
+    documentHandle: DocumentHandle,
     kind?: PaneKind
   ) => WorkspacePaneState<TPaneId>;
   canRemovePane: (paneId: TPaneId) => boolean;
@@ -54,24 +54,24 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
     paneId: TPaneId,
     kind: PaneKind
   ) => boolean;
-  setPaneNoteKey: (
+  setPaneDocumentHandle: (
     paneId: TPaneId,
-    noteKey: NoteKey
+    documentHandle: DocumentHandle
   ) => void;
   setPaneConversationId: (
     paneId: TPaneId,
     conversationId: string | null
   ) => void;
-  replaceNoteKeyReferences: (
-    previousKey: NoteKey,
-    nextKey: NoteKey
+  replaceDocumentHandleReferences: (
+    previousHandle: DocumentHandle,
+    nextHandle: DocumentHandle
   ) => void;
-  isNoteReferenced: (noteKey: NoteKey) => boolean;
-  listReferencedNoteKeys: () => NoteKey[];
+  isDocumentReferenced: (documentHandle: DocumentHandle) => boolean;
+  listReferencedDocumentHandles: () => DocumentHandle[];
   assertInvariants: () => void;
   beginPaneCommand: (
     paneId: TPaneId,
-    sourceNoteKey: NoteKey,
+    sourceDocumentHandle: DocumentHandle,
     mode: PaneCommandMode,
     sourcePaneId?: TPaneId
   ) => void;
@@ -79,7 +79,7 @@ export interface NotepadWorkspaceCommands<TPaneId extends string> {
   setPaneCommandHighlight: (index: number) => void;
   getPaneCommandPaneId: () => TPaneId | null;
   getPaneCommandSourcePaneId: () => TPaneId | null;
-  getPaneCommandSourceNoteKey: () => NoteKey | null;
+  getPaneCommandSourceDocumentHandle: () => DocumentHandle | null;
   getPaneCommandHighlightedIndex: () => number;
   getPaneCommandMode: () => PaneCommandMode;
   getPaneCommandFocusEl: () => HTMLElement | null;
@@ -92,7 +92,7 @@ export interface NotepadPaneCommands<TPaneId extends string> {
   getNavigationPaneId: () => TPaneId;
   getNextPaneId: (paneId?: TPaneId, direction?: 1 | -1) => TPaneId | null;
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
-  getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
+  getDocumentByHandle: (documentHandle: DocumentHandle) => NoteDraftState | null;
   activatePaneSession: (paneId: TPaneId) => unknown;
   setPaneDocumentSession: (paneId: TPaneId, document: NoteDraftState) => unknown;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
@@ -116,7 +116,7 @@ export interface NotepadPersistenceCommands {
   invalidatePendingSaveResults: (note?: NoteDraftState) => void;
   scheduleAutosave: (note: NoteDraftState) => void;
   hasCleanBuffer: (note: NoteDraftState) => boolean;
-  getNoteSaveQueue: (noteKey: NoteKey) => Promise<void>;
+  getNoteSaveQueue: (documentHandle: DocumentHandle) => Promise<void>;
 }
 
 export interface NotepadDerivedViewCommands<TPaneId extends string> {
@@ -173,11 +173,11 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
         paneId as NotepadPaneId,
         event
       ),
-    completePaneCreation: (paneId, operationId, noteKey, kind) =>
+    completePaneCreation: (paneId, operationId, documentHandle, kind) =>
       workspace.completePaneCreation(
         paneId as NotepadPaneId,
         operationId,
-        noteKey,
+        documentHandle,
         kind
       ) as WorkspacePaneState<TPaneId>,
     canRemovePane: (paneId) =>
@@ -201,30 +201,30 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
         paneId as NotepadPaneId,
         kind
       ),
-    setPaneNoteKey: (paneId, noteKey) =>
-      workspace.setPaneNoteKey(
+    setPaneDocumentHandle: (paneId, documentHandle) =>
+      workspace.setPaneDocumentHandle(
         paneId as NotepadPaneId,
-        noteKey
+        documentHandle
       ),
     setPaneConversationId: (paneId, conversationId) =>
       workspace.setPaneConversationId(
         paneId as NotepadPaneId,
         conversationId
       ),
-    replaceNoteKeyReferences: (previousKey, nextKey) =>
-      workspace.replaceNoteKeyReferences(
-        previousKey,
-        nextKey
+    replaceDocumentHandleReferences: (previousHandle, nextHandle) =>
+      workspace.replaceDocumentHandleReferences(
+        previousHandle,
+        nextHandle
       ),
-    isNoteReferenced: (noteKey) =>
-      workspace.isNoteReferenced(noteKey),
-    listReferencedNoteKeys: () =>
-      workspace.listReferencedNoteKeys(),
+    isDocumentReferenced: (documentHandle) =>
+      workspace.isDocumentReferenced(documentHandle),
+    listReferencedDocumentHandles: () =>
+      workspace.listReferencedDocumentHandles(),
     assertInvariants: () => workspace.assertInvariants(),
-    beginPaneCommand: (paneId, sourceNoteKey, mode, sourcePaneId) =>
+    beginPaneCommand: (paneId, sourceDocumentHandle, mode, sourcePaneId) =>
       workspace.beginPaneCommand(
         paneId as NotepadPaneId,
-        sourceNoteKey,
+        sourceDocumentHandle,
         mode,
         sourcePaneId as NotepadPaneId | undefined
       ),
@@ -232,7 +232,7 @@ export function createNotepadWorkspaceCommands<TPaneId extends string>(
     setPaneCommandHighlight: (index) => workspace.setPaneCommandHighlight(index),
     getPaneCommandPaneId: () => workspace.paneCommand.paneId as TPaneId | null,
     getPaneCommandSourcePaneId: () => workspace.paneCommand.sourcePaneId as TPaneId | null,
-    getPaneCommandSourceNoteKey: () => workspace.paneCommand.sourceNoteKey,
+    getPaneCommandSourceDocumentHandle: () => workspace.paneCommand.sourceDocumentHandle,
     getPaneCommandHighlightedIndex: () => workspace.paneCommand.highlightedIndex,
     getPaneCommandMode: () => workspace.paneCommand.mode,
     getPaneCommandFocusEl: paneCommand.getFocusEl

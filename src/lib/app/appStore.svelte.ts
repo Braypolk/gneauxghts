@@ -38,7 +38,7 @@ type NoteSavedPayload = {
   revision: number;
 };
 
-class AppStore {
+export class AppStore {
   vaultInfo = $state<VaultInfo | null>(null);
   semanticStatus = $state<SemanticStatus | null>(null);
   indexRevision = $state<number>(0);
@@ -53,17 +53,30 @@ class AppStore {
   #vaultChangedListeners = new Set<Listener<VaultInfo>>();
 
   #unlisteners: UnlistenFn[] = [];
+  #generation = 0;
+  #snapshotRevisions = { vault: 0, semanticStatus: 0, indexRevision: 0 };
   #bootstrapPromise: Promise<BootstrapAppResult> | null = null;
 
   /** Boot once. Returns the cached promise on subsequent calls. */
   async bootstrap(): Promise<BootstrapAppResult> {
     if (this.#bootstrapPromise) return this.#bootstrapPromise;
+    const generation = this.#generation;
+    const revisions = { ...this.#snapshotRevisions };
     this.#bootstrapPromise = (async () => {
-      const payload = await loadBootstrapPayload();
-      this.vaultInfo = payload.vault;
-      this.semanticStatus = payload.semanticStatus;
-      this.indexRevision = payload.indexRevision ?? 0;
-      await this.#attachListeners();
+      // Establish event admission while the backend restores canonical Markdown.
+      // Editable session application still waits for both, so the first save
+      // cannot outrun its note-saved listener.
+      const [bootstrap, listeners] = await Promise.allSettled([
+        loadBootstrapPayload(),
+        this.#attachListeners(generation)
+      ]);
+      if (bootstrap.status === 'rejected') throw bootstrap.reason;
+      if (listeners.status === 'rejected') throw listeners.reason;
+      const payload = bootstrap.value;
+      if (generation !== this.#generation) return payload;
+      if (revisions.vault === this.#snapshotRevisions.vault) this.vaultInfo = payload.vault;
+      if (revisions.semanticStatus === this.#snapshotRevisions.semanticStatus) this.semanticStatus = payload.semanticStatus;
+      if (revisions.indexRevision === this.#snapshotRevisions.indexRevision) this.indexRevision = payload.indexRevision ?? 0;
       this.ready = true;
       return payload;
     })();
@@ -72,6 +85,13 @@ class AppStore {
 
   /** Tear-down for tests / hot reload. */
   async dispose(): Promise<void> {
+    this.#generation += 1;
+    this.#detachListeners();
+    this.#bootstrapPromise = null;
+    this.ready = false;
+  }
+
+  #detachListeners() {
     for (const unlisten of this.#unlisteners) {
       try {
         unlisten();
@@ -80,8 +100,6 @@ class AppStore {
       }
     }
     this.#unlisteners = [];
-    this.#bootstrapPromise = null;
-    this.ready = false;
   }
 
   subscribeVaultNoteChanged(listener: Listener<VaultNoteChangedPayload>): () => void {
@@ -105,10 +123,12 @@ class AppStore {
   }
 
   setSemanticStatus(status: SemanticStatus | null): void {
+    this.#snapshotRevisions.semanticStatus += 1;
     this.semanticStatus = status;
   }
 
   setVaultInfo(info: VaultInfo | null): void {
+    this.#snapshotRevisions.vault += 1;
     this.vaultInfo = info;
   }
 
@@ -122,40 +142,39 @@ class AppStore {
     }
   }
 
-  async #attachListeners(): Promise<void> {
-    this.#unlisteners.push(
-      await listen<VaultNoteChangedPayload>('vault-note-changed', (event) => {
-        this.#dispatchToListeners(
-          'vault-note-changed',
-          this.#vaultNoteChangedListeners,
-          event.payload
-        );
+  async #attachListeners(generation: number): Promise<void> {
+    const attach = async <T>(channel: string, callback: (payload: T) => void) => {
+      const unlisten = await listen<T>(channel, (event) => {
+        if (generation === this.#generation) callback(event.payload);
+      });
+      if (generation === this.#generation) this.#unlisteners.push(unlisten);
+      else unlisten();
+    };
+    const results = await Promise.allSettled([
+      attach<VaultNoteChangedPayload>('vault-note-changed', (payload) => {
+        this.#dispatchToListeners('vault-note-changed', this.#vaultNoteChangedListeners, payload);
+      }),
+      attach<SemanticStatus>('semantic-status-changed', (payload) => {
+        this.#snapshotRevisions.semanticStatus += 1;
+        this.semanticStatus = payload;
+        this.#dispatchToListeners('semantic-status-changed', this.#semanticStatusListeners, payload);
+      }),
+      attach<NoteSavedPayload>('note-saved', (payload) => {
+        this.#snapshotRevisions.indexRevision += 1;
+        if (typeof payload.revision === 'number') this.indexRevision = payload.revision;
+        this.#dispatchToListeners('note-saved', this.#noteSavedListeners, payload);
+      }),
+      attach<VaultInfo>('vault-changed', (payload) => {
+        this.#snapshotRevisions.vault += 1;
+        this.vaultInfo = payload;
+        this.#dispatchToListeners('vault-changed', this.#vaultChangedListeners, payload);
       })
-    );
-    this.#unlisteners.push(
-      await listen<SemanticStatus>('semantic-status-changed', (event) => {
-        this.semanticStatus = event.payload;
-        this.#dispatchToListeners(
-          'semantic-status-changed',
-          this.#semanticStatusListeners,
-          event.payload
-        );
-      })
-    );
-    this.#unlisteners.push(
-      await listen<NoteSavedPayload>('note-saved', (event) => {
-        if (typeof event.payload.revision === 'number') {
-          this.indexRevision = event.payload.revision;
-        }
-        this.#dispatchToListeners('note-saved', this.#noteSavedListeners, event.payload);
-      })
-    );
-    this.#unlisteners.push(
-      await listen<VaultInfo>('vault-changed', (event) => {
-        this.vaultInfo = event.payload;
-        this.#dispatchToListeners('vault-changed', this.#vaultChangedListeners, event.payload);
-      })
-    );
+    ]);
+    for (const result of results) {
+      if (result.status === 'rejected') {
+        logDevError('[AppStore] listener setup failed', result.reason);
+      }
+    }
   }
 }
 

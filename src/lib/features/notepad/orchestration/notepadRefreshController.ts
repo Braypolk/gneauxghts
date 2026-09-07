@@ -1,13 +1,14 @@
 import {
   dispatchDocumentExternalSync,
   documentHasCleanBuffer,
+  getDocumentNoteId,
   getDocumentPath,
   type ExternalRefreshSource
 } from '$lib/features/notepad/document/documentState';
 import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
 import type {
   NoteDraftState,
-  NoteKey
+  DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 
 export interface VaultNoteChangeEvent {
@@ -25,7 +26,7 @@ interface NotepadRefreshControllerParams {
     document: NoteDraftState,
     options: { source: ExternalRefreshSource }
   ) => Promise<unknown>;
-  getNoteByKey: (noteKey: NoteKey) => NoteDraftState | null;
+  findOpenDocumentByPath: (notePath: string) => NoteDraftState | null;
   getPaneIdsForDocument: (document: NoteDraftState) => NotepadPaneId[];
   replaceNoteAcrossPanes: (
     previousNote: NoteDraftState,
@@ -33,12 +34,11 @@ interface NotepadRefreshControllerParams {
     options?: { restoreCursor?: boolean }
   ) => Promise<void>;
   replaceReferencedNoteWithFreshDraft: (
-    noteKey: NoteKey
+    documentHandle: DocumentHandle
   ) => NoteDraftState;
   suspendPersistenceForConflict: (
     document: NoteDraftState
   ) => void;
-  noteKeyFromPath: (notePath: string) => NoteKey | null;
   shouldDeferRefresh?: (notePath: string) => boolean;
 }
 
@@ -73,12 +73,8 @@ export function createNotepadRefreshController(
   }
 
   function findLoadedReferencedDocument(notePath: string) {
-    const noteKey = params.noteKeyFromPath(notePath);
-    const keyedDocument = noteKey
-      ? params.getNoteByKey(noteKey)
-      : null;
     const document =
-      keyedDocument ??
+      params.findOpenDocumentByPath(notePath) ??
       (getDocumentPath(params.getDocumentSession()) === notePath
         ? params.getDocumentSession()
         : null);
@@ -114,10 +110,27 @@ export function createNotepadRefreshController(
           ? 'taskMutation'
           : 'watcher';
       if (payload.deleted) {
+        // The watcher reports a filesystem move as an old-path deletion
+        // followed by a new-path change. Durable identity can already resolve
+        // the new location, so try that before treating this as disappearance.
+        // A true deletion fails this read and follows the existing branch.
+        if (getDocumentNoteId(document)) {
+          const outcome = await params.refreshDocumentFromDisk(document, {
+            source
+          });
+          if (
+            outcome === 'refreshed' ||
+            outcome === 'unchanged' ||
+            outcome === 'conflict'
+          ) {
+            await params.refreshDerivedViews();
+            return;
+          }
+        }
         if (documentHasCleanBuffer(document)) {
           const freshDraft =
             params.replaceReferencedNoteWithFreshDraft(
-              document.key
+              document.handle
             );
           await params.replaceNoteAcrossPanes(
             document,

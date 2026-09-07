@@ -7,6 +7,7 @@ import type {
   DurableProposalReviewRequest,
   ProposalReviewRuntime
 } from './types';
+import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ProposalReviewIdentity } from './proposalReviewMachine';
 import {
   getDocumentPath,
@@ -43,6 +44,7 @@ export interface ProposalOrchestrationDeps {
     document: NoteDraftState;
     path: string;
     markdown: string;
+    commitWarning: NonNullable<CommitNoteReviewResult['commitWarning']> | null;
   }) => void | Promise<void>;
   reloadReviewFromDisk?: (path: string) => Promise<void>;
   reopenReviewEditor?: (document: NoteDraftState) => Promise<EditorCapabilityAdapter | null>;
@@ -282,7 +284,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       await deps.acknowledgeDocumentCommit({
         document: review.document,
         path: result.applied?.path ?? review.request.preview.notePath,
-        markdown
+        markdown,
+        commitWarning: result.commitWarning ?? null
       });
       closeReview(review);
     } catch (error) {
@@ -714,7 +717,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     attachEditor: (document: NoteDraftState, editor: EditorCapabilityAdapter) => {
       const review = currentReview();
-      if (!review || review.document.key !== document.key || !editor.isReady()) return;
+      if (!review || review.document.handle !== document.handle || !editor.isReady()) return;
       review.editor = editor;
       if (!editorHasReviewInstalled(review, editor)) {
         installReviewInEditor(review, editor);
@@ -724,7 +727,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     suspendDocument: (document: NoteDraftState, editor: EditorCapabilityAdapter | null) => {
       const review = currentReview();
-      if (!review || review.document.key !== document.key) return;
+      if (!review || review.document.handle !== document.handle) return;
       captureReview(editor, review);
       // The document state is also retained so an ordinary open path mounts
       // the same working copy even before its review extension is attached.

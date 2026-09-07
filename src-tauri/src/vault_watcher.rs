@@ -427,8 +427,6 @@ fn flush_dirty_batch(
         return Ok(());
     };
     let timeline = state.note_timeline();
-    state.semantic.report_user_activity();
-
     let resolved = resolve_batch(notes_dir, paths)?;
     let mut ordinary_present = Vec::new();
     let mut ordinary_removed = Vec::new();
@@ -1075,7 +1073,6 @@ mod tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let path = PathBuf::from(created.path.unwrap());
         let note_id = created.note_id.unwrap();

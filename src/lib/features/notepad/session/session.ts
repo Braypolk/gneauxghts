@@ -1,3 +1,4 @@
+import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
 import { invoke } from "@tauri-apps/api/core";
 import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
 import type {
@@ -87,24 +88,6 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
   };
 }
 
-export function shouldSkipAutosave(
-  title: string,
-  markdown: string,
-  currentNoteId: string | null,
-  currentNotePath: string | null,
-  snapshot: Pick<
-    SessionSnapshot,
-    "lastSavedTitle" | "lastSavedMarkdown" | "lastSavedNoteId" | "lastSavedPath"
-  >,
-) {
-  return (
-    title === snapshot.lastSavedTitle &&
-    markdown === snapshot.lastSavedMarkdown &&
-    currentNoteId === snapshot.lastSavedNoteId &&
-    currentNotePath === snapshot.lastSavedPath
-  );
-}
-
 export async function loadSavedNoteSession() {
   const saved = await invoke<NoteSession>("load_note_session");
   return createSessionSnapshot(saved);
@@ -133,11 +116,14 @@ export async function readNoteSession(
   noteId: string | null,
   notePath: string | null,
 ) {
-  const session = await invoke<NoteSession>("read_note", {
+  return invoke<NoteSession>("read_note", {
     noteId,
     path: notePath,
   });
-  return createSessionSnapshot(session);
+}
+
+export function loadHistoryReadiness(noteId: string | null) {
+  return invoke<HistoryReadiness>("get_history_readiness", { noteId });
 }
 
 export async function saveNoteSession(
@@ -145,12 +131,11 @@ export async function saveNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  const saved = await invoke<NoteSession>("save_note", {
+  return invoke<NoteSession>("save_note", {
     title,
     markdown,
     currentPath,
   });
-  return createSessionSnapshot(saved);
 }
 
 export async function saveTaskNoteSession(
@@ -158,12 +143,11 @@ export async function saveTaskNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  const saved = await invoke<NoteSession>("save_task_note", {
+  return invoke<NoteSession>("save_task_note", {
     title,
     markdown,
     currentPath,
   });
-  return createSessionSnapshot(saved);
 }
 
 export async function markNoteOpened(noteId: string) {

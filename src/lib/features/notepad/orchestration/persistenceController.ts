@@ -1,7 +1,7 @@
+import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
 import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
-import {
-  type SessionSnapshot,
-} from "$lib/features/notepad/session/session";
+import type { NoteSession } from "$lib/features/notepad/model/types";
+import type { DocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
 import {
   dispatchDocumentOperation,
   documentHasCleanBuffer,
@@ -12,7 +12,7 @@ import {
   getDocumentTitle,
   isDocumentOperationCurrent,
   type NoteDraftState,
-  type NoteKey,
+  type DocumentHandle,
 } from "$lib/features/notepad/document/documentState";
 
 export interface PersistenceControllerParams {
@@ -21,24 +21,19 @@ export interface PersistenceControllerParams {
     title: string,
     markdown: string,
     currentPath: string | null,
-  ) => Promise<SessionSnapshot>;
+  ) => Promise<NoteSession>;
   saveTaskNoteSession?: (
     title: string,
     markdown: string,
     currentPath: string | null,
-  ) => Promise<SessionSnapshot>;
+  ) => Promise<NoteSession>;
+  loadHistoryReadiness?: (noteId: string | null) => Promise<HistoryReadiness>;
   markNoteOpened?: (noteId: string) => Promise<void>;
   isActiveNote?: (note: NoteDraftState) => boolean;
-  rekeyNoteWithRuntime: (
-    note: NoteDraftState,
-    snapshot: SessionSnapshot,
-  ) => NoteDraftState | Promise<NoteDraftState>;
-  applySavedSnapshot: (
-    note: NoteDraftState,
-    snapshot: SessionSnapshot,
-    options: { preserveDraft: boolean },
-  ) => void | Promise<void>;
-  isTitleEditing?: (note: NoteDraftState) => boolean;
+  documentEditing: Pick<
+    DocumentEditingService<string>,
+    "captureSave" | "adoptSavedResult"
+  >;
   /** Prevent generic save paths from persisting an editable proposal review. */
   shouldSuppressPersistence?: (note: NoteDraftState) => boolean;
 }
@@ -61,15 +56,15 @@ export function createNotepadPersistenceController(
     dispatchDocumentOperation(note, { type: "invalidate" });
   }
 
-  function getNoteSaveQueue(noteKey: NoteDraftState["key"]) {
-    return documentRegistry.get(noteKey)?.getSaveQueue() ?? Promise.resolve();
+  function getNoteSaveQueue(documentHandle: NoteDraftState["handle"]) {
+    return documentRegistry.get(documentHandle)?.getSaveQueue() ?? Promise.resolve();
   }
 
   function queueNoteOperation(
     note: NoteDraftState,
     operation: () => Promise<void>,
   ) {
-    const runtime = documentRegistry.ensure(note.key);
+    const runtime = documentRegistry.ensure(note.handle);
     return runtime.requestSave(async () => {
       try {
         await operation();
@@ -96,8 +91,6 @@ export function createNotepadPersistenceController(
     }
     const title = getDocumentTitle(note);
     const markdown = getDocumentMarkdown(note);
-    const currentNoteId = getDocumentNoteId(note);
-    const currentNotePath = getDocumentPath(note);
     const taskAttribution = taskActionAttributions.get(note);
     const isAttributedTaskAction = Boolean(
       taskAttribution &&
@@ -120,42 +113,38 @@ export function createNotepadPersistenceController(
       type: "start",
       operation: "saving",
     });
-    const operationToken = note.operation.token;
-    const operationRevision = note.operation.revision;
+    const capture = params.documentEditing.captureSave(note);
     const save = isAttributedTaskAction
       ? params.saveTaskNoteSession
       : params.saveNoteSession;
     if (!save) {
       throw new Error("Task note persistence is not configured");
     }
-    const savedSession = await save(title, markdown, currentNotePath);
+    // Start the authoritative IPC immediately. Observation never gates or
+    // retries publication and must not change its result (including warnings).
+    const saving = save(title, markdown, capture.path);
+    const stopObserving = observePendingSave(
+      note,
+      capture.operationToken,
+      capture.noteId,
+    );
+    let savedSession: NoteSession;
+    try {
+      savedSession = await saving;
+    } finally {
+      stopObserving();
+    }
     if (
       isAttributedTaskAction &&
       taskActionAttributions.get(note) === taskAttribution
     ) {
       taskActionAttributions.delete(note);
     }
-    if (!isDocumentOperationCurrent(note, operationToken)) {
-      return;
-    }
-
-    const preserveDraft =
-      note.operation.revision !== operationRevision ||
-      getDocumentTitle(note) !== title ||
-      getDocumentMarkdown(note) !== markdown ||
-      getDocumentNoteId(note) !== currentNoteId ||
-      getDocumentPath(note) !== currentNotePath ||
-      (params.isTitleEditing?.(note) ?? false);
-
-    const savedNote = await params.rekeyNoteWithRuntime(
-      note,
+    const savedNote = await params.documentEditing.adoptSavedResult(
+      capture,
       savedSession,
     );
-    await params.applySavedSnapshot(
-      savedNote,
-      savedSession,
-      { preserveDraft },
-    );
+    if (!savedNote) return;
     if (savedSession.commitWarning) {
       console.warn(
         "Note was saved, but required projections need repair:",
@@ -163,12 +152,12 @@ export function createNotepadPersistenceController(
       );
     }
     if (
-      currentNotePath === null &&
-      savedSession.currentNoteId &&
+      capture.path === null &&
+      savedSession.noteId &&
       (params.isActiveNote?.(savedNote) ?? true)
     ) {
       try {
-        await params.markNoteOpened?.(savedSession.currentNoteId);
+        await params.markNoteOpened?.(savedSession.noteId);
       } catch (error) {
         // The note is already safely on disk. Session-restore bookkeeping is
         // secondary and must not turn a completed save into a save failure.
@@ -179,21 +168,64 @@ export function createNotepadPersistenceController(
       type: "succeed",
       token:
         savedNote === note
-          ? operationToken
+          ? capture.operationToken
           : savedNote.operation.token,
     });
+  }
+
+  function observePendingSave(note: NoteDraftState, token: number, noteId: string | null) {
+    const observe = params.loadHistoryReadiness;
+    if (!observe) return () => undefined;
+    let stopped = false;
+    let identity: Pick<HistoryReadiness, 'scope' | 'revision'> | null = null;
+    let timer: ReturnType<typeof setTimeout>;
+    const current = () => !stopped && note.operation.kind === "saving" &&
+      isDocumentOperationCurrent(note, token) && getDocumentNoteId(note) === noteId;
+    const poll = async () => {
+      if (!current()) return;
+      try {
+        const readiness = await observe(noteId);
+        if (!current() || readiness.noteId !== noteId) return;
+        if (identity && (identity.scope !== readiness.scope || identity.revision !== readiness.revision)) {
+          dispatchDocumentOperation(note, { type: "savingProgress", token });
+          return;
+        }
+        identity = readiness;
+        // A draft has no target identity to observe. Its null-ID snapshot can
+        // describe vault recovery, but cannot describe the generated note's check.
+        dispatchDocumentOperation(note, {
+          type: "savingProgress", token,
+          waitReason: readiness.state === 'recoveryPending' ? 'recovery'
+            : readiness.state === 'targetVerificationPending' ? (noteId === null ? undefined : 'verification')
+            : readiness.state === 'ready' ? undefined : readiness.state,
+        });
+        timer = setTimeout(() => void poll(), 250);
+      } catch {
+        // Advisory observation may be unavailable even when the save succeeds.
+        if (current()) dispatchDocumentOperation(note, { type: "savingProgress", token });
+      }
+    };
+    // Fast saves need no extra IPC. A pending observer never overlaps another.
+    timer = setTimeout(() => void poll(), 250);
+    return () => {
+      stopped = true;
+      clearTimeout(timer);
+      if (isDocumentOperationCurrent(note, token)) {
+        dispatchDocumentOperation(note, { type: "savingProgress", token });
+      }
+    };
   }
 
   function cancelPendingAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    documentRegistry.get(note.key)?.clearSaveTimer();
+    documentRegistry.get(note.handle)?.clearSaveTimer();
   }
 
   function scheduleAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    const runtime = documentRegistry.ensure(note.key);
+    const runtime = documentRegistry.ensure(note.handle);
     runtime.clearSaveTimer();
     runtime.setSaveTimer(
       window.setTimeout(() => {
@@ -212,22 +244,13 @@ export function createNotepadPersistenceController(
   function flushPendingAutosave(
     note: NoteDraftState = params.getDocumentSession(),
   ) {
-    const runtime = documentRegistry.get(note.key);
+    const runtime = documentRegistry.get(note.handle);
     if (!runtime || runtime.getSaveTimer() === null) {
       return;
     }
 
     runtime.clearSaveTimer();
     void enqueueSave(note).catch(() => undefined);
-  }
-
-  /** Iterate every running save queue and await it. */
-  async function awaitAllSaveQueues() {
-    const queues: Promise<void>[] = [];
-    for (const runtime of documentRegistry.values()) {
-      queues.push(runtime.getSaveQueue());
-    }
-    await Promise.all(queues);
   }
 
   function attributeTaskActionSave(
@@ -254,9 +277,6 @@ export function createNotepadPersistenceController(
     getNoteSaveQueue,
     hasCleanBuffer,
     invalidatePendingSaveResults,
-    persistNote,
-    queueNoteOperation,
     scheduleAutosave,
-    awaitAllSaveQueues,
   };
 }

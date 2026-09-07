@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDocumentState,
+  resolveConflictUsingExternal,
   updateDocumentMarkdown
 } from './documentState';
 import {
@@ -37,7 +38,7 @@ function conflictedDocument() {
     lastSavedNoteId: 'note-1',
     lastSavedPath: path
   };
-  const document = createDocumentState(saved, `path:${path}`);
+  const document = createDocumentState(saved, `document:`);
   updateDocumentMarkdown(document, 'my edits');
   captureExternalSnapshotForTest(
     document,
@@ -67,7 +68,8 @@ function setup() {
     replaceDocumentContentInPlace,
     enqueueSave,
     copyText,
-    refreshDerivedViews
+    refreshDerivedViews,
+    resolveUsingExternal: resolveConflictUsingExternal
   });
   return {
     controller,

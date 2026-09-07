@@ -101,7 +101,7 @@ export function createOpenDocumentTaskMutationHandler(
 
     for (let attempt = 0; attempt < maxPrepareAttempts; attempt += 1) {
       const expectedDocument = document;
-      const expectedKey = document.key;
+      const expectedKey = document.handle;
       const expectedRevision = document.operation.revision;
       const workingMarkdown = getDocumentMarkdown(document);
       const bodyHash = await hashMarkdown(workingMarkdown);
@@ -115,7 +115,7 @@ export function createOpenDocumentTaskMutationHandler(
       document = deps.findReferencedDocument(noteId, notePath);
       const targetIsCurrent =
         document === expectedDocument &&
-        document.key === expectedKey &&
+        document.handle === expectedKey &&
         document.operation.revision === expectedRevision &&
         getDocumentMarkdown(document) === workingMarkdown &&
         !documentHasUnresolvedConflict(document);

@@ -80,7 +80,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       setIsEditorReady: () => {},
       setIsApplyingProgrammaticUpdate: () => {},
       handleEditorMarkdownChange: (_paneId, document, nextMarkdown) => {
-        received.push({ key: document.key, markdown: nextMarkdown });
+        received.push({ key: document.handle, markdown: nextMarkdown });
       },
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
@@ -91,7 +91,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     expect(capturedOnMarkdownChange).toBeTypeOf('function');
 
     // A save rekeys the draft to its persisted path, replacing the pane's note
-    // object (the collision branch of rekeyNote returns a *different* object).
+    // object, including when durable identity or path changes.
     liveDocument = createNoteDraftState({
       title: 'Foo',
       bodyMarkdown: '',
@@ -108,8 +108,8 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
 
     // The edit must land on the persisted note, not the orphaned draft —
     // otherwise the body is saved as a separate file.
-    expect(received).toEqual([{ key: liveDocument.key, markdown: 'body text' }]);
-    expect(liveDocument.key).not.toBe(draftDocument.key);
+    expect(received).toEqual([{ key: liveDocument.handle, markdown: 'body text' }]);
+    expect(liveDocument.handle).not.toBe(draftDocument.handle);
   });
 
   it('does not reset a shared runtime when a pane remounts the same document', async () => {

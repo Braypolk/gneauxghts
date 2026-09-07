@@ -49,7 +49,7 @@ describe('document state transitions', () => {
     (kind) => {
       const document = createDocumentState(
         snapshot(),
-        `path:${path}`
+        `document:`
       );
 
       dispatchDocumentOperation(document, {
@@ -82,7 +82,7 @@ describe('document state transitions', () => {
   it('rejects stale failures without replacing a newer operation', () => {
     const document = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
     dispatchDocumentOperation(document, {
       type: 'start',
@@ -111,7 +111,7 @@ describe('document state transitions', () => {
   it('advances revision only for real working-content changes', () => {
     const document = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
 
     expect(updateDocumentTitle(document, 'Saved title')).toBe(
@@ -129,7 +129,7 @@ describe('document state transitions', () => {
     const boundary = snapshot();
     const document = createDocumentState(
       boundary,
-      `path:${path}`
+      `document:`
     );
 
     expect(documentToSessionSnapshot(document)).toEqual(
@@ -152,7 +152,7 @@ describe('external synchronization transitions', () => {
     (source, _changeKind) => {
       const document = createDocumentState(
         snapshot(),
-        `path:${path}`
+        `document:`
       );
       updateDocumentMarkdown(document, 'local body');
 
@@ -187,7 +187,7 @@ describe('external synchronization transitions', () => {
   it('can keep local work or apply the captured external snapshot', () => {
     const keepLocal = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
     updateDocumentMarkdown(keepLocal, 'local body');
     const keepConflictId = captureExternalSnapshotForTest(
@@ -210,7 +210,7 @@ describe('external synchronization transitions', () => {
 
     const useExternal = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
     updateDocumentMarkdown(useExternal, 'local body');
     const externalConflictId = captureExternalSnapshotForTest(
@@ -243,7 +243,7 @@ describe('external synchronization transitions', () => {
   it('turns a conflicted external deletion into a recoverable draft', () => {
     const document = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
     updateDocumentMarkdown(document, 'local body');
     const conflictId = captureExternalDeletionForTest(
@@ -270,7 +270,7 @@ describe('external synchronization transitions', () => {
   it('applies a clean external snapshot and advances one revision', () => {
     const document = createDocumentState(
       snapshot(),
-      `path:${path}`
+      `document:`
     );
 
     const result = applySessionSnapshotToDocument(

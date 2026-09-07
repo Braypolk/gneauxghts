@@ -1,7 +1,6 @@
 import {
   dispatchDocumentExternalSync,
   getDocumentMarkdown,
-  resolveConflictUsingExternal,
   type NoteDraftState
 } from './documentState';
 import { isDocumentExternalConflictCurrent } from './documentExternalSyncMachine';
@@ -17,6 +16,10 @@ export interface DocumentConflictControllerDeps {
   enqueueSave: (document: NoteDraftState) => Promise<void>;
   copyText: (text: string) => Promise<void>;
   refreshDerivedViews?: () => void;
+  resolveUsingExternal: (
+    document: NoteDraftState,
+    conflictId: number
+  ) => boolean;
 }
 
 /**
@@ -117,7 +120,7 @@ export function createDocumentConflictController(
       return false;
     }
     if (
-      !resolveConflictUsingExternal(document, conflictId)
+      !deps.resolveUsingExternal(document, conflictId)
     ) {
       return false;
     }
