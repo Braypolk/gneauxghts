@@ -33,17 +33,17 @@ const ACTIONS_BY_STATE: Readonly<
     editor: {
       regular: ['open-chat', 'open-previous', 'split-pane'],
       expanded: [
+        'split-with-current',
         'split-with-chat',
         'split-with-previous',
-        'split-with-current',
         'split-pane'
       ]
     },
     chat: {
       regular: ['open-previous', 'split-pane'],
       expanded: [
-        'split-with-previous',
         'split-with-current',
+        'split-with-previous',
         'split-pane'
       ]
     }

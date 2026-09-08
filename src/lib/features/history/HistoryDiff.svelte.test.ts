@@ -74,7 +74,7 @@ describe('HistoryDiff', () => {
   it('renders complete authored changes, disclosed properties, and missing assets', () => {
     const body = render(HistoryDiff, { props: { diff } }).body;
 
-    expect(body).toContain('Compared with previous revision');
+    expect(body).toContain('Changes in this version');
     expect(body).toContain('Kept');
     expect(body).toContain('*old*');
     expect(body).toContain('**new**');
@@ -86,6 +86,14 @@ describe('HistoryDiff', () => {
     expect(body).toContain('missing.png');
     expect(body).toContain('not stored in Note Timeline history');
     expect(body).not.toContain('gneauxghts');
+  });
+
+  it('frames the current-note comparison as changes since the selected version', () => {
+    const body = render(HistoryDiff, {
+      props: { diff: { ...diff, comparison: 'current' } }
+    }).body;
+
+    expect(body).toContain('Changes since this version');
   });
 
   it('reports an authored no-op explicitly', () => {

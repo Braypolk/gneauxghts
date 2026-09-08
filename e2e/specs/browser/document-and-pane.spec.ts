@@ -166,8 +166,13 @@ describe('document and pane state-machine boundaries', () => {
         expect((await history.getLocation()).x).toBeCloseTo(position.x, 0);
         expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
 
+        expect(await $('button[aria-controls="related-drawer-panel"]').isExisting()).toBe(false);
+
         await $('button[aria-label="Back to workspace"]').click();
         await history.waitForExist({ reverse: true });
+        const relatedToggle = await $('button[aria-controls="related-drawer-panel"]');
+        await relatedToggle.waitForExist();
+        expect(await relatedToggle.getAttribute('aria-expanded')).toBe(String(layout.expandRelated));
         expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
         expect((await card.getLocation()).x).toBeCloseTo(position.x, 0);
       } finally {
@@ -283,7 +288,14 @@ describe('document and pane state-machine boundaries', () => {
     await history.waitForExist();
     expect((await history.getText()).toUpperCase()).toContain('READ ONLY');
     await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
-    expect(await history.getText()).toContain('Alpha line 1');
+    expect(await history.getText()).toContain('Current version');
+    expect(await history.getText()).toContain('No authored body changes in this comparison.');
+    const initialHistoryDiff = await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__?.invocations.findLast(
+        (entry) => entry.command === 'get_note_history_diff'
+      )
+    );
+    expect(initialHistoryDiff?.args.comparison).toBe('current');
     expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(panesBefore.length);
     expect(await $('[data-testid="note-editor"] .cm-content').getAttribute('contenteditable')).toBe(
       'true'
@@ -293,6 +305,12 @@ describe('document and pane state-machine boundaries', () => {
     await changedRevision.click();
     const revisionDiff = await $('[data-testid="historical-revision-diff"]');
     await browser.waitUntil(async () => (await revisionDiff.getText()).includes('Inserted'));
+    expect(await revisionDiff.getText()).toContain('Changes since this version');
+    expect(await revisionDiff.getText()).toContain('Alpha line 1');
+    await $('button=Previous version').click();
+    await browser.waitUntil(async () =>
+      (await revisionDiff.getText()).includes('Changes in this version')
+    );
     expect(await revisionDiff.getText()).toContain('Removed');
     expect(await revisionDiff.getText()).toContain('*old formatting*');
     expect(await revisionDiff.getText()).toContain('**new formatting**');
@@ -342,6 +360,10 @@ describe('document and pane state-machine boundaries', () => {
     const emptyRevision = await $('[data-revision-id="note-alpha-revision-30"]');
     await emptyRevision.click();
     await browser.waitUntil(async () =>
+      (await revisionDiff.getText()).includes('Changes since this version')
+    );
+    await $('button=Previous version').click();
+    await browser.waitUntil(async () =>
       (await revisionDiff.getText()).includes('Deleted to create an empty note.')
     );
     const authoredBody = await revisionDiff.$('[aria-label="Authored body changes"]');
@@ -379,7 +401,8 @@ describe('document and pane state-machine boundaries', () => {
     await confirmClear.click();
     await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
     expect(await history.getText()).not.toContain('Renamed Alpha old.md to alpha.md');
-    expect(await history.getText()).toContain('Alpha line 1');
+    expect(await history.getText()).toContain('Current version');
+    expect(await history.getText()).toContain('No authored body changes in this comparison.');
 
     const back = await $('button[aria-label="Back to workspace"]');
     await back.click();
@@ -509,21 +532,21 @@ describe('document and pane state-machine boundaries', () => {
       )
     );
 
-    await $('button=Preview complete replacement').click();
-    const preview = await $('[aria-label="Complete replacement preview"]');
+    await $('button=Restore this version…').click();
+    const preview = await $('[aria-label="Restore version preview"]');
     await preview.waitForExist();
     expect(await preview.getText()).toContain('Historical revision 34 of Alpha note');
-    expect(await preview.getText()).toContain('Confirm Version Restore');
+    expect(await preview.getText()).toContain('Restore version');
     expect(await preview.$$('textarea')).toHaveLength(0);
-    const previewToggle = await $('button=Preview complete replacement');
+    const previewToggle = await $('button=Restore this version…');
     expect(await previewToggle.getAttribute('aria-expanded')).toBe('true');
     await previewToggle.click();
     await preview.waitForExist({ reverse: true });
     expect(await previewToggle.getAttribute('aria-expanded')).toBe('false');
     await previewToggle.click();
     await preview.waitForExist();
-    await preview.$('button=Confirm Version Restore').click();
-    await browser.waitUntil(async () => (await history.getText()).includes('Version restore'));
+    await preview.$('button=Restore version').click();
+    await browser.waitUntil(async () => (await history.getText()).includes('Restored version'));
 
     await $('button[aria-label="Back to workspace"]').click();
     await history.waitForExist({ reverse: true });

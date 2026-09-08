@@ -81,8 +81,8 @@ describe('native finalized Editing Windows', () => {
     expect(window).not.toHaveProperty('editingSessionId');
     expect(window.timeEvidence?.kind).toBe('editingWindow');
     expect(await $$(`[data-revision-id="${window.revisionId}"]`)).toHaveLength(1);
-    expect(await $('[aria-label="Note timeline"]').getText()).toContain('Editing Window · Editor');
-    expect(await $('[aria-label="Note timeline"]').getText()).toContain('Saved');
+    expect(await $('[aria-label="Note timeline"]').getText()).toContain('Edited');
+    expect(await $('[aria-label="Note timeline"]').getText()).not.toContain('Editing Window');
     expect(await $('[data-testid="historical-revision-diff"]').getText()).toContain('Retained endpoint');
     expect(await $('[data-testid="historical-revision-diff"]').getText()).not.toContain('Discarded intermediate');
     expect(await $('[data-testid="history-net-summary"]').getText()).toContain('1 line added');
@@ -101,10 +101,10 @@ describe('native finalized Editing Windows', () => {
     await edit('Later window endpoint');
     await openHistory();
     await $(`[data-revision-id="${window.revisionId}"]`).click();
-    await $('button=Preview complete replacement').click();
-    await $('[aria-label="Complete replacement preview"]').waitForExist();
-    expect(await $('[aria-label="Complete replacement preview"]').getText()).toContain('Retained endpoint');
-    await $('button=Confirm Version Restore').click();
+    await $('button=Restore this version…').click();
+    await $('[aria-label="Restore version preview"]').waitForExist();
+    expect(await $('[aria-label="Restore version preview"]').getText()).toContain('Retained endpoint');
+    await $('button=Restore version').click();
     await browser.waitUntil(async () => (await invoke<NoteSession>('open_note', { noteId: note.noteId, path: null })).markdown === 'Retained endpoint', { timeout: 20_000 });
     await closeHistory();
     expect((await state()).editor?.markdown).toBe('Retained endpoint');

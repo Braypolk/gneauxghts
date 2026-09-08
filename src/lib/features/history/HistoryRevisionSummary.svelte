@@ -2,11 +2,25 @@
   import type { HistoryRevisionRecord } from './historyModeMachine';
   import { historySourceLabels, historyRevisionTimeSummary } from './historyTimeline';
 
-  let { revision }: { revision: HistoryRevisionRecord } = $props();
-  const source = $derived(revision.timeKind === 'editingWindow' ? 'Editing Window · Editor' : historySourceLabels[revision.source]);
+  let { revision, isCurrentVersion = false }: {
+    revision: HistoryRevisionRecord;
+    isCurrentVersion?: boolean;
+  } = $props();
+  const source = $derived(historySourceLabels[revision.source]);
+  const time = $derived(historyRevisionTimeSummary(revision));
+  const title = $derived(
+    revision.revisionLabel ?? (isCurrentVersion ? 'Current version' : `Version from ${time}`)
+  );
+  const detail = $derived(
+    revision.revisionLabel && isCurrentVersion
+      ? `Current version · ${source} · ${time}`
+      : revision.revisionLabel
+        ? `${source} · ${time}`
+        : `${source}${isCurrentVersion ? ` · ${time}` : ''}`
+  );
 </script>
 
-<span class="block truncate text-xs font-medium" title={source}>
-  {revision.revisionLabel ?? source}
+<span class="block text-xs font-medium" title={title}>
+  {title}
 </span>
-<span class="mt-1 block text-xs leading-relaxed text-muted-foreground">{historyRevisionTimeSummary(revision)}</span>
+<span class="mt-1 block text-xs leading-relaxed text-muted-foreground">{detail}</span>

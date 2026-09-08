@@ -81,10 +81,10 @@ describe('finalized Editing Windows', () => {
   });
 
   it('displays the interval and explicitly uncertain raw clock evidence without inventing a point', async () => {
-    const { formatHistoryTime, historyRevisionTimeSummary } = await import('./historyTimeline');
-    expect(historyRevisionTimeSummary(window)).toBe(`Saved ${formatHistoryTime(1_000)} – ${formatHistoryTime(3_000)}`);
+    const { historyIntervalTimeSummary, historyRevisionTimeSummary } = await import('./historyTimeline');
+    expect(historyRevisionTimeSummary(window)).toBe(historyIntervalTimeSummary(1_000, 3_000));
     const reversed = { ...window, timeEvidence: { ...window.timeEvidence, firstWallMillis: 3_000, lastWallMillis: 1_000, clockDiscontinuity: true } };
-    expect(historyRevisionTimeSummary(reversed)).toContain(`Time uncertain (clock changed) · first saved ${formatHistoryTime(3_000)}, last saved ${formatHistoryTime(1_000)}`);
-    expect(historyRevisionTimeSummary({ ...window, timeEvidence: undefined })).toBe('Editing interval unavailable');
+    expect(historyRevisionTimeSummary(reversed)).toContain('Time uncertain (clock changed)');
+    expect(historyRevisionTimeSummary({ ...window, timeEvidence: undefined })).toBe('Time unavailable');
   });
 });

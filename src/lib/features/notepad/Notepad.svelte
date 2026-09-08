@@ -1615,7 +1615,7 @@
       </div>
     </div>
 
-    {#if relatedState.panelPlacement === "side"}
+    {#if !historyMode.isActive && relatedState.panelPlacement === "side"}
       <RelatedPanelHost
         placement={relatedState.panelPlacement}
         reservedWidth={relatedState.reservedWidth}
@@ -1637,7 +1637,7 @@
     {/if}
   </div>
 
-  {#if relatedState.panelPlacement !== "side"}
+  {#if !historyMode.isActive && relatedState.panelPlacement !== "side"}
     <RelatedPanelHost
       placement={relatedState.panelPlacement}
       reservedWidth={relatedState.reservedWidth}
@@ -1695,6 +1695,7 @@
         state={historyMode.state}
         onExit={historyMode.exit}
         onSelectRevision={historyMode.selectRevision}
+        onSetComparison={historyMode.setComparison}
         onPreviewRestore={historyMode.previewRestore}
         onCancelRestore={historyMode.cancelRestore}
         onConfirmRestore={historyMode.confirmRestore}

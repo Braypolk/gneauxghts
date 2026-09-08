@@ -385,6 +385,17 @@ function historicalDiff(
   }
   const restore = historyRestores.get(note.noteId);
   if (restore?.revisionId === revisionId) {
+    if (comparison === 'current') {
+      return {
+        revisionId,
+        comparison,
+        fromRevisionId: revisionId,
+        toRevisionId: revisionId,
+        bodyLines: [{ kind: 'context', text: restore.body, oldLineNumber: 1, newLineNumber: 1 }],
+        propertiesLines: [],
+        missingAssets: []
+      };
+    }
     const previous = historicalRevision(note, `${note.noteId}-revision-35`);
     return {
       revisionId,
@@ -400,6 +411,17 @@ function historicalDiff(
     };
   }
   if (revisionId === `${note.noteId}-baseline-after-clear`) {
+    if (comparison === 'current') {
+      return {
+        revisionId,
+        comparison,
+        fromRevisionId: revisionId,
+        toRevisionId: revisionId,
+        bodyLines: [{ kind: 'context', text: note.markdown, oldLineNumber: 1, newLineNumber: 1 }],
+        propertiesLines: [],
+        missingAssets: []
+      };
+    }
     return {
       revisionId,
       comparison,

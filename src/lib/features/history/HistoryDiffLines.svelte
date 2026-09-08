@@ -34,11 +34,11 @@
   const presentation = {
     added: {
       marker: '+',
-      className: 'bg-emerald-500/10 text-foreground'
+      className: 'bg-emerald-500/[0.06] text-foreground dark:bg-emerald-400/[0.07]'
     },
     removed: {
       marker: '−',
-      className: 'bg-rose-500/10 text-foreground'
+      className: 'bg-rose-500/[0.06] text-foreground dark:bg-rose-400/[0.07]'
     },
     context: { marker: ' ', className: 'text-foreground' }
   } satisfies Record<HistoryDiffLine['kind'], { marker: string; className: string }>;
@@ -67,11 +67,12 @@
     {:else}
       {@const style = presentation[line.kind]}
       <div
-        class={`grid ${compact ? 'grid-cols-[2.5rem_2.5rem_1.25rem_minmax(0,1fr)]' : 'min-h-6 grid-cols-[3rem_3rem_1.5rem_minmax(0,1fr)]'} ${style.className}`}
+        class={`grid ${compact ? 'grid-cols-[2rem_1.25rem_minmax(0,1fr)] sm:grid-cols-[2.5rem_2.5rem_1.25rem_minmax(0,1fr)]' : 'min-h-6 grid-cols-[2.25rem_1.25rem_minmax(0,1fr)] sm:grid-cols-[3rem_3rem_1.5rem_minmax(0,1fr)]'} ${style.className}`}
         data-diff-kind={line.kind}
       >
-        <span class={`select-none px-2 py-0.5 text-right text-muted-foreground ${compact ? '' : 'text-xs'}`}>{line.oldLineNumber ?? ''}</span>
-        <span class={`select-none px-2 py-0.5 text-right text-muted-foreground ${compact ? '' : 'text-xs'}`}>{line.newLineNumber ?? ''}</span>
+        <span class={`select-none px-1 py-0.5 text-right text-muted-foreground sm:hidden ${compact ? '' : 'text-xs'}`}>{line.newLineNumber ?? line.oldLineNumber ?? ''}</span>
+        <span class={`hidden select-none px-2 py-0.5 text-right text-muted-foreground sm:block ${compact ? '' : 'text-xs'}`}>{line.oldLineNumber ?? ''}</span>
+        <span class={`hidden select-none px-2 py-0.5 text-right text-muted-foreground sm:block ${compact ? '' : 'text-xs'}`}>{line.newLineNumber ?? ''}</span>
         <span class="select-none px-1 py-0.5 text-center">{style.marker}</span>
         <span class={`whitespace-pre-wrap break-words py-0.5 ${compact ? 'pr-3' : 'pr-4'}`}>{displayText(line.text)}</span>
       </div>

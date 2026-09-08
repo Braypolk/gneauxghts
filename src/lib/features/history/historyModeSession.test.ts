@@ -45,9 +45,9 @@ const firstPage: HistoryModePage = {
 };
 const revisionDiff: HistoricalDiff = {
   revisionId: 'revision-1',
-  comparison: 'parent',
-  fromRevisionId: null,
-  toRevisionId: 'revision-1',
+  comparison: 'current',
+  fromRevisionId: 'revision-1',
+  toRevisionId: 'revision-current',
   bodyLines: [
     {
       kind: 'added',
@@ -130,7 +130,7 @@ describe('HistoryModeSession', () => {
 
   it('crosses the save barrier before requesting role-limited history', async () => {
     const callOrder: string[] = [];
-    const { session } = setup({
+    const { session, deps } = setup({
       flushWorkspace: vi.fn(async () => {
         callOrder.push('flush');
       }),
@@ -146,10 +146,11 @@ describe('HistoryModeSession', () => {
     await session.enter('notepad-pane-1');
 
     expect(callOrder).toEqual(['flush', 'seal:note-1', 'history']);
+    expect(deps.loadDiff).toHaveBeenCalledExactlyOnceWith('note-1', 'revision-1', 'current');
     expect(session.state).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-1',
-      selectedComparison: 'parent',
+      selectedComparison: 'current',
       selectedDiff: revisionDiff
     });
   });
@@ -606,9 +607,9 @@ describe('HistoryModeSession', () => {
     });
     const secondRevision: HistoricalDiff = {
       revisionId: 'revision-2',
-      comparison: 'parent',
-      fromRevisionId: null,
-      toRevisionId: 'revision-2',
+      comparison: 'current',
+      fromRevisionId: 'revision-2',
+      toRevisionId: 'revision-current',
       bodyLines: [],
       propertiesLines: [],
       missingAssets: []
@@ -655,28 +656,28 @@ describe('HistoryModeSession', () => {
     });
   });
 
-  it('switches between parent and current comparisons without changing the pinned revision', async () => {
-    const currentDiff: HistoricalDiff = {
+  it('switches between current and previous-version comparisons without changing the pinned revision', async () => {
+    const parentDiff: HistoricalDiff = {
       ...revisionDiff,
-      comparison: 'current',
-      fromRevisionId: 'revision-1',
-      toRevisionId: 'revision-3'
+      comparison: 'parent',
+      fromRevisionId: null,
+      toRevisionId: 'revision-1'
     };
     const loadDiff = vi
       .fn()
       .mockResolvedValueOnce(revisionDiff)
-      .mockResolvedValueOnce(currentDiff);
+      .mockResolvedValueOnce(parentDiff);
     const { session } = setup({ loadDiff });
     await session.enter('notepad-pane-1');
 
-    await session.setComparison('current');
+    await session.setComparison('parent');
 
-    expect(loadDiff).toHaveBeenLastCalledWith('note-1', 'revision-1', 'current');
+    expect(loadDiff).toHaveBeenLastCalledWith('note-1', 'revision-1', 'parent');
     expect(session.state).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-1',
-      selectedComparison: 'current',
-      selectedDiff: currentDiff
+      selectedComparison: 'parent',
+      selectedDiff: parentDiff
     });
   });
 
@@ -688,26 +689,20 @@ describe('HistoryModeSession', () => {
     const { session } = setup({ loadDiff });
     await session.enter('notepad-pane-1');
 
-    await session.setComparison('current');
+    await session.setComparison('parent');
 
     expect(session.state).toMatchObject({
       phase: 'open',
       selectedRevisionId: 'revision-1',
-      selectedComparison: 'current',
+      selectedComparison: 'parent',
       selectedDiff: null,
       error: 'That revision diff could not be opened: selected revision hash mismatch'
     });
   });
 
   it('keeps the selected revision pinned while refreshing its current comparison', async () => {
-    const currentDiff: HistoricalDiff = {
-      ...revisionDiff,
-      comparison: 'current',
-      fromRevisionId: 'revision-1',
-      toRevisionId: 'revision-2'
-    };
     const refreshedCurrentDiff: HistoricalDiff = {
-      ...currentDiff,
+      ...revisionDiff,
       toRevisionId: 'revision-3'
     };
     const newestPage: HistoryModePage = {
@@ -729,11 +724,9 @@ describe('HistoryModeSession', () => {
     const loadDiff = vi
       .fn()
       .mockResolvedValueOnce(revisionDiff)
-      .mockResolvedValueOnce(currentDiff)
       .mockResolvedValueOnce(refreshedCurrentDiff);
     const { session } = setup({ loadPage, loadDiff });
     await session.enter('notepad-pane-1');
-    await session.setComparison('current');
 
     await session.refresh();
 

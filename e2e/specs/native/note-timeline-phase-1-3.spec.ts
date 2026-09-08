@@ -365,13 +365,13 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await loadAllHistory();
     await revealRevision(oldestRevision!.revisionId);
     await $(`[data-revision-id="${oldestRevision!.revisionId}"]`).click();
-    await $('button=Preview complete replacement').click();
-    const preview = await $('[aria-label="Complete replacement preview"]');
+    await $('button=Restore this version…').click();
+    const preview = await $('[aria-label="Restore version preview"]');
     await preview.waitForExist();
     expect(await preview.getText()).toContain('Native journey base line 1');
-    await preview.$('button=Confirm Version Restore').click();
+    await preview.$('button=Restore version').click();
     await browser.waitUntil(async () =>
-      (await $('[data-testid="history-mode"]').getText()).includes('Version restore')
+      (await $('[data-testid="history-mode"]').getText()).includes('Restored version')
     );
     await $('button[aria-label="Back to workspace"]').click();
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
@@ -403,14 +403,14 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     expect(readFileSync(note.path!, 'utf8')).toContain('project: updated');
     await revealRevision(original.revisionId);
     await $(`[data-revision-id="${original.revisionId}"]`).click();
-    await $('button=Preview complete replacement').click();
-    const preview = await $('[aria-label="Complete replacement preview"]');
+    await $('button=Restore this version…').click();
+    const preview = await $('[aria-label="Restore version preview"]');
     await preview.waitForExist();
-    await preview.$('button=Confirm Version Restore').click();
+    await preview.$('button=Restore version').click();
     const back = await $('button[aria-label="Back to workspace"]');
     await browser.waitUntil(async () =>
       (await back.isEnabled()) &&
-      (await $('[data-testid="history-mode"]').getText()).includes('Version restore')
+      (await $('[data-testid="history-mode"]').getText()).includes('Restored version')
     );
     expect(readFileSync(note.path!, 'utf8')).toContain('project: original');
     await back.click();
@@ -575,14 +575,14 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await $(`[data-revision-id="${firstEditRevision.revisionId}"]`).click();
     const diff = await $('[data-testid="historical-revision-diff"]');
     await browser.waitUntil(async () => (await diff.getText()).includes('First edit after reset recovery'));
-    await $('button=Preview complete replacement').click();
-    const preview = await $('[aria-label="Complete replacement preview"]');
+    await $('button=Restore this version…').click();
+    const preview = await $('[aria-label="Restore version preview"]');
     await preview.waitForExist();
     expect(await preview.getText()).toContain('First edit after reset recovery');
     expect(await preview.getText()).not.toContain('Second edit before driver reconnection');
-    await preview.$('button=Confirm Version Restore').click();
+    await preview.$('button=Restore version').click();
     await browser.waitUntil(async () =>
-      (await $('[data-testid="history-mode"]').getText()).includes('Version restore')
+      (await $('[data-testid="history-mode"]').getText()).includes('Restored version')
     );
     await $('button[aria-label="Back to workspace"]').click();
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });

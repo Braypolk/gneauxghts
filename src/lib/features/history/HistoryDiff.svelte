@@ -17,9 +17,9 @@
   const comparisonLabel = $derived(
     diff.comparison === 'parent'
       ? diff.fromRevisionId
-        ? 'Compared with previous revision'
-        : 'Compared with empty beginning'
-      : 'Compared with current note'
+        ? 'Changes in this version'
+        : 'Changes from the beginning'
+      : 'Changes since this version'
   );
 
 </script>

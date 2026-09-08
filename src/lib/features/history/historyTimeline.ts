@@ -8,14 +8,14 @@ import type {
 import { compareHistoryRecordsNewestFirst } from './historyModeMachine';
 
 export const historySourceLabels: Record<HistoryMutationSource, string> = {
-  editor: 'Editor revision',
-  taskAction: 'Task action',
-  acceptedChatProposal: 'Accepted chat proposal',
+  editor: 'Edited',
+  taskAction: 'Task updated',
+  acceptedChatProposal: 'Accepted chat suggestion',
   externalEdit: 'External edit',
-  versionRestore: 'Version restore',
+  versionRestore: 'Restored version',
   noteCreation: 'Note created',
-  baselineInitialization: 'Baseline revision',
-  recoveryReconciliation: 'Recovery reconciliation'
+  baselineInitialization: 'First saved version',
+  recoveryReconciliation: 'Recovered version'
 };
 
 export function formatHistoryTime(millis: number) {
@@ -30,7 +30,7 @@ export function historyCountLabel(value: number, singular: string) {
 }
 
 export function historyRevisionSummary(record: HistoryRevisionRecord) {
-  const source = record.timeKind === 'editingWindow' ? 'Editing Window · Editor' : historySourceLabels[record.source];
+  const source = historySourceLabels[record.source];
   return `${source} · ${historyCountLabel(record.lineCount, 'line')} · ${historyCountLabel(record.characterCount, 'character')}`;
 }
 
@@ -39,18 +39,18 @@ export function historyRevisionTimeSummary(record: HistoryRevisionRecord) {
   switch (record.timeKind) {
     case 'editingWindow': {
       const evidence = record.timeEvidence;
-      if (evidence?.kind !== 'editingWindow') return 'Editing interval unavailable';
+      if (evidence?.kind !== 'editingWindow') return 'Time unavailable';
       if (evidence.clockDiscontinuity) {
-        return `Time uncertain (clock changed) · first saved ${formatHistoryTime(evidence.firstWallMillis)}, last saved ${formatHistoryTime(evidence.lastWallMillis)} · wall-time range ${historyIntervalTimeSummary(evidence.minWallMillis, evidence.maxWallMillis)}`;
+        return `Time uncertain (clock changed) · ${historyIntervalTimeSummary(evidence.minWallMillis, evidence.maxWallMillis)}`;
       }
-      return `Saved ${historyIntervalTimeSummary(evidence.firstWallMillis, evidence.lastWallMillis)}`;
+      return historyIntervalTimeSummary(evidence.firstWallMillis, evidence.lastWallMillis);
     }
     case 'knownSince':
       return `Known since ${timestamp}`;
     case 'committed':
-      return `Committed ${timestamp}`;
+      return timestamp;
     case 'observed':
-      return `Observed ${timestamp}`;
+      return timestamp;
   }
 }
 
@@ -59,6 +59,17 @@ export function historyIntervalTimeSummary(
   endedAtMillis: number
 ) {
   if (startedAtMillis === endedAtMillis) return formatHistoryTime(endedAtMillis);
+  const startedAt = new Date(startedAtMillis);
+  const endedAt = new Date(endedAtMillis);
+  if (
+    startedAt.getFullYear() === endedAt.getFullYear() &&
+    startedAt.getMonth() === endedAt.getMonth() &&
+    startedAt.getDate() === endedAt.getDate()
+  ) {
+    const date = new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(startedAt);
+    const time = new Intl.DateTimeFormat(undefined, { timeStyle: 'short' });
+    return `${date}, ${time.format(startedAt)} – ${time.format(endedAt)}`;
+  }
   return `${formatHistoryTime(startedAtMillis)} – ${formatHistoryTime(endedAtMillis)}`;
 }
 

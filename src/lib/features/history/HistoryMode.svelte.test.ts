@@ -58,12 +58,12 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
   ],
   nextCursor: 'event-1',
   selectedRevisionId: 'revision-2',
-  selectedComparison: 'parent',
+  selectedComparison: 'current',
   selectedDiff: {
     revisionId: 'revision-2',
-    comparison: 'parent',
-    fromRevisionId: 'revision-1',
-    toRevisionId: 'revision-2',
+    comparison: 'current',
+    fromRevisionId: 'revision-2',
+    toRevisionId: null,
     bodyLines: [
       {
         kind: 'added',
@@ -160,10 +160,10 @@ describe('HistoryMode', () => {
     expect(body).toContain('Renamed Old.md to Timeline note.md');
     expect(body).toContain('# Historical body');
     expect(body).toContain('project: atlas');
-    expect(body).not.toContain('Previous revision');
-    expect(body).not.toContain('Current note');
-    expect(body).toContain('Preview complete replacement');
-    expect(body).not.toContain('Restore complete revision');
+    expect(body).toContain('Current note');
+    expect(body).toContain('Previous version');
+    expect(body).toContain('Current version');
+    expect(body).not.toContain('Restore this version…');
     expect(body).toContain('Release candidate');
     expect(body).not.toContain('aria-label="Revision name"');
     expect(body).toContain('aria-label="Rename revision"');
@@ -258,10 +258,10 @@ describe('HistoryMode', () => {
       }
     }).body;
 
-    expect(body).toContain('Complete replacement preview');
+    expect(body).toContain('Restore this version?');
     expect(body).toContain('project: atlas');
     expect(body).toContain('# Historical body');
-    expect(body).toContain('Confirm Version Restore');
+    expect(body).toContain('Restore version');
     expect(body).toContain('Cancel');
     expect(body).not.toContain('<textarea');
   });
@@ -283,13 +283,13 @@ it('renders one selectable named window with its interval and combined net diff 
     onClearHistory: vi.fn(), onCheckHealth: vi.fn(), onLoadMore: vi.fn(), onRetry: vi.fn()
   }}).body;
   expect(body.match(/data-revision-id="revision-2"/gu)).toHaveLength(1);
-  expect(body).toContain('Editing Window · Editor');
-  expect(body).toContain('Saved');
+  expect(body).toContain('Edited');
+  expect(body).not.toContain('Editing Window');
   expect(body).not.toContain('Individual revisions');
   expect(body).not.toContain('Editing Session');
   expect(body).toContain('Release candidate');
   expect(body).toContain('2 lines added · 0 lines removed');
-  expect(body).toContain('Compared with previous revision');
+  expect(body).toContain('Changes since this version');
   expect(body).not.toContain('File timestamp Jan');
 });
 

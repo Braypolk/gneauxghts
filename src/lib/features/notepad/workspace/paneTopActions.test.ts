@@ -9,9 +9,9 @@ describe('pane top action state', () => {
       'split-pane'
     ]);
     expect(getPaneTopActions('editor', 'solo', 'expanded')).toEqual([
+      'split-with-current',
       'split-with-chat',
       'split-with-previous',
-      'split-with-current',
       'split-pane'
     ]);
   });
@@ -22,8 +22,8 @@ describe('pane top action state', () => {
       'split-pane'
     ]);
     expect(getPaneTopActions('chat', 'solo', 'expanded')).toEqual([
-      'split-with-previous',
       'split-with-current',
+      'split-with-previous',
       'split-pane'
     ]);
   });

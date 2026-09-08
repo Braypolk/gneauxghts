@@ -5,9 +5,10 @@
   import HistoryRevisionSummary from './HistoryRevisionSummary.svelte';
   import RevisionNameEditor from './RevisionNameEditor.svelte';
 
-  let { revision, selected, busy, renamingRevisionId = $bindable(null), onSelect, onSave, onRemove }: {
+  let { revision, selected, isCurrentVersion = false, busy, renamingRevisionId = $bindable(null), onSelect, onSave, onRemove }: {
     revision: HistoryRevisionRecord;
     selected: boolean;
+    isCurrentVersion?: boolean;
     busy: boolean;
     renamingRevisionId: string | null;
     onSelect: (revisionId: string) => void | Promise<void>;
@@ -39,7 +40,7 @@
   }
 </script>
 
-<div class={`group relative rounded-r-lg border-l-2 ${selected ? 'border-foreground/60 bg-muted/72' : 'border-transparent hover:bg-muted/50'}`}>
+<div class={`group relative rounded-lg ${selected ? 'bg-muted/72' : 'hover:bg-muted/50'}`}>
   {#if editing}
     <div class="px-3 py-2">
       <RevisionNameEditor
@@ -70,7 +71,7 @@
         }
       }}
     >
-      <HistoryRevisionSummary {revision} />
+      <HistoryRevisionSummary {revision} {isCurrentVersion} />
     </button>
     <button
       type="button"

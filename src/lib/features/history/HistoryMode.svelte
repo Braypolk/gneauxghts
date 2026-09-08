@@ -1,18 +1,25 @@
 <script lang="ts">
-  import { ArrowLeft, Clock3, LoaderCircle, RotateCcw } from '@lucide/svelte';
+  import { ArrowLeft, Clock3, LoaderCircle, Pencil, RotateCcw } from '@lucide/svelte';
   import type {
+    HistoryDiffComparison,
     HistoryLifecycleRecord,
     HistoryModeState
   } from './historyModeMachine';
   import { canExitHistoryMode } from './historyModeMachine';
   import HistoryDiff from './HistoryDiff.svelte';
   import HistoryTimelineRevision from './HistoryTimelineRevision.svelte';
-  import { buildHistoryTimelineItems, formatHistoryTime } from './historyTimeline';
+  import {
+    buildHistoryTimelineItems,
+    formatHistoryTime,
+    historyRevisionTimeSummary,
+    historySourceLabels
+  } from './historyTimeline';
 
   interface Props {
     state: Exclude<HistoryModeState, { phase: 'inactive' | 'restoring' }>;
     onExit: () => void | Promise<void>;
     onSelectRevision: (revisionId: string) => void | Promise<void>;
+    onSetComparison?: (comparison: HistoryDiffComparison) => void | Promise<void>;
     onPreviewRestore: () => void | Promise<void>;
     onCancelRestore: () => void;
     onConfirmRestore: () => void | Promise<void>;
@@ -29,6 +36,7 @@
     state: historyState,
     onExit,
     onSelectRevision,
+    onSetComparison,
     onPreviewRestore,
     onCancelRestore,
     onConfirmRestore,
@@ -90,6 +98,25 @@
         )
       : undefined
   );
+  const newestRevisionId = $derived(
+    historyState.phase === 'open' && !historyState.target.citationRevisionId
+      ? historyState.records.find((record) => record.kind === 'revision')?.revisionId ?? null
+      : null
+  );
+  const selectedIsCurrent = $derived(
+    selectedRevision?.kind === 'revision' && selectedRevision.revisionId === newestRevisionId
+  );
+  const selectedVersionTime = $derived(
+    selectedRevision?.kind === 'revision' ? historyRevisionTimeSummary(selectedRevision) : null
+  );
+  const selectedVersionTitle = $derived(
+    selectedRevision?.kind === 'revision'
+      ? selectedRevision.revisionLabel ?? (selectedIsCurrent ? 'Current version' : `Version from ${selectedVersionTime}`)
+      : null
+  );
+  const selectedVersionLabel = $derived(
+    selectedRevision?.kind === 'revision' ? selectedRevision.revisionLabel : null
+  );
 
   async function clearHistory() {
     await onClearHistory();
@@ -130,7 +157,7 @@
       </h1>
       <p class="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
         <Clock3 class="h-3 w-3" aria-hidden="true" />
-        <span>History</span><span aria-hidden="true">·</span><span>Read only</span>
+        <span>Version history</span><span aria-hidden="true">·</span><span>Read only</span>
       </p>
     </div>
   </header>
@@ -161,9 +188,9 @@
       </div>
     </div>
   {:else}
-    <div class="grid min-h-0 flex-1 grid-rows-[minmax(8rem,28%)_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] md:grid-rows-1">
+    <div class="grid min-h-0 flex-1 grid-rows-[minmax(11rem,36%)_minmax(0,1fr)] md:grid-cols-[16rem_minmax(0,1fr)] md:grid-rows-1">
       <aside class="flex min-h-0 flex-col overflow-hidden border-b border-border/60 px-3 pb-4 md:border-r md:border-b-0 sm:px-4" aria-label="Note timeline" aria-busy={historyState.request?.kind === 'page'} data-history-record-count={historyState.records.length}>
-        <h2 class="shrink-0 px-3 py-3 text-xs font-medium text-muted-foreground">Timeline</h2>
+        <h2 class="shrink-0 px-3 py-3 text-xs font-medium text-muted-foreground">Versions</h2>
         <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain">
           {#if historyState.previousCursor}
             <button type="button"
@@ -179,6 +206,7 @@
                     revision={item.revision}
                     bind:renamingRevisionId
                     selected={historyState.selectedRevisionId === item.revision.revisionId}
+                    isCurrentVersion={item.revision.revisionId === newestRevisionId}
                     busy={historyState.request !== null}
                     onSelect={onSelectRevision}
                     onSave={onNameRevision}
@@ -262,19 +290,62 @@
             <p class="mb-4 border-l-2 border-destructive/60 pl-3 text-sm text-destructive">{historyState.error}</p>
           {/if}
           {#if selectedRevision?.kind === 'revision'}
-            <button
-              type="button"
-              class="mb-5 rounded-full bg-muted px-4 py-2 text-xs font-medium hover:bg-accent disabled:opacity-50"
-              aria-expanded={historyState.restorePreview !== null}
-              disabled={historyState.request !== null}
-              onclick={() => historyState.restorePreview ? onCancelRestore() : void onPreviewRestore()}
-            >{historyState.request?.kind === 'restorePreview' ? 'Preparing preview…' : 'Preview complete replacement'}</button>
+            <section class="mb-5 border-b border-border/60 pb-4" aria-label="Selected version">
+              <div class="flex flex-wrap items-start justify-between gap-3">
+                <div class="min-w-0">
+                  <p class="text-[0.6875rem] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Selected version</p>
+                  <h2 class="mt-1 text-base font-semibold">{selectedVersionTitle}</h2>
+                  <p class="mt-1 text-xs text-muted-foreground">
+                    {historySourceLabels[selectedRevision.source]} · {selectedVersionTime}
+                  </p>
+                </div>
+                <div class="flex flex-wrap items-center gap-1.5">
+                  <button
+                    type="button"
+                    class="inline-flex items-center gap-1.5 rounded-full px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
+                    disabled={historyState.request !== null}
+                    onclick={() => (renamingRevisionId = selectedRevision.revisionId)}
+                  ><Pencil class="h-3 w-3" /> Rename</button>
+                  {#if !selectedIsCurrent}
+                    <button
+                      type="button"
+                      class="rounded-full bg-foreground px-4 py-2 text-xs font-medium text-background disabled:opacity-50"
+                      aria-expanded={historyState.restorePreview !== null}
+                      disabled={historyState.request !== null}
+                      onclick={() => historyState.restorePreview ? onCancelRestore() : void onPreviewRestore()}
+                    >{historyState.request?.kind === 'restorePreview' ? 'Preparing preview…' : 'Restore this version…'}</button>
+                  {/if}
+                </div>
+              </div>
+              <div class="mt-4 inline-flex rounded-full bg-muted/70 p-1" role="group" aria-label="Compare selected version with">
+                <button
+                  type="button"
+                  class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                  class:bg-foreground={historyState.selectedComparison === 'current'}
+                  class:text-background={historyState.selectedComparison === 'current'}
+                  class:text-muted-foreground={historyState.selectedComparison !== 'current'}
+                  aria-pressed={historyState.selectedComparison === 'current'}
+                  disabled={historyState.request !== null}
+                  onclick={() => void onSetComparison?.('current')}
+                >Current note</button>
+                <button
+                  type="button"
+                  class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                  class:bg-foreground={historyState.selectedComparison === 'parent'}
+                  class:text-background={historyState.selectedComparison === 'parent'}
+                  class:text-muted-foreground={historyState.selectedComparison !== 'parent'}
+                  aria-pressed={historyState.selectedComparison === 'parent'}
+                  disabled={historyState.request !== null}
+                  onclick={() => void onSetComparison?.('parent')}
+                >Previous version</button>
+              </div>
+            </section>
           {/if}
           {#if historyState.restorePreview}
-            <div class="mb-6 border-l-2 border-destructive/60 pl-4" role="alertdialog" aria-label="Complete replacement preview">
-              <p class="text-sm font-semibold">Complete replacement preview</p>
+            <div class="mb-6 rounded-xl border border-destructive/30 bg-destructive/[0.04] p-4" role="alertdialog" aria-label="Restore version preview">
+              <p class="text-sm font-semibold">Restore this version?</p>
               <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-                Confirming replaces all current user-authored content and creates a new auditable Version Restore. Ordinary undo cannot cross this boundary.
+                Replace the current note with {selectedVersionLabel ? `“${selectedVersionLabel}”` : `the version from ${selectedVersionTime}`}. The current version will stay available in History. Ordinary undo cannot reverse this restore.
               </p>
               <pre class="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words bg-muted/40 p-3 text-xs">{historyState.restorePreview.unmanagedFrontmatter ? `---\n${historyState.restorePreview.unmanagedFrontmatter}\n---\n\n` : ''}{historyState.restorePreview.body}</pre>
               <div class="mt-3 flex flex-wrap gap-2">
@@ -283,7 +354,7 @@
                   class="rounded-full bg-destructive px-4 py-2 text-sm font-medium text-destructive-foreground disabled:opacity-50"
                   disabled={historyState.request !== null}
                   onclick={() => void onConfirmRestore()}
-                >{historyState.request?.kind === 'restoreCommit' ? 'Restoring…' : 'Confirm Version Restore'}</button>
+                >{historyState.request?.kind === 'restoreCommit' ? 'Restoring…' : 'Restore version'}</button>
                 <button
                   type="button"
                   class="rounded-full px-4 py-2 text-sm font-medium hover:bg-accent disabled:opacity-50"
