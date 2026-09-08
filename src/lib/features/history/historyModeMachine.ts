@@ -343,7 +343,7 @@ export function transitionHistoryMode(
         nextCursor: event.page.nextCursor,
         previousCursor: event.page.previousCursor ?? null,
         selectedRevisionId: event.selectedDiff?.revisionId ?? null,
-        selectedComparison: event.selectedDiff?.comparison ?? 'current',
+        selectedComparison: event.selectedDiff?.comparison ?? 'parent',
         selectedDiff: event.selectedDiff,
         restorePreview: null,
         diagnostics: event.diagnostics,

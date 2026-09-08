@@ -321,16 +321,6 @@
                 <button
                   type="button"
                   class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
-                  class:bg-foreground={historyState.selectedComparison === 'current'}
-                  class:text-background={historyState.selectedComparison === 'current'}
-                  class:text-muted-foreground={historyState.selectedComparison !== 'current'}
-                  aria-pressed={historyState.selectedComparison === 'current'}
-                  disabled={historyState.request !== null}
-                  onclick={() => void onSetComparison?.('current')}
-                >Current note</button>
-                <button
-                  type="button"
-                  class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
                   class:bg-foreground={historyState.selectedComparison === 'parent'}
                   class:text-background={historyState.selectedComparison === 'parent'}
                   class:text-muted-foreground={historyState.selectedComparison !== 'parent'}
@@ -338,6 +328,16 @@
                   disabled={historyState.request !== null}
                   onclick={() => void onSetComparison?.('parent')}
                 >Previous version</button>
+                <button
+                  type="button"
+                  class="rounded-full px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-50"
+                  class:bg-foreground={historyState.selectedComparison === 'current'}
+                  class:text-background={historyState.selectedComparison === 'current'}
+                  class:text-muted-foreground={historyState.selectedComparison !== 'current'}
+                  aria-pressed={historyState.selectedComparison === 'current'}
+                  disabled={historyState.request !== null}
+                  onclick={() => void onSetComparison?.('current')}
+                >Current note</button>
               </div>
             </section>
           {/if}

@@ -88,7 +88,10 @@ does not create an editor runtime, and cannot change pane membership or Note
 Draft State. Exiting restores the captured active pane and focus while the
 mounted editors retain their selection and scroll. The selected historical
 revision remains pinned when newer timeline records arrive, and History Mode
-never survives an application restart. A forgotten note retains its complete
+never survives an application restart. Opening or selecting a version defaults
+to comparing it with its previous revision: additions and removals describe
+what changed in the selected version. Comparing with the current note is an
+explicit alternative. A forgotten note retains its complete
 timeline but cannot enter History Mode or expose timeline records until
 Forgotten-Note Recovery returns it to the active vault.
 An externally deleted note follows the same ordinary-access gate while it is

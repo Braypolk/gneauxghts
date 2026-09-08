@@ -129,7 +129,7 @@
               <button
                 type="button"
                 disabled={!viewModel.canPin}
-                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'bg-accent/70 text-accent-foreground' : ''}`}
+                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
                 aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
                 aria-pressed={viewModel.isPinned}
                 title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}

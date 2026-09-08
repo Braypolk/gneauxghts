@@ -171,7 +171,7 @@ export class HistoryModeSession {
         (record) => record.kind === 'revision' && (!revisionId || record.revisionId === revisionId)
       );
       const selectedDiff = newestRevision?.kind === 'revision'
-        ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'current')
+        ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
       if (!this.#isEntryCurrent(requestId)) return;
       const diagnostics = null;
@@ -231,7 +231,7 @@ export class HistoryModeSession {
     ) {
       return;
     }
-    await this.#loadSelectedDiff(revisionId, 'current');
+    await this.#loadSelectedDiff(revisionId, 'parent');
   };
 
   setComparison = async (comparison: HistoryDiffComparison): Promise<void> => {
@@ -343,7 +343,7 @@ export class HistoryModeSession {
       const selectedDiff = await this.#deps.loadDiff(
         noteId,
         restoredRevision.revisionId,
-        'current'
+        'parent'
       );
       const diagnostics = await diagnosticsPromise;
       this.#dispatch({
@@ -424,7 +424,7 @@ export class HistoryModeSession {
         if (!baseline || baseline.kind !== 'revision') {
           throw new Error('The new Baseline Revision is unavailable.');
         }
-        const selectedDiff = await this.#deps.loadDiff(noteId, baseline.revisionId, 'current');
+        const selectedDiff = await this.#deps.loadDiff(noteId, baseline.revisionId, 'parent');
         const diagnostics = await diagnosticsPromise;
         this.#dispatch({ type: 'historyReplaced', requestId, page, selectedDiff, diagnostics });
       } catch (error) {
