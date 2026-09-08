@@ -14,19 +14,6 @@ The `NoteTimeline` interface remains storage-neutral and exposes only closed dom
 
 No polymorphic `HistoryStore` interface will be introduced while SQLite is the only implementation. SQLite knowledge will instead remain local inside `NoteTimeline`; a shared storage interface will be extracted from the real needs of SQLite and the later immutable-record implementation when both exist.
 
-The storage spike demonstrated reconstruction of identical domain identities and
-content hashes from the SQLite representation. That result validates the current
-storage boundary without making the experimental export fixture or its measurements
-part of the architecture.
+The Phase 1 storage spike must prove an export shape by converting representative SQLite histories into immutable-object fixtures and reconstructing identical domain identities and content hashes. A future migration will run behind a mutation barrier, verify the candidate store completely, and atomically change the vault manifest's history format and generation; interruption leaves the old SQLite store selected, and long-lived dual writes are rejected.
 
-The current schema uses compact nonce receipt keys, retains detailed preparation
-data only while recovery needs it, and stores exact terminal outcomes separately.
-Only fresh schema 14 stores are admitted. Older or incomplete stores require the
-explicit reset path; there is no migration, trust-old-store command, or long-lived
-dual write. Derived indexes may be removed only after store identity, format,
-generation, and observation admission succeeds.
-
-The SQLite phase supports clean-close sequential portability, not live copying of
-an open history database. A future storage change must run behind the mutation
-barrier, verify its candidate completely, and switch the manifest atomically. Live
-file sync and concurrent multi-device history merging remain separate decisions.
+The SQLite phase supports clean-close sequential portability, not live copying of an open history database. A later storage-evolution milestone may support third-party live file sync with one logical writer by making immutable vault records authoritative and SQLite a rebuildable projection. Concurrent multi-device editing and merging divergent Note Timelines remain a separate, out-of-scope consistency problem.

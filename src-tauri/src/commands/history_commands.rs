@@ -189,7 +189,7 @@ pub(crate) async fn list_missing_notes<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> HistoryCommandResult<Vec<MissingNoteSummary>> {
     super::on_app_worker(app, move |state| {
-        super::prepare_notes_dir_with_state(true, Some(state))
+        super::prepare_notes_dir_with_state(true, state)
             .map_err(unavailable_command_error("list_missing_notes"))?;
         let timeline = state.note_timeline();
         timeline
@@ -605,11 +605,10 @@ pub(crate) async fn clear_vault_history<R: tauri::Runtime>(
                 "Clearing vault history requires explicit confirmation",
             ));
         }
-        let vault_root =
-            crate::state::vault_root().map_err(unavailable_command_error("clear_vault_history"))?;
+        let vault_root = state.running_vault().root();
         state
             .note_timeline()
-            .clear_vault_history(&vault_root)
+            .clear_vault_history(vault_root)
             .map(|_| ())
             .map_err(command_error("clear_vault_history"))
     })

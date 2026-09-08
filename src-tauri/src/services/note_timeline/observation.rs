@@ -68,6 +68,8 @@ impl<'a> NoteTimeline<'a> {
 
             let requested_sequence =
                 history_store::retain_observation(&self.runtime.store, &observation)?;
+            #[cfg(feature = "e2e-wdio")]
+            crate::e2e_process_fault::hit("observation-retained");
             Ok(self
                 .replay_retained_observations(Some(requested_sequence))?
                 .ok_or_else(|| {

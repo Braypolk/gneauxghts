@@ -99,7 +99,7 @@ pub(crate) async fn get_vault_atlas(
 ) -> Result<VaultAtlasResponse, String> {
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
@@ -134,7 +134,7 @@ pub(crate) async fn search_vault_atlas(
 ) -> Result<AtlasSearchResponse, String> {
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,

@@ -352,6 +352,28 @@ impl AgentPermissionBroker {
             });
         }
     }
+
+    pub(crate) fn cancel_all(&self) {
+        let pending = {
+            let Ok(mut state) = self.inner.lock() else {
+                return;
+            };
+            state.run_grants.clear();
+            state
+                .pending
+                .drain()
+                .map(|(_, pending)| pending)
+                .collect::<Vec<_>>()
+        };
+        for pending in pending {
+            let resolution = AgentPermissionResolution::Cancelled;
+            let _ = pending.sender.send(resolution.clone());
+            (pending.event_sink)(AgentEvent::PermissionResolved {
+                permission_id: pending.request.identity.permission_id,
+                resolution,
+            });
+        }
+    }
 }
 
 #[cfg(test)]
@@ -642,6 +664,48 @@ mod tests {
                     ..
                 }
             )));
+            assert!(events.lock().unwrap().iter().any(|event| matches!(
+                event,
+                AgentEvent::PermissionResolved {
+                    resolution: AgentPermissionResolution::Cancelled,
+                    ..
+                }
+            )));
+        });
+    }
+
+    #[test]
+    fn restart_cancellation_releases_every_permission_waiter() {
+        tauri::async_runtime::block_on(async {
+            let broker = AgentPermissionBroker::default();
+            let request = request("permission-restart", "run-restart", "command:echo");
+            let (registered_tx, registered_rx) = std::sync::mpsc::channel();
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let captured = Arc::clone(&events);
+            let sink: AgentEventSink = Arc::new(move |event| {
+                if matches!(event, AgentEvent::PermissionRequested { .. }) {
+                    let _ = registered_tx.send(());
+                }
+                captured.lock().unwrap().push(event);
+            });
+            let waiting = tauri::async_runtime::spawn({
+                let broker = broker.clone();
+                async move {
+                    broker
+                        .request(request, CancellationToken::new(), sink)
+                        .await
+                }
+            });
+
+            registered_rx.recv().unwrap();
+            broker.cancel_all();
+            assert_eq!(
+                waiting.await.unwrap().unwrap(),
+                AgentPermissionResolution::Cancelled
+            );
+            let state = broker.inner.lock().unwrap();
+            assert!(state.pending.is_empty());
+            assert!(state.run_grants.is_empty());
             assert!(events.lock().unwrap().iter().any(|event| matches!(
                 event,
                 AgentEvent::PermissionResolved {

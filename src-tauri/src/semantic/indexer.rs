@@ -30,7 +30,7 @@ use std::{
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
     thread,
     time::UNIX_EPOCH,
@@ -137,6 +137,8 @@ impl PendingIndexState {
 
 pub(crate) enum WorkerSignal {
     Wake,
+    Barrier(Sender<()>),
+    Shutdown,
 }
 
 #[derive(Clone)]
@@ -144,6 +146,24 @@ pub(crate) struct SemanticWorkQueue {
     signal_tx: Sender<WorkerSignal>,
     pending: Arc<Mutex<PendingIndexState>>,
     wake_pending: Arc<AtomicBool>,
+    accepting: Arc<Mutex<bool>>,
+    active: Arc<(Mutex<usize>, Condvar)>,
+}
+
+pub(crate) struct SemanticWorkLease {
+    active: Arc<(Mutex<usize>, Condvar)>,
+}
+
+impl Drop for SemanticWorkLease {
+    fn drop(&mut self) {
+        let (lock, settled) = &*self.active;
+        if let Ok(mut active) = lock.lock() {
+            *active = active.saturating_sub(1);
+            if *active == 0 {
+                settled.notify_all();
+            }
+        }
+    }
 }
 
 impl SemanticWorkQueue {
@@ -154,6 +174,8 @@ impl SemanticWorkQueue {
                 signal_tx,
                 pending: Arc::new(Mutex::new(initial)),
                 wake_pending: Arc::new(AtomicBool::new(false)),
+                accepting: Arc::new(Mutex::new(true)),
+                active: Arc::new((Mutex::new(0), Condvar::new())),
             },
             signal_rx,
         )
@@ -172,6 +194,13 @@ impl SemanticWorkQueue {
         &self,
         update: impl FnOnce(&mut PendingIndexState) -> R,
     ) -> Result<R, String> {
+        let accepting = self
+            .accepting
+            .lock()
+            .map_err(|_| "Semantic admission lock poisoned".to_string())?;
+        if !*accepting {
+            return Err("Semantic maintenance is quiesced for restart".to_string());
+        }
         self.pending
             .lock()
             .map(|mut pending| update(&mut pending))
@@ -203,6 +232,13 @@ impl SemanticWorkQueue {
     }
 
     pub(crate) fn request_wake(&self) -> Result<(), String> {
+        let accepting = self
+            .accepting
+            .lock()
+            .map_err(|_| "Semantic admission lock poisoned".to_string())?;
+        if !*accepting {
+            return Err("Semantic maintenance is quiesced for restart".to_string());
+        }
         if !self.wake_pending.swap(true, Ordering::AcqRel) {
             self.signal_tx
                 .send(WorkerSignal::Wake)
@@ -213,6 +249,79 @@ impl SemanticWorkQueue {
 
     fn clear_wake(&self) {
         self.wake_pending.store(false, Ordering::Release);
+    }
+
+    pub(crate) fn admit_work(&self) -> Result<SemanticWorkLease, String> {
+        let accepting = self
+            .accepting
+            .lock()
+            .map_err(|_| "Semantic admission lock poisoned".to_string())?;
+        if !*accepting {
+            return Err("Semantic maintenance is quiesced for restart".to_string());
+        }
+        Ok(self.track_started_work())
+    }
+
+    fn track_started_work(&self) -> SemanticWorkLease {
+        let (lock, _) = &*self.active;
+        if let Ok(mut active) = lock.lock() {
+            *active += 1;
+        }
+        SemanticWorkLease {
+            active: Arc::clone(&self.active),
+        }
+    }
+
+    pub(crate) fn quiesce_and_discard(&self) -> Result<(), String> {
+        {
+            // Admission and staging share this gate, so a producer either
+            // finishes staging before this clear or observes quiescence. No
+            // late staged mutation can land after the discard barrier.
+            let mut accepting = self
+                .accepting
+                .lock()
+                .map_err(|_| "Semantic admission lock poisoned".to_string())?;
+            *accepting = false;
+            *self
+                .pending
+                .lock()
+                .map_err(|_| "Semantic pending state lock poisoned".to_string())? =
+                PendingIndexState::default();
+        }
+        // FIFO with previously admitted wakes. The active-work count alone is
+        // insufficient because a worker can receive Wake immediately before
+        // it increments that count.
+        let (barrier_tx, barrier_rx) = mpsc::channel();
+        self.signal_tx
+            .send(WorkerSignal::Barrier(barrier_tx))
+            .map_err(|_| "Semantic indexer unavailable during restart".to_string())?;
+        barrier_rx
+            .recv()
+            .map_err(|_| "Semantic indexer stopped before restart settlement".to_string())?;
+        let (lock, settled) = &*self.active;
+        let mut active = lock
+            .lock()
+            .map_err(|_| "Semantic work settlement lock poisoned".to_string())?;
+        while *active != 0 {
+            active = settled
+                .wait(active)
+                .map_err(|_| "Semantic work settlement lock poisoned".to_string())?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn resume_after_failed_restart(&self) -> Result<(), String> {
+        *self
+            .accepting
+            .lock()
+            .map_err(|_| "Semantic admission lock poisoned".to_string())? = true;
+        Ok(())
+    }
+
+    pub(crate) fn stop_worker(&self) -> Result<(), String> {
+        self.signal_tx
+            .send(WorkerSignal::Shutdown)
+            .map_err(|error| error.to_string())
     }
 }
 
@@ -232,13 +341,12 @@ pub(crate) struct IndexingWorkerContext {
 pub(crate) fn spawn_indexing_worker(
     context: IndexingWorkerContext,
     signal_rx: Receiver<WorkerSignal>,
-) -> Result<(), String> {
+) -> Result<thread::JoinHandle<()>, String> {
     thread::Builder::new()
         .name("semantic-indexer".to_string())
         .spawn(move || {
             run_worker(context, signal_rx);
         })
-        .map(|_| ())
         .map_err(|err| err.to_string())
 }
 
@@ -246,8 +354,13 @@ fn run_worker(context: IndexingWorkerContext, signal_rx: Receiver<WorkerSignal>)
     loop {
         match signal_rx.recv() {
             Ok(WorkerSignal::Wake) => {
+                let _work = context.queue.track_started_work();
                 handle_wake(&context);
             }
+            Ok(WorkerSignal::Barrier(settled)) => {
+                let _ = settled.send(());
+            }
+            Ok(WorkerSignal::Shutdown) => return,
             Err(_) => return,
         }
     }
@@ -1985,6 +2098,36 @@ mod tests {
             .last_scan_requested_at_millis
             .is_some());
     }
+
+    #[test]
+    fn semantic_quiescence_joins_admitted_detached_work_and_rejects_late_work() {
+        let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        let work = queue.admit_work().expect("admit detached maintenance");
+        let (barrier_seen_tx, barrier_seen_rx) = std::sync::mpsc::channel();
+        let (settled_tx, settled_rx) = std::sync::mpsc::channel();
+
+        std::thread::scope(|scope| {
+            scope.spawn(move || match signals.recv().expect("restart barrier") {
+                WorkerSignal::Barrier(barrier) => {
+                    barrier.send(()).expect("settle barrier");
+                    barrier_seen_tx.send(()).expect("observe barrier");
+                }
+                _ => panic!("expected restart barrier"),
+            });
+            scope.spawn(|| {
+                queue.quiesce_and_discard().expect("quiesce queue");
+                settled_tx.send(()).expect("settled queue");
+            });
+
+            barrier_seen_rx.recv().expect("barrier reached worker");
+            assert!(settled_rx.try_recv().is_err());
+            drop(work);
+            settled_rx.recv().expect("admitted work joined");
+        });
+
+        assert!(queue.admit_work().is_err());
+    }
+
     use crate::semantic::{
         activity::BackgroundWorkGate,
         atlas::{AtlasChatVisibilityKey, AtlasGenerationKey},

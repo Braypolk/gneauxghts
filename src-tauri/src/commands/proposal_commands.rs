@@ -7,7 +7,7 @@ use crate::{
         ProposalPreview,
     },
     services::note_timeline::{MutationSource, NoteIdentity, NoteMutation, PreparedHistoryIntent},
-    state::{notes_root, with_note_file_mutation},
+    state::with_note_file_mutation,
 };
 use std::path::PathBuf;
 use tauri::{Manager, State};
@@ -49,7 +49,7 @@ pub(crate) fn commit_agent_proposal_with_state(
     } else if proposal.kind == "create" && conversation.summary.access == VaultAccess::None {
         return Err("Vault access is disabled for this conversation".to_string());
     }
-    let notes_dir = notes_root()?;
+    let notes_dir = state.running_vault().root().to_path_buf();
     let (plan, committed_markdown, create_title, expected_base_hash) = if proposal.kind == "update"
     {
         let preview: ProposalPreview = serde_json::from_value(proposal.preview.clone())

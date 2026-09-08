@@ -307,7 +307,8 @@ mod tests {
                 revision: 42,
             },
             AppEvent::VaultChanged(VaultInfo {
-                current_path: "/vault".to_string(),
+                running_path: "/vault".to_string(),
+                selected_path: "/next-vault".to_string(),
                 default_path: "/documents/Gneauxghts".to_string(),
                 forgotten_path: "/vault/.forgotten".to_string(),
                 is_default: false,

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
 
 import {
   defaultKeyboardShortcutBindings,
@@ -35,6 +36,17 @@ describe('history shortcut', () => {
     expect(keyboardShortcutMatchesEvent(
       keyboardEvent('h', { altKey: true }), 'showHistory', remapped
     )).toBe(true);
+  });
+
+  it('does not admit a global shortcut while restart owns workspace departure', () => {
+    const event = keyboardEvent('H', { metaKey: true, shiftKey: true });
+    restartLifecycle.observeBackendPreparing();
+    try {
+      expect(keyboardShortcutMatchesEvent(event, 'showHistory')).toBe(false);
+    } finally {
+      restartLifecycle.workspaceMutationsBlocked = false;
+      restartLifecycle.phase = 'idle';
+    }
   });
 });
 

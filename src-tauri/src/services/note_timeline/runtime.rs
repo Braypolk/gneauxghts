@@ -14,6 +14,9 @@ struct OperationState {
     active: usize,
     closing: bool,
     closed: bool,
+    close_result: Option<Result<(), HistoryError>>,
+    #[cfg(test)]
+    close_joiners: usize,
 }
 
 #[derive(Default)]
@@ -233,28 +236,43 @@ impl NoteTimelineRuntime {
         })
     }
 
-    pub(super) fn close_operations<T>(
+    pub(super) fn close_operations(
         &self,
-        operation: impl FnOnce() -> Result<T, HistoryError>,
-    ) -> Result<T, HistoryError> {
+        operation: impl FnOnce() -> Result<(), HistoryError>,
+    ) -> Result<(), HistoryError> {
         let mut state = self
             .operations
             .state
             .lock()
             .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
         if state.closed {
-            return Err(
-                "Note Timeline is already cleanly closed for vault portability"
-                    .to_string()
-                    .into(),
-            );
+            return Ok(());
         }
         if state.closing {
-            return Err("Note Timeline clean close is already in progress"
-                .to_string()
-                .into());
+            #[cfg(test)]
+            {
+                state.close_joiners += 1;
+                self.operations.settled.notify_all();
+            }
+            while state.closing {
+                state = self
+                    .operations
+                    .settled
+                    .wait(state)
+                    .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
+            }
+            #[cfg(test)]
+            {
+                state.close_joiners = state.close_joiners.saturating_sub(1);
+            }
+            return state.close_result.clone().unwrap_or_else(|| {
+                Err("Note Timeline clean close finished without an outcome"
+                    .to_string()
+                    .into())
+            });
         }
         state.closing = true;
+        state.close_result = None;
         self.stop_verification();
         while state.active != 0 {
             state = self
@@ -265,8 +283,20 @@ impl NoteTimelineRuntime {
         }
         drop(state);
 
-        self.allow_close_settlement_verification()?;
-        let result = operation();
+        // Starting close-settlement verification is itself part of the close
+        // attempt. Capture its failure so the barrier is always released and
+        // concurrent callers receive the same completed outcome.
+        let mut result = self
+            .allow_close_settlement_verification()
+            .and_then(|()| operation());
+        if result.is_err() {
+            if let Err(reopen_error) = self.replace_verification(false) {
+                result = Err(HistoryError::Unavailable(format!(
+                    "{}; Note Timeline verification could not be restored: {reopen_error}",
+                    result.expect_err("checked error")
+                )));
+            }
+        }
         let mut state = self
             .operations
             .state
@@ -274,18 +304,17 @@ impl NoteTimelineRuntime {
             .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?;
         state.closing = false;
         state.closed = result.is_ok();
+        state.close_result = Some(result.clone());
         if result.is_ok() {
             self.stop_verification();
             self.windows.stop();
         }
         self.operations.settled.notify_all();
         drop(state);
-        if result.is_err() {
-            self.replace_verification(false)?;
-        }
         result
     }
 
+    #[cfg(test)]
     pub(super) fn is_cleanly_closed(&self) -> Result<bool, HistoryError> {
         Ok(self
             .operations
@@ -293,6 +322,19 @@ impl NoteTimelineRuntime {
             .lock()
             .map(|state| state.closed)
             .map_err(|_| "Note Timeline mutation barrier lock poisoned".to_string())?)
+    }
+
+    #[cfg(test)]
+    pub(super) fn wait_for_close_joiner(&self) {
+        let state = self.operations.state.lock().expect("timeline barrier");
+        let (state, _) = self
+            .operations
+            .settled
+            .wait_timeout_while(state, std::time::Duration::from_secs(1), |state| {
+                state.close_joiners == 0
+            })
+            .expect("timeline close joiner");
+        assert!(state.close_joiners > 0, "clean close caller did not join");
     }
 
     pub(super) fn with_observation_replay<T>(

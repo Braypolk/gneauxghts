@@ -2,9 +2,8 @@ import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { createNotepadSessionLifecycle, type NotepadSessionLifecycleDeps } from './notepadSessionLifecycle';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 
-const mocks = vi.hoisted(() => ({ bootstrap: vi.fn(), subscribe: vi.fn(), loadSession: vi.fn(), loadVault: vi.fn(), noteTarget: vi.fn(), taskTarget: vi.fn() }));
-vi.mock('$lib/app/appStore.svelte', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeVaultNoteChanged: mocks.subscribe } }));
-vi.mock('$lib/features/notepad/session/session', async (load) => ({ ...await load<object>(), loadSavedNoteSession: mocks.loadSession, loadCurrentVaultInfo: mocks.loadVault }));
+const mocks = vi.hoisted(() => ({ bootstrap: vi.fn(), subscribe: vi.fn(), vaultInfo: null as { runningPath: string; selectedPath?: string } | null, noteTarget: vi.fn(), taskTarget: vi.fn() }));
+vi.mock('$lib/app/appStore.svelte', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeVaultNoteChanged: mocks.subscribe, get vaultInfo() { return mocks.vaultInfo; } } }));
 vi.mock('$lib/noteNavigation', () => ({ consumePendingNoteTarget: mocks.noteTarget }));
 vi.mock('$lib/taskNavigation', () => ({ consumePendingTaskTarget: mocks.taskTarget }));
 function deferred<T>() {
@@ -13,10 +12,10 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-const payload = { session: createEmptySessionSnapshot(), vault: { currentPath: '/vault' } };
-function deps(): NotepadSessionLifecycleDeps {
+const payload = { session: createEmptySessionSnapshot(), vault: { runningPath: '/vault' } };
+function deps(hasLoadedInitialSession = false): NotepadSessionLifecycleDeps {
   return {
-    hasLoadedInitialSession: () => false, markInitialSessionLoaded: vi.fn(), isInitialEditorRootReady: () => true,
+    hasLoadedInitialSession: () => hasLoadedInitialSession, markInitialSessionLoaded: vi.fn(), isInitialEditorRootReady: () => true,
     applySession: vi.fn(), bindVaultScope: vi.fn(), applyAssetRoot: vi.fn(), registerWindowCloseHandler: () => vi.fn(), registerPendingSaveHandler: () => vi.fn(),
     registerTransientMenuListeners: () => vi.fn(), getWorkspaceShell: () => null, ensurePaneEditors: vi.fn().mockResolvedValue(undefined),
     refreshCurrentNote: vi.fn().mockResolvedValue(undefined), updateRelatedLayout: vi.fn(), scheduleRelated: vi.fn(),
@@ -28,6 +27,7 @@ async function settle() { for (let i = 0; i < 15; i++) await Promise.resolve(); 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bootstrap.mockResolvedValue(payload);
+  mocks.vaultInfo = null;
   mocks.subscribe.mockReturnValue(vi.fn());
   mocks.noteTarget.mockReturnValue(null);
   mocks.taskTarget.mockReturnValue(null);
@@ -50,14 +50,29 @@ it('ignores late bootstrap after unmount and allows only the new mount to apply 
   const unsubscribe = mocks.subscribe.mock.results[0].value;
   unmountNew(); expect(unsubscribe).toHaveBeenCalledOnce();
 });
-it('ignores fallback session and asset results or failures after unmount', async () => {
-  const session = deferred<ReturnType<typeof createEmptySessionSnapshot>>(); const vault = deferred<{ currentPath: string }>();
+it('keeps editing unavailable after bootstrap failure and admits a later successful retry', async () => {
   mocks.bootstrap.mockRejectedValue(new Error('bootstrap unavailable'));
-  mocks.loadSession.mockReturnValue(session.promise); mocks.loadVault.mockReturnValue(vault.promise);
-  const d = deps(); const unmount = createNotepadSessionLifecycle(d).mount(); await settle(); unmount();
-  session.resolve(createEmptySessionSnapshot()); vault.reject(new Error('late')); await settle();
+  const d = deps(); const lifecycle = createNotepadSessionLifecycle(d);
+  const unmount = lifecycle.mount(); await settle();
   expect(d.applySession).not.toHaveBeenCalled(); expect(d.applyAssetRoot).not.toHaveBeenCalled();
   expect(d.markInitialSessionLoaded).not.toHaveBeenCalled(); expect(mocks.subscribe).not.toHaveBeenCalled();
+  unmount();
+  mocks.bootstrap.mockResolvedValue(payload);
+  const unmountRetry = lifecycle.mount(); await settle();
+  expect(d.applySession).toHaveBeenCalledWith(payload.session);
+  expect(d.applyAssetRoot).toHaveBeenCalledOnce();
+  expect(d.markInitialSessionLoaded).toHaveBeenCalledOnce();
+  unmountRetry();
+});
+it('uses the shared running vault on remount after another vault is staged', async () => {
+  mocks.vaultInfo = { runningPath: '/running-a', selectedPath: '/staged-b' };
+  const d = deps(true);
+  const unmount = createNotepadSessionLifecycle(d).mount(); await settle();
+  expect(d.applySession).not.toHaveBeenCalled();
+  expect(d.bindVaultScope).toHaveBeenCalledWith('/running-a');
+  expect(d.applyAssetRoot).toHaveBeenCalledWith('/running-a/assets', expect.any(Function));
+  expect(d.markInitialSessionLoaded).not.toHaveBeenCalled();
+  unmount();
 });
 it.each(['ensurePaneEditors', 'refreshCurrentNote', 'openNote'] as const)('does not continue initialization after delayed %s loses its mount', async (stage) => {
   const pending = deferred<void>(); const d = deps();

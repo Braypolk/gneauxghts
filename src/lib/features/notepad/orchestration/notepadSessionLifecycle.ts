@@ -1,9 +1,6 @@
 import { tick } from 'svelte';
 import { appStore } from '$lib/app/appStore.svelte';
 import {
-  createEmptySessionSnapshot,
-  loadCurrentVaultInfo,
-  loadSavedNoteSession,
   resolveAssetRootPath,
   storePastedImageAsset,
   type SessionSnapshot
@@ -61,33 +58,6 @@ export function createNotepadSessionLifecycle(
 ) {
   let mountRevision = 0;
 
-  async function loadSavedNoteFallback(current: () => boolean) {
-    try {
-      const session = await loadSavedNoteSession();
-      if (current()) deps.applySession(session);
-    } catch (error) {
-      if (!current()) return;
-      console.error('Failed to load saved note:', error);
-      deps.applySession(createEmptySessionSnapshot());
-    }
-  }
-
-  async function loadAssetRootFallback(current: () => boolean) {
-    try {
-      const vault = await loadCurrentVaultInfo();
-      if (!current()) return;
-      deps.bindVaultScope(vault.currentPath);
-      deps.applyAssetRoot(
-        resolveAssetRootPath(vault.currentPath),
-        storePastedImageAsset
-      );
-    } catch (error) {
-      if (!current()) return;
-      console.error('Failed to load vault info for image assets:', error);
-      deps.applyAssetRoot(null, storePastedImageAsset);
-    }
-  }
-
   function mount() {
     let mounted = true;
     const revision = ++mountRevision;
@@ -106,31 +76,19 @@ export function createNotepadSessionLifecycle(
     void (async () => {
       await tick();
       if (!current()) return;
-      if (deps.hasLoadedInitialSession()) {
-        await loadAssetRootFallback(current);
-      } else {
-        try {
-          const bootstrap = await appStore.bootstrap();
-          if (!current()) return;
-          deps.bindVaultScope(bootstrap.vault.currentPath);
-          deps.applySession(bootstrap.session);
-          deps.applyAssetRoot(
-            resolveAssetRootPath(bootstrap.vault.currentPath),
-            storePastedImageAsset
-          );
-        } catch (error) {
-          if (!current()) return;
-          console.error(
-            'appStore.bootstrap failed, falling back to individual invokes:',
-            error
-          );
-          await Promise.all([
-            loadSavedNoteFallback(current),
-            loadAssetRootFallback(current)
-          ]);
-        }
+      try {
+        const bootstrap = await appStore.bootstrap();
         if (!current()) return;
-        deps.markInitialSessionLoaded();
+        const runningPath = appStore.vaultInfo?.runningPath ?? bootstrap.vault.runningPath;
+        deps.bindVaultScope(runningPath);
+        if (!deps.hasLoadedInitialSession()) {
+          deps.applySession(bootstrap.session);
+          deps.markInitialSessionLoaded();
+        }
+        deps.applyAssetRoot(resolveAssetRootPath(runningPath), storePastedImageAsset);
+      } catch (error) {
+        if (current()) console.error('App bootstrap failed; editing remains unavailable:', error);
+        return;
       }
       if (!current()) return;
 

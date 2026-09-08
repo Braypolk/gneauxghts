@@ -324,7 +324,7 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
         &app,
         &[
             "name(\"vault-watcher-startup\".to_string())",
-            "state.note_timeline().initialize_existing_notes(&notes_dir)",
+            "state.note_timeline().initialize_existing_notes(notes_dir)",
         ],
     );
     assert_contains_all(
@@ -702,8 +702,8 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
             "pub(crate) struct NoteTimelineOwnerToken(());",
             "let note_timeline = NoteTimelineRuntime::new(",
             "NoteTimelineOwnerToken(()),",
-            "crate::state::vault_root()?,",
-            "crate::state::app_data_dir()?,",
+            "running_vault.root().to_path_buf(),",
+            "running_vault.app_local_observation_dir().to_path_buf(),",
             "pub(crate) fn note_timeline(&self) -> NoteTimeline<'_>",
         ],
     );
@@ -726,7 +726,7 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
             "store: Arc::clone(&self.store)",
             "struct NoteTimelineOperationBarrier",
             "fn begin_operation(",
-            "fn close_operations<T>(",
+            "fn close_operations(",
             "fn with_observation_replay<T>(",
             "fn ensure_history_recovered(",
         ],
@@ -745,6 +745,37 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
             "lock_note_timeline_integrity",
         ],
     );
+}
+
+#[test]
+fn running_vault_is_bound_and_apply_only_stages_the_next_launch() {
+    let app = repository_file("src-tauri/src/lib.rs");
+    let index = repository_file("src-tauri/src/index.rs");
+    let commands = repository_file("src-tauri/src/commands.rs");
+    let watcher = repository_file("src-tauri/src/vault_watcher.rs");
+    let apply = rust_function(&commands, "set_vault_directory_for_state");
+
+    assert_contains_all(
+        &app,
+        &[
+            "let running_vault = state::RunningVault::resolve(app_data_dir.clone())?;",
+            "AppState::new_with_running_vault(",
+        ],
+    );
+    assert_contains_all(
+        &index,
+        &[
+            "running_vault: RunningVault",
+            "app_state_storage: AppStateStorage",
+            "pub(crate) fn running_vault(&self) -> &RunningVault",
+        ],
+    );
+    assert_contains_all(apply, &["stage_notes_root(state.running_vault()"]);
+    assert_contains_none(
+        apply,
+        &["clean_close", "vault_root()", "semantic_status_changed"],
+    );
+    assert_contains_none(&watcher, &["notes_root()"]);
 }
 
 #[test]
@@ -1091,4 +1122,76 @@ fn interactive_history_waits_run_offthread_and_readiness_stays_observational() {
             "rusqlite",
         ],
     );
+}
+
+#[test]
+fn explicit_restart_has_one_joining_frontend_action_and_one_backend_owner() {
+    let frontend = repository_file("src/lib/app/restartLifecycle.svelte.ts");
+    let settings = repository_file("src/lib/features/settings/store.svelte.ts");
+    let backend = repository_file("src-tauri/src/app/lifecycle.rs");
+    let commands = repository_file("src-tauri/src/commands.rs");
+    let app = repository_file("src-tauri/src/lib.rs");
+
+    assert_contains_all(
+        &frontend,
+        &[
+            "await awaitPendingNoteSave()",
+            "invoke<PrepareRestartReceipt>('prepare_restart')",
+            "await relaunch()",
+            "workspaceMutationsBlocked",
+            "this.phase === 'readyToRestart'",
+        ],
+    );
+    let save = frontend.find("await awaitPendingNoteSave()").unwrap();
+    let prepare = frontend
+        .find("invoke<PrepareRestartReceipt>('prepare_restart')")
+        .unwrap();
+    let relaunch = frontend.find("await relaunch()").unwrap();
+    assert!(save < prepare && prepare < relaunch);
+    assert_contains_none(&settings, &["plugin-process", "relaunch("]);
+
+    assert_contains_all(
+        &backend,
+        &[
+            "pub(crate) struct AppLifecycle",
+            "self.settled.wait(state)",
+            "chat.quiesce_for_restart()",
+            "state.semantic.quiesce_for_restart()",
+            "watcher.stop_and_join()?",
+            "state.settle_restart_writes()?",
+            "state.stop_rebuildable_projection_work()?",
+            ".clean_close(state.running_vault().root())",
+            "state.semantic.finish_restart_shutdown()?",
+        ],
+    );
+    assert_contains_none(&backend, &["is_cleanly_closed("]);
+    let chat_quiesce = backend.find("chat.quiesce_for_restart()").unwrap();
+    let semantic_quiesce = backend
+        .find("state.semantic.quiesce_for_restart()")
+        .unwrap();
+    let watcher_stop = backend.find("watcher.stop_and_join()?").unwrap();
+    let durable_settlement = backend.find("state.settle_restart_writes()?").unwrap();
+    let projection_stop = backend
+        .find("state.stop_rebuildable_projection_work()?")
+        .unwrap();
+    let timeline_close = backend
+        .find(".clean_close(state.running_vault().root())")
+        .unwrap();
+    let semantic_finish = backend
+        .find("state.semantic.finish_restart_shutdown()?")
+        .unwrap();
+    assert!(
+        chat_quiesce < semantic_quiesce
+            && semantic_quiesce < watcher_stop
+            && watcher_stop < durable_settlement
+            && durable_settlement < projection_stop
+            && projection_stop < timeline_close
+            && timeline_close < semantic_finish
+    );
+    assert_contains_all(
+        rust_function(&commands, "prepare_restart"),
+        &["spawn_blocking", "prepare_restart(&app)"],
+    );
+    assert_contains_all(&app, &["ordinary-exit-settlement", "api.prevent_exit()"]);
+    assert_contains_none(&app, &[".clean_close(", ".is_cleanly_closed("]);
 }

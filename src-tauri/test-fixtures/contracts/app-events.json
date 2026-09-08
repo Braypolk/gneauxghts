@@ -92,7 +92,8 @@
     {
       "channel": "vault-changed",
       "payload": {
-        "currentPath": "/vault",
+        "runningPath": "/vault",
+        "selectedPath": "/next-vault",
         "defaultPath": "/documents/Gneauxghts",
         "forgottenPath": "/vault/.forgotten",
         "isDefault": false,

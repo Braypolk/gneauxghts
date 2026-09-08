@@ -1,5 +1,6 @@
 export interface VaultInfo {
-  currentPath: string;
+  runningPath: string;
+  selectedPath: string;
   defaultPath: string;
   forgottenPath: string;
   isDefault: boolean;

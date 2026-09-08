@@ -1,4 +1,15 @@
+import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { nativeE2EPath, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
+
+const optimized = process.argv.includes('--release');
+if (optimized) {
+  const frontend = spawnSync('pnpm', ['build'], {
+    env: { ...process.env, VITE_E2E_NATIVE: 'true' }, stdio: 'inherit'
+  });
+  if (frontend.status !== 0) process.exit(frontend.status ?? 1);
+}
 
 const e2eTauriConfig = {
   identifier: 'com.braypolkinghorne.gneauxghts-e2e',
@@ -6,6 +17,9 @@ const e2eTauriConfig = {
   // can resolve to an unrelated development server listening on IPv6.
   build: { devUrl: 'http://127.0.0.1:1430' },
   app: {
+    ...(optimized ? { windows: JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).app.windows.map(window => ({
+      ...window, backgroundThrottling: 'disabled'
+    })) } : {}),
     withGlobalTauri: true,
     security: {
       capabilities: [
@@ -33,7 +47,7 @@ const e2eTauriConfig = {
 
 const result = spawnSync(
   'cargo',
-  ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e-wdio'],
+  ['build', ...(optimized ? ['--release'] : []), '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'e2e-wdio'],
   {
     cwd: process.cwd(),
     env: {
@@ -45,4 +59,7 @@ const result = spawnSync(
 );
 
 if (result.error) throw result.error;
-process.exit(result.status ?? 1);
+if (result.status !== 0) process.exit(result.status ?? 1);
+const profile = optimized ? 'release' : 'debug';
+const binaryName = process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts';
+console.log(JSON.stringify(pinNativeE2EBinary(resolve('src-tauri', 'target', profile, binaryName), nativeE2EPath(profile), profile)));

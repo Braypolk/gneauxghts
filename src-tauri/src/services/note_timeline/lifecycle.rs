@@ -14,7 +14,6 @@ impl<'a> NoteTimeline<'a> {
         expected: &crate::state::PersistedForgottenNote,
         occurred_at_millis: u64,
     ) -> Result<(), HistoryError> {
-        require_active_vault_root(&self.runtime.store, &crate::state::notes_root()?)?;
         let path = PathBuf::from(&expected.forgotten_path);
         self.runtime.store.require_path(&path)?;
         if let Some(note_id) = forgotten::forgotten_note_identity(expected, &path) {
@@ -26,8 +25,11 @@ impl<'a> NoteTimeline<'a> {
         } else {
             crate::state::with_note_file_mutation(|| {
                 let _operation = self.runtime.begin_operation()?;
-                require_active_vault_root(&self.runtime.store, &crate::state::notes_root()?)?;
-                if !crate::state::db_forgotten_note_matches(expected)? {
+                if !self
+                    .state
+                    .app_state_storage()
+                    .forgotten_note_matches(expected)?
+                {
                     return Err(HistoryError::Stale(
                         "The forgotten item changed before deletion".into(),
                     ));
@@ -35,7 +37,9 @@ impl<'a> NoteTimeline<'a> {
                 if path.exists() {
                     fs::remove_file(&path).map_err(|error| error.to_string())?;
                 }
-                crate::state::db_remove_forgotten_note(expected)?;
+                self.state
+                    .app_state_storage()
+                    .remove_forgotten_note(expected)?;
                 Ok(())
             })
         }
@@ -82,8 +86,11 @@ impl<'a> NoteTimeline<'a> {
                 // A restore followed by forgetting again can reuse the same path.
                 // The selected metadata must still describe this lifecycle instance.
                 if let Some(expected) = expected {
-                    require_active_vault_root(&self.runtime.store, &crate::state::notes_root()?)?;
-                    if !crate::state::db_forgotten_note_matches(expected)? {
+                    if !self
+                        .state
+                        .app_state_storage()
+                        .forgotten_note_matches(expected)?
+                    {
                         return Err(HistoryError::Stale(
                             "The forgotten item changed before deletion".to_string(),
                         ));
@@ -91,7 +98,9 @@ impl<'a> NoteTimeline<'a> {
                 }
                 self.purge_note_under_mutation_boundary(&note_id, &path, occurred_at_millis)?;
                 if let Some(expected) = expected {
-                    crate::state::db_remove_forgotten_note(expected)?;
+                    self.state
+                        .app_state_storage()
+                        .remove_forgotten_note(expected)?;
                 }
                 Ok(())
             })

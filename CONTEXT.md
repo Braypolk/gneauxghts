@@ -59,3 +59,11 @@ _Avoid_: Revert, rollback, note recovery
 **Forgotten-Note Recovery**:
 The lifecycle transition that returns a forgotten note to the active vault without treating its content as an earlier version.
 _Avoid_: Version restore, unforget
+
+**Running Vault**:
+The one vault whose canonical notes and vault-scoped services are bound to the current application process. It remains active when another folder is staged in Settings and changes only after a new process starts.
+_Avoid_: Selected vault, active preference
+
+**Next-launch Vault Selection**:
+The persisted vault folder that a newly started process will bind as its Running Vault. Applying it does not live-switch or close the current Running Vault.
+_Avoid_: Active vault, current vault

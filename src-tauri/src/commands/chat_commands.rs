@@ -475,7 +475,7 @@ pub(crate) fn archive_conversation_with_state(
         return Err("Restore forgotten chats from Settings → Forgotten Items".to_string());
     }
 
-    let notes_dir = prepare_notes_dir_with_state(true, Some(state))?;
+    let notes_dir = prepare_notes_dir_with_state(true, state)?;
     let Some((relocation, forgotten_summary)) = crate::state::with_note_file_mutation(|| {
         let snapshot = service.forgotten_folder_snapshot(&conversation_id)?;
         if snapshot.archived {
@@ -486,6 +486,7 @@ pub(crate) fn archive_conversation_with_state(
         let forgotten_path = resolve_forgotten_target_path(&notes_dir, &snapshot.original_path);
         let relocation = service.archive_conversation_folder(&conversation_id, &forgotten_path)?;
         let forgotten_summary = match register_forgotten_chat_folder(
+            state,
             &notes_dir,
             &snapshot.original_path,
             &forgotten_path,
@@ -665,7 +666,7 @@ pub(crate) fn chat_list_note_policies(
     state: State<'_, AppState>,
 ) -> Result<Vec<ChatNotePolicy>, String> {
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
@@ -702,7 +703,7 @@ pub(crate) fn chat_search_notes(
         return Ok(Vec::new());
     }
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
@@ -886,7 +887,7 @@ pub(crate) fn chat_suggest_context(
         });
     }
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
@@ -1005,7 +1006,7 @@ fn resolve_selected_context(
     if access == &VaultAccess::None {
         return Err("Enable vault access before including note context".to_string());
     }
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,

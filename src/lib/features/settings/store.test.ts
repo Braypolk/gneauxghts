@@ -5,16 +5,57 @@ const loadForgottenNotesSliceMock = vi.fn();
 const loadMissingNotesSliceMock = vi.fn();
 const loadMissingNoteTimelinePageMock = vi.fn();
 const loadSettingsViewSliceMock = vi.fn();
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => {
+    resolve = yes;
+    reject = no;
+  });
+  return { promise, resolve, reject };
+}
+const appStoreMock = vi.hoisted(() => {
+  const store: any = {
+    vaultInfo: null,
+    semanticStatus: null,
+    vaultRevision: 0,
+    semanticRevision: 0,
+    bootstrap: vi.fn().mockResolvedValue(undefined),
+    subscribeVaultNoteChanged: vi.fn(() => () => undefined),
+    subscribeSemanticStatusChanged: vi.fn(() => () => undefined),
+    subscribeVaultChanged: vi.fn(() => () => undefined),
+    refreshVaultInfo: vi.fn().mockResolvedValue(undefined),
+    refreshSemanticStatus: vi.fn().mockResolvedValue(undefined)
+  };
+  store.beginSnapshotAdmission = vi.fn((...slices: string[]) => ({
+    generation: 0,
+    vault: slices.includes('vault') ? ++store.vaultRevision : null,
+    semanticStatus: slices.includes('semanticStatus') ? ++store.semanticRevision : null,
+    indexRevision: null
+  }));
+  store.admitSnapshot = vi.fn((snapshot: any, admission: any) => {
+    const admitted = { vault: false, semanticStatus: false, indexRevision: false };
+    if ('vault' in snapshot && admission.vault === store.vaultRevision) {
+      store.vaultInfo = snapshot.vault;
+      admitted.vault = true;
+    }
+    if (
+      'semanticStatus' in snapshot &&
+      admission.semanticStatus === store.semanticRevision
+    ) {
+      store.semanticStatus = snapshot.semanticStatus;
+      admitted.semanticStatus = true;
+    }
+    return admitted;
+  });
+  return store;
+});
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
 vi.mock('$lib/app/appStore.svelte', () => ({
-  appStore: {
-    bootstrap: vi.fn().mockResolvedValue(undefined),
-    subscribeVaultNoteChanged: vi.fn(() => () => undefined),
-    subscribeSemanticStatusChanged: vi.fn(() => () => undefined)
-  }
+  appStore: appStoreMock
 }));
 vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
   atlasStore: { invalidateCachedResponse: vi.fn() }
@@ -34,6 +75,16 @@ describe('SettingsStore actions', () => {
     loadForgottenNotesSliceMock.mockReset();
     loadMissingNotesSliceMock.mockReset();
     loadMissingNoteTimelinePageMock.mockReset();
+    appStoreMock.vaultInfo = null;
+    appStoreMock.semanticStatus = null;
+    appStoreMock.vaultRevision = 0;
+    appStoreMock.semanticRevision = 0;
+    appStoreMock.bootstrap.mockReset().mockResolvedValue(undefined);
+    appStoreMock.subscribeVaultNoteChanged.mockReset().mockReturnValue(() => undefined);
+    appStoreMock.subscribeSemanticStatusChanged.mockReset().mockReturnValue(() => undefined);
+    appStoreMock.subscribeVaultChanged.mockReset().mockReturnValue(() => undefined);
+    appStoreMock.refreshVaultInfo.mockReset().mockResolvedValue(undefined);
+    appStoreMock.refreshSemanticStatus.mockReset().mockResolvedValue(undefined);
     invokeMock.mockResolvedValue(undefined);
     loadForgottenNotesSliceMock.mockResolvedValue([]);
     loadMissingNotesSliceMock.mockResolvedValue([]);
@@ -58,7 +109,8 @@ describe('SettingsStore actions', () => {
       semanticSettings: null,
       semanticDebug: null,
       vault: {
-        currentPath: '/vault',
+        runningPath: '/vault',
+        selectedPath: '/vault',
         defaultPath: '/vault',
         forgottenPath: '/vault/.forgotten',
         isDefault: true,
@@ -420,5 +472,99 @@ describe('SettingsStore actions', () => {
       'Vault history was cleared, but storage reporting could not refresh: History is unavailable right now.'
     );
     expect(store.isRunningHistoryAction).toBe(false);
+  });
+
+  it('stages the selected path without replacing the backend running vault', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    store.setVaultPathInput('/next-vault');
+    invokeMock.mockResolvedValue({
+      runningPath: '/running-vault',
+      selectedPath: '/next-vault',
+      defaultPath: '/default-vault',
+      forgottenPath: '/running-vault/.forgotten',
+      isDefault: false,
+      noteCount: 3,
+      requiresRestart: true,
+      canConfigurePath: true,
+      canPickArbitraryPath: true,
+      vaultContainerPath: null,
+      pathConfigurationNote: null
+    });
+
+    await store.saveVaultDirectory();
+
+    expect(invokeMock).toHaveBeenCalledWith('set_vault_directory', {
+      path: '/next-vault'
+    });
+    expect(store.vaultInfo).toMatchObject({
+      runningPath: '/running-vault',
+      selectedPath: '/next-vault',
+      requiresRestart: true
+    });
+    expect(store.vaultPathInput).toBe('/next-vault');
+  });
+
+  it('keeps a newer staged vault when an older Apply result arrives later', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    const resultB = deferred<any>();
+    const resultC = deferred<any>();
+    invokeMock.mockImplementation((_command, args) =>
+      args.path === '/vault-b' ? resultB.promise : resultC.promise
+    );
+    store.setVaultPathInput('/vault-b');
+    const applyB = store.saveVaultDirectory();
+    store.setVaultPathInput('/vault-c');
+    const applyC = store.saveVaultDirectory();
+    resultC.resolve({
+      ...loadSettingsViewSliceMock.mock.results[0]?.value?.vault,
+      runningPath: '/vault-a', selectedPath: '/vault-c', canPickArbitraryPath: true
+    });
+    await applyC;
+    resultB.resolve({
+      runningPath: '/vault-a', selectedPath: '/vault-b', canPickArbitraryPath: true
+    });
+    await applyB;
+    expect(store.vaultInfo?.selectedPath).toBe('/vault-c');
+    expect(store.vaultPathInput).toBe('/vault-c');
+  });
+
+  it('does not let a delayed Settings view replace newer vault and semantic snapshots', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    const delayed = deferred<any>();
+    loadSettingsViewSliceMock.mockReturnValue(delayed.promise);
+    const loading = store.loadSemanticState();
+    const newer = appStoreMock.beginSnapshotAdmission('vault', 'semanticStatus');
+    appStoreMock.admitSnapshot(
+      {
+        vault: { runningPath: '/vault-a', selectedPath: '/vault-c' },
+        semanticStatus: { phase: 'newer-event' }
+      },
+      newer
+    );
+    delayed.resolve({
+      vault: { runningPath: '/vault-a', selectedPath: '/vault-b' },
+      semanticStatus: { phase: 'older-load' },
+      semanticSettings: { semanticSearchEnabled: true },
+      semanticDebug: { queuedNotes: 0 },
+      historyHealth: { state: 'healthy' }
+    });
+    await loading;
+    expect(store.vaultInfo?.selectedPath).toBe('/vault-c');
+    expect((store.semanticStatus as any)?.phase).toBe('newer-event');
+    expect(store.semanticSettings).toEqual({ semanticSearchEnabled: true });
+  });
+
+  it('surfaces bundled Settings failure without invoking equivalent fallback RPCs', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    loadSettingsViewSliceMock.mockRejectedValue(new Error('settings bundle unavailable'));
+    await store.loadSemanticState();
+    expect(store.settingsLoadError).toContain('settings bundle unavailable');
+    expect(invokeMock).not.toHaveBeenCalledWith('get_semantic_status');
+    expect(invokeMock).not.toHaveBeenCalledWith('get_vault_info');
+    expect(invokeMock).not.toHaveBeenCalledWith('get_history_health');
   });
 });

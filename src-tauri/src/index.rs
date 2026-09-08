@@ -5,7 +5,9 @@ use crate::{
     path_utils::collect_markdown_files_recursively,
     semantic::SemanticState,
     services::note_timeline::{NoteTimeline, NoteTimelineRuntime},
-    state::{derive_file_stem, derive_file_stem_from_title_and_markdown},
+    state::{
+        derive_file_stem, derive_file_stem_from_title_and_markdown, AppStateStorage, RunningVault,
+    },
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -39,6 +41,8 @@ pub(crate) struct DraftRef {
 }
 
 pub(crate) struct AppState {
+    running_vault: RunningVault,
+    app_state_storage: AppStateStorage,
     pub(crate) notes_index: Mutex<NotesIndex>,
     pub(crate) lexical: Arc<LexicalIndex>,
     pub(crate) semantic: Arc<SemanticState>,
@@ -154,16 +158,26 @@ enum PendingIndexUpdate {
 }
 
 impl AppState {
+    #[cfg(test)]
     pub(crate) fn new(
         semantic: SemanticState,
         events: crate::app::EventBus,
     ) -> Result<Self, String> {
-        // Resolve the selected-vault context before starting background workers.
+        let running_vault = RunningVault::resolve(crate::state::app_data_dir()?)?;
+        Self::new_with_running_vault(running_vault, semantic, events)
+    }
+
+    pub(crate) fn new_with_running_vault(
+        running_vault: RunningVault,
+        semantic: SemanticState,
+        events: crate::app::EventBus,
+    ) -> Result<Self, String> {
         let note_timeline = NoteTimelineRuntime::new(
             NoteTimelineOwnerToken(()),
-            crate::state::vault_root()?,
-            crate::state::app_data_dir()?,
+            running_vault.root().to_path_buf(),
+            running_vault.app_local_observation_dir().to_path_buf(),
         )?;
+        let app_state_storage = AppStateStorage::bind(running_vault.data_dir())?;
         let lexical = Arc::new(LexicalIndex::new()?);
         let foreground_activity = Arc::new(ForegroundActivity::default());
         let catalog_projection_retries =
@@ -174,6 +188,8 @@ impl AppState {
             Arc::clone(&catalog_projection_retries),
         );
         Ok(Self {
+            running_vault,
+            app_state_storage,
             notes_index: Mutex::new(NotesIndex::default()),
             lexical,
             semantic: Arc::new(semantic),
@@ -185,6 +201,22 @@ impl AppState {
             foreground_activity,
             note_timeline,
         })
+    }
+
+    pub(crate) fn running_vault(&self) -> &RunningVault {
+        &self.running_vault
+    }
+
+    pub(crate) fn app_state_storage(&self) -> &AppStateStorage {
+        &self.app_state_storage
+    }
+
+    pub(crate) fn settle_restart_writes(&self) -> Result<(), String> {
+        self.app_state_storage.settle_admitted_writes()
+    }
+
+    pub(crate) fn stop_rebuildable_projection_work(&self) -> Result<(), String> {
+        self.background_index_queue.shutdown_discard_and_join()
     }
 
     pub(crate) fn note_timeline(&self) -> NoteTimeline<'_> {

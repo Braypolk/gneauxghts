@@ -15,6 +15,6 @@ Completed the four authorized corrections. Changes are limited to three frontend
 - Changed Rust file passes `rustfmt --check`; `git diff --check` passes.
 - Isolated regression probes: the 21 affected frontend cases pass on unmodified application code. Adding forbidden controller state, swapping the settings loaders, and disabling search timer cancellation produces five expected failures across the three test files. This confirms the corrected assertions catch these regressions. The probes do not modify the working application.
 
-Disposable run logs and temporary probe paths were removed during pre-commit cleanup. Browser/native journeys were not rerun for these test-only changes.
+Disposable run logs and temporary probe paths were removed during pre-commit cleanup. Browser/native journeys were not rerun for these test-only changes; their prior passing runs remain recorded in the [Phase 1–3 fixes](../note-timelines/reviews/phase-1-3-final/fixes.md).
 
 The localized diff was reviewed against the authorized scope and repository standards. No further findings arose in that review. The broader audit's deferred removals and production-path improvements remain separate follow-up work; they are not prerequisites added to this pass.

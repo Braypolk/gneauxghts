@@ -5,5 +5,7 @@
 //! and event emission.
 
 pub(crate) mod events;
+pub(crate) mod lifecycle;
 
 pub(crate) use events::EventBus;
+pub(crate) use lifecycle::{AppLifecycle, PrepareRestartReceipt};

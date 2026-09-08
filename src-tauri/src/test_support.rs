@@ -29,6 +29,7 @@ impl TestDir {
             .as_nanos();
         let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
         fs::create_dir_all(&path).expect("create temp dir");
+        let path = fs::canonicalize(path).expect("canonicalize temp dir");
         Self { path }
     }
 
@@ -60,7 +61,7 @@ pub(crate) fn load_json_fixture(relative_path: &str) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::semantic::SemanticSettings;
+    use crate::{app::PrepareRestartReceipt, semantic::SemanticSettings};
 
     #[test]
     fn representative_command_payloads_use_production_serde_contracts() {
@@ -76,11 +77,17 @@ mod tests {
             serde_json::to_value(settings).expect("semantic settings serialize"),
             commands["set_semantic_settings"]["result"],
         );
+        let restart = PrepareRestartReceipt::ready();
+        assert_eq!(
+            serde_json::to_value(restart).expect("restart receipt serializes"),
+            commands["prepare_restart"]["result"],
+        );
 
         for command in [
             "save_note",
             "save_task_note",
             "clear_last_opened_note",
+            "prepare_restart",
             "chat_send_message",
             "commit_agent_proposal",
             "set_semantic_settings",

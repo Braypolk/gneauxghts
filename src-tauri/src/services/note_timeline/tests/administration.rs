@@ -1076,20 +1076,29 @@ fn clean_close_reports_portability_and_stops_new_timeline_mutations() {
         .unwrap();
     assert_eq!(prepared_history_intent_count_for_test("prepared"), 1);
 
+    let close_state = &state;
+    let joining_state = &state;
+    let close_root = notes.path().to_path_buf();
+    let joining_root = close_root.clone();
     thread::scope(|scope| {
         let (closed_tx, closed_rx) = mpsc::channel();
-        let close_state = &state;
-        let vault_root = notes.path();
         let close = scope.spawn(move || {
-            let result = close_state.note_timeline().clean_close(vault_root);
+            let result = close_state.note_timeline().clean_close(&close_root);
             closed_tx.send(()).unwrap();
             result
         });
         assert!(closed_rx.recv_timeout(Duration::from_millis(50)).is_err());
+        let joining_close = scope.spawn(move || {
+            joining_state.note_timeline().clean_close(&joining_root)
+        });
+        state
+            .note_timeline()
+            .wait_for_clean_close_joiner_for_test();
         let (_, history_intent) = prepared.into_parts();
         history_intent.abandon().unwrap();
         closed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         close.join().unwrap().unwrap();
+        joining_close.join().unwrap().unwrap();
     });
     assert_eq!(
         history_store::prepared_intent_count_without_opening_store(

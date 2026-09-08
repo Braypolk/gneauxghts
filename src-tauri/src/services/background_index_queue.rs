@@ -59,6 +59,7 @@ struct QueueInner {
     /// path -> queue position so we can coalesce repeats for the same path
     /// without scanning the deque on every enqueue.
     pending_by_path: HashMap<PathBuf, usize>,
+    stopping: bool,
 }
 
 pub(crate) struct BackgroundIndexQueue {
@@ -125,6 +126,9 @@ impl BackgroundIndexQueue {
         };
         let (lock, cvar) = &*self.inner;
         let mut state = lock.lock().expect("background index queue lock poisoned");
+        if state.stopping && !matches!(job, BackgroundJob::Shutdown) {
+            return;
+        }
         if let Some(path) = path {
             // Coalesce: if there's already a job for this path, replace it
             // in place rather than queueing a duplicate.
@@ -150,6 +154,34 @@ impl BackgroundIndexQueue {
             state.jobs.push_back(job);
         }
         cvar.notify_one();
+    }
+
+    /// Stop accepting derived work, discard queued rebuildable projections,
+    /// and join the worker after any projection already executing completes.
+    pub(crate) fn shutdown_discard_and_join(&self) -> Result<(), String> {
+        let (lock, cvar) = &*self.inner;
+        {
+            let mut state = lock
+                .lock()
+                .map_err(|_| "Background index queue lock poisoned".to_string())?;
+            if !state.stopping {
+                state.stopping = true;
+                state.jobs.clear();
+                state.pending_by_path.clear();
+                state.jobs.push_back(BackgroundJob::Shutdown);
+            }
+            cvar.notify_all();
+        }
+        let join = self
+            .worker
+            .lock()
+            .map_err(|_| "Background index worker lock poisoned".to_string())?
+            .take();
+        if let Some(join) = join {
+            join.join()
+                .map_err(|_| "Background index worker panicked during shutdown".to_string())?;
+        }
+        Ok(())
     }
 }
 
@@ -235,11 +267,6 @@ fn run_worker(
 
 impl Drop for BackgroundIndexQueue {
     fn drop(&mut self) {
-        self.push(BackgroundJob::Shutdown);
-        if let Ok(mut handle) = self.worker.lock() {
-            if let Some(join) = handle.take() {
-                let _ = join.join();
-            }
-        }
+        let _ = self.shutdown_discard_and_join();
     }
 }

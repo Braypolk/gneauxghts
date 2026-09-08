@@ -582,3 +582,25 @@ it('keeps backend readiness and observer identity out of the document reducer', 
   expect(controller).toContain('loadHistoryReadiness');
   expect(controller).toContain('waitReason:');
 });
+
+it('keeps bootstrap and shared backend snapshots behind AppStore admission', () => {
+  const appStore = sourceText('src/lib/app/appStore.svelte.ts');
+  const settings = sourceText('src/lib/features/settings/store.svelte.ts');
+  const lifecycle = sourceText(
+    'src/lib/features/notepad/orchestration/notepadSessionLifecycle.ts'
+  );
+  const session = sourceText('src/lib/features/notepad/session/session.ts');
+
+  expect(appStore).toContain('beginSnapshotAdmission(');
+  expect(appStore).toContain('admitSnapshot(');
+  expect(
+    classProperties('src/lib/features/settings/store.svelte.ts', 'SettingsStore')
+  ).not.toEqual(expect.arrayContaining(['vaultInfo', 'semanticStatus']));
+  for (const source of [settings, lifecycle, session]) {
+    expect(source).not.toContain('loadSavedNoteFallback');
+    expect(source).not.toContain('loadAssetRootFallback');
+    expect(source).not.toContain('loadSavedNoteSession');
+    expect(source).not.toContain('loadCurrentVaultInfo');
+    expect(source).not.toContain('falling back to individual');
+  }
+});

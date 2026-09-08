@@ -22,7 +22,6 @@ impl NoteTimeline<'_> {
             return Err("Unsupported forgotten note retention window".into());
         }
         self.runtime.store.require_path(path)?;
-        require_active_vault_root(&self.runtime.store, &state::notes_root()?)?;
         let notes_dir = self.runtime.store.vault_root();
         fs::create_dir_all(state::forgotten_notes_root(notes_dir))
             .map_err(|error| error.to_string())?;
@@ -73,13 +72,15 @@ impl NoteTimeline<'_> {
         &self,
         selected: &PersistedForgottenNote,
     ) -> Result<Option<(PathBuf, Option<NoteMutationWarning>)>, HistoryError> {
-        require_active_vault_root(&self.runtime.store, &state::notes_root()?)?;
         let source_path = Path::new(&selected.forgotten_path);
         self.runtime.store.require_path(source_path)?;
         let exists = state::with_note_file_mutation(|| {
             let _operation = self.runtime.begin_operation()?;
-            require_active_vault_root(&self.runtime.store, &state::notes_root()?)?;
-            if !state::db_forgotten_note_matches(selected)? {
+            if !self
+                .state
+                .app_state_storage()
+                .forgotten_note_matches(selected)?
+            {
                 return Err(HistoryError::Stale(
                     "The forgotten item changed before recovery".into(),
                 ));
@@ -87,7 +88,9 @@ impl NoteTimeline<'_> {
             if source_path.is_file() {
                 return Ok(true);
             }
-            state::db_remove_forgotten_note(selected)?;
+            self.state
+                .app_state_storage()
+                .remove_forgotten_note(selected)?;
             Ok(false)
         })?;
         if !exists {
@@ -153,22 +156,15 @@ impl NoteTimeline<'_> {
                         operation.clone(),
                         canonical,
                         || {
-                            require_active_vault_root(
-                                &self.runtime.store,
-                                &state::notes_root()
-                                    .map_err(LifecyclePublicationFailure::not_published)?,
-                            )
-                            .map_err(|error| {
-                                LifecyclePublicationFailure::not_published(error.to_string())
-                            })?;
                             validate_note_move_source(source, source_markdown)?;
                             if recovering {
-                                state::db_set_forgotten_original_path(
-                                    selected,
-                                    &staged.original_path,
-                                )
+                                self.state
+                                    .app_state_storage()
+                                    .set_forgotten_original_path(selected, &staged.original_path)
                             } else {
-                                state::db_insert_forgotten_note(selected)
+                                self.state
+                                    .app_state_storage()
+                                    .insert_forgotten_note(selected)
                             }
                             .map_err(LifecyclePublicationFailure::not_published)?;
                             #[cfg(test)]
@@ -190,12 +186,15 @@ impl NoteTimeline<'_> {
                                 );
                                 return Err(rollback_forgotten_metadata(failure, || {
                                     if recovering {
-                                        state::db_set_forgotten_original_path(
+                                        self.state.app_state_storage().set_forgotten_original_path(
                                             &staged,
                                             &selected.original_path,
                                         )
                                     } else {
-                                        state::db_remove_forgotten_note(selected).map(|_| ())
+                                        self.state
+                                            .app_state_storage()
+                                            .remove_forgotten_note(selected)
+                                            .map(|_| ())
                                     }
                                 }));
                             }
@@ -208,10 +207,13 @@ impl NoteTimeline<'_> {
                         if indeterminate {
                             Ok(())
                         } else {
-                            state::db_remove_forgotten_note(&staged).map(|_| ())
+                            self.state
+                                .app_state_storage()
+                                .remove_forgotten_note(&staged)
+                                .map(|_| ())
                         }
                     } else {
-                        state::db_finish_forgetting(selected)
+                        self.state.app_state_storage().finish_forgetting(selected)
                     };
                     if let Err(error) = bookkeeping {
                         merge_note_mutation_warning(

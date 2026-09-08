@@ -711,6 +711,7 @@ fn resolve_target_path(
     Err("Unable to determine a target path for the note".to_string())
 }
 
+#[cfg(test)]
 fn state_database_path() -> Result<PathBuf, String> {
     // Vault-local, portable: app-state.sqlite3 holds vault-specific UI state
     // (recents, hidden/collapsed/order lists, forgotten-note metadata, open
@@ -720,19 +721,126 @@ fn state_database_path() -> Result<PathBuf, String> {
     Ok(vault_data_dir.join(APP_STATE_DB_FILE_NAME))
 }
 
-struct StateDatabase {
-    path: PathBuf,
-    connection: Connection,
+struct RunningStateDatabaseBinding {
+    connection: std::sync::Weak<Mutex<Connection>>,
+    #[cfg(test)]
+    database_path: PathBuf,
 }
 
-static STATE_DATABASE: Mutex<Option<StateDatabase>> = Mutex::new(None);
+// Compatibility binding for state operations that have not yet acquired an
+// AppState parameter. Production composition publishes one weak running-vault
+// handle here; it never stores or resolves the mutable next-launch path.
+static RUNNING_STATE_DATABASE_COMPAT: Mutex<Option<RunningStateDatabaseBinding>> = Mutex::new(None);
+#[cfg(test)]
+thread_local! {
+    static TEST_THREAD_STATE_DATABASE: std::cell::RefCell<std::sync::Weak<Mutex<Connection>>> =
+        std::cell::RefCell::new(std::sync::Weak::new());
+}
 
-/// Returns a guarded long-lived connection to the app-state SQLite database.
-///
-/// The connection is created once and reused across calls so we do not pay
-/// re-open + schema-check costs on every mutation. The cached entry is keyed
-/// on the resolved database path so test runs that swap the configured app
-/// data directory get a fresh connection automatically.
+/// Bound handle for the running vault's serialized app-state storage.
+/// Construction is the only production path that may choose the database;
+/// ordinary operations never consult the mutable next-launch preference.
+pub(crate) struct AppStateStorage {
+    connection: std::sync::Arc<Mutex<Connection>>,
+}
+
+impl AppStateStorage {
+    pub(crate) fn bind(vault_data_dir: &Path) -> Result<Self, String> {
+        fs::create_dir_all(vault_data_dir).map_err(|err| err.to_string())?;
+        let database_path = vault_data_dir.join(APP_STATE_DB_FILE_NAME);
+        let connection = Connection::open(&database_path).map_err(|err| err.to_string())?;
+        ensure_state_schema(&connection)?;
+        let storage = Self {
+            connection: std::sync::Arc::new(Mutex::new(connection)),
+        };
+        let mut guard = RUNNING_STATE_DATABASE_COMPAT
+            .lock()
+            .map_err(|_| "App state database lock poisoned".to_string())?;
+        *guard = Some(RunningStateDatabaseBinding {
+            connection: std::sync::Arc::downgrade(&storage.connection),
+            #[cfg(test)]
+            database_path,
+        });
+        #[cfg(test)]
+        TEST_THREAD_STATE_DATABASE.with(|binding| {
+            *binding.borrow_mut() = std::sync::Arc::downgrade(&storage.connection);
+        });
+        Ok(storage)
+    }
+
+    fn with<R>(
+        &self,
+        action: impl FnOnce(&mut Connection) -> Result<R, String>,
+    ) -> Result<R, String> {
+        let mut connection = self
+            .connection
+            .lock()
+            .map_err(|_| "App state database lock poisoned".to_string())?;
+        action(&mut connection)
+    }
+
+    /// Join any transaction already using the running-vault app-state store.
+    /// The restart lifecycle closes frontend mutation admission before calling
+    /// this barrier, so acquiring and releasing the serialized connection is
+    /// the durable-settlement receipt for task and workspace metadata.
+    pub(crate) fn settle_admitted_writes(&self) -> Result<(), String> {
+        let _connection = self
+            .connection
+            .lock()
+            .map_err(|_| "App state database lock poisoned".to_string())?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use super::*;
+    use std::sync::{mpsc, Arc};
+
+    #[test]
+    fn restart_settlement_joins_an_admitted_metadata_write() {
+        let _guard = crate::test_support::lock_test_env();
+        let root = crate::test_support::TestDir::new("restart-state-write");
+        let storage = Arc::new(AppStateStorage::bind(root.path()).unwrap());
+        let (entered_tx, entered_rx) = mpsc::channel();
+        let (release_tx, release_rx) = mpsc::channel();
+        let (settle_started_tx, settle_started_rx) = mpsc::channel();
+        let (settled_tx, settled_rx) = mpsc::channel();
+
+        std::thread::scope(|scope| {
+            let writer_storage = Arc::clone(&storage);
+            scope.spawn(move || {
+                writer_storage
+                    .with(|connection| {
+                        connection
+                            .execute(
+                                "UPDATE app_state SET last_opened_note_id = 'admitted' WHERE id = ?1",
+                                [APP_STATE_SINGLETON_ID],
+                            )
+                            .map_err(|error| error.to_string())?;
+                        entered_tx.send(()).unwrap();
+                        release_rx.recv().unwrap();
+                        Ok(())
+                    })
+                    .unwrap();
+            });
+            entered_rx.recv().unwrap();
+            let settling_storage = Arc::clone(&storage);
+            scope.spawn(move || {
+                settle_started_tx.send(()).unwrap();
+                settling_storage.settle_admitted_writes().unwrap();
+                settled_tx.send(()).unwrap();
+            });
+            settle_started_rx.recv().unwrap();
+            assert!(settled_rx.try_recv().is_err());
+            release_tx.send(()).unwrap();
+            settled_rx.recv().unwrap();
+        });
+    }
+}
+
+/// Uses the running vault's already-bound compatibility connection. Test-only
+/// callers that predate AppState bind against their disposable override root.
 fn with_state_database<R, F>(action: F) -> Result<R, String>
 where
     F: FnOnce(&mut Connection) -> Result<R, String>,
@@ -748,24 +856,53 @@ pub(super) fn with_state_database_internal<R, F>(action: F) -> Result<R, String>
 where
     F: FnOnce(&mut Connection) -> Result<R, String>,
 {
-    let database_path = state_database_path()?;
-    let mut guard: MutexGuard<'_, Option<StateDatabase>> = STATE_DATABASE
+    #[cfg(test)]
+    if let Some(connection) = TEST_THREAD_STATE_DATABASE.with(|binding| binding.borrow().upgrade())
+    {
+        let mut connection = connection
+            .lock()
+            .map_err(|_| "App state database lock poisoned".to_string())?;
+        return action(&mut connection);
+    }
+    let guard: MutexGuard<'_, Option<RunningStateDatabaseBinding>> = RUNNING_STATE_DATABASE_COMPAT
         .lock()
         .map_err(|_| "App state database lock poisoned".to_string())?;
-    let needs_open = guard
-        .as_ref()
-        .map(|entry| entry.path != database_path)
-        .unwrap_or(true);
-    if needs_open {
-        let connection = Connection::open(&database_path).map_err(|err| err.to_string())?;
-        ensure_state_schema(&connection)?;
-        *guard = Some(StateDatabase {
-            path: database_path,
-            connection,
-        });
+    #[cfg(test)]
+    {
+        let database_path = state_database_path()?;
+        if let Some(connection) = guard
+            .as_ref()
+            .filter(|binding| binding.database_path == database_path)
+            .and_then(|binding| binding.connection.upgrade())
+        {
+            drop(guard);
+            let mut connection = connection
+                .lock()
+                .map_err(|_| "App state database lock poisoned".to_string())?;
+            return action(&mut connection);
+        }
+        drop(guard);
+        let storage = AppStateStorage::bind(
+            database_path
+                .parent()
+                .ok_or("App state database path has no parent")?,
+        )?;
+        return storage.with(action);
     }
-    let entry = guard.as_mut().expect("state database initialised");
-    action(&mut entry.connection)
+    #[cfg(not(test))]
+    {
+        let connection = guard
+            .as_ref()
+            .ok_or_else(|| "Running vault app-state storage is not bound".to_string())?
+            .connection
+            .upgrade()
+            .ok_or_else(|| "Running vault app-state storage is no longer available".to_string())?;
+        drop(guard);
+        let mut connection = connection
+            .lock()
+            .map_err(|_| "App state database lock poisoned".to_string())?;
+        action(&mut connection)
+    }
 }
 
 /// Idempotent re-entry to the schema bootstrap. Sibling modules (the
@@ -1287,54 +1424,127 @@ const FORGOTTEN_ROW_MATCH: &str = "forgotten_path = ?1 AND note_id IS ?2 AND ori
     AND title = ?4 AND forgotten_at_millis = ?5 AND purge_after_days = ?6 AND purge_at_millis = ?7
     AND kind = ?8 AND conversation_id IS ?9";
 
+#[cfg(test)]
 pub(crate) fn db_insert_forgotten_note(note: &PersistedForgottenNote) -> Result<(), String> {
-    let values = forgotten_row_values(note)?;
-    with_state_database(|connection| {
-        connection.execute("INSERT INTO app_state_forgotten_notes
-            (forgotten_path, note_id, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis, kind, conversation_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", rusqlite::params_from_iter(values))
-            .map(|_| ()).map_err(|error| error.to_string())
-    })
+    with_state_database(|connection| insert_forgotten_note(connection, note))
 }
 
-pub(crate) fn db_forgotten_note_matches(expected: &PersistedForgottenNote) -> Result<bool, String> {
+fn insert_forgotten_note(
+    connection: &mut Connection,
+    note: &PersistedForgottenNote,
+) -> Result<(), String> {
+    let values = forgotten_row_values(note)?;
+    connection.execute("INSERT INTO app_state_forgotten_notes
+            (forgotten_path, note_id, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis, kind, conversation_id)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", rusqlite::params_from_iter(values))
+        .map(|_| ()).map_err(|error| error.to_string())
+}
+
+fn forgotten_note_matches(
+    connection: &mut Connection,
+    expected: &PersistedForgottenNote,
+) -> Result<bool, String> {
     let values = forgotten_row_values(expected)?;
-    with_state_database(|connection| {
-        connection.query_row(
+    connection.query_row(
             &format!("SELECT EXISTS(SELECT 1 FROM app_state_forgotten_notes WHERE {FORGOTTEN_ROW_MATCH})"),
             rusqlite::params_from_iter(values),
             |row| row.get(0),
         ).map_err(|error| error.to_string())
-    })
 }
 
+#[cfg(test)]
 pub(crate) fn db_remove_forgotten_note(expected: &PersistedForgottenNote) -> Result<bool, String> {
-    let values = forgotten_row_values(expected)?;
-    with_state_database(|connection| {
-        connection
-            .execute(
-                &format!("DELETE FROM app_state_forgotten_notes WHERE {FORGOTTEN_ROW_MATCH}"),
-                rusqlite::params_from_iter(values),
-            )
-            .map(|changed| changed == 1)
-            .map_err(|error| error.to_string())
-    })
+    with_state_database(|connection| remove_forgotten_note(connection, expected))
 }
 
+fn remove_forgotten_note(
+    connection: &mut Connection,
+    expected: &PersistedForgottenNote,
+) -> Result<bool, String> {
+    let values = forgotten_row_values(expected)?;
+    connection
+        .execute(
+            &format!("DELETE FROM app_state_forgotten_notes WHERE {FORGOTTEN_ROW_MATCH}"),
+            rusqlite::params_from_iter(values),
+        )
+        .map(|changed| changed == 1)
+        .map_err(|error| error.to_string())
+}
+
+#[cfg(test)]
 pub(crate) fn db_set_forgotten_original_path(
+    expected: &PersistedForgottenNote,
+    path: &str,
+) -> Result<(), String> {
+    with_state_database(|connection| set_forgotten_original_path(connection, expected, path))
+}
+
+fn set_forgotten_original_path(
+    connection: &mut Connection,
     expected: &PersistedForgottenNote,
     path: &str,
 ) -> Result<(), String> {
     let mut values = forgotten_row_values(expected)?;
     values.push(rusqlite::types::Value::Text(path.to_owned()));
-    with_state_database(|connection| {
-        let changed = connection.execute(&format!("UPDATE app_state_forgotten_notes SET original_path = ?10 WHERE {FORGOTTEN_ROW_MATCH}"), rusqlite::params_from_iter(values))
+    let changed = connection.execute(&format!("UPDATE app_state_forgotten_notes SET original_path = ?10 WHERE {FORGOTTEN_ROW_MATCH}"), rusqlite::params_from_iter(values))
             .map_err(|error| error.to_string())?;
-        if changed != 1 {
-            return Err("The forgotten item changed before recovery finished".to_string());
-        }
-        Ok(())
-    })
+    if changed != 1 {
+        return Err("The forgotten item changed before recovery finished".to_string());
+    }
+    Ok(())
+}
+
+impl AppStateStorage {
+    pub(crate) fn insert_forgotten_note(
+        &self,
+        note: &PersistedForgottenNote,
+    ) -> Result<(), String> {
+        self.with(|connection| insert_forgotten_note(connection, note))
+    }
+
+    pub(crate) fn forgotten_note_matches(
+        &self,
+        note: &PersistedForgottenNote,
+    ) -> Result<bool, String> {
+        self.with(|connection| forgotten_note_matches(connection, note))
+    }
+
+    pub(crate) fn remove_forgotten_note(
+        &self,
+        note: &PersistedForgottenNote,
+    ) -> Result<bool, String> {
+        self.with(|connection| remove_forgotten_note(connection, note))
+    }
+
+    pub(crate) fn set_forgotten_original_path(
+        &self,
+        note: &PersistedForgottenNote,
+        path: &str,
+    ) -> Result<(), String> {
+        self.with(|connection| set_forgotten_original_path(connection, note, path))
+    }
+
+    pub(crate) fn finish_forgetting(&self, note: &PersistedForgottenNote) -> Result<(), String> {
+        self.with(|connection| {
+            let transaction = connection.transaction().map_err(|error| error.to_string())?;
+            if let Some(note_id) = &note.note_id {
+                transaction.execute(
+                    "UPDATE app_state SET last_opened_note_id = NULL WHERE id = ?1 AND last_opened_note_id = ?2",
+                    params![APP_STATE_SINGLETON_ID, note_id],
+                ).map_err(|error| error.to_string())?;
+                transaction.execute(
+                    "DELETE FROM app_state_recent_note_ids WHERE note_id = ?1",
+                    [note_id],
+                ).map_err(|error| error.to_string())?;
+            }
+            if let Some(conversation_id) = &note.conversation_id {
+                transaction.execute("UPDATE app_state SET last_chat_conversation_id = NULL, last_chat_context_note_id = NULL, last_chat_context_note_path = NULL
+                    WHERE id = ?1 AND last_chat_conversation_id = ?2", params![APP_STATE_SINGLETON_ID, conversation_id])
+                    .map_err(|error| error.to_string())?;
+            }
+            transaction.commit().map_err(|error| error.to_string())
+        })
+    }
 }
 
 /// Remove only the observed IDs; a concurrent open of another note survives.
@@ -1355,22 +1565,6 @@ pub(crate) fn db_prune_note_navigation(note_ids: &[String]) -> Result<(), String
         }
         transaction.commit().map_err(|error| error.to_string())
     })
-}
-
-/// Navigation changes follow canonical publication; failed preparation never
-/// needs to restore an old aggregate snapshot over another command's edits.
-pub(crate) fn db_finish_forgetting(note: &PersistedForgottenNote) -> Result<(), String> {
-    if let Some(note_id) = &note.note_id {
-        db_prune_note_navigation(std::slice::from_ref(note_id))?;
-    }
-    if let Some(conversation_id) = &note.conversation_id {
-        with_state_database(|connection| {
-            connection.execute("UPDATE app_state SET last_chat_conversation_id = NULL, last_chat_context_note_id = NULL, last_chat_context_note_path = NULL
-                WHERE id = ?1 AND last_chat_conversation_id = ?2", params![APP_STATE_SINGLETON_ID, conversation_id])
-                .map(|_| ()).map_err(|error| error.to_string())
-        })?;
-    }
-    Ok(())
 }
 
 // Row-scoped mutation helpers. These avoid the full DELETE + INSERT rewrite

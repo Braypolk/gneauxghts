@@ -6,7 +6,7 @@ use crate::{
         NoteTimeline, VaultObservation, VaultObservationKind,
         BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES,
     },
-    state::{is_forgotten_note_path, notes_root},
+    state::is_forgotten_note_path,
     time::current_time_millis,
 };
 use notify::{
@@ -225,6 +225,7 @@ struct DirtyState {
     first_seen: Option<Instant>,
     last_event: Option<Instant>,
     last_activity: Option<Instant>,
+    stopping: bool,
 }
 
 struct DirtyQueue {
@@ -245,6 +246,9 @@ impl DirtyQueue {
         let Ok(mut state) = self.state.lock() else {
             return;
         };
+        if state.stopping {
+            return;
+        }
         let mut added = false;
         for path in paths {
             state.paths.insert(path);
@@ -263,15 +267,63 @@ impl DirtyQueue {
     fn last_activity(&self) -> Option<Instant> {
         self.state.lock().ok().and_then(|state| state.last_activity)
     }
+
+    fn stop(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.stopping = true;
+            self.signal.notify_all();
+        }
+    }
+
+    fn wait_for_reconcile(&self, duration: Duration) -> bool {
+        let Ok(state) = self.state.lock() else {
+            return false;
+        };
+        if state.stopping {
+            return false;
+        }
+        self.signal
+            .wait_timeout_while(state, duration, |state| !state.stopping)
+            .map(|(state, _)| !state.stopping)
+            .unwrap_or(false)
+    }
 }
 
-#[allow(dead_code)]
 pub(crate) struct VaultWatcherHandle {
-    watcher: RecommendedWatcher,
+    watcher: Option<RecommendedWatcher>,
+    queue: std::sync::Arc<DirtyQueue>,
+    debounce: Option<thread::JoinHandle<()>>,
+    reconcile: Option<thread::JoinHandle<()>>,
+}
+
+impl VaultWatcherHandle {
+    pub(crate) fn stop_and_join(&mut self) -> Result<(), String> {
+        self.watcher.take();
+        self.queue.stop();
+        let mut first_error = None;
+        for (name, handle) in [
+            ("debounce", self.debounce.take()),
+            ("reconciliation", self.reconcile.take()),
+        ] {
+            if let Some(handle) = handle {
+                if handle.join().is_err() && first_error.is_none() {
+                    first_error = Some(format!(
+                        "Vault watcher {name} thread panicked during shutdown"
+                    ));
+                }
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
 }
 
 pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherHandle, String> {
-    let notes_dir = notes_root()?;
+    let notes_dir = app_handle
+        .try_state::<AppState>()
+        .ok_or_else(|| "Application state unavailable".to_string())?
+        .running_vault()
+        .root()
+        .to_path_buf();
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
 
     let queue = std::sync::Arc::new(DirtyQueue::new());
@@ -289,9 +341,22 @@ pub(crate) fn start_vault_watcher(app_handle: AppHandle) -> Result<VaultWatcherH
         .watch(&notes_dir, RecursiveMode::Recursive)
         .map_err(|err| err.to_string())?;
 
-    spawn_debounce_flush_loop(app_handle.clone(), queue.clone());
-    spawn_background_reconcile_loop(app_handle, queue);
-    Ok(VaultWatcherHandle { watcher })
+    let debounce = spawn_debounce_flush_loop(app_handle.clone(), queue.clone(), notes_dir.clone())?;
+    let reconcile = match spawn_background_reconcile_loop(app_handle, queue.clone(), notes_dir) {
+        Ok(reconcile) => reconcile,
+        Err(error) => {
+            queue.stop();
+            drop(watcher);
+            let _ = debounce.join();
+            return Err(error);
+        }
+    };
+    Ok(VaultWatcherHandle {
+        watcher: Some(watcher),
+        queue,
+        debounce: Some(debounce),
+        reconcile: Some(reconcile),
+    })
 }
 
 /// Watcher callback: cheap. Filter events and record dirty paths only; all
@@ -332,35 +397,48 @@ fn collect_watch_result(queue: &DirtyQueue, notes_dir: &Path, result: notify::Re
 /// Debounce thread: waits for a burst of watcher events to settle, then flushes
 /// the whole batch in one pass (with rename detection) so the foreground and
 /// the embedding server see coalesced work.
-fn spawn_debounce_flush_loop(app_handle: AppHandle, queue: std::sync::Arc<DirtyQueue>) {
-    thread::spawn(move || loop {
-        let paths = wait_for_flushable_batch(&queue);
-        if paths.is_empty() {
-            continue;
-        }
-        let notes_dir = match notes_root() {
-            Ok(dir) => dir,
-            Err(_) => continue,
-        };
-        if let Err(error) = flush_dirty_batch(&app_handle, &notes_dir, paths) {
-            eprintln!("vault flush error: {error}");
-        }
-    });
+fn spawn_debounce_flush_loop(
+    app_handle: AppHandle,
+    queue: std::sync::Arc<DirtyQueue>,
+    notes_dir: PathBuf,
+) -> Result<thread::JoinHandle<()>, String> {
+    thread::Builder::new()
+        .name("vault-watcher-debounce".to_string())
+        .spawn(move || loop {
+            let Some(paths) = wait_for_flushable_batch(&queue) else {
+                return;
+            };
+            if paths.is_empty() {
+                continue;
+            }
+            if let Err(error) = flush_dirty_batch(&app_handle, &notes_dir, paths) {
+                eprintln!("vault flush error: {error}");
+            }
+        })
+        .map_err(|error| error.to_string())
 }
 
 /// Block until a batch is ready to flush per the debounce policy, then take it.
-fn wait_for_flushable_batch(queue: &DirtyQueue) -> Vec<PathBuf> {
+fn wait_for_flushable_batch(queue: &DirtyQueue) -> Option<Vec<PathBuf>> {
     let mut state = match queue.state.lock() {
         Ok(state) => state,
-        Err(_) => return Vec::new(),
+        Err(_) => return None,
     };
 
     loop {
+        if state.stopping {
+            if state.paths.is_empty() {
+                return None;
+            }
+            state.first_seen = None;
+            state.last_event = None;
+            return Some(state.paths.drain().collect());
+        }
         if state.paths.is_empty() {
             // Nothing pending: wait indefinitely for the next event.
             state = match queue.signal.wait(state) {
                 Ok(state) => state,
-                Err(_) => return Vec::new(),
+                Err(_) => return None,
             };
             continue;
         }
@@ -378,7 +456,7 @@ fn wait_for_flushable_batch(queue: &DirtyQueue) -> Vec<PathBuf> {
         if quiet_for >= DEBOUNCE_QUIET_WINDOW || waited_total >= DEBOUNCE_MAX_WAIT {
             state.first_seen = None;
             state.last_event = None;
-            return state.paths.drain().collect();
+            return Some(state.paths.drain().collect());
         }
 
         // Sleep just long enough to re-check the earlier of the two deadlines.
@@ -387,7 +465,7 @@ fn wait_for_flushable_batch(queue: &DirtyQueue) -> Vec<PathBuf> {
         let timeout = until_quiet.min(until_max).max(Duration::from_millis(10));
         let (next_state, _) = match queue.signal.wait_timeout(state, timeout) {
             Ok(pair) => pair,
-            Err(_) => return Vec::new(),
+            Err(_) => return None,
         };
         state = next_state;
     }
@@ -606,7 +684,12 @@ fn flush_dirty_batch(
 
 #[cfg(feature = "e2e-wdio")]
 pub(crate) fn flush_path_for_test(app_handle: &AppHandle, path: PathBuf) -> Result<(), String> {
-    let notes_dir = notes_root()?;
+    let notes_dir = app_handle
+        .try_state::<AppState>()
+        .ok_or_else(|| "Application state unavailable".to_string())?
+        .running_vault()
+        .root()
+        .to_path_buf();
     if !path.starts_with(&notes_dir) {
         return Err("E2E watcher path must stay inside the active vault".to_string());
     }
@@ -741,40 +824,48 @@ fn observe_reconciliation_state(
 /// network shares, large bursts) without ever blocking a search or focus
 /// command. The interval adapts: tight right after activity, backing off
 /// toward [`RECONCILE_INTERVAL_MAX`] while the vault is quiet. The thread is
-/// detached: it lives for the rest of the process and exits naturally when the
-/// host process tears down.
-fn spawn_background_reconcile_loop(app_handle: AppHandle, queue: std::sync::Arc<DirtyQueue>) {
-    thread::spawn(move || loop {
-        thread::sleep(next_reconcile_interval(queue.last_activity()));
-        let Some(state) = app_handle.try_state::<crate::index::AppState>() else {
-            continue;
-        };
-        let Ok(notes_dir) = notes_root() else {
-            continue;
-        };
-        if !notes_dir.exists() {
-            continue;
-        }
-        match state.reconcile_full_vault_scan_observing(&notes_dir, |known_paths, present_paths| {
-            observe_reconciliation_state(
-                &app_handle,
-                &state,
+/// owned by `VaultWatcherHandle`, which interrupts and joins it before restart.
+fn spawn_background_reconcile_loop(
+    app_handle: AppHandle,
+    queue: std::sync::Arc<DirtyQueue>,
+    notes_dir: PathBuf,
+) -> Result<thread::JoinHandle<()>, String> {
+    thread::Builder::new()
+        .name("vault-reconciliation".to_string())
+        .spawn(move || loop {
+            if !queue.wait_for_reconcile(next_reconcile_interval(queue.last_activity())) {
+                return;
+            }
+            let Some(state) = app_handle.try_state::<crate::index::AppState>() else {
+                continue;
+            };
+            if !notes_dir.exists() {
+                continue;
+            }
+            match state.reconcile_full_vault_scan_observing(
                 &notes_dir,
-                known_paths,
-                present_paths,
-            )
-        }) {
-            Err(error) => eprintln!("vault reconcile error: {error}"),
-            Ok(_) => {
-                if let Err(error) = state
-                    .note_timeline()
-                    .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)
-                {
-                    eprintln!("Note Timeline background compaction error: {error}");
+                |known_paths, present_paths| {
+                    observe_reconciliation_state(
+                        &app_handle,
+                        &state,
+                        &notes_dir,
+                        known_paths,
+                        present_paths,
+                    )
+                },
+            ) {
+                Err(error) => eprintln!("vault reconcile error: {error}"),
+                Ok(_) => {
+                    if let Err(error) = state
+                        .note_timeline()
+                        .compact_history_storage(BACKGROUND_HISTORY_COMPACTION_BUDGET_BYTES)
+                    {
+                        eprintln!("Note Timeline background compaction error: {error}");
+                    }
                 }
             }
-        }
-    });
+        })
+        .map_err(|error| error.to_string())
 }
 
 /// Choose the next sleep duration for the reconcile loop. Stays at
@@ -836,7 +927,7 @@ mod tests {
         consume_self_save, is_watchable_markdown_path, next_reconcile_interval,
         reconciliation_observations, record_expected_move, record_expected_removal,
         record_expected_write, should_process_watch_event, stored_content_hash,
-        RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
+        wait_for_flushable_batch, DirtyQueue, RECONCILE_INTERVAL_MAX, RECONCILE_INTERVAL_MIN,
     };
     use crate::services::note_timeline::{
         inject_history_recovery_failure_once, reconstructed_revision_bodies_for_test,
@@ -925,7 +1016,36 @@ mod tests {
     }
 
     #[test]
+    fn restart_stop_drains_pending_debounce_and_interrupts_reconciliation() {
+        let queue = std::sync::Arc::new(DirtyQueue::new());
+        let pending = PathBuf::from("/disposable-vault/Pending.md");
+        queue.push([pending.clone()]);
+        let (batch_tx, batch_rx) = std::sync::mpsc::channel();
+        let (reconcile_tx, reconcile_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let debounce_queue = queue.clone();
+            scope.spawn(move || {
+                batch_tx
+                    .send(wait_for_flushable_batch(&debounce_queue))
+                    .unwrap();
+            });
+            let reconcile_queue = queue.clone();
+            scope.spawn(move || {
+                reconcile_tx
+                    .send(reconcile_queue.wait_for_reconcile(Duration::from_secs(300)))
+                    .unwrap();
+            });
+            queue.stop();
+            assert_eq!(batch_rx.recv().unwrap(), Some(vec![pending]));
+            assert!(!reconcile_rx.recv().unwrap());
+        });
+        queue.push([PathBuf::from("/disposable-vault/Late.md")]);
+        assert_eq!(wait_for_flushable_batch(&queue), None);
+    }
+
+    #[test]
     fn rename_matching_uses_catalog_hash_when_semantic_indexing_is_unavailable() {
+        let _guard = crate::test_support::lock_test_env();
         let state = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),

@@ -55,8 +55,14 @@ impl<'a> NoteTimeline<'a> {
         self.runtime.readiness(Some(note))
     }
 
+    #[cfg(test)]
     pub(crate) fn is_cleanly_closed(&self) -> Result<bool, HistoryError> {
         self.runtime.is_cleanly_closed()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn wait_for_clean_close_joiner_for_test(&self) {
+        self.runtime.wait_for_close_joiner();
     }
 
     pub(super) fn ensure_history_recovered(&self) -> Result<(), HistoryError> {
@@ -103,8 +109,8 @@ impl<'a> NoteTimeline<'a> {
 
     pub(crate) fn clean_close(&self, vault_root: &Path) -> Result<(), HistoryError> {
         let vault_root = require_active_vault_root(&self.runtime.store, vault_root)?;
-        crate::state::with_note_file_mutation(|| {
-            self.runtime.close_operations(|| {
+        self.runtime.close_operations(|| {
+            crate::state::with_note_file_mutation(|| {
                 self.runtime.with_observation_replay(|| {
                     self.recover_pending_deletions()?;
                     self.replay_retained_observations(None)?;

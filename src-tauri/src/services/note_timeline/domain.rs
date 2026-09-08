@@ -1818,7 +1818,7 @@ pub(crate) struct HistoryReadiness {
     pub(crate) background_unavailable: bool,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum HistoryError {
     AlreadyCurrent(String),
     Unavailable(String),

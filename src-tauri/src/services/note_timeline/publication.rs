@@ -323,6 +323,8 @@ impl<'a> NoteTimeline<'a> {
                         .expect("baseline Markdown requires known-since time"),
                 }),
         )?;
+        #[cfg(feature = "e2e-wdio")]
+        crate::e2e_process_fault::hit("publication-prepared");
         Ok(PreparedRevisionPublication {
             canonical_markdown: canonical,
             history_intent,
@@ -337,6 +339,8 @@ impl<'a> NoteTimeline<'a> {
             previous_path,
             fallback_markdown,
         } = mutation;
+        #[cfg(feature = "e2e-wdio")]
+        crate::e2e_process_fault::hit("canonical-published");
         let canonical_read = fs::read_to_string(&path);
         let history_error = match canonical_read.as_deref() {
             Ok(canonical) => self
@@ -355,6 +359,10 @@ impl<'a> NoteTimeline<'a> {
                 format!("Read authoritative Markdown before history finalization: {error}").into(),
             ),
         };
+        #[cfg(feature = "e2e-wdio")]
+        if history_error.is_none() {
+            crate::e2e_process_fault::hit("publication-captured");
+        }
         // Canonical publication has completed, including uncertain capture. The
         // durable unresolved record remains protected, but is now safe to retry.
         let release_error = self

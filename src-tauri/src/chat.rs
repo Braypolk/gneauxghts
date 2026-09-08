@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicU64, Ordering},
-        Arc, Mutex,
+        Arc, Condvar, Mutex,
     },
 };
 use tauri::{AppHandle, Emitter, Manager};
@@ -383,6 +383,7 @@ struct ActiveChatRun {
     selected_context: Vec<ChatRunContextItem>,
     cancelled: CancellationToken,
     automatic_title_fallback: Option<String>,
+    _work: ChatWorkLease,
 }
 
 struct RetryRunContext {
@@ -516,9 +517,115 @@ pub(crate) struct ProjectionConflictConversion {
 struct ChatServiceInner {
     db_path: PathBuf,
     notes_root: PathBuf,
-    active_requests: Mutex<HashMap<String, CancellationToken>>,
+    work: Arc<ChatWorkTracker>,
     permission_broker: crate::agent_permissions::AgentPermissionBroker,
     projection_sink: Arc<dyn ChatProjectionSink>,
+}
+
+#[derive(Default)]
+struct ChatWorkState {
+    accepting: bool,
+    active: usize,
+    cancellations: HashMap<String, CancellationToken>,
+}
+
+struct ChatWorkTracker {
+    state: Mutex<ChatWorkState>,
+    settled: Condvar,
+}
+
+struct ChatWorkLease {
+    tracker: Arc<ChatWorkTracker>,
+    id: String,
+}
+
+impl ChatWorkTracker {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(ChatWorkState {
+                accepting: true,
+                ..Default::default()
+            }),
+            settled: Condvar::new(),
+        }
+    }
+
+    fn admit(
+        self: &Arc<Self>,
+        id: String,
+        cancellation: CancellationToken,
+    ) -> Result<ChatWorkLease, String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Chat work lock poisoned".to_string())?;
+        if !state.accepting {
+            return Err("Chat work is quiesced for restart".to_string());
+        }
+        state.active += 1;
+        state.cancellations.insert(id.clone(), cancellation);
+        Ok(ChatWorkLease {
+            tracker: Arc::clone(self),
+            id,
+        })
+    }
+
+    fn cancel(&self, id: &str) -> Result<(), String> {
+        self.state
+            .lock()
+            .map_err(|_| "Chat work lock poisoned".to_string())?
+            .cancellations
+            .get(id)
+            .ok_or_else(|| "That chat request is no longer active".to_string())?
+            .cancel();
+        Ok(())
+    }
+
+    fn cancel_all(&self) {
+        if let Ok(state) = self.state.lock() {
+            for token in state.cancellations.values() {
+                token.cancel();
+            }
+        }
+    }
+
+    fn quiesce_and_wait(&self) -> Result<(), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "Chat work lock poisoned".to_string())?;
+        state.accepting = false;
+        for token in state.cancellations.values() {
+            token.cancel();
+        }
+        while state.active != 0 {
+            state = self
+                .settled
+                .wait(state)
+                .map_err(|_| "Chat work lock poisoned".to_string())?;
+        }
+        Ok(())
+    }
+
+    fn resume(&self) -> Result<(), String> {
+        self.state
+            .lock()
+            .map_err(|_| "Chat work lock poisoned".to_string())?
+            .accepting = true;
+        Ok(())
+    }
+}
+
+impl Drop for ChatWorkLease {
+    fn drop(&mut self) {
+        if let Ok(mut state) = self.tracker.state.lock() {
+            state.cancellations.remove(&self.id);
+            state.active = state.active.saturating_sub(1);
+            if state.active == 0 {
+                self.tracker.settled.notify_all();
+            }
+        }
+    }
 }
 
 trait ChatProjectionSink: Send + Sync {
@@ -588,7 +695,7 @@ impl ChatService {
             inner: Arc::new(ChatServiceInner {
                 db_path: vault_data_dir.join("ai.sqlite3"),
                 notes_root,
-                active_requests: Mutex::new(HashMap::new()),
+                work: Arc::new(ChatWorkTracker::new()),
                 permission_broker: crate::agent_permissions::AgentPermissionBroker::default(),
                 projection_sink: Arc::new(FilesystemChatProjectionSink { app_handle }),
             }),
@@ -1779,6 +1886,12 @@ impl ChatService {
         request: ChatRequest,
         app: AppHandle,
     ) -> Result<ChatRequestAccepted, String> {
+        let request_id = generate_id("req");
+        let cancelled = CancellationToken::new();
+        let work = self
+            .inner
+            .work
+            .admit(request_id.clone(), cancelled.clone())?;
         let conversation_id = match &request {
             ChatRequest::New {
                 conversation_id, ..
@@ -1974,13 +2087,6 @@ impl ChatService {
             .map_err(|error| error.to_string())?;
         self.write_projection(&conversation_id, false)?;
 
-        let request_id = generate_id("req");
-        let cancelled = CancellationToken::new();
-        self.inner
-            .active_requests
-            .lock()
-            .map_err(|_| "Chat request lock poisoned".to_string())?
-            .insert(request_id.clone(), cancelled.clone());
         let accepted = ChatRequestAccepted {
             request_id: request_id.clone(),
             conversation_id: conversation_id.clone(),
@@ -2019,6 +2125,7 @@ impl ChatService {
             selected_context,
             cancelled,
             automatic_title_fallback,
+            _work: work,
         };
         tauri::async_runtime::spawn(async move {
             service.run_request(run).await;
@@ -2211,21 +2318,23 @@ impl ChatService {
                 let title_conversation_id = run.conversation_id.clone();
                 let title_user_message_id = run.user_message_id.clone();
                 let title_cancelled = run.cancelled.clone();
-                tauri::async_runtime::spawn(async move {
-                    let _ = service
-                        .generate_model_conversation_title(
-                            &title_app,
-                            &title_conversation_id,
-                            &title_user_message_id,
-                            &fallback,
-                            title_cancelled,
-                        )
-                        .await;
-                });
+                let title_id = format!("title:{}", run.request_id);
+                if let Ok(title_work) = service.inner.work.admit(title_id, title_cancelled.clone())
+                {
+                    tauri::async_runtime::spawn(async move {
+                        let _title_work = title_work;
+                        let _ = service
+                            .generate_model_conversation_title(
+                                &title_app,
+                                &title_conversation_id,
+                                &title_user_message_id,
+                                &fallback,
+                                title_cancelled,
+                            )
+                            .await;
+                    });
+                }
             }
-        }
-        if let Ok(mut requests) = self.inner.active_requests.lock() {
-            requests.remove(&run.request_id);
         }
     }
 
@@ -2579,16 +2688,7 @@ impl ChatService {
     }
 
     pub(crate) fn cancel_request(&self, request_id: &str) -> Result<(), String> {
-        let requests = self
-            .inner
-            .active_requests
-            .lock()
-            .map_err(|_| "Chat request lock poisoned".to_string())?;
-        let token = requests
-            .get(request_id)
-            .ok_or_else(|| "That chat request is no longer active".to_string())?;
-        token.cancel();
-        Ok(())
+        self.inner.work.cancel(request_id)
     }
 
     pub(crate) fn decide_agent_permission(
@@ -2599,11 +2699,16 @@ impl ChatService {
     }
 
     fn cancel_active_requests(&self) {
-        if let Ok(requests) = self.inner.active_requests.lock() {
-            for token in requests.values() {
-                token.cancel();
-            }
-        }
+        self.inner.work.cancel_all();
+    }
+
+    pub(crate) fn quiesce_for_restart(&self) -> Result<(), String> {
+        self.inner.permission_broker.cancel_all();
+        self.inner.work.quiesce_and_wait()
+    }
+
+    pub(crate) fn resume_after_failed_restart(&self) -> Result<(), String> {
+        self.inner.work.resume()
     }
 
     pub(crate) fn create_excerpt(
@@ -4878,6 +4983,40 @@ mod tests {
         fs::create_dir_all(&data).unwrap();
         let service = ChatService::new(root.path().to_path_buf(), data).unwrap();
         (root, service)
+    }
+
+    #[test]
+    fn restart_quiescence_cancels_and_joins_admitted_request_and_title_work() {
+        let tracker = Arc::new(ChatWorkTracker::new());
+        let request_cancel = CancellationToken::new();
+        let title_cancel = CancellationToken::new();
+        let request = tracker
+            .admit("request:active".to_string(), request_cancel.clone())
+            .unwrap();
+        let title = tracker
+            .admit("title:active".to_string(), title_cancel.clone())
+            .unwrap();
+        let (settled_tx, settled_rx) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            scope.spawn(|| {
+                tracker.quiesce_and_wait().unwrap();
+                settled_tx.send(()).unwrap();
+            });
+            tauri::async_runtime::block_on(request_cancel.cancelled());
+            tauri::async_runtime::block_on(title_cancel.cancelled());
+            assert!(settled_rx.try_recv().is_err());
+            drop(request);
+            assert!(settled_rx.try_recv().is_err());
+            drop(title);
+            settled_rx.recv().unwrap();
+        });
+        assert!(tracker
+            .admit("request:late".to_string(), CancellationToken::new())
+            .is_err());
+        tracker.resume().unwrap();
+        assert!(tracker
+            .admit("request:resumed".to_string(), CancellationToken::new())
+            .is_ok());
     }
 
     fn seed_agent_run(

@@ -451,6 +451,8 @@ impl NoteTimelineRuntime {
             state.total = Some(notes.len());
         }
         for note in notes {
+            #[cfg(feature = "e2e-wdio")]
+            crate::e2e_process_fault::hit("background-note-verification");
             if stop.load(Ordering::Acquire) {
                 return Ok(());
             }

@@ -1392,6 +1392,9 @@
     },
     dispose: () => {
       documents.saveCursorPositionForDocument();
+      // Browser history and modified/default anchor navigation can bypass the
+      // app-shell barrier. Keep this best-effort defensive flush until those
+      // platform departure routes can be synchronously vetoed.
       void workspacePersistence.flushAllForNavigation();
       chatCoordinator.dispose();
       syncCurrentFileSearchHighlights("", "all");

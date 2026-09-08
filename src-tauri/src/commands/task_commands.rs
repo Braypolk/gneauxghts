@@ -12,7 +12,7 @@ use crate::{
         PreparedTaskDocumentMutation, TaskMutationKind, TaskMutationService,
     },
     state::{
-        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, notes_root, read_state,
+        db_set_note_collapsed, db_set_note_hidden, db_set_note_order, read_state,
         resolve_note_path_by_id,
         task_projection::{
             list_recent_open_tasks, list_tasks_with_filter, load_task_by_id,
@@ -69,7 +69,7 @@ pub(super) fn list_recent_tasks(
         .note_timeline()
         .current_content(AllowedScope::vault())
         .read(|| {
-            let notes_dir = prepare_notes_dir(false)?;
+            let notes_dir = prepare_notes_dir(&state, false)?;
 
             let persisted_state = read_state(&notes_dir)?;
             state.ensure_interactive_index(
@@ -105,7 +105,7 @@ pub(super) fn list_tasks(
         .note_timeline()
         .current_content(AllowedScope::vault())
         .read(|| {
-            let notes_dir = prepare_notes_dir(false)?;
+            let notes_dir = prepare_notes_dir(&state, false)?;
             let persisted_state = read_state(&notes_dir)?;
 
             state.ensure_interactive_index(
@@ -147,13 +147,13 @@ pub(super) fn get_task_group(
         .note_timeline()
         .current_content(AllowedScope::vault())
         .read(|| {
-            let notes_dir = prepare_notes_dir(false)?;
+            let notes_dir = prepare_notes_dir(&state, false)?;
             state.ensure_interactive_index(
                 &notes_dir,
                 INTERACTIVE_INDEX_REFRESH_MAX_AGE,
                 "get_task_group",
             )?;
-            build_task_group_patch(&note_id, filter, show_hidden)
+            build_task_group_patch(&state, &note_id, filter, show_hidden)
         })
 }
 
@@ -257,11 +257,12 @@ fn group_task_records(
 }
 
 fn build_task_group_patch(
+    state: &AppState,
     note_id: &str,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(state, false)?;
     let persisted_state = read_state(&notes_dir)?;
     let hidden_note_ids: HashSet<String> =
         persisted_state.hidden_note_ids.iter().cloned().collect();
@@ -284,12 +285,13 @@ fn build_task_group_patch(
 }
 
 pub(super) fn set_task_hidden(
+    state: State<'_, AppState>,
     task_id: String,
     hidden: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let _ = prepare_notes_dir(false)?;
+    let _ = prepare_notes_dir(&state, false)?;
     if task_id.is_empty() {
         return Ok(TaskListGroupPatch {
             note_id: String::new(),
@@ -301,36 +303,38 @@ pub(super) fn set_task_hidden(
     let task = load_task_by_id(&task_id)?.ok_or_else(|| "Task not found".to_string())?;
     let note_id = task.note_id.clone();
     set_hidden_for_task_id(&task_id, hidden)?;
-    build_task_group_patch(&note_id, filter, show_hidden)
+    build_task_group_patch(&state, &note_id, filter, show_hidden)
 }
 
 pub(super) fn set_note_hidden(
+    state: State<'_, AppState>,
     note_id: String,
     hidden: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let _ = prepare_notes_dir(false)?;
+    let _ = prepare_notes_dir(&state, false)?;
     db_set_note_hidden(&note_id, hidden)?;
-    build_task_group_patch(&note_id, filter, show_hidden)
+    build_task_group_patch(&state, &note_id, filter, show_hidden)
 }
 
 pub(super) fn set_note_collapsed(
+    state: State<'_, AppState>,
     note_id: String,
     collapsed: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let _ = prepare_notes_dir(false)?;
+    let _ = prepare_notes_dir(&state, false)?;
     db_set_note_collapsed(&note_id, collapsed)?;
-    build_task_group_patch(&note_id, filter, show_hidden)
+    build_task_group_patch(&state, &note_id, filter, show_hidden)
 }
 
 pub(super) fn set_note_order(
     state: State<'_, AppState>,
     note_ids: Vec<String>,
 ) -> Result<(), String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
 
     let mut normalized_note_ids = Vec::new();
     let mut seen = HashSet::new();
@@ -397,9 +401,9 @@ fn mutate_task_with_view(
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let committed = TaskMutationService::new(&state).commit(&notes_dir, &task_id, mutation_kind)?;
-    let mut patch = match build_task_group_patch(&committed.note_id, filter, show_hidden) {
+    let mut patch = match build_task_group_patch(&state, &committed.note_id, filter, show_hidden) {
         Ok(patch) => patch,
         Err(error) => TaskListGroupPatch {
             note_id: committed.note_id.clone(),
@@ -427,13 +431,14 @@ fn mutate_task_with_view(
 
 #[tauri::command]
 pub(crate) fn prepare_task_document_mutation(
+    state: State<'_, AppState>,
     task_id: String,
     mutation_kind: TaskMutationKind,
     working_markdown: String,
     body_hash: String,
 ) -> Result<PreparedTaskDocumentMutation, String> {
     TaskMutationService::prepare(
-        &notes_root()?,
+        state.running_vault().root(),
         &task_id,
         mutation_kind,
         &working_markdown,

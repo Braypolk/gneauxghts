@@ -10,4 +10,11 @@ The app records the greatest history generation it has opened for each Vault Ide
 
 A vault moved to a new installation has no prior local observation and is validated by its manifest plus a store marked portable by clean close. An open SQLite store is recoverable only on an installation whose app-local observation matches its instance and generation; this supports ordinary restart/WAL recovery without treating arbitrary live copies as backups. On an installation that has already opened the vault, restoring an older backup may require an explicit recovery or reset instead of opening automatically; this trades friction during rollback for honest provenance and makes removal or replacement of the selected store fail closed.
 
-The fresh-schema policy supersedes the original one-time legacy trust/migration option. Only the current history schema is supported. Older stores require the existing confirmed reset, which advances the generation and rebuilds current Markdown; matching old observations never authorize migration or silently adopt an old store.
+The observation path is part of the immutable running-vault context. Publishing
+a different next-launch selection does not redirect an admitted runtime,
+app-state transaction, or retained callback to another vault's observation
+record. Only composition of the next process binds the newly selected vault;
+the current process retains the original rollback authority until its explicit
+clean-close lifecycle releases that vault.
+
+[Issue 43](../../.scratch/note-timelines/issues/43-remove-granular-editor-history-compatibility.md) supersedes the original one-time legacy trust/migration option. Only the current history schema is supported. Older stores require the existing confirmed reset, which advances the generation and rebuilds current Markdown; matching old observations never authorize migration or silently adopt an old store.

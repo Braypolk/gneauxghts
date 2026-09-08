@@ -15,6 +15,8 @@ mod history_store;
 mod post_publication;
 mod provenance;
 pub(crate) use activity::RevisionCitation;
+#[cfg(test)]
+mod release_validation;
 mod runtime;
 
 // One owner; private files group its vocabulary and complete operations by responsibility.
@@ -28,7 +30,6 @@ mod publication;
 #[cfg(any(test, feature = "e2e-wdio"))]
 mod test_support;
 
-use administration::require_active_vault_root;
 #[cfg(test)]
 use administration::{FAIL_NEXT_PURGE_PROJECTION_CLEANUP, FAIL_NEXT_PURGE_STAGE};
 pub(crate) use current_content::*;

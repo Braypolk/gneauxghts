@@ -2352,7 +2352,8 @@ fn select_other_vault(original: &Fixture) -> Fixture {
     crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
     crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
     crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let path = notes.path().join(original.path.file_name().unwrap());
+    let canonical_notes = fs::canonicalize(notes.path()).unwrap();
+    let path = canonical_notes.join(original.path.file_name().unwrap());
     let markdown = crate::note::repair_managed_note_identity(
         &crate::note::prepare_note_markdown("Other vault baseline", None, Some(None))
             .unwrap()
@@ -2364,7 +2365,7 @@ fn select_other_vault(original: &Fixture) -> Fixture {
     let state = Fixture::state();
     state
         .note_timeline()
-        .initialize_existing_notes(notes.path())
+        .initialize_existing_notes(&canonical_notes)
         .unwrap();
     let other = Fixture {
         state,

@@ -192,7 +192,8 @@ function historyHealth() {
 
 function vaultInfo() {
   return {
-    currentPath: '/e2e',
+    runningPath: '/e2e',
+    selectedPath: '/e2e',
     defaultPath: '/e2e',
     forgottenPath: '/e2e/.forgotten',
     isDefault: true,

@@ -27,9 +27,9 @@ use crate::{
     },
     state::{
         create_vault_folder as create_vault_folder_state, current_vault_info,
-        db_clear_last_opened_note, db_mark_note_opened, default_notes_root,
-        list_vault_folders as list_vault_folders_state, notes_root, set_notes_root, vault_root,
-        CreateVaultFolderResult, VaultFolderInfo, VaultInfo,
+        db_clear_last_opened_note, db_mark_note_opened,
+        list_vault_folders as list_vault_folders_state, stage_notes_root, CreateVaultFolderResult,
+        VaultFolderInfo, VaultInfo,
     },
     time::current_time_millis,
 };
@@ -246,7 +246,7 @@ fn maybe_run_forgotten_note_cleanup(notes_dir: &Path, state: &AppState) -> Resul
 }
 
 pub(crate) fn startup_cleanup_expired_forgotten_notes(state: &AppState) -> Result<(), String> {
-    let notes_dir = notes_root()?;
+    let notes_dir = state.running_vault().root().to_path_buf();
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
     let mut last = LAST_FORGOTTEN_NOTE_CLEANUP_AT
         .lock()
@@ -256,22 +256,20 @@ pub(crate) fn startup_cleanup_expired_forgotten_notes(state: &AppState) -> Resul
     forgotten_note_commands::cleanup_expired_forgotten_notes(&notes_dir, state)
 }
 
-fn prepare_notes_dir(cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
-    prepare_notes_dir_with_state(cleanup_forgotten_notes, None)
+fn prepare_notes_dir(state: &AppState, cleanup_forgotten_notes: bool) -> Result<PathBuf, String> {
+    prepare_notes_dir_with_state(cleanup_forgotten_notes, state)
 }
 
 fn prepare_notes_dir_with_state(
     cleanup_forgotten_notes: bool,
-    state: Option<&AppState>,
+    state: &AppState,
 ) -> Result<PathBuf, String> {
-    let notes_dir = notes_root()?;
+    let notes_dir = state.running_vault().root().to_path_buf();
     fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
     if cleanup_forgotten_notes {
         // The previous behaviour ran the full forgotten-note cleanup on every
         // save/open/list invocation. We now throttle to a background cadence
         // so common interactive commands no longer pay for it.
-        let state =
-            state.ok_or_else(|| "Forgotten-note cleanup requires application state".to_string())?;
         maybe_run_forgotten_note_cleanup(&notes_dir, state)?;
     }
     Ok(notes_dir)
@@ -289,7 +287,7 @@ pub(crate) async fn load_note_session<R: tauri::Runtime>(
         let _foreground_guard = state.foreground_guard();
         // Background startup maintenance owns forgotten-note cleanup and recovery.
         // Canonical session restoration never waits for that maintenance.
-        let notes_dir = prepare_notes_dir_with_state(false, Some(state))?;
+        let notes_dir = prepare_notes_dir_with_state(false, state)?;
         load_note_session_from_notes_dir_with_state(&notes_dir, Some(state))
     })
     .await?
@@ -303,7 +301,7 @@ pub(crate) fn open_note(
 ) -> Result<NoteSession, String> {
     // See `load_note_session` for the rationale on the foreground guard.
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
+    let notes_dir = prepare_notes_dir_with_state(false, &state)?;
     open_note_from_notes_dir_with_state(&notes_dir, note_id, path, Some(&state))
 }
 
@@ -314,7 +312,7 @@ pub(crate) fn read_note(
     path: Option<String>,
 ) -> Result<NoteSession, String> {
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir_with_state(false, Some(&state))?;
+    let notes_dir = prepare_notes_dir_with_state(false, &state)?;
 
     let note_path = resolve_note_path_input_with_state(&notes_dir, note_id, path, Some(&state))?;
 
@@ -322,8 +320,8 @@ pub(crate) fn read_note(
 }
 
 #[tauri::command]
-pub(crate) fn get_vault_info() -> Result<VaultInfo, String> {
-    current_vault_info()
+pub(crate) fn get_vault_info(state: State<'_, AppState>) -> Result<VaultInfo, String> {
+    current_vault_info(state.running_vault())
 }
 
 #[tauri::command]
@@ -344,6 +342,23 @@ pub(crate) fn set_vault_directory(
     path: Option<String>,
 ) -> Result<VaultInfo, String> {
     set_vault_directory_for_state(&state, path)
+}
+
+#[tauri::command]
+pub(crate) async fn prepare_restart<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<crate::app::PrepareRestartReceipt, String> {
+    // The desktop runtime is the production target for restart. Keeping the
+    // lifecycle on a blocking worker lets active async chat/tool tasks settle
+    // without deadlocking Tauri's event loop.
+    tauri::async_runtime::spawn_blocking(move || {
+        let lifecycle = app
+            .try_state::<crate::app::AppLifecycle>()
+            .ok_or_else(|| "Application lifecycle unavailable".to_string())?;
+        Ok(lifecycle.prepare_restart(&app))
+    })
+    .await
+    .map_err(|error| error.to_string())?
 }
 
 /// Cheap advisory observation: never resolve a path or authorize publication.
@@ -438,12 +453,10 @@ pub(crate) async fn retry_history_recovery<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> history_commands::HistoryCommandResult<crate::services::note_timeline::HistoryHealthReport> {
     on_app_worker(app, move |state| {
-        let root = vault_root().map_err(|error| {
-            history_commands::HistoryCommandError::unavailable("retry_history_recovery", error)
-        })?;
+        let root = state.running_vault().root();
         state
             .note_timeline()
-            .retry_history_recovery(&root)
+            .retry_history_recovery(root)
             .map_err(|error| {
                 history_commands::HistoryCommandError::from_history_error(
                     "retry_history_recovery",
@@ -469,12 +482,10 @@ pub(crate) async fn reset_corrupt_history<R: tauri::Runtime>(
                 "Corrupt history reset requires explicit confirmation",
             ));
         }
-        let root = vault_root().map_err(|error| {
-            history_commands::HistoryCommandError::unavailable("reset_corrupt_history", error)
-        })?;
+        let root = state.running_vault().root();
         state
             .note_timeline()
-            .reset_corrupt_history(&root, confirmed)
+            .reset_corrupt_history(root, confirmed)
             .map_err(|error| {
                 history_commands::HistoryCommandError::from_history_error(
                     "reset_corrupt_history",
@@ -497,29 +508,7 @@ fn set_vault_directory_for_state(
         .map(str::trim)
         .filter(|path| !path.is_empty())
         .map(PathBuf::from);
-    let selected_root = requested_path
-        .clone()
-        .map(Ok)
-        .unwrap_or_else(default_notes_root)?;
-    crate::services::note_timeline::ensure_vault_scaffold(&selected_root)?;
-    let active_root = vault_root()?;
-    let active_identity = fs::canonicalize(&active_root).unwrap_or_else(|_| active_root.clone());
-    let selected_identity =
-        fs::canonicalize(&selected_root).unwrap_or_else(|_| selected_root.clone());
-    if selected_identity != active_identity {
-        state.note_timeline().clean_close(&active_root)?;
-    }
-    let info = set_notes_root(requested_path.as_deref())?;
-    // Scaffold the newly-selected vault's `.gneauxghts` data/cache dirs
-    // and manifest up front so that, on the next launch, opening this
-    // vault finds a clean, initialized layout. Vault-local DBs and the
-    // HNSW cache still initialize lazily on that launch; live switching
-    // is intentionally deferred (globals, DB handles, and the watcher
-    // are bound once at startup), so `VaultInfo.requires_restart`
-    // remains true and the UI prompts for a restart.
-    if let Ok(status) = state.semantic.get_status() {
-        state.events.semantic_status_changed(status);
-    }
+    let info = stage_notes_root(state.running_vault(), requested_path.as_deref())?;
     state.events.vault_changed(info.clone());
     Ok(info)
 }
@@ -591,32 +580,35 @@ pub(crate) fn get_task_group(
 
 #[tauri::command]
 pub(crate) fn set_task_hidden(
+    state: State<'_, AppState>,
     task_id: String,
     hidden: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    set_task_hidden_impl(task_id, hidden, filter, show_hidden)
+    set_task_hidden_impl(state, task_id, hidden, filter, show_hidden)
 }
 
 #[tauri::command]
 pub(crate) fn set_note_hidden(
+    state: State<'_, AppState>,
     note_id: String,
     hidden: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    set_note_hidden_impl(note_id, hidden, filter, show_hidden)
+    set_note_hidden_impl(state, note_id, hidden, filter, show_hidden)
 }
 
 #[tauri::command]
 pub(crate) fn set_note_collapsed(
+    state: State<'_, AppState>,
     note_id: String,
     collapsed: bool,
     filter: TaskFilter,
     show_hidden: bool,
 ) -> Result<TaskListGroupPatch, String> {
-    set_note_collapsed_impl(note_id, collapsed, filter, show_hidden)
+    set_note_collapsed_impl(state, note_id, collapsed, filter, show_hidden)
 }
 
 #[tauri::command]
@@ -776,9 +768,9 @@ pub(crate) async fn bootstrap_app<R: tauri::Runtime>(
 ) -> Result<BootstrapAppPayload, String> {
     on_app_worker(app, move |state| {
         let _foreground_guard = state.foreground_guard();
-        let notes_dir = prepare_notes_dir_with_state(false, Some(state))?;
+        let notes_dir = prepare_notes_dir_with_state(false, state)?;
         let note_session = load_note_session_from_notes_dir_with_state(&notes_dir, Some(state))?;
-        let vault = current_vault_info()?;
+        let vault = current_vault_info(state.running_vault())?;
         let semantic_status = state.semantic.get_status()?;
         let index_revision = state.semantic.current_index_revision();
         Ok(BootstrapAppPayload {
@@ -809,7 +801,7 @@ pub(crate) async fn get_settings_view<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<SettingsViewPayload, String> {
     on_app_worker(app, move |state| {
-        let vault = current_vault_info()?;
+        let vault = current_vault_info(state.running_vault())?;
         let history_health = state.note_timeline().history_health()?;
         let semantic_status = state.semantic.get_status()?;
         let semantic_settings = state.semantic.get_settings()?;
@@ -853,41 +845,65 @@ mod tests {
     use std::{fs, path::PathBuf};
 
     #[test]
-    fn vault_switch_cleanly_closes_the_active_note_timeline_first() {
+    fn applying_vault_selection_keeps_the_running_vault_usable() {
         let _guard = lock_test_env();
         let app_data = TestDir::new("commands-vault-switch-app-data");
         initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let active = TestDir::new("commands-vault-switch-active");
         let selected = TestDir::new("commands-vault-switch-selected");
-        crate::state::set_notes_root_override(Some(active.path().to_path_buf())).unwrap();
+        crate::state::set_notes_root_override(None).unwrap();
+        crate::state::write_vault_config(&crate::state::VaultConfig {
+            notes_root: Some(active.path().to_string_lossy().into_owned()),
+        })
+        .unwrap();
         crate::state::ensure_vault_scaffold(active.path()).unwrap();
-        let note_path = active.path().join("Active.md");
+        let canonical_active = fs::canonicalize(active.path()).unwrap();
+        let note_path = canonical_active.join("Active.md");
         fs::write(
             &note_path,
             "---\ngneauxghts:\n  id: switch-active-note\n  kind: note\n---\n\nActive",
         )
         .unwrap();
-        let state = crate::index::AppState::new(
+        let running = crate::state::RunningVault::resolve(app_data.path().to_path_buf()).unwrap();
+        let state = crate::index::AppState::new_with_running_vault(
+            running,
             crate::semantic::SemanticState::new_disabled("disabled"),
             crate::app::EventBus::disabled(),
         )
         .unwrap();
         state
             .note_timeline()
-            .initialize_existing_notes(active.path())
+            .initialize_existing_notes(&canonical_active)
             .unwrap();
 
-        set_vault_directory_for_state(&state, Some(selected.path().to_string_lossy().into_owned()))
-            .unwrap();
+        let info = set_vault_directory_for_state(
+            &state,
+            Some(selected.path().to_string_lossy().into_owned()),
+        )
+        .unwrap();
 
         assert_eq!(
             crate::state::read_vault_config()
                 .unwrap()
                 .notes_root
                 .as_deref(),
-            Some(selected.path().to_string_lossy().as_ref())
+            Some(
+                fs::canonicalize(selected.path())
+                    .unwrap()
+                    .to_string_lossy()
+                    .as_ref()
+            )
         );
-        let error = state
+        assert_eq!(
+            info.running_path,
+            fs::canonicalize(active.path()).unwrap().to_string_lossy()
+        );
+        assert_eq!(
+            info.selected_path,
+            fs::canonicalize(selected.path()).unwrap().to_string_lossy()
+        );
+        assert!(info.requires_restart);
+        let prepared = state
             .note_timeline()
             .prepare_revision_publication(
                 crate::services::note_timeline::MutationSource::Editor,
@@ -898,10 +914,142 @@ mod tests {
                 )),
                 "Changed after switch",
             )
-            .expect_err("vault switching must stop active-vault mutations");
-        assert!(error.to_string().contains("cleanly closed"));
-        assert!(state.note_timeline().is_cleanly_closed().unwrap());
+            .expect("staging a selection must not stop running-vault mutations");
+        prepared.into_parts().1.abandon().unwrap();
+        assert!(!state.note_timeline().is_cleanly_closed().unwrap());
+        let externally_changed = "---\ngneauxghts:\n  id: switch-active-note\n  kind: note\n---\n\nChanged by the old watcher";
+        fs::write(&note_path, externally_changed).unwrap();
+        state
+            .note_timeline()
+            .observe(
+                crate::services::note_timeline::VaultObservation::external_edit(
+                    note_path.clone(),
+                    1_700_000_000_000,
+                    None,
+                )
+                .with_canonical_markdown(externally_changed.to_string()),
+            )
+            .expect("a captured running-vault watcher callback must remain admitted after Apply");
+
+        crate::state::db_mark_note_opened("switch-active-note").unwrap();
+        assert!(active
+            .path()
+            .join(".gneauxghts/app-state.sqlite3")
+            .is_file());
+        assert!(!selected
+            .path()
+            .join(".gneauxghts/app-state.sqlite3")
+            .is_file());
+
+        drop(state);
+        let restarted_running =
+            crate::state::RunningVault::resolve(app_data.path().to_path_buf()).unwrap();
+        assert_eq!(
+            fs::canonicalize(restarted_running.root()).unwrap(),
+            fs::canonicalize(selected.path()).unwrap()
+        );
+        let restarted_state = crate::index::AppState::new_with_running_vault(
+            restarted_running,
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        crate::state::db_mark_note_opened("switch-selected-note").unwrap();
+        assert!(selected
+            .path()
+            .join(".gneauxghts/app-state.sqlite3")
+            .is_file());
+        drop(restarted_state);
+    }
+
+    #[test]
+    fn vault_selection_can_be_replaced_cleared_by_alias_and_fail_without_closing() {
+        let _guard = lock_test_env();
+        let app_data = TestDir::new("commands-vault-stage-app-data");
+        initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let documents = TestDir::new("commands-vault-stage-documents");
+        crate::state::initialize_documents_dir(documents.path().to_path_buf()).unwrap();
         crate::state::set_notes_root_override(None).unwrap();
+        let active = TestDir::new("commands-vault-stage-active");
+        let selected_b = TestDir::new("commands-vault-stage-b");
+        let selected_c = TestDir::new("commands-vault-stage-c");
+        crate::state::write_vault_config(&crate::state::VaultConfig {
+            notes_root: Some(active.path().to_string_lossy().into_owned()),
+        })
+        .unwrap();
+        crate::state::ensure_vault_scaffold(active.path()).unwrap();
+        let running = crate::state::RunningVault::resolve(app_data.path().to_path_buf()).unwrap();
+        let state = crate::index::AppState::new_with_running_vault(
+            running,
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+
+        let expected_default = crate::state::default_notes_root().unwrap();
+        let staged_default = set_vault_directory_for_state(&state, None).unwrap();
+        let canonical_default = fs::canonicalize(&expected_default).unwrap();
+        assert_eq!(crate::state::read_vault_config().unwrap().notes_root, None);
+        assert_eq!(
+            PathBuf::from(&staged_default.selected_path),
+            canonical_default
+        );
+        assert!(staged_default.requires_restart);
+        assert!(expected_default.is_dir());
+        assert!(expected_default.join(".gneauxghts/vault.json").is_file());
+
+        let staged_b = set_vault_directory_for_state(
+            &state,
+            Some(selected_b.path().to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            staged_b.selected_path,
+            fs::canonicalize(selected_b.path())
+                .unwrap()
+                .to_string_lossy()
+        );
+        let staged_c = set_vault_directory_for_state(
+            &state,
+            Some(selected_c.path().to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert_eq!(
+            staged_c.selected_path,
+            fs::canonicalize(selected_c.path())
+                .unwrap()
+                .to_string_lossy()
+        );
+
+        let running_alias = active.path().join(".");
+        let cleared = set_vault_directory_for_state(
+            &state,
+            Some(running_alias.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        assert!(!cleared.requires_restart);
+        assert_eq!(
+            fs::canonicalize(&cleared.running_path).unwrap(),
+            PathBuf::from(&cleared.selected_path)
+        );
+
+        crate::state::inject_vault_config_publication_failure_once();
+        let error = set_vault_directory_for_state(
+            &state,
+            Some(selected_b.path().to_string_lossy().into_owned()),
+        )
+        .expect_err("injected publication failure");
+        assert!(error.contains("Injected vault config publication failure"));
+        assert!(!state.note_timeline().is_cleanly_closed().unwrap());
+
+        let invalid = app_data.path().join("not-a-directory");
+        fs::write(&invalid, "occupied").unwrap();
+        assert!(set_vault_directory_for_state(
+            &state,
+            Some(invalid.to_string_lossy().into_owned()),
+        )
+        .is_err());
+        assert_eq!(fs::read_to_string(invalid).unwrap(), "occupied");
     }
 
     #[test]

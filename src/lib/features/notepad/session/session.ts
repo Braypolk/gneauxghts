@@ -1,3 +1,4 @@
+import { startupMark } from '$lib/e2e/startupMetrics';
 import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
 import { invoke } from "@tauri-apps/api/core";
 import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
@@ -9,7 +10,6 @@ import type {
   ForgottenNoteSummary,
   RestoredForgottenNote,
 } from "$lib/types/forgottenNotes";
-import type { VaultInfo } from "$lib/types/vault";
 
 export interface ForgottenNote {
   title: string;
@@ -88,15 +88,6 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
   };
 }
 
-export async function loadSavedNoteSession() {
-  const saved = await invoke<NoteSession>("load_note_session");
-  return createSessionSnapshot(saved);
-}
-
-export async function loadCurrentVaultInfo() {
-  return invoke<VaultInfo>("get_vault_info");
-}
-
 export function resolveAssetRootPath(vaultPath: string) {
   return `${vaultPath.replace(/[\\/]+$/u, "")}${vaultPath.includes("\\") ? "\\" : "/"}assets`;
 }
@@ -131,11 +122,14 @@ export async function saveNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  return invoke<NoteSession>("save_note", {
+  startupMark("editor-save-ipc-start", { currentPath, markdownBytes: markdown.length });
+  const saved = await invoke<NoteSession>("save_note", {
     title,
     markdown,
     currentPath,
   });
+  startupMark("editor-save-ipc-resolved", { noteId: saved.noteId, commitWarning: saved.commitWarning ?? null });
+  return saved;
 }
 
 export async function saveTaskNoteSession(

@@ -87,6 +87,8 @@ impl NoteTimeline<'_> {
             &window.window_id,
             window.generation,
         )?;
+        #[cfg(feature = "e2e-wdio")]
+        crate::e2e_process_fault::hit("window-sealed");
         self.runtime.forget_window_clock(note_id);
         Ok(revision)
     }

@@ -1878,11 +1878,37 @@ struct RevisionAppend<'a> {
     record_count: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    static APPEND_TIMINGS: std::cell::RefCell<Option<Vec<(&'static str, f64)>>> = const { std::cell::RefCell::new(None) };
+}
+
+#[cfg(test)]
+pub(super) fn begin_append_measurement() {
+    APPEND_TIMINGS.with(|samples| *samples.borrow_mut() = Some(Vec::new()));
+}
+
+#[cfg(test)]
+pub(super) fn take_append_measurement() -> Vec<(&'static str, f64)> {
+    APPEND_TIMINGS.with(|samples| samples.borrow_mut().take().unwrap_or_default())
+}
+
+#[cfg(test)]
+fn record_append_stage(name: &'static str, started: Instant) {
+    APPEND_TIMINGS.with(|samples| {
+        if let Some(samples) = samples.borrow_mut().as_mut() {
+            samples.push((name, started.elapsed().as_secs_f64() * 1000.0));
+        }
+    });
+}
+
 fn append_revision(
     transaction: &Transaction<'_>,
     append: RevisionAppend<'_>,
 ) -> Result<(), HistoryError> {
     reject_purged_note_identity(transaction, append.note_id)?;
+    #[cfg(test)]
+    let stage = Instant::now();
     let base =
         append
             .base_revision_id
@@ -1900,7 +1926,15 @@ fn append_revision(
             })
             .transpose()?
             .unwrap_or_default();
+    #[cfg(test)]
+    record_append_stage("base_reconstruction", stage);
+    #[cfg(test)]
+    let stage = Instant::now();
     let delta = LineDelta::between(&base, append.authored_payload).encode();
+    #[cfg(test)]
+    record_append_stage("delta_encoding", stage);
+    #[cfg(test)]
+    let stage = Instant::now();
     let prior_policy = append
         .base_revision_id
         .map(|revision_id| load_revision_policy(transaction, revision_id))
@@ -1948,6 +1982,8 @@ fn append_revision(
                 DELTA_PAYLOAD_VERSION,
             )
         };
+    #[cfg(test)]
+    record_append_stage("verify_and_compress", stage);
     let (known_since_millis, committed_at_millis, observed_at_millis, modified_at_millis) =
         match append.time_evidence {
             RevisionTimeEvidence::Baseline { known_since_millis } => {
@@ -4368,6 +4404,8 @@ fn open_store(store: &Store) -> Result<Connection, HistoryError> {
         ensure_store_creation_is_authorized(store, &manifest)?;
     }
     let connection = Connection::open(&path).map_err(HistoryError::from)?;
+    #[cfg(test)]
+    sql_work::observe(&connection);
     if !creating_store {
         let has_metadata_table = connection
             .query_row(
@@ -4860,6 +4898,8 @@ fn recover_pending_with_connection(
                 {
                     let mut recovered = open_existing_connection(connection)?;
                     finalize_intent(&mut recovered, &intent_id, &canonical_payload, None)?;
+                    #[cfg(feature = "e2e-wdio")]
+                    crate::e2e_process_fault::hit("recovery-publication-captured");
                 } else {
                     editing_windows::abandon(connection, &intent_id)?;
                 }

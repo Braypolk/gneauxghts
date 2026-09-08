@@ -1,4 +1,5 @@
 import { logDevError } from '$lib/logDevError';
+import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
 
 type ModifierToken = 'Meta' | 'Ctrl' | 'Alt' | 'Shift';
 type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';
@@ -464,6 +465,9 @@ export function keyboardShortcutMatchesEvent(
   bindings: KeyboardShortcutBindings = keyboardShortcuts.bindings,
   platform = currentPlatform()
 ) {
+  if (restartLifecycle.workspaceMutationsBlocked) {
+    return false;
+  }
   return shortcutBindingMatchesEvent(
     event,
     getEffectiveKeyboardShortcutBinding(id, bindings, platform)

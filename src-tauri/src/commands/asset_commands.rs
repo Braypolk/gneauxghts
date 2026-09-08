@@ -1,6 +1,7 @@
 use super::{
     prepare_notes_dir, StoredImageAsset, ASSETS_DIRECTORY_NAME, DEFAULT_PASTED_IMAGE_NAME,
 };
+use crate::index::AppState;
 use crate::path_utils::unique_path_in_dir;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::{
@@ -10,14 +11,18 @@ use std::{
 };
 
 #[tauri::command]
-pub(crate) fn read_image_asset_data_url(file_name: String) -> Result<String, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+pub(crate) fn read_image_asset_data_url(
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+) -> Result<String, String> {
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     read_image_asset_data_url_from_assets_dir(&assets_dir, &file_name)
 }
 
 #[tauri::command]
 pub(crate) fn store_pasted_image(
+    state: tauri::State<'_, AppState>,
     bytes: Vec<u8>,
     original_name: Option<String>,
     mime_type: Option<String>,
@@ -26,7 +31,7 @@ pub(crate) fn store_pasted_image(
         return Err("Pasted image is empty".to_string());
     }
 
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     fs::create_dir_all(&assets_dir).map_err(|err| err.to_string())?;
 

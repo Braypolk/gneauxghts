@@ -2,6 +2,7 @@ use crate::path_utils::collect_markdown_files_recursively;
 use serde::{Deserialize, Serialize};
 use std::{
     env, fs,
+    io::Write,
     path::{Path, PathBuf},
     sync::Mutex,
     time::{SystemTime, UNIX_EPOCH},
@@ -26,12 +27,47 @@ pub(crate) const VAULT_MANIFEST_SCHEMA_VERSION: u32 = 2;
 
 static APP_DATA_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 static DOCUMENTS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
-/// Process-wide override for the active vault root. When set, it takes
-/// precedence over the persisted vault config. The startup path keeps using
-/// the config file; this exists so tests can point the (now vault-local)
-/// SQLite databases at an isolated temp directory, and as the seam a future
-/// runtime vault-switch would flip.
+/// Fixture-only composition input for the startup vault root. When set, it
+/// takes precedence over the persisted vault config before `RunningVault` is
+/// constructed. It never changes an already-composed running vault.
 static NOTES_ROOT_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
+#[cfg(test)]
+static FAIL_NEXT_CONFIG_PUBLICATION: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+#[derive(Debug)]
+pub(crate) struct RunningVault {
+    root: PathBuf,
+    data_dir: PathBuf,
+    app_local_observation_dir: PathBuf,
+}
+
+impl RunningVault {
+    pub(crate) fn resolve(app_local_observation_dir: PathBuf) -> Result<Self, String> {
+        let root = prepare_vault_root(&selected_notes_root()?, false)?;
+        let data_dir = vault_data_dir_for(&root);
+        fs::create_dir_all(&app_local_observation_dir).map_err(|err| err.to_string())?;
+        let app_local_observation_dir =
+            fs::canonicalize(app_local_observation_dir).map_err(|err| err.to_string())?;
+        Ok(Self {
+            root,
+            data_dir,
+            app_local_observation_dir,
+        })
+    }
+
+    pub(crate) fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub(crate) fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    pub(crate) fn app_local_observation_dir(&self) -> &Path {
+        &self.app_local_observation_dir
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +78,8 @@ pub(crate) struct VaultConfig {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct VaultInfo {
-    pub(crate) current_path: String,
+    pub(crate) running_path: String,
+    pub(crate) selected_path: String,
     pub(crate) default_path: String,
     pub(crate) forgotten_path: String,
     pub(crate) is_default: bool,
@@ -72,7 +109,7 @@ pub(crate) struct CreateVaultFolderResult {
     pub(crate) folders: Vec<VaultFolderInfo>,
 }
 
-pub(crate) fn notes_root() -> Result<PathBuf, String> {
+fn selected_notes_root() -> Result<PathBuf, String> {
     if let Some(override_root) = NOTES_ROOT_OVERRIDE
         .lock()
         .map_err(|_| "Notes root override lock poisoned".to_string())?
@@ -81,6 +118,10 @@ pub(crate) fn notes_root() -> Result<PathBuf, String> {
         return Ok(override_root);
     }
 
+    configured_selected_root()
+}
+
+fn configured_selected_root() -> Result<PathBuf, String> {
     let config = read_vault_config()?;
     if let Some(notes_root) = config
         .notes_root
@@ -92,6 +133,13 @@ pub(crate) fn notes_root() -> Result<PathBuf, String> {
     }
 
     default_notes_root()
+}
+
+/// Resolve the startup selection. Operational code must use
+/// [`RunningVault::root`] after composition instead of rereading this value.
+#[cfg(test)]
+pub(crate) fn notes_root() -> Result<PathBuf, String> {
+    selected_notes_root()
 }
 
 pub(crate) fn initialize_app_data_dir(app_data_dir: PathBuf) -> Result<(), String> {
@@ -112,10 +160,9 @@ pub(crate) fn initialize_documents_dir(documents_dir: PathBuf) -> Result<(), Str
     Ok(())
 }
 
-/// Override the active vault root for the current process. Primarily used by
-/// tests to isolate the vault-local SQLite databases; passing `None` clears
-/// the override so config-file resolution resumes. This is also the seam a
-/// future in-process vault switch would drive.
+/// Override startup vault selection for disposable tests and E2E composition.
+/// Passing `None` restores persisted-config resolution. This input is consumed
+/// only when constructing `RunningVault`; it is not a runtime switching seam.
 #[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn set_notes_root_override(path: Option<PathBuf>) -> Result<(), String> {
     let mut stored = NOTES_ROOT_OVERRIDE
@@ -160,55 +207,116 @@ pub(crate) fn read_vault_config() -> Result<VaultConfig, String> {
 }
 
 pub(crate) fn write_vault_config(config: &VaultConfig) -> Result<(), String> {
+    #[cfg(test)]
+    if FAIL_NEXT_CONFIG_PUBLICATION.swap(false, std::sync::atomic::Ordering::AcqRel) {
+        return Err("Injected vault config publication failure".to_string());
+    }
     let path = vault_config_path()?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
 
-    let serialized = serde_json::to_string_pretty(config).map_err(|err| err.to_string())?;
-    fs::write(path, serialized).map_err(|err| err.to_string())
+    let serialized = serde_json::to_vec_pretty(config).map_err(|err| err.to_string())?;
+    let temporary = path.with_extension(format!(
+        "tmp-{}",
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0)
+    ));
+    let result = (|| {
+        let mut file = fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|err| err.to_string())?;
+        file.write_all(&serialized).map_err(|err| err.to_string())?;
+        file.sync_all().map_err(|err| err.to_string())?;
+        fs::rename(&temporary, &path).map_err(|err| err.to_string())
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(temporary);
+    }
+    result
 }
 
-pub(crate) fn set_notes_root(path: Option<&Path>) -> Result<VaultInfo, String> {
-    let notes_root = match path {
-        Some(path) => {
-            if uses_vault_container() {
-                let container = vault_container_dir()?.ok_or_else(|| {
-                    "Documents container is not available for vault selection.".to_string()
-                })?;
-                validate_vault_path_in_container(path, &container)?;
-            }
-            fs::create_dir_all(path).map_err(|err| err.to_string())?;
-            Some(path.to_string_lossy().into_owned())
-        }
-        None => None,
+pub(crate) fn stage_notes_root(
+    running: &RunningVault,
+    path: Option<&Path>,
+) -> Result<VaultInfo, String> {
+    let mut info = current_vault_info(running)?;
+    let (notes_root, requested) = match path {
+        Some(path) => (Some(path), path.to_path_buf()),
+        None => (None, default_notes_root()?),
     };
+    let selected = prepare_vault_root(&requested, true)?;
+    let notes_root = notes_root.map(|_| selected.to_string_lossy().into_owned());
 
     write_vault_config(&VaultConfig { notes_root })?;
-    current_vault_info()
+    info.selected_path = selected.to_string_lossy().into_owned();
+    info.requires_restart = selected != running.root;
+    Ok(info)
 }
 
-pub(crate) fn current_vault_info() -> Result<VaultInfo, String> {
-    let current_path = notes_root()?;
-    fs::create_dir_all(&current_path).map_err(|err| err.to_string())?;
+pub(crate) fn current_vault_info(running: &RunningVault) -> Result<VaultInfo, String> {
+    let current_path = running.root();
     let default_path = default_notes_root()?;
+    let default_identity = canonical_path_identity(&default_path)?;
     let forgotten_path = forgotten_notes_root(&current_path);
     let note_count = collect_markdown_files_recursively(&current_path)?.len();
+    let selected_path = canonical_path_identity(&configured_selected_root()?)?;
     let vault_container_path =
         vault_container_dir()?.map(|path| path.to_string_lossy().into_owned());
 
     Ok(VaultInfo {
-        current_path: current_path.to_string_lossy().into_owned(),
+        running_path: current_path.to_string_lossy().into_owned(),
+        selected_path: selected_path.to_string_lossy().into_owned(),
         default_path: default_path.to_string_lossy().into_owned(),
         forgotten_path: forgotten_path.to_string_lossy().into_owned(),
-        is_default: current_path == default_path,
+        is_default: running.root == default_identity,
         note_count,
-        requires_restart: true,
+        requires_restart: selected_path != running.root,
         can_configure_path: true,
         can_pick_arbitrary_path: can_pick_arbitrary_vault_path(),
         vault_container_path,
         path_configuration_note: vault_path_configuration_note(),
     })
+}
+
+fn prepare_vault_root(path: &Path, scaffold: bool) -> Result<PathBuf, String> {
+    if uses_vault_container() {
+        let container = vault_container_dir()?.ok_or_else(|| {
+            "Documents container is not available for vault selection.".to_string()
+        })?;
+        validate_vault_path_in_container(path, &container)?;
+    }
+    if path.exists() && !path.is_dir() {
+        return Err("Vault path must be a folder".to_string());
+    }
+    fs::create_dir_all(path).map_err(|err| err.to_string())?;
+    let canonical = fs::canonicalize(path).map_err(|err| err.to_string())?;
+    if scaffold {
+        crate::services::note_timeline::ensure_vault_scaffold(&canonical)
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(canonical)
+}
+
+#[cfg(test)]
+pub(crate) fn inject_vault_config_publication_failure_once() {
+    FAIL_NEXT_CONFIG_PUBLICATION.store(true, std::sync::atomic::Ordering::Release);
+}
+
+fn canonical_path_identity(path: &Path) -> Result<PathBuf, String> {
+    if path.exists() {
+        return fs::canonicalize(path).map_err(|err| err.to_string());
+    }
+    if path.is_absolute() {
+        return Ok(path.to_path_buf());
+    }
+    env::current_dir()
+        .map(|directory| directory.join(path))
+        .map_err(|err| err.to_string())
 }
 
 /// Documents container that holds selectable vault folders (iOS only).
@@ -371,12 +479,12 @@ pub(crate) fn forgotten_notes_root(notes_dir: &Path) -> PathBuf {
 // Portable vault path abstraction
 //
 // All vault-local durable state and caches live under `<vault>/.gneauxghts`.
-// These helpers are the single source of truth for those paths so callers
-// never hand-assemble `.gneauxghts/...` strings. `vault_root()` is an alias
-// for `notes_root()`; the rest are derived from it.
+// Production callers derive these paths from the composed RunningVault. The
+// no-argument root/data aliases below remain test-only compatibility helpers.
 // ---------------------------------------------------------------------------
 
 /// The active vault root (the notes directory). Alias of [`notes_root`].
+#[cfg(test)]
 pub(crate) fn vault_root() -> Result<PathBuf, String> {
     notes_root()
 }
@@ -387,6 +495,7 @@ pub(crate) fn vault_data_dir_for(vault_root: &Path) -> PathBuf {
 }
 
 /// `<vault>/.gneauxghts` for the active vault.
+#[cfg(test)]
 pub(crate) fn vault_data_dir() -> Result<PathBuf, String> {
     Ok(vault_data_dir_for(&vault_root()?))
 }
@@ -669,6 +778,39 @@ mod tests {
         );
 
         set_notes_root_override(None).expect("clear override");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn running_vault_canonicalizes_missing_root_and_observation_aliases() {
+        let _guard = lock_test_env();
+        let fixture = TestDir::new("config-running-vault-canonical");
+        let real_parent = fixture.path().join("real-parent");
+        fs::create_dir_all(&real_parent).expect("create real parent");
+        let parent_alias = fixture.path().join("parent-alias");
+        std::os::unix::fs::symlink(&real_parent, &parent_alias).expect("alias parent");
+        let requested_root = parent_alias.join("new-vault");
+
+        let real_observation_dir = fixture.path().join("real-observation");
+        fs::create_dir_all(&real_observation_dir).expect("create real observation dir");
+        let observation_alias = fixture.path().join("observation-alias");
+        std::os::unix::fs::symlink(&real_observation_dir, &observation_alias)
+            .expect("alias observation dir");
+
+        set_notes_root_override(Some(requested_root.clone())).expect("set startup selection");
+        let running = RunningVault::resolve(observation_alias).expect("compose running vault");
+
+        let expected_root =
+            fs::canonicalize(real_parent.join("new-vault")).expect("canonical created root");
+        assert!(requested_root.is_dir());
+        assert_eq!(running.root(), expected_root);
+        assert_eq!(running.data_dir(), expected_root.join(VAULT_DATA_DIR_NAME));
+        assert_eq!(
+            running.app_local_observation_dir(),
+            fs::canonicalize(real_observation_dir).expect("canonical observation dir")
+        );
+
+        set_notes_root_override(None).expect("clear startup selection");
     }
 
     #[test]

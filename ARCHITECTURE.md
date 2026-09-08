@@ -46,6 +46,8 @@ state references, independently of Tauri dispatch.
 | One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
+| Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
+| Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
 
 `NotepadState` owns documents and its one vault-scoped canonical identity/path
 to handle lookup, while `WorkspaceStore` owns ephemeral handle references from
@@ -57,6 +59,15 @@ rebuilt across all owned documents after identity changes. A same-identity
 collision admits aliases to the established document; a path-only collision
 retains the established path binding without stealing either distinct identity
 alias.
+
+`AppStore` is the sole frontend admission point for bundled bootstrap and the
+shared running/next-launch vault and semantic snapshots. Listener attachment is
+part of bootstrap admission and a failed attempt cleans partial listeners before
+retry. Snapshot loads and commands claim per-slice revisions when they start, so
+older results cannot replace newer events or operations. Settings retains only
+its editable inputs, action state, and Settings-only diagnostics; the mounted
+Notepad session separately records whether an admitted bootstrap session has
+been adopted by the current editor lifetime.
 
 ## Canonical write paths
 
@@ -102,9 +113,9 @@ content captures without another Note Revision. Under the accepted Editing
 Window contract, distinct ordinary editor publications replace a durable pending
 endpoint; boundary finalization retains its net delta against the preceding
 finalized revision. Distinct task, proposal, restore, and observed changes remain
-separate. The integrated default uses the
-[Editing Window contract](docs/architecture/editing-window-contract.md), with its
-trade-offs recorded in [ADR 0007](docs/adr/0007-retain-editor-history-at-editing-window-boundaries.md). Exact finalization
+separate. The integrated default uses this window contract; completed release
+acceptance and measurement limits are recorded by issue 42 and its [validation report](docs/architecture/editing-window-release-validation.md). See the
+[capture contract](docs/architecture/editing-window-contract.md). Exact finalization
 also verifies the managed Note Identity in the published file, and records the
 app-owned publication time issued into the durable intent immediately before
 the write rather than filesystem metadata or later reconciliation time.
@@ -122,8 +133,7 @@ replace the viewport and never merge with absolute newest-page coordinates.
 Clear/restore leave anchored paging while retaining the independent citation
 origin on the existing History Mode target. Request identities stop obsolete
 entry work, and workspace restoration completes before a newer entry captures
-its snapshot. Behavior and query bounds are protected by the History Mode,
-command, browser, and native tests.
+its snapshot. See [bounded citation validation](docs/architecture/citation-context-50-validation.md).
 
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability is intentionally absent until its
@@ -268,15 +278,36 @@ Settings can explicitly retry pending recovery. A confirmed reset is admitted
 only for unavailable or corrupt history; it advances the generation, rebuilds
 current Markdown as Baseline Revisions, and retains only a prose-free reset
 diagnostic outside the replacement timelines.
-Each `AppState` composes one concrete private selected-vault store context inside
-`NoteTimelineRuntime`. Its vault root, configured data directory, app-local
-observation directory, and vault identity/generation remain bound when global
-selection changes. Recovery, reads, deadlines, and clean close use this context;
+Each process resolves one concrete immutable `RunningVault` at composition. Its
+canonical root identity, vault-data directory, and app-local observation
+directory are carried into `AppState`, `NoteTimelineRuntime`, semantic/chat
+construction, app-state storage, and watcher registration. App-state SQLite is
+opened only from that bound context; ordinary operations do not reread the
+next-launch preference or swap its connection. Recovery, reads, deadlines, and
+clean close use this context;
 prepared intent callbacks retain their original scope. An explicit reset advances
 the runtime's scope for future work while old intent scopes remain stale. All
 canonical path and lifecycle admission checks validate against the bound vault,
-including canonical aliases, before publication or staging. Vault switching still
-requires clean close and restart; this is not live multi-vault support.
+including canonical aliases, before publication or staging. Settings Apply
+validates, scaffolds, and atomically publishes only the next-launch selection. Repeated
+selection is allowed, and selecting the running vault by a canonical alias clears
+the pending-restart indication. The running vault remains usable until explicit
+Restart performs the clean-close lifecycle; this is not live multi-vault support.
+One frontend `RestartLifecycle` action closes workspace mutation admission, joins
+the existing restore/save/departure barrier, and only requests process relaunch
+after the backend returns an explicit ready receipt. The backend `AppLifecycle`
+joins concurrent preparations and owns the ordered release of that same
+`RunningVault`: reversibly cancel and settle chat, tool, permission, title, and
+semantic producers; stop and join watcher debounce/reconciliation; join admitted
+app-state/catalog/task writes; discard queued rebuildable projections; then invoke
+`NoteTimeline.clean_close` before terminal semantic shutdown. Full lexical or
+semantic catch-up is not a portability prerequisite. A failure after terminal
+release begins keeps the workspace inert and retryable; admission is restored
+only when every reversibly quiesced owner reports itself usable. Relaunch failure
+therefore leaves a ready-to-restart closed state whose only action is Retry
+Restart. Ordinary exit dispatches this same lifecycle off the application event
+loop as a settlement fallback, without claiming it can save unsent frontend
+drafts.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
@@ -302,7 +333,7 @@ check within one generation. `NoteTimeline.clean_close` stops new operations,
 waits for admitted work, settles prepared intent and deletion recovery,
 finalizes surviving Editing Windows,
 checkpoints and truncates the WAL, and only then marks the store portable.
-Vault switch and application exit cross this seam before releasing the vault.
+Explicit Restart and application exit cross this seam before releasing the running vault.
 The observing installation may recover its own open store and WAL after an
 interrupted run, while store replacement, watermark rollback, and a live
 main-file-only copy require explicit recovery. A development reset advances the
@@ -325,8 +356,9 @@ Complete forgotten-note forget, recovery and selected purge operations also belo
 to `NoteTimeline`. Commands select items and map results; the owner stages only the
 selected metadata row, compares current source bytes, guards destination collisions,
 rolls back known failures and retains indeterminate recovery evidence. Chat content
-continues through `ChatService`. Forgotten metadata still uses the selected app-state
-database, so these operations reject a runtime whose vault is no longer selected.
+continues through `ChatService`. Forgotten metadata uses the `AppState`-bound
+app-state database, so a staged next-launch selection cannot redirect lifecycle
+records away from the running vault.
 Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
 SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
 its remaining byte budget, then bounds incremental vacuum work with that
@@ -430,10 +462,9 @@ and replacement strategy.
 
 ## Fitness checks
 
-The production availability decision is recorded in
-[ADR 0006](docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
-Performance checks belong in focused benchmarks when needed; historical
-measurements are not part of the architecture map.
+The [release validation report](docs/architecture/note-timeline-release-validation.md)
+records scale measurements, regression gates, and the production availability
+decision in [ADR 0006](docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
 
 Architecture fitness tests protect ownership and routing; behavior tests
 protect outcomes.
