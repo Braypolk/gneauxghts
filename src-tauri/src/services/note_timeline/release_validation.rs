@@ -1,5 +1,5 @@
 //! Opt-in release measurements through the real persistence and History Mode seams.
-//! Run alone in an optimized build; see docs/architecture/editing-window-release-validation.md.
+//! Run alone in an optimized build.
 
 use super::*;
 use crate::{app::EventBus, semantic::SemanticState, test_support::TestDir};

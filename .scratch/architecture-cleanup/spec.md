@@ -14,7 +14,7 @@ Ticket 14 is explicitly a navigation/readability improvement: it preserves owner
 
 Round 1 excludes vault selection/restart/bootstrap changes, backend publication admission, proposal command relocation, chat request lifecycle redesign, mounted/suspended review restructuring, and provider/runtime containment. Preserve their existing behavior when touching shared call sites. The broader findings below remain evidence and potential follow-up work, not active requirements.
 
-This plan is based on the current working tree, including history consolidation 56–58, not just HEAD. The tree already contains unrelated/uncommitted work. Source references below and in tickets identify current lines plus symbols; later tickets must locate the symbols after earlier edits. No implementation, test runs, native checks, user database access, or commits were performed for this planning task. Concurrent work changed some history presentation/E2E files while drafting; those changes were left untouched and are not attributed to this plan. Core workflow files used for the ownership findings remained stable during the final drafting audit.
+This plan is based on the current working tree after the history consolidation, not just HEAD. The tree already contains unrelated/uncommitted work. Source references below and in tickets identify current lines plus symbols; later tickets must locate the symbols after earlier edits. No implementation, test runs, native checks, user database access, or commits were performed for this planning task. Concurrent work changed some history presentation/E2E files while drafting; those changes were left untouched and are not attributed to this plan. Core workflow files used for the ownership findings remained stable during the final drafting audit.
 
 Fresh-context execution prompt: [Round 1 start prompt](round-1-start-prompt.md).
 
@@ -30,7 +30,7 @@ Four investigations provide the call traces, owner/state ledgers, failure branch
 
 This is a detailed assessment of these four workflows and their shared infrastructure, not an exhaustive declaration that every other module in the approximately 100,000-line production application is simple. Uninvestigated features are not deletion targets.
 
-History issues 22 and 24–26 remain deferred; issue 55's historical native/100,000-revision acceptance remains paused. This effort does not add agent history restore, live multi-vault switching, a new storage schema, legacy support, a new agent framework, or a generic application state machine. Existing reports retain their historical measurements unchanged.
+Historical agent-restore and live-sync work remain deferred; historical native/100,000-revision acceptance remains paused. This effort does not add agent history restore, live multi-vault switching, a new storage schema, legacy support, a new agent framework, or a generic application state machine.
 
 ## How complexity is counted
 
@@ -165,7 +165,7 @@ Run only checks appropriate to active tickets; the broader validation inventory 
 | Agent action | Events before receipts do not resurrect activity; reopened conversation gets truthful live state; permissions/cancellation correlated; policy rechecked before Keep; status failure does not replay a committed proposal. |
 | Semantic/review/runtime | Pause cannot lose a wake; suspended review cannot read a rebound note; unapproved content is not autosaved; provider conversion retains attachments, permissions, cancellation, usage and safe event semantics. |
 
-Round 1 native validation is limited to focused shared-editor/restore-adoption/rename/proposal-adoption interactions for 09–10 where existing browser tests cannot prove native behavior. Restart checks for 04–06 and review-representation checks for 12 are deferred with those tickets. Use existing harnesses; never reset the user's databases or restart their active session just to test. These checks do not resume issue 55 or rewrite its historical scale reports. No new scale-fixture/benchmark framework is needed for this plan.
+Round 1 native validation is limited to focused shared-editor/restore-adoption/rename/proposal-adoption interactions for 09–10 where existing browser tests cannot prove native behavior. Restart checks for 04–06 and review-representation checks for 12 are deferred with those tickets. Use existing harnesses; never reset the user's databases or restart their active session just to test. These checks do not resume historical scale acceptance. No new scale-fixture/benchmark framework is needed for this plan.
 
 ## Deferred candidates and limits
 

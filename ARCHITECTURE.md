@@ -113,8 +113,7 @@ content captures without another Note Revision. Under the accepted Editing
 Window contract, distinct ordinary editor publications replace a durable pending
 endpoint; boundary finalization retains its net delta against the preceding
 finalized revision. Distinct task, proposal, restore, and observed changes remain
-separate. The integrated default uses this window contract; completed release
-acceptance and measurement limits are recorded by issue 42 and its [validation report](docs/architecture/editing-window-release-validation.md). See the
+separate. The integrated default uses this window contract; see the
 [capture contract](docs/architecture/editing-window-contract.md). Exact finalization
 also verifies the managed Note Identity in the published file, and records the
 app-owned publication time issued into the durable intent immediately before
@@ -133,7 +132,7 @@ replace the viewport and never merge with absolute newest-page coordinates.
 Clear/restore leave anchored paging while retaining the independent citation
 origin on the existing History Mode target. Request identities stop obsolete
 entry work, and workspace restoration completes before a newer entry captures
-its snapshot. See [bounded citation validation](docs/architecture/citation-context-50-validation.md).
+its snapshot.
 
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability is intentionally absent until its

@@ -555,7 +555,7 @@ pub(super) fn seal(
                 predecessor: Some((&head.record_kind, &head.record_id)),
                 base_revision_id: Some(&window.anchor_revision_id),
                 source: MutationSource::Editor,
-                // Private interval table is authoritative. Domain/wire promotion is issue 40;
+                // Private interval table is authoritative. Domain/wire promotion requires separate evidence;
                 // these APIs are not yet enabled in the production writer.
                 time_evidence: RevisionTimeEvidence::Committed {
                     committed_at_millis: window.evidence.last_wall_millis,

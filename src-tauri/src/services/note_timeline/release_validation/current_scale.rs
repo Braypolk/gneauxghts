@@ -383,7 +383,7 @@ fn release_current_scale_write_probe() {
 }
 
 #[test]
-#[ignore = "issue 50 direct citation probes on admitted current-format disposable clones"]
+#[ignore = "direct citation probes on admitted current-format disposable clones"]
 fn release_current_scale_citation_probe() {
     let _guard = crate::test_support::lock_test_env();
     let run = PathBuf::from(std::env::var("GNEAUXGHTS_SCALE_RUN").unwrap());

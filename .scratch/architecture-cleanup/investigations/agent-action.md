@@ -2,7 +2,7 @@
 
 Ticket 14 source wayfinding: the historical `note_timeline.rs:<line>` anchors below predate physical organization. `NoteMutation`/`NoteMutationResult` now live in `note_timeline/domain.rs`, while preparation and `NoteTimeline::mutate` live in `note_timeline/publication.rs`; the parent owner and caller import surface are unchanged.
 
-Read-only inspection of the current workspace on 2026-09-07, including the existing consolidation 56–58 edits. No implementation, tests, native application, database, or Git mutations were performed. Read `AGENTS.md`, `ARCHITECTURE.md`, `CONTEXT.md`, behavior invariants, ADR 0001, and the repository codebase-design skill and DEEPENING reference. References below are repository-relative current file:line anchors, not historical issue descriptions.
+Read-only inspection of the current workspace on 2026-09-07, including the existing history consolidation. No implementation, tests, native application, database, or Git mutations were performed. Read `AGENTS.md`, `ARCHITECTURE.md`, `CONTEXT.md`, behavior invariants, ADR 0001, and the repository codebase-design skill and DEEPENING reference. References below are repository-relative current file:line anchors, not historical issue descriptions.
 
 ## Scope and counting convention
 

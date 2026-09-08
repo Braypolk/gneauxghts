@@ -1,6 +1,6 @@
 # Cross-cutting findings
 
-Read-only source investigation, 2026-09-07, after note-timeline consolidation 56–58. These are adjacent to the four requested workflows. No execution/performance claims are inferred from source size.
+Read-only source investigation, 2026-09-07, after the note-timeline consolidation. These are adjacent to the four requested workflows. No execution/performance claims are inferred from source size.
 
 ## C1. One semantic pause decision is written into three places
 

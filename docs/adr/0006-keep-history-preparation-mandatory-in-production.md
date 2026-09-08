@@ -6,7 +6,7 @@ status: accepted
 
 The initial single-writer Note Timeline release keeps app-owned ordinary-note writes fail-closed when durable history preparation is unavailable. Controlled development failures demonstrate that preparation can reject a write without changing canonical Markdown, while failures after publication must return the committed result with a recoverable warning. Allowing a save without durable history capture would break the mandatory-history contract and make later reconstruction and Current-Content Provenance silently incomplete.
 
-[ADR 0007](0007-retain-editor-history-at-editing-window-boundaries.md) changes ordinary Editor retention to durable pending windows and boundary finalization. Preparation and recoverable capture remain mandatory, with separate [window-policy measurements and release acceptance](../architecture/editing-window-release-validation.md).
+[ADR 0007](0007-retain-editor-history-at-editing-window-boundaries.md) changes ordinary Editor retention to durable pending windows and boundary finalization. Preparation and recoverable capture remain mandatory.
 
 ## Consequences
 

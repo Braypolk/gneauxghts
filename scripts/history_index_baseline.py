@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Issue 51: immutable schema-13 fixture allocation and owned-copy DROP/VACUUM experiment."""
+"""Immutable schema-13 fixture allocation and owned-copy DROP/VACUUM experiment."""
 import argparse
 from contextlib import closing
 import hashlib

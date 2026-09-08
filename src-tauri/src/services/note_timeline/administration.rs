@@ -35,7 +35,7 @@ pub(super) fn stage_note_for_purge(path: &Path, staged_path: &Path) -> std::io::
 }
 
 impl<'a> NoteTimeline<'a> {
-    #[allow(dead_code)] // Consumed by workspace bootstrap in issue 54.
+    #[allow(dead_code)] // Consumed by workspace bootstrap.
     pub(crate) fn history_readiness(
         &self,
         note: Option<&NoteIdentity>,

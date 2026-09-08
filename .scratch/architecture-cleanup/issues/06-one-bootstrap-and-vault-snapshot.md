@@ -58,7 +58,7 @@ Validation:
 - `pnpm run check`: 0 errors, 0 warnings.
 - `pnpm test`: 125 files, 880 tests passed.
 - Archive-relative whitespace check and removed-chain search: clean.
-- No Rust production changed, so Rust/native execution was not material to this frontend snapshot/adoption ticket. Native relaunch would touch application lifecycle/user state and was intentionally not run; Ticket 05's restart tests remain the relevant lifecycle evidence. Issue 55 scale work was not reopened.
+- No Rust production changed, so Rust/native execution was not material to this frontend snapshot/adoption ticket. Native relaunch would touch application lifecycle/user state and was intentionally not run; Ticket 05's restart tests remain the relevant lifecycle evidence. Historical scale work was not reopened.
 
 Archive-relative delta ledger (production/test only; planning and docs excluded):
 

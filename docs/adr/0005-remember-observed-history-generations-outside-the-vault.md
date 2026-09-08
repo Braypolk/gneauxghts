@@ -17,4 +17,4 @@ record. Only composition of the next process binds the newly selected vault;
 the current process retains the original rollback authority until its explicit
 clean-close lifecycle releases that vault.
 
-[Issue 43](../../.scratch/note-timelines/issues/43-remove-granular-editor-history-compatibility.md) supersedes the original one-time legacy trust/migration option. Only the current history schema is supported. Older stores require the existing confirmed reset, which advances the generation and rebuilds current Markdown; matching old observations never authorize migration or silently adopt an old store.
+The current-format implementation supersedes the original one-time legacy trust/migration option. Only the current history schema is supported. Older stores require the existing confirmed reset, which advances the generation and rebuilds current Markdown; matching old observations never authorize migration or silently adopt an old store.

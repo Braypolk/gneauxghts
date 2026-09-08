@@ -95,7 +95,6 @@ and a continued save that survives another actual restart. Logs, snapshots,
 fixture directories, failed attempts, and `results.json` remain under the printed
 `PROCESS_RELAUNCH_EVIDENCE` directory or its recorded fixture paths. These are
 process-interruption tests; they do not establish device power-loss durability.
-See [issue 48 evidence](../docs/architecture/editing-window-process-relaunch-48-validation.md).
 
 ## Native artifact admission and large histories
 
@@ -119,10 +118,10 @@ node e2e/support/buildNative.mjs --release
 GNEAUXGHTS_SCALE_NATIVE_BINARY="$PWD/src-tauri/target/e2e/release/gneauxghts" python3 scripts/timeline_fixture.py native-scale --cache /tmp/gneauxghts-current-scale-100k
 ```
 
-The runner checks actual visible/focused state at the start and final animation frame, owns its native/Vite PIDs, and verifies its embedded listener and selected disposable vault before any write. Backend page/diff p95 budgets are 250 ms and reconstruction/restore-preview budgets are 1 s; native entry/page/diff have separate 250 ms p95 paint gates. Fixture construction, process startup, full traversal and observed memory have no invented SLA. The issue-49 report records precise workload counts, samples, limitations and failed attempts.
+The runner checks actual visible/focused state at the start and final animation frame, owns its native/Vite PIDs, and verifies its embedded listener and selected disposable vault before any write. Backend page/diff p95 budgets are 250 ms and reconstruction/restore-preview budgets are 1 s; native entry/page/diff have separate 250 ms p95 paint gates. Fixture construction, process startup, full traversal and observed memory have no invented SLA. Probe output records precise workload counts, samples, limitations and failed attempts.
 
 
-### Direct old-citation context (issue 50)
+### Direct old-citation context
 
 Use the same admitted current-format clones. Set `GNEAUXGHTS_SCALE_RUN` to the
 canonical clone path and run `cargo test --release --manifest-path src-tauri/Cargo.toml release_current_scale_citation_probe -- --ignored --nocapture`.
@@ -136,7 +135,7 @@ For native citation paint, build the admitted artifact above and supply a JSON
 array of hot-note samples for indices 0, 50, 5000 and 9999 (one sample per index)
 from `CITATION_SAMPLES`. Preserved arrays are
 `/tmp/gneauxghts-citation-context-50-evidence/selections-{10k,100k}.json` and are
-also embedded in the issue-50 measurement JSON. With the actual desktop unlocked:
+also emitted by the citation probe. With the actual desktop unlocked:
 
 ```sh
 GNEAUXGHTS_SCALE_NATIVE_BINARY="$PWD/src-tauri/target/e2e/release/gneauxghts" \

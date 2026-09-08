@@ -2,7 +2,7 @@
 
 Ticket 14 source wayfinding: the historical `note_timeline.rs:<line>` anchors below predate physical organization. `NoteTimeline::clean_close`, active-root validation, settlement, and surviving-window finalization now live in `note_timeline/administration.rs`; the parent owner and external import surface are unchanged.
 
-Read-only source investigation, 2026-09-07. The dirty workspace after consolidation 56–58 is the baseline. No implementation, native runs, database access, commits, or issue 55 scale acceptance were performed. Read AGENTS.md, ARCHITECTURE.md, CONTEXT.md, behavior invariants, ADRs 0005/0008, and codebase-design/SKILL.md plus DEEPENING.md. Source locations below refer to this working tree; symbols are the stable anchors.
+Read-only source investigation, 2026-09-07. The post-consolidation dirty workspace is the baseline. No implementation, native runs, database access, commits, or historical scale acceptance were performed. Read AGENTS.md, ARCHITECTURE.md, CONTEXT.md, behavior invariants, ADRs 0005/0008, and codebase-design/SKILL.md plus DEEPENING.md. Source locations below refer to this working tree; symbols are the stable anchors.
 
 ## Recommendation
 
@@ -228,7 +228,7 @@ Required cases: A → stage B → continue reading/saving A → restart → boot
 
 Existing protection to preserve: `commands.rs::vault_switch_cleanly_closes_the_active_note_timeline_first` (rewrite for changed Apply semantics); `note_timeline.rs::failed_clean_close_reports_failure_and_allows_a_retry`; `clean_close_reports_portability_and_stops_new_timeline_mutations`; `editing_window_capture/tests.rs::clean_close_waits_for_active_save_then_finalizes_and_old_runtime_is_inert_after_vault_switch`; `selected_context_deadlines_clean_close_and_reads_ignore_later_global_selection`; `editing_window_capture/tests/readiness.rs::clean_close_cancels_verifier_without_needing_note_file_owner`; workspacePersistenceService tests; navigationCoordinator tests; notepadSessionLifecycle/AppStore tests and contract/architecture fitness tests.
 
-Scoped future validation: relevant Vitest suites plus `pnpm check`; Rust context/config/command and selected timeline close/readiness tests using fresh temporary fixtures, followed by the existing architecture/IPC contract suites. **Do not run any now** as part of this read-only audit. Native lifecycle/relaunch verification and scale issue 55 remain separately paused; source-level assurance cannot claim those acceptance results. Test the production no-override root path, not only NOTES_ROOT_OVERRIDE fixtures.
+Scoped future validation: relevant Vitest suites plus `pnpm check`; Rust context/config/command and selected timeline close/readiness tests using fresh temporary fixtures, followed by the existing architecture/IPC contract suites. **Do not run any now** as part of this read-only audit. Native lifecycle/relaunch verification and historical scale validation remain separately paused; source-level assurance cannot claim those acceptance results. Test the production no-override root path, not only NOTES_ROOT_OVERRIDE fixtures.
 
 ## Risk, rollback and alternatives
 
@@ -238,6 +238,6 @@ The Apply semantics change is visible and should be stated in the implementation
 
 An alternative preserving immediate closure requires global frozen UI, explicit cancellation/drain of producers at Apply, idempotent repeated selection updates after close, and recoverable post-close config outcomes. This can be correct but keeps an additional closed-before-restart mode and more failure coordination. A live-switch resource graph would require rebuilding AppState, chat, watchers, document resources and durable stores under generation checks; no current requirement justifies that scope.
 
-Do not delete recovery versus verification versus operation drain versus continuous deadlines: they protect different invariants. Do not merge app-local observations with vault-local metadata: that defeats ADR 0005 rollback detection. Do not remove the private NoteTimeline bound context or path admission while binding the rest of the app; consolidation 56–58's protected scope is the model to extend, not undo.
+Do not delete recovery versus verification versus operation drain versus continuous deadlines: they protect different invariants. Do not merge app-local observations with vault-local metadata: that defeats ADR 0005 rollback detection. Do not remove the private NoteTimeline bound context or path admission while binding the rest of the app; the consolidation's protected scope is the model to extend, not undo.
 
 Remaining measurement hypotheses: how much duplicate bootstrap/settings work costs; how many projection jobs remain at a typical close; whether native OS quit reaches any frontend persistence barrier; precise chat cancellation latency and projection completion behavior; large-vault startup cost of `current_vault_info`'s full note count. Source confirms the paths but no timing, data-loss incidence, or native acceptance result was inferred.

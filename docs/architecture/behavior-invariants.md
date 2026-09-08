@@ -170,7 +170,7 @@ A successful save means canonical bytes and the required in-memory note
 catalog are committed, and its successful authored state has durable history
 capture. Ordinary Editor saves replace a pending Editing Window endpoint;
 immutable Note Revisions are retained at its boundaries. The integrated
-contract is [Editing Window capture](editing-window-contract.md); [release validation](editing-window-release-validation.md) records completed acceptance gates and measurement limits. History intent is durably prepared before Markdown publication;
+contract is [Editing Window capture](editing-window-contract.md). History intent is durably prepared before Markdown publication;
 a preparation failure publishes nothing. Target verification and retryable
 recovery admission do not hold the canonical file owner. A ready note remains
 saveable while another save waits for its target. Admission is checked again

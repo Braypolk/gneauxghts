@@ -1,10 +1,10 @@
 # Editing Window capture contract
 
 Accepted by [ADR 0007](../adr/0007-retain-editor-history-at-editing-window-boundaries.md).
-Issues 36–41 implement this contract across storage, coordination, evidence, and
-UI. The integrated default uses window capture; [issue 42 release validation](editing-window-release-validation.md) records completed correctness, storage, and native gates with explicit measurement limits. This contract
+The implementation spans storage, coordination, evidence, and UI. The integrated
+default uses window capture. This contract
 supersedes the original per-editor-save retention and new-history Editing
-Session requirements, with issue 43 superseding old-store compatibility. Issue 22 remains deferred.
+Session requirements, and the current format rejects old-store compatibility.
 
 ## Publication and retained state
 
@@ -170,28 +170,27 @@ clear/reset/purge remove affected receipts and invalidate old scopes together.
 
 Producers and consumers share these regression fixtures:
 
-- Issue 37: history-store current-schema/export and incompatible-store rejection fixtures, terminal receipt
+- History-store current-schema/export and incompatible-store rejection fixtures, terminal receipt
   retry tests, pending recovery, anchor reconstruction, and integrity attestation.
-- Issues 38–39: `note_timeline.rs` mutation conformance and warning tests;
+- `note_timeline.rs` mutation conformance and warning tests;
   `note_timeline/runtime.rs` barrier/generation tests; document save/departure,
   multi-pane navigation, History Mode entry, naming-current, close/switch,
   observation/reconciliation, task-dirty-document attribution, and deletion tests.
-- Issue 40: `RevisionTimeEvidence`, History Mode time DTOs, current-content
+- `RevisionTimeEvidence`, History Mode time DTOs, current-content
   evidence and activity filtering, chat citation persistence/delivery, shared
   `src/lib/contracts/timelineContractFixtures.test.ts` (versioned point and interval evidence), `ipcFixtures.test.ts`, and their Rust/JSON fixtures. Add interval,
   clock-discontinuous, no-op, mixed action/window, stale-citation and count cases.
-- Issue 41: `historyTimeline.test.ts`, `HistoryEditingSession.svelte.test.ts`,
+- `historyTimeline.test.ts`, `HistoryEditingSession.svelte.test.ts`,
   History Mode/session/component fixtures: new windows are one selectable entry
   and combined diff; point revisions and lifecycle events remain standalone.
-- Issue 42: preserve historical release-validation measurements;
-  use a current-schema window fixture with 300 saves/window and twelve
+- Release coverage uses a current-schema window fixture with 300 saves/window and twelve
   windows, bounded receipts, byte/WAL/I/O/latency/cold-recovery measurements.
   Passing policy tests alone does not prove persistence, storage reduction, or
   native responsiveness; final release acceptance requires the available native gates.
 
-## Supported store boundary (issues 43 and 52)
+## Supported store boundary
 
-Only freshly created schema 14 stores are supported (issue 52). Existing schema 13 and all
+Only freshly created schema 14 stores are supported. Existing schema 13 and all
 older stores, future schemas, and files without complete metadata fail before
 schema writes. No migration, old-store trust command, or per-save Editor policy
 switch remains. Settings offers the existing confirmed history reset: it advances
