@@ -85,6 +85,45 @@ describe('document and pane state-machine boundaries', () => {
     await waitForNote('Alpha note');
   });
 
+  it('keeps the move block handle beside text when Related opens and closes', async () => {
+    await browser.setWindowSize(1280, 844);
+    const card = await $('[data-testid="workspace-card"]');
+    const hoverLine = () => browser.execute(() => {
+      const line = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-line')!;
+      const rect = line.getBoundingClientRect();
+      line.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true, clientX: rect.left + 120, clientY: rect.top + 8
+      }));
+    });
+    const geometry = () => browser.execute(() => {
+      const line = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-line')!;
+      const range = document.createRange();
+      range.selectNodeContents(line);
+      const text = range.getBoundingClientRect();
+      const handle = document.querySelector<HTMLElement>('.notepad-block-handle')!.getBoundingClientRect();
+      return { gap: text.left - handle.right, centerDelta: handle.top + handle.height / 2 - (text.top + text.height / 2) };
+    });
+    const settle = async () => {
+      await browser.waitUntil(async () => browser.execute(
+        (element: HTMLElement) => element.getAnimations().length === 0, card
+      ));
+      await hoverLine();
+      await $('.notepad-block-handle[data-show="true"]').waitForExist();
+      await browser.pause(100);
+    };
+    await settle();
+    const baseline = await geometry();
+    expect(baseline.gap).toBeGreaterThanOrEqual(4);
+    for (const label of ['Expand related notes', 'Collapse related notes', 'Expand related notes']) {
+      await $(`button[aria-label="${label}"]`).click();
+      await settle();
+      const current = await geometry();
+      expect(current.gap).toBeGreaterThanOrEqual(4);
+      expect(Math.abs(current.gap - baseline.gap)).toBeLessThanOrEqual(2);
+      expect(Math.abs(current.centerDelta)).toBeLessThanOrEqual(3);
+    }
+  });
+
   it('keeps note content isolated while switching repeatedly', async () => {
     const alphaText = await editorText();
     expect(alphaText).toContain('Alpha line 1');

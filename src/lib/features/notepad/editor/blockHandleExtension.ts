@@ -181,12 +181,14 @@ export function createBlockHandleExtension(
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        // Pane/Related transitions can move the centered text column without
+        // changing the document or the visible range of document positions.
+        if (update.geometryChanged || update.viewportChanged) {
           this.#laneDirty = true;
           this.#dropSlotsDirty = true;
         }
         if (
-          update.docChanged ||
+          update.geometryChanged ||
           update.selectionSet ||
           update.viewportChanged
         ) {
