@@ -1,0 +1,15 @@
+{
+  "extends": "../tsconfig.json",
+  "compilerOptions": {
+    "checkJs": false,
+    "types": [
+      "node",
+      "mocha",
+      "vite/client",
+      "@wdio/globals/types",
+      "@wdio/mocha-framework"
+    ]
+  },
+  "include": ["./**/*.ts", "./**/*.d.ts"],
+  "exclude": ["../node_modules/**"]
+}

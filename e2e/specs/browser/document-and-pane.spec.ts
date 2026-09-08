@@ -268,7 +268,7 @@ describe('document and pane state-machine boundaries', () => {
   });
 
   it('opens paged read-only history and returns to the exact editor state without surviving restart', async () => {
-    const panesBefore = await $$('[data-testid="workspace-pane"]');
+    const paneCountBefore = await $$('[data-testid="workspace-pane"]').length;
     const scroller = await $('[data-testid="note-editor"] .cm-scroller');
     const content = await $('[data-testid="note-editor"] .cm-content');
     await browser.execute((element: HTMLElement) => {
@@ -296,7 +296,7 @@ describe('document and pane state-machine boundaries', () => {
       )
     );
     expect(initialHistoryDiff?.args.comparison).toBe('current');
-    expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(panesBefore.length);
+    expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(paneCountBefore);
     expect(await $('[data-testid="note-editor"] .cm-content').getAttribute('contenteditable')).toBe(
       'true'
     );
@@ -777,7 +777,7 @@ describe('document and pane state-machine boundaries', () => {
 
     await browser.keys(['Meta', 'ArrowLeft']);
     const editorLines = await $$('[data-testid="note-editor"] .cm-line');
-    const wrappedLine = editorLines.at(-1)!;
+    const wrappedLine = editorLines[(await editorLines.length) - 1];
     await browser.execute((line: HTMLElement) => {
       line.scrollIntoView({ block: 'center' });
     }, wrappedLine);

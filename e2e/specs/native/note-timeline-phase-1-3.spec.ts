@@ -28,11 +28,27 @@ interface NativeE2EBridge {
   setEditorSelection: (anchor: number, head: number) => boolean;
 }
 
+type NativeInvocationOutcome =
+  | { ok: true; value: unknown }
+  | { ok: false; error: string };
+
+type PersistedNoteSession = NoteSession & { noteId: string; path: string };
+
+function requirePersistedNote(note: NoteSession): PersistedNoteSession {
+  if (!note.noteId || !note.path) {
+    throw new Error(`Expected a persisted note session, received ${JSON.stringify(note)}`);
+  }
+  return note as PersistedNoteSession;
+}
+
 async function invokeNative<T>(
   command: string,
   args: Record<string, unknown> = {}
 ): Promise<T> {
-  const outcome = await browser.executeAsync(
+  const outcome = await browser.executeAsync<
+    NativeInvocationOutcome,
+    [string, Record<string, unknown>]
+  >(
     (
       innerCommand: string,
       innerArgs: Record<string, unknown>,
@@ -96,18 +112,18 @@ async function openSettings() {
   await $('[aria-label="Settings categories"]').waitForExist({ timeout: 20_000 });
 }
 
-async function saveVersions(title: string, versions: string[]): Promise<NoteSession> {
-  let note = await invokeNative<NoteSession>('save_note', {
+async function saveVersions(title: string, versions: string[]): Promise<PersistedNoteSession> {
+  let note = requirePersistedNote(await invokeNative<NoteSession>('save_note', {
     title,
     markdown: versions[0],
     currentPath: null
-  });
+  }));
   for (const markdown of versions.slice(1)) {
-    note = await invokeNative<NoteSession>('save_note', {
+    note = requirePersistedNote(await invokeNative<NoteSession>('save_note', {
       title,
       markdown,
       currentPath: note.path
-    });
+    }));
     await invokeNative('finalize_note_editing_window', {noteId: note.noteId});
   }
   return note;
@@ -117,7 +133,7 @@ async function historyRecords(noteId: string) {
   const records: HistoryModePage['records'] = [];
   let cursor: string | null = null;
   do {
-    const page = await invokeNative<HistoryModePage>('get_note_history_page', {
+    const page: HistoryModePage = await invokeNative<HistoryModePage>('get_note_history_page', {
       noteId,
       cursor,
       limit: 30

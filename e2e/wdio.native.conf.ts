@@ -1,9 +1,11 @@
 import { mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
-import type { Options } from '@wdio/types';
+import type { Capabilities, Options } from '@wdio/types';
 import { startVite, stopVite } from './support/viteServer';
 import { nativeE2EBinary } from './support/nativeE2EBinary.mjs';
+
+type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunnerCapabilities;
 
 const scaleRun = process.env.GNEAUXGHTS_RELEASE_SCALE_RUN;
 const optimized = Boolean(scaleRun) || process.env.GNEAUXGHTS_E2E_OPTIMIZED === '1';
@@ -33,7 +35,7 @@ function cleanupFixture() {
   rmSync(fixtureRoot, { recursive: true, force: true });
 }
 
-export const config: Options.Testrunner = {
+export const config: TestrunnerConfig = {
   runner: 'local',
   ...(scaleRun ? { outputDir: join(scaleRun, 'logs') } : {}),
   specs: ['./specs/native/**/*.spec.ts'],
@@ -43,7 +45,7 @@ export const config: Options.Testrunner = {
       browserName: 'tauri',
       'tauri:options': { application }
     }
-  ] as unknown as Options.Testrunner['capabilities'],
+  ] as unknown as TestrunnerConfig['capabilities'],
   services: [[
     'tauri',
     {

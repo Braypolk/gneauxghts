@@ -1,10 +1,12 @@
-import type { Options } from '@wdio/types';
+import type { Capabilities, Options } from '@wdio/types';
 import { startVite, stopVite } from './support/viteServer';
+
+type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunnerCapabilities;
 
 const port = 1421;
 const devServerUrl = `http://127.0.0.1:${port}`;
 
-export const config: Options.Testrunner = {
+export const config: TestrunnerConfig = {
   runner: 'local',
   baseUrl: devServerUrl,
   specs: ['./specs/browser/**/*.spec.ts'],
@@ -19,7 +21,7 @@ export const config: Options.Testrunner = {
         devServerUrl
       }
     }
-  ] as unknown as Options.Testrunner['capabilities'],
+  ] as unknown as TestrunnerConfig['capabilities'],
   services: ['tauri'],
   framework: 'mocha',
   reporters: ['spec'],

@@ -4,14 +4,18 @@ import type { HistoryModePage, HistoryRevisionRecord } from '../../../src/lib/fe
 
 // This journey asserts the shipped default policy, without a writer override.
 // Historical per-save journeys select their explicitly labeled test-only policy.
+type NativeInvocationResult =
+  | { ok: true; value: unknown }
+  | { ok: false; error: string };
+
 async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((cmd, input, done) => {
+  const result: NativeInvocationResult = await browser.executeAsync((cmd, input, done) => {
     const native = window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, input: Record<string, unknown>) => Promise<unknown> } };
     void native.__TAURI_INTERNALS__.invoke(cmd, input).then(
-      value => done({ ok: true, value }), error => done({ ok: false, value: JSON.stringify(error) })
+      value => done({ ok: true, value }), error => done({ ok: false, error: JSON.stringify(error) })
     );
   }, command, args);
-  if (!result.ok) throw new Error(String(result.value));
+  if (!result.ok) throw new Error(result.error);
   return result.value as T;
 }
 
