@@ -106,7 +106,6 @@ let missingNotes = [
           timelineOrdinal: 1,
           timeKind: 'committed',
           modifiedAtMillis: null,
-          editingSessionId: null,
           revisionLabel: null,
           lineCount: 1,
           characterCount: 25
@@ -193,7 +192,8 @@ function historyHealth() {
 
 function vaultInfo() {
   return {
-    currentPath: '/e2e',
+    runningPath: '/e2e',
+    selectedPath: '/e2e',
     defaultPath: '/e2e',
     forgottenPath: '/e2e/.forgotten',
     isDefault: true,
@@ -257,7 +257,6 @@ function historyRecords(note: NoteFixture) {
         timelineOrdinal: 0,
         timeKind: 'knownSince',
         modifiedAtMillis: null,
-        editingSessionId: `${note.noteId}-baseline-after-clear`,
         revisionLabel: null,
         lineCount: note.markdown.split('\n').length,
         characterCount: note.markdown.length
@@ -267,8 +266,6 @@ function historyRecords(note: NoteFixture) {
   const revisions = Array.from({ length: 35 }, (_, index) => {
     const ordinal = 35 - index;
     const source = ordinal === 35 ? 'editor' : ordinal % 6 === 0 ? 'externalEdit' : 'editor';
-    const sessionOrdinal =
-      source === 'externalEdit' ? ordinal : ordinal - ((ordinal - 1) % 6);
     return {
       kind: 'revision',
       recordId: `${note.noteId}-revision-${ordinal}`,
@@ -276,9 +273,9 @@ function historyRecords(note: NoteFixture) {
       source,
       occurredAtMillis: now - index * 60_000,
       timelineOrdinal: ordinal,
-      timeKind: ordinal % 6 === 0 ? 'observed' : 'committed',
+      timeKind: source === 'externalEdit' ? 'observed' : 'editingWindow',
+      timeEvidence: source === 'externalEdit' ? {kind: 'observed', version: 1, observedAtMillis: now - index * 60_000, modifiedAtMillis: now - index * 60_000 - 5_000} : {kind: 'editingWindow', version: 1, firstWallMillis: now - index * 60_000 - 30_000, lastWallMillis: now - index * 60_000, minWallMillis: now - index * 60_000 - 30_000, maxWallMillis: now - index * 60_000, clockDiscontinuity: false},
       modifiedAtMillis: ordinal % 6 === 0 ? now - index * 60_000 - 5_000 : null,
-      editingSessionId: `${note.noteId}-revision-${sessionOrdinal}`,
       revisionLabel: historyLabels.get(`${note.noteId}-revision-${ordinal}`) ?? null,
       lineCount: ordinal === 35 ? 80 : 3,
       characterCount: ordinal === 35 ? note.markdown.length : 78
@@ -296,7 +293,6 @@ function historyRecords(note: NoteFixture) {
           timelineOrdinal: 36,
           timeKind: 'committed',
           modifiedAtMillis: null,
-          editingSessionId: null,
           revisionLabel: null,
           lineCount: restore.body.split('\n').length,
           characterCount: restore.body.length
@@ -508,6 +504,7 @@ export function installBrowserE2eBackend() {
   let activeNote = notes.get('note-alpha')!;
   const pinnedNoteIds = new Set<string>();
   let nextHistoryPageDelayMillis = 0;
+  let pendingSave: { release: () => void; promise: Promise<void>; fail: boolean } | null = null;
 
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
@@ -521,12 +518,22 @@ export function installBrowserE2eBackend() {
         indexRevision: 1
       };
     }
+    if (command === 'get_history_readiness') {
+      return { scope: 'browser-fixture', revision: 0, noteId: args.noteId ?? null,
+        state: pendingSave ? 'targetVerificationPending' : 'ready', verifiedNotes: pendingSave ? 0 : notes.size, totalNotes: notes.size,
+        backgroundComplete: !pendingSave, backgroundUnavailable: false };
+    }
     if (command === 'load_note_session') return session(activeNote);
     if (command === 'open_note' || command === 'read_note') {
       activeNote = findNote(args);
       return session(activeNote);
     }
     if (command === 'save_note') {
+      const held = pendingSave;
+      if (held) {
+        await held.promise;
+        if (held.fail) throw { code: 'historyUnavailable', message: 'History is unavailable. Retry history from Settings.', action: 'retryHistory' };
+      }
       const saved: NoteFixture = {
         ...activeNote,
         title: String(args.title ?? activeNote.title),
@@ -557,6 +564,28 @@ export function installBrowserE2eBackend() {
               source: 'editor', currentExcerpt: 'Beta body is independent from Alpha.' }
           }] }
       ] };
+    }
+    if (command === 'get_note_history_context') {
+      const noteId = String(args.noteId ?? '');
+      const revisionId = String(args.revisionId ?? '');
+      const note = notes.get(noteId);
+      if (!note) throw { state: 'ineligible' };
+      const records = historyRecords(note);
+      const anchor = records.findIndex(record => record.kind === 'revision' && record.recordId === revisionId);
+      if (anchor < 0) throw { state: 'missing' };
+      let start = Math.max(0, anchor - 15);
+      let end = Math.min(records.length, start + 31);
+      if (typeof args.cursor === 'string') {
+        const cursor = JSON.parse(args.cursor);
+        if (cursor.noteId !== noteId || cursor.revisionId !== revisionId) throw { state: 'stale' };
+        start = cursor.start; end = cursor.end;
+      }
+      const cursor = (start: number, end: number) => JSON.stringify({ noteId, revisionId, start, end });
+      return {
+        records: records.slice(start, end).map((record, index) => ({ ...record, timelineOrdinal: anchor - start - index })),
+        nextCursor: end < records.length ? cursor(end, Math.min(records.length, end + 31)) : null,
+        previousCursor: start > 0 ? cursor(Math.max(0, start - 31), start) : null
+      };
     }
     if (command === 'get_note_history_page') {
       if (nextHistoryPageDelayMillis > 0) {
@@ -689,7 +718,6 @@ export function installBrowserE2eBackend() {
             timelineOrdinal: 0,
             timeKind: 'committed',
             modifiedAtMillis: null,
-            editingSessionId: null,
             revisionLabel: 'Before external deletion',
             lineCount: 1,
             characterCount: 20
@@ -791,6 +819,12 @@ export function installBrowserE2eBackend() {
 
   window.__GNEAUXGHTS_E2E__ = {
     invocations,
+    holdSave(fail = false) {
+      let release!: () => void;
+      const promise = new Promise<void>(resolve => { release = resolve; });
+      pendingSave = { release, promise, fail };
+    },
+    releaseSave() { const held = pendingSave; pendingSave = null; held?.release(); },
     seedRevisionChat() { revisionChatEnabled = true; },
     seedLargeHistory() { largeHistoryEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
@@ -811,6 +845,8 @@ declare global {
     __TAURI_INTERNALS__: Record<string, unknown>;
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
+      holdSave(fail?: boolean): void;
+      releaseSave(): void;
       seedRevisionChat(): void;
       seedLargeHistory(): void;
       delayNextHistoryPage(delayMillis?: number): void;

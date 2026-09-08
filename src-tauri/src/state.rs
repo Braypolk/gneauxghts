@@ -6,33 +6,40 @@ pub(crate) mod task_projection;
 pub(crate) use config::{
     advance_vault_history_generation, app_data_dir, create_vault_folder, current_vault_info,
     default_notes_root, ensure_vault_scaffold_for_history, forgotten_notes_root,
-    initialize_app_data_dir, initialize_documents_dir, list_vault_folders, notes_root,
-    read_vault_config, read_vault_manifest_for, set_notes_root, set_notes_root_override,
-    vault_data_dir, vault_data_dir_for, vault_manifest_path_for, vault_root, write_vault_config,
-    CreateVaultFolderResult, VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest,
-    VAULT_CACHE_DIR_NAME,
+    initialize_app_data_dir, initialize_documents_dir, list_vault_folders, read_vault_config,
+    read_vault_manifest_for, set_notes_root_override, stage_notes_root, vault_data_dir_for,
+    vault_manifest_path_for, write_vault_config, CreateVaultFolderResult, RunningVault,
+    VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
 };
+#[cfg(test)]
+pub(crate) use config::{inject_vault_config_publication_failure_once, vault_data_dir, vault_root};
 
 #[cfg(test)]
 pub(crate) fn ensure_vault_scaffold(vault_root: &std::path::Path) -> Result<VaultManifest, String> {
     crate::services::note_timeline::ensure_vault_scaffold(vault_root)
+        .map_err(|error| error.to_string())
 }
 #[allow(unused_imports)]
 pub(crate) use persistence::{
     atomic_create_note, atomic_write_note, db_clear_last_opened_note, db_load_note_activity,
-    db_mark_note_opened, db_set_last_chat_location, db_set_note_collapsed, db_set_note_hidden,
-    db_set_note_order, db_set_note_pinned, db_touch_note_activity, derive_file_stem,
-    derive_file_stem_from_title_and_markdown, effective_open_count, forgotten_note_retention_days,
-    is_forgotten_note_path, is_valid_note_path, persist_note_with_preparation,
+    db_mark_note_opened, db_prune_note_navigation, db_prune_recent_state,
+    db_record_session_restore, db_set_last_chat_location, db_set_note_collapsed,
+    db_set_note_hidden, db_set_note_order, db_set_note_pinned, db_touch_note_activity,
+    derive_file_stem, derive_file_stem_from_title_and_markdown, effective_open_count,
+    forgotten_note_retention_days, is_forgotten_note_path, is_valid_note_path, prepare_note_save,
     prune_recent_note_ids, prune_recent_note_ids_with_lookup, read_state, read_state_with_lookup,
     read_unpruned_state, resolve_note_id_from_path, resolve_note_path_by_id,
     set_forgotten_note_retention_days, touch_recent_note_id, validate_current_path,
-    with_note_file_mutation, write_last_opened_and_recents, write_state, write_state_with_lookup,
-    write_unpruned_state, ForgottenItemKind, NoteActivity, NoteIdLookup, NoteIdPathResolver,
-    PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS, OPEN_COUNT_DECAY_INTERVAL_MS,
+    with_note_file_mutation, AppStateStorage, ForgottenItemKind, NoteActivity, NoteIdLookup,
+    NoteIdPathResolver, PersistedForgottenNote, PersistedState, OPEN_COUNT_COOLDOWN_MS,
+    OPEN_COUNT_DECAY_INTERVAL_MS,
 };
 #[cfg(test)]
-pub(crate) use persistence::{inject_note_publication_failure_once, persist_note};
+pub(crate) use persistence::{
+    db_insert_forgotten_note, db_remove_forgotten_note, db_set_forgotten_original_path,
+    inject_note_publication_failure_once, persist_note, write_last_opened_and_recents, write_state,
+    write_unpruned_state,
+};
 
 #[cfg(test)]
 mod tests {

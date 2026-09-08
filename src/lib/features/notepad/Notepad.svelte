@@ -20,11 +20,10 @@
   import { type SearchMode } from "$lib/features/notepad/search/search";
   import {
     markNoteOpened,
-    createSessionSnapshot,
     saveNoteSession,
     saveTaskNoteSession,
+    loadHistoryReadiness,
     type ForgottenNote,
-    type SessionSnapshot,
   } from "$lib/features/notepad/session/session";
   import NotepadCommandBar from "$lib/features/notepad/ui/NotepadCommandBar.svelte";
   import NotepadPane from "$lib/features/notepad/NotepadPane.svelte";
@@ -67,12 +66,12 @@
   } from "$lib/features/notepad/pane/paneControllers";
   import {
     adoptSnapshotForPane,
+    bindNotepadStateToVault,
+    findOpenDocument,
     getPaneNote,
-    noteKeyFromPath,
-    rekeyNote,
     replaceReferencedNoteWithFreshDraft,
     type NoteDraftState,
-    type NoteKey,
+    type DocumentHandle,
   } from "$lib/features/notepad/state/noteStore";
   import { notepadState } from "$lib/features/notepad/state/noteState.svelte";
   import {
@@ -83,7 +82,6 @@
   } from "$lib/features/notepad/session/runtimeStore.svelte";
   import {
     cleanupNoteRuntime,
-    transferNoteRuntime,
   } from "$lib/features/notepad/session/noteRuntime";
   import { createDocumentPaneCoordinator } from "$lib/features/notepad/document/documentPaneCoordinator";
   import { createDocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
@@ -95,6 +93,7 @@
   import { createNavigationSelectionController } from "$lib/features/notepad/interaction/navigationSelectionController";
   import { createWorkspaceChoiceController } from "$lib/features/notepad/interaction/workspaceChoiceController";
   import {
+    documentCanLeaveWithoutCanonicalWrite,
     documentHasUnresolvedConflict,
     getDocumentMarkdown,
     getDocumentNoteId,
@@ -110,10 +109,12 @@
     getHistoryModeDiff,
     getHistoryModeDiagnostics,
     getHistoryModePage,
+    getHistoryModeContext,
     nameHistoryRevision,
     previewHistoryRevisionRestore,
     removeHistoryRevisionName,
     restoreHistoryRevision,
+    finalizeNoteEditingWindow,
   } from "$lib/features/history/historyApi";
   import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
   import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
@@ -149,6 +150,7 @@
   type NativeE2EWindow = Window & {
     __GNEAUXGHTS_NATIVE_E2E__?: {
       readEditorState: () => NativeE2EEditorState;
+      openRevisionCitation: (citation: Extract<import("$lib/features/chat/types").ChatCitation, { kind: "note" }>) => Promise<void>;
       setEditorSelection: (anchor: number, head: number) => boolean;
     };
   };
@@ -223,8 +225,8 @@
   });
 
   let paneCommandPaneId = $derived(workspaceStore.paneCommand.paneId);
-  let paneCommandSourceNoteKey = $derived(
-    workspaceStore.paneCommand.sourceNoteKey,
+  let paneCommandSourceDocumentHandle = $derived(
+    workspaceStore.paneCommand.sourceDocumentHandle,
   );
   let paneCommandMode = $derived(workspaceStore.paneCommand.mode);
   let paneCommandHighlightedIndex = $derived(
@@ -381,8 +383,8 @@
     return getPaneDocumentSession(getNavigationPaneId());
   }
 
-  function getNoteByKey(noteKey: NoteKey) {
-    return notepadState.notesByKey[noteKey] ?? null;
+  function getDocumentByHandle(documentHandle: DocumentHandle) {
+    return notepadState.documentsByHandle[documentHandle] ?? null;
   }
 
   function getPaneDocumentSession(paneId: PaneId) {
@@ -390,7 +392,7 @@
   }
 
   function setPaneDocumentSession(paneId: PaneId, document: NoteDraftState) {
-    workspaceStore.setPaneNoteKey(paneId, document.key);
+    workspaceStore.setPaneDocumentHandle(paneId, document.handle);
     return document;
   }
 
@@ -521,37 +523,6 @@
     setWikilinkAutocomplete: updatePaneWikilinkState,
   };
 
-  async function rekeyNoteWithRuntime(
-    note: NoteDraftState,
-    snapshot: SessionSnapshot,
-  ) {
-    const nextKey = noteKeyFromPath(snapshot.currentNotePath);
-    if (!nextKey || nextKey === note.key) {
-      return note;
-    }
-
-    const previousKey = note.key;
-    const nextNote =
-      rekeyNote(
-        notepadState,
-        workspaceStore,
-        previousKey,
-        nextKey,
-      ) ?? note;
-    if (nextNote !== note) {
-      // A pane already owns the saved path. Rebind every affected pane to
-      // that canonical runtime before discarding the draft-key resources.
-      await documents.replaceNoteAcrossPanes(note, nextNote, {
-        cleanupPrevious: false,
-      });
-    }
-    transferNoteRuntime(previousKey, nextKey);
-    if (!getNoteByKey(previousKey)) {
-      cleanupNoteRuntime(previousKey);
-    }
-    return nextNote;
-  }
-
   function isTitleInputFocusedForNote(note: NoteDraftState) {
     for (const paneId of getPaneIdsForDocument(note)) {
       const titleInput = getPaneTitleInput(paneId);
@@ -561,71 +532,6 @@
     }
     return false;
   }
-
-  const persistence = createNotepadPersistenceController({
-    getDocumentSession,
-    saveNoteSession,
-    saveTaskNoteSession,
-    markNoteOpened,
-    rekeyNoteWithRuntime,
-    applySavedSnapshot: async (
-      document,
-      snapshot,
-      { preserveDraft }
-    ) => {
-      await documentEditing.applySnapshot(
-        document,
-        snapshot,
-        () =>
-          documents.replaceNoteAcrossPanes(
-            document,
-            document
-          ),
-        {
-          preserveDraft,
-          scheduleDerived: false
-        }
-      );
-    },
-    isTitleEditing: isTitleInputFocusedForNote,
-    isActiveNote: (note) => getDocumentSession() === note,
-    shouldSuppressPersistence: (note) =>
-      shouldSuppressAutosaveForDocument(note),
-  });
-
-  const {
-    cancelPendingAutosave,
-    attributeTaskActionSave,
-    enqueueSave,
-    flushPendingAutosave,
-    getNoteSaveQueue,
-    hasCleanBuffer,
-    invalidatePendingSaveResults,
-    scheduleAutosave,
-  } = persistence;
-
-  const documentEditing = createDocumentEditingService<PaneId>({
-    isApplyingProgrammaticUpdate: (document) =>
-      getPaneIdsForDocument(document).some(
-        (paneId) => getPaneRuntime(paneId).ui.isApplyingProgrammaticUpdate,
-      ),
-    shouldSuppressAutosave: shouldSuppressAutosaveForDocument,
-    resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
-      if (
-        paneCommandPaneId === paneId &&
-        paneCommandMode !== null &&
-        nextMarkdown.trim() !== ""
-      ) {
-        workspaceStore.resetPaneCommand();
-      }
-    },
-    clearRecentlyForgotten: () => setRecentlyForgotten(null),
-    scheduleAutosave,
-    scheduleSearch: searchState.scheduleSearch,
-    scheduleRelated: relatedState.scheduleRelated,
-  });
-
-  ensurePaneControllers(initialPaneId);
 
   // ---------------------------------------------------------------------------
   // Pane editor sessions serialize mount, swap, replacement and destruction.
@@ -673,22 +579,73 @@
     getNavigationDocument: getDocumentSession,
     getNavigationPaneId,
     getPaneDocument: getPaneDocumentSession,
-    getNoteByKey,
+    getDocumentByHandle,
   });
+
+  let persistence: ReturnType<typeof createNotepadPersistenceController>;
+  const documentEditing = createDocumentEditingService<PaneId>({
+    state: notepadState,
+    isApplyingProgrammaticUpdate: (document) =>
+      getPaneIdsForDocument(document).some(
+        (paneId) => getPaneRuntime(paneId).ui.isApplyingProgrammaticUpdate,
+      ),
+    shouldSuppressAutosave: shouldSuppressAutosaveForDocument,
+    isTitleEditing: isTitleInputFocusedForNote,
+    resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
+      if (
+        paneCommandPaneId === paneId &&
+        paneCommandMode !== null &&
+        nextMarkdown.trim() !== ""
+      ) {
+        workspaceStore.resetPaneCommand();
+      }
+    },
+    clearRecentlyForgotten: () => setRecentlyForgotten(null),
+    clearSelectedRelatedText,
+    scheduleAutosave: (document) => persistence.scheduleAutosave(document),
+    scheduleSearch: searchState.scheduleSearch,
+    scheduleRelated: relatedState.scheduleRelated,
+  });
+
+  persistence = createNotepadPersistenceController({
+    getDocumentSession,
+    saveNoteSession,
+    saveTaskNoteSession,
+    loadHistoryReadiness,
+    markNoteOpened,
+    documentEditing,
+    isActiveNote: (note) => getDocumentSession() === note,
+    shouldSuppressPersistence: (note) =>
+      shouldSuppressAutosaveForDocument(note),
+  });
+
+  const {
+    cancelPendingAutosave,
+    attributeTaskActionSave,
+    enqueueSave,
+    flushPendingAutosave,
+    getNoteSaveQueue,
+    hasCleanBuffer,
+    invalidatePendingSaveResults,
+    scheduleAutosave,
+  } = persistence;
+
+  ensurePaneControllers(initialPaneId);
 
   const documentConflicts = createDocumentConflictController({
     replaceDocumentContentInPlace:
       documents.replaceDocumentContentInPlace,
     enqueueSave,
+    resolveUsingExternal: documentEditing.resolveUsingExternal,
     copyText: (text) => navigator.clipboard.writeText(text),
     refreshDerivedViews,
   });
 
   const openTaskDocumentMutation =
     createNotepadTaskMutationHandler({
-      listReferencedNoteKeys: () =>
-        workspaceStore.listReferencedNoteKeys(),
-      getNoteByKey,
+      listReferencedDocumentHandles: () =>
+        workspaceStore.listReferencedDocumentHandles(),
+      getDocumentByHandle,
       replaceMarkdown: documentEditing.replaceMarkdown,
       replaceDocumentContentInPlace:
         documents.replaceDocumentContentInPlace,
@@ -698,12 +655,13 @@
 
   const workspacePersistence = createWorkspacePersistenceService({
     flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
-    getDocuments: () => Object.values(notepadState.notesByKey),
+    getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
     enqueueSave,
   });
 
   const historyMode = new HistoryModeSession({
+    finalizeWindow: finalizeNoteEditingWindow,
     flushWorkspace: workspacePersistence.flushAllForNavigation,
     captureWorkspace: (paneId) => {
       const resolvedPaneId = paneId as PaneId;
@@ -787,6 +745,7 @@
       }
     },
     loadPage: getHistoryModePage,
+    loadContext: getHistoryModeContext,
     loadDiff: getHistoryModeDiff,
     loadRestorePreview: previewHistoryRevisionRestore,
     restoreRevision: (noteId, revisionId, expectedCurrentAuthoredContentHash) =>
@@ -796,31 +755,7 @@
         expectedCurrentAuthoredContentHash,
       ),
     adoptRestoredRevision: async (restored) => {
-      const noteId = restored.noteId;
-      if (!noteId) {
-        throw new Error("The committed restore returned no Note Identity.");
-      }
-      const restoredDocument = Object.values(notepadState.notesByKey).find(
-        (candidate) => getDocumentNoteId(candidate) === noteId,
-      );
-      if (!restoredDocument) {
-        throw new Error("The restored note is no longer open in the workspace.");
-      }
-      await documentEditing.applySnapshot(
-        restoredDocument,
-        createSessionSnapshot(restored),
-        async (markdown) => {
-          const applied = await documents.replaceDocumentContentInPlace(
-            restoredDocument,
-            markdown,
-            { resetUndoHistory: true },
-          );
-          if (applied !== "applied") {
-            throw new Error("The editor could not adopt the restored content.");
-          }
-        },
-        { autosave: false, resetUndoHistory: true },
-      );
+      await documentEditing.adoptVersionRestore(restored);
     },
     nameRevision: nameHistoryRevision,
     removeRevisionName: removeHistoryRevisionName,
@@ -880,7 +815,7 @@
   }
 
   $effect(() => {
-    getDocumentSession().key;
+    getDocumentSession().handle;
     untrack(() => {
       syncCurrentFileSearchHighlights();
     });
@@ -955,7 +890,7 @@
     getNavigationPaneId,
     getNextPaneId,
     getPaneRuntime,
-    getNoteByKey,
+    getDocumentByHandle,
     activatePaneSession,
     setPaneDocumentSession,
     getPaneTitleInput,
@@ -992,7 +927,8 @@
     forgottenNoteRetentionPreference: () =>
       appSettings.forgottenNoteRetentionPreference,
     canLeaveDocument: (document) =>
-      !documentHasUnresolvedConflict(document),
+      !documentHasUnresolvedConflict(document) ||
+      documentCanLeaveWithoutCanonicalWrite(document),
     onDocumentLeaving: (paneId, document) => {
       proposalOrchestrationInstance?.suspendDocument(
         document,
@@ -1034,7 +970,7 @@
     void locationHistoryEpoch;
     if (paneCommandPaneId === null) {
       return paneCommandNoteLabel(
-        getSplitSourceNote(notepadState, paneCommandSourceNoteKey),
+        getSplitSourceNote(notepadState, paneCommandSourceDocumentHandle),
       );
     }
     return commands.paneCommandCurrentLocationLabel(paneCommandPaneId);
@@ -1155,7 +1091,7 @@
     }, citation.revision!.revisionId),
     openWikilink,
     flushPendingAutosave,
-    getNoteSaveQueue: (document) => getNoteSaveQueue(document.key),
+    getNoteSaveQueue: (document) => getNoteSaveQueue(document.handle),
   });
 
   // Live-follow updates the chat header from the sibling editor, but the chat
@@ -1164,7 +1100,7 @@
   $effect(() => {
     for (const paneId of paneOrder) {
       getPaneKind(paneId);
-      getPaneDocumentSession(paneId).key;
+      getPaneDocumentSession(paneId).handle;
     }
     untrack(() => {
       chatPaneAdapter.syncRetainedContexts();
@@ -1185,20 +1121,23 @@
     refreshDerivedViews,
     updateRelatedDrawerLayout,
     refreshDocumentFromDisk: commands.refreshDocumentFromDisk,
-    getNoteByKey,
+    findOpenDocumentByPath: (notePath) =>
+      findOpenDocument(notepadState, {
+        noteId: null,
+        path: notePath
+      }),
     getPaneIdsForDocument,
     replaceNoteAcrossPanes: documents.replaceNoteAcrossPanes,
-    replaceReferencedNoteWithFreshDraft: (noteKey) =>
+    replaceReferencedNoteWithFreshDraft: (documentHandle) =>
       replaceReferencedNoteWithFreshDraft(
         notepadState,
         workspaceStore,
-        noteKey,
+        documentHandle,
       ),
     suspendPersistenceForConflict: (document) => {
       cancelPendingAutosave(document);
       invalidatePendingSaveResults(document);
     },
-    noteKeyFromPath,
     shouldDeferRefresh: (notePath) => {
       if (!proposalOrchestration.isReviewingPath(notePath)) return false;
       proposalOrchestration.markConflict(notePath);
@@ -1278,6 +1217,10 @@
     getActivePaneId: () => activePaneId,
     getPaneTitleInput,
     openThoughtPartner: () => openPaneChoiceInCurrent("thoughtPartner"),
+    showHistory: async () => {
+      if (getPaneKind(activePaneId) !== "editor") return;
+      await historyMode.enter(activePaneId);
+    },
     openSplitPaneOptions: () => splitWorkspaceIfAllowed(),
     openNewChatInSplit: () => splitWorkspaceIfAllowed("thoughtPartner"),
     openPreviousNoteInSplit: () => splitWorkspaceIfAllowed("previous"),
@@ -1298,14 +1241,10 @@
   });
 
   function handleHistoryAwareGlobalKeydown(event: KeyboardEvent) {
+    // History owns its keyboard handling, including Escape in inline renaming.
+    // Capturing Escape here would close history before the field can cancel it.
     if (!historyMode.isActive) {
       handleGlobalKeydown(event);
-      return;
-    }
-    if (event.key === "Escape") {
-      event.preventDefault();
-      event.stopImmediatePropagation();
-      void historyMode.exit();
     }
   }
 
@@ -1403,6 +1342,8 @@
         snapshot,
       );
     },
+    bindVaultScope: (vaultRoot) =>
+      bindNotepadStateToVault(notepadState, vaultRoot),
     applyAssetRoot: updateSharedEditorResourceConfig,
     registerWindowCloseHandler: () =>
       registerWorkspaceWindowCloseHandler({
@@ -1451,6 +1392,9 @@
     },
     dispose: () => {
       documents.saveCursorPositionForDocument();
+      // Browser history and modified/default anchor navigation can bypass the
+      // app-shell barrier. Keep this best-effort defensive flush until those
+      // platform departure routes can be synchronously vetoed.
       void workspacePersistence.flushAllForNavigation();
       chatCoordinator.dispose();
       syncCurrentFileSearchHighlights("", "all");
@@ -1466,10 +1410,9 @@
       );
     const disposeSession = sessionLifecycle.mount();
     let disposeNativeE2EBridge: (() => void) | null = null;
-    if (
-      import.meta.env.DEV &&
-      import.meta.env.VITE_E2E_NATIVE === "true"
-    ) {
+    // Explicit E2E builds include inspection, selection and citation actions in
+    // optimized native tests too; ordinary builds erase this branch.
+    if (import.meta.env.VITE_E2E_NATIVE === "true") {
       const nativeE2EWindow = window as NativeE2EWindow;
       const nativeE2EBridge = {
         readEditorState: (): NativeE2EEditorState => {
@@ -1492,6 +1435,8 @@
               : null,
           };
         },
+        openRevisionCitation: async (citation: Extract<import("$lib/features/chat/types").ChatCitation, { kind: "note" }>) =>
+          chatPaneAdapter.getBindings(activePaneId).context.onOpenCitation(citation),
         setEditorSelection: (anchor: number, head: number) =>
           editorCapabilities.get(activePaneId)?.focusSelection(
             { anchor, head },
@@ -1567,6 +1512,7 @@
     <div
       class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,margin-right,width] duration-300 ease-out will-change-[margin-left,margin-right,width] sm:rounded-4xl sm:border"
       style={getCardStyle(relatedState.panelPlacement)}
+      data-testid="workspace-card"
     >
       <div
         class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"
@@ -1743,21 +1689,27 @@
   </div>
 
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
-    <HistoryMode
-      state={historyMode.state}
-      onExit={historyMode.exit}
-      onSelectRevision={historyMode.selectRevision}
-      onSetComparison={historyMode.setComparison}
-      onPreviewRestore={historyMode.previewRestore}
-      onCancelRestore={historyMode.cancelRestore}
-      onConfirmRestore={historyMode.confirmRestore}
-      onNameRevision={historyMode.nameRevision}
-      onRemoveRevisionName={historyMode.removeRevisionName}
-      onClearHistory={historyMode.clearHistory}
-      onCheckHealth={historyMode.checkHealth}
-      onLoadMore={historyMode.loadMore}
-      onRetry={historyMode.retry}
-    />
+    <!-- Match the editor card's bounds, including the space reserved for Related. -->
+    <div
+      class="absolute inset-y-0 left-0 z-50 transition-[margin-left,margin-right,width] duration-300 ease-out"
+      style={`${getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)} ${getCardStyle(relatedState.panelPlacement)}`}
+    >
+      <HistoryMode
+        state={historyMode.state}
+        onExit={historyMode.exit}
+        onSelectRevision={historyMode.selectRevision}
+        onPreviewRestore={historyMode.previewRestore}
+        onCancelRestore={historyMode.cancelRestore}
+        onConfirmRestore={historyMode.confirmRestore}
+        onNameRevision={historyMode.nameRevision}
+        onRemoveRevisionName={historyMode.removeRevisionName}
+        onClearHistory={historyMode.clearHistory}
+        onCheckHealth={historyMode.checkHealth}
+        onLoadMore={historyMode.loadMore}
+        onLoadNewer={historyMode.loadNewer}
+        onRetry={historyMode.retry}
+      />
+    </div>
   {:else if historyMode.state.phase === "inactive" && historyMode.state.entryError}
     <div
       class="absolute inset-x-4 top-4 z-50 mx-auto flex max-w-xl items-start gap-3 rounded-2xl border border-destructive/30 bg-card px-4 py-3 text-sm shadow-lg"

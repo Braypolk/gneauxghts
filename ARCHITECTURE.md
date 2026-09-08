@@ -21,7 +21,10 @@ Markdown vault + SQLite metadata/indexes
 
 The Tauri command and event contracts are seams. Frontend modules should not
 reimplement backend persistence policy, and backend modules should not infer
-interactive workspace state that is owned by the frontend.
+interactive workspace state that is owned by the frontend. One private command
+worker owns AppState lookup and blocking dispatch; named commands retain their
+typed arguments and domain errors. Substantial domain operations receive concrete
+state references, independently of Tauri dispatch.
 
 ## Canonical ownership
 
@@ -29,10 +32,12 @@ interactive workspace state that is owned by the frontend.
 | --- | --- |
 | Pane membership, order, active pane, kind, and content references | `WorkspaceStore`; membership transitions use `paneLifecycleMachine.ts` |
 | Per-pane editor mount lifecycle | `PaneEditorSession` through `paneLifecycleMachine.ts` |
-| Open note content, identity, saved baseline, operation, publication warning, and external conflict | `NoteDraftState` in `NotepadState.notesByKey`; transitions use the document machines |
+| Open note content, mutable durable identity/path, saved baseline, operation, publication warning, and conflicts | `NoteDraftState` in `NotepadState.documentsByHandle`; an immutable ephemeral `DocumentHandle` keys the open lifetime and transitions use the document machines |
+| Committed open-document adoption across model, runtime, and derived views | Operation-specific methods on `DocumentEditingService`; callers provide authoritative results, not synchronization policy |
 | Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
 | Canonical note bytes | The Markdown file in the vault |
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
+| Editing Window capture, deadlines, recovery, and finalization | `NoteTimeline`; workspace departure and save flushing remain with existing frontend owners |
 | Canonical task toggle and delete behavior | `TaskMutationService` |
 | Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
 | Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
@@ -41,10 +46,28 @@ interactive workspace state that is owned by the frontend.
 | One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
+| Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
+| Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
 
-`NotepadState` owns documents, while `WorkspaceStore` owns references from
-panes to those documents. `runtimeStore.svelte.ts` provides bootstrap and
-shared resource configuration; it must not mirror either owner's state.
+`NotepadState` owns documents and its one vault-scoped canonical identity/path
+to handle lookup, while `WorkspaceStore` owns ephemeral handle references from
+panes to those documents. `DocumentRegistry` uses the same immutable handle for
+the open lifetime. Handles are not persisted or migrated. `runtimeStore.svelte.ts`
+provides bootstrap and shared resource configuration; it must not mirror either
+owner's state. Lookup aliases and collision flags are a wholly derived projection
+rebuilt across all owned documents after identity changes. A same-identity
+collision admits aliases to the established document; a path-only collision
+retains the established path binding without stealing either distinct identity
+alias.
+
+`AppStore` is the sole frontend admission point for bundled bootstrap and the
+shared running/next-launch vault and semantic snapshots. Listener attachment is
+part of bootstrap admission and a failed attempt cleans partial listeners before
+retry. Snapshot loads and commands claim per-slice revisions when they start, so
+older results cannot replace newer events or operations. Settings retains only
+its editable inputs, action state, and Settings-only diagnostics; the mounted
+Notepad session separately records whether an admitted bootstrap session has
+been adopted by the current editor lifetime.
 
 ## Canonical write paths
 
@@ -59,6 +82,22 @@ private timeline implementation detail; no parallel mutation service is
 available to callers. The same boundary can deepen durability ordering without
 changing those callers or exposing SQL and storage policy.
 
+Frontend adoption of a committed result enters `DocumentEditingService` through
+an operation-specific method. That boundary locates any retained document and
+shared runtime, atomically adopts identity, saved baseline, publication warning,
+and the canonical open-document lookup, and preserves edits that remain newer
+than the committed operation. Save and rename never replace the document handle,
+shared editor root, timers, save queue, or pane references. If a committed result
+collides with another independently dirty open document, both documents remain
+open and the collision blocks later persistence; the already completed canonical
+write is not retried. A dirty participant cannot leave. Once one participant
+matches its own saved baseline, pane close cancels its timer, joins its existing
+save queue, rechecks the authoritative document, and removes that side without a
+new write; lookup reconciliation then clears and reindexes the survivor.
+Version Restore always starts a fresh shared undo root, including when only
+unmanaged properties changed; an unopened restore target requires no pane or
+document mutation.
+
 Before an app-owned writer publishes canonical bytes, it asks `NoteTimeline`
 to prepare the publication from path or lifecycle continuity evidence. Identity
 repair policy and managed-metadata representation remain hidden inside that
@@ -70,8 +109,13 @@ identity that the writer carries through publication to exact finalization;
 finalization never rediscovers an intent from path, source, or content. Editor,
 task, and proposal flows remain under the shared note-file mutation owner from
 preparation through publication and history finalization. Identical authored
-content finalizes without another Note Revision; distinct content finalizes a
-versioned, hash-verified delta or compressed checkpoint. Exact finalization
+content captures without another Note Revision. Under the accepted Editing
+Window contract, distinct ordinary editor publications replace a durable pending
+endpoint; boundary finalization retains its net delta against the preceding
+finalized revision. Distinct task, proposal, restore, and observed changes remain
+separate. The integrated default uses this window contract; completed release
+acceptance and measurement limits are recorded by issue 42 and its [validation report](docs/architecture/editing-window-release-validation.md). See the
+[capture contract](docs/architecture/editing-window-contract.md). Exact finalization
 also verifies the managed Note Identity in the published file, and records the
 app-owned publication time issued into the durable intent immediately before
 the write rather than filesystem metadata or later reconciliation time.
@@ -80,6 +124,16 @@ History Mode entry obtains its page and diff through the mandatory recovered
 read capability. Browsing requests optional per-note and vault health diagnostics
 explicitly instead of repeating an exhaustive scan on entry just to display
 storage statistics. Restore and clear still refresh diagnostics after mutation.
+
+Revision Citation entry seeks a Note/immutable Revision pair directly through
+History Mode and returns at most 31 surrounding predecessor-ordered records.
+Private rebuildable successor indexes avoid walking newer history. Scoped
+context cursors carry positions relative to the immutable anchor; nearby pages
+replace the viewport and never merge with absolute newest-page coordinates.
+Clear/restore leave anchored paging while retaining the independent citation
+origin on the existing History Mode target. Request identities stop obsolete
+entry work, and workspace restoration completes before a newer entry captures
+its snapshot. See [bounded citation validation](docs/architecture/citation-context-50-validation.md).
 
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability is intentionally absent until its
@@ -110,9 +164,17 @@ domain evidence attached to the prepared publication before Markdown is
 written; its reference survives finalization recovery and is removed with the
 retained timeline. The projection itself has no durable cache.
 
-A save crosses the `note_persistence` command seam, publishes the vault file,
-and immediately enters `NoteTimeline.mutate`, which updates the required
-in-memory note catalog through its private post-publication helper. Task,
+An ordinary editor/task save crosses `note_persistence` into the complete
+`NoteTimeline.save_note` operation. It verifies the target before acquiring the
+file owner, drops its preflight lease before waiting for that owner, and then
+rechecks canonical identity, runtime proof and pending recovery under the
+existing observation replay lock. Changed admission releases the owner and
+retries outside it. Durable preparation, canonical publication, abandonment
+and finalization belong to this operation; commands convert its authoritative
+mutation result into a saved session. A failed rename/write restores the original
+path; an indeterminate rollback keeps its intent and returns an error so the
+requested edit stays dirty. The private post-publication helper updates the required
+in-memory note catalog. Task,
 lexical, and semantic projections follow that same timeline-owned path.
 Lexical and semantic work may be queued after the canonical write.
 Synchronous reconciliation resolves identity once, commits the catalog, and
@@ -133,8 +195,24 @@ after restart, so recovery completes history without replaying the file write.
 History finalization likewise reads authoritative Markdown from disk and never
 substitutes caller fallback bytes when that read fails.
 Known publication failures and proposal conflicts explicitly abandon their
-prepared intent; only an indeterminate post-publication finalization failure
-remains pending for restart recovery.
+prepared intent; only an indeterminate post-publication capture failure
+keeps its publication intent pending for restart recovery. Successfully captured
+Editing Windows are separate durable state, not unresolved publication intents.
+Pending canonical heads and immutable finalized heads serve different hash
+checks; private pending identities cannot become citation or naming targets.
+Receipt retirement uses scoped tokens and a durable retirement watermark, as
+defined in the capture contract, without removing unresolved or referenced evidence.
+The token's existing random nonce is the private durable receipt key. Full tokens
+remain at the publication boundary, where every store instance, generation,
+note, deletion epoch, sequence, and nonce is checked before acting on that key.
+Receipts own exact outcomes, scope, disposition kind, status, and liveness;
+`prepared_intents` and its pending window disposition exist only until capture
+or abandonment completes. One transaction records the outcome and removes all
+preparation fields. A PendingWindow receipt keeps that original outcome after
+sealing; `revision_window_evidence` is the sole retained interval representation.
+Retained revisions, lifecycle events, restore origins, and pending endpoints
+reference receipts directly. Window preparation has no public Revision Identity;
+point preparation still reserves one before publication for Version Restore.
 External observations retain their exact captured Markdown in a vault-owned
 durable ledger before timeline application. `NoteTimeline` replays that ledger
 in order before later observations, authored publications, reconciliation, or
@@ -160,15 +238,76 @@ bytes already read for its baseline. Its finalization transaction uses those
 bytes as a delta base only after matching the exact retained base revision's
 hash; mismatches and restart recovery reconstruct from storage. This candidate
 belongs to one opaque intent and never becomes a cross-operation cache.
-Each `AppState` caches that exhaustive integrity attestation for its selected
-vault, while corruption remains latched until an explicit reset replaces the
-store. Prepared writes consult the cached gate in constant time, so routine
-write cost continues to scale with the changed content rather than the full
-retained timeline.
+Each `AppState` first admits its selected store and settles actual interrupted
+work. Its private NoteTimeline runtime then verifies the required note's complete
+payload, hash, head, lifecycle, and window lineage in one consistent read
+transaction. A foreground request claims an unstarted target directly or joins
+only that target's check. One private worker verifies other histories and whole-store
+structure, with cancellation between notes, within long note loops, and during
+SQL execution. No readiness lock or canonical file mutation owner is held by the
+verifier. Background baseline initialization similarly verifies before acquiring
+the file owner and holds bounded operation leases rather than a vault-long lease.
+
+Trusted mutations extend a note's proof without rescanning retained payloads on
+every save. This proof has its own per-note replacement identity and runtime
+store generation; the current-content mutation generation remains exclusively a
+delivery freshness check. Clear and purge prevent verification during their
+replacement transaction; reset makes ordinary admission unavailable throughout
+store replacement. Both old successes and old corruption failures are discarded. Explicit discard
+operations need not reconstruct prose being removed. Clear and purge still require
+store admission/recovery and preserve the discovered-corruption gate; explicit
+reset may replace the unavailable or corrupt store and resolve the gate. A later
+publication verifies the replacement target.
+Corruption, whenever discovered, remains latched until explicit reset replaces
+the store. This intentionally permits a ready note to be saved before unrelated
+history corruption is discovered, as recorded in [ADR 0008](docs/adr/0008-verify-target-note-history-before-background-coverage.md).
+
+The storage-neutral readiness contract exposes recovery pending, target
+verification pending, ready, unavailable, or corrupt, correlated by runtime scope,
+replacement revision, and Note Identity. It also reports verified/known note counts
+and background completion or retryable failure without performing a scan. A private
+verification coordinator owns the corruption latch, scoped proof completion, cached
+counts, and explicit coverage/close-settlement phases. Recovery, operation draining,
+current-content freshness, and Editing Window deadlines remain separate owners. The UI
+observes this contract; publication always performs its own admission. Explicit
+health diagnostics perform SQL outside runtime locks and apply results only to
+the still-current scope. A successful diagnostic cannot clear a corruption latch.
+Close cancels background checks before waiting for operation leases, then allows
+its private settlement to finish pending work without an exhaustive payload scan.
 Settings can explicitly retry pending recovery. A confirmed reset is admitted
 only for unavailable or corrupt history; it advances the generation, rebuilds
 current Markdown as Baseline Revisions, and retains only a prose-free reset
 diagnostic outside the replacement timelines.
+Each process resolves one concrete immutable `RunningVault` at composition. Its
+canonical root identity, vault-data directory, and app-local observation
+directory are carried into `AppState`, `NoteTimelineRuntime`, semantic/chat
+construction, app-state storage, and watcher registration. App-state SQLite is
+opened only from that bound context; ordinary operations do not reread the
+next-launch preference or swap its connection. Recovery, reads, deadlines, and
+clean close use this context;
+prepared intent callbacks retain their original scope. An explicit reset advances
+the runtime's scope for future work while old intent scopes remain stale. All
+canonical path and lifecycle admission checks validate against the bound vault,
+including canonical aliases, before publication or staging. Settings Apply
+validates, scaffolds, and atomically publishes only the next-launch selection. Repeated
+selection is allowed, and selecting the running vault by a canonical alias clears
+the pending-restart indication. The running vault remains usable until explicit
+Restart performs the clean-close lifecycle; this is not live multi-vault support.
+One frontend `RestartLifecycle` action closes workspace mutation admission, joins
+the existing restore/save/departure barrier, and only requests process relaunch
+after the backend returns an explicit ready receipt. The backend `AppLifecycle`
+joins concurrent preparations and owns the ordered release of that same
+`RunningVault`: reversibly cancel and settle chat, tool, permission, title, and
+semantic producers; stop and join watcher debounce/reconciliation; join admitted
+app-state/catalog/task writes; discard queued rebuildable projections; then invoke
+`NoteTimeline.clean_close` before terminal semantic shutdown. Full lexical or
+semantic catch-up is not a portability prerequisite. A failure after terminal
+release begins keeps the workspace inert and retryable; admission is restored
+only when every reversibly quiesced owner reports itself usable. Relaunch failure
+therefore leaves a ready-to-restart closed state whose only action is Retry
+Restart. Ordinary exit dispatches this same lifecycle off the application event
+loop as a settlement fallback, without claiming it can save unsent frontend
+drafts.
 Each `AppState` completes that reconciliation successfully before its first
 history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
@@ -177,7 +316,10 @@ History-facing Tauri commands translate private storage, reconstruction, and
 coordination failures into a closed product contract: unavailable, corrupt,
 stale, ineligible, missing, or invalid request, each paired with a stable
 message and recovery action. Diagnostic causes remain in backend logs and do
-not cross the command seam.
+not cross the command seam. Storage and reconstruction boundaries preserve typed
+failures through recovery and role-limited reads; translating a failure never
+performs a diagnostic rescan. Corruption detected during reads or capture is
+latched by the runtime before later canonical publications can be admitted.
 
 The vault manifest selects the active history format and monotonic store
 generation. The SQLite metadata repeats the vault identity, format, and
@@ -189,8 +331,9 @@ Identity, so rolling back the manifest and store together is also rejected. A
 stable store-instance identity and monotonic clean-close watermark extend that
 check within one generation. `NoteTimeline.clean_close` stops new operations,
 waits for admitted work, settles prepared intent and deletion recovery,
+finalizes surviving Editing Windows,
 checkpoints and truncates the WAL, and only then marks the store portable.
-Vault switch and application exit cross this seam before releasing the vault.
+Explicit Restart and application exit cross this seam before releasing the running vault.
 The observing installation may recover its own open store and WAL after an
 interrupted run, while store replacement, watermark rollback, and a live
 main-file-only copy require explicit recovery. A development reset advances the
@@ -209,12 +352,22 @@ stages the canonical file under hidden vault data, commits the timeline deletion
 and removes the staging file. Recovery uses that staging evidence before
 observation replay or history access, so interruption or reuse of the original
 path cannot make the purged identity readable or appendable again.
+Complete forgotten-note forget, recovery and selected purge operations also belong
+to `NoteTimeline`. Commands select items and map results; the owner stages only the
+selected metadata row, compares current source bytes, guards destination collisions,
+rolls back known failures and retains indeterminate recovery evidence. Chat content
+continues through `ChatService`. Forgotten metadata uses the `AppState`-bound
+app-state database, so a staged next-launch selection cannot redirect lifecycle
+records away from the running vault.
 Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
 SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
 its remaining byte budget, then bounds incremental vacuum work with that
 remainder.
-Schema-five stores migrate once behind the storage-opening barrier to enable
-incremental auto-vacuum before the current schema is admitted.
+Only freshly created schema 14 stores are admitted. Older schemas and existing
+files without complete metadata fail before schema writes; confirmed Settings
+reset advances the generation and rebuilds current Markdown as baselines.
+Granular Editor history migration, trust authorization, and Editing Session
+grouping have been removed.
 See [ADR 0004](docs/adr/0004-treat-sqlite-as-the-first-note-timeline-store.md)
 for the initial store boundary and
 [ADR 0005](docs/adr/0005-remember-observed-history-generations-outside-the-vault.md)
@@ -257,7 +410,10 @@ membership, note context, editor resources, selection, and scroll are neither
 recreated nor transferred to a history pane. Exit restores the captured active
 pane and focus. The session itself is intentionally not persisted; restart
 returns to the normal persisted workspace.
-Revision naming and confirmed note-history clear remain metadata-only writes.
+Naming an existing revision and confirmed note-history clear remain metadata-only
+writes. Naming current content first flushes its save and finalizes its window;
+History Mode entry finalizes the inspected note’s window after its workspace
+persistence barrier.
 A complete Version Restore is the sole authored-content write admitted from
 this surface: its preview is bound to the current authored-content hash, its
 confirmation crosses the canonical `NoteTimeline` mutation seam, and its
@@ -266,7 +422,10 @@ runtime starts a fresh undo history. The mutation preserves the selected
 authored payload exactly and returns its prepared Revision Identity so the
 session cannot mistake an older restore for the new result.
 
-- Reducers choose state; controllers execute effects.
+- Reducers choose state; controllers execute effects. The document persistence
+  controller starts saves immediately and owns delayed serial readiness observation,
+  including operation, note, runtime scope, and replacement checks. The document
+  reducer receives only a save-wait reason; readiness never completes a save.
 - Async results are serialized by an owner or correlated with an operation,
   request, run, review, or conflict identity so stale results can be ignored.
 - Independent dimensions remain separate instead of forming a state

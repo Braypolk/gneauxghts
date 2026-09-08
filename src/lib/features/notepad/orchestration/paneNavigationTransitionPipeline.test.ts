@@ -183,3 +183,50 @@ describe('pane navigation transition pipeline', () => {
     expect(applied.sort()).toEqual(['left', 'right']);
   });
 });
+
+describe('departure queue ownership', () => {
+  function pipeline() {
+    return createPaneNavigationTransitionPipeline<PaneId>({
+      assertWorkspaceInvariants: vi.fn(), ensurePaneEditors: vi.fn().mockResolvedValue(undefined)
+    });
+  }
+
+  it('releases before completion so nested leaf work cannot deadlock', async () => {
+    const transitions = pipeline();
+    const result = await transitions.execute({
+      kind: 'restore-location', resolvePane: () => 'left', trackLatestForPane: false,
+      mutateWorkspace: async () => {
+        expect((await transitions.execute({
+          kind: 'open-note', resolvePane: () => 'left', departDocument: vi.fn(),
+          complete: async () => {
+            expect((await transitions.execute({
+              kind: 'change-pane-kind', resolvePane: () => 'right', departDocument: vi.fn()
+            })).status).toBe('applied');
+          }
+        })).status).toBe('applied');
+      }
+    });
+    expect(result.status).toBe('applied');
+  });
+
+  it.each(['failure', 'stale', 'blocked'] as const)('releases after %s and permits the next departure', async mode => {
+    const transitions = pipeline();
+    const ready = deferred();
+    const started = deferred();
+    const cleanup = vi.fn();
+    const first = transitions.execute({
+      kind: 'close-pane', resolvePane: () => 'left',
+      guard: async () => { started.resolve(); await ready.promise; return mode === 'blocked' ? { status: 'blocked', reason: 'guard' } : { status: 'allow' }; },
+      departDocument: () => { if (mode === 'failure') throw new Error('seal failed'); },
+      onFailed: cleanup, onStale: cleanup
+    });
+    await started.promise;
+    const second = transitions.execute({
+      kind: 'open-note', resolvePane: () => mode === 'stale' ? 'left' : 'right', departDocument: vi.fn()
+    });
+    ready.resolve();
+    expect((await first).status).toBe(mode === 'failure' ? 'failed' : mode);
+    expect((await second).status).toBe('applied');
+    if (mode !== 'blocked') expect(cleanup).toHaveBeenCalledOnce();
+  });
+});

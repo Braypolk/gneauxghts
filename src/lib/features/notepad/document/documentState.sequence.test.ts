@@ -43,7 +43,7 @@ function savedSnapshot(
 function document() {
   return createDocumentState(
     savedSnapshot(),
-    `path:${path}`
+    `document:`
   );
 }
 

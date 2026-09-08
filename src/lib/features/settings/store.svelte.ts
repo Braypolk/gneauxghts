@@ -4,9 +4,8 @@ import {
   invokeHistoryCommand
 } from '$lib/contracts/historyCommand';
 import { open } from '@tauri-apps/plugin-dialog';
-import { relaunch } from '@tauri-apps/plugin-process';
 import { appStore } from '$lib/app/appStore.svelte';
-import { loadForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
+import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
 import type {
   ForgottenNoteSummary,
@@ -32,8 +31,6 @@ import {
   loadMissingNotesSlice
 } from './loaders/forgottenLoader';
 import {
-  loadSemanticSlice,
-  loadSemanticStatusSlice,
   retrySemanticIndex
 } from './loaders/semanticLoader';
 import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
@@ -45,8 +42,7 @@ import {
 } from './loaders/historyLoader';
 import {
   createVaultFolderSlice,
-  listVaultFoldersSlice,
-  loadVaultInfoSlice
+  listVaultFoldersSlice
 } from './loaders/vaultLoader';
 
 type SettingsTab = 'general' | 'forgotten';
@@ -69,19 +65,16 @@ type SemanticAction =
 export type { GeneralSection, SettingsTab };
 
 export class SettingsStore {
-  semanticStatus = $state<SemanticStatus | null>(null);
   semanticSettings = $state<SemanticSettings | null>(null);
   semanticDebug = $state<SemanticDebugSnapshot | null>(null);
-  vaultInfo = $state<VaultInfo | null>(null);
+  settingsLoadError = $state<string | null>(null);
   historyHealth = $state<HistoryHealthReport | null>(null);
   historyActionError = $state<string | null>(null);
   isRunningHistoryAction = $state(false);
   vaultPathInput = $state('');
-  activeVaultPath = $state('');
   vaultSaveError = $state<string | null>(null);
   isSavingVault = $state(false);
   isPickingVault = $state(false);
-  isRestarting = $state(false);
   vaultFolders = $state<VaultFolderInfo[]>([]);
   newVaultName = $state('');
   isLoadingVaultFolders = $state(false);
@@ -110,11 +103,29 @@ export class SettingsStore {
   #semanticStateRequest: Promise<void> | null = null;
   #forgottenNotesRequest: Promise<void> | null = null;
   #missingNotesGeneration = 0;
+  #vaultSaveGeneration = 0;
   #disposeVaultNoteChanged: (() => void) | null = null;
   #disposeSemanticStatus: (() => void) | null = null;
+  #disposeVaultChanged: (() => void) | null = null;
+
+  get semanticStatus(): SemanticStatus | null {
+    return appStore.semanticStatus;
+  }
+
+  get vaultInfo(): VaultInfo | null {
+    return appStore.vaultInfo;
+  }
 
   get usesVaultContainer() {
     return this.vaultInfo != null && this.vaultInfo.canPickArbitraryPath === false;
+  }
+
+  get isRestarting() {
+    return restartLifecycle.phase === 'preparing';
+  }
+
+  get restartReady() {
+    return restartLifecycle.workspaceMutationsBlocked && restartLifecycle.phase !== 'preparing';
   }
 
   setActiveTab(activeTab: SettingsTab) {
@@ -145,15 +156,14 @@ export class SettingsStore {
         : selectedForgottenPaths;
   }
 
-  #applyVaultInfo(nextVaultInfo: VaultInfo, resetInput = false) {
-    this.vaultInfo = nextVaultInfo;
+  #syncVaultSnapshot(resetInput = false) {
+    const nextVaultInfo = this.vaultInfo;
+    if (!nextVaultInfo) return;
     this.vaultPathInput = resetInput
-      ? nextVaultInfo.currentPath
+      ? nextVaultInfo.selectedPath
       : this.vaultPathInput.trim() === ''
-        ? nextVaultInfo.currentPath
+        ? nextVaultInfo.selectedPath
         : this.vaultPathInput;
-    this.activeVaultPath =
-      this.activeVaultPath === '' ? nextVaultInfo.currentPath : this.activeVaultPath;
     this.vaultSaveError = null;
     if (!nextVaultInfo.canPickArbitraryPath) {
       void this.loadVaultFolders();
@@ -219,7 +229,7 @@ export class SettingsStore {
       const selected = await open({
         directory: true,
         multiple: false,
-        defaultPath: this.vaultPathInput.trim() || this.vaultInfo?.currentPath || undefined,
+        defaultPath: this.vaultPathInput.trim() || this.vaultInfo?.selectedPath || undefined,
         title: 'Choose vault folder'
       });
       if (typeof selected === 'string' && selected.trim() !== '') {
@@ -234,14 +244,8 @@ export class SettingsStore {
   }
 
   async restartApp() {
-    this.isRestarting = true;
-    try {
-      await relaunch();
-    } catch (error) {
-      console.error('Failed to restart app:', error);
-      this.vaultSaveError = String(error);
-      this.isRestarting = false;
-    }
+    await restartLifecycle.restart();
+    this.vaultSaveError = restartLifecycle.error;
   }
 
   #stopSemanticPolling() {
@@ -279,7 +283,8 @@ export class SettingsStore {
 
   async loadVaultInfo() {
     try {
-      this.#applyVaultInfo(await loadVaultInfoSlice());
+      await appStore.refreshVaultInfo();
+      this.#syncVaultSnapshot();
     } catch (error) {
       console.error('Failed to load vault info:', error);
     }
@@ -292,7 +297,7 @@ export class SettingsStore {
 
     this.#semanticStatusRequest = (async () => {
       try {
-        this.semanticStatus = await loadSemanticStatusSlice();
+        await appStore.refreshSemanticStatus();
         this.#syncSemanticPolling();
       } catch (error) {
         console.error('Failed to load semantic status:', error);
@@ -310,37 +315,22 @@ export class SettingsStore {
     }
 
     this.#semanticStateRequest = (async () => {
+      const admission = appStore.beginSnapshotAdmission('vault', 'semanticStatus');
       try {
-        // Prefer the bundled get_settings_view command which collapses
-        // the four parallel invokes into one. Fall back to the legacy
-        // parallel fan-out if the bundled command errors so the
-        // settings panel keeps working.
-        try {
-          const view = await loadSettingsViewSlice();
-          this.semanticStatus = view.semanticStatus;
-          this.semanticSettings = view.semanticSettings;
-          this.semanticDebug = view.semanticDebug;
-          this.historyHealth = view.historyHealth;
-          this.#applyVaultInfo(view.vault);
-        } catch (bundledError) {
-          console.warn(
-            'get_settings_view failed, falling back to individual loads:',
-            bundledError
-          );
-          const [semantic, nextVaultInfo, historyHealth] = await Promise.all([
-            loadSemanticSlice(),
-            loadVaultInfoSlice(),
-            loadHistoryHealthSlice()
-          ]);
-          this.semanticStatus = semantic.status;
-          this.semanticSettings = semantic.settings;
-          this.semanticDebug = semantic.debug;
-          this.historyHealth = historyHealth;
-          this.#applyVaultInfo(nextVaultInfo);
-        }
+        const view = await loadSettingsViewSlice();
+        appStore.admitSnapshot(
+          { vault: view.vault, semanticStatus: view.semanticStatus },
+          admission
+        );
+        this.semanticSettings = view.semanticSettings;
+        this.semanticDebug = view.semanticDebug;
+        this.historyHealth = view.historyHealth;
+        this.#syncVaultSnapshot();
+        this.settingsLoadError = null;
         this.#syncSemanticPolling();
       } catch (error) {
         console.error('Failed to load semantic settings:', error);
+        this.settingsLoadError = String(error);
       } finally {
         this.#semanticStateRequest = null;
       }
@@ -667,19 +657,25 @@ export class SettingsStore {
   };
 
   async saveVaultDirectory() {
+    const operation = ++this.#vaultSaveGeneration;
+    const admission = appStore.beginSnapshotAdmission('vault');
     this.isSavingVault = true;
     this.vaultSaveError = null;
     try {
       const nextVaultInfo = await invoke<VaultInfo>('set_vault_directory', {
         path: this.vaultPathInput.trim() === '' ? null : this.vaultPathInput.trim()
       });
-      this.#applyVaultInfo(nextVaultInfo, true);
-      await loadForgottenNoteRetentionPreference();
+      if (operation !== this.#vaultSaveGeneration) return;
+      const admitted = appStore.admitSnapshot({ vault: nextVaultInfo }, admission).vault;
+      this.#syncVaultSnapshot(
+        admitted || this.vaultInfo?.selectedPath === nextVaultInfo.selectedPath
+      );
     } catch (error) {
+      if (operation !== this.#vaultSaveGeneration) return;
       console.error('Failed to save vault directory:', error);
       this.vaultSaveError = String(error);
     } finally {
-      this.isSavingVault = false;
+      if (operation === this.#vaultSaveGeneration) this.isSavingVault = false;
     }
   }
 
@@ -715,10 +711,16 @@ export class SettingsStore {
   }
 
   async initialize() {
-    await Promise.all([this.loadSemanticState(), this.loadForgottenNotes()]);
-    await appStore.bootstrap().catch(() => undefined);
+    try {
+      await appStore.bootstrap();
+    } catch (error) {
+      this.settingsLoadError = String(error);
+      return;
+    }
+    this.#syncVaultSnapshot();
     this.#disposeVaultNoteChanged?.();
     this.#disposeSemanticStatus?.();
+    this.#disposeVaultChanged?.();
     this.#disposeVaultNoteChanged = appStore.subscribeVaultNoteChanged((payload) => {
       if (payload.documentKind && payload.documentKind !== 'note') return;
       this.#scheduleVaultChangeRefresh();
@@ -727,10 +729,13 @@ export class SettingsStore {
     // save, rebuild/pause/resume, vault change). Reduce to listening
     // instead of polling those code paths; we still poll while indexing
     // is in progress because background workers don't currently emit.
-    this.#disposeSemanticStatus = appStore.subscribeSemanticStatusChanged((payload) => {
-      this.semanticStatus = payload;
+    this.#disposeSemanticStatus = appStore.subscribeSemanticStatusChanged(() => {
       this.#syncSemanticPolling();
     });
+    this.#disposeVaultChanged = appStore.subscribeVaultChanged(() => {
+      this.#syncVaultSnapshot();
+    });
+    await Promise.all([this.loadSemanticState(), this.loadForgottenNotes()]);
   }
 
   dispose() {
@@ -743,6 +748,8 @@ export class SettingsStore {
     this.#disposeVaultNoteChanged = null;
     this.#disposeSemanticStatus?.();
     this.#disposeSemanticStatus = null;
+    this.#disposeVaultChanged?.();
+    this.#disposeVaultChanged = null;
   }
 }
 

@@ -49,6 +49,9 @@
   const pinShortcutLabel = $derived(
     formatShortcutBinding(getEffectiveKeyboardShortcutBinding('togglePinCurrentNote'))
   );
+  const historyShortcutLabel = $derived(
+    formatShortcutBinding(getEffectiveKeyboardShortcutBinding('showHistory'))
+  );
 
   const splitPaneActionIcons = {
     'open-chat': MessagesSquare,
@@ -112,7 +115,7 @@
             disabled={!viewModel.canPin}
             class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-muted/72 disabled:hover:text-muted-foreground sm:h-9 sm:w-9"
             aria-label="Open note history"
-            title="Open note history"
+            title={`Open note history (${historyShortcutLabel})`}
             onmousedown={(event) => event.preventDefault()}
             onclick={() => void actions.onOpenHistory(viewModel.paneId)}
           >

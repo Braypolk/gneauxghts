@@ -3,17 +3,16 @@ use crate::{
     index::AppState,
     note,
     state::{
+        db_mark_note_opened, db_prune_note_navigation, db_record_session_restore,
         db_touch_note_activity, is_valid_note_path, read_state_with_lookup,
-        resolve_note_path_by_id, touch_recent_note_id, validate_current_path,
-        write_last_opened_and_recents, write_state_with_lookup, NoteIdLookup, NoteIdPathResolver,
-        PersistedState,
+        resolve_note_path_by_id, touch_recent_note_id, validate_current_path, NoteIdLookup,
+        NoteIdPathResolver, PersistedState,
     },
     time::current_time_millis,
 };
 use std::{fs, path::Path, path::PathBuf};
-use tauri::State;
 
-fn lookup_path_in_index(state: &State<'_, AppState>, note_id: &str) -> Option<PathBuf> {
+fn lookup_path_in_index(state: &AppState, note_id: &str) -> Option<PathBuf> {
     state
         .notes_index
         .lock()
@@ -41,7 +40,7 @@ struct NoteSessionLookup<'a> {
 }
 
 impl<'a> NoteSessionLookup<'a> {
-    fn new(app_state: Option<&'a State<'_, AppState>>) -> Self {
+    fn new(app_state: Option<&'a AppState>) -> Self {
         Self {
             resolver: app_state.map(|state| AppStateNoteIdResolver { state }),
             is_warm: app_state
@@ -62,7 +61,7 @@ impl<'a> NoteSessionLookup<'a> {
 }
 
 fn resolve_note_path_by_id_with_state(
-    state: Option<&State<'_, AppState>>,
+    state: Option<&AppState>,
     notes_dir: &Path,
     note_id: &str,
 ) -> Result<Option<PathBuf>, String> {
@@ -81,11 +80,6 @@ fn clear_stale_last_opened_note(state: &mut crate::state::PersistedState, note_i
     state
         .recent_note_ids
         .retain(|recent_note_id| recent_note_id != note_id);
-}
-
-fn mark_note_opened(state: &mut crate::state::PersistedState, note_id: String) {
-    state.last_opened_note_id = Some(note_id.clone());
-    touch_recent_note_id(state, note_id);
 }
 
 fn touch_note_activity(note_id: &str, count_as_open: bool) {
@@ -114,7 +108,7 @@ pub(crate) fn load_note_session_from_notes_dir(notes_dir: &Path) -> Result<NoteS
 
 pub(crate) fn load_note_session_from_notes_dir_with_state(
     notes_dir: &Path,
-    app_state: Option<&State<'_, AppState>>,
+    app_state: Option<&AppState>,
 ) -> Result<NoteSession, String> {
     let lookup_owner = NoteSessionLookup::new(app_state);
     let lookup = lookup_owner.strategy();
@@ -127,12 +121,12 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
         resolve_note_path_by_id_with_state(app_state, notes_dir, &last_opened_note_id)?
     else {
         clear_stale_last_opened_note(&mut persisted, &last_opened_note_id);
-        write_state_with_lookup(notes_dir, &persisted, &lookup)?;
+        db_prune_note_navigation(std::slice::from_ref(&last_opened_note_id))?;
         return Ok(NoteSession::default());
     };
     if !is_valid_note_path(&note_path, notes_dir) {
         clear_stale_last_opened_note(&mut persisted, &last_opened_note_id);
-        write_state_with_lookup(notes_dir, &persisted, &lookup)?;
+        db_prune_note_navigation(std::slice::from_ref(&last_opened_note_id))?;
         return Ok(NoteSession::default());
     }
 
@@ -142,7 +136,7 @@ pub(crate) fn load_note_session_from_notes_dir_with_state(
     touch_note_activity(&last_opened_note_id, false);
     // Row-scoped write of the recents/last-opened only — same rationale as
     // mark_note_opened.
-    write_last_opened_and_recents(&persisted)?;
+    db_record_session_restore(&last_opened_note_id)?;
     read_note_session_from_path(&note_path)
 }
 
@@ -159,7 +153,7 @@ pub(crate) fn open_note_from_notes_dir_with_state(
     notes_dir: &Path,
     note_id: Option<String>,
     path: Option<String>,
-    app_state: Option<&State<'_, AppState>>,
+    app_state: Option<&AppState>,
 ) -> Result<NoteSession, String> {
     let note_path = resolve_note_path_input_with_state(notes_dir, note_id, path, app_state)?;
     let session = read_note_session_from_path(&note_path)?;
@@ -176,15 +170,13 @@ pub(crate) fn open_note_from_notes_dir_with_state(
         return Ok(session);
     }
 
-    let mut persisted = persisted;
-    mark_note_opened(&mut persisted, resolved_note_id);
     if let Some(note_id) = session.note_id.as_deref() {
         touch_note_activity(note_id, true);
     }
     // Row-scoped write: only the last_opened_note_id and recents change here.
     // Avoid the full app_state rewrite that previously fired on every note
     // switch and contended with concurrent open/save under rapid switching.
-    write_last_opened_and_recents(&persisted)?;
+    db_mark_note_opened(&resolved_note_id)?;
 
     Ok(session)
 }
@@ -211,7 +203,7 @@ pub(crate) fn resolve_note_path_input_with_state(
     notes_dir: &Path,
     note_id: Option<String>,
     path: Option<String>,
-    app_state: Option<&State<'_, AppState>>,
+    app_state: Option<&AppState>,
 ) -> Result<PathBuf, String> {
     let path = path
         .filter(|value| !value.trim().is_empty())

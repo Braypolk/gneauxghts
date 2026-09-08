@@ -3,228 +3,390 @@ import {
   type ForgottenNote,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
+import type { NoteSession } from '$lib/features/notepad/model/types';
 import {
+  applyCommittedNoteToDocument,
   applySessionSnapshotToDocument,
   createDocumentState,
+  documentHasCleanBuffer,
+  getDocumentNoteId,
   getDocumentPath,
-  type NoteDraftState,
-  type NoteKey
+  type DocumentHandle,
+  type NoteDraftState
 } from '$lib/features/notepad/document/documentState';
 
 export type {
-  NoteDraftState,
-  NoteKey
+  DocumentHandle,
+  NoteDraftState
 } from '$lib/features/notepad/document/documentState';
 
-export interface PaneNoteReferences<TPaneId extends string> {
-  getPaneState: (paneId: TPaneId) => { noteKey: NoteKey };
-  setPaneNoteKey: (paneId: TPaneId, noteKey: NoteKey) => void;
-  replaceNoteKeyReferences: (
-    previousKey: NoteKey,
-    nextKey: NoteKey
+export interface PaneDocumentReferences<TPaneId extends string> {
+  getPaneState: (paneId: TPaneId) => { documentHandle: DocumentHandle };
+  setPaneDocumentHandle: (
+    paneId: TPaneId,
+    documentHandle: DocumentHandle
   ) => void;
-  isNoteReferenced: (noteKey: NoteKey) => boolean;
-  listReferencedNoteKeys: () => NoteKey[];
+  replaceDocumentHandleReferences: (
+    previousHandle: DocumentHandle,
+    nextHandle: DocumentHandle
+  ) => void;
+  isDocumentReferenced: (documentHandle: DocumentHandle) => boolean;
+  listReferencedDocumentHandles: () => DocumentHandle[];
 }
 
 /** Document lifecycle state. Pane structure and references live in WorkspaceStore. */
 export interface NotepadState<TPaneId extends string = string> {
-  notesByKey: Record<string, NoteDraftState>;
+  documentsByHandle: Record<string, NoteDraftState>;
+  /** Bound running-vault root. Ephemeral handles never cross this boundary. */
+  vaultRoot: string | null;
+  /** One identity/path-to-handle index for this running vault. */
+  canonicalDocumentLookup: Record<string, DocumentHandle>;
   recentlyForgotten: ForgottenNote | null;
 }
 
-let draftCounter = 0;
+let documentHandleCounter = 0;
 
-export function createDraftNoteKey(): NoteKey {
-  draftCounter += 1;
-  return `draft:${draftCounter}`;
+function createDocumentHandle(): DocumentHandle {
+  documentHandleCounter += 1;
+  return `document:${documentHandleCounter}`;
 }
 
-export function noteKeyFromPath(path: string | null): NoteKey | null {
-  return path ? (`path:${path}` as NoteKey) : null;
+function normalizeVaultRoot(vaultRoot: string) {
+  return vaultRoot.replace(/[\\/]+$/u, '');
+}
+
+function canonicalLookupKeys(
+  vaultRoot: string,
+  noteId: string | null,
+  path: string | null
+) {
+  const scope = normalizeVaultRoot(vaultRoot);
+  return [
+    ...(noteId ? [`${scope}\u0000identity:${noteId}`] : []),
+    ...(path ? [`${scope}\u0000path:${path}`] : [])
+  ];
+}
+
+function documentLookupKeys(
+  state: NotepadState,
+  document: NoteDraftState
+) {
+  if (!state.vaultRoot) return [];
+  return canonicalLookupKeys(
+    state.vaultRoot,
+    getDocumentNoteId(document),
+    getDocumentPath(document)
+  );
+}
+
+function markCanonicalCollision(
+  left: NoteDraftState,
+  right: NoteDraftState,
+  noteId: string | null,
+  path: string
+) {
+  left.canonicalCollision = {
+    otherHandle: right.handle,
+    noteId,
+    path
+  };
+  right.canonicalCollision = {
+    otherHandle: left.handle,
+    noteId,
+    path
+  };
+}
+
+function registerCanonicalDocument(
+  state: NotepadState,
+  document: NoteDraftState
+) {
+  const noteId = getDocumentNoteId(document);
+  const path = getDocumentPath(document);
+  const keys = documentLookupKeys(state, document);
+  if (keys.length === 0) return null;
+  const identityKey = noteId ? keys[0] : null;
+  const pathKey = path ? keys[keys.length - 1] : null;
+  const identityHandle = identityKey
+    ? state.canonicalDocumentLookup[identityKey]
+    : null;
+  const pathHandle = pathKey
+    ? state.canonicalDocumentLookup[pathKey]
+    : null;
+  const identityConflict = identityHandle && identityHandle !== document.handle
+    ? state.documentsByHandle[identityHandle] ?? null
+    : null;
+  const pathConflict = pathHandle && pathHandle !== document.handle
+    ? state.documentsByHandle[pathHandle] ?? null
+    : null;
+  const conflictingDocument = identityConflict ?? pathConflict;
+  if (conflictingDocument) {
+    if (path) {
+      markCanonicalCollision(
+        document,
+        conflictingDocument,
+        identityConflict ? noteId : null,
+        path
+      );
+    }
+    if (identityKey) {
+      state.canonicalDocumentLookup[identityKey] = identityConflict
+        ? identityConflict.handle
+        : document.handle;
+    }
+    if (pathKey) {
+      state.canonicalDocumentLookup[pathKey] = pathConflict
+        ? pathConflict.handle
+        : conflictingDocument.handle;
+    }
+    return conflictingDocument;
+  }
+  for (const key of keys) {
+    state.canonicalDocumentLookup[key] = document.handle;
+  }
+  document.canonicalCollision = null;
+  return null;
+}
+
+function rebuildCanonicalDocumentLookup(state: NotepadState) {
+  state.canonicalDocumentLookup = {};
+  for (const document of Object.values(state.documentsByHandle)) {
+    document.canonicalCollision = null;
+  }
+  for (const document of Object.values(state.documentsByHandle)) {
+    registerCanonicalDocument(state, document);
+  }
+}
+
+export function bindNotepadStateToVault(
+  state: NotepadState,
+  vaultRoot: string
+) {
+  state.vaultRoot = normalizeVaultRoot(vaultRoot);
+  rebuildCanonicalDocumentLookup(state);
+}
+
+export function findOpenDocument(
+  state: NotepadState,
+  reference: {
+    vaultRoot?: string | null;
+    noteId: string | null;
+    path: string | null;
+  }
+): NoteDraftState | null {
+  if (!state.vaultRoot) return null;
+  if (
+    reference.vaultRoot &&
+    normalizeVaultRoot(reference.vaultRoot) !== state.vaultRoot
+  ) {
+    return null;
+  }
+  for (const key of canonicalLookupKeys(
+    state.vaultRoot,
+    reference.noteId,
+    reference.path
+  )) {
+    const handle = state.canonicalDocumentLookup[key];
+    if (handle) return state.documentsByHandle[handle] ?? null;
+  }
+  return null;
 }
 
 export function createNoteDraftState(
-  snapshot: SessionSnapshot = createEmptySessionSnapshot(),
-  key: NoteKey = noteKeyFromPath(snapshot.currentNotePath) ?? createDraftNoteKey()
+  snapshot: SessionSnapshot = createEmptySessionSnapshot()
 ): NoteDraftState {
-  return createDocumentState(snapshot, key);
+  return createDocumentState(snapshot, createDocumentHandle());
 }
 
 export function createNotepadState<TPaneId extends string = string>(
-  initialNote: NoteDraftState = createNoteDraftState()
+  initialDocument: NoteDraftState = createNoteDraftState(),
+  vaultRoot: string | null = null
 ): NotepadState<TPaneId> {
-  return {
-    notesByKey: {
-      [initialNote.key]: initialNote
+  const state: NotepadState<TPaneId> = {
+    documentsByHandle: {
+      [initialDocument.handle]: initialDocument
     },
+    vaultRoot: vaultRoot ? normalizeVaultRoot(vaultRoot) : null,
+    canonicalDocumentLookup: {},
     recentlyForgotten: null
   };
+  rebuildCanonicalDocumentLookup(state);
+  return state;
 }
 
 export function getPaneNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
+  references: PaneDocumentReferences<TPaneId>,
   paneId: TPaneId
 ): NoteDraftState {
-  return state.notesByKey[
-    references.getPaneState(paneId).noteKey
+  return state.documentsByHandle[
+    references.getPaneState(paneId).documentHandle
   ];
 }
 
-/**
- * Store and return the canonical note object exposed by the state container.
- *
- * Svelte wraps objects assigned into a deeply reactive record. Returning the
- * pre-assignment object would give orchestration a different identity from the
- * one panes read back, causing editor lifecycle stale-document guards to reject
- * a valid first binding.
- */
-function storeNote<TPaneId extends string>(
+/** Store and return the canonical object exposed by the reactive container. */
+function storeDocument<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  note: NoteDraftState
+  document: NoteDraftState
 ): NoteDraftState {
-  state.notesByKey[note.key] = note;
-  return state.notesByKey[note.key];
+  state.documentsByHandle[document.handle] = document;
+  const stored = state.documentsByHandle[document.handle];
+  rebuildCanonicalDocumentLookup(state);
+  return stored;
 }
 
 export function upsertNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  note: NoteDraftState
+  document: NoteDraftState
 ) {
-  return storeNote(state, note);
+  return storeDocument(state, document);
 }
 
-export function createFreshDraftNote<TPaneId extends string>(state: NotepadState<TPaneId>) {
-  return storeNote(state, createNoteDraftState());
+export function createFreshDraftNote<TPaneId extends string>(
+  state: NotepadState<TPaneId>
+) {
+  return storeDocument(state, createNoteDraftState());
 }
 
 export function replacePaneReferenceWithFreshDraft<
   TPaneId extends string
 >(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
+  references: PaneDocumentReferences<TPaneId>,
   paneId: TPaneId
 ) {
   const freshDraft = createFreshDraftNote(state);
-  references.setPaneNoteKey(paneId, freshDraft.key);
+  references.setPaneDocumentHandle(paneId, freshDraft.handle);
   return freshDraft;
 }
 
 export function replaceReferencedNoteWithFreshDraft<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
-  noteKey: NoteKey
+  references: PaneDocumentReferences<TPaneId>,
+  documentHandle: DocumentHandle
 ) {
   const freshDraft = createFreshDraftNote(state);
-  references.replaceNoteKeyReferences(
-    noteKey,
-    freshDraft.key
+  references.replaceDocumentHandleReferences(
+    documentHandle,
+    freshDraft.handle
   );
-  delete state.notesByKey[noteKey];
+  delete state.documentsByHandle[documentHandle];
+  rebuildCanonicalDocumentLookup(state);
   return freshDraft;
-}
-
-export function rekeyNote<TPaneId extends string>(
-  state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
-  oldKey: NoteKey,
-  nextKey: NoteKey
-) {
-  if (oldKey === nextKey) {
-    return state.notesByKey[oldKey] ?? null;
-  }
-
-  const note = state.notesByKey[oldKey];
-  if (!note) {
-    return null;
-  }
-
-  const existing = state.notesByKey[nextKey];
-  if (existing && existing !== note) {
-    references.replaceNoteKeyReferences(oldKey, nextKey);
-    delete state.notesByKey[oldKey];
-    return existing;
-  }
-
-  delete state.notesByKey[oldKey];
-  note.key = nextKey;
-  const canonicalNote = storeNote(state, note);
-  references.replaceNoteKeyReferences(oldKey, nextKey);
-  return canonicalNote;
 }
 
 export function removeNoteIfUnreferenced<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
-  noteKey: NoteKey
+  references: PaneDocumentReferences<TPaneId>,
+  documentHandle: DocumentHandle
 ) {
-  if (references.isNoteReferenced(noteKey)) {
-    return;
-  }
-  delete state.notesByKey[noteKey];
+  if (references.isDocumentReferenced(documentHandle)) return false;
+  delete state.documentsByHandle[documentHandle];
+  rebuildCanonicalDocumentLookup(state);
+  return true;
 }
 
 function removeTransientNoteIfUnreferenced<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
-  noteKey: NoteKey
+  references: PaneDocumentReferences<TPaneId>,
+  documentHandle: DocumentHandle
 ) {
-  const note = state.notesByKey[noteKey];
-  if (!note || getDocumentPath(note)) {
-    return;
-  }
-
-  removeNoteIfUnreferenced(state, references, noteKey);
+  const document = state.documentsByHandle[documentHandle];
+  if (!document || getDocumentPath(document)) return;
+  removeNoteIfUnreferenced(state, references, documentHandle);
 }
 
-export function listReferencedNoteKeys<TPaneId extends string>(
-  references: PaneNoteReferences<TPaneId>
+export function listReferencedDocumentHandles<TPaneId extends string>(
+  references: PaneDocumentReferences<TPaneId>
 ) {
-  return references.listReferencedNoteKeys();
+  return references.listReferencedDocumentHandles();
+}
+
+export type CommittedDocumentAdoption =
+  | { kind: 'adopted'; document: NoteDraftState }
+  | {
+      kind: 'collision';
+      document: NoteDraftState;
+      conflictingDocument: NoteDraftState;
+    };
+
+/**
+ * Atomically adopts committed identity/baseline and updates the vault-scoped
+ * lookup. A collision is a retained in-memory conflict, never a document or
+ * runtime merge and never permission to replay the canonical write.
+ */
+export function adoptCommittedDocument(
+  state: NotepadState,
+  document: NoteDraftState,
+  committed: NoteSession,
+  options: { preserveWorking?: boolean } = {}
+): CommittedDocumentAdoption {
+  applyCommittedNoteToDocument(document, committed, options);
+  rebuildCanonicalDocumentLookup(state);
+  const conflictingDocument = document.canonicalCollision
+    ? state.documentsByHandle[document.canonicalCollision.otherHandle] ?? null
+    : null;
+  return conflictingDocument
+    ? { kind: 'collision', document, conflictingDocument }
+    : { kind: 'adopted', document };
+}
+
+export function synchronizeDocumentCanonicalLookup(
+  state: NotepadState,
+  document: NoteDraftState
+) {
+  rebuildCanonicalDocumentLookup(state);
+  return document.canonicalCollision
+    ? state.documentsByHandle[document.canonicalCollision.otherHandle] ?? null
+    : null;
 }
 
 export function adoptSnapshotForPane<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  references: PaneNoteReferences<TPaneId>,
+  references: PaneDocumentReferences<TPaneId>,
   paneId: TPaneId,
   snapshot: SessionSnapshot
 ) {
-  const nextPersistedKey = noteKeyFromPath(snapshot.currentNotePath);
-  const currentNote = getPaneNote(
-    state,
-    references,
-    paneId
-  );
+  const currentDocument = getPaneNote(state, references, paneId);
+  const existing = findOpenDocument(state, {
+    noteId: snapshot.currentNoteId,
+    path: snapshot.currentNotePath
+  });
 
-  if (nextPersistedKey) {
-    const existing = state.notesByKey[nextPersistedKey];
-    const note =
-      existing ??
-      createNoteDraftState(snapshot, nextPersistedKey);
-    applySessionSnapshotToDocument(note, snapshot);
-    const canonicalNote = storeNote(state, note);
-    references.setPaneNoteKey(paneId, canonicalNote.key);
+  if (snapshot.currentNotePath) {
+    const document = existing ?? createNoteDraftState(snapshot);
+    if (existing) {
+      applySessionSnapshotToDocument(document, snapshot, {
+        preserveWorking: !documentHasCleanBuffer(document)
+      });
+    }
+    const canonicalDocument = storeDocument(state, document);
+    references.setPaneDocumentHandle(
+      paneId,
+      canonicalDocument.handle
+    );
     removeTransientNoteIfUnreferenced(
       state,
       references,
-      currentNote.key
+      currentDocument.handle
     );
-    return canonicalNote;
+    return canonicalDocument;
   }
 
-  if (currentNote.key.startsWith('draft:')) {
-    applySessionSnapshotToDocument(currentNote, snapshot);
-    return currentNote;
+  if (currentDocument.identity.kind === 'draft') {
+    applySessionSnapshotToDocument(currentDocument, snapshot);
+    return currentDocument;
   }
 
-  const freshDraft = createNoteDraftState(snapshot);
-  const canonicalDraft = storeNote(state, freshDraft);
-  references.setPaneNoteKey(paneId, canonicalDraft.key);
+  const freshDraft = storeDocument(
+    state,
+    createNoteDraftState(snapshot)
+  );
+  references.setPaneDocumentHandle(paneId, freshDraft.handle);
   removeTransientNoteIfUnreferenced(
     state,
     references,
-    currentNote.key
+    currentDocument.handle
   );
-  return canonicalDraft;
+  return freshDraft;
 }

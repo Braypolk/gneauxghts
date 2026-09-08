@@ -72,18 +72,14 @@
   }
 
   let selectedVaultPath = $derived(
-    settings.vaultPathInput.trim() || settings.vaultInfo?.currentPath || ''
+    settings.vaultPathInput.trim() || settings.vaultInfo?.selectedPath || ''
   );
-  let savedVaultPath = $derived(settings.vaultInfo?.currentPath ?? '');
+  let savedVaultPath = $derived(settings.vaultInfo?.selectedPath ?? '');
   let hasUnsavedVaultChange = $derived(
     Boolean(savedVaultPath) &&
       normalizeVaultPath(selectedVaultPath) !== normalizeVaultPath(savedVaultPath)
   );
-  let vaultNeedsRestart = $derived(
-    Boolean(settings.activeVaultPath) &&
-      Boolean(savedVaultPath) &&
-      normalizeVaultPath(savedVaultPath) !== normalizeVaultPath(settings.activeVaultPath)
-  );
+  let vaultNeedsRestart = $derived(settings.vaultInfo?.requiresRestart ?? false);
 
   function handleVisibilityChange() {
     void settings.handleVisibilityChange();
@@ -136,6 +132,12 @@
           </button>
         </div>
       </div>
+
+      {#if settings.settingsLoadError}
+        <p class="border-t border-border/70 px-4 py-3 text-sm text-destructive sm:px-6" role="alert">
+          Settings could not be loaded: {settings.settingsLoadError}
+        </p>
+      {/if}
 
       {#if settings.activeTab === 'general'}
       <div class="border-t border-border/70">
@@ -471,7 +473,7 @@
               }
               onclick={() => void settings.saveVaultDirectory()}
             >
-              {settings.isSavingVault ? 'Saving…' : settings.usesVaultContainer ? 'Apply vault' : 'Apply folder'}
+              {settings.isSavingVault ? 'Saving…' : 'Apply for next launch'}
             </button>
           </div>
 
@@ -480,7 +482,7 @@
               <p class="font-medium">Restart required</p>
               <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
                 The app is still using
-                <span class="font-medium break-all">{settings.activeVaultPath}</span>.
+                <span class="font-medium break-all">{settings.vaultInfo?.runningPath}</span>.
                 Restart now to open notes from
                 <span class="font-medium break-all">{savedVaultPath}</span>.
               </p>
@@ -490,7 +492,11 @@
                 disabled={settings.isRestarting}
                 onclick={() => void settings.restartApp()}
               >
-                {settings.isRestarting ? 'Restarting…' : 'Restart app'}
+                {settings.isRestarting
+                  ? 'Preparing restart…'
+                  : settings.restartReady
+                    ? 'Retry Restart'
+                    : 'Restart app'}
               </button>
             </div>
           {/if}
@@ -511,7 +517,7 @@
             <div class="grid gap-4 md:grid-cols-3">
               <SettingsCard>
                 <SettingsLabel text="Active vault" />
-                <p class="mt-2 text-sm font-medium break-all">{settings.activeVaultPath}</p>
+                <p class="mt-2 text-sm font-medium break-all">{settings.vaultInfo.runningPath}</p>
               </SettingsCard>
               <SettingsCard>
                 <SettingsLabel text="Forgotten items" />
@@ -521,7 +527,7 @@
                 <SettingsLabel text="Vault stats" />
                 <p class="mt-2 text-sm font-medium">{settings.vaultInfo.noteCount} notes</p>
                 <p class="mt-1 text-xs text-muted-foreground">
-                  {settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {settings.vaultInfo.requiresRestart ? 'restart required after changes' : 'live'}
+                  {settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {settings.vaultInfo.requiresRestart ? 'next launch staged' : 'active selection'}
                 </p>
               </SettingsCard>
             </div>

@@ -157,13 +157,14 @@ describe('architecture fitness: notepad state ownership', () => {
     );
 
     expect(fields).toEqual([
-      'key',
+      'handle',
       'working',
       'identity',
       'savedBaseline',
       'operation',
       'externalSync',
-      'publication'
+      'publication',
+      'canonicalCollision'
     ]);
   });
 
@@ -294,6 +295,92 @@ describe('architecture fitness: document external-sync machine', () => {
     expect(conflictController).not.toMatch(
       /document\.externalSync\s*=/
     );
+  });
+});
+
+describe('architecture fitness: committed document adoption', () => {
+  it('keeps synchronization policy behind operation-specific document methods', () => {
+    const editing = sourceText(
+      'src/lib/features/notepad/document/documentEditingService.ts'
+    );
+    const persistence = sourceText(
+      'src/lib/features/notepad/orchestration/persistenceController.ts'
+    );
+    const notepad = sourceText(
+      'src/lib/features/notepad/Notepad.svelte'
+    );
+
+    for (const method of [
+      'adoptSavedResult',
+      'adoptVersionRestore',
+      'adoptAcceptedProposal',
+      'adoptCleanExternalRefresh',
+      'restoreTransientForgotten'
+    ]) {
+      expect(editing).toContain(method);
+    }
+    for (const removedProtocol of [
+      'rekeyNoteWithRuntime',
+      'applySavedSnapshot'
+    ]) {
+      expect(persistence).not.toContain(removedProtocol);
+      expect(notepad).not.toContain(removedProtocol);
+    }
+    expect(editing).not.toContain('function applySnapshot(');
+    expect(editing).not.toContain('resetUndoHistory?:');
+    expect(editing).not.toContain('preserveDraft?:');
+  });
+
+  it('uses immutable handles without path-rekey or runtime-transfer machinery', () => {
+    const documentState = sourceText(
+      'src/lib/features/notepad/document/documentState.ts'
+    );
+    const noteStore = sourceText(
+      'src/lib/features/notepad/state/noteStore.ts'
+    );
+    const registry = sourceText(
+      'src/lib/features/notepad/document/documentRegistry.ts'
+    );
+    const runtime = sourceText(
+      'src/lib/features/notepad/document/documentRuntime.ts'
+    );
+    const noteRuntime = sourceText(
+      'src/lib/features/notepad/session/noteRuntime.ts'
+    );
+    const stateFields = interfaceProperties(
+      'src/lib/features/notepad/state/noteStore.ts',
+      'NotepadState'
+    );
+
+    expect(documentState).toContain('readonly handle: DocumentHandle');
+    expect(stateFields).toEqual(
+      expect.arrayContaining([
+        'documentsByHandle',
+        'vaultRoot',
+        'canonicalDocumentLookup'
+      ])
+    );
+    expect(noteStore).toContain('adoptCommittedDocument(');
+    expect(noteStore).toContain('findOpenDocument(');
+    expect(noteStore).toContain('canonicalCollision');
+    for (const removedProtocol of [
+      'NoteKey',
+      'noteKeyFromPath',
+      'rekeyNote'
+    ]) {
+      expect(noteStore).not.toContain(removedProtocol);
+      expect(documentState).not.toContain(removedProtocol);
+    }
+    expect(registry).not.toContain('transfer(');
+    for (const removedRuntimeProtocol of [
+      'rekey(',
+      'adoptFrom(',
+      'joinExternalQueue(',
+      'setSaveQueue('
+    ]) {
+      expect(runtime).not.toContain(removedRuntimeProtocol);
+    }
+    expect(noteRuntime).not.toContain('transferNoteRuntime');
   });
 });
 
@@ -482,4 +569,38 @@ describe('architecture fitness: NoteDraftState consumers', () => {
 
     expect(violations).toEqual([]);
   });
+});
+
+
+it('keeps backend readiness and observer identity out of the document reducer', () => {
+  const reducer = sourceText('src/lib/features/notepad/document/documentOperationMachine.ts');
+  expect(reducer).toContain('SaveWaitReason');
+  for (const backendDetail of ['HistoryReadiness', 'noteId', 'scope', 'verifiedNotes', 'totalNotes']) {
+    expect(reducer).not.toContain(backendDetail);
+  }
+  const controller = sourceText('src/lib/features/notepad/orchestration/persistenceController.ts');
+  expect(controller).toContain('loadHistoryReadiness');
+  expect(controller).toContain('waitReason:');
+});
+
+it('keeps bootstrap and shared backend snapshots behind AppStore admission', () => {
+  const appStore = sourceText('src/lib/app/appStore.svelte.ts');
+  const settings = sourceText('src/lib/features/settings/store.svelte.ts');
+  const lifecycle = sourceText(
+    'src/lib/features/notepad/orchestration/notepadSessionLifecycle.ts'
+  );
+  const session = sourceText('src/lib/features/notepad/session/session.ts');
+
+  expect(appStore).toContain('beginSnapshotAdmission(');
+  expect(appStore).toContain('admitSnapshot(');
+  expect(
+    classProperties('src/lib/features/settings/store.svelte.ts', 'SettingsStore')
+  ).not.toEqual(expect.arrayContaining(['vaultInfo', 'semanticStatus']));
+  for (const source of [settings, lifecycle, session]) {
+    expect(source).not.toContain('loadSavedNoteFallback');
+    expect(source).not.toContain('loadAssetRootFallback');
+    expect(source).not.toContain('loadSavedNoteSession');
+    expect(source).not.toContain('loadCurrentVaultInfo');
+    expect(source).not.toContain('falling back to individual');
+  }
 });

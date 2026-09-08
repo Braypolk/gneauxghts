@@ -1,5 +1,5 @@
 import type { SearchItem } from '$lib/types/semantic';
-import type { NoteDraftState, NoteKey, NotepadState } from '$lib/features/notepad/state/noteStore';
+import type { NoteDraftState, DocumentHandle, NotepadState } from '$lib/features/notepad/state/noteStore';
 import {
   getNavigationPaneId as selectNavigationPaneId
 } from '$lib/features/notepad/workspace/paneRoles';
@@ -112,7 +112,7 @@ export function createPaneSessionController<TPaneId extends string>(
           params.getPaneKind(paneId),
           'edit-document'
         ) &&
-        params.getPaneDocumentSession(paneId).key === document.key
+        params.getPaneDocumentSession(paneId).handle === document.handle
     );
   }
 
@@ -152,7 +152,7 @@ export function createPaneSessionController<TPaneId extends string>(
 
 export function getSplitSourceNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
-  sourceKey: NoteKey | null
+  sourceKey: DocumentHandle | null
 ) {
-  return sourceKey ? state.notesByKey[sourceKey] : null;
+  return sourceKey ? state.documentsByHandle[sourceKey] : null;
 }

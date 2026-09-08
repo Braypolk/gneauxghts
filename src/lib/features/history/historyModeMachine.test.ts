@@ -29,7 +29,6 @@ function revision(revisionId: string, occurredAtMillis: number) {
     timelineOrdinal: occurredAtMillis,
     timeKind: 'committed' as const,
     modifiedAtMillis: null,
-    editingSessionId: 'revision-1',
     revisionLabel: null,
     lineCount: 1,
     characterCount: 10
@@ -81,7 +80,7 @@ describe('historyModeMachine', () => {
     });
   });
 
-  it('opens on the newest revision and keeps it pinned across refreshes', () => {
+  it('opens on the newest finalized window and keeps its immutable diff pinned across newer arrivals', () => {
     const entering = transitionHistoryMode(
       createInactiveHistoryModeState(),
       { type: 'entryStarted', requestId: 4, target, workspace }
@@ -90,7 +89,9 @@ describe('historyModeMachine', () => {
       type: 'entryLoaded',
       requestId: 4,
       target,
-      page: page([revision('revision-2', 20), revision('revision-1', 10)]),
+      page: page([{ ...revision('revision-2', 20), timeKind: 'editingWindow',
+        timeEvidence: { kind: 'editingWindow', version: 1, firstWallMillis: 10, lastWallMillis: 20,
+          minWallMillis: 10, maxWallMillis: 20, clockDiscontinuity: false } }, revision('revision-1', 10)]),
       selectedDiff: diff('revision-2', 'second'),
       diagnostics: null
     });

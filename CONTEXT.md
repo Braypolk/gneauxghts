@@ -13,12 +13,12 @@ The durable identity that binds a note and its timeline across content changes, 
 _Avoid_: File identity, path identity
 
 **Note Revision**:
-A reconstructable user-visible state produced by a distinct canonical commit to a note. Revisions are retained individually even when presented together.
+A retained, reconstructable user-visible authored state with a stable identity. Finalized revisions are individually addressable.
 _Avoid_: Save, snapshot, version
 
-**Editing Session**:
-A presentation-level grouping of nearby note revisions that helps a person browse history without changing its granularity.
-_Avoid_: Revision group, autosave batch
+**Editing Window**:
+A span of ordinary editing lasting at most five minutes from its first distinct saved state, whose net change becomes one retained Note Revision. Intermediate states are not individually retained; returning to the preceding retained state creates no revision.
+_Avoid_: Editing Session, codec checkpoint, autosave interval
 
 **Named Revision**:
 A note revision carrying a durable user-supplied label that marks an important state without duplicating its content.
@@ -33,7 +33,7 @@ The local origin through which a revision or lifecycle event entered the timelin
 _Avoid_: Author, collaborator
 
 **Current-Content Provenance**:
-Revision evidence about when and how content still present in a note was introduced, most recently changed, or returned through a Version Restore.
+Retained revision evidence about when and how content still present in a note was introduced, most recently changed, or returned through a Version Restore. Editing Windows supply intervals rather than exact within-window introduction or retyping history.
 _Avoid_: Historical recall, history context
 
 **History Mode**:
@@ -59,3 +59,11 @@ _Avoid_: Revert, rollback, note recovery
 **Forgotten-Note Recovery**:
 The lifecycle transition that returns a forgotten note to the active vault without treating its content as an earlier version.
 _Avoid_: Version restore, unforget
+
+**Running Vault**:
+The one vault whose canonical notes and vault-scoped services are bound to the current application process. It remains active when another folder is staged in Settings and changes only after a new process starts.
+_Avoid_: Selected vault, active preference
+
+**Next-launch Vault Selection**:
+The persisted vault folder that a newly started process will bind as its Running Vault. Applying it does not live-switch or close the current Running Vault.
+_Avoid_: Active vault, current vault

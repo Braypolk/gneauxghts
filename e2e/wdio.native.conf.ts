@@ -1,15 +1,17 @@
-import { existsSync, mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { basename, dirname, join, resolve } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import type { Options } from '@wdio/types';
 import { startVite, stopVite } from './support/viteServer';
+import { nativeE2EBinary } from './support/nativeE2EBinary.mjs';
 
-const binaryName = process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts';
 const scaleRun = process.env.GNEAUXGHTS_RELEASE_SCALE_RUN;
-const application = resolve('src-tauri', 'target', scaleRun ? 'release' : 'debug', binaryName);
+const optimized = Boolean(scaleRun) || process.env.GNEAUXGHTS_E2E_OPTIMIZED === '1';
+const profile = optimized ? 'release' : 'debug';
+const { binary: application } = nativeE2EBinary(profile);
 if (scaleRun) {
   const marker = JSON.parse(readFileSync(join(scaleRun, 'run.json'), 'utf8'));
-  if (marker.kind !== 'gneauxghts-production-scale-v1' || !basename(scaleRun).startsWith('gneauxghts-timeline-run-')) {
+  if (marker.kind !== 'gneauxghts-editing-window-v3' || !basename(scaleRun).startsWith('gneauxghts-timeline-run-')) {
     throw new Error('Native scale tests require a disposable fixture clone');
   }
 }
@@ -68,10 +70,8 @@ export const config: Options.Testrunner = {
   connectionRetryCount: 1,
   mochaOpts: { ui: 'bdd', timeout: scaleRun ? 900_000 : 90_000 },
   async onPrepare() {
-    if (!existsSync(application)) {
-      throw new Error(`Native E2E binary is missing: ${application}`);
-    }
-    await startVite(scaleRun ? 'native-preview' : 'native', 1430);
+    nativeE2EBinary(profile, application);
+    await startVite(optimized ? 'native-preview' : 'native', 1430);
   },
   async onComplete() {
     await stopVite();

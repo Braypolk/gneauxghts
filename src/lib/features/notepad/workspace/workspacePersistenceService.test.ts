@@ -10,8 +10,8 @@ import { createWorkspacePersistenceService } from './workspacePersistenceService
 
 describe('workspacePersistenceService', () => {
   it('flushes every open document before crossing a navigation barrier', async () => {
-    const left = createNoteDraftState(undefined, 'draft:left');
-    const right = createNoteDraftState(undefined, 'draft:right');
+    const left = createNoteDraftState();
+    const right = createNoteDraftState();
     updateDocumentMarkdown(left, 'left');
     updateDocumentMarkdown(right, 'right');
     const flushAllPaneCursorSaves = vi.fn();

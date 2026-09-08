@@ -15,12 +15,14 @@ import {
 import type { NoteSession } from '$lib/features/notepad/model/types';
 
 export interface HistoryModeSessionDeps {
+  finalizeWindow: (noteId: string) => Promise<void>;
   flushWorkspace: () => Promise<void>;
   captureWorkspace: (paneId: string) => HistoryWorkspaceSnapshot;
   readTarget: (paneId: string) => HistoryModeTarget | null;
   restoreWorkspace: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
   restoreEditorState: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
   restoreFocus: (snapshot: HistoryWorkspaceSnapshot) => void | Promise<void>;
+  loadContext: (noteId: string, revisionId: string, cursor: string | null) => Promise<HistoryModePage>;
   loadPage: (
     noteId: string,
     cursor: string | null
@@ -56,6 +58,7 @@ export class HistoryModeSession {
   #nextRequestId = 1;
   #refreshPending = false;
   #restoreCompletion: Promise<void> | null = null;
+  #exitCompletion: Promise<void> | null = null;
 
   constructor(deps: HistoryModeSessionDeps) {
     this.#deps = deps;
@@ -69,28 +72,38 @@ export class HistoryModeSession {
     this.state = transitionHistoryMode(this.state, event);
   }
 
+  #isEntryCurrent(requestId: number): boolean {
+    return this.state.phase === 'entering' && this.state.requestId === requestId;
+  }
+
+  #isRequestCurrent(requestId: number): boolean {
+    return this.state.phase === 'open' && this.state.request?.requestId === requestId;
+  }
+
   #restoreAfterFailedEntry = async (workspace: HistoryWorkspaceSnapshot) => {
-    const restoreSteps = [
-      this.#deps.restoreWorkspace,
-      this.#deps.restoreEditorState,
-      this.#deps.restoreFocus
-    ];
-    for (const restore of restoreSteps) {
-      try {
-        await restore(workspace);
-      } catch {
-        // Preserve the actionable entry error while attempting every recovery step.
+    const completion = (async () => {
+      for (const restore of [this.#deps.restoreWorkspace, this.#deps.restoreEditorState, this.#deps.restoreFocus]) {
+        try { await restore(workspace); } catch {
+          // Preserve the entry error while attempting every recovery step.
+        }
       }
-    }
+    })();
+    // Entry failure also returns the workspace. Reuse the exit barrier so a
+    // newer entry captures its snapshot only after all restoration has settled.
+    this.#exitCompletion = completion;
+    try { await completion; } finally { this.#exitCompletion = null; }
   };
 
   enter = async (paneId: string): Promise<void> => this.#enter(paneId);
 
   enterCitation = async (paneId: string, target: HistoryModeTarget, revisionId: string): Promise<void> => {
-    await this.#enter(paneId, { ...target, citationRevisionId: revisionId }, revisionId);
+    await this.#enter(paneId, { ...target, fromCitation: true, citationRevisionId: revisionId }, revisionId);
   };
 
   #enter = async (paneId: string, citationTarget?: HistoryModeTarget, revisionId?: string): Promise<void> => {
+    // The editor is interactive while its prior viewport restoration settles.
+    // Preserve a new entry request and capture its workspace only afterward.
+    if (this.#exitCompletion) await this.#exitCompletion;
     if (this.state.phase !== 'inactive') return;
     const workspace = this.#deps.captureWorkspace(paneId);
     const initialTarget = citationTarget ?? this.#deps.readTarget(paneId);
@@ -111,7 +124,9 @@ export class HistoryModeSession {
 
     try {
       await this.#deps.flushWorkspace();
+      if (!this.#isEntryCurrent(requestId)) return;
     } catch (error) {
+      if (!this.#isEntryCurrent(requestId)) return;
       this.#dispatch({
         type: 'entryFailed',
         requestId,
@@ -143,16 +158,14 @@ export class HistoryModeSession {
     revisionId?: string
   ): Promise<void> => {
     try {
-      const page = await this.#deps.loadPage(target.noteId, null);
-      if (revisionId) {
-        while (!page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId) && page.nextCursor) {
-          const older = await this.#deps.loadPage(target.noteId, page.nextCursor);
-          page.records = [...page.records, ...older.records];
-          page.nextCursor = older.nextCursor;
-        }
-        if (!page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId)) {
-          throw new Error('The cited revision is no longer retained.');
-        }
+      await this.#deps.finalizeWindow(target.noteId);
+      if (!this.#isEntryCurrent(requestId)) return;
+      const page = revisionId
+        ? await this.#deps.loadContext(target.noteId, revisionId, null)
+        : await this.#deps.loadPage(target.noteId, null);
+      if (!this.#isEntryCurrent(requestId)) return;
+      if (revisionId && !page.records.some(record => record.kind === 'revision' && record.revisionId === revisionId)) {
+        throw new Error('The cited revision is no longer retained.');
       }
       const newestRevision = page.records.find(
         (record) => record.kind === 'revision' && (!revisionId || record.revisionId === revisionId)
@@ -160,6 +173,7 @@ export class HistoryModeSession {
       const selectedDiff = newestRevision?.kind === 'revision'
         ? await this.#deps.loadDiff(target.noteId, newestRevision.revisionId, 'parent')
         : null;
+      if (!this.#isEntryCurrent(requestId)) return;
       const diagnostics = null;
       this.#dispatch({
         type: 'entryLoaded',
@@ -176,6 +190,7 @@ export class HistoryModeSession {
         });
       }
     } catch (error) {
+      if (!this.#isEntryCurrent(requestId)) return;
       this.#dispatch({
         type: origin === 'entry' ? 'entryFailed' : 'retryFailed',
         requestId,
@@ -438,27 +453,26 @@ export class HistoryModeSession {
     await this.#runPendingRefresh();
   };
 
-  loadMore = async (): Promise<void> => {
-    if (
-      this.state.phase !== 'open' ||
-      this.state.request !== null ||
-      this.state.nextCursor === null
-    ) {
-      return;
-    }
+  loadMore = async (): Promise<void> => this.#loadNearby(false);
+  loadNewer = async (): Promise<void> => this.#loadNearby(true);
+
+  #loadNearby = async (newer: boolean): Promise<void> => {
+    if (this.state.phase !== 'open' || this.state.request !== null) return;
+    const cursor = newer ? this.state.previousCursor : this.state.nextCursor;
+    if (!cursor) return;
     const requestId = this.#nextRequestId++;
-    const { noteId } = this.state.target;
-    const cursor = this.state.nextCursor;
+    const { noteId, citationRevisionId } = this.state.target;
     this.#dispatch({ type: 'pageStarted', requestId });
     try {
-      const page = await this.#deps.loadPage(noteId, cursor);
+      const page = citationRevisionId
+        ? await this.#deps.loadContext(noteId, citationRevisionId, cursor)
+        : await this.#deps.loadPage(noteId, cursor);
+      if (!this.#isRequestCurrent(requestId)) return;
       this.#dispatch({ type: 'pageLoaded', requestId, page });
     } catch (error) {
-      this.#dispatch({
-        type: 'pageFailed',
-        requestId,
-        error: `Older history could not be loaded: ${errorMessage(error)}`
-      });
+      if (!this.#isRequestCurrent(requestId)) return;
+      this.#dispatch({ type: 'pageFailed', requestId,
+        error: `Nearby history could not be loaded: ${errorMessage(error)}` });
     }
     await this.#runPendingRefresh();
   };
@@ -473,7 +487,9 @@ export class HistoryModeSession {
     const { noteId } = this.state.target;
     this.#dispatch({ type: 'refreshStarted', requestId });
     try {
-      const pagePromise = this.#deps.loadPage(noteId, null);
+      const pagePromise = this.state.target.citationRevisionId
+        ? this.#deps.loadContext(noteId, this.state.target.citationRevisionId, null)
+        : this.#deps.loadPage(noteId, null);
       const diffPromise =
         this.state.selectedComparison === 'current' && this.state.selectedRevisionId
           ? this.#deps.loadDiff(noteId, this.state.selectedRevisionId, 'current')
@@ -482,6 +498,7 @@ export class HistoryModeSession {
         pagePromise,
         diffPromise ?? Promise.resolve(undefined)
       ]);
+      if (!this.#isRequestCurrent(requestId)) return;
       if (page.records.length === 0) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -491,6 +508,7 @@ export class HistoryModeSession {
       }
       this.#dispatch({ type: 'refreshLoaded', requestId, page, selectedDiff });
     } catch (error) {
+      if (!this.#isRequestCurrent(requestId)) return;
       this.#dispatch({
         type: 'historyUnavailable',
         error: `History became unavailable: ${errorMessage(error)}`
@@ -510,7 +528,7 @@ export class HistoryModeSession {
       this.state.phase === 'historyUnavailable' ||
       this.state.phase === 'noteUnavailable'
     ) {
-      const target = this.state.target.citationRevisionId ? this.state.target : this.#deps.readTarget(this.state.workspace.activePaneId);
+      const target = this.state.target.fromCitation ? this.state.target : this.#deps.readTarget(this.state.workspace.activePaneId);
       if (!target || target.noteId !== this.state.target.noteId) {
         this.#dispatch({
           type: 'noteUnavailable',
@@ -540,7 +558,7 @@ export class HistoryModeSession {
     ) {
       return;
     }
-    if (this.state.target.citationRevisionId) {
+    if (this.state.target.fromCitation) {
       // Citation targets are independent of the invoking pane. Backend reads
       // reapply eligibility to this Note Identity after a lifecycle transition.
       if (this.state.phase === 'open') await this.refresh();
@@ -559,6 +577,17 @@ export class HistoryModeSession {
   };
 
   exit = async (): Promise<void> => {
+    if (this.#exitCompletion) return this.#exitCompletion;
+    const completion = this.#finishExit();
+    this.#exitCompletion = completion;
+    try {
+      await completion;
+    } finally {
+      this.#exitCompletion = null;
+    }
+  };
+
+  #finishExit = async (): Promise<void> => {
     if (!canExitHistoryMode(this.state) || !('workspace' in this.state)) return;
     const workspace = this.state.workspace;
     this.#refreshPending = false;

@@ -25,55 +25,9 @@ pub(crate) enum CatalogWriteMode {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum ProjectionTiming {
-    Synchronous,
-    Excluded,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum TaskProjectionAction {
     Reconcile,
     Remove,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ProjectionPlan {
-    pub(crate) lexical: ProjectionTiming,
-    pub(crate) tasks: ProjectionTiming,
-    pub(crate) task_action: TaskProjectionAction,
-}
-
-impl ProjectionPlan {
-    pub(crate) fn for_upsert(mode: CatalogWriteMode, kind: DocumentKind) -> Self {
-        let task_action = task_projection_action(kind);
-        match mode {
-            CatalogWriteMode::Synchronous => Self {
-                lexical: ProjectionTiming::Synchronous,
-                tasks: ProjectionTiming::Synchronous,
-                task_action,
-            },
-            CatalogWriteMode::ManagedProjection => Self {
-                lexical: ProjectionTiming::Synchronous,
-                tasks: ProjectionTiming::Excluded,
-                task_action,
-            },
-        }
-    }
-
-    pub(crate) fn for_remove(mode: CatalogWriteMode) -> Self {
-        match mode {
-            CatalogWriteMode::Synchronous => Self {
-                lexical: ProjectionTiming::Synchronous,
-                tasks: ProjectionTiming::Synchronous,
-                task_action: TaskProjectionAction::Remove,
-            },
-            CatalogWriteMode::ManagedProjection => Self {
-                lexical: ProjectionTiming::Synchronous,
-                tasks: ProjectionTiming::Excluded,
-                task_action: TaskProjectionAction::Remove,
-            },
-        }
-    }
 }
 
 #[derive(Clone)]
@@ -361,25 +315,21 @@ impl<'a> NoteCatalog<'a> {
             let note = index.upsert_note(path.clone(), note);
             (note, index.revision())
         };
-        let plan = ProjectionPlan::for_upsert(mode, note.document_kind);
         let mutation = CatalogMutation::Upsert {
             path,
             note: Box::new(note),
         };
 
-        if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries.apply(
-                self.lexical,
-                generation,
-                &mutation,
-                ProjectionWork::synchronous(plan.tasks == ProjectionTiming::Synchronous),
-            )?;
-        }
+        self.retries.apply(
+            self.lexical,
+            generation,
+            &mutation,
+            ProjectionWork::synchronous(mode == CatalogWriteMode::Synchronous),
+        )?;
         Ok(())
     }
 
     pub(crate) fn remove(&self, path: &Path, mode: CatalogWriteMode) -> Result<(), String> {
-        let plan = ProjectionPlan::for_remove(mode);
         let generation = {
             let mut index = self
                 .notes_index
@@ -392,14 +342,12 @@ impl<'a> NoteCatalog<'a> {
         let mutation = CatalogMutation::Remove {
             path: path.to_path_buf(),
         };
-        if plan.lexical == ProjectionTiming::Synchronous {
-            self.retries.apply(
-                self.lexical,
-                generation,
-                &mutation,
-                ProjectionWork::synchronous(plan.tasks == ProjectionTiming::Synchronous),
-            )?;
-        }
+        self.retries.apply(
+            self.lexical,
+            generation,
+            &mutation,
+            ProjectionWork::synchronous(mode == CatalogWriteMode::Synchronous),
+        )?;
         Ok(())
     }
 }
@@ -463,71 +411,72 @@ mod tests {
     use crate::index::build_indexed_note;
 
     #[test]
-    fn upsert_projection_policy_covers_document_kinds_and_execution_modes() {
-        let cases = [
-            (
+    fn managed_chat_updates_lexical_search_without_changing_task_projection() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("catalog-managed-chat-app-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(app_data.path().to_path_buf())).unwrap();
+        let notes = crate::test_support::TestDir::new("catalog-managed-chat-notes");
+        let path = notes.path().join("Projection.md");
+        let note = "---\ngneauxghts:\n  id: projection-id\n  kind: note\n---\n\nOld lexical body\n\n- [ ] retained ordinary task";
+        let chat = "---\ngneauxghts:\n  id: projection-id\n  kind: chatTranscript\n---\n\nManaged chat lexical body\n\n- [ ] ignored chat task";
+        let index = Mutex::new(NotesIndex::default());
+        let lexical = Arc::new(LexicalIndex::new().unwrap());
+        let retries = CatalogProjectionRetries::default();
+        let catalog = NoteCatalog::new(&index, &lexical, &retries);
+
+        catalog
+            .upsert(
+                path.clone(),
+                build_indexed_note(&path, note, 41),
                 CatalogWriteMode::Synchronous,
-                DocumentKind::Note,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Synchronous,
-                TaskProjectionAction::Reconcile,
-            ),
-            (
-                CatalogWriteMode::Synchronous,
-                DocumentKind::ChatIndex,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Synchronous,
-                TaskProjectionAction::Remove,
-            ),
-            (
-                CatalogWriteMode::Synchronous,
-                DocumentKind::ChatTranscript,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Synchronous,
-                TaskProjectionAction::Remove,
-            ),
-            (
+            )
+            .unwrap();
+        catalog
+            .upsert(
+                path.clone(),
+                build_indexed_note(&path, chat, 42),
                 CatalogWriteMode::ManagedProjection,
-                DocumentKind::ChatTranscript,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Excluded,
-                TaskProjectionAction::Remove,
-            ),
-        ];
+            )
+            .unwrap();
 
-        for (mode, kind, lexical, tasks, task_action) in cases {
-            assert_eq!(
-                ProjectionPlan::for_upsert(mode, kind),
-                ProjectionPlan {
-                    lexical,
-                    tasks,
-                    task_action,
-                }
-            );
-        }
-    }
+        assert_eq!(
+            lexical
+                .search(
+                    "managed chat",
+                    "managed chat",
+                    &["managed", "chat"],
+                    10,
+                    None,
+                )
+                .unwrap()
+                .len(),
+            1
+        );
+        let tasks = crate::state::task_projection::load_tasks_for_note_id("projection-id").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].text, "retained ordinary task");
 
-    #[test]
-    fn remove_projection_policy_distinguishes_synchronous_and_managed_paths() {
-        let cases = [
-            (
-                CatalogWriteMode::Synchronous,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Synchronous,
-            ),
-            (
-                CatalogWriteMode::ManagedProjection,
-                ProjectionTiming::Synchronous,
-                ProjectionTiming::Excluded,
-            ),
-        ];
-
-        for (mode, lexical, tasks) in cases {
-            let plan = ProjectionPlan::for_remove(mode);
-            assert_eq!(plan.lexical, lexical);
-            assert_eq!(plan.tasks, tasks);
-            assert_eq!(plan.task_action, TaskProjectionAction::Remove);
-        }
+        catalog
+            .remove(&path, CatalogWriteMode::ManagedProjection)
+            .unwrap();
+        assert!(lexical
+            .search(
+                "managed chat",
+                "managed chat",
+                &["managed", "chat"],
+                10,
+                None,
+            )
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            crate::state::task_projection::load_tasks_for_note_id("projection-id")
+                .unwrap()
+                .len(),
+            1
+        );
+        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]

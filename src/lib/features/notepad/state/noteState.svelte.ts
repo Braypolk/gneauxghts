@@ -5,7 +5,7 @@ import {
 
 const initialNote = createNoteDraftState();
 
-export const initialNotepadNoteKey = initialNote.key;
+export const initialNotepadDocumentHandle = initialNote.handle;
 export const notepadState = $state(
   createNotepadState(initialNote)
 );

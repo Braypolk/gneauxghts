@@ -1,11 +1,17 @@
+import {
+  documentCanLeaveWithoutCanonicalWrite,
+  documentHasCleanBuffer
+} from '$lib/features/notepad/document/documentState';
 import type {
   NoteDraftState,
-  NoteKey
+  DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 
 export interface DocumentDepartureControllerDeps<
   TPaneId extends string
 > {
+  hasOtherEditingPane: (paneId: TPaneId, document: NoteDraftState) => boolean;
+  finalizeWindow: (document: NoteDraftState) => Promise<void>;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   flushAllPendingCursorSaves: () => void;
   saveCursorPositionForPane: (
@@ -14,13 +20,15 @@ export interface DocumentDepartureControllerDeps<
   ) => void | Promise<void>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
   enqueueSave: (document: NoteDraftState) => Promise<void>;
-  getNoteSaveQueue: (noteKey: NoteKey) => Promise<void>;
+  getNoteSaveQueue: (documentHandle: DocumentHandle) => Promise<void>;
   clearLastOpenedNote: () => Promise<void>;
 }
 
 export interface PrepareDocumentDepartureOptions {
   clearLastOpened?: boolean;
   persist?: boolean;
+  /** Save/cursor-only preparation when navigation has not been chosen yet. */
+  finalize?: boolean;
 }
 
 /**
@@ -38,18 +46,28 @@ export function createDocumentDepartureController<
     document: NoteDraftState,
     {
       clearLastOpened = false,
-      persist = true
+      persist = true,
+      finalize = true
     }: PrepareDocumentDepartureOptions = {}
   ): Promise<NoteDraftState> {
     deps.flushAllPendingCursorSaves();
     if (persist) {
       deps.cancelPendingAutosave(document);
-      await deps.getNoteSaveQueue(document.key);
-      await deps.enqueueSave(document);
+      await deps.getNoteSaveQueue(document.handle);
+      const documentAfterQueue = deps.getPaneDocument(paneId);
+      if (!documentCanLeaveWithoutCanonicalWrite(documentAfterQueue)) {
+        await deps.enqueueSave(documentAfterQueue);
+      }
     }
 
     const authoritativeDocument =
       deps.getPaneDocument(paneId);
+    if (!documentHasCleanBuffer(authoritativeDocument)) {
+      throw new Error('The note could not be saved before leaving the editor.');
+    }
+    if (finalize && !deps.hasOtherEditingPane(paneId, authoritativeDocument)) {
+      await deps.finalizeWindow(authoritativeDocument);
+    }
     await deps.saveCursorPositionForPane(
       paneId,
       authoritativeDocument

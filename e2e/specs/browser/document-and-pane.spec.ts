@@ -101,16 +101,80 @@ describe('document and pane state-machine boundaries', () => {
     expect(await editorText()).toBe(betaText);
   });
 
+  it('opens history with Cmd+Shift+H only from an editor pane', async () => {
+    await $('[data-testid="note-editor"] .cm-content').click();
+    // Dispatch logical keys: the host keyboard layout remaps WebDriver's H to D.
+    const showHistory = () => browser.execute(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'H', code: 'KeyH', metaKey: true, shiftKey: true,
+        bubbles: true, cancelable: true
+      }));
+    });
+    await showHistory();
+    await $('[data-testid="historical-revision-diff"]').waitForExist();
+    await browser.keys('Escape');
+    await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
+
+    await browser.execute(() => {
+      document.activeElement?.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 't', code: 'KeyT', metaKey: true, bubbles: true, cancelable: true
+      }));
+    });
+    await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').waitForExist();
+    await showHistory();
+    expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
+  });
+
   it('returns keyboard focus to the history toolbar control', async () => {
     const open = await $('button[aria-label="Open note history"]');
     await browser.execute((element: HTMLElement) => { element.focus(); element.click(); }, open);
     await $('[data-testid="historical-revision-diff"]').waitForExist();
-    await $('button[aria-label="Back to workspace"]').click();
+    await browser.keys('Escape');
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
     await browser.waitUntil(async () => browser.execute(() =>
       document.activeElement === document.querySelector('button[aria-label="Open note history"]')
     ));
   });
+
+  for (const layout of [
+    { name: 'desktop with Related collapsed', width: 1280, expandRelated: false },
+    { name: 'desktop with Related expanded', width: 1280, expandRelated: true },
+    { name: 'mobile', width: 390, expandRelated: false }
+  ]) {
+    it(`keeps the editor frame width in history on ${layout.name}`, async () => {
+      const originalSize = await browser.getWindowSize();
+      try {
+        await browser.setWindowSize(layout.width, 844);
+        if (layout.expandRelated) {
+          await $('button[aria-label="Expand related notes"]').click();
+          await $('button[aria-label="Close related panel"]').waitForClickable();
+        }
+        const card = await $('[data-testid="workspace-card"]');
+        await browser.waitUntil(async () => browser.execute(
+          (element: HTMLElement) => element.getAnimations().length === 0, card
+        ));
+        const before = await card.getSize();
+        const position = await card.getLocation();
+
+        const openHistory = await $('button[aria-label="Open note history"]');
+        // Match the existing history journeys: mobile shell chrome can overlap
+        // this toolbar in the browser harness, independently of history layout.
+        await browser.execute((element: HTMLElement) => element.click(), openHistory);
+        const history = await $('[data-testid="history-mode"]');
+        await $('[data-testid="historical-revision-diff"]').waitForExist();
+        expect((await history.getSize()).width).toBeCloseTo(before.width, 0);
+        expect((await history.getLocation()).x).toBeCloseTo(position.x, 0);
+        expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
+
+        await $('button[aria-label="Back to workspace"]').click();
+        await history.waitForExist({ reverse: true });
+        expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
+        expect((await card.getLocation()).x).toBeCloseTo(position.x, 0);
+      } finally {
+        await browser.setWindowSize(originalSize.width, originalSize.height);
+      }
+    });
+  }
 
   it('opens Revision Citations at exact evidence and leaves chat workspace context intact', async () => {
     await browser.execute(() => window.__GNEAUXGHTS_E2E__?.seedRevisionChat());
@@ -130,7 +194,16 @@ describe('document and pane state-machine boundaries', () => {
     expect(await history.getText()).toContain('removed confidential prose');
     const requests = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot().invocations ?? []);
     expect(requests.some(entry => entry.command === 'get_note_history_diff' && entry.args.noteId === 'note-beta' && entry.args.revisionId === 'note-beta-revision-2')).toBe(true);
-    expect(requests.filter(entry => entry.command === 'get_note_history_page' && entry.args.noteId === 'note-beta').length).toBeGreaterThan(1);
+    expect(requests.filter(entry => entry.command === 'get_note_history_page' && entry.args.noteId === 'note-beta').length).toBe(0);
+    expect(requests.filter(entry => entry.command === 'get_note_history_context' && entry.args.noteId === 'note-beta').length).toBe(1);
+    expect(await $$('[data-revision-id]').length).toBeLessThanOrEqual(31);
+    const originalIds = await $$('[data-revision-id]').map(row => row.getAttribute('data-revision-id'));
+    await $('button=Load newer history').click();
+    await browser.waitUntil(async () => !(await $('[data-revision-id="note-beta-revision-2"]').isExisting()));
+    expect(await $$('[data-revision-id]').length).toBeLessThanOrEqual(31);
+    await $('button=Load older history').click();
+    await $('[data-revision-id="note-beta-revision-2"]').waitForExist();
+    expect(await $$('[data-revision-id]').map(row => row.getAttribute('data-revision-id'))).toEqual(originalIds);
     const exit = await $('button[aria-label="Back to workspace"]');
     await exit.click();
     await history.waitForExist({ reverse: true });
@@ -216,13 +289,7 @@ describe('document and pane state-machine boundaries', () => {
       'true'
     );
 
-    const editingSession = await $('[data-testid="editing-session-note-alpha-revision-31"]');
-    await editingSession.waitForExist();
-    const expandSession = await editingSession.$('button[aria-label="Expand Editing Session"]');
-    await expandSession.click();
-    await editingSession.$('button[aria-label="Collapse Editing Session"]').waitForExist();
-    expect(await editingSession.$$('[data-revision-id]')).toHaveLength(5);
-    const changedRevision = await editingSession.$('[data-revision-id="note-alpha-revision-33"]');
+    const changedRevision = await $('[data-revision-id="note-alpha-revision-33"]');
     await changedRevision.click();
     const revisionDiff = await $('[data-testid="historical-revision-diff"]');
     await browser.waitUntil(async () => (await revisionDiff.getText()).includes('Inserted'));
@@ -235,29 +302,44 @@ describe('document and pane state-machine boundaries', () => {
     expect(await properties.getText()).toContain('project: atlas');
     expect(await properties.getText()).toContain('project: zeus');
 
+    await changedRevision.doubleClick();
     const revisionName = await $('input[aria-label="Revision name"]');
     await revisionName.setValue('Release candidate');
     await $('button=Add name').click();
     await browser.waitUntil(async () => (await history.getText()).includes('Release candidate'));
+    await $('[data-revision-id="note-alpha-revision-33"]').click({ button: 'right' });
     const renamedRevision = await $('input[aria-label="Revision name"]');
     await renamedRevision.setValue('Milestone');
     await $('button=Save name').click();
     await browser.waitUntil(async () => (await history.getText()).includes('Milestone'));
 
-    const duplicateRevision = await editingSession.$('[data-revision-id="note-alpha-revision-32"]');
-    await duplicateRevision.click();
+    const duplicateRevision = await $('[data-revision-id="note-alpha-revision-32"]');
+    await duplicateRevision.doubleClick();
     await $('input[aria-label="Revision name"]').setValue('Milestone');
     await $('button=Add name').click();
-    await browser.waitUntil(async () => (await history.getText()).match(/Milestone/gu)?.length === 2);
+    await browser.waitUntil(async () => (await $('[aria-label="Note timeline"]').getText()).match(/Milestone/gu)?.length === 2);
+    await $('[data-revision-id="note-alpha-revision-32"]').click({ button: 'right' });
     await $('button=Remove name').click();
-    await browser.waitUntil(async () => (await history.getText()).match(/Milestone/gu)?.length === 1);
+    await browser.waitUntil(async () => (await $('[aria-label="Note timeline"]').getText()).match(/Milestone/gu)?.length === 1);
+
+    const renameTrigger = await $('[data-revision-id="note-alpha-revision-32"]');
+    await renameTrigger.click();
+    await browser.keys('F2');
+    const cancelledName = await $('input[aria-label="Revision name"]');
+    await cancelledName.setValue('Unsaved name');
+    await browser.keys('Escape');
+    await cancelledName.waitForExist({ reverse: true });
+    expect(await history.isExisting()).toBe(true);
+    expect(await history.getText()).not.toContain('Unsaved name');
+    expect(await browser.execute((element: HTMLElement) => document.activeElement === element,
+      await $('[data-revision-id="note-alpha-revision-32"]'))).toBe(true);
+    expect(await $('[aria-label="Historical revision"] [aria-label="History tools"]').isExisting()).toBe(false);
+    expect(await $('[aria-label="Note timeline"] [aria-label="History tools"]').isExisting()).toBe(true);
 
     expect(await history.getText()).toContain('Renamed Alpha old.md to alpha.md');
     expect(await $$('[data-revision-id="note-alpha-title-only-rename"]')).toHaveLength(0);
 
-    const emptySession = await $('[data-testid="editing-session-note-alpha-revision-30"]');
-    await emptySession.$('button[aria-label="Expand Editing Session"]').click();
-    const emptyRevision = await emptySession.$('[data-revision-id="note-alpha-revision-30"]');
+    const emptyRevision = await $('[data-revision-id="note-alpha-revision-30"]');
     await emptyRevision.click();
     await browser.waitUntil(async () =>
       (await revisionDiff.getText()).includes('Deleted to create an empty note.')
@@ -266,7 +348,7 @@ describe('document and pane state-machine boundaries', () => {
     expect(await authoredBody.$$('[data-diff-kind="removed"]')).toHaveLength(1);
     expect(await authoredBody.$$('[data-diff-kind="added"]')).toHaveLength(0);
 
-    const olderRevision = await editingSession.$('[data-revision-id="note-alpha-revision-34"]');
+    const olderRevision = await $('[data-revision-id="note-alpha-revision-34"]');
     await olderRevision.click();
     await browser.waitUntil(async () =>
       (await $('[data-testid="historical-revision-diff"]').getText()).includes(
@@ -277,22 +359,11 @@ describe('document and pane state-machine boundaries', () => {
     const currentComparison = await $(
       'button[aria-label="Compare selected revision with current note"]'
     );
-    await currentComparison.waitForClickable();
-    await currentComparison.click();
-    await browser.waitUntil(async () =>
-      (await currentComparison.getAttribute('aria-pressed')) === 'true' &&
-      (await currentComparison.isEnabled())
-    );
-    expect(await history.getText()).toContain('Alpha line 1');
+    expect(await currentComparison.isExisting()).toBe(false);
     const parentComparison = await $(
       'button[aria-label="Compare selected revision with previous revision"]'
     );
-    await parentComparison.waitForClickable();
-    await parentComparison.click();
-    await browser.waitUntil(async () =>
-      (await parentComparison.getAttribute('aria-pressed')) === 'true' &&
-      (await parentComparison.isEnabled())
-    );
+    expect(await parentComparison.isExisting()).toBe(false);
 
     const loadOlder = await $('button=Load older history');
     await loadOlder.waitForClickable();
@@ -300,7 +371,8 @@ describe('document and pane state-machine boundaries', () => {
     await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
     expect(await history.getText()).toContain('Created');
 
-    const clearHistory = await (await $('main')).$('button=Clear note history');
+    await $('[aria-label="History tools"] summary').click();
+    const clearHistory = await (await $('[aria-label="Note timeline"]')).$('button=Clear note history');
     await clearHistory.click();
     const confirmClear = await $('button=Confirm clear note history');
     await confirmClear.waitForClickable();
@@ -430,9 +502,7 @@ describe('document and pane state-machine boundaries', () => {
     await browser.execute((element: HTMLElement) => element.click(), openHistory);
     const history = await $('[data-testid="history-mode"]');
     await history.waitForExist();
-    const editingSession = await $('[data-testid="editing-session-note-alpha-revision-31"]');
-    await editingSession.$('button[aria-label="Expand Editing Session"]').click();
-    await editingSession.$('[data-revision-id="note-alpha-revision-34"]').click();
+    await $('[data-revision-id="note-alpha-revision-34"]').click();
     await browser.waitUntil(async () =>
       (await $('[data-testid="historical-revision-diff"]').getText()).includes(
         'Historical revision 34'
@@ -445,6 +515,13 @@ describe('document and pane state-machine boundaries', () => {
     expect(await preview.getText()).toContain('Historical revision 34 of Alpha note');
     expect(await preview.getText()).toContain('Confirm Version Restore');
     expect(await preview.$$('textarea')).toHaveLength(0);
+    const previewToggle = await $('button=Preview complete replacement');
+    expect(await previewToggle.getAttribute('aria-expanded')).toBe('true');
+    await previewToggle.click();
+    await preview.waitForExist({ reverse: true });
+    expect(await previewToggle.getAttribute('aria-expanded')).toBe('false');
+    await previewToggle.click();
+    await preview.waitForExist();
     await preview.$('button=Confirm Version Restore').click();
     await browser.waitUntil(async () => (await history.getText()).includes('Version restore'));
 

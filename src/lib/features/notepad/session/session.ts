@@ -1,3 +1,5 @@
+import { startupMark } from '$lib/e2e/startupMetrics';
+import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
 import { invoke } from "@tauri-apps/api/core";
 import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
 import type {
@@ -8,7 +10,6 @@ import type {
   ForgottenNoteSummary,
   RestoredForgottenNote,
 } from "$lib/types/forgottenNotes";
-import type { VaultInfo } from "$lib/types/vault";
 
 export interface ForgottenNote {
   title: string;
@@ -87,33 +88,6 @@ export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
   };
 }
 
-export function shouldSkipAutosave(
-  title: string,
-  markdown: string,
-  currentNoteId: string | null,
-  currentNotePath: string | null,
-  snapshot: Pick<
-    SessionSnapshot,
-    "lastSavedTitle" | "lastSavedMarkdown" | "lastSavedNoteId" | "lastSavedPath"
-  >,
-) {
-  return (
-    title === snapshot.lastSavedTitle &&
-    markdown === snapshot.lastSavedMarkdown &&
-    currentNoteId === snapshot.lastSavedNoteId &&
-    currentNotePath === snapshot.lastSavedPath
-  );
-}
-
-export async function loadSavedNoteSession() {
-  const saved = await invoke<NoteSession>("load_note_session");
-  return createSessionSnapshot(saved);
-}
-
-export async function loadCurrentVaultInfo() {
-  return invoke<VaultInfo>("get_vault_info");
-}
-
 export function resolveAssetRootPath(vaultPath: string) {
   return `${vaultPath.replace(/[\\/]+$/u, "")}${vaultPath.includes("\\") ? "\\" : "/"}assets`;
 }
@@ -133,11 +107,14 @@ export async function readNoteSession(
   noteId: string | null,
   notePath: string | null,
 ) {
-  const session = await invoke<NoteSession>("read_note", {
+  return invoke<NoteSession>("read_note", {
     noteId,
     path: notePath,
   });
-  return createSessionSnapshot(session);
+}
+
+export function loadHistoryReadiness(noteId: string | null) {
+  return invoke<HistoryReadiness>("get_history_readiness", { noteId });
 }
 
 export async function saveNoteSession(
@@ -145,12 +122,14 @@ export async function saveNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
+  startupMark("editor-save-ipc-start", { currentPath, markdownBytes: markdown.length });
   const saved = await invoke<NoteSession>("save_note", {
     title,
     markdown,
     currentPath,
   });
-  return createSessionSnapshot(saved);
+  startupMark("editor-save-ipc-resolved", { noteId: saved.noteId, commitWarning: saved.commitWarning ?? null });
+  return saved;
 }
 
 export async function saveTaskNoteSession(
@@ -158,12 +137,11 @@ export async function saveTaskNoteSession(
   markdown: string,
   currentPath: string | null,
 ) {
-  const saved = await invoke<NoteSession>("save_task_note", {
+  return invoke<NoteSession>("save_task_note", {
     title,
     markdown,
     currentPath,
   });
-  return createSessionSnapshot(saved);
 }
 
 export async function markNoteOpened(noteId: string) {

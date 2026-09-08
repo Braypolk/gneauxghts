@@ -1,12 +1,14 @@
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+import type { NoteSession } from '$lib/features/notepad/model/types';
 import {
   createDocumentOperationState,
   isDocumentOperationTokenCurrent,
   transitionDocumentOperation,
   type DocumentOperationEvent,
   type DocumentOperationKind,
-  type DocumentOperationState
+  type DocumentOperationState,
+  type SaveWaitReason
 } from './documentOperationMachine';
 import {
   createDocumentExternalSyncState,
@@ -25,7 +27,8 @@ export type {
   DocumentExternalSyncState
 } from './documentExternalSyncMachine';
 
-export type NoteKey = `path:${string}` | `draft:${string}`;
+/** Opaque identity for one in-memory open-document lifetime. */
+export type DocumentHandle = `document:${string}`;
 
 export interface DocumentWorkingContent {
   title: string;
@@ -74,13 +77,18 @@ export type ExternalDocumentChange =
     };
 
 export interface NoteDraftState {
-  key: NoteKey;
+  readonly handle: DocumentHandle;
   working: DocumentWorkingContent;
   identity: DocumentIdentity;
   savedBaseline: DocumentSavedBaseline | null;
   operation: DocumentOperationState;
   externalSync: DocumentExternalSyncState;
   publication: DocumentPublicationState;
+  canonicalCollision: {
+    otherHandle: DocumentHandle;
+    noteId: string | null;
+    path: string;
+  } | null;
 }
 
 function identityFromBoundary(
@@ -148,21 +156,42 @@ export function externalDocumentSnapshotFromSession(
   };
 }
 
+export function externalDocumentSnapshotFromCommittedNote(
+  committed: NoteSession
+): ExternalDocumentSnapshot {
+  const identity = identityFromBoundary(
+    committed.noteId,
+    committed.path
+  );
+  const content = {
+    title: committed.title,
+    markdown: committed.markdown
+  };
+  return {
+    content,
+    identity,
+    savedBaseline: committed.path || committed.noteId
+      ? { content: { ...content }, identity }
+      : null
+  };
+}
+
 export function createDocumentState(
   snapshot: SessionSnapshot,
-  key: NoteKey
+  handle: DocumentHandle
 ): NoteDraftState {
   const external = externalDocumentSnapshotFromSession(
     snapshot
   );
   const document: NoteDraftState = {
-    key,
+    handle,
     working: { ...external.content },
     identity: external.identity,
     savedBaseline: external.savedBaseline,
     operation: createDocumentOperationState(),
     externalSync: createDocumentExternalSyncState(),
-    publication: { warning: snapshot.commitWarning ?? null }
+    publication: { warning: snapshot.commitWarning ?? null },
+    canonicalCollision: null
   };
   return document;
 }
@@ -236,7 +265,21 @@ export function documentHasCleanBuffer(
 export function documentHasUnresolvedConflict(
   document: NoteDraftState
 ) {
-  return document.externalSync.kind === 'conflict';
+  return (
+    document.externalSync.kind === 'conflict' ||
+    document.canonicalCollision !== null
+  );
+}
+
+/** A collision participant can leave only when closing cannot discard edits. */
+export function documentCanLeaveWithoutCanonicalWrite(
+  document: NoteDraftState
+) {
+  return (
+    document.canonicalCollision !== null &&
+    document.externalSync.kind !== 'conflict' &&
+    documentHasCleanBuffer(document)
+  );
 }
 
 function advanceRevision(document: NoteDraftState) {
@@ -328,12 +371,68 @@ export function applySessionSnapshotToDocument(
   return { titleChanged, markdownChanged };
 }
 
+export function applyCommittedNoteToDocument(
+  document: NoteDraftState,
+  committed: NoteSession,
+  {
+    preserveWorking = false
+  }: { preserveWorking?: boolean } = {}
+) {
+  const external = externalDocumentSnapshotFromCommittedNote(
+    committed
+  );
+  const titleChanged =
+    !preserveWorking &&
+    document.working.title !== external.content.title;
+  const markdownChanged =
+    !preserveWorking &&
+    document.working.markdown !== external.content.markdown;
+
+  document.identity = external.identity;
+  document.savedBaseline = external.savedBaseline;
+  document.publication.warning = committed.commitWarning ?? null;
+  if (!preserveWorking) {
+    document.working = { ...external.content };
+  }
+  if (titleChanged || markdownChanged) {
+    advanceRevision(document);
+  }
+  dispatchDocumentExternalSync(document, {
+    type: 'boundaryApplied'
+  });
+  return { titleChanged, markdownChanged };
+}
+
+export function restoreTransientDraftToDocument(
+  document: NoteDraftState,
+  content: DocumentWorkingContent,
+  identity: { noteId: string | null; path: string | null }
+) {
+  const titleChanged = document.working.title !== content.title;
+  const markdownChanged =
+    document.working.markdown !== content.markdown;
+  document.working = { ...content };
+  document.identity = identityFromBoundary(
+    identity.noteId,
+    identity.path
+  );
+  document.savedBaseline = null;
+  document.publication.warning = null;
+  if (titleChanged || markdownChanged) {
+    advanceRevision(document);
+  }
+  dispatchDocumentExternalSync(document, {
+    type: 'boundaryApplied'
+  });
+  return { titleChanged, markdownChanged };
+}
+
 export function externalSnapshotMatchesSavedBaseline(
   document: NoteDraftState,
-  snapshot: SessionSnapshot
+  committed: NoteSession
 ) {
-  const external = externalDocumentSnapshotFromSession(
-    snapshot
+  const external = externalDocumentSnapshotFromCommittedNote(
+    committed
   );
   const baseline = document.savedBaseline;
   return Boolean(
@@ -388,7 +487,7 @@ export function resolveConflictUsingExternal(
 export type DocumentStatusViewModel =
   | { kind: 'idle'; label: 'Saved' }
   | { kind: 'dirty'; label: 'Unsaved changes' }
-  | { kind: 'busy'; label: string }
+  | { kind: 'busy'; label: string; historyWaiting?: true }
   | { kind: 'failed'; label: string }
   | {
       kind: 'warning';
@@ -400,11 +499,23 @@ export type DocumentStatusViewModel =
       kind: 'conflict';
       label: 'Changed outside the app';
       externalKind: ExternalDocumentChange['kind'];
+    }
+  | {
+      kind: 'canonicalCollision';
+      label: 'Saved note is open in another draft';
+      path: string;
     };
 
 export function getDocumentStatusViewModel(
   document: NoteDraftState
 ): DocumentStatusViewModel {
+  if (document.canonicalCollision) {
+    return {
+      kind: 'canonicalCollision',
+      label: 'Saved note is open in another draft',
+      path: document.canonicalCollision.path
+    };
+  }
   if (document.externalSync.kind === 'conflict') {
     return {
       kind: 'conflict',
@@ -421,7 +532,11 @@ export function getDocumentStatusViewModel(
   if (document.operation.kind !== 'idle') {
     return {
       kind: 'busy',
-      label: document.operation.kind
+      ...(document.operation.kind === 'saving' && document.operation.waitReason
+        ? { historyWaiting: true as const } : {}),
+      label: document.operation.kind === 'saving'
+        ? saveProgressLabel(document.operation.waitReason)
+        : 'Forgetting…'
     };
   }
   if (document.publication.warning) {
@@ -439,4 +554,14 @@ export function getDocumentStatusViewModel(
   return !documentHasCleanBuffer(document)
     ? { kind: 'dirty', label: 'Unsaved changes' }
     : { kind: 'idle', label: 'Saved' };
+}
+
+function saveProgressLabel(reason?: SaveWaitReason) {
+  switch (reason) {
+    case 'recovery': return 'Unsaved changes — recovering history before saving…';
+    case 'verification': return 'Unsaved changes — checking this note’s history before saving…';
+    case 'unavailable': return 'Unsaved changes — history is unavailable. Retry history from Settings.';
+    case 'corrupt': return 'Unsaved changes — history needs repair. Open Settings for recovery.';
+    default: return 'Saving…';
+  }
 }

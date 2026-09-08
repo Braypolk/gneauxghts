@@ -37,7 +37,6 @@ describe('MissingNotesPanel', () => {
                   timelineOrdinal: 1,
                   timeKind: 'committed',
                   modifiedAtMillis: null,
-                  editingSessionId: null,
                   revisionLabel: 'Before deletion',
                   lineCount: 12,
                   characterCount: 480

@@ -431,7 +431,8 @@ describe('durable proposal editor review', () => {
     expect(test.acknowledgeDocumentCommit).toHaveBeenCalledWith({
       document: test.document,
       path,
-      markdown: 'After'
+      markdown: 'After',
+      commitWarning: null
     });
   });
 

@@ -1,3 +1,6 @@
+import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
+import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import { getDocumentNoteId } from '$lib/features/notepad/document/documentState';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { removeNoteIfUnreferenced } from '$lib/features/notepad/state/noteStore';
 import { createPaneCommandGroup } from './paneCommandGroup';
@@ -70,6 +73,13 @@ export function createNotepadCommands<TPaneId extends string>(
     });
   const documentDeparture =
     createDocumentDepartureController<TPaneId>({
+      hasOtherEditingPane: (paneId, document) => workspace.getPaneOrder().some(
+        other => other !== paneId && paneHasCapability(panes.getPaneKind(other), 'edit-document') && panes.getPaneDocument(other).handle === document.handle
+      ),
+      finalizeWindow: async (document) => {
+        const noteId = getDocumentNoteId(document);
+        if (noteId) await finalizeNoteEditingWindow(noteId);
+      },
       getPaneDocument: panes.getPaneDocument,
       flushAllPendingCursorSaves:
         documents.flushAllPendingCursorSaves,
@@ -105,7 +115,7 @@ export function createNotepadCommands<TPaneId extends string>(
       workspace.getPaneCommandSourcePaneId,
     getPaneTitleInput: panes.getPaneTitleInput,
     activatePaneSession: panes.activatePaneSession,
-    setPaneKind: workspace.setPaneKind,
+    setPaneKind: (paneId, kind): Promise<void> => workspacePaneCommands.setPaneKind(paneId, kind, { recordCurrentLocation: false }),
     loadRecentNotes: derivedViews.loadRecentNotes,
     openNotePath,
     paneLifecycle,
@@ -173,11 +183,11 @@ export function createNotepadCommands<TPaneId extends string>(
     resetPaneCommand: workspace.resetPaneCommand,
     getPaneCommandPaneId:
       workspace.getPaneCommandPaneId,
-    removeUnreferencedNote: (noteKey) =>
+    removeUnreferencedNote: (documentHandle) =>
       removeNoteIfUnreferenced(
         state,
         workspace,
-        noteKey
+        documentHandle
       ),
     paneLifecycle,
     canLeaveDocument: deps.canLeaveDocument,
@@ -214,17 +224,17 @@ export function createNotepadCommands<TPaneId extends string>(
 
   const paneCommandController = createPaneCommandController({
     setStoredPaneKind: workspace.setPaneKind,
-    removeUnreferencedNote: (noteKey) =>
+    removeUnreferencedNote: (documentHandle) =>
       removeNoteIfUnreferenced(
         state,
         workspace,
-        noteKey
+        documentHandle
       ),
     getActivePaneId: workspace.getActivePaneId,
     getPaneCommandPaneId:
       workspace.getPaneCommandPaneId,
-    getPaneCommandSourceNoteKey:
-      workspace.getPaneCommandSourceNoteKey,
+    getPaneCommandSourceDocumentHandle:
+      workspace.getPaneCommandSourceDocumentHandle,
     getPaneCommandHighlightedIndex:
       workspace.getPaneCommandHighlightedIndex,
     getPaneCommandMode: workspace.getPaneCommandMode,
@@ -234,7 +244,7 @@ export function createNotepadCommands<TPaneId extends string>(
     getPaneDocument: panes.getPaneDocument,
     getPaneKind: panes.getPaneKind,
     focusPaneEditorAtEnd: panes.focusPaneEditorAtEnd,
-    getNoteByKey: panes.getNoteByKey,
+    getDocumentByHandle: panes.getDocumentByHandle,
     setPaneDocument: panes.setPaneDocumentSession,
     activatePane: panes.activatePaneSession,
     paneLifecycle,

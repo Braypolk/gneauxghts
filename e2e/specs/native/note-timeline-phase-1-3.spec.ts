@@ -108,6 +108,7 @@ async function saveVersions(title: string, versions: string[]): Promise<NoteSess
       markdown,
       currentPath: note.path
     });
+    await invokeNative('finalize_note_editing_window', {noteId: note.noteId});
   }
   return note;
 }
@@ -199,10 +200,6 @@ async function loadAllHistory() {
 
 async function revealRevision(revisionId: string) {
   if (await $(`[data-revision-id="${revisionId}"]`).isExisting()) return;
-  for (const expand of await $$('button[aria-label="Expand Editing Session"]')) {
-    await expand.click();
-    if (await $(`[data-revision-id="${revisionId}"]`).isExisting()) return;
-  }
   throw new Error(`Revision ${revisionId} was not present in History Mode`);
 }
 
@@ -475,7 +472,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await history.waitForExist({ reverse: true });
   });
 
-  it('resets corrupt history, recovers a forgotten note, and keeps its timeline usable after restart', async () => {
+  it('resets corrupt history, recovers a forgotten note, and keeps its timeline usable after driver reconnection', async () => {
     const note = await saveVersions('Native reset recovery', [
       'Forgotten version before corruption',
       'Forgotten current version before corruption'
@@ -528,17 +525,21 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await openHistory();
     await $('button[aria-label="Back to workspace"]').click();
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
-    await replaceEditorText(`${firstRecoveredEdit}\n\nSecond edit before restart`);
-    await browser.waitUntil(async () => {
-      const records = await historyRecords(note.noteId);
-      return records.filter(
-        (record) => record.kind === 'revision' && record.source === 'editor'
-      ).length >= 2;
-    }, { timeout: 20_000, timeoutMsg: 'Expected the second recovered editor revision to persist' });
+    await replaceEditorText(`${firstRecoveredEdit}\n\nSecond edit before driver reconnection`);
+    await browser.waitUntil(() =>
+      readFileSync(recovered.path!, 'utf8').includes('Second edit before driver reconnection'),
+      { timeout: 20_000, timeoutMsg: 'Expected the second recovered edit to reach canonical Markdown' });
+    const beforeReconnect = await historyRecords(note.noteId);
+    expect(beforeReconnect.filter(record => record.kind === 'revision' && record.source === 'editor')).toHaveLength(1);
 
     await browser.reloadSession();
     await browser.switchToWindow('main');
     await waitForNote(note.title);
+    // Embedded reloadSession reconnects WebDriver without restarting Rust.
+    // Background reconnection must leave the saved window pending; explicit
+    // History Mode entry flushes and finalizes it for immutable inspection.
+    expect((await historyRecords(note.noteId)).filter(record => record.kind === 'revision' && record.source === 'editor')).toHaveLength(1);
+    await openHistory();
     const records = await historyRecords(note.noteId);
     const editorRevisions = records.filter(
       (record): record is HistoryRevisionRecord =>
@@ -556,7 +557,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
       reconstructedEditorBodies.push({ revisionId: record.revisionId, body: revision.body });
       if (
         revision.body.includes('First edit after reset recovery') &&
-        !revision.body.includes('Second edit before restart')
+        !revision.body.includes('Second edit before driver reconnection')
       ) {
         firstEditRevision = record;
         firstEditBody = revision.body;
@@ -578,7 +579,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     const preview = await $('[aria-label="Complete replacement preview"]');
     await preview.waitForExist();
     expect(await preview.getText()).toContain('First edit after reset recovery');
-    expect(await preview.getText()).not.toContain('Second edit before restart');
+    expect(await preview.getText()).not.toContain('Second edit before driver reconnection');
     await preview.$('button=Confirm Version Restore').click();
     await browser.waitUntil(async () =>
       (await $('[data-testid="history-mode"]').getText()).includes('Version restore')

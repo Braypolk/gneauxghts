@@ -1,24 +1,20 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDocumentPaneCoordinator } from './documentPaneCoordinator';
-import {
-  createNoteDraftState,
-  type NoteKey
-} from '$lib/features/notepad/state/noteStore';
+import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 
-function note(key: NoteKey, bodyMarkdown: string) {
+function note(_label: string, bodyMarkdown: string) {
   return createNoteDraftState(
     {
       ...createEmptySessionSnapshot(),
       bodyMarkdown
-    },
-    key
+    }
   );
 }
 
 describe('documentPaneCoordinator', () => {
   it('flushes only a pending cursor snapshot during pane teardown', () => {
-    const document = note('path:/vault/shared.md', 'body');
+    const document = note('document:shared', 'body');
     const position = { anchor: 4, head: 4, scrollTop: 720 };
     const saveCursorPosition = vi.fn(async () => 'applied');
     let pending: (() => void) | null = null;
@@ -44,7 +40,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationDocument: () => document,
       getNavigationPaneId: () => 'left',
       getPaneDocument: () => document,
-      getNoteByKey: () => document
+      getDocumentByHandle: () => document
     });
 
     coordinator.schedulePaneCursorSave('left');
@@ -60,7 +56,7 @@ describe('documentPaneCoordinator', () => {
   });
 
   it('uses one pane-session replacement for same-document runtime fanout', async () => {
-    const document = note('path:/vault/shared.md', 'updated');
+    const document = note('document:shared', 'updated');
     const replaceContentInPlace = vi.fn(async () => 'applied');
     const coordinator = createDocumentPaneCoordinator({
       paneLifecycle: {
@@ -73,7 +69,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationDocument: () => document,
       getNavigationPaneId: () => 'right',
       getPaneDocument: () => document,
-      getNoteByKey: () => document
+      getDocumentByHandle: () => document
     });
 
     await coordinator.replaceNoteAcrossPanes(
@@ -91,8 +87,8 @@ describe('documentPaneCoordinator', () => {
   });
 
   it('serializes every different-document rebind through its pane session', async () => {
-    const previous = note('path:/vault/old.md', 'old');
-    const next = note('path:/vault/new.md', 'new');
+    const previous = note('document:old', 'old');
+    const next = note('document:new', 'new');
     const bindDocument = vi.fn(async () => 'applied');
     const coordinator = createDocumentPaneCoordinator({
       paneLifecycle: { bindDocument } as never,
@@ -103,7 +99,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationDocument: () => next,
       getNavigationPaneId: () => 'left',
       getPaneDocument: () => next,
-      getNoteByKey: () => previous
+      getDocumentByHandle: () => previous
     });
 
     await coordinator.replaceNoteAcrossPanes(previous, next, {
@@ -117,8 +113,8 @@ describe('documentPaneCoordinator', () => {
   });
 
   it('rebinds only the navigating pane when another pane already shows the destination', async () => {
-    const previous = note('path:/vault/old.md', 'old');
-    const next = note('path:/vault/shared.md', 'shared');
+    const previous = note('document:old', 'old');
+    const next = note('document:shared', 'shared');
     const bindDocument = vi.fn(async () => 'applied');
     const coordinator = createDocumentPaneCoordinator({
       paneLifecycle: { bindDocument } as never,
@@ -129,7 +125,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationDocument: () => next,
       getNavigationPaneId: () => 'right',
       getPaneDocument: () => next,
-      getNoteByKey: () => next
+      getDocumentByHandle: () => next
     });
 
     await coordinator.replacePaneDocument(
@@ -148,8 +144,8 @@ describe('documentPaneCoordinator', () => {
   });
 
   it('replaces a specifically targeted open document instead of the navigation document', async () => {
-    const navigation = note('path:/vault/current.md', 'current');
-    const target = note('path:/vault/tasks.md', 'updated tasks');
+    const navigation = note('document:current', 'current');
+    const target = note('document:tasks', 'updated tasks');
     const replaceContentInPlace = vi.fn(async () => 'applied');
     const coordinator = createDocumentPaneCoordinator({
       paneLifecycle: { replaceContentInPlace } as never,
@@ -162,7 +158,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationPaneId: () => 'left',
       getPaneDocument: (paneId) =>
         paneId === 'right' ? target : navigation,
-      getNoteByKey: () => target
+      getDocumentByHandle: () => target
     });
 
     await coordinator.replaceDocumentContentInPlace(
@@ -180,7 +176,7 @@ describe('documentPaneCoordinator', () => {
   });
 
   it('reports unavailable when no editable pane can apply a targeted replacement', async () => {
-    const document = note('path:/vault/shared.md', 'updated');
+    const document = note('document:shared', 'updated');
     const replaceContentInPlace = vi.fn();
     const coordinator = createDocumentPaneCoordinator({
       paneLifecycle: {
@@ -193,7 +189,7 @@ describe('documentPaneCoordinator', () => {
       getNavigationDocument: () => document,
       getNavigationPaneId: () => 'left',
       getPaneDocument: () => document,
-      getNoteByKey: () => document
+      getDocumentByHandle: () => document
     });
 
     await expect(

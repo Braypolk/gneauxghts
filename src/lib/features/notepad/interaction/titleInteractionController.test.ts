@@ -15,7 +15,7 @@ function setup(markdown = '') {
       ...createEmptySessionSnapshot(),
       bodyMarkdown: markdown
     },
-    'draft:title'
+    'document:title'
   );
   const activatePane = vi.fn();
   const resetPaneCommand = vi.fn();

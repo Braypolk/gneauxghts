@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
 
 import {
   defaultKeyboardShortcutBindings,
@@ -25,6 +26,29 @@ function keyboardEvent(
     ...modifiers
   } as KeyboardEvent;
 }
+
+describe('history shortcut', () => {
+  it('defaults to Cmd+Shift+H and honors a custom binding', () => {
+    const event = keyboardEvent('H', { metaKey: true, shiftKey: true });
+    expect(keyboardShortcutMatchesEvent(event, 'showHistory')).toBe(true);
+    const remapped = { ...defaultKeyboardShortcutBindings, showHistory: 'Alt+h' };
+    expect(keyboardShortcutMatchesEvent(event, 'showHistory', remapped)).toBe(false);
+    expect(keyboardShortcutMatchesEvent(
+      keyboardEvent('h', { altKey: true }), 'showHistory', remapped
+    )).toBe(true);
+  });
+
+  it('does not admit a global shortcut while restart owns workspace departure', () => {
+    const event = keyboardEvent('H', { metaKey: true, shiftKey: true });
+    restartLifecycle.observeBackendPreparing();
+    try {
+      expect(keyboardShortcutMatchesEvent(event, 'showHistory')).toBe(false);
+    } finally {
+      restartLifecycle.workspaceMutationsBlocked = false;
+      restartLifecycle.phase = 'idle';
+    }
+  });
+});
 
 describe('editor link shortcut', () => {
   it('uses Cmd+K on macOS and Ctrl+K elsewhere', () => {

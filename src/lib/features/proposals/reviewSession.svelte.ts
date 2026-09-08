@@ -81,7 +81,7 @@ export function createProposalReviewSession() {
     notifyReviewRuntimeChanged,
     isReviewingDocument(document: NoteDraftState) {
       if (workflow.kind === 'idle') return false;
-      return workflow.review?.document.key === document.key;
+      return workflow.review?.document.handle === document.handle;
     }
   };
 }

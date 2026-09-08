@@ -10,7 +10,7 @@ import type { PaneEditorLifecycle } from '$lib/features/notepad/pane/paneEditorL
 import type { DocumentPaneCoordinator } from '$lib/features/notepad/document/documentPaneCoordinator';
 import {
   type NoteDraftState,
-  type NoteKey
+  type DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type { NavLocation } from '$lib/features/notepad/navigation/locationMru';
@@ -28,10 +28,10 @@ export interface PaneCommandControllerDeps<TPaneId extends string> {
     paneId: TPaneId,
     kind: PaneKind
   ) => boolean;
-  removeUnreferencedNote: (noteKey: NoteKey) => void;
+  removeUnreferencedNote: (documentHandle: DocumentHandle) => void;
   getActivePaneId: () => TPaneId;
   getPaneCommandPaneId: () => TPaneId | null;
-  getPaneCommandSourceNoteKey: () => NoteKey | null;
+  getPaneCommandSourceDocumentHandle: () => DocumentHandle | null;
   getPaneCommandHighlightedIndex: () => number;
   getPaneCommandMode: () => PaneCommandMode;
   setPaneCommandHighlight: (index: number) => void;
@@ -39,7 +39,7 @@ export interface PaneCommandControllerDeps<TPaneId extends string> {
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   getPaneKind: (paneId: TPaneId) => PaneKind;
   focusPaneEditorAtEnd: (paneId: TPaneId) => boolean;
-  getNoteByKey: (key: NoteKey) => NoteDraftState | null;
+  getDocumentByHandle: (key: DocumentHandle) => NoteDraftState | null;
   setPaneDocument: (paneId: TPaneId, document: NoteDraftState) => unknown;
   activatePane: (paneId: TPaneId) => unknown;
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
@@ -85,7 +85,7 @@ export function createPaneCommandController<TPaneId extends string>(
     paneId: TPaneId,
     choice: PaneCommandChoice
   ) {
-    let sourceKey: NoteKey | null = null;
+    let sourceKey: DocumentHandle | null = null;
     let referencePaneId = paneId;
     let currentLocation: NavLocation | null = null;
     let previousLocation: NavLocation | null = null;
@@ -99,7 +99,7 @@ export function createPaneCommandController<TPaneId extends string>(
           ? paneId
           : null,
       guard: () => {
-        sourceKey = deps.getPaneCommandSourceNoteKey();
+        sourceKey = deps.getPaneCommandSourceDocumentHandle();
         referencePaneId = deps.findReferencePane(paneId);
         currentLocation =
           deps.getPaneCommandMode() === 'split'
@@ -112,7 +112,7 @@ export function createPaneCommandController<TPaneId extends string>(
           currentLocation?.kind !== 'chat'
         ) {
           sharedDocument = sourceKey
-            ? deps.getNoteByKey(sourceKey)
+            ? deps.getDocumentByHandle(sourceKey)
             : null;
           if (!sharedDocument) {
             return {
@@ -136,7 +136,7 @@ export function createPaneCommandController<TPaneId extends string>(
           ? deps.getActivePaneId() === paneId
           : deps.getPaneCommandPaneId() === paneId,
       mutateWorkspace: async () => {
-        const placeholderKey = placeholderDocument.key;
+        const placeholderKey = placeholderDocument.handle;
         commandClaimed = true;
         deps.resetPaneCommand();
         deps.activatePane(paneId);
@@ -171,7 +171,7 @@ export function createPaneCommandController<TPaneId extends string>(
             sharedDocument,
             { restoreCursor: true }
           );
-          if (placeholderKey !== sharedDocument.key) {
+          if (placeholderKey !== sharedDocument.handle) {
             deps.removeUnreferencedNote(placeholderKey);
             cleanupNoteRuntime(placeholderKey);
           }
@@ -192,7 +192,7 @@ export function createPaneCommandController<TPaneId extends string>(
         }
 
         const sourceNote = sourceKey
-          ? deps.getNoteByKey(sourceKey)
+          ? deps.getDocumentByHandle(sourceKey)
           : null;
         if (sourceNote) {
           deps.touchLocation(paneId, {

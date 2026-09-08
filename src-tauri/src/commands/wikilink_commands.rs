@@ -31,7 +31,7 @@ pub(crate) fn resolve_note_link(
     current_markdown: Option<String>,
     current_body_hash: Option<String>,
 ) -> Result<Option<ResolvedNoteLink>, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut draft = build_draft_ref(
@@ -89,7 +89,7 @@ pub(crate) fn autocomplete_note_links(
     current_body_hash: Option<String>,
     limit: usize,
 ) -> Result<Vec<NoteLinkSuggestion>, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
 
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let mut draft = build_draft_ref(

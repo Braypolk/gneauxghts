@@ -5,60 +5,28 @@
 //! state; each caller decides whether its public contract must surface a
 //! required read-your-writes synchronization failure.
 
+use super::{MutationWarningStage, NoteMutationWarning, NoteTimelineIssue, PayloadVersion};
 use crate::index::{build_indexed_note, AppState, IndexedNote};
 use crate::services::note_catalog::{CatalogMutation, DeferredCatalogProjection, ProjectionWork};
-use serde::Serialize;
 use std::{
     fs,
     path::{Path, PathBuf},
 };
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) enum PublicationStage {
-    CanonicalRead,
-    CatalogUpsert,
-    TaskProjectionUpsert,
-    CatalogRemove,
-    TaskProjectionRemove,
-    SemanticUpdate,
-    SemanticMove,
-    DirtyRecovery,
-    HistoryFinalization,
-    Revision,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct PublicationIssue {
-    pub(super) stage: PublicationStage,
-    pub(super) message: String,
-}
-
-/// A canonical write succeeded, but one or more required read-your-write
-/// projections did not. Commands return this warning as data so callers must
-/// not retry the canonical mutation.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct CommittedMutationWarning {
-    pub(super) message: String,
-    pub(super) issues: Vec<PublicationIssue>,
-}
 
 #[derive(Clone, Debug)]
 pub(super) struct PublicationOutcome {
     pub(super) note_id: String,
     pub(super) path: PathBuf,
     pub(super) canonical_markdown: String,
-    pub(super) issues: Vec<PublicationIssue>,
+    pub(super) issues: Vec<NoteTimelineIssue>,
 }
 
 impl PublicationOutcome {
-    pub(super) fn record_issue(&mut self, stage: PublicationStage, message: String) {
-        self.issues.push(PublicationIssue { stage, message });
+    pub(super) fn record_issue(&mut self, stage: MutationWarningStage, message: String) {
+        self.issues.push(NoteTimelineIssue { stage, message });
     }
 
-    pub(super) fn required_consistency_warning(&self) -> Option<CommittedMutationWarning> {
+    pub(super) fn required_consistency_warning(&self) -> Option<NoteMutationWarning> {
         let required_issues = self
             .issues
             .iter()
@@ -73,7 +41,8 @@ impl PublicationOutcome {
             .map(|issue| format!("{:?}: {}", issue.stage, issue.message))
             .collect::<Vec<_>>()
             .join("; ");
-        Some(CommittedMutationWarning {
+        Some(NoteMutationWarning {
+            payload_version: PayloadVersion::V1,
             message: format!(
                 "Canonical note file was saved at {}, but required history or catalog/task synchronization is incomplete: {}",
                 self.path.display(),
@@ -81,20 +50,6 @@ impl PublicationOutcome {
             ),
             issues: required_issues,
         })
-    }
-}
-
-impl PublicationStage {
-    fn is_required_consistency(self) -> bool {
-        matches!(
-            self,
-            Self::CanonicalRead
-                | Self::CatalogUpsert
-                | Self::TaskProjectionUpsert
-                | Self::CatalogRemove
-                | Self::TaskProjectionRemove
-                | Self::HistoryFinalization
-        )
     }
 }
 
@@ -296,9 +251,9 @@ pub(super) fn synchronize_canonical_file(
     };
     let mut outcome = synchronize_committed_mutation(&sink, mutation);
     if let Some(error) = read_error {
-        outcome.record_issue(PublicationStage::CanonicalRead, error);
+        outcome.record_issue(MutationWarningStage::CanonicalRead, error);
         if let Err(recovery_error) = sink.mark_dirty(&outcome.path, "timeline-canonical-read") {
-            outcome.record_issue(PublicationStage::DirtyRecovery, recovery_error);
+            outcome.record_issue(MutationWarningStage::DirtyRecovery, recovery_error);
         }
     }
     outcome
@@ -322,24 +277,24 @@ fn synchronize_committed_mutation(
     collect_catalog_issues(
         &mut issues,
         upsert,
-        PublicationStage::CatalogUpsert,
-        PublicationStage::TaskProjectionUpsert,
+        MutationWarningStage::CatalogUpsert,
+        MutationWarningStage::TaskProjectionUpsert,
     );
     if issues.iter().any(|issue| {
         matches!(
             issue.stage,
-            PublicationStage::CatalogUpsert | PublicationStage::TaskProjectionUpsert
+            MutationWarningStage::CatalogUpsert | MutationWarningStage::TaskProjectionUpsert
         )
     }) {
         if let Err(error) = sink.mark_dirty(&mutation.path, "timeline-publication-upsert") {
-            issues.push(PublicationIssue {
-                stage: PublicationStage::DirtyRecovery,
+            issues.push(NoteTimelineIssue {
+                stage: MutationWarningStage::DirtyRecovery,
                 message: error,
             });
         }
     } else if let Err(error) = sink.clear_dirty(&mutation.path) {
-        issues.push(PublicationIssue {
-            stage: PublicationStage::DirtyRecovery,
+        issues.push(NoteTimelineIssue {
+            stage: MutationWarningStage::DirtyRecovery,
             message: error,
         });
     }
@@ -350,19 +305,19 @@ fn synchronize_committed_mutation(
         collect_catalog_issues(
             &mut issues,
             removal,
-            PublicationStage::CatalogRemove,
-            PublicationStage::TaskProjectionRemove,
+            MutationWarningStage::CatalogRemove,
+            MutationWarningStage::TaskProjectionRemove,
         );
         if issues.len() > before_remove_count {
             if let Err(error) = sink.mark_dirty(previous_path, "timeline-publication-remove") {
-                issues.push(PublicationIssue {
-                    stage: PublicationStage::DirtyRecovery,
+                issues.push(NoteTimelineIssue {
+                    stage: MutationWarningStage::DirtyRecovery,
                     message: error,
                 });
             }
         } else if let Err(error) = sink.clear_dirty(previous_path) {
-            issues.push(PublicationIssue {
-                stage: PublicationStage::DirtyRecovery,
+            issues.push(NoteTimelineIssue {
+                stage: MutationWarningStage::DirtyRecovery,
                 message: error,
             });
         }
@@ -372,8 +327,8 @@ fn synchronize_committed_mutation(
             mutation.markdown.clone(),
             mutation.modified_millis,
         ) {
-            issues.push(PublicationIssue {
-                stage: PublicationStage::SemanticMove,
+            issues.push(NoteTimelineIssue {
+                stage: MutationWarningStage::SemanticMove,
                 message: error,
             });
         }
@@ -382,8 +337,8 @@ fn synchronize_committed_mutation(
         mutation.markdown.clone(),
         mutation.modified_millis,
     ) {
-        issues.push(PublicationIssue {
-            stage: PublicationStage::SemanticUpdate,
+        issues.push(NoteTimelineIssue {
+            stage: MutationWarningStage::SemanticUpdate,
             message: error,
         });
     }
@@ -391,8 +346,8 @@ fn synchronize_committed_mutation(
     let revision = match sink.revision() {
         Ok(revision) => revision,
         Err(error) => {
-            issues.push(PublicationIssue {
-                stage: PublicationStage::Revision,
+            issues.push(NoteTimelineIssue {
+                stage: MutationWarningStage::Revision,
                 message: error,
             });
             0
@@ -409,19 +364,19 @@ fn synchronize_committed_mutation(
 }
 
 fn collect_catalog_issues(
-    issues: &mut Vec<PublicationIssue>,
+    issues: &mut Vec<NoteTimelineIssue>,
     outcome: PublicationCatalogOutcome,
-    catalog_stage: PublicationStage,
-    task_stage: PublicationStage,
+    catalog_stage: MutationWarningStage,
+    task_stage: MutationWarningStage,
 ) {
     if let Some(message) = outcome.catalog_error {
-        issues.push(PublicationIssue {
+        issues.push(NoteTimelineIssue {
             stage: catalog_stage,
             message,
         });
     }
     if let Some(message) = outcome.task_projection_error {
-        issues.push(PublicationIssue {
+        issues.push(NoteTimelineIssue {
             stage: task_stage,
             message,
         });
@@ -593,11 +548,11 @@ mod tests {
         assert!(outcome
             .issues
             .iter()
-            .any(|issue| issue.stage == PublicationStage::TaskProjectionUpsert));
+            .any(|issue| issue.stage == MutationWarningStage::TaskProjectionUpsert));
         assert!(outcome
             .issues
             .iter()
-            .any(|issue| issue.stage == PublicationStage::SemanticUpdate));
+            .any(|issue| issue.stage == MutationWarningStage::SemanticUpdate));
         assert!(sink.calls().contains(&"dirty:/vault/Note.md".to_string()));
         assert!(sink
             .calls()
@@ -615,7 +570,7 @@ mod tests {
         assert_eq!(warning.issues.len(), 1);
         assert_eq!(
             warning.issues[0].stage,
-            PublicationStage::TaskProjectionUpsert
+            MutationWarningStage::TaskProjectionUpsert
         );
     }
 
@@ -632,7 +587,7 @@ mod tests {
         assert!(outcome
             .issues
             .iter()
-            .any(|issue| issue.stage == PublicationStage::SemanticUpdate));
+            .any(|issue| issue.stage == MutationWarningStage::SemanticUpdate));
         assert_eq!(outcome.required_consistency_warning(), None);
     }
 
@@ -644,7 +599,7 @@ mod tests {
         };
         let mut outcome = synchronize_committed_mutation(&sink, mutation("/vault/Note.md", None));
         outcome.record_issue(
-            PublicationStage::CanonicalRead,
+            MutationWarningStage::CanonicalRead,
             "canonical bytes unavailable".to_string(),
         );
 

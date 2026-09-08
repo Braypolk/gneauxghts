@@ -6,6 +6,51 @@ guide new cases. Details not stated here remain open.
 
 ## Workspace and navigation
 
+### Vault selection applies on the next launch
+
+Settings Apply validates and atomically stages a next-launch vault selection.
+It does not close or rebind the running vault. Until the user explicitly
+restarts, ordinary reads, saves, events, watcher reconciliation, forgotten-note
+metadata, and app-local rollback observations continue to use the immutable
+running-vault context. Applying another folder replaces the staged selection;
+applying the running vault, including a canonical alias, clears the pending
+restart. A failed selection leaves the running vault editable. A newly started
+process resolves and binds only the persisted selection.
+
+### Restart releases one running vault before relaunch
+
+Restart immediately makes the workspace inert, then joins the existing pending
+Version Restore and save/departure work. It does not create a parallel save
+queue. Backend preparation joins concurrent callers and returns ready only after
+chat/tool/permission/title work is cancelled and settled, watcher debounce and
+reconciliation are stopped and joined, admitted durable metadata/task writes
+are settled, rebuildable projection and semantic work is quiesced, and the
+bound Note Timeline reports a portable clean close. Queued rebuildable indexes
+may be discarded; a complete index catch-up is not required for portability.
+
+Process relaunch is never requested before that ready receipt. A save, conflict,
+restore, producer-settlement, or clean-close failure therefore cannot trigger
+relaunch. Editing resumes after a preparation failure only when every required
+owner confirms reversible admission can be restored. Once terminal release has
+begun—or when IPC cannot prove otherwise—the workspace stays inert while Retry
+Restart joins or retries backend settlement. If relaunch itself fails, the
+portable ready state remains closed and Retry Restart retries only relaunch.
+Ordinary process exit uses the same backend settlement operation off the event
+loop, but it does not imply unsent browser drafts were saved.
+
+### Bootstrap admits one coherent backend snapshot
+
+The bundled application bootstrap is the only initial-session retrieval path.
+Editing remains unavailable until both its payload and every required backend
+listener are admitted; a failed attempt removes partial listeners and may be
+retried. Newer events and operations win over delayed bootstrap, Settings, and
+command results independently for each shared snapshot. Settings consumes the
+same running/next-launch vault and semantic snapshots rather than retaining a
+second copy. Editor asset paths always derive from the Running Vault, including
+after a different Next-launch Vault Selection has been staged. Backend readiness
+does not itself mean the mounted editor has adopted the session, and obsolete
+mount work never applies to a later editor lifetime.
+
 ### Remember changes only the invoking pane
 
 Remember persists one canonical document and rebinds only the invoking pane to
@@ -35,7 +80,8 @@ when present; otherwise the pane immediately to its left becomes active.
 
 ### History browsing leaves the workspace untouched
 
-Entering global History Mode first flushes pending canonical note saves. A
+Entering global History Mode first flushes pending canonical note saves and
+finalizes the inspected note’s pending Editing Window. A
 failed save leaves the user in the editor with a clear error. While history is
 open, the normal workspace remains mounted but inert: history is not a pane,
 does not create an editor runtime, and cannot change pane membership or Note
@@ -47,8 +93,8 @@ timeline but cannot enter History Mode or expose timeline records until
 Forgotten-Note Recovery returns it to the active vault.
 An externally deleted note follows the same ordinary-access gate while it is
 Missing, but its retained timeline remains inspectable from recovery UI.
-History Mode entry awaits mandatory prepared-write recovery and integrity
-attestation through its read capability. Optional exhaustive health/storage
+History Mode entry awaits mandatory prepared-write recovery and complete
+verification of its target Note Timeline through its read capability. Optional exhaustive health/storage
 checks during browsing are explicit actions; their absence never means history
 is verified. Restore and clear refresh diagnostics after mutation.
 A health result from an exited session cannot populate a later session.
@@ -94,6 +140,23 @@ process restart replays that exact snapshot before a newer observation,
 authored publication, or history read; recovery never substitutes whatever
 bytes happen to be on disk later.
 
+### Committed adoption belongs to the document boundary
+
+Ordinary save, Version Restore, accepted proposal, clean external refresh, and
+transient Forgotten-Note Recovery enter fixed-purpose document adoption methods.
+Callers do not choose identity, baseline, warning, rekey, runtime-reset, or
+derived-refresh policy. A committed warning is adopted as part of the successful
+result and never authorizes another write. Save and proposal adoption preserve
+eligible later title and body edits. A canonical proposal read-back that no
+longer matches the committed Markdown enters ordinary external-conflict handling.
+
+Version Restore succeeds when its target is unopened without creating or
+navigating a pane. If the document is retained only by chat, adoption updates
+the document and any existing shared runtime so a later editor mount sees the
+restored state without the previous undo root. Every open-document Version
+Restore starts one fresh shared undo root across sibling panes while their
+selection and scroll remain pane-owned.
+
 ### Task mutations respect dirty documents
 
 A task mutation targeting a dirty open note changes the open document and then
@@ -104,9 +167,17 @@ guessing from stale positions.
 ### Save completion has a consistency boundary
 
 A successful save means canonical bytes and the required in-memory note
-catalog are committed, and its distinct user-authored state has one durable
-Note Revision. History intent is durably prepared before Markdown publication;
-a preparation failure publishes nothing. An opaque intent identity correlates
+catalog are committed, and its successful authored state has durable history
+capture. Ordinary Editor saves replace a pending Editing Window endpoint;
+immutable Note Revisions are retained at its boundaries. The integrated
+contract is [Editing Window capture](editing-window-contract.md); [release validation](editing-window-release-validation.md) records completed acceptance gates and measurement limits. History intent is durably prepared before Markdown publication;
+a preparation failure publishes nothing. Target verification and retryable
+recovery admission do not hold the canonical file owner. A ready note remains
+saveable while another save waits for its target. Admission is checked again
+under ownership; newly retained observations settle before the authored save.
+A failed rename/save restores the original path when rollback succeeds and
+returns an error, preserving the requested dirty edit. An indeterminate rollback
+retains recovery evidence and must never report old bytes as a successful save. An opaque intent identity correlates
 that preparation with exact finalization, and the shared note-file mutation
 owner serializes preparation, publication, and finalization end to end. Task
 reads provide read-your-write consistency. Lexical and semantic indexing may
@@ -132,16 +203,41 @@ concurrent history reads or commits, which must never classify a live prepared
 intent as abandoned crash residue; a transient recovery failure remains
 retryable. Explicit recovery retry uses the same note-file mutation owner as
 canonical writers. Once an intent is finalized or abandoned, its full authored
-payload is retired atomically; correlation metadata remains available for
-idempotency and revision references. Schema migration retires existing terminal
-payloads while preserving pending recovery bytes.
+payload is retired atomically; correlation metadata remains while live, pending,
+or retained references need it.
+Completed operations retain exact outcomes in compact scoped receipts; all
+preparation-only fields disappear in the same transaction that captures or
+abandons them. The receipt's nonce never authorizes a mismatched full boundary
+token. A sealed Editing Window does not rewrite its endpoint receipt's original
+PendingWindow outcome. Retained interval verification depends on the retained
+revision and receipt, with one authoritative interval record and no completed
+preparation. Live/unresolved and retained references survive below the retirement
+watermark; missing old tokens cannot infer success from current content.
+Unreferenced terminal retry receipts are bounded to 64 per note; a durable scoped
+retirement watermark distinguishes stale tokens from unknown ones without
+replaying writes or inventing successful outcomes (see the capture contract).
+Existing stores are never migrated; unsupported formats require the confirmed
+reset that advances the generation and rebuilds current Markdown as baselines.
 A prepared publication's in-memory base candidate may avoid checkpoint replay
 only when its authored-byte hash matches the exact retained base revision inside
 the append transaction. It cannot substitute a different canonical state as the
 history base. Crash recovery needs no candidate and reconstructs from the store.
-Cold attestation validates every retained payload and its hashes, including
-lineage continuity at checkpoints; previous verified bytes live only within the
-attestation pass.
+Before ordinary work consumes or changes a retained Note Timeline, verify that
+note's complete payloads, hashes, head, lifecycle, and window lineage in one
+consistent read snapshot. Previous verified bytes live only within that pass;
+trusted mutations extend the resulting runtime proof. Unrelated histories and
+whole-store structural checks run in background or explicit diagnostics. A ready
+note may therefore be saved before unrelated corruption is discovered; any
+subsequently discovered corruption blocks new canonical publications globally.
+No publication bypasses durable preparation. This selected availability trade-off
+is recorded in [ADR 0008](../adr/0008-verify-target-note-history-before-background-coverage.md).
+Foreground work never waits for an unrelated verifier's readiness lock. Concurrent
+requests share only the target note's check, and background verification can stop
+within a long note. Clear, purge, and reset replace proof identity around the
+entire replacement interval; neither a stale success nor a stale failure can
+bless or poison replacement history. Retryable I/O and cancellation do not become
+corruption. Readiness and background completion are observable without a scan;
+UI observations never authorize writes.
 Managed metadata changes alone do not create Note Revisions.
 A managed note that predates history receives one Baseline Revision without a
 Markdown write. Its `knownSince` time says only when Gneauxghts first retained
@@ -157,20 +253,41 @@ Identity, storage format, and generation. The app also remembers the greatest
 generation it has opened outside the vault, so a synchronized rollback of both
 vault-local records is not silently accepted. Development resets retain an
 operation and generation diagnostic outside the replacement timelines.
-A clean close stops admitting Note Timeline operations, waits for admitted
-work, settles prepared intent, checkpoints and truncates the SQLite WAL, and
+A clean close stops admitting Note Timeline operations, cancels background
+verification before waiting for admitted work, settles prepared intent, finalizes Editing Windows, checkpoints and
+truncates the SQLite WAL, and
 advances a durable clean-close watermark before reporting the vault portable.
-Failure at any step reports an error and never claims portability. Application
-exit and vault switch cross this seam first. The observing installation may
+Failure at any step reports an error and never claims portability. Completing
+background payload coverage is not a portability prerequisite. Application exit
+and explicit Restart cross this seam first. Merely staging a next-launch
+selection does not release the running vault and therefore does not cross the
+close seam.
+Admitted work, retained recovery evidence, deadlines, and clean close remain bound
+to the original vault and app-local observation context if the next-launch
+selection changes. A stale runtime cannot admit a canonical or lifecycle mutation
+targeting the newly selected vault, even when both vaults contain the same Note Identity.
+Reset admits future work under its new generation but never rebinds old intent
+callbacks to it. The observing installation may
 recover its own open store and WAL after interruption, while a new installation
 rejects an open main-file-only copy. Store-instance changes, same-generation
 watermark rollback, and manifest/store/app-observation mismatches require
-explicit recovery. A pre-portability schema is never assigned a store-instance
-identity merely because its vault identity and generation match an old local
-observation; migration requires the explicit legacy-trust recovery command,
-and that one-shot authorization is cleared when migration records the instance.
+explicit recovery. Only freshly created current-schema stores are supported;
+older schemas and existing files without complete metadata are rejected before
+schema writes. Confirmed Settings reset advances the generation and rebuilds
+current Markdown without migrating old history. Ordinary Editor revisions
+require Editing Window evidence; explicit creation and rename/move publication
+boundaries retain their correlated point evidence.
 SHM remains ephemeral and is never required backup data.
-Clearing one Note Timeline atomically removes every previously readable record
+Explicitly confirmed clear, reset, and purge need not reconstruct prose being
+discarded. Clear and purge retain current-store admission/recovery and the existing
+discovered-corruption gate. Explicit reset remains allowed to replace an unavailable
+or corrupt store and resolve that gate. Replacement guards invalidate old proof,
+canonical baselines are rebuilt where applicable, and any later publication still
+verifies its target.
+Clear, reset, and purge remove affected pending windows and publication receipts
+with retained history, invalidate old tokens and callbacks, and never append
+pending prose just to delete it. Clearing one Note Timeline atomically removes
+every previously readable record
 and establishes the current canonical authored state as a fresh Baseline
 Revision. A vault clear applies the same boundary independently to every active
 ordinary note without rewriting Markdown; missing and forgotten timelines stay
@@ -204,7 +321,12 @@ write.
 Every history read or history-changing command failure crosses the frontend
 boundary as a closed Note Timeline state with stable recovery guidance.
 Storage paths, query text, database errors, and reconstruction details remain
-backend diagnostics and never become user-visible command errors.
+backend diagnostics and never become user-visible command errors. Failure
+translation performs no exhaustive health scan. A typed corruption failure
+detected after successful attestation still latches the runtime gate, including
+History Mode, Missing Note recovery browsing, current-content evidence, and
+deadline finalization; subsequent app-owned publication remains blocked until
+explicit reset.
 
 An unavailable or corrupt history store can be reset only after explicit
 confirmation. Reset never rewrites current Markdown: it advances the history
@@ -254,6 +376,21 @@ Automatic retries are bounded and cannot overwrite newer queued work. The UI
 distinguishes fresh, stale, rebuilding, and degraded states and offers an
 explicit retry.
 
+### Editing Windows preserve explicit boundaries
+
+The first distinct successful Editor publication starts a fixed five-minute
+elapsed deadline that includes suspension and ignores wall-clock adjustments.
+A save admitted at the deadline starts a new window after prior finalization;
+subsequent saves never slide the deadline. Last-editor departure, History Mode,
+naming current content, explicit temporal evidence requests, distinct actions, lifecycle
+transitions, and clean close finalize prior work through the shared mutation
+barrier. One of several editors leaving, app blur, cursor changes, health polls,
+and ordinary chat loading do not. Restart recovers publication evidence before
+validating and finalizing surviving windows exactly once. Finalization atomically
+retains the net change against the immutable anchor and deletes the pending
+window; A → B → A creates no revision. Its private identity never escapes as a
+revision, and stale generation/window callbacks cannot resurrect deleted history.
+
 ## Chat
 
 ### Provenance explains only current authored content
@@ -262,12 +399,16 @@ Current-Content Provenance is available only through the allowed current-note
 capability. Exclusions win over an explicit allow list; missing, forgotten,
 and uncaptured canonical states cannot deliver retained prose. Output contains
 only current body, unmanaged properties, and title, with evidence identities
-and authoritative commit/observation times. Filesystem modification time never
+and authoritative point or versioned Editing Window interval evidence. Discarded
+within-window states cannot prove exact introduction times or deletion/retyping.
+Clock-discontinuous intervals are explicitly uncertain. Filesystem modification
+time never
 becomes introduction or last-change evidence.
 
 Unique correspondence between adjacent retained states preserves moved
-content. Ambiguous correspondence and text retyped after deletion receive new
-introduction evidence. Authored word edits, including Markdown delimiters,
+content. Ambiguous correspondence and text retyped after a deletion visible in retained
+states receive new introduction evidence; an unchanged window endpoint cannot
+prove that text was retyped inside the window. Authored word edits, including Markdown delimiters,
 update affected ranges while unchanged words retain their evidence. Markdown
 parser context extends formatting changes across inline spans and multiline
 blocks, including headings and fenced code. Baselines
@@ -283,9 +424,19 @@ predecessor order and ignores moves that preserve the filename title.
 Activity and Current-Content Provenance enter chat only on demand. They reapply
 vault access, explicit turn grants, global exclusions, current eligibility, and
 canonical-byte checks. Activity answers carry current excerpts, revision counts,
-times, and Mutation Sources; removed prose and historical labels stay private.
+times, and Mutation Sources; counts mean finalized retained transitions rather
+than saves. Ordinary intervals match half-open activity queries by overlap and
+uncertain clock-discontinuous evidence is marked explicitly. Removed prose and
+historical labels stay private. Explicit provenance/citation or temporal activity
+requests finalize only the eligible notes needed as evidence; routine chat loading and health polling do not.
 Revision Citations retain exact Note and Revision Identity and open that revision
-in global History Mode without navigating the invoking pane. Cleared, purged,
+in global History Mode without navigating the invoking pane.
+Citation navigation seeks bounded surrounding context directly, independent of
+how many newer records exist. Newer/older context pages replace at most 31
+rows while preserving the selected diff. Clear or restore may leave anchored
+context but never transfer the target to the invoking pane's note. Obsolete
+entry work stops at asynchronous boundaries, and failed-entry or exit workspace
+restoration settles before a newer entry captures that workspace. Cleared, purged,
 missing, forgotten, excluded, or no-longer-current citation evidence is withheld
 when results or conversations are delivered, including branches. Earlier temporal
 answers remain visible in their transcript but are omitted from later model

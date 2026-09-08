@@ -53,3 +53,18 @@ export interface NoteHistoryHealth {
   lifecycleEventCount: number;
   revisionPayloadBytes: number;
 }
+
+/** Retained publication evidence, never finalization/keystroke time. */
+export type RevisionTimeEvidence =
+  | { kind: 'knownSince'; knownSinceMillis: number }
+  | { kind: 'committed'; committedAtMillis: number }
+  | { kind: 'observed'; observedAtMillis: number; modifiedAtMillis: number | null }
+  | {
+      kind: 'editingWindow';
+      version: 1;
+      firstWallMillis: number;
+      lastWallMillis: number;
+      minWallMillis: number;
+      maxWallMillis: number;
+      clockDiscontinuity: boolean;
+    };

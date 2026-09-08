@@ -48,7 +48,7 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   getPaneCommandSourcePaneId: () => TPaneId | null;
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   activatePaneSession: (paneId: TPaneId) => unknown;
-  setPaneKind: (paneId: TPaneId, kind: PaneKind) => boolean;
+  setPaneKind: (paneId: TPaneId, kind: PaneKind) => Promise<void>;
   loadRecentNotes: () => Promise<SearchItem[]> | SearchItem[];
   openNotePath: (
     path: string | null,
@@ -149,7 +149,7 @@ export function createLocationHistoryController<TPaneId extends string>(
     paneId: TPaneId
   ): Promise<{
     location: NavLocation | null;
-    documentDeparted: boolean;
+    documentSaved: boolean;
   }> {
     const current = capturePaneLocation(paneId);
     if (
@@ -161,7 +161,7 @@ export function createLocationHistoryController<TPaneId extends string>(
     ) {
       return {
         location: current,
-        documentDeparted: false
+        documentSaved: false
       };
     }
     const note = deps.getPaneDocument(paneId);
@@ -169,12 +169,12 @@ export function createLocationHistoryController<TPaneId extends string>(
       note.working.title.trim() === '' &&
       note.working.markdown.trim() === ''
     ) {
-      return { location: null, documentDeparted: false };
+      return { location: null, documentSaved: false };
     }
-    await deps.documentDeparture.prepare(paneId, note);
+    await deps.documentDeparture.prepare(paneId, note, { finalize: false });
     return {
       location: capturePaneLocation(paneId),
-      documentDeparted: true
+      documentSaved: true
     };
   }
 
@@ -226,8 +226,8 @@ export function createLocationHistoryController<TPaneId extends string>(
     paneId: TPaneId,
     location: NavLocation,
     {
-      currentDocumentAlreadyDeparted = false
-    }: { currentDocumentAlreadyDeparted?: boolean } = {}
+      currentDocumentAlreadySaved = false
+    }: { currentDocumentAlreadySaved?: boolean } = {}
   ) {
     suppressLocationTouch = true;
     try {
@@ -260,7 +260,7 @@ export function createLocationHistoryController<TPaneId extends string>(
             await deps.openNotePath(location.notePath, {
               noteId: location.noteId,
               currentNoteAlreadySaved:
-                currentDocumentAlreadyDeparted,
+                currentDocumentAlreadySaved,
               focusEditorAfterOpen: true,
               revealEditorAfterOpen: true
             });
@@ -285,21 +285,18 @@ export function createLocationHistoryController<TPaneId extends string>(
             );
           }
 
-          deps.setPaneConversationId(
-            paneId,
-            location.conversationId
-          );
           if (
             !paneHasCapability(
               deps.getPaneKind(paneId),
               'host-chat'
-            ) &&
-            !deps.setPaneKind(paneId, 'chat')
+            )
           ) {
-            throw new LocationRestoreBlockedError(
-              'The target pane rejected the chat location.'
-            );
+            await deps.setPaneKind(paneId, 'chat');
           }
+          if (!paneHasCapability(deps.getPaneKind(paneId), 'host-chat')) {
+            throw new LocationRestoreBlockedError('The target pane rejected the chat location.');
+          }
+          deps.setPaneConversationId(paneId, location.conversationId);
         },
         ensureEditors: location.kind === 'chat',
         complete:
@@ -335,7 +332,7 @@ export function createLocationHistoryController<TPaneId extends string>(
     blurFocusedPaneTitle(paneId);
     const {
       location: current,
-      documentDeparted
+      documentSaved
     } = await captureRestorablePaneLocation(paneId);
     await ensureLocationMruSeeded(paneId);
     let previous = previousRestorableLocation(paneId, paneId, current);
@@ -346,31 +343,7 @@ export function createLocationHistoryController<TPaneId extends string>(
           'host-chat'
         )
       ) {
-        const result = await deps.transitions.execute({
-          kind: 'change-pane-kind',
-          resolvePane: () => paneId,
-          mutateWorkspace: () => {
-            if (!deps.setPaneKind(paneId, 'editor')) {
-              throw new Error(
-                'Workspace rejected restoring the retained editor.'
-              );
-            }
-          },
-          ensureEditors: true,
-          isCurrent: () =>
-            deps.getActivePaneId() === paneId,
-          complete: () => {
-            deps.updateSelectedRelatedText();
-            bumpEpoch();
-          },
-          focus: async () => {
-            await tick();
-            await deps.focusPaneAfterShortcut(paneId);
-          }
-        });
-        if (result.status === 'failed') {
-          throw result.error;
-        }
+        await deps.setPaneKind(paneId, 'editor');
       }
       return;
     }
@@ -378,8 +351,8 @@ export function createLocationHistoryController<TPaneId extends string>(
     while (previous) {
       try {
         await restoreLocation(paneId, previous, {
-          currentDocumentAlreadyDeparted:
-            documentDeparted
+          currentDocumentAlreadySaved:
+            documentSaved
         });
         return;
       } catch (error) {

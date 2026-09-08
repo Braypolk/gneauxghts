@@ -1,0 +1,19 @@
+{
+  "states": [
+    "recoveryPending",
+    "targetVerificationPending",
+    "ready",
+    "unavailable",
+    "corrupt"
+  ],
+  "snapshot": {
+    "scope": "runtime-scope",
+    "revision": 2,
+    "noteId": null,
+    "state": "recoveryPending",
+    "verifiedNotes": 3,
+    "totalNotes": null,
+    "backgroundComplete": false,
+    "backgroundUnavailable": false
+  }
+}

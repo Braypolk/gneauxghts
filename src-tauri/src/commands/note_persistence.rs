@@ -1,67 +1,26 @@
-use super::{prepare_notes_dir, NoteSession};
+use super::NoteSession;
 use crate::{
     index::AppState,
     note,
-    services::note_timeline::{
-        MutationSource, NoteMutation, NoteMutationResult, NoteMutationWarning,
-    },
-    state::{persist_note_with_preparation, validate_current_path},
+    services::note_timeline::{MutationSource, NoteMutationResult},
 };
 use std::path::Path;
-
-#[derive(Clone, Copy, Debug)]
-enum NoteSaveSource {
-    Editor,
-    TaskAction,
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct PersistNoteOutcome {
-    pub(crate) session: Option<NoteSession>,
-}
 
 fn file_stem_title(path: Option<&str>) -> Option<String> {
     path.and_then(|raw_path| Path::new(raw_path).file_stem())
         .map(|stem| stem.to_string_lossy().into_owned())
 }
 
-fn build_saved_note_session(
-    note_id: Option<String>,
-    title: &str,
-    markdown: &str,
-    persisted_path: Option<String>,
-    persisted_markdown: &str,
-    commit_warning: Option<NoteMutationWarning>,
-) -> NoteSession {
-    let fallback_title = file_stem_title(persisted_path.as_deref()).unwrap_or_default();
-    NoteSession {
-        note_id,
-        title: if fallback_title.is_empty() {
-            title.trim().to_string()
-        } else {
-            fallback_title.clone()
-        },
-        markdown: if persisted_markdown.is_empty() {
-            note::normalize_wikilink_markdown(markdown)
-        } else {
-            note::extract_file_name_title_and_body(persisted_markdown, &fallback_title).1
-        },
-        path: persisted_path,
-        commit_warning,
-    }
-}
-
 pub(crate) fn build_note_session_from_mutation(outcome: &NoteMutationResult) -> NoteSession {
     let path = outcome.path().to_string_lossy().into_owned();
     let title = file_stem_title(Some(&path)).unwrap_or_default();
-    build_saved_note_session(
-        Some(outcome.note_id().as_str().to_string()),
-        &title,
-        "",
-        Some(path),
-        outcome.canonical_markdown(),
-        outcome.warning().cloned(),
-    )
+    NoteSession {
+        note_id: Some(outcome.note_id().as_str().to_string()),
+        markdown: note::extract_file_name_title_and_body(outcome.canonical_markdown(), &title).1,
+        title,
+        path: Some(path),
+        commit_warning: outcome.warning().cloned(),
+    }
 }
 
 pub(crate) fn persist_note_session_with_outcome(
@@ -69,8 +28,8 @@ pub(crate) fn persist_note_session_with_outcome(
     title: String,
     markdown: String,
     current_path: Option<String>,
-) -> Result<PersistNoteOutcome, String> {
-    persist_note_session_with_source(state, title, markdown, current_path, NoteSaveSource::Editor)
+) -> Result<Option<NoteSession>, String> {
+    persist_note_session_with_source(state, title, markdown, current_path, MutationSource::Editor)
 }
 
 pub(crate) fn persist_task_note_session_with_outcome(
@@ -78,13 +37,13 @@ pub(crate) fn persist_task_note_session_with_outcome(
     title: String,
     markdown: String,
     current_path: Option<String>,
-) -> Result<PersistNoteOutcome, String> {
+) -> Result<Option<NoteSession>, String> {
     persist_note_session_with_source(
         state,
         title,
         markdown,
         current_path,
-        NoteSaveSource::TaskAction,
+        MutationSource::TaskAction,
     )
 }
 
@@ -93,93 +52,16 @@ fn persist_note_session_with_source(
     title: String,
     markdown: String,
     current_path: Option<String>,
-    save_source: NoteSaveSource,
-) -> Result<PersistNoteOutcome, String> {
-    // Save is a hot path; the throttled forgotten-note cleanup runs from
-    // explicit forgotten-note commands and at startup instead.
-    let notes_dir = prepare_notes_dir(false)?;
-    let current_path = validate_current_path(current_path, &notes_dir)?;
-    let is_note_creation = current_path.is_none();
-    let source = if is_note_creation {
-        MutationSource::NoteCreation
-    } else {
-        match save_source {
-            NoteSaveSource::TaskAction => MutationSource::TaskAction,
-            NoteSaveSource::Editor => MutationSource::Editor,
-        }
-    };
-    let publication = persist_note_with_preparation(
-        &notes_dir,
-        &title,
-        &markdown,
-        current_path.as_deref(),
-        |target_path, canonical| {
-            state
-                .note_timeline()
-                .prepare_revision_publication(
-                    source,
-                    target_path,
-                    current_path.as_deref(),
-                    None,
-                    canonical,
-                )
-                .map(|prepared| prepared.into_parts())
-        },
-        |history_intent, publication_error| {
-            history_intent.abandon_after_publication_failure(publication_error)
-        },
-        |path, persisted_markdown, history_intent| {
-            let mutation = if is_note_creation {
-                NoteMutation::note_creation(history_intent, path, None, persisted_markdown)
-            } else {
-                match save_source {
-                    NoteSaveSource::TaskAction => NoteMutation::task_action(
-                        history_intent,
-                        path,
-                        current_path.clone(),
-                        persisted_markdown,
-                    ),
-                    NoteSaveSource::Editor => NoteMutation::editor(
-                        history_intent,
-                        path,
-                        current_path.clone(),
-                        persisted_markdown,
-                    ),
-                }
-            };
-            state.note_timeline().mutate(mutation)
-        },
-    )?;
-    let (persisted_path, persisted_markdown, mutation_outcome) = publication
-        .map(|(path, markdown, outcome)| (Some(path), markdown, Some(outcome)))
-        .unwrap_or((None, markdown.clone(), None));
-
-    let saved_note_id = mutation_outcome
-        .as_ref()
-        .map(|outcome| outcome.note_id().as_str().to_string());
-    let commit_warning = mutation_outcome
-        .as_ref()
-        .and_then(|outcome| outcome.warning().cloned());
-
-    let session = persisted_path.as_ref().map(|_| {
-        build_saved_note_session(
-            saved_note_id,
-            &title,
-            &persisted_markdown,
-            persisted_path.clone(),
-            mutation_outcome
-                .as_ref()
-                .map(|outcome| outcome.canonical_markdown())
-                .unwrap_or(""),
-            commit_warning.clone(),
-        )
-    });
-
-    if let Some(outcome) = mutation_outcome.as_ref() {
+    source: MutationSource,
+) -> Result<Option<NoteSession>, String> {
+    let outcome = state
+        .note_timeline()
+        .save_note(source, &title, &markdown, current_path)
+        .map_err(|error| error.to_string())?;
+    if let Some(outcome) = &outcome {
         outcome.report_degraded("note persistence");
     }
-
-    Ok(PersistNoteOutcome { session })
+    Ok(outcome.as_ref().map(build_note_session_from_mutation))
 }
 
 #[cfg(test)]
@@ -214,7 +96,7 @@ mod tests {
             None,
         )
         .expect("canonical commit returns an outcome");
-        let session = outcome.session.expect("saved session");
+        let session = outcome.expect("saved session");
         let expected_path = notes.path().join("Draft title.md");
 
         assert_eq!(

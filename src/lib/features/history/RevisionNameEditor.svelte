@@ -6,16 +6,24 @@
     label,
     disabled,
     onSave,
-    onRemove
+    onRemove,
+    onCancel
   }: {
     revisionId: string;
     label: string | null;
     disabled: boolean;
     onSave: (revisionId: string, label: string) => void | Promise<void>;
     onRemove: (revisionId: string) => void | Promise<void>;
+    onCancel: () => void;
   } = $props();
 
   let draft = $state(untrack(() => label ?? ''));
+  let input = $state<HTMLInputElement | null>(null);
+
+  $effect(() => {
+    input?.focus();
+    input?.select();
+  });
 
   function save(event: SubmitEvent) {
     event.preventDefault();
@@ -25,14 +33,18 @@
   }
 </script>
 
-<section class="mb-5 rounded-2xl border border-border/70 bg-muted/20 p-4" aria-label="Named Revision">
-  <p class="text-xs font-semibold uppercase tracking-[0.12em] text-muted-foreground">Named Revision</p>
-  <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-    Add a durable name to this revision. Duplicate names are allowed; its revision identity stays unchanged.
-  </p>
-  <form class="mt-3 flex flex-col gap-2 sm:flex-row" onsubmit={save}>
+<section class="mb-2" aria-label="Named Revision">
+  <form class="flex flex-wrap items-center gap-1" onsubmit={save}>
     <input
-      class="min-w-0 flex-1 rounded-xl border border-border bg-background px-3 py-2 text-sm outline-none focus:border-foreground/40"
+      bind:this={input}
+      onkeydown={(event) => {
+        if (event.key === 'Escape') {
+          event.preventDefault();
+          event.stopImmediatePropagation();
+          onCancel();
+        }
+      }}
+      class="w-full min-w-0 basis-full border-b border-border bg-transparent py-2 text-sm outline-none placeholder:text-muted-foreground/65 hover:border-border focus:border-foreground/40"
       aria-label="Revision name"
       placeholder="Name this revision"
       bind:value={draft}
@@ -40,15 +52,16 @@
     />
     <button
       type="submit"
-      class="rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background disabled:opacity-50"
+      class="rounded-full px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-35"
       disabled={disabled || draft.trim() === '' || draft.trim() === label}
     >
       {label ? 'Save name' : 'Add name'}
     </button>
+    <button type="button" class="rounded-full px-3 py-2 text-xs text-muted-foreground hover:bg-accent" onclick={onCancel}>Cancel</button>
     {#if label}
       <button
         type="button"
-        class="rounded-full border border-border px-4 py-2 text-sm font-medium disabled:opacity-50"
+        class="rounded-full px-3 py-2 text-xs font-medium text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-35"
         {disabled}
         onclick={() => void onRemove(revisionId)}
       >Remove name</button>

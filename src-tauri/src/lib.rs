@@ -6,6 +6,8 @@ mod agent_tools;
 mod app;
 mod chat;
 mod commands;
+#[cfg(feature = "e2e-wdio")]
+mod e2e_process_fault;
 mod index;
 mod lexical;
 mod note;
@@ -21,17 +23,15 @@ mod test_support;
 mod time;
 mod vault_watcher;
 
-use app::EventBus;
+use app::{AppLifecycle, EventBus};
 use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
-use state::{
-    initialize_app_data_dir, initialize_documents_dir, notes_root, set_notes_root_override,
-};
+use state::{initialize_app_data_dir, initialize_documents_dir, set_notes_root_override};
 #[cfg(feature = "e2e-wdio")]
 use std::ffi::OsString;
 use std::{path::PathBuf, thread};
-use tauri::{Manager, RunEvent};
+use tauri::{Emitter, Manager, RunEvent};
 use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
 #[cfg(target_os = "ios")]
 use tauri_plugin_keyring_store::WriteAccessibility;
@@ -123,13 +123,14 @@ pub fn run() {
                 initialize_documents_dir(documents_dir)?;
             }
 
-            let notes_dir = notes_root()?;
+            let running_vault = state::RunningVault::resolve(app_data_dir.clone())?;
+            let notes_dir = running_vault.root().to_path_buf();
             // Scaffold the portable vault data dir (`<vault>/.gneauxghts`),
             // its cache dir, and the vault manifest before any vault-local
             // DB or cache is opened. Idempotent and cheap; safe to run on
             // every launch.
             services::note_timeline::ensure_vault_scaffold(&notes_dir)?;
-            let vault_data_dir = state::vault_data_dir()?;
+            let vault_data_dir = running_vault.data_dir().to_path_buf();
             let semantic = if cfg!(target_os = "ios") {
                 SemanticState::new_disabled("Semantic search is disabled on iPhone builds for now.")
             } else {
@@ -141,7 +142,9 @@ pub fn run() {
                     bundled_runtime_path,
                 )?
             };
-            app.manage(AppState::new(
+            app.manage(AppLifecycle::new());
+            app.manage(AppState::new_with_running_vault(
+                running_vault,
                 semantic,
                 EventBus::new(app.handle().clone()),
             )?);
@@ -166,7 +169,9 @@ pub fn run() {
                 .spawn(move || {
                     match vault_watcher::start_vault_watcher(watcher_handle.clone()) {
                         Ok(handle) => {
-                            watcher_handle.manage(handle);
+                            if let Some(lifecycle) = watcher_handle.try_state::<AppLifecycle>() {
+                                lifecycle.install_watcher(handle);
+                            }
                         }
                         Err(error) => {
                             eprintln!("vault watcher startup failed: {error}");
@@ -196,16 +201,15 @@ pub fn run() {
                     // the first seconds after launch do not contend on
                     // the global SQLite state mutex.
                     if let Some(state) = watcher_handle.try_state::<AppState>() {
-                        if let Ok(notes_dir) = notes_root() {
-                            if notes_dir.exists() {
-                                if let Err(error) = state.prewarm_notes_index(&notes_dir) {
-                                    eprintln!("notes-index prewarm failed: {error}");
-                                }
-                                if let Err(error) =
-                                    state.note_timeline().initialize_existing_notes(&notes_dir)
-                                {
-                                    eprintln!("Baseline Revision initialization failed: {error}");
-                                }
+                        let notes_dir = state.running_vault().root();
+                        if notes_dir.exists() {
+                            if let Err(error) = state.prewarm_notes_index(notes_dir) {
+                                eprintln!("notes-index prewarm failed: {error}");
+                            }
+                            if let Err(error) =
+                                state.note_timeline().initialize_existing_notes(notes_dir)
+                            {
+                                eprintln!("Baseline Revision initialization failed: {error}");
                             }
                         }
                     }
@@ -225,14 +229,18 @@ pub fn run() {
             commands::get_vault_info,
             commands::list_vault_folders,
             commands::create_vault_folder,
-            commands::trust_and_migrate_legacy_note_timeline_history,
             commands::get_history_health,
+            commands::get_history_readiness,
             #[cfg(feature = "e2e-wdio")]
             commands::e2e_corrupt_history_store,
             #[cfg(feature = "e2e-wdio")]
             commands::e2e_flush_vault_watcher_path,
             commands::get_note_history_health,
             commands::history_commands::get_note_history_page,
+            commands::history_commands::get_note_history_context,
+            commands::history_commands::finalize_note_editing_window,
+            #[cfg(feature = "e2e-wdio")]
+            commands::history_commands::e2e_advance_window_clock,
             commands::history_commands::get_missing_note_history_page,
             commands::history_commands::get_note_history_revision,
             commands::history_commands::get_note_history_diff,
@@ -250,6 +258,7 @@ pub fn run() {
             commands::asset_commands::read_image_asset_data_url,
             commands::asset_commands::store_pasted_image,
             commands::set_vault_directory,
+            commands::prepare_restart,
             commands::wikilink_commands::resolve_note_link,
             commands::wikilink_commands::autocomplete_note_links,
             commands::save_note,
@@ -323,7 +332,6 @@ pub fn run() {
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,
-            commands::report_user_activity,
             commands::get_semantic_debug_metrics,
             commands::clear_semantic_debug_metrics,
             commands::rebuild_semantic_index,
@@ -352,40 +360,46 @@ pub fn run() {
             }
         }
 
-        let mut exit_permitted = true;
         if let RunEvent::ExitRequested { api, .. } = &event {
-            if let Some(state) = app_handle.try_state::<AppState>() {
-                let clean_close = state.note_timeline().is_cleanly_closed().and_then(|closed| {
-                    if closed {
-                        Ok(())
-                    } else {
-                        state::vault_root()
-                            .and_then(|vault_root| {
-                                state.note_timeline()
-                                    .clean_close(&vault_root)
-                            })
-                            .map(|_| ())
-                    }
-                });
-                if let Err(error) = clean_close {
-                    eprintln!("vault clean close failed: {error}");
+            if let Some(lifecycle) = app_handle.try_state::<AppLifecycle>() {
+                if !lifecycle.is_ready() {
+                    // Never block Tauri's event loop: chat cancellation and
+                    // async agent work may need it in order to settle.
                     api.prevent_exit();
-                    exit_permitted = false;
-                    app_handle
-                        .dialog()
-                        .message(format!(
-                            "Gneauxghts could not safely close the vault, so the app remains open. Resolve the storage problem and quit again.\n\n{error}"
-                        ))
-                        .title("Vault could not be closed safely")
-                        .kind(MessageDialogKind::Error)
-                        .show(|_| {});
+                    let _ = app_handle.emit("app://restart-preparing", ());
+                    let close_app = app_handle.clone();
+                    let _ = thread::Builder::new()
+                        .name("ordinary-exit-settlement".to_string())
+                        .spawn(move || {
+                            let receipt = close_app
+                                .try_state::<AppLifecycle>()
+                                .map(|lifecycle| lifecycle.prepare_restart(&close_app))
+                                .unwrap_or_else(|| app::PrepareRestartReceipt {
+                                    status: "failed",
+                                    ready: false,
+                                    timeline_portable: false,
+                                    can_resume: false,
+                                    error: Some("Application lifecycle unavailable".to_string()),
+                                });
+                            let _ = close_app.emit("app://restart-prepared", receipt.clone());
+                            if receipt.ready {
+                                close_app.exit(0);
+                            } else {
+                                let error = receipt.error.unwrap_or_else(|| {
+                                    "Vault settlement did not produce a ready receipt".to_string()
+                                });
+                                eprintln!("vault clean close failed: {error}");
+                                close_app
+                                    .dialog()
+                                    .message(format!(
+                                        "Gneauxghts could not safely close the vault, so the app remains open. This fallback settles backend work only; it cannot save an unsent frontend draft. Resolve the storage problem and quit again.\n\n{error}"
+                                    ))
+                                    .title("Vault could not be closed safely")
+                                    .kind(MessageDialogKind::Error)
+                                    .show(|_| {});
+                            }
+                        });
                 }
-            }
-        }
-
-        if exit_permitted && matches!(&event, RunEvent::Exit | RunEvent::ExitRequested { .. }) {
-            if let Some(state) = app_handle.try_state::<AppState>() {
-                state.semantic.shutdown();
             }
         }
     });

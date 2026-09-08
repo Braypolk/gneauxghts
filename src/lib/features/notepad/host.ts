@@ -10,7 +10,7 @@ import {
 } from '$lib/features/notepad/document/documentState';
 
 export interface NotepadDocumentSnapshot {
-  key: string;
+  documentHandle: string;
   title: string;
   bodyMarkdown: string;
   currentNoteId: string | null;
@@ -29,14 +29,14 @@ export interface NotepadEditorSelectionSnapshot {
 }
 
 export interface NotepadInsertMarkdownRequest extends EditorMarkdownInsertOptions {
-  noteKey: string;
+  documentHandle: string;
   expectedDocumentRevision: number;
   markdown: string;
 }
 
 export type NotepadInsertMarkdownResult =
   | ({ status: 'inserted' } & EditorMarkdownInsertResult)
-  | { status: 'target-changed'; currentNoteKey: string; currentDocumentRevision: number }
+  | { status: 'target-changed'; currentDocumentHandle: string; currentDocumentRevision: number }
   | { status: 'editor-unavailable' };
 
 export interface NotepadFeatureHostDeps {
@@ -62,7 +62,7 @@ export interface NotepadFeatureHost {
 export function snapshotDocument(document: NoteDraftState): NotepadDocumentSnapshot {
   const snapshot = documentToSessionSnapshot(document);
   return {
-    key: document.key,
+    documentHandle: document.handle,
     ...snapshot,
     operationRevision: document.operation.revision
   };
@@ -73,15 +73,15 @@ export function createNotepadFeatureHost(deps: NotepadFeatureHostDeps): NotepadF
     getActiveDocumentSnapshot: () => snapshotDocument(deps.getActiveDocument()),
     getActiveEditorSnapshot: () => deps.getActiveEditor()?.readSnapshot() ?? null,
     getActiveSelectionSnapshot: () => deps.getActiveEditor()?.readSelection() ?? null,
-    insertMarkdown: ({ noteKey, expectedDocumentRevision, markdown, ...options }) => {
+    insertMarkdown: ({ documentHandle, expectedDocumentRevision, markdown, ...options }) => {
       const document = deps.getActiveDocument();
       if (
-        document.key !== noteKey ||
+        document.handle !== documentHandle ||
         document.operation.revision !== expectedDocumentRevision
       ) {
         return {
           status: 'target-changed',
-          currentNoteKey: document.key,
+          currentDocumentHandle: document.handle,
           currentDocumentRevision: document.operation.revision
         };
       }

@@ -1,16 +1,15 @@
 import { describe, expect, it } from 'vitest';
 import {
+  adoptCommittedDocument,
   adoptSnapshotForPane,
+  bindNotepadStateToVault,
   createFreshDraftNote,
   createNoteDraftState,
   createNotepadState,
   getPaneNote,
-  listReferencedNoteKeys,
-  noteKeyFromPath,
-  rekeyNote,
+  listReferencedDocumentHandles,
   removeNoteIfUnreferenced,
-  replacePaneReferenceWithFreshDraft,
-  type NoteKey
+  replacePaneReferenceWithFreshDraft
 } from '$lib/features/notepad/state/noteStore';
 import {
   WorkspaceStore,
@@ -33,12 +32,12 @@ function setupWorkspace() {
   const state = createNotepadState(initialNote);
   const workspace = new WorkspaceStore(
     primary,
-    initialNote.key
+    initialNote.handle
   );
   createReadyPaneForTest(
     workspace,
     secondary,
-    initialNote.key
+    initialNote.handle
   );
   return { state, workspace, initialNote };
 }
@@ -54,8 +53,8 @@ describe('shared note identity', () => {
     expect(
       getPaneNote(state, workspace, secondary)
     ).toBe(initialNote);
-    expect(listReferencedNoteKeys(workspace)).toEqual([
-      initialNote.key
+    expect(listReferencedDocumentHandles(workspace)).toEqual([
+      initialNote.handle
     ]);
   });
 
@@ -70,16 +69,34 @@ describe('shared note identity', () => {
     ).toBe('edited content');
   });
 
+  it('keeps both pane references on the same handle after first save', () => {
+    const { state, workspace, initialNote } = setupWorkspace();
+    bindNotepadStateToVault(state, '/vault');
+    const originalHandle = initialNote.handle;
+
+    adoptCommittedDocument(state, initialNote, {
+      noteId: 'saved-id',
+      title: 'Saved',
+      markdown: 'body',
+      path: '/vault/Saved.md'
+    });
+
+    expect(workspace.getPaneState(primary).documentHandle).toBe(originalHandle);
+    expect(workspace.getPaneState(secondary).documentHandle).toBe(originalHandle);
+    expect(getPaneNote(state, workspace, primary)).toBe(initialNote);
+    expect(getPaneNote(state, workspace, secondary)).toBe(initialNote);
+  });
+
   it('closing one pane does not delete a still-referenced note', () => {
     const { state, workspace, initialNote } =
       setupWorkspace();
     const fresh = createFreshDraftNote(state);
-    workspace.setPaneNoteKey(primary, fresh.key);
+    workspace.setPaneDocumentHandle(primary, fresh.handle);
 
     expect(
       getPaneNote(state, workspace, secondary)
     ).toBe(initialNote);
-    expect(state.notesByKey[initialNote.key]).toBe(
+    expect(state.documentsByHandle[initialNote.handle]).toBe(
       initialNote
     );
   });
@@ -96,7 +113,7 @@ describe('shared note identity', () => {
     removeNoteIfUnreferenced(
       state,
       workspace,
-      initialNote.key
+      initialNote.handle
     );
 
     expect(
@@ -105,7 +122,7 @@ describe('shared note identity', () => {
     expect(
       getPaneNote(state, workspace, secondary)
     ).toBe(initialNote);
-    expect(state.notesByKey[initialNote.key]).toBe(
+    expect(state.documentsByHandle[initialNote.handle]).toBe(
       initialNote
     );
   });
@@ -115,7 +132,7 @@ describe('shared note identity', () => {
     const state = createNotepadState(initialNote);
     const workspace = new WorkspaceStore(
       primary,
-      initialNote.key
+      initialNote.handle
     );
 
     replacePaneReferenceWithFreshDraft(
@@ -126,10 +143,10 @@ describe('shared note identity', () => {
     removeNoteIfUnreferenced(
       state,
       workspace,
-      initialNote.key
+      initialNote.handle
     );
 
-    expect(state.notesByKey[initialNote.key]).toBeUndefined();
+    expect(state.documentsByHandle[initialNote.handle]).toBeUndefined();
   });
 
   it('only removes a note after workspace references are gone', () => {
@@ -139,51 +156,22 @@ describe('shared note identity', () => {
     removeNoteIfUnreferenced(
       state,
       workspace,
-      initialNote.key
+      initialNote.handle
     );
-    expect(state.notesByKey[initialNote.key]).toBe(
+    expect(state.documentsByHandle[initialNote.handle]).toBe(
       initialNote
     );
 
     const fresh = createFreshDraftNote(state);
-    workspace.setPaneNoteKey(primary, fresh.key);
-    workspace.setPaneNoteKey(secondary, fresh.key);
+    workspace.setPaneDocumentHandle(primary, fresh.handle);
+    workspace.setPaneDocumentHandle(secondary, fresh.handle);
     removeNoteIfUnreferenced(
       state,
       workspace,
-      initialNote.key
+      initialNote.handle
     );
 
-    expect(state.notesByKey[initialNote.key]).toBeUndefined();
-  });
-});
-
-describe('rekey transfer', () => {
-  it('rekeying a note updates all workspace references', () => {
-    const { state, workspace, initialNote } =
-      setupWorkspace();
-    const oldKey = initialNote.key;
-    const nextKey =
-      noteKeyFromPath('/vault/Rekeyed.md') ??
-      ('path:/vault/Rekeyed.md' as NoteKey);
-
-    const rekeyed = rekeyNote(
-      state,
-      workspace,
-      oldKey,
-      nextKey
-    );
-
-    expect(rekeyed).toBe(initialNote);
-    expect(rekeyed?.key).toBe(nextKey);
-    expect(workspace.getPaneState(primary).noteKey).toBe(
-      nextKey
-    );
-    expect(workspace.getPaneState(secondary).noteKey).toBe(
-      nextKey
-    );
-    expect(state.notesByKey[oldKey]).toBeUndefined();
-    expect(state.notesByKey[nextKey]).toBe(initialNote);
+    expect(state.documentsByHandle[initialNote.handle]).toBeUndefined();
   });
 });
 
@@ -229,11 +217,11 @@ describe('noteStore and WorkspaceStore ownership', () => {
   it('removing pane state does not remove its document', () => {
     const { state, workspace } = setupWorkspace();
     const draft = createFreshDraftNote(state);
-    workspace.setPaneNoteKey(secondary, draft.key);
+    workspace.setPaneDocumentHandle(secondary, draft.handle);
 
     retirePaneForTest(workspace, secondary);
 
     expect(workspace.hasPane(secondary)).toBe(false);
-    expect(state.notesByKey[draft.key]).toBe(draft);
+    expect(state.documentsByHandle[draft.handle]).toBe(draft);
   });
 });

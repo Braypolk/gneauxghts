@@ -2,8 +2,8 @@ import {
   INITIAL_PANE_ID,
   type NotepadPaneId
 } from '$lib/features/notepad/session/runtimeStore.svelte';
-import { initialNotepadNoteKey } from '$lib/features/notepad/state/noteState.svelte';
-import type { NoteKey } from '$lib/features/notepad/state/noteStore';
+import { initialNotepadDocumentHandle } from '$lib/features/notepad/state/noteState.svelte';
+import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import {
   canRemovePane as policyCanRemovePane,
@@ -29,7 +29,7 @@ import {
 export interface PaneCommandState {
   paneId: NotepadPaneId | null;
   sourcePaneId: NotepadPaneId | null;
-  sourceNoteKey: NoteKey | null;
+  sourceDocumentHandle: DocumentHandle | null;
   mode: PaneCommandMode;
   highlightedIndex: number;
   focusEl: HTMLElement | null;
@@ -52,7 +52,7 @@ export class WorkspaceStore {
   paneCommand = $state<PaneCommandState>({
     paneId: null,
     sourcePaneId: null,
-    sourceNoteKey: null,
+    sourceDocumentHandle: null,
     mode: 'split',
     highlightedIndex: 0,
     focusEl: null
@@ -67,7 +67,7 @@ export class WorkspaceStore {
 
   constructor(
     initialPaneId: NotepadPaneId = INITIAL_PANE_ID,
-    initialNoteKey: NoteKey = initialNotepadNoteKey
+    initialDocumentHandle: DocumentHandle = initialNotepadDocumentHandle
   ) {
     this.paneOrder = [initialPaneId];
     this.activePaneId = initialPaneId;
@@ -75,7 +75,7 @@ export class WorkspaceStore {
       [initialPaneId]: {
         paneId: initialPaneId,
         kind: 'editor',
-        noteKey: initialNoteKey,
+        documentHandle: initialDocumentHandle,
         chatConversationId: null
       }
     };
@@ -135,7 +135,7 @@ export class WorkspaceStore {
   completePaneCreation(
     paneId: NotepadPaneId,
     operationId: number,
-    noteKey: NoteKey,
+    documentHandle: DocumentHandle,
     kind: PaneKind = 'editor'
   ): WorkspacePaneState<NotepadPaneId> {
     if (this.panesById[paneId]) {
@@ -153,7 +153,7 @@ export class WorkspaceStore {
     const pane: WorkspacePaneState<NotepadPaneId> = {
       paneId,
       kind,
-      noteKey,
+      documentHandle,
       chatConversationId: null
     };
     this.panesById[paneId] = pane;
@@ -270,11 +270,11 @@ export class WorkspaceStore {
     return true;
   }
 
-  setPaneNoteKey(
+  setPaneDocumentHandle(
     paneId: NotepadPaneId,
-    noteKey: NoteKey
+    documentHandle: DocumentHandle
   ): void {
-    this.getPaneState(paneId).noteKey = noteKey;
+    this.getPaneState(paneId).documentHandle = documentHandle;
     this.assertInvariants();
   }
 
@@ -287,31 +287,31 @@ export class WorkspaceStore {
     this.assertInvariants();
   }
 
-  replaceNoteKeyReferences(
-    previousKey: NoteKey,
-    nextKey: NoteKey
+  replaceDocumentHandleReferences(
+    previousHandle: DocumentHandle,
+    nextHandle: DocumentHandle
   ): void {
     for (const paneId of this.paneOrder) {
       const pane = this.getPaneState(paneId);
-      if (pane.noteKey === previousKey) {
-        pane.noteKey = nextKey;
+      if (pane.documentHandle === previousHandle) {
+        pane.documentHandle = nextHandle;
       }
     }
     this.assertInvariants();
   }
 
-  isNoteReferenced(noteKey: NoteKey): boolean {
+  isDocumentReferenced(documentHandle: DocumentHandle): boolean {
     return this.paneOrder.some(
       (paneId) =>
-        this.getPaneState(paneId).noteKey === noteKey
+        this.getPaneState(paneId).documentHandle === documentHandle
     );
   }
 
-  listReferencedNoteKeys(): NoteKey[] {
+  listReferencedDocumentHandles(): DocumentHandle[] {
     return [
       ...new Set(
         this.paneOrder.map(
-          (paneId) => this.getPaneState(paneId).noteKey
+          (paneId) => this.getPaneState(paneId).documentHandle
         )
       )
     ];
@@ -367,14 +367,14 @@ export class WorkspaceStore {
 
   beginPaneCommand(
     paneId: NotepadPaneId,
-    sourceNoteKey: NoteKey,
+    sourceDocumentHandle: DocumentHandle,
     mode: PaneCommandMode,
     sourcePaneId: NotepadPaneId = paneId
   ): void {
     this.paneCommand = {
       paneId,
       sourcePaneId,
-      sourceNoteKey,
+      sourceDocumentHandle,
       mode,
       highlightedIndex: 0,
       focusEl: this.paneCommand.focusEl
@@ -401,7 +401,7 @@ export class WorkspaceStore {
     this.paneCommand = {
       paneId: null,
       sourcePaneId: null,
-      sourceNoteKey: null,
+      sourceDocumentHandle: null,
       mode: 'split',
       highlightedIndex: 0,
       focusEl: null

@@ -17,9 +17,9 @@ use crate::{
         resolve_current_document, CurrentDocumentRequest,
     },
     state::{
-        db_load_note_activity, db_set_last_chat_location, db_set_note_pinned, effective_open_count,
-        prune_recent_note_ids, read_state, resolve_note_id_from_path, validate_current_path,
-        write_state, NoteActivity,
+        db_load_note_activity, db_prune_recent_state, db_set_last_chat_location,
+        db_set_note_pinned, effective_open_count, prune_recent_note_ids, read_state,
+        resolve_note_id_from_path, validate_current_path, NoteActivity,
     },
     time::current_time_millis,
 };
@@ -263,12 +263,13 @@ pub(crate) fn list_recent_notes(
         .note_timeline()
         .current_content(AllowedScope::vault())
         .read(|| {
-            let notes_dir = prepare_notes_dir(false)?;
+            let notes_dir = prepare_notes_dir(&state, false)?;
 
             let current_path = validate_current_path(current_path, &notes_dir)?;
             let mut persisted_state = read_state(&notes_dir)?;
+            let previous = persisted_state.clone();
             if prune_recent_note_ids(&mut persisted_state, &notes_dir) {
-                write_state(&notes_dir, &persisted_state)?;
+                db_prune_recent_state(&previous, &persisted_state)?;
             }
 
             state.ensure_interactive_index(
@@ -412,10 +413,11 @@ pub(crate) fn list_recent_focus(
         .note_timeline()
         .current_content(AllowedScope::vault())
         .read(|| {
-            let notes_dir = prepare_notes_dir(false)?;
+            let notes_dir = prepare_notes_dir(&state, false)?;
 
             let current_path = validate_current_path(current_path, &notes_dir)?;
             let mut persisted_state = read_state(&notes_dir)?;
+            let previous = persisted_state.clone();
             let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
 
             state.ensure_interactive_index(
@@ -443,7 +445,7 @@ pub(crate) fn list_recent_focus(
 
             drop(index);
             if prune_changed {
-                write_state(&notes_dir, &persisted_state)?;
+                db_prune_recent_state(&previous, &persisted_state)?;
             }
 
             let last_chat =
@@ -474,8 +476,10 @@ pub(crate) fn set_note_pinned(note_id: String, pinned: bool) -> Result<(), Strin
 }
 
 #[tauri::command]
-pub(crate) fn get_last_chat_location() -> Result<Option<LastChatLocation>, String> {
-    let notes_dir = prepare_notes_dir(false)?;
+pub(crate) fn get_last_chat_location(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<LastChatLocation>, String> {
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let state = read_state(&notes_dir)?;
     Ok(state
         .last_chat_conversation_id
@@ -571,7 +575,7 @@ async fn search_notes_hybrid_unchecked(
     let _foreground_guard = state.foreground_guard();
     let cache_generation = result_cache_generation();
     let started_at = Instant::now();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
 
     let normalized_query = normalize_search_text(&query);
     if normalized_query.is_empty() {
@@ -782,7 +786,7 @@ async fn get_related_notes_unchecked(
 ) -> Result<RelatedNotesResponse, String> {
     let _foreground_guard = state.foreground_guard();
     let cache_generation = result_cache_generation();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
         state,
@@ -870,7 +874,7 @@ async fn retrieve_note_context_unchecked(
     limit: usize,
 ) -> Result<RetrievalContextResponse, String> {
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir(false)?;
+    let notes_dir = prepare_notes_dir(&state, false)?;
     let current_path = validate_current_path(current_path, &notes_dir)?;
     let resolved_current = resolve_current_document(
         state,
@@ -1478,7 +1482,6 @@ mod current_content_delivery_tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = created.note_id.unwrap();
         let note_path = created.path.unwrap();

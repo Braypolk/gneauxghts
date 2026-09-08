@@ -50,6 +50,8 @@ enum BackgroundJob {
 
 #[derive(Default)]
 struct QueueInner {
+    #[cfg(test)]
+    waiting_for_job: bool,
     /// FIFO of jobs waiting to be processed. We collapse repeated jobs for
     /// the same path on enqueue, so the deque holds at most one pending
     /// job per path.
@@ -57,6 +59,7 @@ struct QueueInner {
     /// path -> queue position so we can coalesce repeats for the same path
     /// without scanning the deque on every enqueue.
     pending_by_path: HashMap<PathBuf, usize>,
+    stopping: bool,
 }
 
 pub(crate) struct BackgroundIndexQueue {
@@ -90,6 +93,18 @@ impl BackgroundIndexQueue {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn wait_until_idle_for_test(&self) {
+        let (lock, wake) = &*self.inner;
+        let state = lock.lock().expect("queue state");
+        let (state, _) = wake
+            .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                !state.waiting_for_job
+            })
+            .expect("queue idle notification");
+        assert!(state.waiting_for_job, "worker did not reach its idle wait");
+    }
+
     pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote, generation: u64) {
         self.enqueue(DeferredCatalogProjection::all(
             generation,
@@ -111,6 +126,9 @@ impl BackgroundIndexQueue {
         };
         let (lock, cvar) = &*self.inner;
         let mut state = lock.lock().expect("background index queue lock poisoned");
+        if state.stopping && !matches!(job, BackgroundJob::Shutdown) {
+            return;
+        }
         if let Some(path) = path {
             // Coalesce: if there's already a job for this path, replace it
             // in place rather than queueing a duplicate.
@@ -137,6 +155,34 @@ impl BackgroundIndexQueue {
         }
         cvar.notify_one();
     }
+
+    /// Stop accepting derived work, discard queued rebuildable projections,
+    /// and join the worker after any projection already executing completes.
+    pub(crate) fn shutdown_discard_and_join(&self) -> Result<(), String> {
+        let (lock, cvar) = &*self.inner;
+        {
+            let mut state = lock
+                .lock()
+                .map_err(|_| "Background index queue lock poisoned".to_string())?;
+            if !state.stopping {
+                state.stopping = true;
+                state.jobs.clear();
+                state.pending_by_path.clear();
+                state.jobs.push_back(BackgroundJob::Shutdown);
+            }
+            cvar.notify_all();
+        }
+        let join = self
+            .worker
+            .lock()
+            .map_err(|_| "Background index worker lock poisoned".to_string())?
+            .take();
+        if let Some(join) = join {
+            join.join()
+                .map_err(|_| "Background index worker panicked during shutdown".to_string())?;
+        }
+        Ok(())
+    }
 }
 
 fn run_worker(
@@ -146,25 +192,33 @@ fn run_worker(
     projection_retries: Arc<CatalogProjectionRetries>,
 ) {
     loop {
-        // Cooperative back-off before each job: if a foreground IPC call
-        // is currently in flight, sleep briefly and re-check. This keeps
-        // the lexical writer mutex and the global SQLite state mutex
-        // free for the foreground while we still drain the queue
-        // promptly during idle periods. The check is per-job rather
-        // than per-message in flight so the worker continues making
-        // progress under sustained foreground activity (the user's
-        // typing produces many guards but each is short-lived).
-        while foreground_activity.is_busy() {
-            thread::sleep(FOREGROUND_BACKOFF);
-        }
-
         let job = {
             let (lock, cvar) = &*inner;
             let mut state = lock.lock().expect("background index queue lock poisoned");
             while state.jobs.is_empty() {
+                #[cfg(test)]
+                {
+                    state.waiting_for_job = true;
+                    cvar.notify_all();
+                }
                 state = cvar
                     .wait(state)
                     .expect("background index queue cvar wait failed");
+            }
+            #[cfg(test)]
+            {
+                state.waiting_for_job = false;
+            }
+            // Recheck after waking for work. Foreground activity may have
+            // started while this worker was idle. Keep the job queued so
+            // repeated updates still coalesce during the foreground pause.
+            // Shutdown itself needs no projection work and must not back off.
+            if matches!(state.jobs.front(), Some(BackgroundJob::Apply(_)))
+                && foreground_activity.is_busy()
+            {
+                drop(state);
+                thread::sleep(FOREGROUND_BACKOFF);
+                continue;
             }
             let job = state.jobs.pop_front().expect("non-empty queue");
             // Drop the path -> position mapping. If callers race during the
@@ -213,11 +267,6 @@ fn run_worker(
 
 impl Drop for BackgroundIndexQueue {
     fn drop(&mut self) {
-        self.push(BackgroundJob::Shutdown);
-        if let Ok(mut handle) = self.worker.lock() {
-            if let Some(join) = handle.take() {
-                let _ = join.join();
-            }
-        }
+        let _ = self.shutdown_discard_and_join();
     }
 }

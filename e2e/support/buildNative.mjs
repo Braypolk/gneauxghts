@@ -1,5 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
+import { resolve } from 'node:path';
+import { nativeE2EPath, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
 
 const optimized = process.argv.includes('--release');
 if (optimized) {
@@ -57,4 +59,7 @@ const result = spawnSync(
 );
 
 if (result.error) throw result.error;
-process.exit(result.status ?? 1);
+if (result.status !== 0) process.exit(result.status ?? 1);
+const profile = optimized ? 'release' : 'debug';
+const binaryName = process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts';
+console.log(JSON.stringify(pinNativeE2EBinary(resolve('src-tauri', 'target', profile, binaryName), nativeE2EPath(profile), profile)));

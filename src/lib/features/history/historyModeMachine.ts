@@ -29,9 +29,9 @@ export interface HistoryRevisionRecord {
   source: HistoryMutationSource;
   occurredAtMillis: number;
   timelineOrdinal: number;
-  timeKind: 'knownSince' | 'committed' | 'observed';
+  timeKind: 'knownSince' | 'committed' | 'observed' | 'editingWindow';
+  timeEvidence?: import('$lib/types/history').RevisionTimeEvidence;
   modifiedAtMillis: number | null;
-  editingSessionId: string | null;
   revisionLabel: string | null;
   lineCount: number;
   characterCount: number;
@@ -53,6 +53,7 @@ export type HistoryModeRecord = HistoryRevisionRecord | HistoryLifecycleRecord;
 export interface HistoryModePage {
   records: HistoryModeRecord[];
   nextCursor: string | null;
+  previousCursor?: string | null;
 }
 
 export interface HistoryModeDiagnostics {
@@ -88,13 +89,16 @@ export interface HistoricalDiff {
   revisionId: string;
   comparison: HistoryDiffComparison;
   fromRevisionId: string | null;
-  toRevisionId: string;
+  /** Null when comparing against current captured content in an open window. */
+  toRevisionId: string | null;
   bodyLines: HistoryDiffLine[];
   propertiesLines: HistoryDiffLine[];
   missingAssets: string[];
 }
 
 export interface HistoryModeTarget {
+  /** Citation targets stay independent of the invoking pane after restore/clear. */
+  fromCitation?: true;
   citationRevisionId?: string;
   noteId: string;
   noteTitle: string;
@@ -126,6 +130,7 @@ export type HistoryModeState =
       workspace: HistoryWorkspaceSnapshot;
       records: HistoryModeRecord[];
       nextCursor: string | null;
+      previousCursor?: string | null;
       selectedRevisionId: string | null;
       selectedComparison: HistoryDiffComparison;
       selectedDiff: HistoricalDiff | null;
@@ -336,6 +341,7 @@ export function transitionHistoryMode(
         workspace: state.workspace,
         records: event.page.records,
         nextCursor: event.page.nextCursor,
+        previousCursor: event.page.previousCursor ?? null,
         selectedRevisionId: event.selectedDiff?.revisionId ?? null,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,
@@ -422,8 +428,9 @@ export function transitionHistoryMode(
       }
       return {
         ...state,
-        records: mergeRecords(state.records, event.page.records),
+        records: state.target.citationRevisionId ? event.page.records : mergeRecords(state.records, event.page.records),
         nextCursor: event.page.nextCursor,
+        previousCursor: event.page.previousCursor ?? null,
         request: null
       };
     case 'refreshLoaded':
@@ -439,7 +446,7 @@ export function transitionHistoryMode(
           record.kind === 'revision' && record.revisionId === state.selectedRevisionId
       );
       const records =
-        selectedRecord &&
+        !state.target.citationRevisionId && selectedRecord &&
         !event.page.records.some((record) => record.recordId === selectedRecord.recordId)
           ? mergeRecords(event.page.records, [selectedRecord])
           : event.page.records;
@@ -447,6 +454,7 @@ export function transitionHistoryMode(
         ...state,
         records,
         nextCursor: event.page.nextCursor,
+        previousCursor: event.page.previousCursor ?? null,
         selectedDiff: event.selectedDiff ?? state.selectedDiff,
         restorePreview: null,
         request: null
@@ -461,8 +469,10 @@ export function transitionHistoryMode(
       }
       return {
         ...state,
+        target: { ...state.target, citationRevisionId: undefined },
         records: event.page.records,
         nextCursor: event.page.nextCursor,
+        previousCursor: event.page.previousCursor ?? null,
         selectedRevisionId: event.selectedDiff.revisionId,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,
@@ -481,8 +491,10 @@ export function transitionHistoryMode(
       }
       return {
         ...state,
+        target: { ...state.target, citationRevisionId: undefined },
         records: event.page.records,
         nextCursor: event.page.nextCursor,
+        previousCursor: event.page.previousCursor ?? null,
         selectedRevisionId: event.selectedDiff.revisionId,
         selectedComparison: 'parent',
         selectedDiff: event.selectedDiff,

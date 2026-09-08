@@ -11,7 +11,7 @@ const second = 'notepad-pane-2' as NotepadPaneId;
 const third = 'notepad-pane-3' as NotepadPaneId;
 
 function store() {
-  return new WorkspaceStore(first, 'draft:workspace-1');
+  return new WorkspaceStore(first, 'document:workspace-1');
 }
 
 describe('WorkspaceStore pane commands', () => {
@@ -20,7 +20,7 @@ describe('WorkspaceStore pane commands', () => {
 
     store.beginPaneCommand(
       'notepad-pane-2',
-      'path:/vault/Context.md',
+      'document:/vault/Context.md',
       'split',
       'notepad-pane-1'
     );
@@ -28,7 +28,7 @@ describe('WorkspaceStore pane commands', () => {
     expect(store.paneCommand).toMatchObject({
       paneId: 'notepad-pane-2',
       sourcePaneId: 'notepad-pane-1',
-      sourceNoteKey: 'path:/vault/Context.md',
+      sourceDocumentHandle: 'document:/vault/Context.md',
       mode: 'split'
     });
 
@@ -44,7 +44,7 @@ describe('WorkspaceStore invariants', () => {
     createReadyPaneForTest(
       workspace,
       second,
-      'path:/vault/Second.md',
+      'document:/vault/Second.md',
       'chat'
     );
 
@@ -52,7 +52,7 @@ describe('WorkspaceStore invariants', () => {
     expect(workspace.getPaneState(second)).toEqual({
       paneId: second,
       kind: 'chat',
-      noteKey: 'path:/vault/Second.md',
+      documentHandle: 'document:/vault/Second.md',
       chatConversationId: null
     });
   });
@@ -62,7 +62,7 @@ describe('WorkspaceStore invariants', () => {
     createReadyPaneForTest(
       workspace,
       second,
-      'draft:workspace-2',
+      'document:workspace-2',
       'chat'
     );
 
@@ -77,12 +77,12 @@ describe('WorkspaceStore invariants', () => {
 
   it('leases removed pane state until rendered teardown is finalized', () => {
     const workspace = store();
-    createReadyPaneForTest(workspace, second, 'draft:workspace-2');
+    createReadyPaneForTest(workspace, second, 'document:workspace-2');
 
     const retirement = retirePaneForTest(workspace, second)!;
 
-    expect(workspace.getPaneState(second).noteKey).toBe(
-      'draft:workspace-2'
+    expect(workspace.getPaneState(second).documentHandle).toBe(
+      'document:workspace-2'
     );
     workspace.completePaneDisposal(
       second,
@@ -95,8 +95,8 @@ describe('WorkspaceStore invariants', () => {
 
   it('selects the adjacent pane to the right, otherwise the left', () => {
     const workspace = store();
-    createReadyPaneForTest(workspace, second, 'draft:workspace-2');
-    createReadyPaneForTest(workspace, third, 'draft:workspace-3');
+    createReadyPaneForTest(workspace, second, 'document:workspace-2');
+    createReadyPaneForTest(workspace, third, 'document:workspace-3');
 
     workspace.setActivePaneId(second);
     retirePaneForTest(workspace, second);
@@ -111,27 +111,27 @@ describe('WorkspaceStore invariants', () => {
     createReadyPaneForTest(
       workspace,
       second,
-      'draft:workspace-2',
+      'document:workspace-2',
       'chat'
     );
 
-    workspace.setPaneNoteKey(
+    workspace.setPaneDocumentHandle(
       second,
-      'path:/vault/Context.md'
+      'document:/vault/Context.md'
     );
     workspace.setPaneConversationId(second, 'conversation-1');
-    workspace.replaceNoteKeyReferences(
-      'path:/vault/Context.md',
-      'path:/vault/Renamed.md'
+    workspace.replaceDocumentHandleReferences(
+      'document:/vault/Context.md',
+      'document:/vault/Renamed.md'
     );
 
     expect(workspace.getPaneState(second)).toMatchObject({
-      noteKey: 'path:/vault/Renamed.md',
+      documentHandle: 'document:/vault/Renamed.md',
       chatConversationId: 'conversation-1'
     });
-    expect(workspace.listReferencedNoteKeys()).toEqual([
-      'draft:workspace-1',
-      'path:/vault/Renamed.md'
+    expect(workspace.listReferencedDocumentHandles()).toEqual([
+      'document:workspace-1',
+      'document:/vault/Renamed.md'
     ]);
   });
 
@@ -140,7 +140,7 @@ describe('WorkspaceStore invariants', () => {
     createReadyPaneForTest(
       workspace,
       second,
-      'path:/vault/Context.md',
+      'document:/vault/Context.md',
       'editor'
     );
     workspace.setPaneConversationId(
@@ -151,7 +151,7 @@ describe('WorkspaceStore invariants', () => {
     expect(workspace.setPaneKind(second, 'chat')).toBe(true);
     expect(workspace.getPaneState(second)).toMatchObject({
       kind: 'chat',
-      noteKey: 'path:/vault/Context.md',
+      documentHandle: 'document:/vault/Context.md',
       chatConversationId: 'conversation-1'
     });
 
@@ -160,7 +160,7 @@ describe('WorkspaceStore invariants', () => {
     );
     expect(workspace.getPaneState(second)).toMatchObject({
       kind: 'editor',
-      noteKey: 'path:/vault/Context.md',
+      documentHandle: 'document:/vault/Context.md',
       chatConversationId: null
     });
   });

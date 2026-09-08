@@ -19,6 +19,7 @@ const paneSyncAnnotation = Annotation.define<boolean>();
 
 interface RuntimeReplaceOptions {
   flushHistory?: boolean;
+  notifyMarkdownChange?: boolean;
   selectionByPaneKey?: Map<symbol, EditorSelection>;
   preferredPaneKey?: symbol | null;
 }
@@ -230,8 +231,29 @@ export class EditorDocumentRuntime {
     }
 
     this.revision += 1;
-    this.#notifyMarkdownChange(options.preferredPaneKey ?? null);
+    if (options.notifyMarkdownChange !== false) {
+      this.#notifyMarkdownChange(options.preferredPaneKey ?? null);
+    }
     return true;
+  }
+
+  /**
+   * Adopt canonical document content without turning the synchronization
+   * callback into another user edit. Every committed replacement starts a
+   * fresh shared undo root while pane selections and viewports remain local.
+   */
+  adoptCommittedMarkdown(markdown: string) {
+    return this.replaceMarkdown(markdown, {
+      flushHistory: true,
+      notifyMarkdownChange: false
+    });
+  }
+
+  /** Restore a transient draft without presenting it as another pane edit. */
+  restoreTransientMarkdown(markdown: string) {
+    return this.replaceMarkdown(markdown, {
+      notifyMarkdownChange: false
+    });
   }
 
   applyExternalSnapshot(

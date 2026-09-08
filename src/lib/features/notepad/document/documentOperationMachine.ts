@@ -1,3 +1,5 @@
+export type SaveWaitReason = 'recovery' | 'verification' | 'unavailable' | 'corrupt';
+
 export type DocumentOperationKind =
   | 'saving'
   | 'forgetting';
@@ -11,6 +13,7 @@ export type DocumentOperationState =
   | (DocumentOperationBase & { kind: 'idle' })
   | (DocumentOperationBase & {
       kind: DocumentOperationKind;
+      waitReason?: SaveWaitReason;
     })
   | (DocumentOperationBase & {
       kind: 'failed';
@@ -32,6 +35,7 @@ export type DocumentOperationEvent =
       token: number;
       error: unknown;
     }
+  | { type: 'savingProgress'; token: number; waitReason?: SaveWaitReason }
   | { type: 'invalidate' }
   | { type: 'contentChanged' };
 
@@ -62,6 +66,9 @@ export function transitionDocumentOperation(
         token: state.token + 1,
         revision: state.revision
       };
+    case 'savingProgress':
+      if (state.kind !== 'saving' || event.token !== state.token) return state;
+      return { ...state, waitReason: event.waitReason };
     case 'succeed':
       return event.token === state.token &&
         (state.kind === 'saving' || state.kind === 'forgetting')

@@ -9,16 +9,13 @@ import {
 import {
   createEmptySessionSnapshot
 } from '$lib/features/notepad/session/session';
-import {
-  noteKeyFromPath
-} from '$lib/features/notepad/state/noteStore';
 import type {
   PaneKind
 } from '$lib/features/notepad/workspace/paneTypes';
 import {
   createPaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
-import { createLocationHistoryController } from './locationHistoryController';
+import { createLocationHistoryController, type LocationHistoryControllerDeps } from './locationHistoryController';
 
 const paneId = 'pane-1';
 const otherPaneId = 'pane-2';
@@ -58,27 +55,31 @@ function setup(paneOrder: string[] = [paneId]) {
   };
   const document = createDocumentState(
     currentSnapshot,
-    noteKeyFromPath('/vault/A.md')!
+    'document:location-history'
   );
-  const openNotePath = vi.fn(async () => undefined);
+  const openNotePath = vi.fn<LocationHistoryControllerDeps<string>['openNotePath']>(async () => undefined);
   const setPaneConversationId = vi.fn();
   const setPaneKind = vi.fn(
-    (targetPaneId: string, kind: PaneKind) => {
+    async (targetPaneId: string, kind: PaneKind) => {
       kinds.set(targetPaneId, kind);
-      return true;
+      return;
     }
   );
   const ensurePaneEditors = vi.fn(async () => undefined);
   const focusPaneAfterShortcut = vi.fn(
     async () => undefined
   );
+  const transitions = createPaneNavigationTransitionPipeline<string>({
+    assertWorkspaceInvariants: vi.fn(), ensurePaneEditors
+  });
+  const documentDeparture = { prepare: vi.fn(async () => document) };
   const controller = createLocationHistoryController({
     getActivePaneId: () => paneId,
     getPaneOrder: () => paneOrder,
     getPaneState: (targetPaneId) => ({
       paneId: targetPaneId,
       kind: kinds.get(targetPaneId) ?? 'editor',
-      noteKey: document.key,
+      documentHandle: document.handle,
       chatConversationId: null
     }),
     getPaneKind: (targetPaneId) =>
@@ -95,17 +96,16 @@ function setup(paneOrder: string[] = [paneId]) {
     paneLifecycle: {} as never,
     updateSelectedRelatedText: vi.fn(),
     focusPaneAfterShortcut,
-    documentDeparture: {
-      prepare: vi.fn(async () => document)
-    },
-    transitions: createPaneNavigationTransitionPipeline({
-      assertWorkspaceInvariants: vi.fn(),
-      ensurePaneEditors
-    })
+    documentDeparture,
+    transitions
   });
   notepadLocationMru.seedMissing(paneId, []);
   return {
     controller,
+    transitions,
+    documentDeparture,
+    document,
+    kinds,
     openNotePath,
     setPaneConversationId,
     setPaneKind,
@@ -200,5 +200,49 @@ describe('location history workspace invariants', () => {
     expect(notepadLocationMru.list(paneId)).not.toContainEqual(
       missing
     );
+  });
+});
+
+
+describe('nested restoration departure ownership', () => {
+  beforeEach(() => { notepadLocationMru.clearAll(); });
+
+  it('awaits the pane-kind leaf and preserves the conversation when finalization fails', async () => {
+    const harness = setup();
+    const finalize = vi.fn().mockRejectedValueOnce(new Error('seal failed')).mockResolvedValue(undefined);
+    harness.setPaneKind.mockImplementation(async (id, kind) => {
+      const result = await harness.transitions.execute({
+        kind: 'change-pane-kind', resolvePane: () => id,
+        departDocument: finalize,
+        mutateWorkspace: () => { harness.kinds.set(id, kind); }
+      });
+      if (result.status === 'failed') throw result.error;
+    });
+    await expect(harness.controller.restoreLocation(paneId, chatLocation())).rejects.toThrow('seal failed');
+    expect(harness.kinds.get(paneId)).toBe('editor');
+    expect(harness.setPaneConversationId).not.toHaveBeenCalled();
+    expect(harness.controller.isTouchSuppressed()).toBe(false);
+    await harness.controller.restoreLocation(paneId, chatLocation());
+    expect(finalize).toHaveBeenCalledTimes(2);
+    expect(harness.setPaneConversationId).toHaveBeenCalledExactlyOnceWith(paneId, 'chat-1');
+  });
+
+  it('lets a nested open-note acquire the departure queue and recover after a failed load', async () => {
+    const harness = setup();
+    const finalization = vi.fn();
+    const load = vi.fn().mockRejectedValueOnce(new Error('Missing note path')).mockResolvedValue(undefined);
+    harness.openNotePath.mockImplementation(async () => {
+      const result = await harness.transitions.execute({
+        kind: 'open-note', resolvePane: () => paneId, departDocument: finalization,
+        prepare: load
+      });
+      if (result.status === 'failed') throw result.error;
+    });
+    notepadLocationMru.touch(paneId, editorLocation('note-b', '/vault/B.md'));
+    notepadLocationMru.touch(paneId, editorLocation('missing', '/vault/Missing.md'));
+    await harness.controller.goToPreviousLocation();
+    expect(finalization).toHaveBeenCalledTimes(2);
+    expect(load).toHaveBeenCalledTimes(2);
+    expect(harness.controller.isTouchSuppressed()).toBe(false);
   });
 });

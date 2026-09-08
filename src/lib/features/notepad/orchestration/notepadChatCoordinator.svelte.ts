@@ -418,7 +418,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     }
     const document = this.deps.getPaneDocument(destinationPaneId);
     const result = this.deps.insertMarkdown({
-      noteKey: document.key,
+      documentHandle: document.handle,
       expectedDocumentRevision: document.operation.revision,
       markdown: formatChatInsertion(selection),
       target: 'selection',

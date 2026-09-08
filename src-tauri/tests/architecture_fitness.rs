@@ -36,6 +36,7 @@ fn rust_function<'a>(source: &'a str, name: &str) -> &'a str {
     let marker = format!("fn {name}(");
     let start = source
         .find(&marker)
+        .or_else(|| source.find(&format!("fn {name}<")))
         .unwrap_or_else(|| panic!("expected Rust function `{name}`"));
     let body_start = source[start..]
         .find('{')
@@ -131,11 +132,10 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
     assert_contains_all(
         &note_persistence,
         &[
-            "state.note_timeline().mutate(",
-            "NoteMutation::editor(",
-            "NoteMutation::note_creation(",
+            ".save_note(source, &title, &markdown, current_path)",
+            "MutationSource::Editor",
             "pub(crate) fn persist_task_note_session_with_outcome(",
-            "NoteMutation::task_action(",
+            "MutationSource::TaskAction",
             "commit_warning",
         ],
     );
@@ -193,7 +193,11 @@ fn ordinary_note_writers_use_typed_note_timeline_mutations() {
 fn note_timeline_contracts_the_legacy_post_commit_boundary() {
     let services = repository_file("src-tauri/src/services/mod.rs");
     let catalog = repository_file("src-tauri/src/services/note_catalog.rs");
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/publication.rs"),
+    ]
+    .join("\n");
     let post_publication =
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
     let architecture = repository_file("ARCHITECTURE.md");
@@ -225,11 +229,27 @@ fn note_timeline_contracts_the_legacy_post_commit_boundary() {
             "synchronize_published_upsert",
             "synchronize_published_remove",
             "CatalogWriteMode::Save",
-            "ProjectionTiming::Deferred",
+            "ProjectionTiming",
+            "ProjectionPlan",
             "from_plan(",
         ],
     );
-    assert_contains_all(&post_publication, &["DeferredCatalogProjection::lexical("]);
+    assert_contains_all(
+        &post_publication,
+        &[
+            "DeferredCatalogProjection::lexical(",
+            "MutationWarningStage::TaskProjectionUpsert",
+            "MutationWarningStage::SemanticUpdate",
+        ],
+    );
+    assert_contains_none(
+        &post_publication,
+        &[
+            "enum PublicationStage",
+            "struct PublicationIssue",
+            "struct CommittedMutationWarning",
+        ],
+    );
     assert_contains_none(
         &architecture,
         &[
@@ -260,7 +280,12 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
     let watcher = repository_file("src-tauri/src/vault_watcher.rs");
     let app = repository_file("src-tauri/src/lib.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/observation.rs"),
+        repository_file("src-tauri/src/services/note_timeline/lifecycle.rs"),
+    ]
+    .join("\n");
 
     assert_contains_all(
         &watcher,
@@ -299,23 +324,27 @@ fn vault_observers_and_lifecycle_commands_use_typed_note_timeline_entries() {
         &app,
         &[
             "name(\"vault-watcher-startup\".to_string())",
-            "state.note_timeline().initialize_existing_notes(&notes_dir)",
+            "state.note_timeline().initialize_existing_notes(notes_dir)",
         ],
     );
     assert_contains_all(
         &forgotten,
         &[
-            "publish_lifecycle(",
-            "NoteLifecycleOperation::forgotten(",
-            "NoteLifecycleOperation::recovered(",
-            "publication.commit_warning().cloned()",
-            ".note_timeline()\n            .lifecycle(NoteLifecycleOperation::purged(",
-            "retained_identity.as_ref()",
-            "note_id: Some(note_id.clone())",
-            "forgotten_note\n        .note_id",
+            ".forget_note(note_path, retention_days)",
+            ".recover_forgotten_note(&forgotten_note)",
+            ".purge_selected_forgotten_note(",
         ],
     );
-    assert_contains_none(&forgotten, &["prepare_notes_dir(true)"]);
+    assert_contains_none(
+        &forgotten,
+        &[
+            "prepare_notes_dir(true)",
+            "publish_lifecycle(",
+            "NoteLifecycleOperation::",
+            "rollback_forgotten_metadata(",
+            "retain_recovery_metadata",
+        ],
+    );
 }
 
 #[test]
@@ -396,7 +425,6 @@ fn timeline_commands_expose_only_the_closed_command_error_contract() {
     );
 
     for command in [
-        "trust_and_migrate_legacy_note_timeline_history",
         "get_history_health",
         "get_note_history_health",
         "retry_history_recovery",
@@ -511,7 +539,15 @@ fn semantic_state_owns_one_work_queue_and_worker_context() {
 #[test]
 fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
     let services = repository_file("src-tauri/src/services/mod.rs");
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/domain.rs"),
+        repository_file("src-tauri/src/services/note_timeline/history_mode.rs"),
+        repository_file("src-tauri/src/services/note_timeline/current_content.rs"),
+        repository_file("src-tauri/src/services/note_timeline/publication.rs"),
+        repository_file("src-tauri/src/services/note_timeline/observation.rs"),
+    ]
+    .join("\n");
     let history_store = repository_file("src-tauri/src/services/note_timeline/history_store.rs");
 
     assert!(services.contains("pub(crate) mod note_timeline;"));
@@ -577,7 +613,11 @@ fn note_timeline_owns_one_storage_neutral_role_limited_seam() {
 
 #[test]
 fn current_content_consumers_cross_one_timeline_owned_read_interface() {
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/current_content.rs"),
+    ]
+    .join("\n");
     let retrieval = repository_file("src-tauri/src/services/retrieval.rs");
     let search = repository_file("src-tauri/src/commands/search_commands.rs");
     let tasks = repository_file("src-tauri/src/commands/task_commands.rs");
@@ -647,6 +687,7 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
         .into_iter()
         .filter(|(path, _)| {
             !path.ends_with("services/note_timeline.rs")
+                && !path.to_string_lossy().contains("services/note_timeline/")
                 && !path.ends_with("services/note_timeline/runtime.rs")
                 && !path.ends_with("index.rs")
         })
@@ -659,7 +700,10 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
         &[
             "note_timeline: NoteTimelineRuntime",
             "pub(crate) struct NoteTimelineOwnerToken(());",
-            "NoteTimelineRuntime::new(NoteTimelineOwnerToken(()))",
+            "let note_timeline = NoteTimelineRuntime::new(",
+            "NoteTimelineOwnerToken(()),",
+            "running_vault.root().to_path_buf(),",
+            "running_vault.app_local_observation_dir().to_path_buf(),",
             "pub(crate) fn note_timeline(&self) -> NoteTimeline<'_>",
         ],
     );
@@ -678,9 +722,11 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
         &runtime,
         &[
             "pub(crate) struct NoteTimelineRuntime",
+            "pub(super) store: Arc<history_store::Store>",
+            "store: Arc::clone(&self.store)",
             "struct NoteTimelineOperationBarrier",
             "fn begin_operation(",
-            "fn close_operations<T>(",
+            "fn close_operations(",
             "fn with_observation_replay<T>(",
             "fn ensure_history_recovered(",
         ],
@@ -702,9 +748,45 @@ fn app_state_holds_one_encapsulated_note_timeline_runtime() {
 }
 
 #[test]
+fn running_vault_is_bound_and_apply_only_stages_the_next_launch() {
+    let app = repository_file("src-tauri/src/lib.rs");
+    let index = repository_file("src-tauri/src/index.rs");
+    let commands = repository_file("src-tauri/src/commands.rs");
+    let watcher = repository_file("src-tauri/src/vault_watcher.rs");
+    let apply = rust_function(&commands, "set_vault_directory_for_state");
+
+    assert_contains_all(
+        &app,
+        &[
+            "let running_vault = state::RunningVault::resolve(app_data_dir.clone())?;",
+            "AppState::new_with_running_vault(",
+        ],
+    );
+    assert_contains_all(
+        &index,
+        &[
+            "running_vault: RunningVault",
+            "app_state_storage: AppStateStorage",
+            "pub(crate) fn running_vault(&self) -> &RunningVault",
+        ],
+    );
+    assert_contains_all(apply, &["stage_notes_root(state.running_vault()"]);
+    assert_contains_none(
+        apply,
+        &["clean_close", "vault_root()", "semantic_status_changed"],
+    );
+    assert_contains_none(&watcher, &["notes_root()"]);
+}
+
+#[test]
 fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
     let commands = repository_file("src-tauri/src/commands/history_commands.rs");
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/domain.rs"),
+        repository_file("src-tauri/src/services/note_timeline/history_mode.rs"),
+    ]
+    .join("\n");
     let history_store = repository_file("src-tauri/src/services/note_timeline/history_store.rs");
     let lib = repository_file("src-tauri/src/lib.rs");
 
@@ -752,7 +834,14 @@ fn history_mode_commands_use_only_the_role_limited_note_timeline_access() {
 
 #[test]
 fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
-    let timeline = repository_file("src-tauri/src/services/note_timeline.rs");
+    let timeline = [
+        repository_file("src-tauri/src/services/note_timeline.rs"),
+        repository_file("src-tauri/src/services/note_timeline/domain.rs"),
+        repository_file("src-tauri/src/services/note_timeline/publication.rs"),
+        repository_file("src-tauri/src/services/note_timeline/observation.rs"),
+        repository_file("src-tauri/src/services/note_timeline/lifecycle.rs"),
+    ]
+    .join("\n");
     let post_publication =
         repository_file("src-tauri/src/services/note_timeline/post_publication.rs");
     let index = repository_file("src-tauri/src/index.rs");
@@ -809,9 +898,9 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &[
             "struct CatalogProjectionRetries",
             "struct PathProjectionState",
-            "generation: u64",
             "struct ProjectionWork",
-            "target_tasks: bool",
+            "self.retries.apply(",
+            "apply_task_projection(&latest_mutation)",
         ],
     );
     assert_contains_none(&index, &["let mut candidate = index.clone()"]);
@@ -825,21 +914,40 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         &["apply_lexical_projection(", "apply_task_projection("],
     );
     assert_contains_all(&timeline, &["pub(crate) fn prepare_publication("]);
-    assert_contains_all(
-        &forgotten,
-        &[".note_timeline()\n                .prepare_publication("],
-    );
     assert_contains_all(&proposals, &["timeline.prepare_revision_publication("]);
     assert_contains_all(&tasks, &["timeline.prepare_revision_publication("]);
-    assert_contains_all(&note_persistence, &[".prepare_revision_publication("]);
     assert_contains_all(
+        &note_persistence,
+        &[".save_note(source, &title, &markdown, current_path)"],
+    );
+    assert_contains_none(
+        &note_persistence,
+        &[
+            "prepare_revision_publication(",
+            "NoteMutation::",
+            "build_saved_note_session",
+        ],
+    );
+    assert_contains_none(
         &state_persistence,
         &[
-            "pub(crate) fn persist_note_with_preparation<P, T>(",
-            "with_note_file_mutation(||",
-            "abandon_after_publication_failure(",
-            "let outcome = finalize(",
+            "persist_note_with_preparation",
+            "prepared_context",
+            "prepare: impl FnOnce",
         ],
+    );
+    assert_contains_all(
+        &timeline,
+        &[
+            "pub(crate) fn save_note(",
+            "self.runtime.is_note_ready(&note_id)?",
+            "history_store::has_pending_replay(&self.runtime.store)?",
+        ],
+    );
+    let compact_timeline = timeline.split_whitespace().collect::<String>();
+    assert_contains_all(
+        &compact_timeline,
+        &["history_store::finalize_publication(&self.runtime.store,&history_intent,source,&path,canonical"],
     );
     assert_contains_all(&proposals, &["with_note_file_mutation(||"]);
     assert_contains_all(&tasks, &["crate::state::with_note_file_mutation(||"]);
@@ -849,7 +957,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "pub(crate) struct PreparedHistoryIntent",
             "history_intent: PreparedHistoryIntent",
             "pub(crate) fn abandon_after_publication_failure(",
-            "history_store::finalize_publication(&history_intent, source, &path, canonical)",
+            "store: Option<history_store::Store>",
         ],
     );
     assert_contains_all(
@@ -913,4 +1021,177 @@ fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
             ],
         );
     }
+}
+
+#[test]
+fn interactive_history_waits_run_offthread_and_readiness_stays_observational() {
+    for (path, commands) in [
+        (
+            "src-tauri/src/commands.rs",
+            vec![
+                "bootstrap_app",
+                "load_note_session",
+                "save_note",
+                "save_task_note",
+                "toggle_task",
+                "delete_task",
+                "get_settings_view",
+                "get_history_health",
+                "get_note_history_health",
+                "retry_history_recovery",
+                "reset_corrupt_history",
+            ],
+        ),
+        (
+            "src-tauri/src/commands/history_commands.rs",
+            vec![
+                "get_note_history_page",
+                "get_note_history_context",
+                "get_note_history_revision",
+                "get_note_history_diff",
+                "finalize_note_editing_window",
+                "list_missing_notes",
+                "get_missing_note_history_page",
+                "recover_missing_note",
+                "delete_missing_notes",
+                "preview_note_revision_restore",
+                "restore_note_revision",
+                "name_note_revision",
+                "remove_note_revision_name",
+                "clear_note_history",
+                "clear_vault_history",
+            ],
+        ),
+        (
+            "src-tauri/src/commands/forgotten_note_commands.rs",
+            vec![
+                "forget_note",
+                "list_forgotten_notes",
+                "restore_forgotten_notes",
+                "delete_forgotten_notes",
+            ],
+        ),
+        (
+            "src-tauri/src/commands/proposal_commands.rs",
+            vec!["commit_agent_proposal"],
+        ),
+        (
+            "src-tauri/src/commands/chat_commands.rs",
+            vec!["chat_archive_conversation"],
+        ),
+    ] {
+        let source = repository_file(path);
+        for command in commands {
+            assert!(source.contains(&format!(
+                "pub(crate) async fn {command}<R: tauri::Runtime>("
+            )));
+            assert_contains_all(rust_function(&source, command), &["on_app_worker"]);
+        }
+    }
+    let commands = repository_file("src-tauri/src/commands.rs");
+    let worker = rust_function(&commands, "on_app_worker");
+    assert_contains_all(
+        worker,
+        &[
+            "spawn_blocking",
+            "try_state::<AppState>",
+            "operation(&state)",
+            ".await",
+        ],
+    );
+    assert_contains_none(worker, &["HistoryCommandError", "note_timeline()"]);
+    for command in ["bootstrap_app", "load_note_session"] {
+        assert_contains_all(
+            rust_function(&commands, command),
+            &["prepare_notes_dir_with_state(false", "foreground_guard"],
+        );
+        assert_contains_none(
+            rust_function(&commands, command),
+            &["note_timeline()", "history_health"],
+        );
+    }
+    let observer = rust_function(&commands, "get_history_readiness");
+    assert_contains_all(observer, &["history_readiness(note.as_ref())"]);
+    assert_contains_none(
+        observer,
+        &[
+            "resolve_note",
+            "prepare_notes_dir",
+            "await_history",
+            "history_health",
+            "rusqlite",
+        ],
+    );
+}
+
+#[test]
+fn explicit_restart_has_one_joining_frontend_action_and_one_backend_owner() {
+    let frontend = repository_file("src/lib/app/restartLifecycle.svelte.ts");
+    let settings = repository_file("src/lib/features/settings/store.svelte.ts");
+    let backend = repository_file("src-tauri/src/app/lifecycle.rs");
+    let commands = repository_file("src-tauri/src/commands.rs");
+    let app = repository_file("src-tauri/src/lib.rs");
+
+    assert_contains_all(
+        &frontend,
+        &[
+            "await awaitPendingNoteSave()",
+            "invoke<PrepareRestartReceipt>('prepare_restart')",
+            "await relaunch()",
+            "workspaceMutationsBlocked",
+            "this.phase === 'readyToRestart'",
+        ],
+    );
+    let save = frontend.find("await awaitPendingNoteSave()").unwrap();
+    let prepare = frontend
+        .find("invoke<PrepareRestartReceipt>('prepare_restart')")
+        .unwrap();
+    let relaunch = frontend.find("await relaunch()").unwrap();
+    assert!(save < prepare && prepare < relaunch);
+    assert_contains_none(&settings, &["plugin-process", "relaunch("]);
+
+    assert_contains_all(
+        &backend,
+        &[
+            "pub(crate) struct AppLifecycle",
+            "self.settled.wait(state)",
+            "chat.quiesce_for_restart()",
+            "state.semantic.quiesce_for_restart()",
+            "watcher.stop_and_join()?",
+            "state.settle_restart_writes()?",
+            "state.stop_rebuildable_projection_work()?",
+            ".clean_close(state.running_vault().root())",
+            "state.semantic.finish_restart_shutdown()?",
+        ],
+    );
+    assert_contains_none(&backend, &["is_cleanly_closed("]);
+    let chat_quiesce = backend.find("chat.quiesce_for_restart()").unwrap();
+    let semantic_quiesce = backend
+        .find("state.semantic.quiesce_for_restart()")
+        .unwrap();
+    let watcher_stop = backend.find("watcher.stop_and_join()?").unwrap();
+    let durable_settlement = backend.find("state.settle_restart_writes()?").unwrap();
+    let projection_stop = backend
+        .find("state.stop_rebuildable_projection_work()?")
+        .unwrap();
+    let timeline_close = backend
+        .find(".clean_close(state.running_vault().root())")
+        .unwrap();
+    let semantic_finish = backend
+        .find("state.semantic.finish_restart_shutdown()?")
+        .unwrap();
+    assert!(
+        chat_quiesce < semantic_quiesce
+            && semantic_quiesce < watcher_stop
+            && watcher_stop < durable_settlement
+            && durable_settlement < projection_stop
+            && projection_stop < timeline_close
+            && timeline_close < semantic_finish
+    );
+    assert_contains_all(
+        rust_function(&commands, "prepare_restart"),
+        &["spawn_blocking", "prepare_restart(&app)"],
+    );
+    assert_contains_all(&app, &["ordinary-exit-settlement", "api.prevent_exit()"]);
+    assert_contains_none(&app, &[".clean_close(", ".is_cleanly_closed("]);
 }

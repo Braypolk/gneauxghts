@@ -19,7 +19,7 @@ import {
   replacePaneReferenceWithFreshDraft,
   replaceReferencedNoteWithFreshDraft,
   type NoteDraftState,
-  type NoteKey
+  type DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
 import type { NotepadCommandsDeps } from './notepadCommandFacades';
@@ -27,7 +27,7 @@ import {
   dispatchDocumentExternalSync,
   dispatchDocumentOperation,
   externalSnapshotMatchesSavedBaseline,
-  externalDocumentSnapshotFromSession,
+  externalDocumentSnapshotFromCommittedNote,
   getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
@@ -110,7 +110,7 @@ export function createNoteCommandController<
     promise: Promise<RefreshOutcome>;
     trailingSource: ExternalRefreshSource | null;
   }
-  const refreshRuns = new Map<NoteKey, RefreshRun>();
+  const refreshRuns = new Map<DocumentHandle, RefreshRun>();
 
   async function runSingleDocumentRefresh(
     note: NoteDraftState,
@@ -141,19 +141,16 @@ export function createNoteCommandController<
             kind: 'snapshot',
             source,
             document:
-              externalDocumentSnapshotFromSession(session)
+              externalDocumentSnapshotFromCommittedNote(session)
           }
         });
         return 'conflict' as const;
       }
 
-      await deps.base.documentEditing.applySnapshot(
+      await deps.base.documentEditing.adoptCleanExternalRefresh(
         note,
-        session,
-        () => documents.replaceNoteAcrossPanes(note, note)
+        session
       );
-      derivedViews.setRecentlyForgotten(null);
-      derivedViews.clearSelectedRelatedText();
       return 'refreshed' as const;
     } catch (error) {
       console.error('Failed to refresh note from disk:', error);
@@ -167,7 +164,7 @@ export function createNoteCommandController<
       source = 'windowFocus'
     }: { source?: ExternalRefreshSource } = {}
   ): Promise<RefreshOutcome> {
-    const existingRun = refreshRuns.get(note.key);
+    const existingRun = refreshRuns.get(note.handle);
     if (existingRun) {
       // A watcher/focus event that arrives while a read is in flight may
       // represent a newer filesystem state. Coalesce the burst, but always
@@ -194,11 +191,11 @@ export function createNoteCommandController<
       }
       return outcome;
     })().finally(() => {
-      if (refreshRuns.get(note.key) === run) {
-        refreshRuns.delete(note.key);
+      if (refreshRuns.get(note.handle) === run) {
+        refreshRuns.delete(note.handle);
       }
     });
-    refreshRuns.set(note.key, run);
+    refreshRuns.set(note.handle, run);
     return run.promise;
   }
 
@@ -221,14 +218,15 @@ export function createNoteCommandController<
     document: NoteDraftState;
     path: string;
     markdown: string;
+    commitWarning: CommittedMutationWarning | null;
   }) {
-    const { document, path, markdown } = commit;
+    const { document, path, markdown, commitWarning } = commit;
     const snapshot = await readNoteSession(
       getDocumentNoteId(document),
       path
     );
 
-    if (snapshot.bodyMarkdown !== markdown) {
+    if (snapshot.markdown !== markdown) {
       // The file no longer contains the bytes this app committed. Route the
       // mismatch through normal external-change protection instead of claiming
       // ownership of a racing write.
@@ -240,31 +238,17 @@ export function createNoteCommandController<
 
     persistence.cancelPendingAutosave(document);
     persistence.invalidatePendingSaveResults(document);
-    const preserveDraft =
-      getDocumentMarkdown(document) !== markdown;
-    await deps.base.documentEditing.applySnapshot(
+    await deps.base.documentEditing.adoptAcceptedProposal(
       document,
       snapshot,
-      () =>
-        documents.replaceNoteAcrossPanes(
-          document,
-          document
-        ),
-      {
-        preserveDraft,
-        autosave: preserveDraft
-      }
+      markdown,
+      commitWarning
     );
-    derivedViews.setRecentlyForgotten(null);
-    derivedViews.clearSelectedRelatedText();
-    derivedViews.scheduleRelatedIfNeeded({
-      immediate: true
-    });
   }
 
   async function openStartPaneCommand(
     paneId: TPaneId,
-    noteKey: NoteKey
+    documentHandle: DocumentHandle
   ) {
     const result = await deps.transitions.execute({
       kind: 'pane-command',
@@ -279,7 +263,7 @@ export function createNoteCommandController<
       mutateWorkspace: () => {
         workspace.beginPaneCommand(
           paneId,
-          noteKey,
+          documentHandle,
           'start'
         );
         panes.activatePaneSession(paneId);
@@ -375,10 +359,10 @@ export function createNoteCommandController<
     const freshDraft = replaceReferencedNoteWithFreshDraft(
       state,
       workspace,
-      note.key
+      note.handle
     );
     freshDraft.publication.warning = lifecycleWarning;
-    cleanupNoteRuntime(note.key);
+    cleanupNoteRuntime(note.handle);
     derivedViews.setRecentlyForgotten(
       canRestore && hasDraftContent
         ? createForgottenNote(draft, forgottenPath)
@@ -386,7 +370,7 @@ export function createNoteCommandController<
     );
     await documents.replaceNoteAcrossPanes(note, freshDraft);
     refreshDerivedViews();
-    await openStartPaneCommand(paneId, freshDraft.key);
+    await openStartPaneCommand(paneId, freshDraft.handle);
   }
 
   async function unforgetNotepad() {
@@ -420,23 +404,10 @@ export function createNoteCommandController<
     }
 
     const note = panes.getNavigationDocument();
-    await deps.base.documentEditing.applySnapshot(
+    deps.base.documentEditing.restoreTransientForgotten(
       note,
-      {
-        ...forgottenNote,
-        lastSavedTitle: '',
-        lastSavedMarkdown: '',
-        lastSavedNoteId: null,
-        lastSavedPath: null
-      },
-      (markdown) =>
-        documents.replaceEditorContent(
-          markdown
-        ),
-      { autosave: true }
+      forgottenNote
     );
-    derivedViews.setRecentlyForgotten(null);
-    derivedViews.clearSelectedRelatedText();
     void derivedViews.loadRecentNotes();
   }
 
@@ -462,7 +433,7 @@ export function createNoteCommandController<
           recordCurrentLocation: true
         });
       }
-      await openStartPaneCommand(paneId, note.key);
+      await openStartPaneCommand(paneId, note.handle);
       return;
     }
 
@@ -539,10 +510,10 @@ export function createNoteCommandController<
         removeNoteIfUnreferenced(
           state,
           workspace,
-          previousDocument.key
+          previousDocument.handle
         );
-        if (!state.notesByKey[previousDocument.key]) {
-          cleanupNoteRuntime(previousDocument.key);
+        if (!state.documentsByHandle[previousDocument.handle]) {
+          cleanupNoteRuntime(previousDocument.handle);
         }
         derivedViews.setRecentlyForgotten(null);
         derivedViews.clearSearch();
@@ -557,7 +528,7 @@ export function createNoteCommandController<
       return;
     }
     note = freshDraft;
-    await openStartPaneCommand(paneId, note.key);
+    await openStartPaneCommand(paneId, note.handle);
   }
 
   async function openNotePath(
@@ -706,8 +677,8 @@ export function createNoteCommandController<
         }
         panes.updateSelectedRelatedText();
         deps.base.onDocumentPresented?.(nextDocument);
-        if (!panes.getNoteByKey(previousDocument.key)) {
-          cleanupNoteRuntime(previousDocument.key);
+        if (!panes.getDocumentByHandle(previousDocument.handle)) {
+          cleanupNoteRuntime(previousDocument.handle);
         }
         derivedViews.scheduleRelatedIfNeeded({
           immediate: true

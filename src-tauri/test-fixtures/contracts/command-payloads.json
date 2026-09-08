@@ -31,6 +31,15 @@
       "args": null,
       "result": null
     },
+    "prepare_restart": {
+      "args": null,
+      "result": {
+        "status": "ready",
+        "ready": true,
+        "timelinePortable": true,
+        "canResume": false
+      }
+    },
     "prepare_task_document_mutation": {
       "args": {
         "taskId": "task-1",

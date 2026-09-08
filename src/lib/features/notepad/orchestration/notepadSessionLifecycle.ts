@@ -1,9 +1,6 @@
 import { tick } from 'svelte';
 import { appStore } from '$lib/app/appStore.svelte';
 import {
-  createEmptySessionSnapshot,
-  loadCurrentVaultInfo,
-  loadSavedNoteSession,
   resolveAssetRootPath,
   storePastedImageAsset,
   type SessionSnapshot
@@ -20,6 +17,7 @@ export interface NotepadSessionLifecycleDeps {
   markInitialSessionLoaded: () => void;
   isInitialEditorRootReady: () => boolean;
   applySession: (snapshot: SessionSnapshot) => void;
+  bindVaultScope: (vaultRoot: string) => void;
   applyAssetRoot: (
     path: string | null,
     storeImage: typeof storePastedImageAsset
@@ -58,30 +56,12 @@ export interface NotepadSessionLifecycleDeps {
 export function createNotepadSessionLifecycle(
   deps: NotepadSessionLifecycleDeps
 ) {
-  async function loadSavedNoteFallback() {
-    try {
-      deps.applySession(await loadSavedNoteSession());
-    } catch (error) {
-      console.error('Failed to load saved note:', error);
-      deps.applySession(createEmptySessionSnapshot());
-    }
-  }
-
-  async function loadAssetRootFallback() {
-    try {
-      const vault = await loadCurrentVaultInfo();
-      deps.applyAssetRoot(
-        resolveAssetRootPath(vault.currentPath),
-        storePastedImageAsset
-      );
-    } catch (error) {
-      console.error('Failed to load vault info for image assets:', error);
-      deps.applyAssetRoot(null, storePastedImageAsset);
-    }
-  }
+  let mountRevision = 0;
 
   function mount() {
     let mounted = true;
+    const revision = ++mountRevision;
+    const current = () => mounted && revision === mountRevision && deps.isInitialEditorRootReady();
     const unregisterWindowClose = deps.registerWindowCloseHandler();
     const unregisterPendingSave = deps.registerPendingSaveHandler();
     const unregisterTransientMenus = deps.registerTransientMenuListeners();
@@ -95,34 +75,28 @@ export function createNotepadSessionLifecycle(
 
     void (async () => {
       await tick();
-      if (!mounted || !deps.isInitialEditorRootReady()) return;
-      if (deps.hasLoadedInitialSession()) {
-        await loadAssetRootFallback();
-      } else {
-        try {
-          const bootstrap = await appStore.bootstrap();
+      if (!current()) return;
+      try {
+        const bootstrap = await appStore.bootstrap();
+        if (!current()) return;
+        const runningPath = appStore.vaultInfo?.runningPath ?? bootstrap.vault.runningPath;
+        deps.bindVaultScope(runningPath);
+        if (!deps.hasLoadedInitialSession()) {
           deps.applySession(bootstrap.session);
-          deps.applyAssetRoot(
-            resolveAssetRootPath(bootstrap.vault.currentPath),
-            storePastedImageAsset
-          );
-        } catch (error) {
-          console.error(
-            'appStore.bootstrap failed, falling back to individual invokes:',
-            error
-          );
-          await Promise.all([
-            loadSavedNoteFallback(),
-            loadAssetRootFallback()
-          ]);
+          deps.markInitialSessionLoaded();
         }
-        deps.markInitialSessionLoaded();
+        deps.applyAssetRoot(resolveAssetRootPath(runningPath), storePastedImageAsset);
+      } catch (error) {
+        if (current()) console.error('App bootstrap failed; editing remains unavailable:', error);
+        return;
       }
-      if (!mounted || !deps.isInitialEditorRootReady()) return;
+      if (!current()) return;
 
       try {
         await deps.ensurePaneEditors();
+        if (!current()) return;
         await deps.refreshCurrentNote();
+        if (!current()) return;
         deps.updateRelatedLayout();
         deps.scheduleRelated({ immediate: true });
         let skipDefaultFocus = false;
@@ -134,7 +108,9 @@ export function createNotepadSessionLifecycle(
             noteId: taskTarget.noteId,
             focusEditorAfterOpen: false
           });
+          if (!current()) return;
           await deps.navigateToTaskTarget(taskTarget);
+          if (!current()) return;
         }
 
         const noteTarget = consumePendingNoteTarget();
@@ -153,15 +129,18 @@ export function createNotepadSessionLifecycle(
           }
         }
 
+        if (!current()) return;
         if (!skipDefaultFocus) {
           await tick();
+          if (!current()) return;
           await new Promise<void>((resolve) => {
             requestAnimationFrame(() =>
               requestAnimationFrame(() => resolve())
             );
           });
-          if (mounted) deps.focusNavigationPane();
+          if (current()) deps.focusNavigationPane();
         }
+        if (!current()) return;
         const unsubscribe = appStore.subscribeVaultNoteChanged(
           deps.onVaultNoteChanged
         );
@@ -178,7 +157,7 @@ export function createNotepadSessionLifecycle(
       unregisterTransientMenus();
       unsubscribeVault?.();
       resizeObserver?.disconnect();
-      deps.dispose();
+      if (revision === mountRevision) deps.dispose();
     };
   }
 

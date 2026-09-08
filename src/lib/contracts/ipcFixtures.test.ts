@@ -127,7 +127,7 @@ describe('Rust-owned IPC contract fixtures', () => {
         lastSavedNoteId: preparedResult.noteId as string,
         lastSavedPath: preparedResult.notePath as string
       },
-      'path:/vault/Tasks.md'
+      'document:tasks'
     );
     updateDocumentMarkdown(
       document,
@@ -168,9 +168,10 @@ describe('Rust-owned IPC contract fixtures', () => {
   });
 
   it('links the semantic status command to the typed event payload fixture', async () => {
-    const { loadSemanticStatusSlice, retrySemanticIndex } = await import(
+    const { retrySemanticIndex } = await import(
       '$lib/features/settings/loaders/semanticLoader'
     );
+    const { AppStore } = await import('$lib/app/appStore.svelte');
     const statusEvent = eventFixture.events.find(
       ({ channel }) => channel === 'semantic-status-changed'
     );
@@ -182,7 +183,9 @@ describe('Rust-owned IPC contract fixtures', () => {
     expect(statusEvent).toBeDefined();
 
     invokeMock.mockResolvedValueOnce(statusEvent!.payload);
-    await expect(loadSemanticStatusSlice()).resolves.toEqual(statusEvent!.payload);
+    const store = new AppStore();
+    await store.refreshSemanticStatus();
+    expect(store.semanticStatus).toEqual(statusEvent!.payload);
     expect(invokeMock).toHaveBeenLastCalledWith('get_semantic_status');
 
     invokeMock.mockResolvedValueOnce(

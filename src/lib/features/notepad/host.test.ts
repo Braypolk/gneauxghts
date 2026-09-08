@@ -15,7 +15,7 @@ describe('snapshotDocument', () => {
       lastSavedMarkdown: 'Saved body',
       lastSavedNoteId: 'note-id',
       lastSavedPath: '/vault/Test.md'
-    }, 'path:/vault/Test.md');
+    });
     document.operation.revision = 3;
 
     const snapshot = snapshotDocument(document);
@@ -23,7 +23,7 @@ describe('snapshotDocument', () => {
     document.working.markdown = 'Changed';
 
     expect(snapshot).toEqual({
-      key: 'path:/vault/Test.md',
+      documentHandle: document.handle,
       title: 'Test',
       bodyMarkdown: 'Body',
       currentNoteId: 'note-id',
@@ -48,7 +48,7 @@ describe('createNotepadFeatureHost', () => {
       lastSavedMarkdown: '',
       lastSavedNoteId: null,
       lastSavedPath: null
-    }, 'draft:1');
+    });
     let saved = false;
     let replaced = '';
     let inserted = '';
@@ -96,7 +96,7 @@ describe('createNotepadFeatureHost', () => {
     });
     expect(
       host.insertMarkdown({
-        noteKey: 'draft:1',
+        documentHandle: document.handle,
         expectedDocumentRevision: 0,
         markdown: 'Replacement',
         target: 'selection'
@@ -121,7 +121,7 @@ describe('createNotepadFeatureHost', () => {
       lastSavedMarkdown: 'Body',
       lastSavedNoteId: 'current',
       lastSavedPath: '/vault/Current.md'
-    }, 'path:/vault/Current.md');
+    });
     document.operation.revision = 4;
     let insertionCount = 0;
     const host = createNotepadFeatureHost({
@@ -154,14 +154,14 @@ describe('createNotepadFeatureHost', () => {
 
     expect(
       host.insertMarkdown({
-        noteKey: 'path:/vault/Other.md',
+        documentHandle: 'document:other',
         expectedDocumentRevision: 4,
         markdown: 'x'
       })
-    ).toMatchObject({ status: 'target-changed', currentNoteKey: document.key });
+    ).toMatchObject({ status: 'target-changed', currentDocumentHandle: document.handle });
     expect(
       host.insertMarkdown({
-        noteKey: document.key,
+        documentHandle: document.handle,
         expectedDocumentRevision: 3,
         markdown: 'x'
       })

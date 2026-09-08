@@ -28,7 +28,7 @@ describe('pane view model document status', () => {
     };
     const document = createDocumentState(
       saved,
-      'path:/vault/Note.md'
+      'document:note'
     );
     updateDocumentMarkdown(document, 'local edits');
     captureExternalSnapshotForTest(

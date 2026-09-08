@@ -20,7 +20,7 @@
     "reattached",
     "purged"
   ],
-  "timeKinds": ["knownSince", "committed", "observed"],
+  "timeKinds": ["knownSince", "committed", "observed", "editingWindow"],
   "historyHealthStates": [
     "healthy",
     "initializing",

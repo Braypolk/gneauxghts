@@ -23,6 +23,12 @@ export function getHistoryModePage(
   });
 }
 
+export function getHistoryModeContext(
+  noteId: string, revisionId: string, cursor: string | null = null
+): Promise<HistoryModePage> {
+  return invokeHistoryCommand<HistoryModePage>('get_note_history_context', { noteId, revisionId, cursor });
+}
+
 export function getHistoryModeRevision(
   noteId: string,
   revisionId: string
@@ -95,4 +101,8 @@ export async function getHistoryModeDiagnostics(
     invokeHistoryCommand<{ storage?: HistoryStorageUsage }>('get_history_health')
   ]);
   return { note, storage: vault.storage ?? null };
+}
+
+export function finalizeNoteEditingWindow(noteId: string): Promise<void> {
+  return invokeHistoryCommand<void>('finalize_note_editing_window', { noteId });
 }

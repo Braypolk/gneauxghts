@@ -45,13 +45,13 @@ impl Tool for CurrentNoteHistoryTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "On-demand history evidence about current allowed notes only. With note_id, get a page of Current-Content Provenance (body then properties, plus current title); without it, list current notes with revisions in an inclusive Unix-millisecond activity period. offset starts at 0; follow nextOffset for more. Activity is revision counts, times, Mutation Sources and current excerpts, never removed prose or historical labels. Baseline knownSince does not establish introduction. Cite returned evidence as [Title](revision:revisionId). Cannot reconstruct, search or restore historical content.".into()
+        "On-demand history evidence about current allowed notes only. With note_id, get a page of Current-Content Provenance (body then properties, plus current title); without it, list current notes with retained transitions overlapping a half-open Unix-millisecond activity period [after, before). offset starts at 0; follow nextOffset for more. Activity counts retained transitions, never saves or keystrokes. Editing Window evidence is an interval; clockDiscontinuity/uncertainTime means overlap is uncertain, not proven. Activity includes times, Mutation Sources and current excerpts, never removed prose or historical labels. Baseline knownSince does not establish introduction. Cite returned evidence as [Title](revision:revisionId). Cannot reconstruct, search or restore historical content.".into()
     }
     fn parameters(&self) -> Value {
         json!({"type":"object","properties":{
             "note_id":{"type":["string","null"],"description":"Stable current Note Identity; omit for activity across allowed notes"},
             "after":{"type":["integer","null"],"minimum":0,"description":"Inclusive activity start, Unix milliseconds; used only without note_id"},
-            "before":{"type":["integer","null"],"minimum":0,"description":"Inclusive activity end, Unix milliseconds; used only without note_id"},
+            "before":{"type":["integer","null"],"minimum":0,"description":"Exclusive activity end (must exceed start), Unix milliseconds; used only without note_id"},
             "offset":{"type":["integer","null"],"minimum":0}
         },"additionalProperties":false})
     }
@@ -215,7 +215,6 @@ mod tests {
                 path,
             )
             .unwrap()
-            .session
             .unwrap()
         };
         let first = save("Current", "removed confidential prose\nkept\n", None);

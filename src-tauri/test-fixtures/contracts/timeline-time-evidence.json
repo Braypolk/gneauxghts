@@ -1,0 +1,137 @@
+{
+  "version": 1,
+  "evidence": [
+    {
+      "kind": "knownSince",
+      "knownSinceMillis": 100
+    },
+    {
+      "kind": "committed",
+      "committedAtMillis": 200
+    },
+    {
+      "kind": "observed",
+      "observedAtMillis": 300,
+      "modifiedAtMillis": 1
+    },
+    {
+      "kind": "editingWindow",
+      "version": 1,
+      "firstWallMillis": 1000,
+      "lastWallMillis": 1200,
+      "minWallMillis": 1000,
+      "maxWallMillis": 1200,
+      "clockDiscontinuity": false
+    },
+    {
+      "kind": "editingWindow",
+      "version": 1,
+      "firstWallMillis": 3000,
+      "lastWallMillis": 1000,
+      "minWallMillis": 1000,
+      "maxWallMillis": 3000,
+      "clockDiscontinuity": true
+    }
+  ],
+  "queries": [
+    {
+      "start": 100,
+      "end": 101,
+      "matches": [
+        true,
+        false,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "start": 200,
+      "end": 201,
+      "matches": [
+        false,
+        true,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "start": 300,
+      "end": 301,
+      "matches": [
+        false,
+        false,
+        true,
+        false,
+        true
+      ]
+    },
+    {
+      "start": 999,
+      "end": 1000,
+      "matches": [
+        false,
+        false,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "start": 1000,
+      "end": 1001,
+      "matches": [
+        false,
+        false,
+        false,
+        true,
+        true
+      ]
+    },
+    {
+      "start": 1200,
+      "end": 1201,
+      "matches": [
+        false,
+        false,
+        false,
+        true,
+        true
+      ]
+    },
+    {
+      "start": 1201,
+      "end": 1300,
+      "matches": [
+        false,
+        false,
+        false,
+        false,
+        true
+      ]
+    },
+    {
+      "start": 1300,
+      "end": 1300,
+      "matches": [
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    },
+    {
+      "start": 1300,
+      "end": 1299,
+      "matches": [
+        false,
+        false,
+        false,
+        false,
+        false
+      ]
+    }
+  ]
+}

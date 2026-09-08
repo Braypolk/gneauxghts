@@ -5,6 +5,8 @@ use super::*;
 pub(crate) struct ProvenanceEvidence {
     pub(crate) record_id: String,
     pub(crate) at_millis: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) time_evidence: Option<RevisionTimeEvidence>,
     pub(crate) source: Option<MutationSource>,
 }
 
@@ -51,6 +53,7 @@ impl RangeProvenance {
         let evidence = ProvenanceEvidence {
             record_id: header.identity.0.clone(),
             at_millis: header.time_evidence.occurred_at_millis(),
+            time_evidence: Some(header.time_evidence),
             source: Some(header.source),
         };
         let known = !matches!(header.time_evidence, RevisionTimeEvidence::Baseline { .. });
@@ -111,9 +114,10 @@ pub(super) fn read_with_version(
         .runtime
         .with_observation_replay(|| {
             timeline.replay_retained_observations(None)?;
-            timeline.ensure_history_recovered(RecoveryIntegrity::Exhaustive)
+            timeline.ensure_history_recovered()
         })
         .map_err(history_failure)?;
+    access.runtime.ensure_note_ready(note_id)?;
     let version = access.runtime.current_content_version()?;
     let eligibility = access.eligibility()?;
     if !eligibility.allows_note(Some(note_id.as_str()), None) {
@@ -127,17 +131,26 @@ pub(super) fn read_with_version(
     }) {
         return Ok(None);
     }
-    if history_store::current_content_hash(note_id)?.as_deref()
+    if history_store::current_content_hash(&access.runtime.store, note_id)?.as_deref()
         != Some(history_store::authored_content_hash(&canonical).as_str())
     {
         return Err(HistoryError::Stale(
             "Current content is awaiting timeline capture".into(),
         ));
     }
+    // A concurrent save after the explicit boundary invalidates this read.
+    // Never describe an older retained anchor as pending current prose.
+    if history_store::pending_window(&access.runtime.store, note_id)?.is_some() {
+        return Err(HistoryError::Stale(
+            "Current content awaits Editing Window finalization".into(),
+        ));
+    }
     let mut records = Vec::new();
     let mut next = None;
     loop {
-        let Some(page) = history_store::bounded_timeline_page(note_id, next, 100)? else {
+        let Some(page) =
+            history_store::bounded_timeline_page(&access.runtime.store, note_id, next, 100)?
+        else {
             break;
         };
         records.extend(page.records);
@@ -162,14 +175,15 @@ pub(super) fn read_with_version(
     for record in records {
         match record {
             history_store::BoundedTimelineRecord::Revision { header, .. } => {
-                let content = history_store::reconstruct(note_id, &header.identity)?;
+                let content =
+                    history_store::reconstruct(&access.runtime.store, note_id, &header.identity)?;
                 let evidence = RangeProvenance::revision(&header);
                 title_provenance.get_or_insert_with(|| evidence.clone());
                 let origin = header.restored_from.as_ref();
                 let selected = origin.and_then(|id| retained.get(id));
                 if origin.is_some() && selected.is_none() {
-                    return Err(history_failure(
-                        "Version Restore lineage is not retained before its revision",
+                    return Err(HistoryError::Corrupt(
+                        "Version Restore lineage is not retained before its revision".into(),
                     ));
                 }
                 projection = project_revision(&projection, &content, &header, selected)?;
@@ -186,6 +200,7 @@ pub(super) fn read_with_version(
                     let evidence = ProvenanceEvidence {
                         record_id: event.identity.0,
                         at_millis: event.occurred_at_millis,
+                        time_evidence: None,
                         source: None,
                     };
                     title_provenance = Some(RangeProvenance {
@@ -316,7 +331,9 @@ fn project_revision(
                 || lines_text(&selected.properties)
                     != content.unmanaged_frontmatter.as_deref().unwrap_or_default()
             {
-                return Err(history_failure("Version Restore lineage content mismatch"));
+                return Err(HistoryError::Corrupt(
+                    "Version Restore lineage content mismatch".into(),
+                ));
             }
             restore_ranges(&mut result.body, &selected.body, &evidence);
             restore_ranges(&mut result.properties, &selected.properties, &evidence);
@@ -671,8 +688,11 @@ mod tests {
             previous.map(|path| path.to_string_lossy().into_owned()),
         )
         .unwrap()
-        .session
         .unwrap();
+        state
+            .note_timeline()
+            .finalize_editing_window(&NoteIdentity::new(session.note_id.as_ref().unwrap()))
+            .unwrap();
         (
             NoteIdentity::new(session.note_id.unwrap()),
             PathBuf::from(session.path.unwrap()),
@@ -759,9 +779,12 @@ mod tests {
                 assert_ne!(evidence.known_since.record_id, selected_id.as_str());
             }
             assert_eq!(cleared.title_provenance.introduced_at, None);
-            assert!(history_store::restore_origin(restored.revision_id())
-                .unwrap()
-                .is_none());
+            assert!(history_store::restore_origin(
+                &history_store::Store::for_test(),
+                restored.revision_id()
+            )
+            .unwrap()
+            .is_none());
         });
     }
 
@@ -879,7 +902,7 @@ mod tests {
                 .unwrap();
             let timeline = state.note_timeline();
             let access = timeline.current_content(AllowedScope::vault());
-            let period = access.activity(42, 42, 0, 20).unwrap();
+            let period = access.activity(42, 43, 0, 20).unwrap();
             assert_eq!(period.items.len(), 1);
             assert_eq!(period.items[0].revision_count, 1);
             assert_eq!(period.items[0].sources, vec![MutationSource::ExternalEdit]);
@@ -1321,7 +1344,6 @@ mod tests {
             None,
         )
         .unwrap()
-        .session
         .unwrap();
         let note_id = NoteIdentity::new(created.note_id.unwrap());
         let projection = state

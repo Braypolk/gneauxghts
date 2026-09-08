@@ -21,7 +21,7 @@ const MUTATION_SOURCES = [
 const LIFECYCLE_KINDS = [
   'created', 'renamed', 'moved', 'forgotten', 'recovered', 'missing', 'reattached', 'purged'
 ] as const satisfies readonly HistoryLifecycleEventKind[];
-const TIME_KINDS = ['knownSince', 'committed', 'observed'] as const;
+const TIME_KINDS = ['knownSince', 'committed', 'observed', 'editingWindow'] as const;
 const HEALTH_STATES = [
   'healthy', 'initializing', 'degraded', 'warning', 'unavailable', 'corrupt'
 ] as const satisfies readonly HistoryHealthState[];
@@ -97,4 +97,33 @@ describe('Note Timeline command contract fixture', () => {
       expect(RECOVERY_ACTIONS).toContain(error.recoveryAction);
     }
   });
+});
+
+const TIME_EVIDENCE = [
+  { kind: 'knownSince', knownSinceMillis: 100 },
+  { kind: 'committed', committedAtMillis: 200 },
+  { kind: 'observed', observedAtMillis: 300, modifiedAtMillis: 1 },
+  { kind: 'editingWindow', version: 1, firstWallMillis: 1000, lastWallMillis: 1200,
+    minWallMillis: 1000, maxWallMillis: 1200, clockDiscontinuity: false },
+  { kind: 'editingWindow', version: 1, firstWallMillis: 3000, lastWallMillis: 1000,
+    minWallMillis: 1000, maxWallMillis: 3000, clockDiscontinuity: true }
+] as const satisfies readonly import('$lib/types/history').RevisionTimeEvidence[];
+
+it('shares exact legacy and versioned interval evidence with Rust, including reversed raw clock times', () => {
+  const timeFixture = JSON.parse(readFileSync(new URL(
+    '../../../src-tauri/test-fixtures/contracts/timeline-time-evidence.json', import.meta.url
+  ).pathname, 'utf8'));
+  expect(timeFixture.version).toBe(1);
+  expect(timeFixture.evidence).toEqual(TIME_EVIDENCE);
+});
+
+it('matches the advisory readiness IPC states and nullable correlated snapshot', () => {
+  const fixture = JSON.parse(readFileSync(new URL('../../../src-tauri/test-fixtures/contracts/history-readiness-contract.json', import.meta.url).pathname, 'utf8'));
+  const states = ['recoveryPending', 'targetVerificationPending', 'ready', 'unavailable', 'corrupt'] as const satisfies readonly import('./historyReadiness').HistoryReadiness['state'][];
+  const snapshot: import('./historyReadiness').HistoryReadiness = {
+    scope: 'runtime-scope', revision: 2, noteId: null, state: 'recoveryPending', verifiedNotes: 3,
+    totalNotes: null, backgroundComplete: false, backgroundUnavailable: false
+  };
+  expect(fixture.states).toEqual(states);
+  expect(fixture.snapshot).toEqual(snapshot);
 });

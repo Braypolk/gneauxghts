@@ -31,7 +31,7 @@ function setup() {
   const freshDraft = createNoteDraftState();
   const refreshDerivedViews = vi.fn(async () => undefined);
   const refreshDocumentFromDisk = vi.fn(
-    async () => undefined
+    async (): Promise<unknown> => undefined
   );
   const replaceNoteAcrossPanes = vi.fn(
     async () => undefined
@@ -46,14 +46,13 @@ function setup() {
     refreshDerivedViews,
     updateRelatedDrawerLayout: vi.fn(),
     refreshDocumentFromDisk,
-    getNoteByKey: vi.fn(() => note),
+    findOpenDocumentByPath: vi.fn(() => note),
     getPaneIdsForDocument,
     replaceNoteAcrossPanes,
     replaceReferencedNoteWithFreshDraft: vi.fn(
       () => freshDraft
     ),
-    suspendPersistenceForConflict,
-    noteKeyFromPath: vi.fn(() => note.key)
+    suspendPersistenceForConflict
   });
   return {
     note,
@@ -160,6 +159,28 @@ describe('notepad refresh controller', () => {
     expect(
       harness.suspendPersistenceForConflict
     ).toHaveBeenCalledWith(harness.note);
+  });
+
+  it('resolves an external move by durable identity before replacing the document', async () => {
+    const harness = setup();
+    const handle = harness.note.handle;
+    harness.refreshDocumentFromDisk.mockResolvedValueOnce(
+      'refreshed'
+    );
+
+    await harness.controller.handleVaultNoteChanged({
+      notePath: path,
+      deleted: true,
+      source: 'external'
+    });
+
+    expect(harness.refreshDocumentFromDisk).toHaveBeenCalledWith(
+      harness.note,
+      { source: 'watcher' }
+    );
+    expect(harness.note.handle).toBe(handle);
+    expect(harness.replaceNoteAcrossPanes).not.toHaveBeenCalled();
+    expect(harness.suspendPersistenceForConflict).not.toHaveBeenCalled();
   });
 
   it('replaces all pane references with one fresh draft after a clean external deletion', async () => {

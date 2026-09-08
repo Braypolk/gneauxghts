@@ -10,6 +10,8 @@ SQLite will be the first durable Note Timeline storage implementation because it
 
 The `NoteTimeline` interface remains storage-neutral and exposes only closed domain types. Revisions and Lifecycle Events use globally unique opaque identities, explicit predecessor or parent references, versioned payloads independent of table layout, and verified content hashes. SQL, row identities, transaction handles, WAL policy, and storage-format selection stay local to the SQLite implementation; rebuildable projections do not become SQLite-only truth.
 
+[ADR 0007](0007-retain-editor-history-at-editing-window-boundaries.md) adds replaceable private pending windows. Only finalized window records receive public Revision Identities; point publications reserve theirs before canonical publication for Version Restore. Pending state and publication recovery evidence must survive migration and settle before portable close. Finalized identities and existing export guarantees remain unchanged.
+
 No polymorphic `HistoryStore` interface will be introduced while SQLite is the only implementation. SQLite knowledge will instead remain local inside `NoteTimeline`; a shared storage interface will be extracted from the real needs of SQLite and the later immutable-record implementation when both exist.
 
 The Phase 1 storage spike must prove an export shape by converting representative SQLite histories into immutable-object fixtures and reconstructing identical domain identities and content hashes. A future migration will run behind a mutation barrier, verify the candidate store completely, and atomically change the vault manifest's history format and generation; interruption leaves the old SQLite store selected, and long-lived dual writes are rejected.

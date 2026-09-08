@@ -7,20 +7,24 @@ import {
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
-import { createDocumentEditingService } from '../document/documentEditingService';
-import { createNoteDraftState } from '../state/noteStore';
-import { createEmptySessionSnapshot } from '../session/session';
 import {
   replaceEditorDocument,
   restoreCursorPosition
 } from './editorViewController';
 import type { EditorController } from './types';
+import { documentRegistry } from '../document/documentRegistry';
+import {
+  adoptCommittedDocument,
+  createNoteDraftState,
+  createNotepadState
+} from '../state/noteStore';
+import { updateDocumentMarkdown } from '../document/documentState';
 
 function pane(
   runtime: EditorDocumentRuntime,
   markdown: string,
   anchor: number,
-  onMarkdownChange = vi.fn()
+  onMarkdownChange: (markdown: string) => void = vi.fn()
 ) {
   let state = EditorState.create({
     doc: markdown,
@@ -107,46 +111,90 @@ describe('EditorDocumentRuntime', () => {
     expect(second.onMarkdownChange).toHaveBeenCalledOnce();
   });
 
-  it('starts a fresh undo history after a complete Version Restore', () => {
+  it('retains two-pane selection, scroll, undo, and redo when a save assigns identity', () => {
+    const document = createNoteDraftState();
+    const state = createNotepadState(document, '/vault');
+    const handle = document.handle;
+    const registryEntry = documentRegistry.ensure(handle);
+    const runtime = registryEntry.ensureResources({
+      assetRootPath: null,
+      storePastedImage: vi.fn()
+    }).runtime;
+    runtime.ensureMarkdown('abcd');
+    updateDocumentMarkdown(document, 'abcd');
+    const first = pane(runtime, 'abcd', 1, (markdown) => {
+      updateDocumentMarkdown(document, markdown);
+    });
+    const second = pane(runtime, 'abcd', 4, (markdown) => {
+      updateDocumentMarkdown(document, markdown);
+    });
+    second.setViewport(240, 12);
+    runtime.dispatchFromPane(first.controller, [
+      first.readState().update({
+        changes: { from: 1, insert: 'X' },
+        selection: { anchor: 2 }
+      })
+    ]);
+
+    adoptCommittedDocument(state, document, {
+      noteId: 'saved-id',
+      title: 'Saved',
+      markdown: 'aXbcd',
+      path: '/vault/Saved.md'
+    });
+
+    expect(document.handle).toBe(handle);
+    expect(documentRegistry.get(handle)).toBe(registryEntry);
+    expect(registryEntry.resources()?.runtime).toBe(runtime);
+    expect(first.readState().selection.main.head).toBe(2);
+    expect(second.readState().selection.main.head).toBe(5);
+    expect(second.readViewport()).toEqual({
+      scrollTop: 240,
+      scrollLeft: 12
+    });
+    expect(runtime.undo(second.controller.paneKey)).toBe(true);
+    expect(runtime.markdown).toBe('abcd');
+    expect(runtime.redo(first.controller.paneKey)).toBe(true);
+    expect(runtime.markdown).toBe('aXbcd');
+    documentRegistry.dispose(handle);
+  });
+
+  it('starts one fresh shared undo history across panes after Version Restore', () => {
     const runtime = new EditorDocumentRuntime('before restore');
-    const fixture = pane(runtime, 'before restore', 14);
-    runtime.dispatchFromPane(fixture.controller, [
-      fixture.readState().update({
+    const first = pane(runtime, 'before restore', 3);
+    const second = pane(runtime, 'before restore', 10);
+    second.setViewport(240, 12);
+    runtime.dispatchFromPane(first.controller, [
+      first.readState().update({
         changes: { from: 14, insert: ' with local edit' }
       })
     ]);
 
-    expect(runtime.replaceMarkdown('historical body', { flushHistory: true })).toBe(true);
-    expect(runtime.undo(fixture.controller.paneKey)).toBe(false);
+    expect(runtime.adoptCommittedMarkdown('historical body')).toBe(true);
+    expect(first.readState().doc.toString()).toBe('historical body');
+    expect(second.readState().doc.toString()).toBe('historical body');
+    expect(second.readViewport()).toEqual({
+      scrollTop: 240,
+      scrollLeft: 12
+    });
+    expect(runtime.undo(first.controller.paneKey)).toBe(false);
+    expect(runtime.undo(second.controller.paneKey)).toBe(false);
     expect(runtime.markdown).toBe('historical body');
 
-    runtime.dispatchFromPane(fixture.controller, [
-      fixture.readState().update({ changes: { from: 15, insert: '!' } })
+    runtime.dispatchFromPane(first.controller, [
+      first.readState().update({ changes: { from: 15, insert: '!' } })
     ]);
-    expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
+    expect(runtime.undo(second.controller.paneKey)).toBe(true);
     expect(runtime.markdown).toBe('historical body');
   });
 
-  it('clears undo on a properties-only Version Restore with an unchanged editor body', async () => {
+  it('clears undo on a committed properties-only replacement with an unchanged editor body', () => {
     const runtime = new EditorDocumentRuntime('body');
     const fixture = pane(runtime, 'body', 4);
     runtime.dispatchFromPane(fixture.controller, [
       fixture.readState().update({ changes: { from: 4, insert: ' edit' } })
     ]);
-    const snapshot = { ...createEmptySessionSnapshot(), bodyMarkdown: 'body edit' };
-    const document = createNoteDraftState(snapshot);
-    const editing = createDocumentEditingService({
-      isApplyingProgrammaticUpdate: () => false,
-      shouldSuppressAutosave: () => false,
-      resetPaneCommandAfterBodyInput: vi.fn(),
-      clearRecentlyForgotten: vi.fn(),
-      scheduleAutosave: vi.fn(),
-      scheduleSearch: vi.fn(),
-      scheduleRelated: vi.fn()
-    });
-    await editing.applySnapshot(document, snapshot, async (markdown) => {
-      runtime.replaceMarkdown(markdown, { flushHistory: true });
-    }, { resetUndoHistory: true });
+    runtime.adoptCommittedMarkdown('body edit');
     expect(runtime.markdown).toBe('body edit');
     expect(runtime.undo(fixture.controller.paneKey)).toBe(false);
     runtime.dispatchFromPane(fixture.controller, [
@@ -154,6 +202,19 @@ describe('EditorDocumentRuntime', () => {
     ]);
     expect(runtime.undo(fixture.controller.paneKey)).toBe(true);
     expect(runtime.markdown).toBe('body edit');
+  });
+
+  it('restores transient Markdown without notifying another pane edit', () => {
+    const runtime = new EditorDocumentRuntime('before');
+    const fixture = pane(runtime, 'before', 6);
+
+    runtime.restoreTransientMarkdown('recovered draft');
+
+    expect(runtime.markdown).toBe('recovered draft');
+    expect(fixture.readState().doc.toString()).toBe(
+      'recovered draft'
+    );
+    expect(fixture.onMarkdownChange).not.toHaveBeenCalled();
   });
 
   it('restores a reversed selection with a bounded fallback without changing the document', () => {

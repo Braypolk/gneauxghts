@@ -28,7 +28,6 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
       timelineOrdinal: 2,
       timeKind: 'observed',
       modifiedAtMillis: 1_900,
-      editingSessionId: 'revision-1',
       revisionLabel: 'Release candidate',
       lineCount: 2,
       characterCount: 31
@@ -42,7 +41,6 @@ const openState: Extract<HistoryModeState, { phase: 'open' }> = {
       timelineOrdinal: 1,
       timeKind: 'observed',
       modifiedAtMillis: 1_700,
-      editingSessionId: 'revision-1',
       revisionLabel: null,
       lineCount: 1,
       characterCount: 14
@@ -117,7 +115,6 @@ describe('HistoryMode', () => {
         state,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
-        onSetComparison: vi.fn(),
         onPreviewRestore: vi.fn(),
         onCancelRestore: vi.fn(),
         onConfirmRestore: vi.fn(),
@@ -141,7 +138,6 @@ describe('HistoryMode', () => {
         state: openState,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
-        onSetComparison: vi.fn(),
         onPreviewRestore: vi.fn(),
         onCancelRestore: vi.fn(),
         onConfirmRestore: vi.fn(),
@@ -158,21 +154,22 @@ describe('HistoryMode', () => {
     expect(body).toContain('Read only');
     expect(body).toContain('Timeline note');
     expect(body).toContain('External edit');
-    expect(body).toContain('2 revisions');
+    expect(body.match(/data-revision-id=/gu)).toHaveLength(2);
     expect(body).toContain('2 lines');
-    expect(body).toContain('31 characters');
+    expect(body).not.toContain('31 characters');
     expect(body).toContain('Renamed Old.md to Timeline note.md');
     expect(body).toContain('# Historical body');
     expect(body).toContain('project: atlas');
-    expect(body).toContain('Previous revision');
-    expect(body).toContain('Current note');
-    expect(body).toContain('Restore complete revision');
+    expect(body).not.toContain('Previous revision');
+    expect(body).not.toContain('Current note');
+    expect(body).toContain('Preview complete replacement');
+    expect(body).not.toContain('Restore complete revision');
     expect(body).toContain('Release candidate');
-    expect(body).toContain('aria-label="Revision name"');
-    expect(body).toContain('Remove name');
+    expect(body).not.toContain('aria-label="Revision name"');
+    expect(body).toContain('aria-label="Rename revision"');
     expect(body).toContain('Clear note history');
     expect(body).toContain('new Baseline Revision');
-    expect(body).toContain('reclaimable storage');
+    expect(body).toContain('This cannot be undone.');
     expect(body).toContain('Note history healthy');
     expect(body).toContain('512 bytes retained revision content');
     expect(body).toContain('4,096 bytes allocated');
@@ -183,13 +180,12 @@ describe('HistoryMode', () => {
     expect(openState.workspace.editor?.viewState).toBe(entryViewState);
   });
 
-  it('renders Editing Sessions collapsed by default', () => {
+  it('renders every retained revision directly selectable', () => {
     const body = render(HistoryMode, {
       props: {
         state: openState,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
-        onSetComparison: vi.fn(),
         onPreviewRestore: vi.fn(),
         onCancelRestore: vi.fn(),
         onConfirmRestore: vi.fn(),
@@ -202,8 +198,8 @@ describe('HistoryMode', () => {
       }
     }).body;
 
-    expect(body).toContain('aria-expanded="false"');
-    expect(body.match(/data-revision-id=/gu)).toBeNull();
+    expect(body).not.toContain('Editing Session');
+    expect(body.match(/data-revision-id=/gu)).toHaveLength(2);
   });
 
   it('keeps unavailable history escapable', () => {
@@ -218,7 +214,6 @@ describe('HistoryMode', () => {
         state,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
-        onSetComparison: vi.fn(),
         onPreviewRestore: vi.fn(),
         onCancelRestore: vi.fn(),
         onConfirmRestore: vi.fn(),
@@ -251,7 +246,6 @@ describe('HistoryMode', () => {
         state,
         onExit: vi.fn(),
         onSelectRevision: vi.fn(),
-        onSetComparison: vi.fn(),
         onPreviewRestore: vi.fn(),
         onCancelRestore: vi.fn(),
         onConfirmRestore: vi.fn(),
@@ -271,4 +265,42 @@ describe('HistoryMode', () => {
     expect(body).toContain('Cancel');
     expect(body).not.toContain('<textarea');
   });
+});
+
+it('renders one selectable named window with its interval and combined net diff beside a point revision', () => {
+  const revision = openState.records[0];
+  if (revision.kind !== 'revision') throw new Error('fixture');
+  const window = {
+    ...revision, source: 'editor' as const, timeKind: 'editingWindow' as const,
+    timeEvidence: { kind: 'editingWindow' as const, version: 1 as const,
+      firstWallMillis: 1_000, lastWallMillis: 120_000, minWallMillis: 1_000, maxWallMillis: 120_000, clockDiscontinuity: false },
+    modifiedAtMillis: null
+  };
+  const body = render(HistoryMode, { props: {
+    state: { ...openState, records: [window, ...openState.records.slice(1)] },
+    onExit: vi.fn(), onSelectRevision: vi.fn(), onPreviewRestore: vi.fn(),
+    onCancelRestore: vi.fn(), onConfirmRestore: vi.fn(), onNameRevision: vi.fn(), onRemoveRevisionName: vi.fn(),
+    onClearHistory: vi.fn(), onCheckHealth: vi.fn(), onLoadMore: vi.fn(), onRetry: vi.fn()
+  }}).body;
+  expect(body.match(/data-revision-id="revision-2"/gu)).toHaveLength(1);
+  expect(body).toContain('Editing Window · Editor');
+  expect(body).toContain('Saved');
+  expect(body).not.toContain('Individual revisions');
+  expect(body).not.toContain('Editing Session');
+  expect(body).toContain('Release candidate');
+  expect(body).toContain('2 lines added · 0 lines removed');
+  expect(body).toContain('Compared with previous revision');
+  expect(body).not.toContain('File timestamp Jan');
+});
+
+
+it('renders both adjacent context directions around an old citation', () => {
+  const body = render(HistoryMode, { props: {
+    state: { ...openState, previousCursor: 'newer', target: { ...openState.target, citationRevisionId: 'revision-2' } },
+    onExit: vi.fn(), onSelectRevision: vi.fn(), onPreviewRestore: vi.fn(), onCancelRestore: vi.fn(), onConfirmRestore: vi.fn(),
+    onNameRevision: vi.fn(), onRemoveRevisionName: vi.fn(), onClearHistory: vi.fn(), onCheckHealth: vi.fn(), onLoadMore: vi.fn(), onLoadNewer: vi.fn(), onRetry: vi.fn()
+  }}).body;
+  expect(body).toContain('Load newer history');
+  expect(body).toContain('Load older history');
+  expect(body).toContain('data-history-record-count="3"');
 });

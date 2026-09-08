@@ -2,12 +2,13 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   createNoteDraftState,
   createNotepadState,
-  type NoteKey
+  type DocumentHandle
 } from '$lib/features/notepad/state/noteStore';
 import {
-  applySessionSnapshotToDocument,
+  applyCommittedNoteToDocument,
   updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
+import type { NoteSession } from '$lib/features/notepad/model/types';
 import {
   createEmptySessionSnapshot,
   openNoteSession,
@@ -60,6 +61,18 @@ function persistedSnapshot(
   };
 }
 
+function committedNote(snapshot: SessionSnapshot): NoteSession {
+  return {
+    noteId: snapshot.currentNoteId,
+    title: snapshot.title,
+    markdown: snapshot.bodyMarkdown,
+    path: snapshot.currentNotePath,
+    ...(snapshot.commitWarning
+      ? { commitWarning: snapshot.commitWarning }
+      : {})
+  };
+}
+
 describe('note command refresh concurrency', () => {
   it('allows different loaded documents to refresh simultaneously', async () => {
     const leftSnapshot = persistedSnapshot(
@@ -74,8 +87,8 @@ describe('note command refresh concurrency', () => {
     );
     const left = createNoteDraftState(leftSnapshot);
     const right = createNoteDraftState(rightSnapshot);
-    const leftRead = deferred<SessionSnapshot>();
-    const rightRead = deferred<SessionSnapshot>();
+    const leftRead = deferred<NoteSession>();
+    const rightRead = deferred<NoteSession>();
     vi.mocked(readNoteSession).mockImplementation(
       async (_noteId, path) => {
         if (path === '/vault/left.md') {
@@ -84,7 +97,7 @@ describe('note command refresh concurrency', () => {
         return rightRead.promise;
       }
     );
-    const applySnapshot = vi.fn(async () => undefined);
+    const adoptCleanExternalRefresh = vi.fn(async () => undefined);
     const controller =
       createNoteCommandController<PaneId>({
         base: {
@@ -102,7 +115,7 @@ describe('note command refresh concurrency', () => {
               async () => undefined
             )
           },
-          documentEditing: { applySnapshot }
+          documentEditing: { adoptCleanExternalRefresh }
         },
         transitions: {}
       } as never);
@@ -117,20 +130,20 @@ describe('note command refresh concurrency', () => {
       });
 
     expect(readNoteSession).toHaveBeenCalledTimes(2);
-    leftRead.resolve({
+    leftRead.resolve(committedNote({
       ...leftSnapshot,
       bodyMarkdown: 'left changed',
       lastSavedMarkdown: 'left changed'
-    });
-    rightRead.resolve({
+    }));
+    rightRead.resolve(committedNote({
       ...rightSnapshot,
       bodyMarkdown: 'right changed',
       lastSavedMarkdown: 'right changed'
-    });
+    }));
 
     await expect(leftRefresh).resolves.toBe('refreshed');
     await expect(rightRefresh).resolves.toBe('refreshed');
-    expect(applySnapshot).toHaveBeenCalledTimes(2);
+    expect(adoptCleanExternalRefresh).toHaveBeenCalledTimes(2);
   });
 
   it('coalesces duplicate refreshes into one guaranteed trailing reread', async () => {
@@ -141,12 +154,12 @@ describe('note command refresh concurrency', () => {
     );
     const note = createNoteDraftState(boundary);
     vi.mocked(readNoteSession).mockClear();
-    const firstRead = deferred<SessionSnapshot>();
-    const trailingRead = deferred<SessionSnapshot>();
+    const firstRead = deferred<NoteSession>();
+    const trailingRead = deferred<NoteSession>();
     vi.mocked(readNoteSession)
       .mockReturnValueOnce(firstRead.promise)
       .mockReturnValueOnce(trailingRead.promise);
-    const applySnapshot = vi.fn(async () => undefined);
+    const adoptCleanExternalRefresh = vi.fn(async () => undefined);
     const controller =
       createNoteCommandController<PaneId>({
         base: {
@@ -165,7 +178,7 @@ describe('note command refresh concurrency', () => {
             )
           },
           documentEditing: {
-            applySnapshot
+            adoptCleanExternalRefresh
           }
         },
         transitions: {}
@@ -179,19 +192,19 @@ describe('note command refresh concurrency', () => {
     expect(duplicate).toBe(first);
     expect(readNoteSession).toHaveBeenCalledOnce();
 
-    firstRead.resolve(boundary);
+    firstRead.resolve(committedNote(boundary));
     await vi.waitFor(() => {
       expect(readNoteSession).toHaveBeenCalledTimes(2);
     });
-    trailingRead.resolve({
+    trailingRead.resolve(committedNote({
       ...boundary,
       bodyMarkdown: 'changed after first read',
       lastSavedMarkdown: 'changed after first read'
-    });
+    }));
 
     await expect(first).resolves.toBe('refreshed');
     await expect(duplicate).resolves.toBe('refreshed');
-    expect(applySnapshot).toHaveBeenCalledOnce();
+    expect(adoptCleanExternalRefresh).toHaveBeenCalledOnce();
   });
 });
 
@@ -280,7 +293,7 @@ describe('open-note persistence barrier', () => {
       'next content'
     );
     const state = createNotepadState<PaneId>(previous);
-    let paneNoteKey: NoteKey = previous.key;
+    let paneDocumentHandle: DocumentHandle = previous.handle;
     const runtime = {
       ui: { isEditorReady: false }
     };
@@ -303,27 +316,27 @@ describe('open-note persistence barrier', () => {
             getActivePaneId: () => 'left',
             resetPaneCommand: vi.fn(),
             getPaneState: () => ({
-              noteKey: paneNoteKey
+              documentHandle: paneDocumentHandle
             }),
-            setPaneNoteKey: (
+            setPaneDocumentHandle: (
               _paneId: PaneId,
-              noteKey: NoteKey
+              documentHandle: DocumentHandle
             ) => {
-              paneNoteKey = noteKey;
+              paneDocumentHandle = documentHandle;
             },
-            isNoteReferenced: (noteKey: NoteKey) =>
-              paneNoteKey === noteKey,
+            isDocumentReferenced: (documentHandle: DocumentHandle) =>
+              paneDocumentHandle === documentHandle,
             setPaneKind: vi.fn(() => true)
           },
           panes: {
             getPaneDocument: () =>
-              state.notesByKey[paneNoteKey],
+              state.documentsByHandle[paneDocumentHandle],
             getPaneKind: () => 'editor',
             getPaneRuntime: () => runtime,
             closeWikilinkAutocomplete: vi.fn(),
             updateSelectedRelatedText: vi.fn(),
-            getNoteByKey: (noteKey: NoteKey) =>
-              state.notesByKey[noteKey] ?? null
+            getDocumentByHandle: (documentHandle: DocumentHandle) =>
+              state.documentsByHandle[documentHandle] ?? null
           },
           persistence: {
             cancelPendingAutosave: vi.fn(),
@@ -363,7 +376,7 @@ describe('open-note persistence barrier', () => {
       focusEditorAfterOpen: false
     });
 
-    const nextDocument = state.notesByKey[paneNoteKey];
+    const nextDocument = state.documentsByHandle[paneDocumentHandle];
     expect(nextDocument.working.markdown).toBe(
       'next content'
     );
@@ -384,9 +397,9 @@ describe('open-note persistence barrier', () => {
       )
     );
     const state = createNotepadState<PaneId>(shared);
-    const paneNoteKeys: Record<PaneId, NoteKey> = {
-      left: shared.key,
-      right: shared.key
+    const paneDocumentHandles: Record<PaneId, DocumentHandle> = {
+      left: shared.handle,
+      right: shared.handle
     };
     let activePane: PaneId = 'left';
     const leftOpen = deferred<SessionSnapshot>();
@@ -409,23 +422,23 @@ describe('open-note persistence barrier', () => {
           getActivePaneId: () => activePane,
           resetPaneCommand: vi.fn(),
           getPaneState: (paneId: PaneId) => ({
-            noteKey: paneNoteKeys[paneId]
+            documentHandle: paneDocumentHandles[paneId]
           }),
-          setPaneNoteKey: (paneId: PaneId, noteKey: NoteKey) => {
-            paneNoteKeys[paneId] = noteKey;
+          setPaneDocumentHandle: (paneId: PaneId, documentHandle: DocumentHandle) => {
+            paneDocumentHandles[paneId] = documentHandle;
           },
-          isNoteReferenced: (noteKey: NoteKey) =>
-            Object.values(paneNoteKeys).includes(noteKey),
+          isDocumentReferenced: (documentHandle: DocumentHandle) =>
+            Object.values(paneDocumentHandles).includes(documentHandle),
           setPaneKind: vi.fn(() => true)
         },
         panes: {
           getPaneDocument: (paneId: PaneId) =>
-            state.notesByKey[paneNoteKeys[paneId]],
+            state.documentsByHandle[paneDocumentHandles[paneId]],
           getPaneKind: () => 'editor',
           closeWikilinkAutocomplete: vi.fn(),
           updateSelectedRelatedText: vi.fn(),
-          getNoteByKey: (noteKey: NoteKey) =>
-            state.notesByKey[noteKey] ?? null
+          getDocumentByHandle: (documentHandle: DocumentHandle) =>
+            state.documentsByHandle[documentHandle] ?? null
         },
         persistence: {
           cancelPendingAutosave: vi.fn(),
@@ -478,11 +491,11 @@ describe('open-note persistence barrier', () => {
     );
     await Promise.all([openingLeft, openingRight]);
 
-    expect(state.notesByKey[paneNoteKeys.left].identity).toMatchObject({
+    expect(state.documentsByHandle[paneDocumentHandles.left].identity).toMatchObject({
       kind: 'persisted',
       path: '/vault/left-target.md'
     });
-    expect(state.notesByKey[paneNoteKeys.right].identity).toMatchObject({
+    expect(state.documentsByHandle[paneDocumentHandles.right].identity).toMatchObject({
       kind: 'persisted',
       path: '/vault/right-target.md'
     });
@@ -504,31 +517,13 @@ describe('app-owned proposal commit acknowledgement', () => {
     );
     const document = createNoteDraftState(before);
     updateDocumentMarkdown(document, 'After');
+    const committedSession = committedNote(committed);
     vi.mocked(readNoteSession).mockResolvedValueOnce(
-      committed
+      committedSession
     );
-    const replaceNoteAcrossPanes = vi.fn(
-      async () => undefined
-    );
-    const applySnapshot = vi.fn(
-      async (
-        target: typeof document,
-        snapshot: SessionSnapshot,
-        applyMarkdown: () => Promise<void>,
-        options: { preserveDraft?: boolean } = {}
-      ) => {
-        const result = applySessionSnapshotToDocument(
-          target,
-          snapshot,
-          {
-            preserveWorking:
-              options.preserveDraft ?? false
-          }
-        );
-        if (result.markdownChanged) {
-          await applyMarkdown();
-        }
-        return result;
+    const adoptAcceptedProposal = vi.fn(
+      async (target: typeof document, session: NoteSession) => {
+        applyCommittedNoteToDocument(target, session);
       }
     );
     const controller =
@@ -543,11 +538,8 @@ describe('app-owned proposal commit acknowledgement', () => {
             clearSelectedRelatedText: vi.fn(),
             scheduleRelatedIfNeeded: vi.fn()
           },
-          documents: {
-            replaceNoteAcrossPanes
-          },
           documentEditing: {
-            applySnapshot
+            adoptAcceptedProposal
           }
         }
       } as never);
@@ -555,7 +547,8 @@ describe('app-owned proposal commit acknowledgement', () => {
     await controller.acknowledgeDocumentCommit({
       document,
       path: '/vault/Plan.md',
-      markdown: 'After'
+      markdown: 'After',
+      commitWarning: null
     });
 
     expect(document.savedBaseline?.content.markdown).toBe(
@@ -566,15 +559,73 @@ describe('app-owned proposal commit acknowledgement', () => {
       kind: 'noConflict',
       sequence: 0
     });
-    expect(applySnapshot).toHaveBeenCalledWith(
+    expect(adoptAcceptedProposal).toHaveBeenCalledWith(
       document,
-      committed,
-      expect.any(Function),
-      {
-        preserveDraft: false,
-        autosave: false
-      }
+      committedSession,
+      'After',
+      null
     );
+  });
+
+  it('routes a changed canonical read-back through external conflict protection', async () => {
+    vi.mocked(readNoteSession).mockClear();
+    const before = persistedSnapshot(
+      'plan',
+      '/vault/Plan.md',
+      'Before'
+    );
+    const document = createNoteDraftState(before);
+    updateDocumentMarkdown(document, 'After');
+    const racingSession = committedNote({
+      ...before,
+      bodyMarkdown: 'Racing external edit',
+      lastSavedMarkdown: 'Racing external edit'
+    });
+    vi.mocked(readNoteSession)
+      .mockResolvedValueOnce(racingSession)
+      .mockResolvedValueOnce(racingSession);
+    const adoptAcceptedProposal = vi.fn();
+    const invalidatePendingSaveResults = vi.fn();
+    const controller =
+      createNoteCommandController<PaneId>({
+        base: {
+          persistence: {
+            hasCleanBuffer: () => false,
+            cancelPendingAutosave: vi.fn(),
+            invalidatePendingSaveResults
+          },
+          derivedViews: {
+            setRecentlyForgotten: vi.fn(),
+            clearSelectedRelatedText: vi.fn()
+          },
+          documentEditing: {
+            adoptAcceptedProposal
+          }
+        }
+      } as never);
+
+    await controller.acknowledgeDocumentCommit({
+      document,
+      path: '/vault/Plan.md',
+      markdown: 'After',
+      commitWarning: null
+    });
+
+    expect(readNoteSession).toHaveBeenCalledTimes(2);
+    expect(adoptAcceptedProposal).not.toHaveBeenCalled();
+    expect(invalidatePendingSaveResults).toHaveBeenCalledWith(
+      document
+    );
+    expect(document.externalSync).toMatchObject({
+      kind: 'conflict',
+      external: {
+        kind: 'snapshot',
+        document: {
+          content: { markdown: 'Racing external edit' }
+        }
+      }
+    });
+    expect(document.working.markdown).toBe('After');
   });
 });
 
@@ -586,7 +637,7 @@ describe('new-note location history', () => {
       bodyMarkdown: 'Draft body'
     });
     const state = createNotepadState<PaneId>(draft);
-    let paneNoteKey = draft.key;
+    let paneDocumentHandle = draft.handle;
     const remembered = persistedSnapshot(
       'remembered-note',
       '/vault/Remembered.md',
@@ -596,8 +647,8 @@ describe('new-note location history', () => {
     const touchLocation = vi.fn();
     const beginPaneCommand = vi.fn();
     const prepareDeparture = vi.fn(async () => {
-      state.notesByKey[saved.key] = saved;
-      paneNoteKey = saved.key;
+      state.documentsByHandle[saved.handle] = saved;
+      paneDocumentHandle = saved.handle;
       return saved;
     });
     const transitions =
@@ -611,17 +662,17 @@ describe('new-note location history', () => {
         workspace: {
           getActivePaneId: () => 'left',
           getPaneOrder: () => ['left'],
-          setPaneNoteKey: (_paneId: PaneId, noteKey: NoteKey) => {
-            paneNoteKey = noteKey;
+          setPaneDocumentHandle: (_paneId: PaneId, documentHandle: DocumentHandle) => {
+            paneDocumentHandle = documentHandle;
           },
-          isNoteReferenced: (noteKey: NoteKey) =>
-            paneNoteKey === noteKey,
+          isDocumentReferenced: (documentHandle: DocumentHandle) =>
+            paneDocumentHandle === documentHandle,
           beginPaneCommand
         },
         panes: {
-          getPaneDocument: () => state.notesByKey[paneNoteKey],
+          getPaneDocument: () => state.documentsByHandle[paneDocumentHandle],
           getNavigationDocument: () =>
-            state.notesByKey[paneNoteKey],
+            state.documentsByHandle[paneDocumentHandle],
           getPaneKind: () => 'editor',
           activatePaneSession: vi.fn(),
           updateSelectedRelatedText: vi.fn(),
@@ -651,7 +702,7 @@ describe('new-note location history', () => {
       ensureLocationMruSeeded: vi.fn(async () => undefined),
       capturePaneLocation: () => {
         const identity =
-          state.notesByKey[paneNoteKey].identity;
+          state.documentsByHandle[paneDocumentHandle].identity;
         return identity.kind === 'persisted'
           ? {
               kind: 'editor' as const,
@@ -681,10 +732,10 @@ describe('new-note location history', () => {
       draft,
       { clearLastOpened: true }
     );
-    expect(state.notesByKey[paneNoteKey].savedBaseline).toBeNull();
+    expect(state.documentsByHandle[paneDocumentHandle].savedBaseline).toBeNull();
     expect(beginPaneCommand).toHaveBeenCalledWith(
       'left',
-      paneNoteKey,
+      paneDocumentHandle,
       'start'
     );
   });
