@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import {
-  applySessionSnapshotToDocument,
   createDocumentState,
   documentHasCleanBuffer,
   documentHasUnresolvedConflict,
@@ -364,24 +363,4 @@ describe('document-state generated transition sequences', () => {
       expect(resolve(note, conflictId!)).toBe(false);
     }
   );
-
-  it('refreshes one shared clean document reference exactly once', () => {
-    const shared = document();
-    const paneDocuments = [shared, shared, shared];
-    const beforeRevision = shared.operation.revision;
-
-    applySessionSnapshotToDocument(
-      shared,
-      savedSnapshot('external')
-    );
-
-    expect(new Set(paneDocuments).size).toBe(1);
-    expect(
-      paneDocuments.map((note) => note.working.markdown)
-    ).toEqual(['external', 'external', 'external']);
-    expect(shared.operation.revision).toBe(
-      beforeRevision + 1
-    );
-    expect(shared.externalSync.kind).toBe('noConflict');
-  });
 });

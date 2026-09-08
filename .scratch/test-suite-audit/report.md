@@ -31,36 +31,7 @@ constructed results. Keep those capability-race tests, but add focused coverage
 that enters each real consumer, holds its query before delivery, invalidates the
 result, and verifies that stale content is withheld.
 
-## Test cleanup and strengthening
-
-### Remove three opaque-view-state render cases
-
-The parameterized cases in
-`src/lib/features/history/HistoryMode.svelte.test.ts` render a captured view
-state and compare it with the same object. Remove the collapsed, forward, and
-reversed selection cases. Read-only rendering and selection restoration remain
-covered elsewhere.
-
-### Remove the shared-alias pseudo-deduplication case
-
-Remove `refreshes one shared clean document reference exactly once` from
-`src/lib/features/notepad/document/documentState.sequence.test.ts`. It calls the
-adoption function once itself and only observes three aliases to the same object.
-Keep the state-transition sequences and the real refresh-controller deduplication
-test.
-
-### Strengthen and consolidate Atlas compatibility coverage
-
-In `src-tauri/src/semantic/atlas.rs`, move source-set, layout-version, and
-edge-generation rejection assertions into
-`warm_generation_is_served_stale_while_new_epoch_builds`, where
-`pointer_is_compatible` is actually called. Then remove
-`compatibility_rejects_input_and_algorithm_changes`, which currently tests only
-derived equality.
-
-Remove the `LABEL_ALGORITHM_VERSION` string-contains test from
-`src-tauri/src/semantic/atlas_labels.rs`; production generation and pointer
-compatibility tests already cover algorithm selection and cache rejection.
+## Test strengthening
 
 ### Use independent expected task Markdown
 
@@ -68,13 +39,6 @@ compatibility tests already cover algorithm selection and cache rejection.
 still derives its expected values with the same helpers used by production.
 Replace those expectations with literal toggle and delete Markdown, including
 the untouched second task.
-
-### Consolidate duplicated task-adapter success coverage
-
-In `src/lib/features/notepad/orchestration/notepadTaskMutationAdapter.test.ts`,
-give the integrated dirty-task scenario distinct editor-save and task-save spies.
-Assert that task attribution is selected, editor save is not selected, and no
-extra autosave is scheduled. Then remove the earlier fake-editing success case.
 
 ### Remove or make the reasoning-payload assertion meaningful
 
@@ -93,6 +57,6 @@ if practical. Do not delete it unless equivalent ownership coverage survives.
 ## Recommended order
 
 1. Close the three production-path coverage gaps.
-2. Strengthen the task, Atlas compatibility, and task-adapter tests.
-3. Remove the five confirmed low-value cases and the vacuous assertion.
+2. Strengthen the task transform assertion.
+3. Remove or replace the vacuous reasoning-payload assertion.
 4. Revisit the source-string architecture guard separately.

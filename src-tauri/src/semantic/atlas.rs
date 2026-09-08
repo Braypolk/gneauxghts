@@ -4584,21 +4584,6 @@ mod tests {
     }
 
     #[test]
-    fn compatibility_rejects_input_and_algorithm_changes() {
-        let current = test_dependencies("remembered:set-a", "input-a");
-        assert_eq!(current, current.clone());
-        let mut changed_set = current.clone();
-        changed_set.source_key = "remembered:set-b".to_string();
-        assert_ne!(current, changed_set);
-        let mut changed_layout = current.clone();
-        changed_layout.layout_algorithm_version += 1;
-        assert_ne!(current, changed_layout);
-        let mut changed_edge = current.clone();
-        changed_edge.edge_generation = "edge-2".to_string();
-        assert_ne!(current, changed_edge);
-    }
-
-    #[test]
     fn warm_generation_is_served_stale_while_new_epoch_builds() {
         let dependencies = test_dependencies("hidden", "input");
         let pointer = AtlasReadyPointer {
@@ -4611,9 +4596,18 @@ mod tests {
         };
         assert!(pointer_is_compatible(&pointer, &dependencies, 4));
         assert!(!pointer_is_compatible(&pointer, &dependencies, 5));
-        let mut changed = dependencies.clone();
-        changed.input_hash = "edited".to_string();
-        assert!(!pointer_is_compatible(&pointer, &changed, 4));
+        let mut changed_input = dependencies.clone();
+        changed_input.input_hash = "edited".to_string();
+        assert!(!pointer_is_compatible(&pointer, &changed_input, 4));
+        let mut changed_source = dependencies.clone();
+        changed_source.source_key = "remembered:set-b".to_string();
+        assert!(!pointer_is_compatible(&pointer, &changed_source, 4));
+        let mut changed_layout = dependencies.clone();
+        changed_layout.layout_algorithm_version += 1;
+        assert!(!pointer_is_compatible(&pointer, &changed_layout, 4));
+        let mut changed_edge = dependencies.clone();
+        changed_edge.edge_generation = "edge-2".to_string();
+        assert!(!pointer_is_compatible(&pointer, &changed_edge, 4));
     }
 
     #[test]

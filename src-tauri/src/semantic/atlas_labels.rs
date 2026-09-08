@@ -1528,11 +1528,6 @@ mod tests {
     }
 
     #[test]
-    fn algorithm_version_identifies_chunk_keybert_path() {
-        assert!(LABEL_ALGORITHM_VERSION.contains("chunk-keybert"));
-    }
-
-    #[test]
     fn function_words_never_become_standalone_or_function_only_phrases() {
         assert!(is_function_word("the"));
         assert!(is_function_word("from"));

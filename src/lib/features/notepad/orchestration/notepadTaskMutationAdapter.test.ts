@@ -85,71 +85,6 @@ describe('notepad task mutation adapter', () => {
     ).toBeNull();
   });
 
-  it('replaces the dirty shared document in place and crosses the normal save boundary', async () => {
-    const note = document('note-1', '/vault/One.md');
-    updateDocumentMarkdown(note, '- [ ] Task\n\nLocal edit');
-    const replaceDocumentContentInPlace = vi.fn(
-      async () => undefined
-    );
-    const replaceMarkdown = vi.fn(
-      async (
-        target,
-        markdown: string,
-        applyToRuntime: (markdown: string) => Promise<void>
-      ) => {
-        updateDocumentMarkdown(target, markdown);
-        await applyToRuntime(markdown);
-      }
-    );
-    const enqueueSave = vi.fn(async () => undefined);
-    const attributeTaskActionSave = vi.fn();
-    const handler = createNotepadTaskMutationHandler({
-      listReferencedDocumentHandles: () => [note.handle],
-      getDocumentByHandle: () => note,
-      replaceMarkdown,
-      replaceDocumentContentInPlace,
-      enqueueSave,
-      attributeTaskActionSave,
-      hashMarkdown: async () => 'body-hash',
-      prepare: async () => ({
-        taskId: 'task-1',
-        noteId: 'note-1',
-        notePath: '/vault/One.md',
-        baseHash: 'body-hash',
-        updatedEditorMarkdown: '- [x] Task\n\nLocal edit'
-      })
-    });
-
-    await expect(
-      handler({
-        kind: 'toggle',
-        taskId: 'task-1',
-        noteId: 'note-1',
-        notePath: '/vault/One.md'
-      })
-    ).resolves.toEqual({
-      status: 'applied-to-open-document'
-    });
-
-    expect(replaceMarkdown).toHaveBeenCalledWith(
-      note,
-      '- [x] Task\n\nLocal edit',
-      expect.any(Function),
-      { autosave: false }
-    );
-    expect(
-      replaceDocumentContentInPlace
-    ).toHaveBeenCalledWith(
-      note,
-      '- [x] Task\n\nLocal edit'
-    );
-    expect(attributeTaskActionSave).toHaveBeenCalledWith(
-      note,
-      '- [x] Task\n\nLocal edit'
-    );
-    expect(enqueueSave).toHaveBeenCalledWith(note);
-  });
-
   it('traces a dirty task mutation through editing and the real document save boundary', async () => {
     const path = '/vault/System Trace.md';
     const note = document(
@@ -164,6 +99,7 @@ describe('notepad task mutation adapter', () => {
     const trace: string[] = [];
     const state = createNotepadState(note);
     bindNotepadStateToVault(state, '/vault');
+    const scheduleAutosave = vi.fn();
     const editing = createDocumentEditingService({
       state,
       isApplyingProgrammaticUpdate: () => false,
@@ -172,11 +108,26 @@ describe('notepad task mutation adapter', () => {
       resetPaneCommandAfterBodyInput: vi.fn(),
       clearRecentlyForgotten: vi.fn(),
       clearSelectedRelatedText: vi.fn(),
-      scheduleAutosave: vi.fn(),
+      scheduleAutosave,
       scheduleSearch: vi.fn(),
       scheduleRelated: vi.fn()
     });
     const saveNoteSession = vi.fn(
+      async (
+        title: string,
+        markdown: string,
+        currentPath: string | null
+      ) => {
+        trace.push(`editor-save:${markdown}`);
+        return {
+          title,
+          markdown,
+          noteId: 'system-trace-note',
+          path: currentPath
+        };
+      }
+    );
+    const saveTaskNoteSession = vi.fn(
       async (
         title: string,
         markdown: string,
@@ -195,7 +146,7 @@ describe('notepad task mutation adapter', () => {
       createNotepadPersistenceController({
         getDocumentSession: () => note,
         saveNoteSession,
-        saveTaskNoteSession: saveNoteSession,
+        saveTaskNoteSession,
         documentEditing: editing
       });
     const handler = createNotepadTaskMutationHandler({
@@ -253,11 +204,14 @@ describe('notepad task mutation adapter', () => {
         'runtime:- [x] Trace me\n\nUnsaved local context',
         'save:- [x] Trace me\n\nUnsaved local context'
       ]);
-      expect(saveNoteSession).toHaveBeenCalledWith(
+      expect(saveTaskNoteSession).toHaveBeenCalledWith(
         'Tasks',
         '- [x] Trace me\n\nUnsaved local context',
         path
       );
+      expect(saveTaskNoteSession).toHaveBeenCalledTimes(1);
+      expect(saveNoteSession).not.toHaveBeenCalled();
+      expect(scheduleAutosave).not.toHaveBeenCalled();
       expect(documentHasCleanBuffer(note)).toBe(true);
       expect(note.savedBaseline?.content.markdown).toBe(
         '- [x] Trace me\n\nUnsaved local context'
