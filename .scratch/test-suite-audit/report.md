@@ -1,87 +1,98 @@
-# Test-suite usefulness audit
+# Remaining test-suite audit work
 
-Follow-up: the four agreed pre–Phase 4 corrections are complete. See [test-hardening results](hardening.md). The findings and counts below preserve the original audit snapshot.
+This file contains only the audit findings that remain unresolved. Each item was
+rechecked against the current tree; completed hardening work and historical test
+counts are intentionally omitted.
 
-The suite mostly protects worthwhile behavior. The strongest improvement is to repair a small set of tests that can pass while their advertised behavior is broken. Broad deletion is not supported by this audit. Five individual cases can be removed with existing coverage preserved; further consolidation needs replacement assertions first.
+## Coverage gaps
 
-## Scope and evidence
+### Exercise real block-move actions
 
-Reviewed the current working tree at HEAD `14e29d6`, including the earlier Phase 1–3 fixes. This audit changes only audit artifacts; production and test files were preserved. Deliberate regressions ran in an isolated temporary copy.
+`src/lib/features/notepad/editor/blockMoveUndo.test.ts` still constructs the
+desired transaction through `moveViaMinimalChange`. Replace the two synthetic
+movement scenarios with tests that invoke `moveCurrentBlock` or `moveBlockTo`
+against real CodeMirror state and assert ordering plus undo/redo caret position.
+Keep the three focused `minimalDocChange` cases.
 
-| Layer | Cases on this macOS checkout | Execution evidence |
-| --- | ---: | --- |
-| Frontend, 122 files | 770 | Fresh audit run: all passed; no pending/todo cases |
-| Rust unit tests, 46 source files | 447 | Earlier fix-validation run: passed; not rerun for this audit |
-| Rust architecture fitness | 15 | Earlier fix-validation run: passed |
-| Browser journeys | 9 | Earlier fix-validation run: passed |
-| Native journeys | 7 | Earlier fix-validation run: passed |
-| Total | 1,248 | Not a single fresh combined run |
+### Exercise Atlas publication through its production owner
 
-Rust source contains one additional Linux-only RSS test. Desktop results do not validate the iOS-specific branch in configuration tests. Frontend cases include parameterized expansions and frontend architecture checks.
+`src-tauri/src/semantic/atlas.rs::atomic_publication_keeps_previous_generation_until_pointer_flip`
+still writes both artifacts and flips the pointer inside the test. Replace it
+with a test that enters the production structural-publication path, interrupts
+or fails before pointer replacement, and proves through the ordinary reader that
+the previous generation remains usable.
 
-Every test-bearing frontend/Rust file was inventoried. The 103 ordinary frontend files received purpose-level review: 15 full reads, 14 focused scenario reviews, and 74 samples. The remaining 19 frontend files cover rendering, reactive stores, architecture, and cross-language contracts. Rust bodies were sampled across every test-bearing source file, with suspect scenarios traced into production. Large suites were not exhaustively traced assertion by assertion. “Keep” means no concrete removal candidate was established, not proof that every assertion is necessary.
+### Add production-path current-content invalidation coverage
 
-Detailed inventories: [frontend review](frontend-review.md) and [backend review](backend-review.md). Disposable logs, patches, and the generated JSON inventory were removed during pre-commit cleanup.
+The invalidation tests in `commands/search_commands.rs`,
+`commands/task_commands.rs`, `commands/atlas_commands.rs`, and
+`services/retrieval.rs` still call the current-content capability directly with
+constructed results. Keep those capability-race tests, but add focused coverage
+that enters each real consumer, holds its query before delivery, invalidates the
+result, and verifies that stale content is withheld.
 
-## Highest-value corrections
+## Test cleanup and strengthening
 
-### 1. Architecture guard permits the forbidden state it claims to reject
+### Remove three opaque-view-state render cases
 
-`src/lib/architectureFitness.test.ts:209` uses `not.toEqual(arrayContaining([...seven forbidden fields]))`. That rejects all seven fields appearing together, rather than rejecting each forbidden field individually.
+The parameterized cases in
+`src/lib/features/history/HistoryMode.svelte.test.ts` render a captured view
+state and compare it with the same object. Remove the collapsed, forward, and
+reversed selection cases. Read-only rendering and selection restoration remain
+covered elsewhere.
 
-**Confirmed regression probe:** adding `controllerLifecycle = 'ready'` to the production controller in the isolated copy still passed all nine architecture tests. Both baseline and modified runs passed. Assert an empty intersection with the forbidden set, or individual absence. Keep the ownership rule.
+### Remove the shared-alias pseudo-deduplication case
 
+Remove `refreshes one shared clean document reference exactly once` from
+`src/lib/features/notepad/document/documentState.sequence.test.ts`. It calls the
+adoption function once itself and only observes three aliases to the same object.
+Keep the state-transition sequences and the real refresh-controller deduplication
+test.
 
-### 2. Settings routing test cannot distinguish swapped destinations
+### Strengthen and consolidate Atlas compatibility coverage
 
-`src/lib/features/settings/refreshCoordinator.test.ts:27` invokes both `vault` and `forgetting`, then checks aggregate loader counts. **Confirmed regression probe:** swapping the production branches still passed all three tests. Give each section a fresh fixture and assert its selected loader and absence of unrelated calls.
+In `src-tauri/src/semantic/atlas.rs`, move source-set, layout-version, and
+edge-generation rejection assertions into
+`warm_generation_is_served_stale_while_new_epoch_builds`, where
+`pointer_is_compatible` is actually called. Then remove
+`compatibility_rejects_input_and_algorithm_changes`, which currently tests only
+derived equality.
 
+Remove the `LABEL_ALGORITHM_VERSION` string-contains test from
+`src-tauri/src/semantic/atlas_labels.rs`; production generation and pointer
+compatibility tests already cover algorithm selection and cache rejection.
 
-The probes use a minimal Node Vitest configuration in a copied workspace. They establish that these particular assertions miss these particular changes; they are not a full mutation score.
+### Use independent expected task Markdown
 
-### 3. Several tests construct the desired behavior instead of exercising its owner
+`src-tauri/src/services/task_mutation.rs::pure_transform_matches_legacy_toggle_and_delete_behavior`
+still derives its expected values with the same helpers used by production.
+Replace those expectations with literal toggle and delete Markdown, including
+the untouched second task.
 
-| Test | Coverage limit | Correction |
-| --- | --- | --- |
-| `blockMoveUndo.test.ts:67` | A helper constructs the minimal CodeMirror transaction; neither block-move action is called. A regression in production movement can leave it green. | Invoke a real block-move action, then assert text and undo/redo caret position. Retain the three focused diff-helper cases. No browser/native block-move-plus-undo replacement was found. |
-| `semantic/atlas.rs:4544` | The test itself writes artifacts and switches the pointer in the desired order. | Exercise production publication with an interruption/failure, then use the ordinary reader to prove the previous generation remains available. |
-| Search/task/Atlas/retrieval invalidation tests | These directly call the current-content capability with constructed results. They establish capability races, but not that the named consumer uses it correctly. | Retain the race evidence and exercise the real consumer delivery paths. Use existing seams; avoid adding public interfaces only for tests. |
+### Consolidate duplicated task-adapter success coverage
 
-Exact paths, surviving coverage, and implementation entry points are recorded in the detailed reviews. These are coverage limitations, not evidence that the current production behavior is broken.
+In `src/lib/features/notepad/orchestration/notepadTaskMutationAdapter.test.ts`,
+give the integrated dirty-task scenario distinct editor-save and task-save spies.
+Assert that task attribution is selected, editor save is not selected, and no
+extra autosave is scheduled. Then remove the earlier fake-editing success case.
 
-### 4. Timer and shared-environment fixtures need realistic isolation
+### Remove or make the reasoning-payload assertion meaningful
 
-- `src/lib/features/notepad/search/store.test.ts:23`: the timer fake stores one callback, returns a constant ID, and does not cancel anything. The debounce scenario only sends one input. Use functioning fake timers to send a burst and prove only the final request runs; advance time after clearing to prove cancellation.
-- `src-tauri/src/semantic/debug.rs:302` and `:333`: two tests mutate `GNEAUXGHTS_PROFILE_RSS` without shared serialization. One can enable profiling while the other expects it disabled. Combine the scenarios or use a common guard with panic-safe restoration. This is a source-level race, not an observed flake in this audit.
+`src/lib/features/chat/ui/ChatMessage.svelte.test.ts` asserts that `private
+reasoning payload` is absent without putting that value in its fixture. Either
+remove the vacuous assertion or supply private reasoning at the actual filtering
+boundary and prove it is excluded.
 
-## Concrete removal and consolidation candidates
+## Architecture guard follow-up
 
-| Candidate | Disposition | Coverage that survives |
-| --- | --- | --- |
-| Three parameterized cases in `HistoryMode.svelte.test.ts:102` | Remove. They server-render a captured view state and compare it with the same aliased object; they do not exercise editor departure/return. | Read-only rendering remains in the next case. Browser selection-restoration journey covers collapsed, forward, and reversed selections after history refresh; native history journey also covers restoration. |
-| Shared-alias case in `documentState.sequence.test.ts:368` | Remove one. The test calls adoption once itself and observes three references to the same object. | `documentState.test.ts:270` covers snapshot/revision behavior; `notepadRefreshController.test.ts:95` exercises actual refresh deduplication across panes. Keep generated transition sequences. |
-| Algorithm spelling in `semantic/atlas_labels.rs:1531` | Remove one. Checking that a version constant contains `chunk-keybert` does not verify selection or compatibility. | Real label-generation cases and `label_pointer_requires_current_algorithm_and_model` cover those behaviors. |
-| Dependency equality in `semantic/atlas.rs:4586` | Consolidate after moving source/layout/edge rejection cases into the real pointer compatibility test at `:4601`. | Production compatibility behavior becomes stronger; one fewer test afterward. |
-| Fake-editing success in `notepadTaskMutationAdapter.test.ts:85` | Consolidate only after the integrated scenario retains task-versus-editor save attribution and no-extra-autosave coverage. | The integrated scenario already exercises real editing and persistence; currently its shared save spy loses a useful distinction. |
+`src-tauri/src/agent_run_coordinator.rs` still uses a source-string assertion
+against `chat.rs`. Decide whether its routing rule belongs in the Rust
+architecture-fitness suite and replace it with a less spelling-sensitive check
+if practical. Do not delete it unless equivalent ownership coverage survives.
 
-Also strengthen the task transform test's expected Markdown: `services/task_mutation.rs:330` computes it with the same helper used by production. It still verifies dispatch, so retain that purpose and use independent literal outputs.
+## Recommended order
 
-## Architecture and rendering checks
-
-The frontend architecture suite and 15 Rust fitness tests mix useful ownership/import constraints with fragile source-string assertions. Exact whitespace, variable spellings, old-name bans, field order, and documentation phrases can fail harmless refactors or pass text that is never executed. Preserve enforceable boundaries; trim incidental spellings and prefer syntax-aware checks where needed. Do not replace all of this with a new testing framework. The coordinator routing source check is not an established exact duplicate and should not simply be deleted.
-
-Server-render tests remain useful for role-specific content, read-only controls, conditional health/recovery guidance, accessible states, and Markdown rendering. They do not prove clicks, keyboard behavior, or state transitions. In particular:
-
-- `ChatMessage.svelte.test.ts:95` checks absence of `private reasoning payload`, but the fixture never supplies that payload. Remove the vacuous assertion or test the actual filtering boundary.
-- The expanded-session render case in `HistoryEditingSession.svelte.test.ts` verifies an expanded projection, not preservation across a refresh. The browser journey owns that transition.
-- Exact Tailwind class assertions in `ChatPanel.svelte.test.ts` are not evidence that overflow works in a browser.
-
-The other inspected rendering suites—model selector, ChatMarkdown, HistoryDiff, conflict resolver, Forgotten/Missing notes, and history/semantic settings—have distinct rendering contracts worth retaining. Reactive app-settings, note-store, and chat-coordinator tests exercise real acknowledgement, identity, and coordination behavior despite their `.svelte.test.ts` suffix. Shared Rust/TypeScript IPC fixtures also earn their place: the compiler cannot verify command names and casing across that boundary.
-
-## What to keep and how to proceed
-
-Retain real CodeMirror/history tests, stale-result and state-machine sequences, persistence conflicts, crash/restart/migration cases, identity and retention cases, shared IPC contracts, and browser/native integration. Similar setup does not make different failure guarantees redundant. Browser journeys use a substituted backend; native journeys verify real persistence and lifecycle. Their overlap is often intentional.
-
-Recommended order: repair the two confirmed blind spots and nondeterministic fixtures; replace synthetic production-path coverage; remove the five safe cases; then consolidate the conditional candidates. Test count may stay similar or increase where integration is missing. Avoid generic fixture frameworks or broad rewrites.
-
-The visible GitHub workflow set only contains documentation automation. `pnpm test` runs frontend tests, not Rust or UI journeys. Keep the separate regression commands explicit in the development/release process; adding CI is a separate decision, not part of this audit.
+1. Close the three production-path coverage gaps.
+2. Strengthen the task, Atlas compatibility, and task-adapter tests.
+3. Remove the five confirmed low-value cases and the vacuous assertion.
+4. Revisit the source-string architecture guard separately.
