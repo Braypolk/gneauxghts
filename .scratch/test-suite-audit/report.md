@@ -6,14 +6,6 @@ counts are intentionally omitted.
 
 ## Coverage gaps
 
-### Exercise real block-move actions
-
-`src/lib/features/notepad/editor/blockMoveUndo.test.ts` still constructs the
-desired transaction through `moveViaMinimalChange`. Replace the two synthetic
-movement scenarios with tests that invoke `moveCurrentBlock` or `moveBlockTo`
-against real CodeMirror state and assert ordering plus undo/redo caret position.
-Keep the three focused `minimalDocChange` cases.
-
 ### Exercise Atlas publication through its production owner
 
 `src-tauri/src/semantic/atlas.rs::atomic_publication_keeps_previous_generation_until_pointer_flip`
@@ -56,7 +48,7 @@ if practical. Do not delete it unless equivalent ownership coverage survives.
 
 ## Recommended order
 
-1. Close the three production-path coverage gaps.
+1. Close the two remaining production-path coverage gaps.
 2. Strengthen the task transform assertion.
 3. Remove or replace the vacuous reasoning-payload assertion.
 4. Revisit the source-string architecture guard separately.

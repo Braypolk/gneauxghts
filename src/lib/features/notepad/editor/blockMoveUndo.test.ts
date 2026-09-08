@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import { history, undo, redo } from '@codemirror/commands';
-import { EditorState, Transaction } from '@codemirror/state';
+import {
+  EditorState,
+  Transaction,
+  type TransactionSpec
+} from '@codemirror/state';
+import type { EditorView } from '@codemirror/view';
 
-import { minimalDocChange } from './blockTypes';
+import {
+  listBlocks,
+  minimalDocChange,
+  moveBlockTo,
+  moveCurrentBlock
+} from './blockTypes';
 
 // Regression coverage for the reported bug: moving a line with Option+Arrow
 // (a block reorder) followed by Cmd+Z sent the caret and viewport to the top.
@@ -19,17 +29,24 @@ import { minimalDocChange } from './blockTypes';
 // and redo keep the caret near the edit — VS Code-like behavior. These tests
 // run against a real CodeMirror history, no DOM.
 
-function rootState(doc: string) {
-  return EditorState.create({ doc, extensions: [history()] });
-}
-
-function applyCommand(
-  command: (cfg: { state: EditorState; dispatch: (t: Transaction) => void }) => boolean,
-  state: EditorState
-) {
-  let next: Transaction | null = null;
-  const ran = command({ state, dispatch: (t) => (next = t) });
-  return { ran, state: next ? (next as Transaction).state : state };
+function blockView(doc: string, anchor: number) {
+  let state = EditorState.create({
+    doc,
+    selection: { anchor },
+    extensions: [history()]
+  });
+  const view = {
+    get state() {
+      return state;
+    },
+    dispatch(spec: Transaction | TransactionSpec) {
+      const transaction =
+        spec instanceof Transaction ? spec : state.update(spec);
+      state = transaction.state;
+    },
+    focus() {}
+  } as unknown as EditorView;
+  return { view, readState: () => state };
 }
 
 describe('minimalDocChange', () => {
@@ -62,51 +79,59 @@ describe('minimalDocChange', () => {
 });
 
 describe('line move + undo/redo caret restoration', () => {
-  // A block move applies the minimal change with the new caret selection, the
-  // exact spec replaceWholeDoc now produces.
-  function moveViaMinimalChange(state: EditorState, newText: string, anchor: number) {
-    return state.update({
-      changes: minimalDocChange(state.doc.toString(), newText),
-      selection: { anchor }
-    }).state;
-  }
-
-  it('undo after a line swap restores the caret near the edit, not the top', () => {
-    let state = rootState('line1\nline2\nline3');
-    // Caret sits on line2 before the move.
-    state = state.update({ selection: { anchor: 8 } }).state;
+  it('undoes an actual keyboard-style block move without collapsing the caret', () => {
+    const fixture = blockView('line1\nline2\nline3', 8);
 
     // Option+ArrowUp: line2 swaps above line1; caret follows to column on new top line.
-    state = moveViaMinimalChange(state, 'line2\nline1\nline3', 2);
-    expect(state.doc.toString()).toBe('line2\nline1\nline3');
+    expect(moveCurrentBlock(fixture.view, -1)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(
+      'line2\nline1\nline3'
+    );
+    expect(fixture.readState().selection.main.head).toBe(2);
 
-    const afterUndo = applyCommand(undo, state);
-    expect(afterUndo.ran).toBe(true);
-    expect(afterUndo.state.doc.toString()).toBe('line1\nline2\nline3');
+    expect(undo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(
+      'line1\nline2\nline3'
+    );
     // The whole point of the bug report: the caret must NOT collapse to 0.
-    expect(afterUndo.state.selection.main.head).toBeGreaterThan(0);
+    expect(fixture.readState().selection.main.head).toBeGreaterThan(0);
     // It maps back to where it was before the move.
-    expect(afterUndo.state.selection.main.head).toBe(8);
+    expect(fixture.readState().selection.main.head).toBe(8);
 
-    const afterRedo = applyCommand(redo, afterUndo.state);
-    expect(afterRedo.state.doc.toString()).toBe('line2\nline1\nline3');
-    expect(afterRedo.state.selection.main.head).toBeGreaterThan(0);
+    expect(redo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(
+      'line2\nline1\nline3'
+    );
+    // CodeMirror maps the pre-move caret through the replayed targeted change.
+    // It lands at the changed-region boundary rather than collapsing to 0.
+    expect(fixture.readState().selection.main.head).toBe(11);
   });
 
-  it('undo of a swap that follows an earlier deep edit keeps the caret deep', () => {
-    let state = rootState('line1\nline2\nline3');
+  it('undoes an actual drag-style block move back to an earlier deep edit', () => {
+    const fixture = blockView('line1\nline2\nline3', 8);
     // A normal edit deep in the document (caret ends at 18).
-    state = state.update({ changes: { from: 17, insert: 'X' }, selection: { anchor: 18 } }).state;
+    fixture.view.dispatch({
+      changes: { from: 17, insert: 'X' },
+      selection: { anchor: 18 }
+    });
 
-    // Then a line swap (whole-doc-looking rewrite, now a minimal change).
-    state = moveViaMinimalChange(state, 'line2\nline1\nline3X', 2);
+    const blocks = listBlocks(fixture.readState());
+    expect(blocks).toHaveLength(3);
+    expect(
+      moveBlockTo(fixture.view, blocks[1]!, blocks[0]!, true)
+    ).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(
+      'line2\nline1\nline3X'
+    );
 
     // Undo the swap: the document rolls back and the caret returns deep into the
     // document where the earlier edit left it — decisively not the top. Before
     // the fix this collapsed to 0.
-    const afterUndo = applyCommand(undo, state);
-    expect(afterUndo.state.doc.toString()).toBe('line1\nline2\nline3X');
-    expect(afterUndo.state.selection.main.head).toBeGreaterThan(0);
-    expect(afterUndo.state.selection.main.head).toBe(18);
+    expect(undo(fixture.view)).toBe(true);
+    expect(fixture.readState().doc.toString()).toBe(
+      'line1\nline2\nline3X'
+    );
+    expect(fixture.readState().selection.main.head).toBeGreaterThan(0);
+    expect(fixture.readState().selection.main.head).toBe(18);
   });
 });
