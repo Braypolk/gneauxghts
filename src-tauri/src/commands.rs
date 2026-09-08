@@ -344,6 +344,7 @@ pub(crate) fn set_vault_directory(
     set_vault_directory_for_state(&state, path)
 }
 
+/// Cheap advisory observation: never resolve a path or authorize publication.
 #[tauri::command]
 pub(crate) async fn prepare_restart<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,

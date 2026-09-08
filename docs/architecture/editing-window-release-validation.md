@@ -1,6 +1,6 @@
 # Editing Window release validation
 
-This report records the separate release gate for [ADR 0007](../adr/0007-retain-editor-history-at-editing-window-boundaries.md) and [issue 42](../../.scratch/note-timelines/issues/42-validate-editing-window-storage-and-release.md). The [previous Note Timeline report](note-timeline-release-validation.md) and its measurements remain unchanged. **Release acceptance is complete for the measured scope below.** The integrated production default captures ordinary editor saves in Editing Windows; test-only historical fixtures retain their explicit legacy policy. [Machine-readable evidence](editing-window-release-measurements.json) preserves every run log, parsed measurements, fixture manifest, and failed attempt.
+This report records the release gate for [ADR 0007](../adr/0007-retain-editor-history-at-editing-window-boundaries.md) and [issue 42](../../.scratch/note-timelines/issues/42-validate-editing-window-storage-and-release.md). **Release acceptance is complete for the measured scope below.** The integrated production default captures ordinary editor saves in Editing Windows; test-only historical fixtures retain their explicit legacy policy. [Machine-readable evidence](editing-window-release-measurements.json) preserves every run log, parsed measurements, fixture manifest, and failed attempt.
 
 ## Reproduce
 

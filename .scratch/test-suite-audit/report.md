@@ -21,7 +21,7 @@ Rust source contains one additional Linux-only RSS test. Desktop results do not 
 
 Every test-bearing frontend/Rust file was inventoried. The 103 ordinary frontend files received purpose-level review: 15 full reads, 14 focused scenario reviews, and 74 samples. The remaining 19 frontend files cover rendering, reactive stores, architecture, and cross-language contracts. Rust bodies were sampled across every test-bearing source file, with suspect scenarios traced into production. Large suites were not exhaustively traced assertion by assertion. “Keep” means no concrete removal candidate was established, not proof that every assertion is necessary.
 
-Detailed inventories: [frontend review](frontend-review.md) and [backend review](backend-review.md). Earlier validation results are recorded in the [Phase 1–3 fixes](../note-timelines/reviews/phase-1-3-final/fixes.md). Disposable logs, patches, and the generated JSON inventory were removed during pre-commit cleanup.
+Detailed inventories: [frontend review](frontend-review.md) and [backend review](backend-review.md). Disposable logs, patches, and the generated JSON inventory were removed during pre-commit cleanup.
 
 ## Highest-value corrections
 

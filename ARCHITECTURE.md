@@ -462,9 +462,10 @@ and replacement strategy.
 
 ## Fitness checks
 
-The [release validation report](docs/architecture/note-timeline-release-validation.md)
-records scale measurements, regression gates, and the production availability
-decision in [ADR 0006](docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
+The production availability decision is recorded in
+[ADR 0006](docs/adr/0006-keep-history-preparation-mandatory-in-production.md).
+Performance checks belong in focused benchmarks when needed; historical
+measurements are not part of the architecture map.
 
 Architecture fitness tests protect ownership and routing; behavior tests
 protect outcomes.
