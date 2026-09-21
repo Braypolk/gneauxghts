@@ -1,6 +1,9 @@
+mod research;
+use research::{ResearchNotesTool, ResearchRuntime};
+mod evidence;
+use evidence::{ReadEvidenceTool, SearchEvidenceTool};
 mod current_history;
 pub(crate) use current_history::filter_revision_sources;
-use current_history::CurrentNoteHistoryTool;
 
 use crate::{
     agent_runtime::{AgentEvent, AgentPlanEntry},
@@ -25,7 +28,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Arc, Mutex,
     },
 };
@@ -121,10 +124,35 @@ pub(crate) struct AgentToolContext {
     surfaced: Arc<Mutex<HashSet<String>>>,
     read_coverage: Arc<Mutex<HashMap<String, ReadCoverage>>>,
     sources: Arc<Mutex<Vec<ChatSource>>>,
+    evidence: Arc<Mutex<crate::services::evidence::EvidenceSession>>,
+    passage_references: Arc<Mutex<crate::chat::citations::PassageReferences>>,
+    context_versions: Arc<Mutex<HashMap<String, String>>>,
     proposal_lock: Arc<Mutex<()>>,
+    research_runtime: Arc<Mutex<Option<ResearchRuntime>>>,
+    cancellation: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
+    research_usage: Arc<Mutex<crate::agent_runtime::AgentUsage>>,
+    research_started: Arc<AtomicBool>,
+    research_only: bool,
+    source_first: bool,
+    inventory: Arc<Mutex<Option<crate::services::evidence::InventoryResult>>>,
+    query_failures: Arc<AtomicUsize>,
+    primary_query_recorded: Arc<AtomicBool>,
+    worker_calls: Arc<AtomicUsize>,
+    worker_scope: Option<Arc<HashSet<String>>>,
+    worker_period: Option<crate::services::evidence::SearchRequest>,
     local_model: bool,
     proposal_failures: Arc<AtomicUsize>,
     event_sink: Arc<Mutex<Option<crate::agent_runtime::AgentEventSink>>>,
+}
+
+fn canonical_working_note(raw: &str) -> WorkingNote {
+    let disk_hash = content_hash(raw);
+    WorkingNote {
+        body: note::strip_frontmatter(raw).into(),
+        content_hash: disk_hash.clone(),
+        pending_changes: false,
+        disk_hash,
+    }
 }
 
 impl AgentToolContext {
@@ -154,7 +182,22 @@ impl AgentToolContext {
             surfaced: Arc::new(Mutex::new(HashSet::new())),
             read_coverage: Arc::new(Mutex::new(HashMap::new())),
             sources: Arc::new(Mutex::new(Vec::new())),
+            evidence: Arc::new(Mutex::new(Default::default())),
+            passage_references: Arc::new(Mutex::new(Default::default())),
+            context_versions: Arc::new(Mutex::new(HashMap::new())),
             proposal_lock: Arc::new(Mutex::new(())),
+            research_runtime: Arc::new(Mutex::new(None)),
+            cancellation: Arc::new(Mutex::new(None)),
+            research_usage: Arc::new(Mutex::new(Default::default())),
+            research_started: Arc::new(AtomicBool::new(false)),
+            research_only: false,
+            source_first: false,
+            inventory: Arc::new(Mutex::new(None)),
+            query_failures: Arc::new(AtomicUsize::new(0)),
+            primary_query_recorded: Arc::new(AtomicBool::new(false)),
+            worker_calls: Arc::new(AtomicUsize::new(0)),
+            worker_scope: None,
+            worker_period: None,
             local_model,
             proposal_failures: Arc::new(AtomicUsize::new(0)),
             event_sink: Arc::new(Mutex::new(None)),
@@ -165,11 +208,18 @@ impl AgentToolContext {
     where
         M: CompletionModel,
     {
+        if self.research_only || self.source_first {
+            return builder
+                .tool(SearchEvidenceTool(self.clone()))
+                .tool(ReadEvidenceTool(self.clone()))
+                .build();
+        }
         builder
+            .tool(ResearchNotesTool(self.clone()))
             .tool(GetActiveNoteTool(self.clone()))
-            .tool(SearchNotesTool(self.clone()))
+            .tool(SearchEvidenceTool(self.clone()))
+            .tool(ReadEvidenceTool(self.clone()))
             .tool(ReadNoteTool(self.clone()))
-            .tool(CurrentNoteHistoryTool(self.clone()))
             .tool(ProposeNoteEditsTool(self.clone()))
             .tool(ProposeNoteRewriteTool(self.clone()))
             .tool(ProposeCreateNoteTool(self.clone()))
@@ -197,7 +247,10 @@ impl AgentToolContext {
             .lock()
             .map(|items| items.clone())
             .unwrap_or_default();
-        if sources.iter().any(|source| source.revision.is_some()) {
+        if sources
+            .iter()
+            .any(|source| source.revision.is_some() || source.passage.is_some())
+        {
             let valid = self.app.try_state::<AppState>().is_some_and(|state| {
                 filter_revision_sources(
                     &state,
@@ -209,7 +262,7 @@ impl AgentToolContext {
                 .is_ok()
             });
             if !valid {
-                sources.retain(|source| source.revision.is_none());
+                sources.retain(|source| source.revision.is_none() && source.passage.is_none());
             }
         }
         sources
@@ -234,23 +287,38 @@ impl AgentToolContext {
     ) -> String {
         let mut attached = Vec::new();
         for item in items {
-            if !self.run_grants.contains(&item.note_id) {
+            if !self.run_grants.contains(&item.note_id)
+                || !self.allowed(&item.note_id).unwrap_or(false)
+            {
                 continue;
             }
+            let Ok((current_path, _, _)) = self.resolve_note(&item.note_id) else {
+                continue;
+            };
+            let Ok(raw) = fs::read_to_string(&current_path) else {
+                continue;
+            };
+            if !note::parse_note(&raw).body.contains(&item.excerpt) {
+                continue;
+            }
+            let Ok(excerpt) = self.admit_context(&item.excerpt, 2400) else {
+                break;
+            };
             self.surface(&item.note_id);
-            let path = self.service.notes_root().join(&item.note_path);
+            let path = current_path;
             self.add_source(
                 &item.note_id,
                 &path,
                 &item.title,
-                &item.excerpt,
+                &excerpt,
+                &raw,
                 item.block_anchor
                     .clone()
                     .or_else(|| item.section_label.clone()),
             );
             attached.push(format!(
                 "[[{}]] (noteId: {}, contentHash: {}, reason: {})\n{}",
-                item.title, item.note_id, item.content_hash, item.reason, item.excerpt
+                item.title, item.note_id, item.content_hash, item.reason, excerpt
             ));
         }
         attached.join("\n\n")
@@ -285,10 +353,10 @@ impl AgentToolContext {
                 continue;
             }
             let raw = fs::read_to_string(path).map_err(|error| error.to_string())?;
-            let working = self
-                .working_note(&indexed.note_id, &raw)
-                .map_err(|error| error.to_string())?;
-            let excerpt = working.body.chars().take(12_000).collect::<String>();
+            let working = canonical_working_note(&raw);
+            let excerpt = self
+                .admit_context(&working.body, 2400)
+                .map_err(|e| e.to_string())?;
             self.surface(&indexed.note_id);
             if excerpt == working.body {
                 self.record_read(
@@ -299,7 +367,7 @@ impl AgentToolContext {
                     working.body.lines().count(),
                 );
             }
-            self.add_source(&indexed.note_id, path, &indexed.title, &excerpt, None);
+            self.add_source(&indexed.note_id, path, &indexed.title, &excerpt, &raw, None);
             attached.push(format!(
                 "[[{}]] (noteId: {}, contentHash: {}, pendingChanges: {})\n{}",
                 indexed.title,
@@ -343,16 +411,23 @@ impl AgentToolContext {
         let (path, title, _) = self.resolve_note(note_id)?;
         let raw = fs::read_to_string(&path)
             .map_err(|error| AgentToolError(format!("Unable to read active note: {error}")))?;
-        let working = self.working_note(note_id, &raw)?;
+        let working = canonical_working_note(&raw);
         let authoritative = ActiveNoteSnapshot {
             note_id: Some(note_id.to_string()),
             title,
             path: Some(relative_path(self.service.notes_root(), &path)),
-            body: working.body,
+            body: working.body.clone(),
             body_hash: working.content_hash,
-            selection: snapshot.selection.clone(),
+            selection: snapshot
+                .selection
+                .as_ref()
+                .filter(|selection| working.body.contains(selection.as_str()))
+                .map(|s| crate::services::evidence::bounded(s, 480)),
         };
-        let (body, truncated) = truncate_active_body(&authoritative);
+        let (body, mut truncated) = truncate_active_body(&authoritative);
+        let admitted = self.admit_context(&body, 2400)?;
+        truncated |= admitted.len() < body.len();
+        let body = admitted;
         self.surface(note_id);
         if !truncated {
             let total_lines = authoritative.body.lines().count();
@@ -364,7 +439,7 @@ impl AgentToolContext {
                 total_lines,
             );
         }
-        self.add_source(note_id, &path, &authoritative.title, &body, None);
+        self.add_source(note_id, &path, &authoritative.title, &body, &raw, None);
         Ok(json!({
             "status":"ready",
             "noteId":note_id,
@@ -457,8 +532,19 @@ impl AgentToolContext {
         path: &Path,
         title: &str,
         excerpt: &str,
+        canonical_raw: &str,
         anchor: Option<String>,
     ) {
+        // Bind admission to the exact bytes that produced the context. A later
+        // read must never certify an earlier excerpt after a concurrent edit.
+        if let Ok(mut versions) = self.context_versions.lock() {
+            versions
+                .entry(note_id.into())
+                .or_insert_with(|| blake3::hash(canonical_raw.as_bytes()).to_hex().to_string());
+        }
+        let _ = self
+            .service
+            .mark_current_history_use(&self.assistant_message_id, &self.run_id);
         let relative = path
             .strip_prefix(self.service.notes_root())
             .unwrap_or(path)
@@ -480,6 +566,7 @@ impl AgentToolContext {
                 url: None,
                 anchor,
                 revision: None,
+                passage: None,
             });
         }
     }
@@ -626,151 +713,9 @@ impl Tool for GetActiveNoteTool {
 }
 
 fn truncate_active_body(note: &ActiveNoteSnapshot) -> (String, bool) {
-    if note.body.chars().count() <= 48_000 {
-        return (note.body.clone(), false);
-    }
-    let mut output = note.body.chars().take(40_000).collect::<String>();
-    if let Some(selection) = note.selection.as_deref().filter(|value| !value.is_empty()) {
-        output.push_str("\n\n[Selected text]\n");
-        output.extend(selection.chars().take(8_000));
-    }
-    (output, true)
-}
-
-#[derive(Clone)]
-struct SearchNotesTool(AgentToolContext);
-
-#[derive(Deserialize)]
-struct SearchArgs {
-    query: Option<String>,
-    limit: Option<usize>,
-    created_after: Option<u64>,
-    created_before: Option<u64>,
-    updated_after: Option<u64>,
-    updated_before: Option<u64>,
-}
-
-#[derive(Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-struct SearchItem {
-    note_id: String,
-    title: String,
-    note_path: String,
-    excerpt: String,
-    score: f32,
-    source: String,
-    created_at_millis: u64,
-    updated_at_millis: u64,
-}
-
-impl Tool for SearchNotesTool {
-    const NAME: &'static str = "search_notes";
-    type Error = AgentToolError;
-    type Args = SearchArgs;
-    type Output = Value;
-
-    fn description(&self) -> String {
-        "Search allowed ordinary notes across the vault using hybrid lexical and semantic retrieval. Optionally filter by the note's managed frontmatter created_at and updated_at timestamps. A content query is optional when at least one date filter is supplied. Results can then be paged with read_note.".to_string()
-    }
-
-    fn parameters(&self) -> Value {
-        json!({
-            "type":"object",
-            "properties":{
-                "query":{"type":["string","null"],"description":"Optional natural-language content query; omit for a date-only search"},
-                "limit":{"type":["integer","null"],"minimum":1,"maximum":20},
-                "created_after":{"type":["integer","null"],"description":"Inclusive Unix-millisecond lower bound for gneauxghts.created_at in frontmatter"},
-                "created_before":{"type":["integer","null"],"description":"Inclusive Unix-millisecond upper bound for gneauxghts.created_at in frontmatter"},
-                "updated_after":{"type":["integer","null"],"description":"Inclusive Unix-millisecond lower bound for gneauxghts.updated_at in frontmatter"},
-                "updated_before":{"type":["integer","null"],"description":"Inclusive Unix-millisecond upper bound for gneauxghts.updated_at in frontmatter"}
-            },
-            "additionalProperties":false
-        })
-    }
-
-    async fn call(
-        &self,
-        _context: &mut ToolContext,
-        args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        self.0.activity("Searching notes");
-        if self.0.access == VaultAccess::None {
-            return Ok(json!({"status":"ready","items":[]}));
-        }
-        let query = args.query.as_deref().unwrap_or("").trim();
-        let date_filters = crate::services::retrieval::VaultDateFilters {
-            created_after: args.created_after,
-            created_before: args.created_before,
-            updated_after: args.updated_after,
-            updated_before: args.updated_before,
-        };
-        if query.is_empty()
-            && date_filters.created_after.is_none()
-            && date_filters.created_before.is_none()
-            && date_filters.updated_after.is_none()
-            && date_filters.updated_before.is_none()
-        {
-            return Err(AgentToolError(
-                "Provide a content query or at least one date filter".to_string(),
-            ));
-        }
-        let limit = args.limit.unwrap_or(8).clamp(1, 20);
-        let approved = if self.0.access == VaultAccess::Approved {
-            Some(self.0.service.granted_note_ids().map_err(AgentToolError)?)
-        } else {
-            None
-        };
-        let excluded = self.0.service.excluded_note_ids().map_err(AgentToolError)?;
-        let app = self.0.app.clone();
-        let query = query.to_string();
-        let retrieved = run_blocking_tool(move || {
-            let state = app
-                .try_state::<AppState>()
-                .ok_or_else(|| "The notes index is unavailable".to_string())?;
-            crate::services::retrieval::retrieve_vault_notes(
-                &state,
-                &query,
-                limit,
-                approved.as_ref(),
-                &excluded,
-                date_filters,
-            )
-        })
-        .await?;
-        let items = retrieved
-            .iter()
-            .map(|item| SearchItem {
-                note_id: item.note_id.clone(),
-                title: item.title.clone(),
-                note_path: relative_path(self.0.service.notes_root(), &item.note_path),
-                excerpt: item.excerpt.clone(),
-                score: item.score,
-                source: if item.lexical_score.is_none() && item.semantic_score.is_none() {
-                    "date"
-                } else if item.lexical_score.is_some() && item.semantic_score.is_some() {
-                    "hybrid"
-                } else if item.semantic_score.is_some() {
-                    "semantic"
-                } else {
-                    "lexical"
-                }
-                .to_string(),
-                created_at_millis: item.created_at_millis,
-                updated_at_millis: item.updated_at_millis,
-            })
-            .collect::<Vec<_>>();
-        for item in &items {
-            self.0.surface(&item.note_id);
-            self.0.add_source(
-                &item.note_id,
-                &self.0.service.notes_root().join(&item.note_path),
-                &item.title,
-                &item.excerpt,
-                None,
-            );
-        }
-        Ok(json!({"status":"ready","items":items}))
-    }
+    let body = crate::services::evidence::bounded(&note.body, 2400);
+    let truncated = body.len() < note.body.len();
+    (body, truncated)
 }
 
 async fn run_blocking_tool<T, F>(operation: F) -> Result<T, AgentToolError>
@@ -801,7 +746,7 @@ impl Tool for ReadNoteTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Read an allowed note by stable ID in bounded pages. When pendingChanges is true, the content is the current unapproved working copy and should be treated as the note's current text. Line numbers are 1-based.".to_string()
+        "Read an allowed note by stable ID in bounded pages. For preparing reviewed edits. When pendingChanges is true, content is the unapproved working copy, not evidence for ordinary answers. Use search_evidence/read_evidence for recall. Line numbers are 1-based.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -810,7 +755,7 @@ impl Tool for ReadNoteTool {
             "properties":{
                 "note_id":{"type":"string"},
                 "start_line":{"type":["integer","null"],"minimum":1},
-                "max_chars":{"type":["integer","null"],"minimum":1,"maximum":24000}
+                "max_chars":{"type":["integer","null"],"minimum":1,"maximum":6000}
             },
             "required":["note_id"],
             "additionalProperties":false
@@ -834,7 +779,7 @@ impl Tool for ReadNoteTool {
         let working = self.0.working_note(&args.note_id, &raw)?;
         let body = working.body.as_str();
         let start_line = args.start_line.unwrap_or(1).max(1);
-        let max_chars = args.max_chars.unwrap_or(12_000).clamp(1, 24_000);
+        let max_chars = args.max_chars.unwrap_or(3000).clamp(1, 6000);
         let lines = body.lines().collect::<Vec<_>>();
         let mut content = String::new();
         let mut end_line = start_line.saturating_sub(1);
@@ -846,8 +791,17 @@ impl Tool for ReadNoteTool {
             if !content.is_empty() {
                 content.push('\n');
             }
+            if line.len() > max_chars {
+                return Err(AgentToolError("This line exceeds the editing read budget; use focused evidence or a smaller note before a full rewrite".into()));
+            }
             content.push_str(line);
             end_line = index + 1;
+        }
+        let admitted = self.0.admit_context(&content, 6000)?;
+        if admitted.len() != content.len() {
+            return Err(AgentToolError(
+                "Evidence budget exhausted; narrow the task".into(),
+            ));
         }
         self.0.surface(&args.note_id);
         self.0.record_read(
@@ -862,6 +816,7 @@ impl Tool for ReadNoteTool {
             &path,
             &title,
             &content,
+            &raw,
             Some(format!("lines {start_line}-{end_line}")),
         );
         Ok(json!({
@@ -1381,7 +1336,7 @@ mod tests {
     }
 
     #[test]
-    fn active_note_context_is_bounded_but_keeps_selection() {
+    fn active_note_context_is_bounded_without_appending_stale_selection() {
         let note = ActiveNoteSnapshot {
             note_id: Some("n".into()),
             title: "Long".into(),
@@ -1392,7 +1347,7 @@ mod tests {
         };
         let (body, truncated) = truncate_active_body(&note);
         assert!(truncated);
-        assert!(body.contains("important"));
-        assert!(body.chars().count() <= 48_100);
+        assert!(!body.contains("important"));
+        assert!(body.len() <= 2400);
     }
 }

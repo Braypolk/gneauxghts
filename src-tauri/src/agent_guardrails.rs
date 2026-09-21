@@ -8,6 +8,7 @@ use std::{
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRunLimits {
     pub(crate) max_elapsed: Duration,
+    pub(crate) max_context_bytes: usize,
     pub(crate) max_tool_calls: usize,
     pub(crate) max_aggregate_tokens: u64,
     pub(crate) max_repeated_tool_calls: usize,
@@ -17,6 +18,7 @@ impl Default for AgentRunLimits {
     fn default() -> Self {
         Self {
             max_elapsed: Duration::from_secs(15 * 60),
+            max_context_bytes: 128_000,
             max_tool_calls: 96,
             max_aggregate_tokens: 400_000,
             max_repeated_tool_calls: 3,
@@ -33,6 +35,7 @@ pub(crate) struct AgentGuardViolation {
 #[derive(Default)]
 struct AgentRunGuardState {
     model_calls: usize,
+    aggregate_tokens: u64,
     tool_calls: usize,
     tool_signatures: HashMap<String, usize>,
     tool_started: HashMap<String, Instant>,
@@ -103,10 +106,11 @@ impl AgentRunGuard {
         Ok(())
     }
 
-    pub(crate) fn begin_model_call(&self, turn: usize) -> Result<(), AgentGuardViolation> {
+    pub(crate) fn begin_model_call(&self, _turn: usize) -> Result<(), AgentGuardViolation> {
         self.deadline_remaining()?;
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
-        state.model_calls = state.model_calls.max(turn);
+        self.check_tokens(state.aggregate_tokens)?;
+        state.model_calls += 1;
         Ok(())
     }
 
@@ -117,6 +121,27 @@ impl AgentRunGuard {
             .tool_started
             .remove(call_id)
             .map(|started| started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+    }
+
+    pub(crate) fn check_context_bytes(&self, bytes: usize) -> Result<(), AgentGuardViolation> {
+        if bytes > self.limits.max_context_bytes {
+            return Err(AgentGuardViolation {
+                reason: "contextBudgetExceeded",
+                message:
+                    "The model context limit was reached. Narrow the task or reduce attachments."
+                        .into(),
+            });
+        }
+        Ok(())
+    }
+
+    pub(crate) fn add_tokens(&self, tokens: u64) -> Result<(), AgentGuardViolation> {
+        let total = {
+            let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+            state.aggregate_tokens = state.aggregate_tokens.saturating_add(tokens);
+            state.aggregate_tokens
+        };
+        self.check_tokens(total)
     }
 
     pub(crate) fn check_tokens(&self, total: u64) -> Result<(), AgentGuardViolation> {
@@ -165,6 +190,21 @@ mod tests {
     use super::*;
 
     #[test]
+    fn worker_and_parent_share_token_and_context_limits() {
+        let parent = AgentRunGuard::new(AgentRunLimits {
+            max_aggregate_tokens: 10,
+            max_context_bytes: 20,
+            ..Default::default()
+        });
+        let worker = parent.clone();
+        parent.add_tokens(6).unwrap();
+        worker.add_tokens(4).unwrap();
+        assert!(parent.add_tokens(1).is_err());
+        assert!(worker.check_context_bytes(21).is_err());
+        assert!(worker.check_context_bytes(20).is_ok());
+    }
+
+    #[test]
     fn repeated_tool_guard_normalizes_json_key_order() {
         let guard = AgentRunGuard::new(AgentRunLimits {
             max_repeated_tool_calls: 1,
@@ -204,4 +244,19 @@ mod tests {
             "tokenBudgetExceeded"
         );
     }
+}
+
+#[cfg(test)]
+#[test]
+fn exhausted_worker_tokens_block_parent_model_admission() {
+    let guard = AgentRunGuard::new(AgentRunLimits {
+        max_aggregate_tokens: 5,
+        ..Default::default()
+    });
+    let worker = guard.clone();
+    assert!(worker.add_tokens(6).is_err());
+    assert_eq!(
+        guard.begin_model_call(2).unwrap_err().reason,
+        "tokenBudgetExceeded"
+    );
 }

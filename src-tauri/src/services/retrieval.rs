@@ -3,10 +3,7 @@ use crate::{
     note::DocumentKind,
     services::note_timeline::{AllowedScope, CurrentContentIdentity, CurrentContentItem},
 };
-use std::{
-    collections::{HashMap, HashSet},
-    path::PathBuf,
-};
+use std::{collections::HashSet, path::PathBuf};
 
 #[derive(Clone, Debug)]
 pub(crate) struct VaultRetrievalItem {
@@ -21,8 +18,6 @@ pub(crate) struct VaultRetrievalItem {
     pub(crate) start_line: Option<usize>,
     pub(crate) end_line: Option<usize>,
     pub(crate) block_anchor: Option<String>,
-    pub(crate) created_at_millis: u64,
-    pub(crate) updated_at_millis: u64,
 }
 
 impl CurrentContentItem for VaultRetrievalItem {
@@ -66,9 +61,8 @@ fn matches_date_filters(note: &crate::index::IndexedNote, filters: VaultDateFilt
             .is_none_or(|value| note.updated_at_millis <= value)
 }
 
-/// Shared policy-aware hybrid retrieval used by both interactive Tauri search
-/// and the vault agent. Semantic failures deliberately degrade to lexical
-/// matches so note recall remains useful while the local model warms up.
+/// Compatibility adapter for interactive note selection. Agent search/read
+/// uses EvidenceSession directly so coverage and activity semantics remain explicit.
 pub(crate) fn retrieve_vault_notes(
     state: &AppState,
     query: &str,
@@ -100,169 +94,69 @@ fn retrieve_vault_notes_unchecked(
     excluded_note_ids: &HashSet<String>,
     date_filters: VaultDateFilters,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
-    let limit = limit.clamp(1, 20);
-    let terms = query
-        .split(|ch: char| !ch.is_alphanumeric())
-        .filter(|term| term.len() > 1)
-        .map(str::to_lowercase)
-        .collect::<Vec<_>>();
-    let date_only = terms.is_empty();
-    if date_only && !date_filters.is_active() {
+    use super::evidence::{EvidenceSession, SearchMode, SearchRequest};
+    if query.trim().is_empty() && !date_filters.is_active() {
         return Ok(Vec::new());
     }
-
-    let mut candidates = HashMap::<String, VaultRetrievalItem>::new();
-    {
-        let index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Notes index lock poisoned".to_string())?;
-        for (path, indexed) in &index.entries {
-            if indexed.document_kind != DocumentKind::Note
-                || excluded_note_ids.contains(&indexed.note_id)
-                || allowed_note_ids.is_some_and(|ids| !ids.contains(&indexed.note_id))
-                || !matches_date_filters(indexed, date_filters)
-            {
-                continue;
-            }
-            let paragraph = (!date_only).then(|| {
-                indexed.paragraphs.iter().find(|paragraph| {
-                    terms
-                        .iter()
-                        .any(|term| paragraph.text_lower.contains(term.as_str()))
-                })
-            });
-            let paragraph = paragraph.flatten();
-            let matches = terms
-                .iter()
-                .filter(|term| {
-                    indexed.title_lower.contains(term.as_str())
-                        || indexed.file_name_lower.contains(term.as_str())
-                        || indexed
-                            .paragraphs
-                            .iter()
-                            .any(|paragraph| paragraph.text_lower.contains(term.as_str()))
-                })
-                .count();
-            if !date_only && matches == 0 {
-                continue;
-            }
-            let lexical_score = (!date_only).then(|| matches as f32 / terms.len() as f32);
-            let score = lexical_score.unwrap_or(1.0);
-            candidates.insert(
-                indexed.note_id.clone(),
-                VaultRetrievalItem {
-                    note_id: indexed.note_id.clone(),
-                    note_path: path.clone(),
-                    title: indexed.title.clone(),
-                    excerpt: paragraph
-                        .map(|value| value.text.clone())
-                        .unwrap_or_else(|| indexed.title.clone()),
-                    section_label: paragraph
-                        .map(|value| value.section_label.clone())
-                        .unwrap_or_default(),
-                    score,
-                    lexical_score,
-                    semantic_score: None,
-                    start_line: paragraph
-                        .and_then(|value| value.lines.first())
-                        .map(|line| line.line_number),
-                    end_line: paragraph
-                        .and_then(|value| value.lines.last())
-                        .map(|line| line.line_number),
-                    block_anchor: None,
-                    created_at_millis: indexed.created_at_millis,
-                    updated_at_millis: indexed.updated_at_millis,
-                },
-            );
-        }
-    }
-
-    let semantic_enabled = state
-        .semantic
-        .get_settings()
-        .map(|settings| settings.semantic_search_enabled)
-        .unwrap_or(false);
-    if semantic_enabled && !date_only {
-        for item in state
-            .semantic
-            .semantic_matches_for_text(query, None, limit.saturating_mul(3))
-            .unwrap_or_default()
-        {
-            if item.document_kind != DocumentKind::Note {
-                continue;
-            }
-            let path = PathBuf::from(&item.note_path);
-            let indexed = {
-                let index = state
-                    .notes_index
-                    .lock()
-                    .map_err(|_| "Notes index lock poisoned".to_string())?;
-                index.entries.get(&path).cloned()
-            };
-            let Some(indexed) = indexed else { continue };
-            if excluded_note_ids.contains(&indexed.note_id)
-                || allowed_note_ids.is_some_and(|ids| !ids.contains(&indexed.note_id))
-                || !matches_date_filters(&indexed, date_filters)
-            {
-                continue;
-            }
-            candidates
-                .entry(indexed.note_id.clone())
-                .and_modify(|candidate| {
-                    candidate.semantic_score = Some(item.score);
-                    candidate.score = candidate.score.max(item.score);
-                    if item.excerpt.len() > candidate.excerpt.len() {
-                        candidate.excerpt = item.excerpt.clone();
-                        candidate.section_label = item.section_label.clone();
-                        candidate.start_line = Some(item.start_line);
-                        candidate.end_line = Some(item.end_line);
-                        candidate.block_anchor = item.block_anchor.clone();
-                    }
-                })
-                .or_insert(VaultRetrievalItem {
-                    note_id: indexed.note_id,
-                    note_path: path,
-                    title: item.note_title,
-                    excerpt: item.excerpt,
-                    section_label: item.section_label,
-                    score: item.score,
-                    lexical_score: None,
-                    semantic_score: Some(item.score),
-                    start_line: Some(item.start_line),
-                    end_line: Some(item.end_line),
-                    block_anchor: item.block_anchor,
-                    created_at_millis: indexed.created_at_millis,
-                    updated_at_millis: indexed.updated_at_millis,
-                });
-        }
-    }
-
-    let mut results = candidates.into_values().collect::<Vec<_>>();
-    if date_only {
-        let created_only = (date_filters.created_after.is_some()
-            || date_filters.created_before.is_some())
-            && date_filters.updated_after.is_none()
-            && date_filters.updated_before.is_none();
-        results.sort_by(|left, right| {
-            let (left_date, right_date) = if created_only {
-                (left.created_at_millis, right.created_at_millis)
+    let eligible: HashSet<_> = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index unavailable")?
+        .entries
+        .values()
+        .filter(|n| {
+            n.document_kind == DocumentKind::Note
+                && matches_date_filters(n, date_filters)
+                && allowed_note_ids.is_none_or(|ids| ids.contains(&n.note_id))
+        })
+        .map(|n| n.note_id.clone())
+        .collect();
+    let mut evidence = EvidenceSession::default();
+    let page = evidence.search(
+        state,
+        Some(&eligible),
+        excluded_note_ids,
+        SearchRequest {
+            query: if query.trim().is_empty() {
+                ".*".into()
             } else {
-                (left.updated_at_millis, right.updated_at_millis)
-            };
-            right_date
-                .cmp(&left_date)
-                .then_with(|| left.title.cmp(&right.title))
-        });
-    } else {
-        results.sort_by(|left, right| {
-            right
-                .score
-                .total_cmp(&left.score)
-                .then_with(|| left.title.cmp(&right.title))
+                query.into()
+            },
+            mode: if query.trim().is_empty() {
+                SearchMode::Regex
+            } else {
+                SearchMode::Hybrid
+            },
+            limit: Some(limit.clamp(1, 20)),
+            ..Default::default()
+        },
+    )?;
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index unavailable")?;
+    let mut results = Vec::new();
+    for item in page["items"].as_array().into_iter().flatten() {
+        let Some((path, n)) = item["noteId"]
+            .as_str()
+            .and_then(|id| index.get_note_by_note_id(id))
+        else {
+            continue;
+        };
+        results.push(VaultRetrievalItem {
+            note_id: n.note_id.clone(),
+            note_path: path.clone(),
+            title: n.title.clone(),
+            excerpt: item["preview"].as_str().unwrap_or_default().into(),
+            section_label: item["section"].as_str().unwrap_or_default().into(),
+            score: item["score"].as_f64().unwrap_or_default() as f32,
+            lexical_score: None,
+            semantic_score: None,
+            start_line: None,
+            end_line: None,
+            block_anchor: None,
         });
     }
-    results.truncate(limit);
     Ok(results)
 }
 
@@ -335,8 +229,6 @@ mod tests {
             start_line: Some(1),
             end_line: Some(1),
             block_anchor: None,
-            created_at_millis: 1,
-            updated_at_millis: 1,
         };
 
         let delivered = std::thread::scope(|scope| {

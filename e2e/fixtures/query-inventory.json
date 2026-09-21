@@ -1,0 +1,100 @@
+{
+  "notes": [
+    {
+      "title": "Meridian event records",
+      "body": "October 2, 2025 retrospective: the Meridian supplier review took place September 11, 2025. The Meridian budget meeting was scheduled for September 12, 2025 but was canceled. The Meridian workshop is planned for September 25, 2025; no outcome is recorded."
+    },
+    {
+      "title": "Meridian commitments",
+      "body": "The Meridian inspection report is due September 23, 2026. I need to send the Meridian evidence package by September 24, 2026; it is not complete. The Meridian signature was originally due September 22, 2026, but an amendment moved the deadline to October 2, 2026. Completing the inspection took place September 9; submission of the report is not recorded."
+    },
+    {
+      "title": "Meridian decision record",
+      "body": "Meridian initially proposed weekly exports. On August 8, 2026, the team adopted nightly exports instead. Hourly exports remain a suggestion and have not been adopted. The current approach uses nightly exports, replacing the initial weekly proposal."
+    },
+    {
+      "title": "Meridian unrelated",
+      "body": "The lunch menu has soup and toast. A newer file edit does not change any Meridian decisions."
+    }
+  ],
+  "development": [
+    {
+      "question": "Which notes did I edit today?",
+      "expect": "text_activity inventory, no subject"
+    },
+    {
+      "question": "How many notes did I work on last week?",
+      "expect": "notes count, prior calendar week, no subject"
+    },
+    {
+      "question": "Which Meridian meetings happened September 10\u201313, 2025?",
+      "expect": "supplier review only, occurred, no edit cutoff"
+    },
+    {
+      "question": "Which Meridian events are scheduled in September 2025?",
+      "expect": "distinguish canceled meeting and planned workshop"
+    },
+    {
+      "question": "What Meridian tasks are due in September 2026?",
+      "expect": "inspection report and evidence package; moved signature outside"
+    },
+    {
+      "question": "Did I submit the Meridian report?",
+      "expect": "submission unknown; inspection completion does not establish submission"
+    },
+    {
+      "question": "What export decision did Meridian adopt?",
+      "expect": "nightly; hourly only proposed"
+    },
+    {
+      "question": "What remains proposed for Meridian exports?",
+      "expect": "hourly not adopted"
+    },
+    {
+      "question": "How did the Meridian export proposal change?",
+      "expect": "weekly proposed to nightly adopted, current evidence only"
+    },
+    {
+      "question": "What did the deleted Meridian plan say?",
+      "expect": "removed historical content unavailable"
+    }
+  ],
+  "holdout": [
+    {
+      "id": "inventory_current",
+      "question": "How many notes have recorded editing activity this week? List them.",
+      "expected": "All four allowed fixture notes exactly once; no excluded note; complete subset; one model call, terminal inventory",
+      "mode": "normal"
+    },
+    {
+      "id": "inventory_prior",
+      "question": "What were the notes that I worked on last week?",
+      "expected": "No matches in fresh native fixture; correct prior calendar-week bounds; no subject; one model call",
+      "mode": "sources"
+    },
+    {
+      "id": "events_retro",
+      "question": "Which Meridian meetings actually occurred during September 8\u201314, 2025?",
+      "expected": "Supplier review September 11 only; canceled budget meeting and planned workshop cannot count",
+      "mode": "normal"
+    },
+    {
+      "id": "due_prose",
+      "question": "List the Meridian work due September 21\u201327, 2026, including commitments written in prose.",
+      "expected": "Inspection report September 23 and evidence package September 24; not signature; no invented submission/completion",
+      "mode": "normal"
+    },
+    {
+      "id": "decision_adoption",
+      "question": "Which Meridian export frequency is agreed, and which is still just suggested?",
+      "expected": "Nightly adopted; hourly suggested; weekly superseded proposal",
+      "mode": "normal"
+    },
+    {
+      "id": "comparison",
+      "question": "Explain the difference between Meridian\u2019s initial export proposal and the current agreed approach.",
+      "expected": "Initial weekly proposal replaced by nightly adopted approach; hourly unadopted, no historical removed prose",
+      "mode": "normal"
+    }
+  ]
+}

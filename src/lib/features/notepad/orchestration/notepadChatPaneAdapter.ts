@@ -1,3 +1,4 @@
+import { resolveCurrentPassage } from '$lib/features/chat/api';
 import { computeDraftHash } from '$lib/features/notepad/search/draftRef';
 import type { ChatContextNote, ChatCitation } from '$lib/features/chat/types';
 import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
@@ -43,6 +44,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
       focusEditorAfterOpen: true;
     }
   ) => Promise<void>;
+  focusPassage?: (paneId: TPaneId, selection: { anchor: number; head: number }) => boolean;
   openRevisionCitation: (paneId: TPaneId, citation: Extract<ChatCitation, { kind: 'note' }>) => Promise<void>;
   openWikilink: (
     paneId: TPaneId,
@@ -162,6 +164,21 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
         },
         selectionActions: deps.coordinator.selectionActions,
         onOpenCitation: async (citation) => {
+          if (citation.passage) {
+            const conversationId = deps.getPaneConversationId(paneId);
+            if (!conversationId) throw new Error('The citation conversation is unavailable.');
+            const navigation = await resolveCurrentPassage(conversationId, citation.passage.id);
+            const resolved = navigation.source;
+            if (resolved.kind !== 'note' || !resolved.passage) throw new Error('The current passage is unavailable.');
+            const target = getNearestEditorPaneId(deps.getPaneOrder(), deps.getPaneKind, paneId) ?? paneId;
+            deps.setActivePane(target);
+            await deps.openNote(resolved.notePath, { noteId: resolved.noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: true });
+            const document = deps.getPaneDocument(target);
+            if (getDocumentNoteId(document) !== resolved.noteId) throw new Error('Passage navigation was interrupted.');
+            const selection = getDocumentMarkdown(document) === navigation.markdown ? navigation.selection : null;
+            if (!selection || !deps.focusPassage?.(target, selection)) throw new Error('This passage changed or cannot be highlighted. Refresh its evidence.');
+            return;
+          }
           if (citation.revision) {
             await deps.openRevisionCitation(paneId, citation);
             return;

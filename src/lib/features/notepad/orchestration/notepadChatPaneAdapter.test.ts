@@ -1,3 +1,5 @@
+import { resolveCurrentPassage } from "$lib/features/chat/api";
+vi.mock("$lib/features/chat/api", () => ({ resolveCurrentPassage: vi.fn() }));
 import { describe, expect, it, vi } from 'vitest';
 import type { ChatController } from '$lib/features/chat/controller.svelte';
 import type {
@@ -94,6 +96,7 @@ function setup(options: {
     copyCurrent: vi.fn(),
     reloadDisk: vi.fn()
   } as unknown as ProposalOrchestration;
+  const focusPassage = vi.fn(() => true);
   const openRevisionCitation = vi.fn().mockResolvedValue(undefined);
   const adapter = createNotepadChatPaneAdapter({
     coordinator,
@@ -108,6 +111,7 @@ function setup(options: {
     getPaneSelectedText: (paneId) => `${paneId} selection`,
     getEditorPaneIds: () => options.editorPaneIds ?? ['editor'],
     setActivePane,
+    focusPassage,
     openRevisionCitation,
     openNote,
     openWikilink,
@@ -115,6 +119,7 @@ function setup(options: {
     getNoteSaveQueue
   });
   return {
+    focusPassage,
     openRevisionCitation,
     adapter,
     documents,
@@ -332,4 +337,37 @@ it('opens revision evidence without navigating or repurposing any pane', async (
   expect(openNote).not.toHaveBeenCalled();
   expect(setActivePane).not.toHaveBeenCalled();
   expect(setPaneDocument).not.toHaveBeenCalled();
+});
+
+it('revalidates a passage, opens its current identity, and selects current editor text', async () => {
+  const {adapter,focusPassage,openNote}=setup();
+  const citation={...noteCitation(), noteId:'note-1', passage:{id:'e1',noteId:'note-1',contentHash:'h',location:'body',start:0,end:1,excerpt:'Current draft',revisions:[]}};
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'# Project\n\nCurrent draft',selection:{anchor:11,head:24}});
+  await adapter.getBindings('chat').context.onOpenCitation(citation);
+  expect(resolveCurrentPassage).toHaveBeenCalledWith('conversation-1','e1');
+  expect(openNote).toHaveBeenCalledWith('Notes/Referenced.md',expect.objectContaining({noteId:'note-1'}));
+  expect(focusPassage).toHaveBeenCalledWith('editor',{anchor:11,head:24});
+});
+it('does not navigate when backend passage validation fails', async () => {
+  const {adapter,openNote}=setup();
+  vi.mocked(resolveCurrentPassage).mockRejectedValue(new Error('Passage changed'));
+  const citation={...noteCitation(),passage:{id:'e1',noteId:'note-1',contentHash:'h',location:'body',start:0,end:1,excerpt:'old',revisions:[]}};
+  await expect(adapter.getBindings('chat').context.onOpenCitation(citation)).rejects.toThrow('Passage changed');
+  expect(openNote).not.toHaveBeenCalled();
+});
+
+it('highlights the backend-resolved occurrence of repeated text', async () => {
+  const {adapter,documents,focusPassage}=setup();
+  documents.editor.working.markdown='☕ same\nsame';
+  const citation={...noteCitation(),noteId:'note-1',passage:{id:'p2',noteId:'note-1',contentHash:'h',location:'body',start:9,end:13,excerpt:'same',revisions:[]}};
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'☕ same\nsame',selection:{anchor:7,head:11}});
+  await adapter.getBindings('chat').context.onOpenCitation(citation);
+  expect(focusPassage).toHaveBeenCalledWith('editor',{anchor:7,head:11});
+});
+it('refuses a resolved location when the editor changes during navigation', async () => {
+  const {adapter,focusPassage}=setup();
+  const citation={...noteCitation(),noteId:'note-1',passage:{id:'p3',noteId:'note-1',contentHash:'h',location:'body',start:0,end:3,excerpt:'old',revisions:[]}};
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'old snapshot',selection:{anchor:0,head:3}});
+  await expect(adapter.getBindings('chat').context.onOpenCitation(citation)).rejects.toThrow('cannot be highlighted');
+  expect(focusPassage).not.toHaveBeenCalled();
 });

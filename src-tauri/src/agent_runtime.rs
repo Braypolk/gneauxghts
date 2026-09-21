@@ -1,3 +1,7 @@
+mod context_measurement;
+mod usage_context;
+#[cfg(test)]
+mod usage_context_live;
 use futures_util::StreamExt;
 use rig_agent::agent::{
     Agent, AgentBuilder, AgentHook, CompletionCallAction,
@@ -18,6 +22,7 @@ use url::Url;
 
 // High enough for long research/editing runs while retaining a final guard
 // against a provider getting stuck in an unbounded tool-call loop.
+const INVENTORY_COMPLETE: &str = "app_owned_inventory_complete";
 pub(crate) const MAX_MODEL_CALLS: usize = 64;
 pub(crate) const MAX_INVALID_TOOL_RETRIES: usize = 2;
 
@@ -38,6 +43,7 @@ impl AgentProvider {
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct AgentRuntimeRequest {
     pub(crate) provider: AgentProvider,
     pub(crate) model: String,
@@ -55,13 +61,14 @@ pub(crate) struct AgentRuntimeRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRuntimeResponse {
     pub(crate) output: String,
+    pub(crate) inventory: Option<crate::services::evidence::InventoryResult>,
     pub(crate) usage: Usage,
     pub(crate) stats: crate::agent_guardrails::AgentRunStats,
 }
 
 pub(crate) type AgentEventSink = Arc<dyn Fn(AgentEvent) + Send + Sync>;
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AgentUsage {
     pub(crate) input_tokens: u64,
@@ -143,6 +150,15 @@ pub(crate) enum AgentEvent {
         call_index: usize,
         aggregate: AgentUsage,
     },
+    QueryResolved {
+        details: Value,
+    },
+    ResearchCompleted {
+        details: Value,
+    },
+    ContextMeasured {
+        details: Value,
+    },
     ModelTurnRetried {
         turn: usize,
     },
@@ -180,6 +196,7 @@ struct RuntimeEventHook {
     permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
     guard: crate::agent_guardrails::AgentRunGuard,
     tools: Option<crate::agent_tools::AgentToolContext>,
+    context: Option<Arc<usage_context::UsageContext>>,
 }
 
 impl AgentHook for RuntimeEventHook {
@@ -188,6 +205,24 @@ impl AgentHook for RuntimeEventHook {
         _context: &HookContext,
         event: HookCompletionCall<'_>,
     ) -> CompletionCallAction {
+        let bytes = serde_json::to_vec(&(event.prompt, event.history))
+            .map(|b| b.len())
+            .unwrap_or(usize::MAX);
+        if let Err(violation) = self.guard.check_context_bytes(bytes) {
+            emit_guard_violation(&self.on_event, &violation);
+            return CompletionCallAction::stop(violation.message);
+        }
+        if let Some(context) = &self.context {
+            context.record_admission(&self.guard, bytes);
+        }
+        if let Some(tools) = &self.tools {
+            if tools.query_is_blocked() {
+                return CompletionCallAction::stop("Query interpretation remained invalid after one correction. Please rephrase the date or scope.");
+            }
+            if let Err(error) = tools.validate_context() {
+                return CompletionCallAction::stop(error);
+            }
+        }
         if let Err(violation) = self.guard.begin_model_call(event.turn) {
             emit_guard_violation(&self.on_event, &violation);
             return CompletionCallAction::stop(violation.message);
@@ -201,6 +236,22 @@ impl AgentHook for RuntimeEventHook {
     }
 
     async fn on_tool_call(&self, context: &HookContext, event: HookToolCall<'_>) -> ToolCallAction {
+        if self
+            .context
+            .as_ref()
+            .is_some_and(|context| context.finishing())
+        {
+            return ToolCallAction::skip(usage_context::FINISH);
+        }
+        if let Some(tools) = &self.tools {
+            if event.tool_name == "read_evidence" && tools.read_is_blocked(event.args) {
+                return ToolCallAction::stop("Evidence read cannot progress within the remaining allowance. Narrow the question to read additional sources.");
+            }
+            if let Err(error) = tools.check_worker_call() {
+                return ToolCallAction::skip(error);
+            }
+        }
+
         if let Err(violation) =
             self.guard
                 .begin_tool(event.internal_call_id, event.tool_name, event.args)
@@ -280,6 +331,14 @@ impl AgentHook for RuntimeEventHook {
             output_summary: Some(tool_output_summary(event.tool_name, event.raw_result)),
             duration_millis: self.guard.finish_tool(event.internal_call_id),
         });
+        if event.tool_name == "search_evidence"
+            && self
+                .tools
+                .as_ref()
+                .is_some_and(|tools| tools.has_inventory())
+        {
+            return ToolResultAction::stop(INVENTORY_COMPLETE);
+        }
         ToolResultAction::keep()
     }
 }
@@ -303,7 +362,7 @@ fn product_step_index(rig_turn: usize) -> usize {
 fn tool_input_summary(name: &str, args: &str) -> Option<String> {
     let value = serde_json::from_str::<Value>(args).ok();
     match name {
-        "search_notes" => value
+        "search_notes" | "search_evidence" => value
             .as_ref()
             .and_then(|value| value.get("limit"))
             .and_then(Value::as_u64)
@@ -365,6 +424,34 @@ fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> Strin
             .unwrap_or_else(|| "Could not complete this action".to_string());
     }
     match (name, output) {
+        ("read_evidence" | "research_notes", Some(value)) => format!(
+            "Read {} passages from {} notes{}",
+            value["items"].as_array().map_or(0, Vec::len),
+            value["notesRead"].as_u64().unwrap_or(0),
+            if value["truncated"] == true {
+                "; more remains"
+            } else {
+                ""
+            }
+        ),
+        ("search_evidence", Some(value)) if value["status"] == "inventory_complete" => format!(
+            "Found {} notes with recorded activity{}",
+            value["notesReturned"].as_u64().unwrap_or(0),
+            if value["coverageComplete"] == false {
+                "; coverage is partial"
+            } else {
+                ""
+            }
+        ),
+        ("search_evidence", Some(value)) => format!(
+            "Matched {} candidate passages{}",
+            value["items"].as_array().map_or(0, Vec::len),
+            if value["coverage"]["complete"] == false {
+                "; coverage is partial"
+            } else {
+                ""
+            }
+        ),
         ("current_note_history", _) => "Checked current-note history evidence".to_string(),
         ("search_notes", Some(value)) => value
             .get("items")
@@ -457,10 +544,12 @@ fn tool_title(
             .and_then(quoted_activity_text)
             .map(|title| format!("Read {title}"))
             .unwrap_or_else(|| "Read adjacent note".to_string()),
-        "search_notes" => argument("query")
+        "search_notes" | "search_evidence" => argument("query")
             .and_then(quoted_activity_text)
             .map(|query| format!("Search notes for {query}"))
             .unwrap_or_else(|| "Search notes".to_string()),
+        "read_evidence" => "Read selected passages".into(),
+        "research_notes" => "Research across notes".into(),
         "current_note_history" => "Check current-note history".to_string(),
         "read_note" => note_title()
             .map(|title| format!("Read {title}"))
@@ -506,6 +595,9 @@ impl AgentRuntime {
         observer: AgentRuntimeObserver,
         guard: crate::agent_guardrails::AgentRunGuard,
     ) -> Result<AgentRuntimeResponse, String> {
+        if let Some(tools) = &tools {
+            tools.configure_research(request.clone(), observer.clone(), guard.clone());
+        }
         match request.provider {
             AgentProvider::Openai => {
                 let key = request
@@ -536,7 +628,7 @@ impl AgentRuntime {
                 // retain a harmless placeholder for unauthenticated servers.
                 let key = request
                     .api_key
-                    .take()
+                    .clone()
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or_else(|| "lm-studio".to_string());
                 let client = openai::CompletionsClient::builder()
@@ -564,6 +656,24 @@ where
     M: CompletionModel + 'static,
     M::StreamingResponse: Send + Unpin + GetTokenUsage,
 {
+    let measurement = context_measurement::Measurement::configured(
+        &request,
+        observer.on_event.clone(),
+        tools
+            .as_ref()
+            .is_some_and(|tools| tools.is_research_worker()),
+    );
+    let context = usage_context::UsageContext::new(
+        &request,
+        observer.on_event.clone(),
+        tools.as_ref().is_some_and(|t| t.is_research_worker()),
+    );
+    let model = context_measurement::MeasuredModel {
+        inner: model,
+        measurement: measurement.clone(),
+        context: Some(context.clone()),
+    };
+    let hook_context = tools.clone();
     let hook_tools = tools.clone();
     let builder =
         configured_builder(model, &request, additional_params).add_hook(RuntimeEventHook {
@@ -572,12 +682,33 @@ where
             permissions: observer.permissions.clone(),
             guard: guard.clone(),
             tools: hook_tools,
+            context: Some(context.clone()),
         });
     let agent = match tools {
         Some(tools) => tools.build_agent(builder),
         None => builder.build(),
     };
-    drive_agent(agent, request, observer, guard).await
+    let mut response = drive_agent(
+        agent,
+        request,
+        observer,
+        guard,
+        hook_context.clone(),
+        measurement,
+        Some(context),
+    )
+    .await?;
+    if let Some(tools) = &hook_context {
+        let child = tools.research_usage();
+        response.usage.input_tokens += child.input_tokens;
+        response.usage.output_tokens += child.output_tokens;
+        response.usage.total_tokens += child.total_tokens;
+        response.usage.cached_input_tokens += child.cached_input_tokens;
+        response.usage.cache_creation_input_tokens += child.cache_creation_input_tokens;
+        response.usage.tool_use_prompt_tokens += child.tool_use_prompt_tokens;
+        response.usage.reasoning_tokens += child.reasoning_tokens;
+    }
+    Ok(response)
 }
 
 fn configured_builder<M>(
@@ -603,6 +734,9 @@ async fn drive_agent<M>(
     request: AgentRuntimeRequest,
     observer: AgentRuntimeObserver,
     guard: crate::agent_guardrails::AgentRunGuard,
+    tools: Option<crate::agent_tools::AgentToolContext>,
+    measurement: Option<Arc<context_measurement::Measurement>>,
+    context: Option<Arc<usage_context::UsageContext>>,
 ) -> Result<AgentRuntimeResponse, String>
 where
     M: CompletionModel + 'static,
@@ -613,7 +747,7 @@ where
         .history(request.history)
         .max_turns(MAX_MODEL_CALLS)
         .max_invalid_tool_call_retries(MAX_INVALID_TOOL_RETRIES)
-        .tool_concurrency(4)
+        .tool_concurrency(1)
         .stream()
         .await;
     let mut response = None;
@@ -643,13 +777,39 @@ where
         let Some(item) = item else { break };
         let item = match item {
             Ok(item) => item,
-            Err(error) => return Err(format!("Agent run failed: {error}")),
+            Err(error) => {
+                let inventory_stop = matches!(&error, rig_agent::agent::StreamingError::Prompt(e)
+                    if matches!(e.as_ref(), rig_agent::completion::PromptError::PromptCancelled { reason, .. } if reason == INVENTORY_COMPLETE));
+                if inventory_stop && !observer.cancelled.is_cancelled() {
+                    if let Some(inventory) = tools
+                        .as_ref()
+                        .map(|tools| tools.inventory_result())
+                        .transpose()?
+                        .flatten()
+                    {
+                        guard.deadline_remaining().map_err(|e| e.message)?;
+                        return Ok(AgentRuntimeResponse {
+                            output: String::new(),
+                            inventory: Some(inventory),
+                            usage: aggregate_usage,
+                            stats: guard.stats(),
+                        });
+                    }
+                }
+                return Err(format!("Agent run failed: {error}"));
+            }
         };
         match item {
             MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text)) => {
                 (observer.on_event)(AgentEvent::TextDelta { delta: text.text });
             }
             MultiTurnStreamItem::CompletionCall(call) => {
+                if let Some(context) = &context {
+                    context.observe(call.usage);
+                }
+                if let Some(m) = &measurement {
+                    m.finish(Some(call.call_index), call.usage);
+                }
                 aggregate_usage += call.usage;
                 (observer.on_event)(AgentEvent::StepUpdated {
                     index: call.call_index,
@@ -660,7 +820,7 @@ where
                     call_index: call.call_index,
                     aggregate: aggregate_usage.into(),
                 });
-                if let Err(violation) = guard.check_tokens(aggregate_usage.total_tokens) {
+                if let Err(violation) = guard.add_tokens(call.usage.total_tokens) {
                     emit_guard_violation(&observer.on_event, &violation);
                     return Err(violation.message);
                 }
@@ -680,6 +840,7 @@ where
     };
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),
+        inventory: None,
         usage: response.usage(),
         stats: guard.stats(),
     })
@@ -705,13 +866,9 @@ fn openai_parameters(
 }
 
 fn local_parameters(reasoning_effort: Option<&str>) -> Option<Value> {
-    reasoning_effort.map(|effort| {
-        json!({
-            "chat_template_kwargs": {
-                "reasoning_effort": effort
-            }
-        })
-    })
+    // The local OpenAI-compatible endpoint consumes this at the request root.
+    // LM Studio silently ignores the nested chat_template_kwargs form.
+    reasoning_effort.map(|effort| json!({ "reasoning_effort": effort }))
 }
 
 fn local_model_supports_reasoning_effort(model: &str) -> bool {
@@ -837,6 +994,67 @@ mod tests {
     }
 
     #[test]
+    fn context_measurement_covers_system_and_reports_usage_without_content() {
+        let _guard = crate::test_support::lock_test_env();
+        std::env::set_var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS", "1");
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let capture = events.clone();
+        let mut request = fake_request("PRIVATE_PROMPT_CANARY");
+        request.provider = AgentProvider::Openai; // Mock only; no metadata probe.
+        request.preamble = "PRIVATE_SYSTEM_CANARY ".repeat(500);
+        let response = tauri::async_runtime::block_on(run_model(
+            MockCompletionModel::from_stream_turns([vec![
+                MockStreamEvent::text("Test answer"),
+                MockStreamEvent::final_response(Usage {
+                    input_tokens: 3000,
+                    output_tokens: 3,
+                    total_tokens: 3003,
+                    ..Usage::new()
+                }),
+            ]]),
+            request,
+            None,
+            None,
+            AgentRuntimeObserver {
+                cancelled: CancellationToken::new(),
+                on_event: Arc::new(move |e| {
+                    capture
+                        .lock()
+                        .unwrap()
+                        .push(serde_json::to_value(e).unwrap())
+                }),
+                permissions: None,
+            },
+            crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+        ));
+        std::env::remove_var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS");
+        assert_eq!(response.unwrap().output, "Test answer");
+        let events = events.lock().unwrap();
+        let measurements: Vec<_> = events
+            .iter()
+            .filter(|e| e["type"] == "contextMeasured")
+            .collect();
+        assert_eq!(
+            measurements.len(),
+            2,
+            "before-call and completed usage diagnostics"
+        );
+        assert!(measurements[0]["details"]["inputBytes"].as_u64().unwrap() > 10000);
+        assert_eq!(
+            measurements[0]["details"]["attempt"],
+            measurements[1]["details"]["attempt"]
+        );
+        assert!(
+            measurements[1]["details"]["reportedUsage"]["inputTokens"]
+                .as_u64()
+                .unwrap()
+                > 0
+        );
+        let diagnostic = serde_json::to_string(&measurements).unwrap();
+        assert!(!diagnostic.contains("PRIVATE_"));
+    }
+
+    #[test]
     fn rig_hook_turns_share_the_streamed_completion_index() {
         assert_eq!(product_step_index(1), 0);
         assert_eq!(product_step_index(2), 1);
@@ -873,6 +1091,13 @@ mod tests {
 
     #[test]
     fn activity_outcomes_summarize_known_tool_results() {
+        let inventory = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
+            json!({"status":"inventory_complete","notesReturned":9,"coverageComplete":true}),
+        ));
+        assert_eq!(
+            tool_output_summary("search_evidence", &inventory),
+            "Found 9 notes with recorded activity"
+        );
         let search = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
             json!({"status":"ready","items":[{"title":"One"},{"title":"Two"}]}),
         ));
@@ -910,7 +1135,7 @@ mod tests {
     }
 
     #[test]
-    fn qwen_local_reasoning_uses_chat_template_kwargs() {
+    fn qwen_local_reasoning_uses_openai_compatible_request_field() {
         assert_eq!(
             supported_reasoning_effort(&AgentProvider::Local, "qwen/Qwen3.8-27B", "xhigh"),
             Some("xhigh".to_string())
@@ -924,7 +1149,134 @@ mod tests {
             None
         );
         let params = local_parameters(Some("medium")).unwrap();
-        assert_eq!(params["chat_template_kwargs"]["reasoning_effort"], "medium");
+        assert_eq!(params, json!({"reasoning_effort": "medium"}));
+        assert_eq!(
+            local_parameters(Some("xhigh")),
+            Some(json!({"reasoning_effort": "xhigh"}))
+        );
+        assert_eq!(local_parameters(None), None);
+    }
+
+    #[test]
+    fn usage_guard_finishes_with_existing_citation_and_skips_pending_gathering() {
+        tauri::async_runtime::block_on(async {
+            let usage = |input| {
+                MockStreamEvent::final_response(Usage {
+                    input_tokens: input,
+                    output_tokens: 30,
+                    total_tokens: input + 30,
+                    ..Usage::new()
+                })
+            };
+            let model = MockCompletionModel::from_stream_turns([
+                vec![
+                    MockStreamEvent::tool_call(
+                        "read-1",
+                        "echo",
+                        json!({"value":"Verified evidence [source](note://citation-one)"}),
+                    ),
+                    usage(4000),
+                ],
+                vec![
+                    MockStreamEvent::tool_call(
+                        "read-2",
+                        "echo",
+                        json!({"value":"Should not be read"}),
+                    ),
+                    usage(10000),
+                ],
+                vec![
+                    MockStreamEvent::text(
+                        "Supported answer [source](note://citation-one). Coverage is partial.",
+                    ),
+                    usage(11000),
+                ],
+            ]);
+            let events = Arc::new(Mutex::new(Vec::new()));
+            let capture = events.clone();
+            let sink: AgentEventSink = Arc::new(move |e| {
+                capture
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::to_value(e).unwrap())
+            });
+            let mut request = fake_request("Find evidence");
+            request.provider = AgentProvider::Openai; // Mock only: no metadata HTTP request.
+            let context = usage_context::UsageContext::with_test_capacity(
+                &request,
+                sink.clone(),
+                false,
+                19000,
+            );
+            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
+            let cancelled = CancellationToken::new();
+            let calls = Arc::new(AtomicUsize::new(0));
+            let agent = configured_builder(
+                context_measurement::MeasuredModel {
+                    inner: model.clone(),
+                    measurement: None,
+                    context: Some(context.clone()),
+                },
+                &request,
+                None,
+            )
+            .add_hook(RuntimeEventHook {
+                on_event: sink.clone(),
+                cancelled: cancelled.clone(),
+                permissions: None,
+                guard: guard.clone(),
+                tools: None,
+                context: Some(context.clone()),
+            })
+            .tool(EchoTool(calls.clone()))
+            .build();
+            let result = drive_agent(
+                agent,
+                request,
+                AgentRuntimeObserver {
+                    cancelled,
+                    on_event: sink,
+                    permissions: None,
+                },
+                guard,
+                None,
+                None,
+                Some(context),
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                calls.load(Ordering::Relaxed),
+                1,
+                "the second pending tool must be skipped after high reported usage"
+            );
+            assert_eq!(model.request_count(), 3);
+            assert!(result.output.contains("note://citation-one"));
+            let requests = model.requests();
+            let final_request = &requests[2];
+            assert!(final_request.tools.is_empty());
+            assert_eq!(
+                final_request.tool_choice,
+                Some(rig_core::message::ToolChoice::None)
+            );
+            assert_eq!(final_request.max_tokens, Some(4096));
+            let history = serde_json::to_value(&final_request.chat_history)
+                .unwrap()
+                .to_string();
+            assert!(history.contains("Verified evidence"));
+            assert!(history.contains("note://citation-one"));
+            assert!(history.contains("read-1") && history.contains("read-2"));
+            assert!(history.contains("Context allowance"));
+            assert_eq!(
+                events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .filter(|e| e["details"]["phase"] == "finishing")
+                    .count(),
+                1
+            );
+        });
     }
 
     #[test]
@@ -993,6 +1345,7 @@ mod tests {
                     permissions: Some(permission_boundary.clone()),
                     guard: guard.clone(),
                     tools: None,
+                    context: None,
                 })
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
@@ -1005,6 +1358,9 @@ mod tests {
                     permissions: Some(permission_boundary),
                 },
                 guard,
+                None,
+                None,
+                None,
             )
             .await
             .unwrap();
@@ -1080,6 +1436,7 @@ mod tests {
                     permissions: Some(permission_boundary.clone()),
                     guard: guard.clone(),
                     tools: None,
+                    context: None,
                 })
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
@@ -1092,6 +1449,9 @@ mod tests {
                     permissions: Some(permission_boundary),
                 },
                 guard,
+                None,
+                None,
+                None,
             )
             .await
             .unwrap();

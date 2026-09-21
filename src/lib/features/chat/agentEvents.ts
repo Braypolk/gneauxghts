@@ -133,6 +133,10 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       next[index] = usage;
       return next;
     }
+    case 'researchCompleted':
+    case 'contextMeasured':
+    case 'queryResolved':
+      return parts; // Durable query metadata is available for follow-ups and diagnostics.
     case 'modelTurnRetried':
       return upsertPart(parts, {
         id: 'retry',

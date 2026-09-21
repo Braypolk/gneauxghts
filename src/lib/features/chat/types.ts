@@ -92,6 +92,9 @@ export type AgentEvent =
   | { type: 'contextUpdated'; compacted: boolean; selectedNoteTitles: string[] }
   | { type: 'planUpdated'; entries: AgentPlanEntry[] }
   | { type: 'usageUpdated'; callIndex: number; aggregate: AgentUsage }
+  | { type: 'queryResolved'; details: Record<string, unknown> }
+  | { type: 'researchCompleted'; details: Record<string, unknown> }
+  | { type: 'contextMeasured'; details: Record<string, unknown> }
   | { type: 'modelTurnRetried'; turn: number }
   | { type: 'permissionRequested'; request: AgentPermissionRequest }
   | {
@@ -287,11 +290,17 @@ export interface RevisionCitation {
   currentExcerpt: string;
 }
 
+export interface PassageCitation {
+  id: string; noteId: string; contentHash: string; location: string;
+  start: number; end: number; excerpt: string; revisions: RevisionCitation[];
+}
+
 export type ChatCitation =
   | {
       id: string;
       kind: 'note';
       revision?: RevisionCitation;
+      passage?: PassageCitation;
       label: string;
       noteId: string;
       notePath: string;

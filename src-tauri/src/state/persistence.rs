@@ -1,6 +1,6 @@
 use super::config::forgotten_notes_root;
 use crate::{index::is_note_file, note, path_utils::collect_markdown_files_recursively};
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{params, Connection, OptionalExtension, TransactionBehavior};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{HashMap, HashSet},
@@ -748,8 +748,8 @@ impl AppStateStorage {
     pub(crate) fn bind(vault_data_dir: &Path) -> Result<Self, String> {
         fs::create_dir_all(vault_data_dir).map_err(|err| err.to_string())?;
         let database_path = vault_data_dir.join(APP_STATE_DB_FILE_NAME);
-        let connection = Connection::open(&database_path).map_err(|err| err.to_string())?;
-        ensure_state_schema(&connection)?;
+        let mut connection = Connection::open(&database_path).map_err(|err| err.to_string())?;
+        ensure_state_schema(&mut connection)?;
         let storage = Self {
             connection: std::sync::Arc::new(Mutex::new(connection)),
         };
@@ -909,11 +909,19 @@ where
 /// task projection) call this so they can layer their own DDL on top
 /// of the bootstrapped tables without depending on this module's
 /// open-once behaviour.
-pub(super) fn ensure_state_schema_idempotent(connection: &Connection) -> Result<(), String> {
+pub(super) fn ensure_state_schema_idempotent(connection: &mut Connection) -> Result<(), String> {
     ensure_state_schema(connection)
 }
 
-fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
+fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
+    // Serialize schema inspection and migration across independent connections,
+    // before the running-vault handle is published. A deferred transaction would
+    // still let two initializers read the same missing column before upgrading
+    // to a writer. The connection's bounded busy timeout waits for this writer.
+    let transaction = connection
+        .transaction_with_behavior(TransactionBehavior::Immediate)
+        .map_err(|err| err.to_string())?;
+    let connection = &transaction;
     connection
         .execute_batch(
             "CREATE TABLE IF NOT EXISTS app_state (
@@ -962,7 +970,7 @@ fn ensure_state_schema(connection: &Connection) -> Result<(), String> {
     migrate_last_chat_columns(connection)?;
     migrate_forgotten_item_columns(connection)?;
     migrate_forgotten_retention_column(connection)?;
-    Ok(())
+    transaction.commit().map_err(|err| err.to_string())
 }
 
 fn migrate_forgotten_retention_column(connection: &Connection) -> Result<(), String> {
@@ -1049,6 +1057,8 @@ fn migrate_last_chat_columns(connection: &Connection) -> Result<(), String> {
             .map_err(|err| err.to_string())?;
     }
     if !has_column(connection, "app_state", "last_chat_context_note_id")? {
+        #[cfg(test)]
+        migration_tests::after_missing_chat_column();
         connection
             .execute(
                 "ALTER TABLE app_state ADD COLUMN last_chat_context_note_id TEXT",
@@ -1066,6 +1076,9 @@ fn migrate_last_chat_columns(connection: &Connection) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod migration_tests;
 
 fn migrate_note_activity_columns(connection: &Connection) -> Result<(), String> {
     if !has_column(connection, "app_state_note_activity", "open_count")? {

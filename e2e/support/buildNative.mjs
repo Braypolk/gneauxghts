@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import { nativeE2EPath, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
+import { nativeE2EPath, nativeE2EPorts, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
 
 const optimized = process.argv.includes('--release');
 if (optimized) {
@@ -15,7 +15,7 @@ const e2eTauriConfig = {
   identifier: 'com.braypolkinghorne.gneauxghts-e2e',
   // Match the isolated IPv4 server in wdio.native.conf.ts. `localhost:1420`
   // can resolve to an unrelated development server listening on IPv6.
-  build: { devUrl: 'http://127.0.0.1:1430' },
+  build: { devUrl: `http://127.0.0.1:${nativeE2EPorts().dev}` },
   app: {
     ...(optimized ? { windows: JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).app.windows.map(window => ({
       ...window, backgroundThrottling: 'disabled'

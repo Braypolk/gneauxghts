@@ -15,6 +15,7 @@ use crate::{
     note::DocumentKind,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use tauri::{AppHandle, Manager, State};
@@ -404,7 +405,7 @@ fn current_conversation(
             state,
             service,
             &conversation.summary.access,
-            &HashSet::new(),
+            &service.source_run_grants(&message.id)?,
             &mut message.sources,
         )?;
     }
@@ -857,9 +858,42 @@ fn finish_context_candidates(
 }
 
 #[tauri::command]
-pub(crate) fn chat_suggest_context(
-    service: State<'_, ChatService>,
-    state: State<'_, AppState>,
+pub(crate) async fn chat_suggest_context<R: tauri::Runtime>(
+    app: AppHandle<R>,
+    request: ChatSuggestContextRequest,
+) -> Result<ChatContextSuggestionResponse, String> {
+    super::on_app_worker(app.clone(), move |state| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        // Test-only latency on the real command path; never compiled into the app build.
+        #[cfg(feature = "e2e-wdio")]
+        let probe_delay = std::env::var("GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .filter(|ms| *ms > 0 && *ms <= 2000);
+        #[cfg(feature = "e2e-wdio")]
+        if let Some(ms) = probe_delay {
+            let _ = tauri::Emitter::emit(
+                &app,
+                "e2e://context-search",
+                json!({"phase":"started","query":request.query}),
+            );
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
+        let result = suggest_context_with_state(&service, state, request);
+        #[cfg(feature = "e2e-wdio")]
+        if probe_delay.is_some() {
+            let _ = tauri::Emitter::emit(&app, "e2e://context-search", json!({"phase":"finished"}));
+        }
+        result
+    })
+    .await?
+}
+
+fn suggest_context_with_state(
+    service: &ChatService,
+    state: &AppState,
     request: ChatSuggestContextRequest,
 ) -> Result<ChatContextSuggestionResponse, String> {
     let conversation = request
@@ -887,7 +921,7 @@ pub(crate) fn chat_suggest_context(
         });
     }
     let _foreground_guard = state.foreground_guard();
-    let notes_dir = prepare_notes_dir(&state, false)?;
+    let notes_dir = prepare_notes_dir_with_state(false, state)?;
     state.ensure_interactive_index(
         &notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
@@ -904,7 +938,7 @@ pub(crate) fn chat_suggest_context(
     let active_note_query = if excluded_note_id.is_some_and(|note_id| excluded.contains(note_id)) {
         None
     } else {
-        active_note_context_query(&state, excluded_note_id)?
+        active_note_context_query(state, excluded_note_id)?
     };
     let mut candidates = HashMap::new();
     for (signal, weight, priority) in [
@@ -916,7 +950,7 @@ pub(crate) fn chat_suggest_context(
             continue;
         };
         let retrieved = crate::services::retrieval::retrieve_vault_notes(
-            &state,
+            state,
             &truncate_context_signal(&signal),
             candidate_limit,
             None,
@@ -1373,8 +1407,6 @@ mod attachment_capability_tests {
             start_line: Some(1),
             end_line: Some(1),
             block_anchor: None,
-            created_at_millis: 1,
-            updated_at_millis: 1,
         }
     }
 
@@ -1461,6 +1493,142 @@ mod attachment_capability_tests {
         assert_eq!(
             models.into_iter().map(|model| model.id).collect::<Vec<_>>(),
             vec!["gpt-5.6-sol", "gpt-5.6-terra"]
+        );
+    }
+}
+
+/// Resolve only a citation issued into this conversation. The frontend cannot
+/// fabricate an evidence reference to bypass its current access policy.
+#[tauri::command]
+pub(crate) fn chat_resolve_passage(
+    state: State<'_, AppState>,
+    service: State<'_, ChatService>,
+    conversation_id: String,
+    evidence_id: String,
+) -> Result<Value, String> {
+    let conversation = current_conversation(
+        &state,
+        &service,
+        service.get_conversation(&conversation_id)?,
+    )?;
+    let source = conversation
+        .messages
+        .into_iter()
+        .flat_map(|m| m.sources)
+        .find(|s| s.passage.as_ref().is_some_and(|p| p.id == evidence_id))
+        .ok_or("This passage changed or is unavailable. Refresh the answer to obtain current evidence.")?;
+    let passage = source.passage.as_ref().ok_or("Missing passage")?;
+    let path = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index unavailable")?
+        .get_note_by_note_id(&passage.note_id)
+        .map(|(p, _)| p.clone())
+        .ok_or("Note unavailable")?;
+    let raw = std::fs::read_to_string(path).map_err(|_| "Note unavailable")?;
+    if crate::services::evidence::canonical_content_hash(&raw) != passage.content_hash {
+        return Err("Passage changed".into());
+    }
+    let (markdown, selection) =
+        crate::services::evidence::editor_passage_navigation(&raw, &source.title, passage);
+
+    Ok(json!({"source":source,"markdown":markdown,"selection":selection}))
+}
+
+#[cfg(test)]
+mod typing_responsiveness_tests {
+    use super::*;
+    use crate::test_support::{lock_test_env, TestDir};
+    use std::{
+        sync::mpsc,
+        time::{Duration, Instant},
+    };
+
+    #[test]
+    fn related_search_does_not_block_ipc_dispatch_while_index_is_busy() {
+        let _env = lock_test_env();
+        let root = TestDir::new("chat-typing-dispatch");
+        let notes = root.path().join("vault");
+        std::fs::create_dir_all(&notes).unwrap();
+        crate::state::initialize_app_data_dir(root.path().join("app-data")).unwrap();
+        crate::state::set_notes_root_override(Some(notes.clone())).unwrap();
+        crate::state::ensure_vault_scaffold(&notes).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let data = root.path().join("chat-data");
+        std::fs::create_dir_all(&data).unwrap();
+        let service = ChatService::new(notes, data).unwrap();
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .manage(service)
+            .invoke_handler(tauri::generate_handler![
+                chat_suggest_context,
+                chat_get_composer_draft,
+                chat_set_composer_draft
+            ])
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        let window = tauri::WebviewWindowBuilder::new(&app, "main", Default::default())
+            .build()
+            .unwrap();
+        let request = |cmd: &str, body: Value| tauri::webview::InvokeRequest {
+            cmd: cmd.into(),
+            callback: tauri::ipc::CallbackFn(0),
+            error: tauri::ipc::CallbackFn(1),
+            url: "tauri://localhost".parse().unwrap(),
+            body: tauri::ipc::InvokeBody::Json(body),
+            headers: Default::default(),
+            invoke_key: tauri::test::INVOKE_KEY.into(),
+        };
+        let draft_started = Instant::now();
+        tauri::test::get_ipc_response(
+            &window,
+            request(
+                "chat_set_composer_draft",
+                json!({"slot":"pane:typing", "body":"chat typing"}),
+            ),
+        )
+        .unwrap();
+        let draft = tauri::test::get_ipc_response(
+            &window,
+            request("chat_get_composer_draft", json!({"slot":"pane:typing"})),
+        )
+        .unwrap()
+        .deserialize::<String>()
+        .unwrap();
+        let draft_elapsed = draft_started.elapsed();
+        let handle = app.handle().clone();
+        let (held, acquired) = mpsc::channel();
+        let blocker = std::thread::spawn(move || {
+            let state = handle.state::<AppState>();
+            let _index = state.notes_index.lock().unwrap();
+            held.send(()).unwrap();
+            std::thread::sleep(Duration::from_secs(2));
+        });
+        acquired.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (sent, response) = mpsc::channel();
+        let view: &tauri::Webview<tauri::test::MockRuntime> = window.as_ref();
+        let started = Instant::now();
+        view.clone().on_message(request("chat_suggest_context", json!({"request":{
+            "conversationId":null,"vaultAccess":"full","query":"chat typing","excludeNoteId":null,"limit":4
+        }})), Box::new(move |_, _, result, _, _| { let _ = sent.send(result); }));
+        let dispatch_elapsed = started.elapsed();
+        blocker.join().unwrap();
+        let result = response.recv_timeout(Duration::from_secs(10));
+        crate::state::set_notes_root_override(None).unwrap();
+        eprintln!(
+            "CHAT_TYPING_DISPATCH_MS={} DRAFT_ROUNDTRIP_MS={}",
+            dispatch_elapsed.as_millis(),
+            draft_elapsed.as_millis()
+        );
+        assert_eq!(draft, "chat typing");
+        assert!(matches!(result.unwrap(), tauri::ipc::InvokeResponse::Ok(_)));
+        assert!(
+            dispatch_elapsed < Duration::from_millis(250),
+            "IPC dispatch blocked for {dispatch_elapsed:?} on a two-second search dependency"
         );
     }
 }

@@ -301,6 +301,7 @@ pub fn run() {
             commands::chat_commands::chat_create_conversation,
             commands::chat_commands::chat_list_conversations,
             commands::chat_commands::chat_get_conversation,
+            commands::chat_commands::chat_resolve_passage,
             commands::chat_commands::chat_branch_from_message,
             commands::chat_commands::chat_find_conversation_by_projection_path,
             commands::chat_commands::chat_rename_conversation,

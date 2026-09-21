@@ -36,6 +36,10 @@ pub(crate) struct ProvenanceLine {
     pub(crate) line_number: usize,
     pub(crate) text: String,
     pub(crate) ranges: Vec<ProvenanceRange>,
+    // Derived while replaying retained states. A checkbox's boolean status is
+    // distinct from authored bytes: [x] -> [X] must not date a new completion.
+    #[serde(skip)]
+    pub(crate) task_status_provenance: Option<RangeProvenance>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -341,6 +345,13 @@ fn project_revision(
             // Pre-reference restores prove return time but cannot identify which
             // identical historical state was selected. Never invent that lineage.
             for line in result.body.iter_mut().chain(&mut result.properties) {
+                if let Some(status) = &mut line.task_status_provenance {
+                    if status.last_changed_at == evidence.last_changed_at {
+                        status.introduced_at = None;
+                        status.last_changed_at = None;
+                        status.restored_at = Some(evidence.known_since.clone());
+                    }
+                }
                 for range in &mut line.ranges {
                     if range.provenance.last_changed_at == evidence.last_changed_at {
                         range.provenance.introduced_at = None;
@@ -364,6 +375,17 @@ fn restore_ranges(
     evidence: &RangeProvenance,
 ) {
     for (line, origin) in current.iter_mut().zip(selected) {
+        if line
+            .task_status_provenance
+            .as_ref()
+            .is_some_and(|status| status.last_changed_at == evidence.last_changed_at)
+        {
+            line.task_status_provenance =
+                origin.task_status_provenance.clone().map(|mut status| {
+                    status.restored_at = Some(evidence.known_since.clone());
+                    status
+                });
+        }
         let mut ranges = Vec::new();
         for range in &line.ranges {
             if range.provenance.last_changed_at == evidence.last_changed_at {
@@ -399,14 +421,25 @@ fn project_lines(
     if lines_text(old) == text {
         return old.to_vec();
     }
-    let before: Vec<&str> = old.iter().map(|line| line.text.as_str()).collect();
+    // A final newline is a separator, not a different prose line identity.
+    // Otherwise Myers can pair an unterminated old last line with a newly
+    // appended paragraph and transfer its lineage to unrelated new words.
+    let before: Vec<&str> = old
+        .iter()
+        .map(|line| line.text.strip_suffix('\n').unwrap_or(&line.text))
+        .collect();
     let after: Vec<&str> = text.split_inclusive('\n').collect();
+    let after_keys: Vec<&str> = after
+        .iter()
+        .map(|line| line.strip_suffix('\n').unwrap_or(line))
+        .collect();
     let mut result: Vec<_> = after
         .iter()
         .enumerate()
         .map(|(index, text)| ProvenanceLine {
             line_number: index + 1,
             text: (*text).into(),
+            task_status_provenance: crate::index::parse_task_line(text).map(|_| evidence.clone()),
             ranges: vec![ProvenanceRange {
                 start: 0,
                 end: text.len(),
@@ -416,14 +449,28 @@ fn project_lines(
         })
         .collect();
     let old_unique = unique_positions(&before);
-    let new_unique = unique_positions(&after);
-    for (index, text) in after.iter().enumerate() {
+    let new_unique = unique_positions(&after_keys);
+    for (index, text) in after_keys.iter().enumerate() {
         if let (Some(Some(previous)), Some(Some(_))) = (old_unique.get(text), new_unique.get(text))
         {
-            result[index].ranges = old[*previous].ranges.clone();
+            result[index].ranges = if old[*previous].text == after[index] {
+                old[*previous].ranges.clone()
+            } else {
+                let mut ranges = slice_ranges(&old[*previous].ranges, 0, text.len(), 0);
+                if after[index].len() > text.len() {
+                    ranges.push(ProvenanceRange {
+                        start: text.len(),
+                        end: after[index].len(),
+                        provenance: evidence.clone(),
+                        formatting: Vec::new(),
+                    });
+                }
+                ranges
+            };
+            result[index].task_status_provenance = old[*previous].task_status_provenance.clone();
         }
     }
-    for op in capture_diff_slices(Algorithm::Myers, &before, &after) {
+    for op in capture_diff_slices(Algorithm::Myers, &before, &after_keys) {
         if let DiffOp::Replace {
             old_index,
             old_len,
@@ -432,7 +479,7 @@ fn project_lines(
         } = op
         {
             let old_block = &before[old_index..old_index + old_len];
-            let new_block = &after[new_index..new_index + new_len];
+            let new_block = &after_keys[new_index..new_index + new_len];
             let old_words: Vec<_> = old_block.iter().flat_map(|line| words(line)).collect();
             let new_words: Vec<_> = new_block.iter().flat_map(|line| words(line)).collect();
             let old_word_positions = unique_positions(&old_words);
@@ -471,12 +518,24 @@ fn project_lines(
                 let new_index = new_index + relative_new;
                 // Exact moves and duplicate line matches were handled above.
                 if old_unique.get(before[old_index]) == Some(&Some(old_index))
-                    && new_unique.get(after[new_index]) == Some(&Some(new_index))
-                    && !old_unique.contains_key(after[new_index])
+                    && new_unique.get(after_keys[new_index]) == Some(&Some(new_index))
+                    && !old_unique.contains_key(after_keys[new_index])
                     && !new_unique.contains_key(before[old_index])
                 {
                     result[new_index].ranges =
                         project_words(&old[old_index], after[new_index], evidence);
+                    if let (Some((old_status, _, _)), Some((new_status, _, _))) = (
+                        crate::index::parse_task_line(before[old_index]),
+                        crate::index::parse_task_line(after[new_index]),
+                    ) {
+                        // The line correspondence above also applies to its
+                        // checkbox. Even replacing all of a task's description
+                        // does not flip an unchanged completion status.
+                        if old_status == new_status {
+                            result[new_index].task_status_provenance =
+                                old[old_index].task_status_provenance.clone();
+                        }
+                    }
                 }
             }
         }
@@ -858,7 +917,7 @@ mod tests {
     }
 
     #[test]
-    fn chat_provenance_pages_body_then_properties_with_current_evidence() {
+    fn current_provenance_includes_body_and_properties() {
         with_vault(|state, _root| {
             let body = (1..=35).map(|i| format!("line {i}\n")).collect::<String>();
             let (id, _) = save(
@@ -868,20 +927,17 @@ mod tests {
                 None,
             );
             let timeline = state.note_timeline();
-            let access = timeline.current_content(AllowedScope::vault());
-            let (first, _, next) = access.provenance_page(&id, 0).unwrap().unwrap();
-            assert_eq!(first.body.len(), 30);
-            assert!(first.properties.is_empty());
-            let (second, citations, next) =
-                access.provenance_page(&id, next.unwrap()).unwrap().unwrap();
-            assert_eq!(second.body.len(), 5);
-            assert_eq!(second.body[0].text, "line 31\n");
-            assert!(second
+            let current = timeline
+                .current_content(AllowedScope::vault())
+                .provenance(&id)
+                .unwrap()
+                .unwrap();
+            assert_eq!(current.body.len(), 35);
+            assert_eq!(current.body[30].text, "line 31\n");
+            assert!(current
                 .properties
                 .iter()
                 .any(|line| line.text.contains("project: current")));
-            assert!(!citations.is_empty());
-            assert_eq!(next, None);
         });
     }
 
@@ -1103,6 +1159,48 @@ mod tests {
 
     fn introduced(evidence: &RangeProvenance) -> Option<u64> {
         evidence.introduced_at.as_ref().map(|value| value.at_millis)
+    }
+
+    #[test]
+    fn appending_after_unterminated_prose_does_not_transfer_its_lineage() {
+        let initial = edit(
+            &AuthoredProjection::default(),
+            "# Work\n\nI delivered the old brochure on September 4.",
+            1,
+        );
+        let week = "# Work\n\nI delivered the old brochure on September 4.\n\nI sent the Atlas quote on September 9.\n\nI resolved the cache incident.";
+        let first = edit(&initial, week, 2);
+        let text = format!(
+            "{}\n\nSeptember 15 retrospective: I submitted the expense report on September 8.",
+            week.replace("Atlas quote", "Atlas revised quote")
+        );
+        let appended = edit(&first, &text, 3);
+        assert_eq!(introduced(at(&appended.body, 6, "resolved")), Some(2));
+        assert_eq!(
+            at(&appended.body, 6, "resolved")
+                .last_changed_at
+                .as_ref()
+                .unwrap()
+                .at_millis,
+            2
+        );
+        for word in ["I", "submitted", "expense"] {
+            assert_eq!(
+                introduced(at(&appended.body, 8, word)),
+                Some(3),
+                "new paragraph must not borrow old line history"
+            );
+        }
+        let trimmed = edit(&appended, week, 4);
+        assert_eq!(introduced(at(&trimmed.body, 6, "resolved")), Some(2));
+        assert_eq!(
+            at(&trimmed.body, 6, "resolved")
+                .last_changed_at
+                .as_ref()
+                .unwrap()
+                .at_millis,
+            2
+        );
     }
 
     #[test]

@@ -2,7 +2,9 @@ import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ChatConversation,
+  ChatCitation,
   RevisionCitation,
+  PassageCitation,
   ChatConversationSummary,
   ChatEventMap,
   ChatExcerpt,
@@ -59,7 +61,7 @@ interface RawSummary {
 }
 interface RawSource {
   kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
-  url?: string | null; anchor?: string | null; revision?: RevisionCitation | null;
+  url?: string | null; anchor?: string | null; revision?: RevisionCitation | null; passage?: PassageCitation | null;
 }
 interface RawMessage {
   id: string; conversationId: string; ordinal: number; role: string; status: string; content: string;
@@ -119,7 +121,7 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
   };
 }
 
-function normalizeSource(raw: RawSource, index = 0) {
+function normalizeSource(raw: RawSource, index = 0): ChatCitation {
   const id = `${raw.kind}:${raw.noteId ?? raw.url ?? raw.title}:${raw.anchor ?? index}`;
   if (raw.kind === 'web' && raw.url) {
     return { id, kind: 'web' as const, label: raw.title, url: raw.url, excerpt: raw.excerpt || null };
@@ -131,6 +133,7 @@ function normalizeSource(raw: RawSource, index = 0) {
     noteId: raw.noteId ?? '',
     notePath: raw.notePath ?? '',
     ...(raw.revision ? { revision: raw.revision } : {}),
+    ...(raw.passage ? { passage: raw.passage } : {}),
     sectionLabel: raw.anchor ?? null,
     startLine: null,
     excerpt: raw.excerpt || null
@@ -665,3 +668,8 @@ export class TauriChatApi implements ChatApi {
 }
 
 export const chatApi = new TauriChatApi();
+
+export async function resolveCurrentPassage(conversationId: string, evidenceId: string) {
+  const result = await invoke<{source: RawSource; markdown: string; selection: {anchor: number; head: number} | null}>("chat_resolve_passage", { conversationId, evidenceId });
+  return {...result, source: normalizeSource(result.source)};
+}

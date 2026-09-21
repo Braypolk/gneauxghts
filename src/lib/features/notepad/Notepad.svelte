@@ -1086,6 +1086,7 @@
     getEditorPaneIds,
     setActivePane: workspaceStore.setActivePaneId,
     openNote: commands.openNotePath,
+    focusPassage: (paneId, selection) => editorCapabilities.get(paneId)?.focusSelection(selection, { scrollIntoView: true }) ?? false,
     openRevisionCitation: (paneId, citation) => historyMode.enterCitation(paneId, {
       noteId: citation.noteId, noteTitle: citation.label, notePath: citation.notePath
     }, citation.revision!.revisionId),

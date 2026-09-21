@@ -5,6 +5,10 @@ use std::sync::{
     Arc,
 };
 
+mod prose_tasks;
+mod query_inventory;
+mod weekly_tasks;
+
 struct Fixture {
     state: AppState,
     path: PathBuf,
@@ -1406,7 +1410,14 @@ fn editing_window_explicit_provenance_seals_only_target_and_keeps_net_lineage() 
     f.clock.fetch_add(100, Ordering::SeqCst);
     f.save("A endpoint");
     let pending_id = f.pending().window_id;
-    let (current, citations, _) = access.provenance_page(&f.note, 0).unwrap().unwrap();
+    let current = access.provenance(&f.note).unwrap().unwrap();
+    let citations: Vec<_> = access
+        .activity(0, u64::MAX, 0, 20)
+        .unwrap()
+        .items
+        .into_iter()
+        .flat_map(|item| item.citations)
+        .collect();
     assert_eq!(current.body[0].text, "A endpoint");
     assert_eq!(current.body[0].ranges[0].provenance, original);
     let interval = RevisionTimeEvidence::EditingWindow {
@@ -1474,11 +1485,25 @@ fn editing_window_noop_does_not_invent_retyping_or_replace_citations() {
     let f = Fixture::new();
     let timeline = f.state.note_timeline();
     let access = timeline.current_content(AllowedScope::vault());
-    let (before, citations, _) = access.provenance_page(&f.note, 0).unwrap().unwrap();
+    let before = access.provenance(&f.note).unwrap().unwrap();
+    let citations: Vec<_> = access
+        .activity(0, u64::MAX, 0, 20)
+        .unwrap()
+        .items
+        .into_iter()
+        .flat_map(|item| item.citations)
+        .collect();
     f.save("deleted and retyped");
     f.clock.fetch_add(10, Ordering::SeqCst);
     f.save("A");
-    let (after, after_citations, _) = access.provenance_page(&f.note, 0).unwrap().unwrap();
+    let after = access.provenance(&f.note).unwrap().unwrap();
+    let after_citations: Vec<_> = access
+        .activity(0, u64::MAX, 0, 20)
+        .unwrap()
+        .items
+        .into_iter()
+        .flat_map(|item| item.citations)
+        .collect();
     assert_eq!(before, after);
     assert_eq!(
         serde_json::to_value(citations).unwrap(),
@@ -1501,7 +1526,7 @@ fn editing_window_excluded_and_uncaptured_targets_never_seal_on_evidence_reads()
     let timeline = f.state.note_timeline();
     let excluded = HashSet::from([f.note.0.clone()]);
     let access = timeline.current_content(AllowedScope::policy(Some(&excluded), &excluded));
-    assert!(access.provenance_page(&f.note, 0).unwrap().is_none());
+    assert!(access.provenance(&f.note).unwrap().is_none());
     assert!(access
         .activity(0, u64::MAX, 0, 20)
         .unwrap()
@@ -1876,7 +1901,13 @@ fn citations_without_required_time_evidence_are_no_longer_current() {
     let f = Fixture::new();
     let timeline = f.state.note_timeline();
     let access = timeline.current_content(AllowedScope::vault());
-    let (_, citations, _) = access.provenance_page(&f.note, 0).unwrap().unwrap();
+    let citations: Vec<_> = access
+        .activity(0, u64::MAX, 0, 20)
+        .unwrap()
+        .items
+        .into_iter()
+        .flat_map(|item| item.citations)
+        .collect();
     let mut json = serde_json::to_value(&citations).unwrap();
     for citation in json.as_array_mut().unwrap() {
         citation.as_object_mut().unwrap().remove("timeEvidence");
@@ -1892,7 +1923,13 @@ fn citations_without_required_time_evidence_are_no_longer_current() {
             .unwrap()
             .is_some()
     );
-    let (_, current, _) = access.provenance_page(&f.note, 0).unwrap().unwrap();
+    let current: Vec<_> = access
+        .activity(0, u64::MAX, 0, 20)
+        .unwrap()
+        .items
+        .into_iter()
+        .flat_map(|item| item.citations)
+        .collect();
     let mut intervals: Vec<_> = current
         .into_iter()
         .filter(|c| c.time_evidence.is_some_and(|e| e.window().is_some()))
@@ -2750,3 +2787,185 @@ fn selected_context_recovers_staged_deletion_without_touching_other_vault() {
 }
 
 mod readiness;
+
+#[test]
+fn focused_evidence_returns_surviving_period_ranges_after_later_edits_and_clear_invalidates() {
+    use crate::services::evidence::{EvidenceSession, SearchRequest};
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("A kept launch decision.\nRemovedSecret");
+    f.seal();
+    f.clock.store(2_000_000, Ordering::SeqCst);
+    f.save("A kept launch decision.\nLater unrelated followup");
+    f.seal();
+    let mut evidence = EvidenceSession::default();
+    let excluded = HashSet::new();
+    let request = SearchRequest {
+        after: Some(1_000_000),
+        before: Some(1_500_000),
+        ..Default::default()
+    };
+    let page = evidence
+        .search(&f.state, None, &excluded, request.clone())
+        .unwrap();
+    assert!(!page.to_string().contains("RemovedSecret"));
+    let items = page["items"].as_array().unwrap();
+    assert!(!items.is_empty(), "{page}");
+    let ids: Vec<_> = items
+        .iter()
+        .map(|i| i["evidenceId"].as_str().unwrap().into())
+        .collect();
+    let (read, sources) = evidence
+        .read(&f.state, None, &excluded, &ids, false)
+        .unwrap();
+    assert!(read.to_string().contains("launch decision"), "{read}");
+    assert!(read["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|item| !item["excerpt"]
+            .as_str()
+            .unwrap()
+            .contains("Later unrelated")));
+    assert!(!sources.is_empty());
+    assert!(read["items"][0]["provenance"].is_object());
+    assert!(evidence.is_current(&f.state, None, &excluded));
+    f.state
+        .lexical
+        .sync_with_notes_index(&f.state.notes_index.lock().unwrap().entries)
+        .unwrap();
+    for (query, mode) in [
+        (
+            "launch decision",
+            crate::services::evidence::SearchMode::Lexical,
+        ),
+        (
+            "launch|unmatched",
+            crate::services::evidence::SearchMode::Regex,
+        ),
+    ] {
+        let mut scoped = EvidenceSession::default();
+        let page = scoped
+            .search(
+                &f.state,
+                None,
+                &excluded,
+                SearchRequest {
+                    query: query.into(),
+                    mode,
+                    ..request.clone()
+                },
+            )
+            .unwrap();
+        assert!(!page["items"].as_array().unwrap().is_empty(), "{page}");
+    }
+    f.state.note_timeline().clear_note_history(&f.note).unwrap();
+    assert!(!evidence.is_current(&f.state, None, &excluded));
+    let mut cleared = EvidenceSession::default();
+    assert!(
+        cleared.search(&f.state, None, &excluded, request).unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn activity_passage_coordinates_keep_duplicate_words_and_long_range_tails() {
+    use crate::services::evidence::{EvidenceSession, SearchRequest};
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    let body = format!(
+        "A repeated word\n{} final-tail-marker\nrepeated word",
+        "longsegment ".repeat(260)
+    );
+    f.save(&body);
+    f.seal();
+    let mut evidence = EvidenceSession::default();
+    let mut request = SearchRequest {
+        after: Some(1_000_000),
+        before: Some(1_500_000),
+        limit: Some(1),
+        ..Default::default()
+    };
+    let mut previews = String::new();
+    let mut excerpts = String::new();
+    loop {
+        let page = evidence
+            .search(&f.state, None, &HashSet::new(), request.clone())
+            .unwrap();
+        for item in page["items"].as_array().unwrap() {
+            previews.push_str(item["preview"].as_str().unwrap());
+            let id = item["evidenceId"].as_str().unwrap().to_string();
+            let (read, _) = evidence
+                .read(&f.state, None, &HashSet::new(), &[id], false)
+                .unwrap();
+            for passage in read["items"].as_array().unwrap() {
+                excerpts.push_str(passage["excerpt"].as_str().unwrap());
+            }
+        }
+        match page["nextCursor"].as_str() {
+            Some(cursor) => request.cursor = Some(cursor.into()),
+            None => break,
+        }
+    }
+    assert!(excerpts.contains("final-tail-marker"), "{previews}");
+    assert_eq!(excerpts.matches("repeated").count(), 2);
+    assert_eq!(excerpts.matches("word").count(), 2);
+}
+
+#[test]
+fn current_passage_provenance_continues_without_caching_partial_pages() {
+    use crate::services::evidence::{EvidenceSession, SearchMode, SearchRequest};
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("A alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima");
+    f.seal();
+    f.clock.store(2_000_000, Ordering::SeqCst);
+    f.save("A alpha BRAVO charlie DELTA echo FOXTROT golf HOTEL india JULIET kilo LIMA");
+    f.seal();
+    let mut evidence = EvidenceSession::default();
+    let page = evidence
+        .search(
+            &f.state,
+            None,
+            &HashSet::new(),
+            SearchRequest {
+                query: "alpha".into(),
+                mode: SearchMode::Literal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let id = page["items"][0]["evidenceId"].as_str().unwrap().to_string();
+    let mut offset = 0;
+    let mut seen = HashSet::new();
+    let mut pages = 0;
+    loop {
+        let (read, _) = evidence
+            .read_page(&f.state, None, &HashSet::new(), &[id.clone()], true, offset)
+            .unwrap();
+        let item = &read["items"][0];
+        assert!(item.is_object(), "{read}");
+        let ranges = item["provenance"].as_array().unwrap();
+        for range in ranges {
+            assert!(
+                seen.insert(range["ranges"][0]["start"].as_u64().unwrap()),
+                "repeated page: {read}"
+            );
+        }
+        pages += 1;
+        match item["nextProvenanceOffset"].as_u64() {
+            Some(next) => {
+                assert!(next as usize > offset);
+                offset = next as usize;
+            }
+            None => break,
+        }
+    }
+    assert!(pages > 1);
+    let (plain, _) = evidence
+        .read(&f.state, None, &HashSet::new(), &[id], false)
+        .unwrap();
+    assert!(plain["items"][0]["provenance"].is_null());
+}

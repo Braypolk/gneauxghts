@@ -95,43 +95,6 @@ impl CurrentContentAccess<'_> {
         self.with_integrity_tracking(|| activity::read(self, after, before, offset, limit))
     }
 
-    pub(crate) fn provenance_page(
-        &self,
-        note_id: &NoteIdentity,
-        offset: usize,
-    ) -> Result<
-        Option<(
-            provenance::CurrentContentProvenance,
-            Vec<RevisionCitation>,
-            Option<usize>,
-        )>,
-        HistoryError,
-    > {
-        self.with_integrity_tracking(|| {
-            self.finalize_evidence_target(note_id)?;
-            let Some(read) = provenance::read_with_version(self, note_id)? else {
-                return Ok(None);
-            };
-            let mut current = read.current.clone();
-            let total = current.body.len() + current.properties.len();
-            let next = (total > offset.saturating_add(30)).then(|| offset.saturating_add(30));
-            let body_len = current.body.len();
-            current.body = current.body.into_iter().skip(offset).take(30).collect();
-            current.properties = current
-                .properties
-                .into_iter()
-                .skip(offset.saturating_sub(body_len))
-                .take(30 - current.body.len())
-                .collect();
-            let citations = activity::provenance_citations(self, &current)?;
-            if !read.is_current(self)? {
-                return Ok(None);
-            }
-            Ok(Some((current, citations, next)))
-        })
-    }
-
-    #[allow(dead_code)] // Unpaged domain projection; chat uses provenance_page.
     pub(crate) fn provenance(
         &self,
         note_id: &NoteIdentity,

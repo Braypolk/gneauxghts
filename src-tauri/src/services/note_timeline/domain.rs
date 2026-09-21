@@ -416,7 +416,7 @@ impl RevisionTimeEvidence {
         matches!(self, Self::EditingWindow { .. }).then_some(self)
     }
 
-    pub(super) fn bounds(self) -> (u64, u64) {
+    pub(crate) fn bounds(self) -> (u64, u64) {
         match self {
             Self::EditingWindow {
                 min_wall_millis,
@@ -427,7 +427,7 @@ impl RevisionTimeEvidence {
         }
     }
 
-    pub(super) fn uncertain(self) -> bool {
+    pub(crate) fn uncertain(self) -> bool {
         matches!(
             self,
             Self::EditingWindow {
@@ -437,7 +437,7 @@ impl RevisionTimeEvidence {
         )
     }
 
-    pub(super) fn overlaps(self, start: u64, end: u64) -> bool {
+    pub(crate) fn overlaps(self, start: u64, end: u64) -> bool {
         if start >= end {
             return false;
         }

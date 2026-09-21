@@ -28,6 +28,22 @@ function envelope(
 }
 
 describe('agent event reducer', () => {
+  it('retains context diagnostics without displaying them as answer content', () => {
+    const before = initialAgentEventState('Answer');
+    const after = reduceAgentEvent(before, envelope(1, {
+      type: 'contextMeasured', details: { inputBytes: 10000, mode: 'measurement_only' }
+    }));
+    expect(after.parts).toEqual(before.parts);
+    expect(after.sequence).toBe(1);
+  });
+  it('keeps research outcome diagnostics out of answer content', () => {
+    const before = initialAgentEventState('Answer');
+    const after = reduceAgentEvent(before, envelope(1, {
+      type: 'researchCompleted', details: { stage: 'selection', reason: 'unread_selection', readPassages: 4 }
+    }));
+    expect(after.parts).toEqual(before.parts);
+    expect(after.sequence).toBe(1);
+  });
   it('upserts tool lifecycle and ignores duplicate sequence numbers', () => {
     const running = reduceAgentEvent(
       initialAgentEventState('answer'),

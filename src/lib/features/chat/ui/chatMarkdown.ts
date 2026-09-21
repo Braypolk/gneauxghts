@@ -68,6 +68,8 @@ function matchingNoteCitation(
     : '';
   return citations.find((citation): citation is Extract<ChatCitation, { kind: 'note' }> => {
     if (citation.kind !== 'note') return false;
+    if (destination?.startsWith('source:')) return false;
+    if (destination?.startsWith('passage:')) return citation.passage?.id === destination.slice('passage:'.length);
     if (destination?.startsWith('revision:')) return citation.revision?.revisionId === destination.slice('revision:'.length);
     if (citation.revision) return false;
     const names = noteReferenceNames(citation);
@@ -151,7 +153,17 @@ function installNoteCitationLinkRule(markdown: any) {
       while (state.src[destinationStart] === ' ' || state.src[destinationStart] === '\t') {
         destinationStart += 1;
       }
+      // Model references stay inert until ChatService replaces them with validated destinations.
+      if (/^S[0-9]/.test(label) || label === 'citation unavailable') {
+        if (!silent) {
+          const token = state.push('text', '', 0);
+          token.content = state.src.slice(start, labelEnd + 1);
+        }
+        state.pos = labelEnd + 1;
+        return true;
+      }
       const hasDestination = state.src[destinationStart] === '(';
+      if (!hasDestination && state.src[destinationStart] === '[') return false;
       const destinationEnd = hasDestination
         ? state.src.indexOf(')', destinationStart + 1)
         : -1;
@@ -161,7 +173,15 @@ function installNoteCitationLinkRule(markdown: any) {
         : undefined;
       const citations = (state.env?.citations ?? []) as ChatCitation[];
       const citation = matchingNoteCitation(citations, label, destination);
-      if (!citation) return false;
+      if (!citation) {
+        if (!destination || !/^(passage|source):/.test(destination)) return false;
+        if (!silent) {
+          const token = state.push('text', '', 0);
+          token.content = '[citation unavailable]';
+        }
+        state.pos = destinationEnd + 1;
+        return true;
+      }
 
       if (!silent) {
         const token = state.push('chat_note_citation_link', 'button', 0);
@@ -285,7 +305,8 @@ function createChatMarkdown() {
       citation: Extract<ChatCitation, { kind: 'note' }>;
       label: string;
     };
-    return `<button type="button" class="gn-markdown-wikilink" data-chat-note-citation-id="${markdown.utils.escapeHtml(citation.id)}">${markdown.utils.escapeHtml(label)}</button>`;
+    const displayLabel = citation.passage && /^Source \d+$/.test(label) ? citation.label : label;
+    return `<button type="button" class="gn-markdown-wikilink" data-chat-note-citation-id="${markdown.utils.escapeHtml(citation.id)}">${markdown.utils.escapeHtml(displayLabel)}</button>`;
   };
   markdown.renderer.rules.chat_task_checkbox = (tokens: any[], index: number) => {
     const checked = Boolean(tokens[index].meta?.checked);

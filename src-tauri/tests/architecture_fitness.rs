@@ -981,19 +981,29 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
 fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
     let tools = repository_file("src-tauri/src/agent_tools.rs");
     let history_tool = repository_file("src-tauri/src/agent_tools/current_history.rs");
-    assert_contains_all(&tools, &[".tool(CurrentNoteHistoryTool(self.clone()))"]);
     assert_contains_all(
-        &history_tool,
+        &tools,
         &[
-            "current_content(scope)",
-            ".provenance_page(",
+            ".tool(SearchEvidenceTool(self.clone()))",
+            ".tool(ReadEvidenceTool(self.clone()))",
+            ".tool(ResearchNotesTool(self.clone()))",
+        ],
+    );
+    let evidence = repository_file("src-tauri/src/services/evidence.rs");
+    assert_contains_all(
+        &evidence,
+        &[
+            ".current_content(AllowedScope::policy(",
+            ".provenance(",
             ".activity(",
-            "current_history_scope",
+            "validate_citation",
         ],
     );
     for source in [
         &tools,
         &history_tool,
+        &evidence,
+        &repository_file("src-tauri/src/agent_tools/research.rs"),
         &repository_file("src-tauri/src/chat.rs"),
     ] {
         assert_contains_none(

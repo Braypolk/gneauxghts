@@ -3,10 +3,11 @@ import { tmpdir } from 'node:os';
 import { basename, dirname, join } from 'node:path';
 import type { Capabilities, Options } from '@wdio/types';
 import { startVite, stopVite } from './support/viteServer';
-import { nativeE2EBinary } from './support/nativeE2EBinary.mjs';
+import { nativeE2EBinary, nativeE2EPorts } from './support/nativeE2EBinary.mjs';
 
 type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunnerCapabilities;
 
+const ports = nativeE2EPorts();
 const scaleRun = process.env.GNEAUXGHTS_RELEASE_SCALE_RUN;
 const optimized = Boolean(scaleRun) || process.env.GNEAUXGHTS_E2E_OPTIMIZED === '1';
 const profile = optimized ? 'release' : 'debug';
@@ -52,7 +53,7 @@ export const config: TestrunnerConfig = {
       driverProvider: 'embedded',
       captureBackendLogs: Boolean(scaleRun),
       captureFrontendLogs: Boolean(scaleRun),
-      embeddedPort: 4445,
+      embeddedPort: ports.driver,
       appArgs: [
         '--e2e-app-data-root',
         appDataRoot,
@@ -73,7 +74,7 @@ export const config: TestrunnerConfig = {
   mochaOpts: { ui: 'bdd', timeout: scaleRun ? 900_000 : 90_000 },
   async onPrepare() {
     nativeE2EBinary(profile, application);
-    await startVite(optimized ? 'native-preview' : 'native', 1430);
+    await startVite(optimized ? 'native-preview' : 'native', ports.dev);
   },
   async onComplete() {
     await stopVite();

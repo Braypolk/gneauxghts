@@ -1164,6 +1164,9 @@ fn collect_refresh_updates(
 }
 
 impl IndexedNote {
+    pub(crate) fn canonical_digest(&self) -> &str {
+        &self.canonical_hash
+    }
     pub(crate) fn signature(&self) -> &FileSignature {
         &self.signature
     }
@@ -1694,7 +1697,7 @@ fn parse_heading(line: &str) -> Option<String> {
     Some(heading.to_string())
 }
 
-fn parse_task_line(line: &str) -> Option<(bool, String, usize)> {
+pub(crate) fn parse_task_line(line: &str) -> Option<(bool, String, usize)> {
     let indentation_width = indentation_width(line);
     let trimmed = line.trim_start();
     let rest = trimmed
@@ -1800,6 +1803,47 @@ mod tests {
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
     use std::{collections::HashMap, fs};
+
+    // AppState resolves process-wide startup preferences even when a test only
+    // exercises indexing. Keep every path disposable and hold the environment
+    // guard until background work, state handles, and temporary files are gone.
+    struct IndexTestFixture {
+        state: AppState,
+        notes: TestDir,
+        _data: TestDir,
+        _guard: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl IndexTestFixture {
+        fn new(label: &str) -> Self {
+            let guard = crate::test_support::lock_test_env();
+            let data = TestDir::new(&format!("{label}-data"));
+            let notes = TestDir::new(label);
+            crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+            crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+            let state = AppState::new(
+                crate::semantic::SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .expect("construct isolated app state");
+            assert_eq!(state.running_vault().root(), notes.path());
+            Self {
+                state,
+                notes,
+                _data: data,
+                _guard: guard,
+            }
+        }
+    }
+
+    impl Drop for IndexTestFixture {
+        fn drop(&mut self) {
+            // Also join the worker during panic unwinding, before removing its
+            // vault or letting another fixture change the startup preferences.
+            let _ = self.state.stop_rebuildable_projection_work();
+            let _ = crate::state::set_notes_root_override(None);
+        }
+    }
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -1955,17 +1999,12 @@ gneauxghts:
 
     #[test]
     fn prewarm_notes_index_populates_in_memory_map_and_warms_state() {
-        use crate::semantic::SemanticState;
-
-        let temp = TestDir::new("index-prewarm-warms");
+        let fixture = IndexTestFixture::new("index-prewarm-warms");
+        let temp = &fixture.notes;
+        let state = &fixture.state;
         fs::write(temp.path().join("Alpha.md"), "# Alpha\n\nBody").expect("write alpha");
         fs::write(temp.path().join("Beta.md"), "# Beta\n\nBody").expect("write beta");
 
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
         assert!(!state.has_warm_notes_index(), "starts cold");
 
         state
@@ -1980,17 +2019,11 @@ gneauxghts:
 
     #[test]
     fn background_queue_yields_to_foreground_then_drains() {
-        use crate::semantic::SemanticState;
-
-        let temp = TestDir::new("index-bg-queue-yields");
+        let fixture = IndexTestFixture::new("index-bg-queue-yields");
+        let temp = &fixture.notes;
+        let state = &fixture.state;
         let note_path = temp.path().join("Solo.md");
         fs::write(&note_path, "# Solo\n\nBody").expect("write solo");
-
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
 
         // Hold a foreground guard, then push the note's payload through
         // the prewarm — which enqueues it to the background queue. The
@@ -2030,13 +2063,8 @@ gneauxghts:
 
     #[test]
     fn foreground_guard_marks_state_busy_until_dropped() {
-        use crate::semantic::SemanticState;
-
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
+        let fixture = IndexTestFixture::new("index-foreground-guard");
+        let state = &fixture.state;
         assert!(!state.is_foreground_busy(), "starts idle");
 
         let outer = state.foreground_guard();
@@ -2053,16 +2081,10 @@ gneauxghts:
 
     #[test]
     fn ensure_interactive_index_skips_full_scan_after_cold_start() {
-        use crate::semantic::SemanticState;
-
-        let temp = TestDir::new("index-skip-full-scan");
+        let fixture = IndexTestFixture::new("index-skip-full-scan");
+        let temp = &fixture.notes;
+        let state = &fixture.state;
         fs::write(temp.path().join("First.md"), "# First\n\nBody").expect("write first");
-
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
 
         // First call is the cold start: this is allowed to do a full scan.
         state

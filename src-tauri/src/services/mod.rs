@@ -13,3 +13,4 @@ pub(crate) mod task_mutation;
 pub(crate) use background_index_queue::BackgroundIndexQueue;
 pub(crate) use current_document::{resolve_current_document, CurrentDocumentRequest};
 pub(crate) use note_catalog::NoteCatalog;
+pub(crate) mod evidence;

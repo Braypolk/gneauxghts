@@ -6,6 +6,21 @@ import {
 } from './chatMarkdown';
 
 describe('chat Markdown', () => {
+  it('keeps source-first quotations literal while rendering their app-built link', () => {
+    const quote = '[S99](https://example.com) [[Other note]] <img> & café `code`.';
+    const escaped = quote.replace(/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g, '\\$&');
+    const html = renderChatMarkdown(`> ${escaped}\n\n[Source 1](passage:valid)`, [{
+      id: 'source-1', kind: 'note', label: 'Actual note', noteId: 'note-1', notePath: 'Actual.md', sectionLabel: null, startLine: null, excerpt: quote,
+      passage: { id: 'valid', noteId: 'note-1', contentHash: 'hash', location: 'body', start: 0, end: quote.length, excerpt: quote, revisions: [] }
+    }]);
+    expect(html).toContain('data-chat-note-citation-id="source-1"');
+    expect(html).toContain('[S99](https://example.com) [[Other note]] &lt;img&gt; &amp; café `code`.');
+    expect(html).not.toContain('href="https://example.com');
+    expect(html).not.toContain('data-wikilink-target');
+    expect(html).not.toContain('<img');
+    expect(html).not.toContain('<code>');
+  });
+
   it('renders the safe note dialect', () => {
     const html = renderChatMarkdown([
       '# Heading',
@@ -168,4 +183,36 @@ it('binds revision links to exact evidence instead of the first citation for a n
   expect(html).toContain('data-chat-note-citation-id="revision:new"');
   const unbacked = renderChatMarkdown('[Plan](revision:unknown)', citations);
   expect(unbacked).not.toContain('data-chat-note-citation-id=');
+});
+
+it('keeps unvalidated model references inert even when a note shares the reference name', () => {
+  const citations = [{ id: 'note:s1', kind: 'note' as const, label: 'S1', noteId: 's1', notePath: 'S1.md',
+    sectionLabel: null, startLine: null, excerpt: 'unrelated note' }];
+  const html = renderChatMarkdown('Pending [S1].\n\n[S1]: https://example.com/redirect', citations);
+  expect(html).not.toContain('data-chat-note-citation-id=');
+  expect(html).not.toContain('href=');
+  expect(html).toContain('[S1]');
+});
+
+it('never falls back to a same-title note or external navigation for unknown passage references', () => {
+  const citations = [{ id: 'note:plan', kind: 'note' as const, label: 'Plan', noteId: 'plan', notePath: 'Plan.md',
+    sectionLabel: null, startLine: null, excerpt: 'unrelated' }];
+  for (const input of ['[Plan](passage:shortened)', '[Plan](source:S1)', '[Plan][missing]\n\n[missing]: passage:shortened']) {
+    const html = renderChatMarkdown(input, citations);
+    expect(html).not.toContain('data-chat-note-citation-id=');
+    expect(html).not.toContain('href=');
+  }
+});
+
+it('binds app-constructed links to exact passage identities and leaves stale links unavailable', () => {
+  const citations = [{ id: 'passage:note:hash', kind: 'note' as const, label: 'Title with ] punctuation',
+    noteId: 'note', notePath: 'Note.md', sectionLabel: null, startLine: null, excerpt: 'Evidence',
+    passage: { id: 'durable-one', noteId: 'note', contentHash: 'hash', location: 'body', start: 0, end: 8, excerpt: 'Evidence', revisions: [] } }];
+  const content = '[Source 1](passage:durable-one)';
+  expect(renderChatMarkdown(content, citations)).toContain('data-chat-note-citation-id="passage:note:hash"');
+  expect(renderChatMarkdown(content, citations)).toContain('>Title with ] punctuation</button>');
+  const stale = renderChatMarkdown(content, []);
+  expect(stale).not.toContain('href=');
+  expect(stale).not.toContain('data-chat-note-citation-id=');
+  expect(stale).toContain('[citation unavailable]');
 });

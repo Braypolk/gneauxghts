@@ -1242,9 +1242,7 @@ mod tests {
             let timeline = state.note_timeline();
             let access = timeline.current_content(AllowedScope::vault());
             let error = match reader {
-                "provenance" => access
-                    .provenance_page(&NoteIdentity::new(&f.note_id), 0)
-                    .err(),
+                "provenance" => access.provenance(&NoteIdentity::new(&f.note_id)).err(),
                 "activity" => access.activity(0, u64::MAX, 0, 30).err(),
                 "citations" => access
                     .current_citations(&[RevisionCitation {

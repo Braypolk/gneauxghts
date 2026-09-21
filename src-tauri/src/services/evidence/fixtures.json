@@ -1,0 +1,129 @@
+{
+  "notes": [
+    {
+      "id": "orion",
+      "title": "Orion",
+      "body": "# Launch\n\nMaya Chen approved the Orion launch checklist.\n\nThe release remains planned for Friday."
+    },
+    {
+      "id": "meetings",
+      "title": "Meetings",
+      "body": "Discussed database performance with Maya Chen.\n\nOrion retrospective: reduced query latency."
+    },
+    {
+      "id": "private",
+      "title": "Restricted",
+      "body": "Maya Chen confidential compensation decision."
+    },
+    {
+      "id": "unicode",
+      "title": "Café",
+      "body": "Café ☕ launch review with Zoë.\n\n安全な現在の情報。"
+    }
+  ],
+  "questions": [
+    {
+      "query": "Maya Chen",
+      "expected": [
+        "orion",
+        "meetings"
+      ],
+      "expectedPassages": [
+        {
+          "id": "orion:primary",
+          "note": "orion",
+          "text": "Maya Chen approved the Orion launch checklist."
+        },
+        {
+          "id": "meetings:primary",
+          "note": "meetings",
+          "text": "Discussed database performance with Maya Chen."
+        }
+      ]
+    },
+    {
+      "query": "\"launch checklist\"",
+      "expected": [
+        "orion"
+      ],
+      "expectedPassages": [
+        {
+          "id": "orion:primary",
+          "note": "orion",
+          "text": "Maya Chen approved the Orion launch checklist."
+        }
+      ]
+    },
+    {
+      "query": "Orion",
+      "expected": [
+        "orion",
+        "meetings"
+      ],
+      "expectedPassages": [
+        {
+          "id": "orion:primary",
+          "note": "orion",
+          "text": "Maya Chen approved the Orion launch checklist."
+        },
+        {
+          "id": "meetings:retrospective",
+          "note": "meetings",
+          "text": "Orion retrospective: reduced query latency."
+        }
+      ]
+    },
+    {
+      "query": "Café",
+      "expected": [
+        "unicode"
+      ],
+      "expectedPassages": [
+        {
+          "id": "unicode:primary",
+          "note": "unicode",
+          "text": "Café ☕ launch review with Zoë."
+        }
+      ]
+    },
+    {
+      "query": "nonexistentquasar",
+      "expected": [],
+      "expectedPassages": []
+    }
+  ],
+  "semanticQuestions": [
+    {
+      "query": "Who signed off on the release preparation?",
+      "expected": [
+        "orion"
+      ],
+      "reformulations": [
+        "\"launch checklist\""
+      ],
+      "expectedPassages": [
+        {
+          "id": "orion:primary",
+          "note": "orion",
+          "text": "Maya Chen approved the Orion launch checklist."
+        }
+      ]
+    },
+    {
+      "query": "What got faster after the retrospective?",
+      "expected": [
+        "meetings"
+      ],
+      "reformulations": [
+        "\"query latency\""
+      ],
+      "expectedPassages": [
+        {
+          "id": "meetings:retrospective",
+          "note": "meetings",
+          "text": "Orion retrospective: reduced query latency."
+        }
+      ]
+    }
+  ]
+}

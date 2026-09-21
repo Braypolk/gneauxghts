@@ -54,6 +54,10 @@ rig-core = { version = "=0.41.0", default-features = false, features = ["derive"
 rig-agent = { version = "=0.41.0", default-features = false }
 thiserror = "2"
 url = "2"
+regex = "1"
+chrono = { version = "0.4", features = ["clock", "serde"] }
+chrono-tz = "0.10"
+iana-time-zone = "0.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "3.7"

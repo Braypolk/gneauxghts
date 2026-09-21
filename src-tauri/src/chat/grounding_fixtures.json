@@ -1,0 +1,54 @@
+[
+  {
+    "id": "harbor_missing_completion",
+    "question": "As of September 10, is Harbor approved to launch on September 12? Explain which decision controls and whether the release condition has been met.",
+    "sources": [
+      {"title": "Harbor decision September 1", "excerpt": "Harbor launch decision on September 1: approve September 12 release with route A.", "citation": "[Harbor decision September 1](passage:harbor-old)"},
+      {"title": "Harbor decision September 8", "excerpt": "Harbor launch decision on September 8 supersedes the September 1 decision. Hold the release; route A failed recovery testing. Resume only after route B passes a witnessed recovery drill. No drill completion is recorded here.", "citation": "[Harbor decision September 8](passage:harbor-current)"},
+      {"title": "Harbor recovery plan", "excerpt": "September 9 plan: schedule the witnessed route B recovery drill for September 11. Scheduling is not evidence that the drill passed.", "citation": "[Harbor recovery plan](passage:harbor-plan)"}
+    ],
+    "expected": "State September 8 hold is the latest recorded controlling decision; no documented release approval supersedes it. Whether route B passed is not established. Must not assert that the condition was unmet, the drill had not occurred, or the event could not have happened early merely because of its scheduled date."
+  },
+  {
+    "id": "overdue_missing_report",
+    "question": "Today is September 13. Did the Juniper recovery drill fail to happen by its September 11 deadline?",
+    "sources": [
+      {"title": "Juniper schedule", "excerpt": "September 9: Juniper recovery drill scheduled for September 11. The available project record contains this schedule and no subsequent outcome report.", "citation": "[Juniper schedule](passage:juniper-schedule)"}
+    ],
+    "expected": "Cannot determine whether the drill happened or the deadline was missed. The date passing and absent report prove neither occurrence nor nonoccurrence. State the documentary gap without asserting failure."
+  },
+  {
+    "id": "explicit_success",
+    "question": "Was the Cedar recovery condition met, and on what date?",
+    "sources": [
+      {"title": "Cedar release condition", "excerpt": "September 8 decision: Cedar may resume only after route B passes a witnessed recovery drill.", "citation": "[Cedar release condition](passage:cedar-condition)"},
+      {"title": "Cedar signed outcome", "excerpt": "Witnessed outcome: route B passed the Cedar recovery drill on September 11 at 14:00. Mira and Evan signed the result. This note was edited on September 13 to correct a spelling error.", "citation": "[Cedar signed outcome](passage:cedar-outcome)"}
+    ],
+    "expected": "Directly state the recorded condition was met on September 11 (14:00 optional), cite the outcome, and do not substitute September 13 or say it is unknown."
+  },
+  {
+    "id": "explicit_failure",
+    "question": "Did the Elm recovery drill pass? Can we treat its recovery condition as met?",
+    "sources": [
+      {"title": "Elm witnessed report", "excerpt": "September 11 witnessed recovery report: Elm route B failed the drill because the replica could not recover. Recovery condition NOT MET. No successful retry is recorded in this report.", "citation": "[Elm witnessed report](passage:elm-failure)"}
+    ],
+    "expected": "Clearly state the documented drill failed and the recorded condition is not met; missing later retry is only a limit on later state, not grounds to hedge the explicit failed result."
+  },
+  {
+    "id": "restricted_absence",
+    "question": "Did the board cancel Project Hush? Give the cancellation date if the accessible evidence establishes it.",
+    "sources": [
+      {"title": "Hush planning", "excerpt": "Project Hush is under review. Next board meeting is scheduled for September 15. This planning note records no board resolution or cancellation. Coverage: the supplied accessible notes exclude the restricted board minutes.", "citation": "[Hush planning](passage:hush-plan)"}
+    ],
+    "expected": "Neither canceled nor not canceled is established. No cancellation date may be supplied. Explain the accessible-source limit without fabricating what restricted minutes contain."
+  },
+  {
+    "id": "conflicting_outcomes",
+    "question": "Did the Birch witnessed recovery drill pass?",
+    "sources": [
+      {"title": "Birch witness A", "excerpt": "September 11 at 14:00, witnessed Birch drill B-4: PASS. Signed Avery. This report has no correction or supersession marker.", "citation": "[Birch witness A](passage:birch-a)"},
+      {"title": "Birch witness B", "excerpt": "September 11 at 14:00, witnessed Birch drill B-4: FAIL. Signed Rowan. This report has no correction or supersession marker.", "citation": "[Birch witness B](passage:birch-b)"}
+    ],
+    "expected": "Surface the contradictory reports for the same drill and time, cite both, and do not choose a definitive outcome or invent a later correction."
+  }
+]

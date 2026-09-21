@@ -17,6 +17,12 @@ applying the running vault, including a canonical alias, clears the pending
 restart. A failed selection leaves the running vault editable. A newly started
 process resolves and binds only the persisted selection.
 
+App-state schema initialization acquires SQLite's write reservation before
+inspecting or changing the schema, including when independent connections open
+the same vault concurrently. Bootstrap and migrations commit together; failure
+rolls them back without removing existing metadata or publishing an incomplete
+storage handle. Contention waits within the connection's bounded busy timeout.
+
 ### Restart releases one running vault before relaunch
 
 Restart immediately makes the workspace inert, then joins the existing pending
@@ -409,7 +415,9 @@ time never
 becomes introduction or last-change evidence.
 
 Unique correspondence between adjacent retained states preserves moved
-content. Ambiguous correspondence and text retyped after a deletion visible in retained
+content. Adding or removing a final line separator preserves the unchanged
+line's content lineage; an appended paragraph cannot borrow that line's dates.
+Ambiguous correspondence and text retyped after a deletion visible in retained
 states receive new introduction evidence; an unchanged window endpoint cannot
 prove that text was retyped inside the window. Authored word edits, including Markdown delimiters,
 update affected ranges while unchanged words retain their evidence. Markdown
@@ -426,13 +434,55 @@ predecessor order and ignores moves that preserve the filename title.
 
 Activity and Current-Content Provenance enter chat only on demand. They reapply
 vault access, explicit turn grants, global exclusions, current eligibility, and
-canonical-byte checks. Activity answers carry current excerpts, revision counts,
-times, and Mutation Sources; counts mean finalized retained transitions rather
-than saves. Ordinary intervals match half-open activity queries by overlap and
+canonical-byte checks. Activity answers carry only surviving modified ranges, their authoritative
+times, and Mutation Sources. Surrounding current context is labeled separately
+and never presented as activity in the requested period. Ordinary intervals match half-open activity queries by overlap and
 uncertain clock-discontinuous evidence is marked explicitly. Removed prose and
 historical labels stay private. Explicit provenance/citation or temporal activity
 requests finalize only the eligible notes needed as evidence; routine chat loading and health polling do not.
-Revision Citations retain exact Note and Revision Identity and open that revision
+
+Task activity includes current checkbox status and its retained status-change
+evidence, separately from the matched word's provenance. Corresponding task
+wording edits and equivalent `[x]`/`[X]` spellings preserve status timing. Whole-file
+modification times never date task completion. Baselines leave earlier status
+timing unknown; restores retain selected status lineage and identify restoration
+instead of inventing a new completion. A later real status change supersedes the
+restore. Windows crossing a requested period boundary remain uncertain. These
+facts describe recorded checkbox status, not independent proof of real-world work.
+Model citation references bind only to exact sources delivered to the originating
+answer. The app constructs durable destinations; unknown references are unavailable
+and never resolved by title or fuzzy matching. Worker references are remapped on
+parent admission. Unvalidated streaming markers remain inert.
+Source-first preview is explicitly selected per turn. Only clauses from exact
+admitted read excerpts can be rendered, as literal quotations with app-built
+links; model prose and selection JSON never appear as streaming or failed partial
+answers. Invalid selections fail rather than falling back to synthesis. Related
+selections explicitly do not confirm the answer, and empty or incomplete selection
+does not establish factual absence. The preview has search/read tools only and
+preserves current scope and source validation.
+Plain date-based note inventories may finish through an app-owned typed result
+in either ordinary chat or source-first preview. They show exact surviving
+excerpts and recorded activity, with app-built links, without model selection
+JSON. Inventory proof admission does not consume model evidence allowance;
+separate result-byte, row and retrieval-work bounds remain enforced. One validated
+representative passage establishes each displayed note's membership. Its date is
+an example, not an exhaustive history; surrounding current context is labeled
+separately from changed text. Clock uncertainty alone does not establish that
+recorded bounds cross the requested date boundary.
+Distinct notes are counted once per page; incomplete results and uncertain
+timing are explicit. Baselines alone are not edits and mutation source does not
+prove personal authorship. Calendar arithmetic uses one named-timezone run
+anchor; a follow-up uses the previous period for the same date role, with fresh
+retrieval. A continuation is invalidated by scope, content or provenance changes.
+Query metadata may carry request meaning between turns, never old inventory
+counts or evidence facts. Occurrence, deadlines, adoption and inferred task
+status remain semantic judgments unless independently supported by evidence.
+Current-passage citations validate stable identity, content hash and exact
+current range before opening and highlighting the current note. Renames resolve
+to the current location; stale or ambiguous passages are unavailable. Search
+cursors bind scope and canonical versions, and passage provenance pages use a
+separate continuation. Baseline known-since dates never imply creation or work.
+Legacy Revision Citations retain exact Note and Revision Identity and open that revision
 in global History Mode without navigating the invoking pane.
 Citation navigation seeks bounded surrounding context directly, independent of
 how many newer records exist. Newer/older context pages replace at most 31
@@ -441,9 +491,26 @@ context but never transfer the target to the invoking pane's note. Obsolete
 entry work stops at asynchronous boundaries, and failed-entry or exit workspace
 restoration settles before a newer entry captures that workspace. Cleared, purged,
 missing, forgotten, excluded, or no-longer-current citation evidence is withheld
-when results or conversations are delivered, including branches. Earlier temporal
+when results or conversations are delivered, including branches. Explicit source
+access uses the originating run grants with current exclusions. Earlier note-based
 answers remain visible in their transcript but are omitted from later model
-context and compaction; chat must obtain fresh current evidence.
+context and compaction; source-free dialogue is preserved. Chat must obtain fresh
+current evidence. Automatic note context uses canonical bytes, never a pending
+proposal snapshot. Revalidation before each model call and final delivery stops
+an answer if admitted bytes or scoped search versions change.
+
+A research worker receives only its question, resolved scope/period, compact
+eligible references and search/read tools. It shares parent budgets and
+cancellation, cannot delegate or mutate notes, and cannot change provider routing.
+Only backend-validated selected passages and gap codes return to the parent.
+A standalone JSON fence may be removed before strict selection validation;
+surrounding prose, unknown fields, invalid gap codes and unread IDs remain invalid.
+An empty resolved scope returns without worker inference or broader access.
+Counter-only terminal diagnostics distinguish failure, empty scope, selected IDs
+and actually delivered passages; neither worker output nor private identifiers
+enter those events. A completed parent fallback does not prove worker success.
+A period cannot be bypassed through inherited undated evidence. Aggregate token
+exhaustion blocks subsequent model calls in both worker and parent.
 
 ### Interrupted runs preserve partial output
 
@@ -499,3 +566,24 @@ Receiving a proposal adds it to the pending queue without opening, activating,
 focusing, or repurposing a pane. If its target is already open and clean, review
 content may appear there without changing the active pane. Navigation begins
 only when the user explicitly chooses to review the target in an editor.
+
+Opt-in context measurements observe the assembled completion request without
+mutating it or changing admission limits. Diagnostic events carry counters and
+operational identities, never prompt, note, credential, tool-result or reasoning
+text. Approximate counts cannot authorize admission; absent provider usage and
+loaded capacity remain unknown. Every observed attempt closes with either usage
+or an explicit unreported outcome, including cancelled research workers.
+
+
+Each runtime instance uses its own reported input-token baseline for context
+headroom; parent/worker aggregate spending is not context occupancy. Capacity
+must come from a fresh loaded-model observation; unavailable metadata may defer
+retries briefly but cannot reuse an earlier positive capacity. New retained messages receive a
+conservative allowance; changed instructions/tools/model/history invalidate the
+baseline. Unknown usage or capacity retains existing limits. Near capacity,
+pending tools are skipped and at most one final model request retains evidence,
+citation identities and tool-call/result pairs with tools disabled and bounded
+output. Recent user and source-free assistant messages are not individually
+clipped to fit; existing recent-message and compaction rules still apply. The app
+never drops history silently to make a request fit. Cancellation,
+permissions, scope and final evidence-currentness checks remain authoritative.

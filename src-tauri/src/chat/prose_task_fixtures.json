@@ -1,0 +1,180 @@
+[
+  {
+    "id": "prose_mixed_actions",
+    "question": "What tasks did I do this week? This week means September 7 through September 13, 2026, in America/Denver.",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "My journal, September 8: I sent the renewal proposal to Maya. I spent an hour investigating the migration; it remains unfinished. I need to book the venue. I discussed a possible launch with Sam; no decision or launch outcome is recorded.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_mixed_actions-0)"
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "My journal, September 9: Maya delivered the customer demo. I reviewed the draft agenda, but have not sent it.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_mixed_actions-1)"
+      }
+    ],
+    "expected": "Report sending proposal and reviewing draft as completed actions; investigating migration and discussing possible launch as activity, without claiming migration/launch/agenda delivery complete. Do not count booking venue as done. Maya delivered demo, not user. Do not require checkboxes."
+  },
+  {
+    "id": "prose_completed_only",
+    "question": "Which tasks did I complete this week (September 7\u201313, 2026)?",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "September 8, my work log: I diagnosed the upload bug and wrote the fix. Testing is still in progress, and the fix has not shipped. I plan to deploy on Friday.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_completed_only-0)"
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "September 9, my work log: Invoice 42 paid; payment receipt filed by me. Vendor onboarding: waiting on approval.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_completed_only-1)"
+      }
+    ],
+    "expected": "Count diagnosing bug, writing fix, and filing receipt/payment as recorded completed actions. Do not claim shipped fix, completed testing, deployment, or completed onboarding. Avoid overstating the actor of payment itself; the user clearly filed receipt."
+  },
+  {
+    "id": "prose_undated_recording",
+    "question": "What tasks did I do this week? This week means September 7 through September 13, 2026, in America/Denver.",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "Sent the contract to Nia. Resolved the cache incident. No event dates or authored journal dates appear in these sentences.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_undated_recording-0)",
+        "provenance": {
+          "introducedAt": {
+            "atMillis": 1788976800000,
+            "source": "editor",
+            "timeEvidence": {
+              "kind": "point",
+              "atMillis": 1788976800000
+            }
+          },
+          "lastChangedAt": {
+            "atMillis": 1788976800000,
+            "source": "editor"
+          },
+          "knownSince": {
+            "atMillis": 1788976800000
+          }
+        }
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "I need to prepare the audit pack. This note contains no completion report for that action.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_undated_recording-1)",
+        "provenance": {
+          "introducedAt": {
+            "atMillis": 1788976800000,
+            "source": "editor",
+            "timeEvidence": {
+              "kind": "point",
+              "atMillis": 1788976800000
+            }
+          },
+          "lastChangedAt": {
+            "atMillis": 1788976800000,
+            "source": "editor"
+          },
+          "knownSince": {
+            "atMillis": 1788976800000
+          }
+        }
+      }
+    ],
+    "expected": "The two past-tense actions are recorded complete, but timing is unknown; do not count either as definitely done this week from line edit times. Audit preparation is a plan, not completed or proven not to have happened."
+  },
+  {
+    "id": "prose_event_date_over_edit",
+    "question": "What tasks did I do this week? This week means September 7 through September 13, 2026, in America/Denver.",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "September 15 retrospective: I sent the Atlas estimate on September 9. I had already delivered the old brochure on September 4.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_event_date_over_edit-0)"
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "September 8 journal: Yesterday I submitted the travel report. Spelling in this sentence corrected September 15.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_event_date_over_edit-1)"
+      }
+    ],
+    "expected": "Include Atlas estimate September 9 and travel report September 7 despite later recording/edits; exclude September 4 brochure. Resolve yesterday from explicit September 8 journal, not September 15 edit."
+  },
+  {
+    "id": "prose_ambiguous_actor_and_time",
+    "question": "What tasks did I do this week? This week means September 7 through September 13, 2026, in America/Denver.",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "Yesterday sent the revised quote. No dated heading or author attribution is available. The text was first captured September 9 and edited September 15.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_ambiguous_actor_and_time-0)"
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "September 10 team summary: the pilot was delivered. The summary does not identify who delivered it.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_ambiguous_actor_and_time-1)"
+      }
+    ],
+    "expected": "Do not assign yesterday a calendar date from capture/edit time. First action actor/time uncertain. Pilot recorded delivered September 10 but actor unknown; do not claim user delivered it. No definite personal weekly accomplishment established."
+  },
+  {
+    "id": "prose_negation_conflict",
+    "question": "What tasks did I do this week? This week means September 7 through September 13, 2026, in America/Denver.",
+    "resolvedPeriod": {
+      "after": 1788760800000,
+      "before": 1789365600000,
+      "timezone": "America/Denver"
+    },
+    "sources": [
+      {
+        "title": "Work journal",
+        "excerpt": "My September 9 journal: I did not send the Orion quote; I only drafted it. Vega handover completed by me September 10.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_negation_conflict-0)"
+      },
+      {
+        "title": "Work journal",
+        "excerpt": "My September 11 correction: the earlier Vega completion entry was mistaken. I have not completed the Vega handover; acceptance is still pending.",
+        "task": null,
+        "citation": "[Work journal](passage:prose_negation_conflict-1)"
+      }
+    ],
+    "expected": "Include drafting Orion September 9; not sending Orion or completing Vega. Explicit correction controls the Vega claim. Distinguish incomplete handover from completed draft."
+  }
+]

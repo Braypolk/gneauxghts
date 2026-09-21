@@ -9,9 +9,9 @@ use std::{
     sync::Mutex,
 };
 use tantivy::{
-    collector::TopDocs,
+    collector::{Count, TopDocs},
     doc,
-    query::QueryParser,
+    query::{BooleanQuery, Occur, QueryParser, TermSetQuery},
     schema::{Field, Schema, Value, STORED, STRING, TEXT},
     Index, IndexReader, IndexWriter, TantivyDocument, Term,
 };
@@ -180,6 +180,70 @@ impl LexicalIndex {
             Ok(inner) => inner.signatures.contains_key(&note_path),
             Err(_) => false,
         }
+    }
+
+    pub(crate) fn evidence_is_current(
+        &self,
+        entries: &HashMap<PathBuf, IndexedNote>,
+        ids: &HashSet<String>,
+    ) -> bool {
+        let Ok(inner) = self.inner.lock() else {
+            return false;
+        };
+        entries
+            .iter()
+            .filter(|(_, n)| ids.contains(&n.note_id))
+            .all(|(path, n)| {
+                inner.signatures.get(path.to_string_lossy().as_ref()) == Some(n.signature())
+            })
+    }
+
+    /// Scope is part of the Tantivy query, before the bounded collector runs.
+    /// Return paragraph bodies rather than UI snippets; the evidence owner validates
+    /// their exact correspondence against canonical current Markdown.
+    pub(crate) fn evidence_matches(
+        &self,
+        query_text: &str,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<(Vec<(String, String, String, f32)>, usize), String> {
+        if allowed_ids.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
+        let inner = self.inner.lock().map_err(|_| "Lexical index unavailable")?;
+        let mut parser = QueryParser::for_index(
+            &inner.index,
+            vec![
+                self.fields.title,
+                self.fields.section_label,
+                self.fields.body,
+            ],
+        );
+        parser.set_field_boost(self.fields.title, 2.8);
+        let (text, _) = parser.parse_query_lenient(query_text);
+        let scope = TermSetQuery::new(
+            allowed_ids
+                .iter()
+                .map(|id| Term::from_field_text(self.fields.note_id, id)),
+        );
+        let query = BooleanQuery::new(vec![(Occur::Must, text), (Occur::Must, Box::new(scope))]);
+        let searcher = inner.reader.searcher();
+        let (docs, count) = searcher
+            .search(&query, &(TopDocs::with_limit(limit.max(1)), Count))
+            .map_err(|e| e.to_string())?;
+        let mut results = Vec::new();
+        for (score, address) in docs {
+            let doc = searcher
+                .doc::<TantivyDocument>(address)
+                .map_err(|e| e.to_string())?;
+            results.push((
+                string_value(&doc, self.fields.note_id)?,
+                string_value(&doc, self.fields.body)?,
+                string_value(&doc, self.fields.section_label)?,
+                score,
+            ));
+        }
+        Ok((results, count))
     }
 
     pub(crate) fn search(

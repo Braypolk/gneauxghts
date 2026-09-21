@@ -23,7 +23,10 @@ The Tauri command and event contracts are seams. Frontend modules should not
 reimplement backend persistence policy, and backend modules should not infer
 interactive workspace state that is owned by the frontend. One private command
 worker owns AppState lookup and blocking dispatch; named commands retain their
-typed arguments and domain errors. Substantial domain operations receive concrete
+typed arguments and domain errors. Chat related-note suggestions enter this worker;
+composer typing never runs retrieval on the IPC dispatch thread. Each composer
+keeps at most one suggestion request in flight and coalesces pending edits to
+the latest query. Substantial domain operations receive concrete
 state references, independently of Tauri dispatch.
 
 ## Canonical ownership
@@ -442,13 +445,149 @@ session cannot mistake an older restore for the new result.
 event protocol. `ChatService` retains durable run lifecycle and context
 assembly. Provider and runtime-library types do not cross those seams.
 
-Chat exposes `current_note_history` on demand through the current-content
-capability. Activity and paged provenance carry current excerpts and retained
-revision evidence; full revision reconstruction remains private to History Mode.
-Revision Citations are revalidated at delivery, including conversation branches.
-A durable message marker prevents temporal answers from becoming historical
-prose in later model context or compaction. Citation entry binds History Mode to
-the cited Note Identity and revision independently of the invoking pane.
+`services/evidence.rs` owns current evidence search, ranking, scoped/versioned
+cursors, passage reads and canonical citation validation. `search_evidence` uses
+the existing Tantivy paragraphs and reciprocal-rank fusion with local semantic
+candidates; literal/regex modes inspect exact canonical Markdown. Semantic
+availability and approximate coverage are explicit. Interactive note selection
+uses the compatibility adapter in `services/retrieval.rs`; its metadata date
+filters are distinct from agent surviving-content activity periods.
+
+NoteTimeline remains the sole owner of activity reconstruction and range
+provenance. Evidence consumes its allowed current-content capability and keeps
+only surviving modified ranges, with surrounding current text labeled separately.
+Monday-start local weeks resolve to half-open intervals. Baseline knowledge is
+not an introduction date; Editing Window uncertainty remains intact.
+
+Current-passage citations bind stable note identity, canonical content hash,
+exact UTF-8 coordinates and optional retained revision evidence. Delivery and
+navigation revalidate current bytes and permissions, recovering explicit grants
+from the originating run. The UI opens the current note and focuses the exact,
+unambiguous passage. Legacy Revision Citations still enter History Mode.
+`passage_json` is an additive chat-store migration; canonical Markdown and
+canonical history formats do not change.
+
+`chat/citations.rs` owns ephemeral model references such as `[S1]`. Read tools
+issue these only for delivered passage sources; selected research results receive
+parent references independently of the worker's registry. ChatService constructs
+canonical passage links before terminal persistence/delivery, intersecting the
+registry with currently valid sources. Unknown references become explicit inert
+unavailable text. The UI never guesses a model reference from a note title.
+Transcripts and branches persist durable destinations, never depend on the
+run-local registry, and continue to revalidate on navigation. Link integrity
+is distinct from whether a claim is supported by its cited passage.
+
+The optional `/sources` turn command selects the source-first preview. Its
+composer control edits the existing draft; the saved user message retains the
+choice on retry without another settings or persistence owner. ChatService uses
+a selection-only prompt and search/read tool set, suppresses raw model text, and
+renders validated selections through `chat/source_first.rs`. The existing
+run-local citation registry owns stable clause IDs for exact admitted excerpts.
+Supporting context is not selectable activity. Code escapes source Markdown and
+constructs durable links; source grouping remains a model interpretation.
+Invalid selections fail explicitly without a free-form fallback. Existing scope,
+budget, cancellation and final freshness checks apply.
+
+The evidence service owns a narrow typed note-inventory interpretation and an
+immutable run anchor. Calendar expressions resolve in the named local timezone.
+The structured contract accepts only listing/counting notes by recorded text
+activity; other questions use ordinary evidence search/read. Older query events
+can still decode their date roles, without treating event or deadline dates as
+text activity. Plain activity inventories group current surviving
+provenance by Note Identity and return a typed terminal result through the
+existing runtime. The citation owner renders bounded exact excerpts and recorded
+activity metadata directly, without a final model selection or synthesis call.
+Runtime tool calls are serialized so this terminal result stops subsequent tools.
+Inventories retain scope, cancellation and final source validation. Inventory
+admission is separate from the model evidence allowance: pages have a 50-note
+limit and a conservative 256,000-byte charge covering serialized rows and durable
+sources. Each row keeps one validated representative passage, preferring definite
+then recent timing. The renderer shows one linked title, an example recorded edit,
+and bounded current context explicitly distinguished from edited text. Clock
+uncertainty and actual date-boundary crossing are separate labels. QueryResolved
+inventory diagnostics identify model evidence, inventory, display and retrieval
+bounds and stop reasons.
+Continuation cursors bind normalized bounds, scope, canonical versions and ordered
+provenance; each page reports its own count. QueryResolved events reuse the durable
+run event store. Follow-ups receive only the primary root query's interpretation,
+resolved periods and opaque continuation, never earlier result facts as evidence.
+Nonretryable empty reads report their limiting budget and cannot be repeated.
+One standalone relative calendar phrase in the user's request can restrict the
+tool's period schema and validation; compound or ambiguous phrases are left for
+interpretation. The guard never reads note prose. Invalid interpretations receive
+one correction, then stop. The former experimental general routing and its
+environment flag have been removed.
+
+
+Automatic active/selected/link context uses current canonical bytes. Editing
+reads retain the reviewed proposal working-copy contract. A durable evidence-use
+marker omits note-based answers from subsequent model history and compaction;
+source-free dialogue remains available. Recent user and source-free assistant
+messages retain their full text, subject to the existing recent-message window
+and explicit compaction. Oversized assembled requests fail through context
+admission instead of clipping each message. Old unversioned compactions are ignored.
+Before every model request and final delivery, context versions, search scope
+versions and admitted citations are checked; stale evidence stops the answer.
+Historical UI transcripts are not fresh evidence. Each validation pass assembles
+permissions once, validates each admitted passage identity with all delivered
+provenance proofs, and fingerprints each distinct search scope once. These are
+per-operation reuse rules, never caches across freshness boundaries. Repeated
+payloads still consume the model evidence allowance.
+
+The runtime's `research_notes` worker has a separate prompt/history and only
+search/read tools. It retains the parent's provider/model routing, shares the
+run guard and evidence-byte budget, and returns selected issued/read IDs and gap
+codes. The backend resolves passages; worker prose and intermediate transcripts
+never enter parent context. One worker is allowed, with twelve tool calls and a
+90-second timeout, under the parent call/token/time limits. Period-scoped workers
+must obtain their own temporal candidates. Provider failure remains explicit;
+there is no local-to-hosted fallback.
+
+An empty resolved research scope returns `empty_scope` without starting worker
+inference or widening access. Selection accepts raw JSON or one standalone JSON
+code fence; both undergo the same closed-schema, gap-code and actually-read-ID
+validation. Surrounding prose is rejected. Durable `ResearchCompleted` events
+report fixed stage/outcome/reason codes and counters, including selected versus
+actually delivered passages. They never contain worker text, identifiers, scope
+values or raw provider errors, and do not add user-visible answer parts.
+
+Initial evidence limits are byte-based estimates: 24,000 admitted bytes per run,
+6,000 per read, 480 per preview, and 8 candidates per page (20 maximum).
+Search cursors and per-passage provenance continuation offsets are separate.
+The legacy prompt/history hook has a 128,000-byte admission ceiling; shared measured
+usage has a 400,000-token ceiling and 96 tool calls within fifteen minutes.
+Opt-in `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` wraps the completion model inside the
+runtime seam and observes assembled instructions, messages, tools, documents,
+output schema and provider parameters. ContextMeasured events contain counters
+and runtime/attempt identities only. A bytes/4 baseline is explicitly approximate,
+not eligible for enforcement; media token counts and absent usage remain unknown.
+Configured output limits and independently observed LM Studio loaded capacity are
+reported without inventing an output reserve or substituting advertised capacity.
+The read-only metadata probe is bounded, nonredirecting and nonfatal; its result
+is shared with the usage-driven guard on each local completion attempt. Research forwards these counters but never its
+prose or raw tool content. A pending attempt closes with unknown usage on dropped
+or superseded work. Existing byte admission and cumulative limits remain ceilings.
+
+A separate per-runtime usage context guard uses reported input tokens and observed
+loaded capacity. Parent and research worker baselines are independent. Only new
+retained text is projected (serialized UTF-8 bytes plus message framing), and
+configuration changes, replaced history, media or absent usage invalidate the
+baseline. Each local runtime reuses one metadata HTTP client. Successful loaded
+capacity observations are refreshed on every request, so server reloads can
+change the allowance. Unavailable metadata backs off for 30 seconds for the same
+model; a different model probes immediately. No positive capacity is cached.
+Unknown capacity keeps existing fallback limits. The guard reserves
+4,096 answer/reasoning tokens, a 1,024-token margin, and an 8,192-token allowance
+for another gathering step. Near capacity it skips pending tools, preserves
+history/evidence and sends at most one final request with tools disabled and an
+explicit output cap. If the final reserve cannot fit it stops explicitly. This
+is conservative prevention, not exact tokenization or automatic history trimming.
+Counter-only ContextMeasured finishing events are emitted even with optional
+request diagnostics off; worker events retain their worker identity.
+
+These bounds are implementation defaults, not measured quality guarantees.
+Fixture measurements and unmeasured live-provider questions are recorded in
+[the evaluation report](.scratch/current-evidence/evaluation.md).
 
 The protocol keeps run identity, structured activity, plans, usage,
 cancellation, bounded guardrails, and transient permission requests under

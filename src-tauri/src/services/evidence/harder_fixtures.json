@@ -1,0 +1,402 @@
+{
+  "notes": [
+    {
+      "id": "private",
+      "title": "Restricted decision",
+      "body": "Sealed Project Hush cancellation: the board rejected it on September 3. This is restricted evidence."
+    },
+    {
+      "id": "alias_entry",
+      "title": "Coastal renewal",
+      "body": "The Coastal renewal is tracked under contract C-417. Product names in customer emails are aliases; use the contract identifier to locate the delivery workstream."
+    },
+    {
+      "id": "alias_bridge",
+      "title": "Account key C-417",
+      "body": "Contract C-417 maps to internal delivery stream Juniper. The old Cypress stream is unrelated to this renewal."
+    },
+    {
+      "id": "alias_answer",
+      "title": "Juniper exception register",
+      "body": "Juniper readiness remains blocked by certificate rotation CR-92. Salma Ortiz owns CR-92; she needs the customer trust-store export before rotation can proceed."
+    },
+    {
+      "id": "revision_old",
+      "title": "Harbor decision 2026-09-01",
+      "body": "Harbor launch decision on September 1: approve September 12 release with route A. This entry records the decision at that meeting."
+    },
+    {
+      "id": "revision_new",
+      "title": "Harbor decision 2026-09-08",
+      "body": "Harbor launch decision on September 8 supersedes the September 1 decision. Hold the release; route A failed recovery testing. Resume only after route B passes a witnessed recovery drill. No drill completion is recorded here."
+    },
+    {
+      "id": "revision_plan",
+      "title": "Harbor recovery plan",
+      "body": "September 9 plan: schedule the witnessed route B recovery drill for September 11. Scheduling is not evidence that the drill passed."
+    },
+    {
+      "id": "matrix_a",
+      "title": "Supplier Alder",
+      "body": "Supplier Alder: EU storage yes; customer-managed keys yes; signed DPA yes; price $18 per seat. Audit logging retention is 90 days."
+    },
+    {
+      "id": "matrix_b",
+      "title": "Supplier Birch",
+      "body": "Supplier Birch: EU storage yes; customer-managed keys no; signed DPA yes; price $12 per seat. Audit logging retention is 365 days."
+    },
+    {
+      "id": "matrix_c",
+      "title": "Supplier Cedar",
+      "body": "Supplier Cedar: EU storage yes; customer-managed keys yes; signed DPA pending; price $14 per seat. Audit logging retention is 365 days."
+    },
+    {
+      "id": "matrix_d",
+      "title": "Supplier Elm",
+      "body": "Supplier Elm: EU storage yes; customer-managed keys yes; signed DPA yes; price $24 per seat. Audit logging retention is 365 days."
+    },
+    {
+      "id": "hush_plan",
+      "title": "Project Hush planning",
+      "body": "Project Hush is under review. The next board meeting is scheduled for September 15. This note records no board resolution or cancellation."
+    },
+    {
+      "id": "semantic",
+      "title": "Postmortem Kestrel",
+      "body": "The Kestrel incident ended after we lengthened lease TTL from 15 seconds to 90 seconds. This stopped premature lock expiry and duplicate job execution. No increase in worker capacity was needed."
+    },
+    {
+      "id": "lark_1",
+      "title": "Lark release blocker 01",
+      "body": "Lark release blocker LK-01 is open. Owner: Inez Cole. Closure requires evidence package EP-01."
+    },
+    {
+      "id": "lark_2",
+      "title": "Lark release blocker 02",
+      "body": "Lark release blocker LK-02 is open. Owner: Theo Park. Closure requires evidence package EP-02."
+    },
+    {
+      "id": "lark_3",
+      "title": "Lark release blocker 03",
+      "body": "Lark release blocker LK-03 is open. Owner: Ravi Shah. Closure requires evidence package EP-03."
+    },
+    {
+      "id": "lark_4",
+      "title": "Lark release blocker 04",
+      "body": "Lark release blocker LK-04 is open. Owner: Nora Bell. Closure requires evidence package EP-04."
+    },
+    {
+      "id": "lark_5",
+      "title": "Lark release blocker 05",
+      "body": "Lark release blocker LK-05 is open. Owner: Eli Grant. Closure requires evidence package EP-05."
+    },
+    {
+      "id": "lark_6",
+      "title": "Lark release blocker 06",
+      "body": "Lark release blocker LK-06 is open. Owner: Uma Chen. Closure requires evidence package EP-06."
+    },
+    {
+      "id": "lark_7",
+      "title": "Lark release blocker 07",
+      "body": "Lark release blocker LK-07 is open. Owner: Pia Reed. Closure requires evidence package EP-07."
+    },
+    {
+      "id": "lark_8",
+      "title": "Lark release blocker 08",
+      "body": "Lark release blocker LK-08 is open. Owner: Omar West. Closure requires evidence package EP-08."
+    },
+    {
+      "id": "lark_9",
+      "title": "Lark release blocker 09",
+      "body": "Lark release blocker LK-09 is open. Owner: Lena Fox. Closure requires evidence package EP-09."
+    },
+    {
+      "id": "noise_0",
+      "title": "Archived weekly digest 01",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 1: improve the agenda template."
+    },
+    {
+      "id": "noise_1",
+      "title": "Archived weekly digest 02",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 2: improve the agenda template."
+    },
+    {
+      "id": "noise_2",
+      "title": "Archived weekly digest 03",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 3: improve the agenda template."
+    },
+    {
+      "id": "noise_3",
+      "title": "Archived weekly digest 04",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 4: improve the agenda template."
+    },
+    {
+      "id": "noise_4",
+      "title": "Archived weekly digest 05",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 5: improve the agenda template."
+    },
+    {
+      "id": "noise_5",
+      "title": "Archived weekly digest 06",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 6: improve the agenda template."
+    },
+    {
+      "id": "noise_6",
+      "title": "Archived weekly digest 07",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 7: improve the agenda template."
+    },
+    {
+      "id": "noise_7",
+      "title": "Archived weekly digest 08",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 8: improve the agenda template."
+    },
+    {
+      "id": "noise_8",
+      "title": "Archived weekly digest 09",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 9: improve the agenda template."
+    },
+    {
+      "id": "noise_9",
+      "title": "Archived weekly digest 10",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 10: improve the agenda template."
+    },
+    {
+      "id": "noise_10",
+      "title": "Archived weekly digest 11",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 11: improve the agenda template."
+    },
+    {
+      "id": "noise_11",
+      "title": "Archived weekly digest 12",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 12: improve the agenda template."
+    },
+    {
+      "id": "noise_12",
+      "title": "Archived weekly digest 13",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 13: improve the agenda template."
+    },
+    {
+      "id": "noise_13",
+      "title": "Archived weekly digest 14",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 14: improve the agenda template."
+    },
+    {
+      "id": "noise_14",
+      "title": "Archived weekly digest 15",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 15: improve the agenda template."
+    },
+    {
+      "id": "noise_15",
+      "title": "Archived weekly digest 16",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 16: improve the agenda template."
+    },
+    {
+      "id": "noise_16",
+      "title": "Archived weekly digest 17",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 17: improve the agenda template."
+    },
+    {
+      "id": "noise_17",
+      "title": "Archived weekly digest 18",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 18: improve the agenda template."
+    },
+    {
+      "id": "noise_18",
+      "title": "Archived weekly digest 19",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 19: improve the agenda template."
+    },
+    {
+      "id": "noise_19",
+      "title": "Archived weekly digest 20",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 20: improve the agenda template."
+    },
+    {
+      "id": "noise_20",
+      "title": "Archived weekly digest 21",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 21: improve the agenda template."
+    },
+    {
+      "id": "noise_21",
+      "title": "Archived weekly digest 22",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 22: improve the agenda template."
+    },
+    {
+      "id": "noise_22",
+      "title": "Archived weekly digest 23",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 23: improve the agenda template."
+    },
+    {
+      "id": "noise_23",
+      "title": "Archived weekly digest 24",
+      "body": "Archived discussion: Coastal renewal, Harbor launch, supplier pricing and Lark release readiness were agenda headings. This digest contains no contract mapping, release decision, supplier compliance facts or Lark blocker ownership. Retrospective item 24: improve the agenda template."
+    },
+    {
+      "id": "opaque_entry",
+      "title": "Aurora renewal",
+      "body": "Aurora renewal lookup key: AC-811."
+    },
+    {
+      "id": "opaque_bridge1",
+      "title": "AC-811",
+      "body": "AC-811 successor: CL-22."
+    },
+    {
+      "id": "opaque_bridge2",
+      "title": "CL-22",
+      "body": "CL-22 exception reference: OPS-51."
+    },
+    {
+      "id": "opaque_answer",
+      "title": "OPS-51",
+      "body": "OPS-51: Awaiting a signed trust-store export. Accountable: Marta Vale. Status: blocked."
+    }
+  ],
+  "questions": [
+    {
+      "id": "alias_chain",
+      "query": "For the Coastal renewal, what is currently blocking readiness, who owns it, and what input do they need? Trace the contract to its delivery stream.",
+      "expectedPassages": [
+        {
+          "note": "alias_entry",
+          "text": "contract C-417"
+        },
+        {
+          "note": "alias_bridge",
+          "text": "internal delivery stream Juniper"
+        },
+        {
+          "note": "alias_answer",
+          "text": "Salma Ortiz owns CR-92"
+        }
+      ],
+      "rubric": "Must connect Coastal -> C-417 -> Juniper -> CR-92; identify Salma Ortiz and customer trust-store export, not Cypress."
+    },
+    {
+      "id": "revised_decision",
+      "query": "As of September 10, is Harbor approved to launch on September 12? Explain which decision controls and whether the release condition has been met.",
+      "expectedPassages": [
+        {
+          "note": "revision_new",
+          "text": "Hold the release"
+        },
+        {
+          "note": "revision_plan",
+          "text": "Scheduling is not evidence that the drill passed"
+        }
+      ],
+      "rubric": "No: September 8 supersedes September 1; route B must pass witnessed recovery drill; September 11 scheduling is no proof of completion."
+    },
+    {
+      "id": "constraint_join",
+      "query": "Compare Alder, Birch, Cedar and Elm. Which is the cheapest supplier with EU storage, customer-managed keys, a signed DPA and at least 180 days of audit logs? Explain why each cheaper option fails.",
+      "expectedPassages": [
+        {
+          "note": "matrix_a",
+          "text": "retention is 90 days"
+        },
+        {
+          "note": "matrix_b",
+          "text": "customer-managed keys no"
+        },
+        {
+          "note": "matrix_c",
+          "text": "signed DPA pending"
+        },
+        {
+          "note": "matrix_d",
+          "text": "price $24 per seat"
+        }
+      ],
+      "rubric": "Elm $24; Alder fails retention; Birch lacks customer-managed keys; Cedar has no signed DPA. All four must be addressed."
+    },
+    {
+      "id": "restricted_absence",
+      "query": "Did the board cancel Project Hush? Give the decision date if the accessible notes establish it; otherwise state exactly what is and is not known.",
+      "expectedPassages": [
+        {
+          "note": "hush_plan",
+          "text": "records no board resolution or cancellation"
+        }
+      ],
+      "rubric": "Accessible evidence establishes only review and September 15 scheduled meeting; cannot conclude canceled or not canceled; no restricted September 3 assertion."
+    },
+    {
+      "id": "semantic_reformulation",
+      "query": "What fixed the Kestrel jobs being executed twice, and did the team have to add more workers?",
+      "expectedPassages": [
+        {
+          "note": "semantic",
+          "text": "lease TTL from 15 seconds to 90 seconds"
+        }
+      ],
+      "rubric": "TTL increased 15 to 90 seconds, preventing premature lock expiry and duplicate execution; no added worker capacity."
+    },
+    {
+      "id": "wide_synthesis",
+      "query": "List every open Lark release blocker LK-01 through LK-09 with its owner and required closure evidence package. Cite support for each of the nine rows and identify any missing rows.",
+      "expectedPassages": [
+        {
+          "note": "lark_1",
+          "text": "Owner: Inez Cole"
+        },
+        {
+          "note": "lark_2",
+          "text": "Owner: Theo Park"
+        },
+        {
+          "note": "lark_3",
+          "text": "Owner: Ravi Shah"
+        },
+        {
+          "note": "lark_4",
+          "text": "Owner: Nora Bell"
+        },
+        {
+          "note": "lark_5",
+          "text": "Owner: Eli Grant"
+        },
+        {
+          "note": "lark_6",
+          "text": "Owner: Uma Chen"
+        },
+        {
+          "note": "lark_7",
+          "text": "Owner: Pia Reed"
+        },
+        {
+          "note": "lark_8",
+          "text": "Owner: Omar West"
+        },
+        {
+          "note": "lark_9",
+          "text": "Owner: Lena Fox"
+        }
+      ],
+      "rubric": "Nine exact owner / EP pairs supported by nine current passages. Missing rows must be disclosed, not inferred. Deliberately crosses the research bundle maximum of eight IDs."
+    },
+    {
+      "id": "opaque_chain",
+      "query": "What prevents the Aurora renewal from proceeding, and who is accountable? Follow its lookup references to the final exception.",
+      "expectedPassages": [
+        {
+          "note": "opaque_entry",
+          "text": "AC-811"
+        },
+        {
+          "note": "opaque_bridge1",
+          "text": "CL-22"
+        },
+        {
+          "note": "opaque_bridge2",
+          "text": "OPS-51"
+        },
+        {
+          "note": "opaque_answer",
+          "text": "Marta Vale"
+        }
+      ],
+      "rubric": "Trace Aurora -> AC-811 -> CL-22 -> OPS-51. Awaiting signed trust-store export; Marta Vale accountable. All four passages must substantiate the chain."
+    }
+  ],
+  "semanticQuestions": []
+}

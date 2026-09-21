@@ -11,6 +11,15 @@ function assertMarkers(bytes) {
   for (const marker of markers) assert(bytes.includes(Buffer.from(marker)), `Native executable lacks compiled E2E marker ${marker}`);
 }
 
+export function nativeE2EPorts() {
+  const port = (name, fallback) => {
+    const value = Number(process.env[name] ?? fallback);
+    assert(Number.isInteger(value) && value >= 1024 && value <= 65535, `Invalid ${name}`);
+    return value;
+  };
+  return { dev: port('GNEAUXGHTS_E2E_PORT', 1430), driver: port('TAURI_WEBDRIVER_PORT', 4445) };
+}
+
 export function nativeE2EPath(profile) {
   assertProfile(profile);
   return resolve('src-tauri', 'target', 'e2e', profile, process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts');
@@ -27,6 +36,7 @@ export function nativeE2EBinary(profile, path = nativeE2EPath(profile)) {
   assert.equal(manifest.kind, kind);
   assert.equal(manifest.profile, profile, 'Native E2E build profile mismatch');
   assert.deepEqual(manifest.features, ['e2e-wdio']);
+  if (profile === 'debug') assert.equal(manifest.devPort ?? 1430, nativeE2EPorts().dev, 'Rebuild the native E2E binary with the selected GNEAUXGHTS_E2E_PORT');
   const bytes = readFileSync(binary);
   const hash = sha256(bytes);
   assert.equal(hash, manifest.sha256, 'Pinned native binary hash changed');
@@ -47,7 +57,7 @@ export function pinNativeE2EBinary(source, destination, profile) {
     assert(!lstatSync(path, { throwIfNoEntry: false })?.isSymbolicLink(), 'Pinned artifact must not be a symlink');
   }
   copyFileSync(source, binary);
-  const manifest = { kind, profile, features: ['e2e-wdio'], sha256: sha256(bytes), buildCommand: `node e2e/support/buildNative.mjs${profile === 'release' ? ' --release' : ''}` };
+  const manifest = { kind, profile, devPort: nativeE2EPorts().dev, features: ['e2e-wdio'], sha256: sha256(bytes), buildCommand: `node e2e/support/buildNative.mjs${profile === 'release' ? ' --release' : ''}` };
   writeFileSync(`${binary}.build.json`, `${JSON.stringify(manifest, null, 2)}\n`);
   return nativeE2EBinary(profile, binary);
 }

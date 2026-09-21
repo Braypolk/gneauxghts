@@ -43,6 +43,33 @@ The native command first runs the shared TypeScript and Rust timeline-contract f
 
 Keep this suite focused. Add native cases only for behavior that depends on real window state, filesystem persistence, OS events, restart durability, or Tauri plugins.
 
+## Opt-in local-agent evidence check
+
+`e2e/specs/native/agent-date-evidence.spec.ts` exercises real native ChatService,
+AgentRuntime, and model-selected evidence tools against a disposable synthetic
+vault. It is skipped unless `GNEAUX_LIVE_NATIVE=1`. Supply an explicit local
+endpoint, model, and output artifact; it never chooses a hosted fallback.
+
+After building the native E2E binary, run just this spec:
+
+```sh
+GNEAUX_LIVE_NATIVE=1 \
+GNEAUX_LIVE_ENDPOINT=http://100.117.20.29:1234/v1 \
+GNEAUX_LIVE_MODEL=qwen/qwen3.8-27b \
+GNEAUX_LIVE_OUTPUT="$PWD/.scratch/date-handling/native-baseline.json" \
+  pnpm exec wdio run e2e/wdio.native.conf.ts \
+  --spec e2e/specs/native/agent-date-evidence.spec.ts
+```
+
+The first question is submitted through the Svelte composer and opens a rendered
+current-passage citation. Answers must contain app-constructed durable links, with
+no unresolved model references, and retain those links when the conversation is reloaded. Subsequent questions use production chat IPC, followed
+by source exclusion and canonical-edit invalidation checks. Retrieval is lexical
+for this baseline. Raw answers, tool activity, usage, and citation resolutions
+are saved for separate semantic grading; passing execution is not a claim of
+answer correctness. Existing deterministic browser tests remain the primary
+coverage for chat controller lifecycle behavior.
+
 ## Full Phase 1–3 gate
 
 ```bash
@@ -148,3 +175,40 @@ exact command-count assertions live in session and delivered-citation browser
 tests. The native runner checks target, bounded DOM, adjacent pages, workspace
 return and visible/focused final frames, then stops its owned app, server and
 scoped caffeinate. Run fixtures sequentially without source edits/heavy checks.
+
+
+### Source-first preview check
+
+Add `GNEAUX_SOURCE_FIRST_PREVIEW=1` to the opt-in native agent date-evidence invocation above. It exercises the composer preview toggle and four synthetic questions: retrospective event dates, checkbox/prose completions this week, a missing recovery-condition outcome, and an explicit-success control. It requires exact delivered quotations, correct grouping for those cases, no raw streaming answer, durable resolvable links, and the existing exclusion/edit invalidation checks. This is a bounded acceptance check, not a general accuracy benchmark.
+
+If the native test ports are occupied, set `GNEAUXGHTS_E2E_PORT` (Vite) for both build and run, and `TAURI_WEBDRIVER_PORT` for the run. Defaults remain 1430 and 4445. Debug artifact admission checks its recorded dev port to prevent loading a different server. For example, build with `GNEAUXGHTS_E2E_PORT=1431 node e2e/support/buildNative.mjs`, then add `GNEAUXGHTS_E2E_PORT=1431 TAURI_WEBDRIVER_PORT=4446` to the test invocation.
+
+
+### Chat typing responsiveness
+
+After building the native E2E binary, run `GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS=2000 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-typing.spec.ts` (add matching dev/driver port overrides when used). This opt-in test delays real related-note searches in the E2E-only worker path, types through the Svelte composer, and asserts input-to-paint latency, a single in-flight search and eventual search of the latest draft. It uses a disposable vault, disabled semantic search and no model calls. The normal app build contains no delay/event probe.
+
+### Inventory budget regression
+
+Run `query-inventory.spec.ts` with `GNEAUX_QUERY_NATIVE=1` and
+`GNEAUX_INVENTORY_BUDGET=1` plus the existing local endpoint, model and output
+variables. It creates nine allowed synthetic notes and an excluded canary, runs
+ordinary and `/sources` inventories, and checks one model call, complete nine-note
+coverage, one passage link per note, exact navigation and persisted reload.
+Use an isolated dev/WebDriver port pair for concurrent checkouts.
+
+### Context measurement only
+
+Set `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` to record counter-only assembled-request
+and reported-usage diagnostics. It does not alter context or output limits.
+Run the ignored Rust `live_context_measurement_synthetic_matrix` with the local
+endpoint/model variables and an **absolute** `GNEAUX_LIVE_OUTPUT` path. Run
+`query-inventory.spec.ts` with `GNEAUX_QUERY_NATIVE=1` and
+`GNEAUX_CONTEXT_NATIVE=1` for persisted inventory, tool-evidence and research
+measurements. Use the same diagnostics variable for the native app process.
+
+Current chat implementation and archived experiment status are indexed in
+[the integration record](../docs/architecture/current-evidence-integration.md). General
+structured query routing has been removed; the current typed interpretation is
+limited to note-activity inventories. Historical benchmark reports describe the
+code tested at their recorded dates, not additional active runtime pipelines.

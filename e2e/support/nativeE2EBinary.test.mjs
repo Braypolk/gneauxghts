@@ -39,3 +39,20 @@ test('ordinary, modified and wrong-profile artifacts fail before any launch', ()
   writeFileSync(copy, Buffer.concat([e2eBytes, Buffer.from('modified')]));
   assert.throws(() => nativeE2EBinary('debug', copy), /hash changed/);
 }));
+
+test('debug artifact admission rejects a different dev server port', () => fixture(root => {
+  const previous = process.env.GNEAUXGHTS_E2E_PORT;
+  try {
+    process.env.GNEAUXGHTS_E2E_PORT = '1431';
+    const source = join(root, 'source');
+    const copy = join(root, 'copy');
+    writeFileSync(source, e2eBytes);
+    pinNativeE2EBinary(source, copy, 'debug');
+    assert.equal(nativeE2EBinary('debug', copy).manifest.devPort, 1431);
+    process.env.GNEAUXGHTS_E2E_PORT = '1432';
+    assert.throws(() => nativeE2EBinary('debug', copy), /Rebuild.*E2E_PORT/);
+  } finally {
+    if (previous === undefined) delete process.env.GNEAUXGHTS_E2E_PORT;
+    else process.env.GNEAUXGHTS_E2E_PORT = previous;
+  }
+}));

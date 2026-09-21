@@ -38,6 +38,7 @@
     chatConversationContextKey
   } from './chatPanelHelpers';
   import { createComposerDraftPersistence } from './composerDraftPersistence';
+  import { createContextSuggestionSearch } from './contextSuggestionSearch';
   import {
     chatModelChoices,
     type ChatModelChoice,
@@ -94,6 +95,7 @@
   ];
 
   let draft = $state('');
+  const sourceFirst = $derived(/^\/sources(?:\s|$)/.test(draft.trimStart()));
   let attachments = $state<ChatAttachmentInput[]>([]);
   let forceWebSearch = $state(false);
   let attachmentInput = $state<HTMLInputElement | null>(null);
@@ -101,8 +103,6 @@
   let contextSuggestions = $state<ChatContextSuggestion[]>([]);
   let selectedContext = $state<ChatContextSuggestion[]>([]);
   let contextSuggestionsLoading = $state(false);
-  let contextSuggestionTimer: number | null = null;
-  let contextSuggestionRequest = 0;
   let composerContextKey: string | null = null;
   let creatingConversationFromDraft = false;
   let localModels = $state<LocalModel[]>([]);
@@ -200,10 +200,14 @@
     }
   });
 
+  const contextSearch = createContextSuggestionSearch({
+    apply: (response) => { contextSuggestions = response?.items ?? []; },
+    setLoading: (loading) => { contextSuggestionsLoading = loading; }
+  });
+
   onDestroy(() => {
     draftPersistence.dispose();
-    if (contextSuggestionTimer !== null) window.clearTimeout(contextSuggestionTimer);
-    contextSuggestionRequest += 1;
+    contextSearch.dispose();
   });
 
   $effect(() => {
@@ -215,6 +219,7 @@
     if (nextContextKey === composerContextKey) return;
     const hadContext = composerContextKey !== null;
     composerContextKey = nextContextKey;
+    contextSearch.clear();
     if (creatingConversationFromDraft) return;
 
     // Attachments are per-message and deliberately not carried across contexts.
@@ -244,35 +249,17 @@
     const prompt = draft.trim();
     const access = effectiveVaultAccess;
     const activeNoteId = contextNote?.noteId ?? null;
-    if (contextSuggestionTimer !== null) {
-      window.clearTimeout(contextSuggestionTimer);
-      contextSuggestionTimer = null;
-    }
-    const requestId = ++contextSuggestionRequest;
     if (access === 'none' || prompt.split(/\s+/).filter(Boolean).length < 2) {
-      contextSuggestions = [];
+      contextSearch.clear();
       if (access === 'none') selectedContext = [];
-      contextSuggestionsLoading = false;
       return;
     }
-    contextSuggestionsLoading = true;
-    contextSuggestionTimer = window.setTimeout(() => {
-      contextSuggestionTimer = null;
-      void controller.suggestContext({
-        query: prompt,
-        vaultAccess: access,
-        excludeNoteId: activeNoteId,
-        limit: 4
-      }).then((response) => {
-        if (requestId !== contextSuggestionRequest) return;
-        contextSuggestions = response.items;
-      }).catch(() => {
-        if (requestId !== contextSuggestionRequest) return;
-        contextSuggestions = [];
-      }).finally(() => {
-        if (requestId === contextSuggestionRequest) contextSuggestionsLoading = false;
-      });
-    }, 350);
+    contextSearch.schedule(() => controller.suggestContext({
+      query: prompt,
+      vaultAccess: access,
+      excludeNoteId: activeNoteId,
+      limit: 4
+    }));
   });
 
   function toggleSuggestedContext(suggestion: ChatContextSuggestion) {
@@ -294,6 +281,10 @@
 
   async function submit() {
     const content = draft.trim();
+    if (sourceFirst && (!content.replace(/^\/sources\s*/, '').trim() || attachments.length > 0 || forceWebSearch)) {
+      onActionError('Add a question for the source-first preview, remove attachments, and turn off web search.');
+      return;
+    }
     if ((!content && attachments.length === 0) || snapshot.isSending) return;
     let activeNote: ChatActiveNoteSnapshot | null = null;
     try {
@@ -644,6 +635,21 @@
           >
             <Paperclip class="h-3.5 w-3.5" />
           </button>
+
+        <button
+          type="button"
+          class="chat-composer-chip"
+          class:chat-composer-chip--on={sourceFirst}
+          aria-label="Source-first preview"
+          aria-pressed={sourceFirst}
+          title="Show exact note quotations with source links"
+          disabled={snapshot.isSending || snapshot.isLoadingConversation}
+          onclick={() => {
+            if (!sourceFirst) forceWebSearch = false;
+            draft = sourceFirst ? draft.trimStart().replace(/^\/sources\s*/, '') : `/sources ${draft}`;
+            composerElement?.focus();
+          }}
+        >Sources preview</button>
 
         <ModelSelector
           options={modelOptions}

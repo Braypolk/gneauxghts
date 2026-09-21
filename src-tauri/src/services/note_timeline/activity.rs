@@ -10,7 +10,7 @@ pub(super) fn after_selection_once(callback: impl FnOnce() + 'static) {
 }
 
 /// Evidence carries current text only; revision payloads and labels stay private.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RevisionCitation {
     pub(crate) note_id: String,
@@ -23,6 +23,128 @@ pub(crate) struct RevisionCitation {
     pub(crate) current_excerpt: String,
 }
 
+/// The matching range is activity evidence; the surrounding line is only
+/// supporting current context and must not be described as edited in the period.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SurvivingActivityRange {
+    pub(crate) location: String,
+    pub(crate) line_number: usize,
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) text: String,
+    pub(crate) supporting_context: String,
+    pub(crate) provenance: provenance::RangeProvenance,
+    pub(crate) task: Option<TaskActivityContext>,
+}
+
+/// Current task facts, kept separate from the edited word's lineage. In
+/// particular, changing task wording does not date its completion checkbox.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct TaskActivityContext {
+    text: String,
+    text_truncated: bool,
+    current_status: &'static str,
+    status_marker_changed_in_period: Option<bool>,
+    status_marker_time: Option<RevisionTimeEvidence>,
+    status_marker_time_uncertain: bool,
+    status_marker_restored_in_period: bool,
+    matched_range_includes_status_marker: bool,
+}
+
+fn task_context(
+    line: &provenance::ProvenanceLine,
+    after: u64,
+    before: u64,
+) -> Option<(usize, TaskActivityContext)> {
+    let (completed, text, _) = crate::index::parse_task_line(&line.text)?;
+    let marker = line.text.len() - line.text.trim_start().len() + 3;
+    let lineage = line.task_status_provenance.as_ref()?;
+    // A replaced checkbox can preserve the authored range's introduction.
+    // Its latest change dates the current marker; knownSince is never a fallback.
+    let time = lineage
+        .last_changed_at
+        .as_ref()
+        .and_then(|e| e.time_evidence);
+    let uncertain = time.is_some_and(|t| {
+        let (start, end) = t.bounds();
+        t.uncertain() || (t.overlaps(after, before) && (start < after || end >= before))
+    });
+    Some((
+        marker,
+        TaskActivityContext {
+            text: text.chars().take(240).collect(),
+            text_truncated: text.chars().count() > 240,
+            current_status: if completed { "completed" } else { "open" },
+            // Search admits interval overlap, but this fact answers a stronger
+            // question. A boundary-crossing interval cannot truthfully say yes.
+            status_marker_changed_in_period: time
+                .filter(|_| !uncertain)
+                .map(|t| t.overlaps(after, before)),
+            status_marker_time: time,
+            status_marker_time_uncertain: uncertain,
+            status_marker_restored_in_period: lineage
+                .restored_at
+                .as_ref()
+                .and_then(|e| e.time_evidence)
+                .is_some_and(|restored| {
+                    restored.overlaps(after, before)
+                        && time.is_none_or(|changed| {
+                            changed.uncertain()
+                                || restored.uncertain()
+                                || changed.bounds().0 <= restored.bounds().1
+                        })
+                }),
+            matched_range_includes_status_marker: false,
+        },
+    ))
+}
+
+fn surviving_ranges(
+    current: &provenance::CurrentContentProvenance,
+    after: u64,
+    before: u64,
+) -> Vec<SurvivingActivityRange> {
+    let mut result = Vec::new();
+    for (location, lines) in [("body", &current.body), ("properties", &current.properties)] {
+        let mut offset = 0;
+        for line in lines {
+            let task = (location == "body")
+                .then(|| task_context(line, after, before))
+                .flatten();
+            for range in &line.ranges {
+                let p = &range.provenance;
+                if [&p.introduced_at, &p.last_changed_at, &p.restored_at]
+                    .into_iter()
+                    .flatten()
+                    .any(|e| e.time_evidence.is_some_and(|t| t.overlaps(after, before)))
+                {
+                    if let Some(text) = line.text.get(range.start..range.end) {
+                        result.push(SurvivingActivityRange {
+                            location: location.into(),
+                            line_number: line.line_number,
+                            start: offset + range.start,
+                            end: offset + range.end,
+                            text: text.into(),
+                            supporting_context: line.text.clone(),
+                            provenance: p.clone(),
+                            task: task.as_ref().map(|(marker, context)| {
+                                let mut context = context.clone();
+                                context.matched_range_includes_status_marker =
+                                    range.start <= *marker && *marker < range.end;
+                                context
+                            }),
+                        });
+                    }
+                }
+            }
+            offset += line.text.len();
+        }
+    }
+    result
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteActivity {
@@ -31,6 +153,7 @@ pub(crate) struct NoteActivity {
     pub(crate) title: String,
     pub(crate) current_excerpt: String,
     pub(crate) revision_count: usize,
+    pub(crate) surviving_ranges: Vec<SurvivingActivityRange>,
     pub(crate) uncertain_time: bool,
     pub(crate) first_at_millis: u64,
     pub(crate) last_at_millis: u64,
@@ -268,6 +391,7 @@ pub(super) fn read(
             title: current.title.clone(),
             current_excerpt: excerpt.clone(),
             revision_count: revisions.len(),
+            surviving_ranges: surviving_ranges(current, after, before),
             uncertain_time: revisions.iter().any(|h| h.time_evidence.uncertain()),
             first_at_millis: revisions
                 .iter()
@@ -305,79 +429,6 @@ pub(super) fn read(
         items,
         next_offset: (scanned < ids.len()).then_some(scanned),
     })
-}
-
-/// Bind only evidence attached to the delivered current ranges. This cannot be
-/// used to request an arbitrary historical excerpt or a revision payload.
-pub(super) fn provenance_citations(
-    access: &CurrentContentAccess<'_>,
-    current: &provenance::CurrentContentProvenance,
-) -> Result<Vec<RevisionCitation>, HistoryError> {
-    let id = NoteIdentity::new(current.note_id.clone());
-    let headers = {
-        access.runtime.ensure_note_ready(&id)?;
-        headers(&access.runtime.store, &id)?
-    };
-    let mut citations = Vec::new();
-    for line in current.body.iter().chain(&current.properties) {
-        for range in &line.ranges {
-            let p = &range.provenance;
-            for evidence in [
-                p.introduced_at.as_ref(),
-                p.last_changed_at.as_ref(),
-                p.restored_at.as_ref(),
-                Some(&p.known_since),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if let Some(header) = headers
-                    .iter()
-                    .find(|h| h.identity.as_str() == evidence.record_id)
-                {
-                    if !citations
-                        .iter()
-                        .any(|c: &RevisionCitation| c.revision_id == header.identity.as_str())
-                    {
-                        citations.push(citation(&id, header, &line.text[range.start..range.end]));
-                    }
-                }
-            }
-        }
-    }
-    // A title Lifecycle Event points to its preceding revision in timeline
-    // order. Wall-clock order may disagree with external observation evidence.
-    let ordered = records(&access.runtime.store, &id)?;
-    let title_record = &current.title_provenance.known_since.record_id;
-    let title_index = ordered.iter().position(|record| match record {
-        history_store::BoundedTimelineRecord::Revision { header, .. } => {
-            header.identity.as_str() == title_record
-        }
-        history_store::BoundedTimelineRecord::LifecycleEvent(event) => {
-            event.identity.0.as_str() == title_record
-        }
-    });
-    let supporting = title_index.and_then(|index| {
-        ordered[index..].iter().find_map(|record| match record {
-            history_store::BoundedTimelineRecord::Revision { header, .. } => Some(header),
-            _ => None,
-        })
-    });
-    if let Some(header) = supporting {
-        if !citations
-            .iter()
-            .any(|c| c.revision_id == header.identity.as_str())
-        {
-            citations.push(citation(&id, header, &current.title));
-        }
-    }
-    if !access
-        .eligibility()?
-        .allows_note(Some(&current.note_id), None)
-    {
-        citations.clear();
-    }
-    Ok(citations)
 }
 
 pub(super) fn current_citations(
