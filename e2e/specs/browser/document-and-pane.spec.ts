@@ -371,13 +371,13 @@ describe('document and pane state-machine boundaries', () => {
     expect((await history.getText()).toUpperCase()).toContain('READ ONLY');
     await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
     expect(await history.getText()).toContain('Current version');
-    expect(await history.getText()).toContain('No authored body changes in this comparison.');
+    expect(await history.getText()).toContain('Changes in this version');
     const initialHistoryDiff = await browser.execute(() =>
       window.__GNEAUXGHTS_E2E__?.invocations.findLast(
         (entry) => entry.command === 'get_note_history_diff'
       )
     );
-    expect(initialHistoryDiff?.args.comparison).toBe('current');
+    expect(initialHistoryDiff?.args.comparison).toBe('parent');
     expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(paneCountBefore);
     expect(await $('[data-testid="note-editor"] .cm-content').getAttribute('contenteditable')).toBe(
       'true'
@@ -387,7 +387,9 @@ describe('document and pane state-machine boundaries', () => {
     await changedRevision.click();
     const revisionDiff = await $('[data-testid="historical-revision-diff"]');
     await browser.waitUntil(async () => (await revisionDiff.getText()).includes('Inserted'));
-    expect(await revisionDiff.getText()).toContain('Changes since this version');
+    expect(await revisionDiff.getText()).toContain('Changes in this version');
+    await $('button=Current note').click();
+    await browser.waitUntil(async () => (await revisionDiff.getText()).includes('Changes since this version'));
     expect(await revisionDiff.getText()).toContain('Alpha line 1');
     await $('button=Previous version').click();
     await browser.waitUntil(async () =>
@@ -442,10 +444,6 @@ describe('document and pane state-machine boundaries', () => {
     const emptyRevision = await $('[data-revision-id="note-alpha-revision-30"]');
     await emptyRevision.click();
     await browser.waitUntil(async () =>
-      (await revisionDiff.getText()).includes('Changes since this version')
-    );
-    await $('button=Previous version').click();
-    await browser.waitUntil(async () =>
       (await revisionDiff.getText()).includes('Deleted to create an empty note.')
     );
     const authoredBody = await revisionDiff.$('[aria-label="Authored body changes"]');
@@ -484,7 +482,7 @@ describe('document and pane state-machine boundaries', () => {
     await browser.waitUntil(async () => !(await $('button=Load older history').isExisting()));
     expect(await history.getText()).not.toContain('Renamed Alpha old.md to alpha.md');
     expect(await history.getText()).toContain('Current version');
-    expect(await history.getText()).toContain('No authored body changes in this comparison.');
+    expect(await history.getText()).toContain('Changes from the beginning');
 
     const back = await $('button[aria-label="Back to workspace"]');
     await back.click();

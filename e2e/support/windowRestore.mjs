@@ -3,11 +3,11 @@ import { spawnSync } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { nativeE2EBinary } from './nativeE2EBinary.mjs';
+import { nativeE2EBinary, nativeE2EPorts } from './nativeE2EBinary.mjs';
 
 if (process.platform !== 'darwin') throw new Error('Window visibility probe requires macOS');
 const { binary } = nativeE2EBinary('debug');
-const response = await fetch('http://127.0.0.1:1430', { signal: AbortSignal.timeout(3000) });
+const response = await fetch(`http://127.0.0.1:${nativeE2EPorts().dev}`, { signal: AbortSignal.timeout(3000) });
 if (!response.ok) throw new Error('Native Vite server is unavailable');
 const root = mkdtempSync(join(tmpdir(), 'gneauxghts-window-restore-'));
 try {
