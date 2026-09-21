@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, tick } from 'svelte';
+  import { onDestroy, tick, untrack } from 'svelte';
   import {
     Eraser,
     Undo2,
@@ -172,8 +172,12 @@
   $effect(() => {
     canForget;
     forgetItemLabel;
-    commandBarState.closeForgetConfirm();
-    commandBarState.resetForgetHold();
+    // Reset when the action changes, without subscribing to the dialog state
+    // read by closeForgetConfirm and closing it again as soon as it opens.
+    untrack(() => {
+      commandBarState.closeForgetConfirm();
+      commandBarState.resetForgetHold();
+    });
   });
 
   $effect(() => {

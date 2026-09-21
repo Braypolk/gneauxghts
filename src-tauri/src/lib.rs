@@ -82,6 +82,18 @@ fn startup_path_overrides() -> Result<StartupPathOverrides, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(desktop)]
+    let context = {
+        let mut context = context;
+        // Restore native bounds before the window can appear at its default size.
+        for window in &mut context.config_mut().app.windows {
+            if window.label == "main" {
+                window.visible = false;
+            }
+        }
+        context
+    };
     let startup_paths =
         startup_path_overrides().expect("invalid debug-only E2E path configuration");
     let keyring_plugin =
@@ -95,11 +107,41 @@ pub fn run() {
     // initial window's ready event and leaves the plugin cache empty.
     let builder = tauri::Builder::default();
     #[cfg(desktop)]
-    let builder = builder.plugin(
-        tauri_plugin_window_state::Builder::default()
-            .with_state_flags(window_state_flags())
-            .build(),
-    );
+    let builder = {
+        let window_state =
+            tauri_plugin_window_state::Builder::default().with_state_flags(window_state_flags());
+        // Keep native launch tests' saved geometry inside their disposable fixture.
+        let window_state = if let Some(root) = &startup_paths.app_data_dir {
+            window_state.with_filename(
+                root.join(tauri_plugin_window_state::DEFAULT_FILENAME)
+                    .to_string_lossy(),
+            )
+        } else {
+            window_state
+        };
+        builder.plugin(window_state.build())
+    };
+    #[cfg(desktop)]
+    let builder = {
+        let reveal_main_window = std::sync::Once::new();
+        builder.on_page_load(move |webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
+            {
+                // macOS applies the restore plugin's bounds asynchronously.
+                // Page completion lets those native operations settle before reveal.
+                reveal_main_window.call_once(|| {
+                    if let Err(error) = webview
+                        .window()
+                        .show()
+                        .and_then(|_| webview.window().set_focus())
+                    {
+                        eprintln!("main window reveal failed: {error}");
+                    }
+                });
+            }
+        })
+    };
     // The WebDriver surface is deliberately feature-gated so release builds do
     // not expose test execution or an embedded automation server.
     #[cfg(feature = "e2e-wdio")]
@@ -109,6 +151,18 @@ pub fn run() {
 
     let app = builder
         .setup(move |app| {
+            #[cfg(target_os = "macos")]
+            if let Some(window) = app.get_webview_window("main") {
+                // AppKit's automatic opening animation scales even a correctly
+                // restored window. Disable it before the first reveal.
+                let native_window = window.ns_window()?;
+                // SAFETY: Tauri setup runs on the main thread, and this live
+                // WebviewWindow owns the NSWindow for the duration of the call.
+                unsafe {
+                    (&*native_window.cast::<objc2_app_kit::NSWindow>())
+                        .setAnimationBehavior(objc2_app_kit::NSWindowAnimationBehavior::None);
+                }
+            }
             if let Some(notes_root) = startup_paths.notes_root.clone() {
                 set_notes_root_override(Some(notes_root))?;
             }
@@ -342,7 +396,7 @@ pub fn run() {
             commands::prepare_semantic_model,
             commands::download_semantic_embedding_model
         ])
-        .build(tauri::generate_context!())
+        .build(context)
         .expect("error while building tauri application");
 
     app.run(|app_handle, event| {

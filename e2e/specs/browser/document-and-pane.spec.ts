@@ -85,6 +85,49 @@ describe('document and pane state-machine boundaries', () => {
     await waitForNote('Alpha note');
   });
 
+  it('keeps Forget confirmation open until the user cancels or confirms', async () => {
+    const forget = await $('button[aria-label^="Forget this note."]');
+    const dialog = await $('#forget-confirm-popover');
+    const forgetCalls = () => browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__!.invocations.filter((entry) => entry.command === 'forget_note')
+    );
+    const originalText = await editorText();
+
+    await forget.click();
+    await dialog.waitForDisplayed();
+    await expect(dialog.$('button=Cancel')).toBeFocused();
+    expect(await forgetCalls()).toHaveLength(0);
+    await dialog.$('button=Cancel').click();
+    await dialog.waitForExist({ reverse: true });
+    await expect(forget).toBeFocused();
+    expect(await editorText()).toBe(originalText);
+    expect(await forgetCalls()).toHaveLength(0);
+
+    await forget.click();
+    await dialog.waitForDisplayed();
+    await dialog.$('button=Forget').click();
+    await dialog.waitForExist({ reverse: true });
+    await browser.waitUntil(async () => (await forgetCalls()).length === 1);
+    expect((await forgetCalls())[0].args.currentPath).toBe('/e2e/alpha.md');
+  });
+
+  it('holds Forget to skip confirmation', async () => {
+    const forget = await $('button[aria-label^="Forget this note."]');
+    await browser.action('pointer')
+      .move({ origin: forget })
+      .down()
+      .pause(1500)
+      .up()
+      .perform();
+    await browser.waitUntil(async () => browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__!.invocations.some((entry) => entry.command === 'forget_note')
+    ));
+    expect(await $('#forget-confirm-popover').isExisting()).toBe(false);
+    expect(await browser.execute(() =>
+      window.__GNEAUXGHTS_E2E__!.invocations.filter((entry) => entry.command === 'forget_note').length
+    )).toBe(1);
+  });
+
   it('keeps the move block handle beside text when Related opens and closes', async () => {
     await browser.setWindowSize(1280, 844);
     const card = await $('[data-testid="workspace-card"]');
