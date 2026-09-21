@@ -2106,6 +2106,7 @@ dependencies = [
  "leiden-rs",
  "ndarray",
  "notify",
+ "objc2-app-kit",
  "pulldown-cmark",
  "rayon",
  "reqwest",

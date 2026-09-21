@@ -33,7 +33,7 @@ The command builds the debug binary with the `e2e-wdio` Cargo feature, immediate
 Covered checks:
 
 - Real application startup through the embedded driver.
-- Stable first-painted window geometry after a real WebDriver session restart, guarding against the restore-growth regression.
+- Stable window geometry across embedded WebDriver reconnection (this does not restart the native process).
 - Availability of the debug-only Tauri automation bridge.
 - Real note edits through capture, paged History Mode, deterministic diff, complete Version Restore, and exact editor scroll/selection restoration.
 - Real external file deletion through the watcher adapter, Missing Note discovery, incremental retained-history loading, collision-safe recovery, and continued editing.
@@ -42,6 +42,20 @@ Covered checks:
 The native command first runs the shared TypeScript and Rust timeline-contract fixture checks. Its fault and watcher-flush helpers are compiled only by the `e2e-wdio` feature; ordinary builds without `e2e-wdio` do not expose them. The deterministic watcher flush consumes the real temporary-vault filesystem state at the same adapter boundary used by OS notifications, avoiding platform event-delivery timing in the assertion path.
 
 Keep this suite focused. Add native cases only for behavior that depends on real window state, filesystem persistence, OS events, restart durability, or Tauri plugins.
+
+### First-visible window bounds
+
+Build with `node e2e/support/buildNative.mjs`, then run a native Vite server in
+another terminal with `pnpm exec vite --strictPort --host 127.0.0.1 --port 1430`.
+On an unlocked macOS display, run `node e2e/support/windowRestore.mjs`.
+The probe launches fresh processes with disposable saved window states and
+samples WindowServer every 5 ms from process creation through two seconds after
+the window appears. Every observed visible frame must have the final bounds.
+It covers smaller/larger saved sizes, saved position, reopening despite a saved
+hidden flag, and a first launch with no saved state. It catches both default-size
+flashes and AppKit's opening animation before WebDriver could connect. Sampling
+does not establish that no shorter-than-5-ms frame exists. The probe kills only
+its own fixture processes and does not test clean-exit persistence.
 
 ## Full Phase 1–3 gate
 
