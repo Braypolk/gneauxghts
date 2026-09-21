@@ -379,21 +379,7 @@ fn run_research(
                 .map_err(|_| "Evidence unavailable")?
                 .accept_selected(&selected, &selection.evidence_ids);
         }
-        let mut target = parent.sources.lock().map_err(|_| "Sources unavailable")?;
-        for (citation, path, title) in sources {
-            target.push(ChatSource {
-                kind: "passage".into(),
-                note_id: Some(citation.note_id.clone()),
-                note_path: Some(relative_path(parent.service.notes_root(), &path)),
-                title,
-                excerpt: citation.excerpt.clone(),
-                url: None,
-                anchor: Some(citation.id.clone()),
-                revision: None,
-                passage: Some(citation),
-            });
-        }
-        drop(target);
+        parent.admit_passages(sources)?;
         // Worker references never cross the seam: assign parent references only
         // after selected evidence has been revalidated and delivered to the parent.
         parent.prepare_passage_references(&mut payload)?;

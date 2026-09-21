@@ -371,3 +371,12 @@ it('refuses a resolved location when the editor changes during navigation', asyn
   await expect(adapter.getBindings('chat').context.onOpenCitation(citation)).rejects.toThrow('cannot be highlighted');
   expect(focusPassage).not.toHaveBeenCalled();
 });
+
+it.each(['properties', 'title', 'body'])('opens a validated %s source without inventing a body selection', async (location) => {
+  const {adapter,documents,openNote,focusPassage}=setup();
+  const citation={...noteCitation(),noteId:'note-1',passage:{id:'non-body',noteId:'note-1',contentHash:'h',location,start:0,end:5,excerpt:'value',revisions:[]}};
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:documents.editor.working.markdown,selection:null});
+  await expect(adapter.getBindings('chat').context.onOpenCitation(citation)).resolves.toBeUndefined();
+  expect(openNote).toHaveBeenCalledWith(citation.notePath,expect.objectContaining({noteId:'note-1',revealEditorAfterOpen:true}));
+  expect(focusPassage).not.toHaveBeenCalled();
+});

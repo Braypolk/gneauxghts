@@ -6242,6 +6242,114 @@ mod tests {
     }
 
     #[test]
+    fn repeated_passage_admission_preserves_durable_proofs_after_plain_reads() {
+        let _guard = crate::test_support::lock_test_env();
+        let (root, service) = service("chat-proof-admission");
+        crate::state::initialize_app_data_dir(root.path().join("app-data")).unwrap();
+        crate::state::set_notes_root_override(Some(root.path().to_path_buf())).unwrap();
+        let state = crate::index::AppState::new(
+            crate::semantic::SemanticState::new_disabled("test"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let note = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Proof note".into(),
+            "Recorded delivery evidence.".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let mut evidence = crate::services::evidence::EvidenceSession::default();
+        let page = evidence
+            .search(
+                &state,
+                None,
+                &HashSet::new(),
+                crate::services::evidence::SearchRequest {
+                    query: "Recorded delivery evidence.".into(),
+                    mode: crate::services::evidence::SearchMode::Literal,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        let id = page["items"][0]["evidenceId"].as_str().unwrap().to_string();
+        let mut sources = Vec::new();
+        let mut proofs = Vec::new();
+        for provenance in [false, true, true, false] {
+            let (_, read) = evidence
+                .read(&state, None, &HashSet::new(), &[id.clone()], provenance)
+                .unwrap();
+            for (citation, path, title) in read {
+                for proof in &citation.revisions {
+                    if !proofs.contains(proof) {
+                        proofs.push(proof.clone());
+                    }
+                }
+                citations::admit_passage(
+                    &mut sources,
+                    citation,
+                    path.to_string_lossy().into_owned(),
+                    title,
+                );
+            }
+        }
+        assert!(!proofs.is_empty());
+        assert_eq!(sources.len(), 1);
+        assert_eq!(sources[0].passage.as_ref().unwrap().revisions, proofs);
+        let conversation = service.create_conversation(None, None).unwrap();
+        let (_, _, assistant) =
+            seed_streaming_agent_run(&service, &conversation.summary.id, "proofs", "");
+        service
+            .finish_message(
+                &assistant,
+                "complete",
+                "Recorded delivery evidence.",
+                None,
+                &sources,
+            )
+            .unwrap();
+        drop(service);
+        let reopened =
+            ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+        let mut persisted = reopened
+            .get_conversation(&conversation.summary.id)
+            .unwrap()
+            .messages[1]
+            .sources
+            .clone();
+        assert_eq!(persisted[0].passage.as_ref().unwrap().revisions, proofs);
+        crate::agent_tools::filter_revision_sources(
+            &state,
+            &reopened,
+            &VaultAccess::Full,
+            &HashSet::new(),
+            &mut persisted,
+        )
+        .unwrap();
+        assert_eq!(persisted.len(), 1);
+        state
+            .note_timeline()
+            .clear_note_history(&crate::services::note_timeline::NoteIdentity::new(
+                note.note_id.unwrap(),
+            ))
+            .unwrap();
+        crate::agent_tools::filter_revision_sources(
+            &state,
+            &reopened,
+            &VaultAccess::Full,
+            &HashSet::new(),
+            &mut persisted,
+        )
+        .unwrap();
+        assert!(
+            persisted.is_empty(),
+            "Cleared temporal proof must invalidate the durable source"
+        );
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
     fn recent_history_preserves_requirements_until_explicit_context_admission() {
         let (_root, service) = service("chat-complete-recent-history");
         let conversation = service.create_conversation(None, None).unwrap();

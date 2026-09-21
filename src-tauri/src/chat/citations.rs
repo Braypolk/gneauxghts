@@ -4,6 +4,40 @@ use pulldown_cmark::{BrokenLink, CowStr, Event, LinkType, Options, Parser, Tag};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
+/// Admission and persistence share one source per stable passage identity.
+pub(crate) fn admit_passage(
+    sources: &mut Vec<ChatSource>,
+    citation: crate::services::evidence::PassageCitation,
+    note_path: String,
+    title: String,
+) {
+    if let Some(prior) = sources
+        .iter_mut()
+        .filter_map(|s| s.passage.as_mut())
+        .find(|p| p.id == citation.id)
+    {
+        // Each provenance page adds evidence to the same durable source. A later
+        // plain read must not erase dates already used in the answer.
+        for proof in citation.revisions {
+            if !prior.revisions.contains(&proof) {
+                prior.revisions.push(proof);
+            }
+        }
+        return;
+    }
+    sources.push(ChatSource {
+        kind: "passage".into(),
+        note_id: Some(citation.note_id.clone()),
+        note_path: Some(note_path),
+        title,
+        excerpt: citation.excerpt.clone(),
+        url: None,
+        anchor: Some(citation.id.clone()),
+        revision: None,
+        passage: Some(citation),
+    });
+}
+
 #[derive(Default)]
 pub(crate) struct PassageReferences {
     preview: Option<super::source_first::Catalog>,

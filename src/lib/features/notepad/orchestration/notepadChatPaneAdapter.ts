@@ -41,7 +41,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
     options: {
       noteId: string;
       revealEditorAfterOpen?: boolean;
-      focusEditorAfterOpen: true;
+      focusEditorAfterOpen: boolean;
     }
   ) => Promise<void>;
   focusPassage?: (paneId: TPaneId, selection: { anchor: number; head: number }) => boolean;
@@ -172,11 +172,14 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
             if (resolved.kind !== 'note' || !resolved.passage) throw new Error('The current passage is unavailable.');
             const target = getNearestEditorPaneId(deps.getPaneOrder(), deps.getPaneKind, paneId) ?? paneId;
             deps.setActivePane(target);
-            await deps.openNote(resolved.notePath, { noteId: resolved.noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: true });
+            await deps.openNote(resolved.notePath, { noteId: resolved.noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: Boolean(navigation.selection) });
             const document = deps.getPaneDocument(target);
             if (getDocumentNoteId(document) !== resolved.noteId) throw new Error('Passage navigation was interrupted.');
-            const selection = getDocumentMarkdown(document) === navigation.markdown ? navigation.selection : null;
-            if (!selection || !deps.focusPassage?.(target, selection)) throw new Error('This passage changed or cannot be highlighted. Refresh its evidence.');
+            if (getDocumentMarkdown(document) !== navigation.markdown) throw new Error('This passage changed or cannot be highlighted. Refresh its evidence.');
+            // Properties and the title stripped from the editor are valid note
+            // destinations. They have no body range to select; never present
+            // their absence from the editor body as stale evidence.
+            if (navigation.selection && !deps.focusPassage?.(target, navigation.selection)) throw new Error('This passage cannot be highlighted. Reopen its note.');
             return;
           }
           if (citation.revision) {

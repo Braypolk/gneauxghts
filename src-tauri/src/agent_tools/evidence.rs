@@ -96,30 +96,19 @@ impl AgentToolContext {
             .map_err(|_| "Inventory unavailable")?
             .clone())
     }
-    fn admit_passages(
+    pub(super) fn admit_passages(
         &self,
         sources: Vec<(crate::services::evidence::PassageCitation, PathBuf, String)>,
     ) -> Result<(), String> {
         let mut target = self.sources.lock().map_err(|_| "Sources unavailable")?;
         for (citation, path, title) in sources {
             self.surface(&citation.note_id);
-            if target
-                .iter()
-                .any(|s| s.passage.as_ref().is_some_and(|p| p.id == citation.id))
-            {
-                continue;
-            }
-            target.push(ChatSource {
-                kind: "passage".into(),
-                note_id: Some(citation.note_id.clone()),
-                note_path: Some(relative_path(self.service.notes_root(), &path)),
+            crate::chat::citations::admit_passage(
+                &mut target,
+                citation,
+                relative_path(self.service.notes_root(), &path),
                 title,
-                excerpt: citation.excerpt.clone(),
-                url: None,
-                anchor: Some(citation.id.clone()),
-                revision: None,
-                passage: Some(citation),
-            });
+            );
         }
         Ok(())
     }
