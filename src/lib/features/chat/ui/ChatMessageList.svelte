@@ -412,6 +412,7 @@
   bind:this={messagesElement}
   class="relative min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
   role="log"
+  data-pane-content
   aria-live="polite"
   aria-busy={isInitializing || isLoadingConversation || isRenderingHistory}
   onscroll={updateScrollFollowing}

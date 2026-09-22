@@ -271,6 +271,7 @@
           <div
             bind:this={pane.refs.editorRoot}
             data-testid="note-editor"
+            data-pane-content
             class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
             use:editorAction={viewModel.editorLifecycle}
           ></div>
@@ -354,7 +355,9 @@
   }
 
   :global([data-pane-motion]) .notepad-pane {
-    overflow: hidden;
+    /* Focus in the fixed-width content must not horizontally scroll the pane
+       (and its border) while the outer shell is still opening. */
+    overflow: clip;
   }
 
   /*

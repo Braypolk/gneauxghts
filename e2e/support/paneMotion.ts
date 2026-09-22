@@ -9,7 +9,11 @@ interface MotionFrame {
   messages: number;
   chatBusy: boolean;
   border: { id: string; left: number; width: number; opacity: number } | null;
-  panes: { id: string; left: number; width: number; opacity: number; sameEditor: boolean }[];
+  panes: {
+    id: string; left: number; width: number; opacity: number; sameEditor: boolean;
+    content: { width: number; opacity: number } | null;
+    controlsOpacity: number[];
+  }[];
 }
 interface MotionResult { before: MotionFrame; frames: MotionFrame[]; maxGap: number }
 
@@ -40,6 +44,23 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       panes: [...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => ({
         id: pane.dataset.paneId!, left: pane.getBoundingClientRect().left, width: pane.getBoundingClientRect().width,
         opacity: Number(getComputedStyle(pane).opacity),
+        controlsOpacity: [...pane.querySelectorAll<HTMLElement>(
+          '.notepad-editor-top-overlay, .notepad-chat-top-actions, .chat-panel-header, .chat-panel-bottom, [data-pane-command]'
+        )].map(control => {
+          let opacity = 1;
+          for (let element: HTMLElement | null = control; element; element = element.parentElement) {
+            opacity *= Number(getComputedStyle(element).opacity);
+            if (element === pane) break;
+          }
+          return opacity;
+        }),
+        content: (() => {
+          const content = pane.querySelector<HTMLElement>('[data-pane-content]');
+          return content ? {
+            width: content.getBoundingClientRect().width,
+            opacity: Number(getComputedStyle(content).opacity)
+          } : null;
+        })(),
         sameEditor: !originalEditors.has(pane.dataset.paneId!) ||
           originalEditors.get(pane.dataset.paneId!) === pane.querySelector('.cm-editor')
       }))
@@ -93,11 +114,35 @@ export function expectContinuousMotion(result: Awaited<ReturnType<typeof sampleP
     if (Math.abs(finalWidth - startWidth) > 5) {
       expect(widths.filter(value => value > Math.min(startWidth, finalWidth) + 1 &&
         value < Math.max(startWidth, finalWidth) - 1).length).toBeGreaterThan(1);
+      for (const frame of result.frames) {
+        const pane = frame.panes.find(pane => pane.id === id);
+        if (!pane) continue;
+        // Text must be hidden throughout the actual resize, not just dimmed
+        // while it keeps visibly wrapping at intermediate widths.
+        if (pane.width > Math.min(startWidth, finalWidth) + 1 &&
+            pane.width < Math.max(startWidth, finalWidth) - 1) {
+          expect(pane.content?.opacity).toBe(0);
+        }
+        const initialContent = result.before.panes.find(pane => pane.id === id)?.content;
+        const finalContent = end.panes.find(pane => pane.id === id)?.content;
+        const widths = [initialContent?.width, finalContent?.width]
+          .filter((value): value is number => value !== undefined);
+        if (pane.content && widths.length) {
+          const contentWidth = pane.content.width;
+          expect(Math.min(...widths.map(value => Math.abs(value - contentWidth))))
+            .toBeLessThanOrEqual(1);
+        }
+      }
     }
     for (let i = 1; i < widths.length; i++) {
       expect((widths[i] - widths[i - 1]) * direction).toBeGreaterThanOrEqual(-1);
     }
     if (end.panes.some(pane => pane.id === id)) {
+      expect(end.panes.find(pane => pane.id === id)!.content?.opacity).toBe(1);
+      for (const frame of all) {
+        const controls = frame.panes.find(pane => pane.id === id)?.controlsOpacity ?? [];
+        expect(controls.every(opacity => opacity === 1)).toBe(true);
+      }
       expect(all.every(frame => frame.panes.find(pane => pane.id === id)?.sameEditor !== false)).toBe(true);
     }
   }
