@@ -375,6 +375,20 @@ for the initial store boundary and
 [ADR 0005](docs/adr/0005-remember-observed-history-generations-outside-the-vault.md)
 for the app-local rollback authority and portability trade-off.
 
+### Authored tags
+
+`NoteDraftState.working` and its saved baseline carry the note's authored tags
+alongside title and body. `DocumentEditingService.updateTags` schedules ordinary
+autosave; visibility is an app-wide local preference in `AppSettingsStore`.
+Tag controls mount outside the editable body inside the existing CodeMirror
+scroll owner, and reserve measured space above the first body line. The existing save commands accept an
+optional tag edit through `NoteTimeline.save_note_with_tags`, which patches only
+the canonical YAML `tags` field under the same file owner before history intent
+preparation and publication. No independent tag writer or durable tag store exists.
+`tags.rs` owns normalization, safe field patching, and the shared `tag:` / `#`
+interactive query grammar. The note catalog and semantic metadata carry derived
+tag values; embeddings and Atlas structure hashes remain content-based.
+
 ### Tasks
 
 Closed or clean-note mutations go through `TaskMutationService.commit` and the

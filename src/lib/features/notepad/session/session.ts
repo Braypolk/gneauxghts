@@ -11,7 +11,14 @@ import type {
   RestoredForgottenNote,
 } from "$lib/types/forgottenNotes";
 
+export interface TagEdit {
+  previous: string[];
+  tags: string[];
+}
+
 export interface ForgottenNote {
+  tags?: string[];
+  tagsError?: string;
   title: string;
   bodyMarkdown: string;
   currentNoteId: string | null;
@@ -20,6 +27,8 @@ export interface ForgottenNote {
 }
 
 export interface Draft {
+  tags?: string[];
+  tagsError?: string;
   title: string;
   bodyMarkdown: string;
   currentNoteId: string | null;
@@ -29,6 +38,7 @@ export interface Draft {
 export interface SessionSnapshot extends Draft {
   lastSavedTitle: string;
   lastSavedMarkdown: string;
+  lastSavedTags?: string[];
   lastSavedNoteId: string | null;
   lastSavedPath: string | null;
   /** Canonical bytes committed; required projections need background repair. */
@@ -54,6 +64,7 @@ export function hasContent(draft: Draft) {
   return (
     draft.title.trim() !== "" ||
     draft.bodyMarkdown.trim() !== "" ||
+    (draft.tags?.length ?? 0) > 0 ||
     draft.currentNoteId !== null ||
     draft.currentNotePath !== null
   );
@@ -64,6 +75,8 @@ export function createForgottenNote(
   forgottenPath: string | null = null,
 ): ForgottenNote {
   return {
+    ...(draft.tags ? { tags: [...draft.tags] } : {}),
+    ...(draft.tagsError ? { tagsError: draft.tagsError } : {}),
     title: draft.title,
     bodyMarkdown: draft.bodyMarkdown,
     currentNoteId: draft.currentNoteId,
@@ -74,6 +87,8 @@ export function createForgottenNote(
 
 export function createSessionSnapshot(session: NoteSession): SessionSnapshot {
   return {
+    ...(session.tags ? { tags: [...session.tags], lastSavedTags: [...session.tags] } : {}),
+    ...(session.tagsError ? { tagsError: session.tagsError } : {}),
     title: session.title,
     bodyMarkdown: session.markdown,
     currentNoteId: session.noteId,
@@ -121,12 +136,14 @@ export async function saveNoteSession(
   title: string,
   markdown: string,
   currentPath: string | null,
+  tagEdit?: TagEdit,
 ) {
   startupMark("editor-save-ipc-start", { currentPath, markdownBytes: markdown.length });
   const saved = await invoke<NoteSession>("save_note", {
     title,
     markdown,
     currentPath,
+    ...(tagEdit ? { tagEdit } : {}),
   });
   startupMark("editor-save-ipc-resolved", { noteId: saved.noteId, commitWarning: saved.commitWarning ?? null });
   return saved;
@@ -136,11 +153,13 @@ export async function saveTaskNoteSession(
   title: string,
   markdown: string,
   currentPath: string | null,
+  tagEdit?: TagEdit,
 ) {
   return invoke<NoteSession>("save_task_note", {
     title,
     markdown,
     currentPath,
+    ...(tagEdit ? { tagEdit } : {}),
   });
 }
 

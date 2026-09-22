@@ -1,4 +1,5 @@
 type NoteFixture = {
+  tags?: string[];
   noteId: string;
   title: string;
   markdown: string;
@@ -211,6 +212,7 @@ function session(note: NoteFixture) {
     noteId: note.noteId,
     title: note.title,
     markdown: note.markdown,
+    tags: note.tags ?? [],
     path: note.path
   };
 }
@@ -550,7 +552,8 @@ export function installBrowserE2eBackend() {
       activeNote = findNote(args);
       return session(activeNote);
     }
-    if (command === 'save_note') {
+    if (command === 'list_note_tags') return [...new Set([...notes.values()].flatMap((note) => note.tags ?? []))].sort();
+    if (command === 'save_note' || command === 'save_task_note') {
       const held = pendingSave;
       if (held) {
         await held.promise;
@@ -558,6 +561,7 @@ export function installBrowserE2eBackend() {
       }
       const saved: NoteFixture = {
         ...activeNote,
+        ...(args.tagEdit ? { tags: [...(args.tagEdit as { tags: string[] }).tags] } : {}),
         title: String(args.title ?? activeNote.title),
         markdown: String(args.markdown ?? activeNote.markdown)
       };
@@ -782,9 +786,17 @@ export function installBrowserE2eBackend() {
       return null;
     }
     if (command === 'search_notes_hybrid') {
-      const query = String(args.query ?? '').toLowerCase();
+      const tokens = String(args.query ?? '').toLowerCase().split(/\s+/);
+      const tagFilters = tokens.filter((token) => token.startsWith('#') || token.startsWith('tag:'))
+        .map((token) => token.replace(/^(#|tag:)/, ''));
+      const terms = tokens.filter((token) => !token.startsWith('#') && !token.startsWith('tag:'));
       return [...notes.values()]
-        .filter((note) => `${note.title}\n${note.markdown}`.toLowerCase().includes(query))
+        .filter((note) => {
+          const tags = note.path === args.currentPath && Array.isArray(args.currentTags)
+            ? args.currentTags as string[] : note.tags ?? [];
+          return tagFilters.every((tag) => tags.includes(tag)) &&
+            terms.every((term) => `${note.title}\n${note.markdown}\n${tags.join(' ')}`.toLowerCase().includes(term));
+        })
         .map(searchItem);
     }
     if (command === 'list_recent_notes') return [...notes.values()].map(searchItem);

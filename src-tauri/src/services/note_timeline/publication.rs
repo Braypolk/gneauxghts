@@ -65,6 +65,17 @@ impl<'a> NoteTimeline<'a> {
         markdown: &str,
         current_path: Option<String>,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.save_note_with_tags(source, title, markdown, current_path, None)
+    }
+
+    pub(crate) fn save_note_with_tags(
+        &self,
+        source: MutationSource,
+        title: &str,
+        markdown: &str,
+        current_path: Option<String>,
+        tag_edit: Option<&crate::tags::TagEdit>,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
         let notes_dir = self.runtime.store.vault_root();
         let current_path = crate::state::validate_current_path(current_path, notes_dir)?;
         let source = if current_path.is_none() {
@@ -72,7 +83,11 @@ impl<'a> NoteTimeline<'a> {
         } else {
             source
         };
-        if current_path.is_none() && title.trim().is_empty() && markdown.trim().is_empty() {
+        if current_path.is_none()
+            && title.trim().is_empty()
+            && markdown.trim().is_empty()
+            && tag_edit.is_none_or(|edit| edit.tags.is_empty())
+        {
             return Ok(None);
         }
         // This identity is only a fallback for a draft or an unmanaged source.
@@ -126,6 +141,7 @@ impl<'a> NoteTimeline<'a> {
                         Some(candidate.as_str()),
                     )?;
                     self.runtime.store.require_path(&target_path)?;
+                    let canonical = crate::tags::apply_edit(&canonical, tag_edit)?;
                     let canonical =
                         self.prepare_publication(current_path.as_deref(), None, &canonical)?;
                     let note_id = NoteIdentity::new(

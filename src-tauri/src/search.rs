@@ -137,6 +137,7 @@ fn score_search_candidate(
         !candidate.note.file_name_lower.contains(term)
             && !candidate.note.title_lower.contains(term)
             && !candidate.paragraph.text_lower.contains(term)
+            && !candidate.note.tags.iter().any(|tag| tag.contains(term))
     }) {
         return None;
     }

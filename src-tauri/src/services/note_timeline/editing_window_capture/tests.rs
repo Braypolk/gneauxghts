@@ -2969,3 +2969,80 @@ fn current_passage_provenance_continues_without_caching_partial_pages() {
         .unwrap();
     assert!(plain["items"][0]["provenance"].is_null());
 }
+
+#[test]
+fn frontmatter_tags_share_editor_save_capture_and_preserve_other_properties() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("---\ntags: [old]\n# Keep this owner documentation\nowner: 'Alice' # preserve\n---\n\nA");
+    f.seal();
+    let outcome = f
+        .state
+        .note_timeline()
+        .save_note_with_tags(
+            MutationSource::Editor,
+            "Window",
+            "Edited body",
+            Some(f.path.to_string_lossy().into()),
+            Some(&crate::tags::TagEdit {
+                previous: vec!["old".into()],
+                tags: vec!["renovation".into()],
+            }),
+        )
+        .unwrap()
+        .unwrap();
+    let session = note_persistence::build_note_session_from_mutation(&outcome);
+    assert_eq!(session.tags, vec!["renovation"]);
+    assert_eq!(session.markdown, "Edited body");
+    let canonical = std::fs::read_to_string(&f.path).unwrap();
+    assert!(canonical.contains("# Keep this owner documentation\nowner: 'Alice' # preserve"));
+    f.seal();
+    let headers =
+        history_store::revisions(&f.state.note_timeline().runtime.store, &f.note).unwrap();
+    let authored = history_store::reconstruct(
+        &f.state.note_timeline().runtime.store,
+        &f.note,
+        &headers.last().unwrap().identity,
+    )
+    .unwrap();
+    assert!(authored
+        .unmanaged_frontmatter
+        .as_deref()
+        .unwrap()
+        .contains("renovation"));
+    assert_eq!(authored.body, "Edited body");
+    assert_eq!(f.save("Next body edit").tags, vec!["renovation"]);
+    let unchanged = std::fs::read_to_string(&f.path).unwrap();
+    assert!(f
+        .state
+        .note_timeline()
+        .save_note_with_tags(
+            MutationSource::Editor,
+            "Window",
+            "Must not publish",
+            Some(f.path.to_string_lossy().into()),
+            Some(&crate::tags::TagEdit {
+                previous: vec!["old".into()],
+                tags: vec![]
+            }),
+        )
+        .is_err());
+    assert_eq!(std::fs::read_to_string(&f.path).unwrap(), unchanged);
+    f.state
+        .note_timeline()
+        .save_note_with_tags(
+            MutationSource::Editor,
+            "Window",
+            "Next body edit",
+            Some(f.path.to_string_lossy().into()),
+            Some(&crate::tags::TagEdit {
+                previous: vec!["renovation".into()],
+                tags: vec![],
+            }),
+        )
+        .unwrap();
+    assert!(crate::commands::read_note_session_from_path(&f.path)
+        .unwrap()
+        .tags
+        .is_empty());
+}

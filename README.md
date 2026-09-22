@@ -79,6 +79,25 @@ paperclip button and images pasted from the clipboard. Attachments are stored
 with the local chat record so they remain available after reopening or retrying
 a conversation.
 
+## Optional tags
+
+Open the note’s **⋯** menu and choose **Show tags** to add, edit, or remove tags
+at the top of the note, scrolling with its content. Tags are hidden by default;
+the visibility preference applies to every note and pane and survives restart.
+Selecting a chip edits that tag in place on this note only. Tags live in the Markdown file’s YAML frontmatter, for example
+`tags: [renovation, budget]`, and use the same autosave and history as the body.
+Other frontmatter properties are preserved.
+
+In **All notes** search or Atlas, use `tag:renovation` or `#renovation` to match
+that exact tag. Add words to search within tagged notes, such as
+`#renovation contractor estimates`; multiple tags require all of them.
+Ordinary searches also match tag names, with a small relevance contribution.
+Tags ignore case and support letters, numbers, hyphens, underscores, and `/`.
+Body hashtags remain ordinary text rather than adding frontmatter tags.
+
+Atlas keeps its semantic layout. Tag searches highlight matching notes in place;
+click a tag in a selected note’s details to highlight its peers.
+
 ## Keyboard Shortcuts
 
 - `Cmd+1` opens Map

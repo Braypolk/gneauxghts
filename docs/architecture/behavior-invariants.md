@@ -136,6 +136,30 @@ does not require lifecycle recovery.
 
 ## Documents, tasks, and persistence
 
+### Optional note tags are authored content
+
+The top-level YAML `tags` field is canonical. Inline tag controls mutate the
+shared Note Draft State and use the existing save queue, Note Timeline capture,
+and external-conflict handling. Save requests carry a tag edit only when tags
+changed; its previous value is checked under the note-file mutation owner before
+publication. Keeping local edits after a conflict uses the reviewed external
+snapshot as the next save expectation; failed publication retains conflict choices
+unless a newer observation or committed adoption supersedes them. Other
+frontmatter, including adjacent comments, is preserved. Invalid YAML blocks tag editing,
+not ordinary body-only saves. Parsing-error changes refresh even when authored
+content is unchanged, without making a clean note dirty. Removing all tags writes
+an explicit empty list.
+Tag-row visibility is one app-wide local preference, defaults to hidden, and
+never saves a note. Tags scroll with note content; renaming edits the chip in
+place rather than taking over the add-tag field.
+
+Vault search and Atlas accept both `tag:name` and `#name`; multiple tag filters
+intersect and remaining words use ordinary relevance. Tags are normalized to
+lowercase and matched exactly by filters. Only the authored `tags` field is
+indexed as tags; body hashtags remain prose. Tag changes refresh search and Atlas
+metadata without changing content embeddings, graph edges, or geometry inputs.
+Atlas tag searches highlight existing positions; they do not regroup notes.
+
 ### External changes never overwrite dirty local work
 
 Clean documents refresh everywhere they are displayed. A dirty document keeps

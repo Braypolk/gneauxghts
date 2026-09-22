@@ -8,9 +8,11 @@ import {
   restoreTransientDraftToDocument,
   updateDocumentMarkdown,
   updateDocumentTitle,
+  updateDocumentTags,
+  tagsEqual,
   type NoteDraftState
 } from './documentState';
-import type { ForgottenNote } from '$lib/features/notepad/session/session';
+import type { ForgottenNote, TagEdit } from '$lib/features/notepad/session/session';
 import type { NoteSession } from '$lib/features/notepad/model/types';
 import {
   adoptCommittedDocument,
@@ -27,6 +29,8 @@ export interface DocumentSaveCapture {
   readonly revision: number;
   readonly title: string;
   readonly markdown: string;
+  readonly tags: string[];
+  readonly tagEdit?: TagEdit;
   readonly noteId: string | null;
   readonly path: string | null;
 }
@@ -91,6 +95,10 @@ export function createDocumentEditingService<TPaneId extends string>(
       revision: document.operation.revision,
       title: getDocumentTitle(document),
       markdown: getDocumentMarkdown(document),
+      tags: [...(document.working.tags ?? [])],
+      ...(!tagsEqual(document.working.tags, document.savedBaseline?.content.tags) ? {
+        tagEdit: { previous: [...(document.savedBaseline?.content.tags ?? [])], tags: [...(document.working.tags ?? [])] }
+      } : {}),
       noteId: getDocumentNoteId(document),
       path: getDocumentPath(document)
     };
@@ -112,13 +120,15 @@ export function createDocumentEditingService<TPaneId extends string>(
     const preserveWorking =
       document.operation.revision !== capture.revision ||
       getDocumentTitle(document) !== capture.title ||
+      !tagsEqual(document.working.tags, capture.tags) ||
       getDocumentMarkdown(document) !== capture.markdown ||
       getDocumentNoteId(document) !== capture.noteId ||
       getDocumentPath(document) !== capture.path ||
       deps.isTitleEditing(document);
     const previousMarkdown = getDocumentMarkdown(document);
     adoptCommittedDocument(deps.state, document, committed, {
-      preserveWorking
+      preserveWorking,
+      preserveTags: preserveWorking && !tagsEqual(document.working.tags, capture.tags)
     });
     if (getDocumentMarkdown(document) !== previousMarkdown) {
       resetCommittedRuntime(
@@ -167,7 +177,8 @@ export function createDocumentEditingService<TPaneId extends string>(
     };
     const preserveWorking =
       getDocumentMarkdown(document) !== committedMarkdown ||
-      getDocumentTitle(document) !== committed.title;
+      getDocumentTitle(document) !== committed.title ||
+      !tagsEqual(document.working.tags, document.savedBaseline?.content.tags);
     const previousMarkdown = getDocumentMarkdown(document);
     adoptCommittedDocument(deps.state, document, authoritative, {
       preserveWorking
@@ -214,6 +225,8 @@ export function createDocumentEditingService<TPaneId extends string>(
   ) {
     const result = restoreTransientDraftToDocument(document, {
       title: forgotten.title,
+      ...(forgotten.tags ? { tags: [...forgotten.tags] } : {}),
+      ...(forgotten.tagsError ? { tagsError: forgotten.tagsError } : {}),
       markdown: forgotten.bodyMarkdown
     }, {
       noteId: forgotten.currentNoteId,
@@ -313,6 +326,17 @@ export function createDocumentEditingService<TPaneId extends string>(
     return changed;
   }
 
+  function updateTags(document: NoteDraftState, tags: string[]): boolean {
+    if (document.working.tagsError || deps.shouldSuppressAutosave(document)) return false;
+    const changed = updateDocumentTags(document, tags);
+    if (changed) {
+      deps.clearRecentlyForgotten();
+      deps.scheduleAutosave(document);
+      deps.scheduleSearch();
+    }
+    return changed;
+  }
+
   function updateTitle(document: NoteDraftState, title: string): boolean {
     return updateDocumentTitle(document, title);
   }
@@ -327,7 +351,8 @@ export function createDocumentEditingService<TPaneId extends string>(
     resolveUsingExternal,
     recordUserEdit,
     replaceMarkdown,
-    updateTitle
+    updateTitle,
+    updateTags
   };
 }
 

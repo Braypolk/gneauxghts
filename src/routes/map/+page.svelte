@@ -925,7 +925,7 @@
           <p class="text-[0.68rem] font-medium uppercase tracking-wide text-muted-foreground">Tags</p>
           <div class="mt-2 flex flex-wrap gap-1.5">
             {#each atlas.selectedNode.tags as tag (tag)}
-              <span class="rounded-full border border-border/80 bg-muted/40 px-2 py-1 text-[0.68rem] text-muted-foreground">{tag}</span>
+              <button type="button" class="rounded-full border border-border/80 bg-muted/40 px-2 py-1 text-[0.68rem] text-muted-foreground hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring" aria-label={`Highlight notes tagged ${tag}`} onclick={() => atlas.setSearchQuery(`#${tag}`)}>#{tag}</button>
             {/each}
           </div>
         </div>

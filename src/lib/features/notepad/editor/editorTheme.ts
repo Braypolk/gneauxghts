@@ -44,7 +44,7 @@ export function createLayoutTheme() {
         maxWidth:
           'min(100%, calc(var(--content-readable-width) + var(--editor-left-padding) + var(--editor-handle-lane-width) + var(--editor-right-padding)))',
         margin: '0 auto',
-        paddingTop: 'var(--editor-top-padding)',
+        paddingTop: 'calc(var(--editor-top-padding) + var(--editor-tags-height, 0px))',
         paddingLeft: '0',
         paddingRight: '0',
         paddingBottom: 'var(--editor-bottom-padding)',

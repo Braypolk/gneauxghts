@@ -62,6 +62,8 @@ export interface PaneWorkspaceActions {
   onTitleInput: (paneId: NotepadPaneId) => void;
   onTitleBlur: (paneId: NotepadPaneId, rawTitle: string) => void;
   onTitleKeydown: (paneId: NotepadPaneId, event: KeyboardEvent) => void;
+  onNoteOptionsOpen: () => void;
+  onUpdateTags: (paneId: NotepadPaneId, documentHandle: NoteDraftState["handle"], tags: string[]) => void;
   onTogglePin: (paneId: NotepadPaneId) => void | Promise<void>;
   onOpenHistory: (paneId: NotepadPaneId) => void | Promise<void>;
   onKeepMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;

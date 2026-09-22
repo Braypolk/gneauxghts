@@ -319,7 +319,7 @@ export function adoptCommittedDocument(
   state: NotepadState,
   document: NoteDraftState,
   committed: NoteSession,
-  options: { preserveWorking?: boolean } = {}
+  options: { preserveWorking?: boolean; preserveTags?: boolean } = {}
 ): CommittedDocumentAdoption {
   applyCommittedNoteToDocument(document, committed, options);
   rebuildCanonicalDocumentLookup(state);

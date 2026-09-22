@@ -181,14 +181,14 @@ async function openHistory() {
   try {
     await browser.waitUntil(async () => {
       if (await history.isExisting()) return true;
-      const open = await $('button[aria-label="Open note history"]');
+      const open = await $('button[aria-label="Note options"]');
       if ((await open.isExisting()) && (await open.isEnabled())) {
-        await browser.execute((element: HTMLElement) => element.click(), open);
+        await browser.execute((element: HTMLElement) => element.dispatchEvent(new KeyboardEvent('keydown', { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true, bubbles: true, cancelable: true })), open);
       }
       return history.isExisting();
     }, { timeout: 20_000, interval: 250 });
   } catch (error) {
-    const open = await $('button[aria-label="Open note history"]');
+    const open = await $('button[aria-label="Note options"]');
     const entryError = await $('[data-testid="history-entry-error"]');
     throw new Error(
       `History Mode did not open. Button: ${JSON.stringify({
@@ -259,10 +259,10 @@ describe('native Phase 1-3 Note Timeline integration', () => {
       element.dispatchEvent(new Event('scroll'));
       const editorState = bridge.readEditorState();
       const open = document.querySelector<HTMLButtonElement>(
-        'button[aria-label="Open note history"]'
+        'button[aria-label="Note options"]'
       );
       if (!open || open.disabled) throw new Error('History action was unavailable');
-      open.click();
+      open.dispatchEvent(new KeyboardEvent('keydown', { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
       return { editorState, scrollTop: element.scrollTop };
     }, scroller, selectionAnchor, selectionAnchor - 10);
     const editorStateBefore = entryState.editorState;

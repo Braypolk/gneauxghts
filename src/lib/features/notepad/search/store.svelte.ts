@@ -31,6 +31,7 @@ export interface NotepadSearchState {
 interface SearchStoreDeps {
   getCurrentTitle: () => string;
   getCurrentMarkdown: () => string;
+  getCurrentTags?: () => string[];
   getCurrentPath: () => string | null;
   openSearchResult: (result: SearchItem) => Promise<void>;
   openRecentTask: (task: RecentTaskItem) => Promise<void>;
@@ -154,6 +155,7 @@ export class NotepadSearchStore {
       const results = await searchNotes(trimmedQuery, {
         currentPath: this.#deps.getCurrentPath(),
         currentTitle: this.#deps.getCurrentTitle(),
+        ...(this.#deps.getCurrentTags ? { currentTags: this.#deps.getCurrentTags() } : {}),
         currentMarkdown: this.#deps.getCurrentMarkdown()
       });
 

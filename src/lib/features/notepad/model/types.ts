@@ -4,6 +4,8 @@ export interface NoteSession {
   noteId: string | null;
   title: string;
   markdown: string;
+  tags?: string[];
+  tagsError?: string;
   path: string | null;
   commitWarning?: CommittedMutationWarning;
 }

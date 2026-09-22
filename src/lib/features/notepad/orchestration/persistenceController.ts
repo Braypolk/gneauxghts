@@ -1,3 +1,4 @@
+import type { TagEdit } from "../session/session";
 import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
 import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
 import type { NoteSession } from "$lib/features/notepad/model/types";
@@ -21,11 +22,13 @@ export interface PersistenceControllerParams {
     title: string,
     markdown: string,
     currentPath: string | null,
+    tagEdit?: TagEdit,
   ) => Promise<NoteSession>;
   saveTaskNoteSession?: (
     title: string,
     markdown: string,
     currentPath: string | null,
+    tagEdit?: TagEdit,
   ) => Promise<NoteSession>;
   loadHistoryReadiness?: (noteId: string | null) => Promise<HistoryReadiness>;
   markNoteOpened?: (noteId: string) => Promise<void>;
@@ -122,7 +125,9 @@ export function createNotepadPersistenceController(
     }
     // Start the authoritative IPC immediately. Observation never gates or
     // retries publication and must not change its result (including warnings).
-    const saving = save(title, markdown, capture.path);
+    const saving = capture.tagEdit
+      ? save(title, markdown, capture.path, capture.tagEdit)
+      : save(title, markdown, capture.path);
     const stopObserving = observePendingSave(
       note,
       capture.operationToken,

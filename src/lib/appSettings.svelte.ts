@@ -62,7 +62,16 @@ export const forgottenNoteRetentionOptions = [
   description: string;
 }>;
 
+const TAGS_VISIBLE_STORAGE_KEY = 'gneauxghts.tags-visible';
+
 class AppSettingsStore {
+  tagsVisible = $state(isBrowser() && window.localStorage.getItem(TAGS_VISIBLE_STORAGE_KEY) === 'true');
+
+  setTagsVisible = (visible: boolean): void => {
+    this.tagsVisible = visible;
+    if (isBrowser()) window.localStorage.setItem(TAGS_VISIBLE_STORAGE_KEY, String(visible));
+  };
+
   forgetButtonDurationPreference = $state<ForgetButtonDurationPreference>(
     readStoredForgetButtonDurationPreference()
   );

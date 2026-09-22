@@ -1,5 +1,6 @@
 import {
   dispatchDocumentExternalSync,
+  documentHasUnresolvedConflict,
   getDocumentMarkdown,
   type NoteDraftState
 } from './documentState';
@@ -37,15 +38,25 @@ export function createDocumentConflictController(
     ) {
       return false;
     }
-    if (
-      !dispatchDocumentExternalSync(document, {
-        type: 'keepWorking',
-        conflictId: document.externalSync.conflictId
-      })
-    ) {
+    const conflict = document.externalSync;
+    if (!dispatchDocumentExternalSync(document, { type: 'keepWorking', conflictId: conflict.conflictId })) {
       return false;
     }
-    await deps.enqueueSave(document);
+    const expectedBaseline = document.savedBaseline;
+    try {
+      await deps.enqueueSave(document);
+    } catch (error) {
+      // A failed publication must not dismiss the user's resolution choices.
+      // A newer observation or successful adoption takes precedence.
+      if (!documentHasUnresolvedConflict(document) &&
+        document.externalSync.sequence === conflict.sequence &&
+        document.savedBaseline === expectedBaseline) {
+        dispatchDocumentExternalSync(document, {
+          type: 'externalCaptured', external: conflict.external
+        });
+      }
+      throw error;
+    }
     return true;
   }
 

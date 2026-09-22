@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { CornerUpLeft, History, MessagesSquare, Pin, X } from '@lucide/svelte';
+  import { CornerUpLeft, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
   } from '$lib/keyboardShortcuts.svelte';
+  import { DropdownMenu } from 'bits-ui';
+  import ScrollingNoteTags from './ui/ScrollingNoteTags.svelte';
+  import { appSettings } from '$lib/appSettings.svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
   import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
@@ -35,6 +38,8 @@
     paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
   }: Props = $props();
 
+  let optionsButton = $state<HTMLButtonElement | null>(null);
+  let historyRequested = false;
   let titleDraft = $state<string | null>(null);
   let titleDraftDocument = $state<PaneViewModel['titleDocument'] | null>(null);
   const titleDraftBelongsToCurrentDocument = $derived(
@@ -110,20 +115,31 @@
   {/if}
   <div class={viewModel.frameClass}>
     {#if viewModel.paneKind === 'editor'}
-      <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
+      <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20" class:has-split-actions={viewModel.showCloseButton}>
         <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
         <div class="notepad-editor-top-row relative z-10 flex items-center justify-between gap-2 px-3 pt-3 pb-2 sm:gap-3 sm:px-4 sm:pt-4 sm:pb-3">
-          <button
-            type="button"
-            disabled={!viewModel.canPin}
-            class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-muted/72 disabled:hover:text-muted-foreground sm:h-9 sm:w-9"
-            aria-label="Open note history"
-            title={`Open note history (${historyShortcutLabel})`}
-            onmousedown={(event) => event.preventDefault()}
-            onclick={() => void actions.onOpenHistory(viewModel.paneId)}
-          >
-            <History class="h-4 w-4" />
-          </button>
+          <DropdownMenu.Root onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
+            <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-9" aria-label="Note options" title="Note options">
+              <Ellipsis class="h-4 w-4" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content onCloseAutoFocus={(event) => {
+                if (historyRequested) {
+                  event.preventDefault();
+                  historyRequested = false;
+                  optionsButton?.focus();
+                  void actions.onOpenHistory(viewModel.paneId);
+                }
+              }} align="start" sideOffset={6} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg">
+                <DropdownMenu.Item aria-label="Open note history" disabled={!viewModel.canPin} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { historyRequested = true; }}>
+                  <History class="h-4 w-4" /> Note history <span class="ml-auto pl-3 text-xs text-muted-foreground">{historyShortcutLabel}</span>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent" onSelect={() => { appSettings.setTagsVisible(!appSettings.tagsVisible); }}>
+                  <Tags class="h-4 w-4" /> {appSettings.tagsVisible ? 'Hide tags' : 'Show tags'}
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu.Root>
           <div class="notepad-editor-title-wrap pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
             <div
               bind:this={pane.refs.titleShell}
@@ -139,7 +155,10 @@
                 onmousedown={(event) => event.preventDefault()}
                 onclick={() => void actions.onTogglePin(viewModel.paneId)}
               >
-                <Pin class="h-4 w-4" fill={viewModel.isPinned ? 'currentColor' : 'none'} />
+                <Pin
+                  class={`h-4 w-4 transition-[rotate,fill] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${viewModel.isPinned ? '-rotate-45' : 'rotate-0'}`}
+                  fill={viewModel.isPinned ? 'currentColor' : 'none'}
+                />
               </button>
               <span
                 aria-hidden="true"
@@ -256,6 +275,13 @@
             use:editorAction={viewModel.editorLifecycle}
           ></div>
 
+          {#if appSettings.tagsVisible && viewModel.isEditorReady}
+            {#key viewModel.titleDocument.handle}
+              {@const tagDocument = viewModel.titleDocument}
+              <ScrollingNoteTags view={pane.controller?.view} tags={tagDocument.working.tags ?? []} error={tagDocument.working.tagsError} disabled={viewModel.titleReadonly} onChange={(tags) => actions.onUpdateTags(viewModel.paneId, tagDocument.handle, tags)} onDone={() => pane.controller?.view.focus()} />
+            {/key}
+          {/if}
+
           {#if viewModel.isPaneCommandOpen}
             <div class="pointer-events-none absolute inset-0 z-20">
               <div class="pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] left-1/2 box-border w-[min(calc(100%-2rem),var(--content-readable-width))] max-w-md -translate-x-1/2 cursor-default">
@@ -360,9 +386,22 @@
   }
 
   @media (max-width: 639px) {
+    .notepad-editor-top-row {
+      padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
+    }
+
     .notepad-editor-title-wrap {
-      right: 7rem;
-      left: 10rem;
+      top: calc(3.5rem + env(safe-area-inset-top, 0px));
+      right: 4rem;
+      left: 4rem;
+    }
+
+    .has-split-actions .notepad-editor-title-wrap {
+      right: 10rem;
+    }
+
+    .notepad-editor-top-row .mobile-pane-top-action {
+      margin-right: 0;
     }
 
     .mobile-pane-top-action {

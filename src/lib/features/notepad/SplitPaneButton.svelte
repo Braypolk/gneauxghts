@@ -115,7 +115,7 @@
     z-index: 0;
     opacity: 1;
     pointer-events: auto;
-    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem)) scale(1);
+    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem));
     transition:
       transform 200ms cubic-bezier(0.22, 0.8, 0.24, 1),
       opacity 160ms ease,
@@ -128,17 +128,14 @@
   .split-pane-option--current {
     opacity: 0;
     pointer-events: none;
-    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem)) scale(0.72);
+    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem + 0.5rem));
   }
 
   :global(.split-pane-indicator) {
     right: 0.3rem;
     bottom: 0.3rem;
     opacity: 0;
-    transform: scale(0.6);
-    transition:
-      opacity 160ms ease,
-      transform 200ms cubic-bezier(0.22, 0.8, 0.24, 1);
+    transition: opacity 160ms ease;
   }
 
   .split-pane-control::before {
@@ -173,14 +170,13 @@
   .split-pane-control--split .split-pane-option {
     opacity: 1;
     pointer-events: auto;
-    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem)) scale(1);
+    transform: translateX(calc(var(--split-pane-position) * -2.75rem - 1rem));
     background-color: color-mix(in srgb, var(--primary) 14%, var(--muted));
     color: var(--primary);
   }
 
   .split-pane-control--split :global(.split-pane-indicator) {
     opacity: 0.9;
-    transform: scale(1);
   }
 
   .split-pane-control--split .split-pane-option:hover,

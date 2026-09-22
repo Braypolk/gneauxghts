@@ -1226,7 +1226,8 @@ pub(crate) const EDGE_MAX_INCREMENTAL_DIRTY_NOTES: usize = 32;
 const EDGE_INCREMENTAL_CANDIDATE_K: usize = EDGE_NEIGHBORS_PER_NOTE * 8;
 /// Bump when derived, non-embedding metadata changes so existing vault rows are
 /// refreshed without paying to regenerate unchanged chunk embeddings.
-pub(super) const NOTE_PRESENTATION_ALGORITHM_VERSION: &str = "note-presentation-v2-body-tags";
+pub(super) const NOTE_PRESENTATION_ALGORITHM_VERSION: &str =
+    "note-presentation-v3-frontmatter-tags";
 
 fn dirty_count_allows_incremental(dirty_count: usize) -> bool {
     dirty_count > 0 && dirty_count <= EDGE_MAX_INCREMENTAL_DIRTY_NOTES
@@ -1925,28 +1926,9 @@ where
     hasher.finalize().to_hex().to_string()
 }
 
-fn extract_tags(_parsed_note: &note::ParsedNote, chunked_note: &ChunkedNote) -> Vec<String> {
-    let mut tags = Vec::new();
-    for chunk in &chunked_note.chunks {
-        collect_hashtags(&chunk.text, &mut tags);
-    }
-    tags
-}
-
-fn collect_hashtags(text: &str, tags: &mut Vec<String>) {
-    for word in text.split_whitespace() {
-        let tag = word
-            .strip_prefix('#')
-            .unwrap_or("")
-            .trim_matches(|character: char| !is_tag_char(character));
-        if !tag.is_empty() && tag.chars().all(is_tag_char) {
-            tags.push(tag.to_lowercase());
-        }
-    }
-}
-
-fn is_tag_char(character: char) -> bool {
-    character.is_ascii_alphanumeric() || matches!(character, '-' | '_')
+fn extract_tags(parsed_note: &note::ParsedNote, _chunked_note: &ChunkedNote) -> Vec<String> {
+    crate::tags::read_frontmatter_tags(parsed_note.frontmatter.raw_other.as_deref())
+        .unwrap_or_default()
 }
 
 fn extract_wikilink_targets(markdown: &str) -> Vec<String> {
@@ -2041,12 +2023,31 @@ mod tests {
     use crate::{note, semantic::chunking::chunk_markdown};
 
     #[test]
-    fn semantic_metadata_tags_ignore_frontmatter_but_keep_body_hashtags() {
+    fn semantic_metadata_tags_use_only_the_authored_frontmatter_field() {
         let markdown = "---\ntags: [frontmatter-only]\n---\nBody #body-tag";
         let parsed = note::parse_note(markdown);
         let chunked = chunk_markdown(markdown, "Note");
 
-        assert_eq!(extract_tags(&parsed, &chunked), vec!["body-tag"]);
+        assert_eq!(extract_tags(&parsed, &chunked), vec!["frontmatter-only"]);
+    }
+
+    #[test]
+    fn changing_tags_does_not_change_embeddings_or_atlas_geometry_inputs() {
+        let before = "---\ntags: [old]\n---\n\nSame content";
+        let after = "---\ntags: [renovation]\n---\n\nSame content";
+        let metadata = |markdown: &str| {
+            super::note_semantic_metadata(
+                "/notes/Note.md",
+                &chunk_markdown(markdown, "Note"),
+                &note::parse_note(markdown),
+                100,
+            )
+        };
+        let before = metadata(before);
+        let after = metadata(after);
+        assert_eq!(before.semantic_input_hash, after.semantic_input_hash);
+        assert_eq!(before.structure_hash, after.structure_hash);
+        assert_ne!(before.presentation_hash, after.presentation_hash);
     }
 
     #[test]

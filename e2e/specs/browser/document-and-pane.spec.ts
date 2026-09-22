@@ -1,5 +1,13 @@
 import { browser, expect, $ } from '@wdio/globals';
 
+async function openHistoryShortcut() {
+  await browser.execute(() => {
+    (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'H', code: 'KeyH', metaKey: true, shiftKey: true, bubbles: true, cancelable: true
+    }));
+  });
+}
+
 async function waitForNote(title: string) {
   const input = await $('[data-testid="note-title"]');
   try {
@@ -207,14 +215,14 @@ describe('document and pane state-machine boundaries', () => {
     expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
   });
 
-  it('returns keyboard focus to the history toolbar control', async () => {
-    const open = await $('button[aria-label="Open note history"]');
-    await browser.execute((element: HTMLElement) => { element.focus(); element.click(); }, open);
+  it('returns keyboard focus to Note options after opening history from its menu', async () => {
+    await $('button[aria-label="Note options"]').click();
+    await $('[role="menuitem"][aria-label="Open note history"]').click();
     await $('[data-testid="historical-revision-diff"]').waitForExist();
     await browser.keys('Escape');
     await $('[data-testid="history-mode"]').waitForExist({ reverse: true });
     await browser.waitUntil(async () => browser.execute(() =>
-      document.activeElement === document.querySelector('button[aria-label="Open note history"]')
+      document.activeElement === document.querySelector('button[aria-label="Note options"]')
     ));
   });
 
@@ -238,10 +246,7 @@ describe('document and pane state-machine boundaries', () => {
         const before = await card.getSize();
         const position = await card.getLocation();
 
-        const openHistory = await $('button[aria-label="Open note history"]');
-        // Match the existing history journeys: mobile shell chrome can overlap
-        // this toolbar in the browser harness, independently of history layout.
-        await browser.execute((element: HTMLElement) => element.click(), openHistory);
+        await openHistoryShortcut();
         const history = await $('[data-testid="history-mode"]');
         await $('[data-testid="historical-revision-diff"]').waitForExist();
         expect((await history.getSize()).width).toBeCloseTo(before.width, 0);
@@ -364,8 +369,7 @@ describe('document and pane state-machine boundaries', () => {
       scroller
     );
 
-    const openHistory = await $('button[aria-label="Open note history"]');
-    await browser.execute((element: HTMLElement) => element.click(), openHistory);
+    await openHistoryShortcut();
     const history = await $('[data-testid="history-mode"]');
     await history.waitForExist();
     expect((await history.getText()).toUpperCase()).toContain('READ ONLY');
@@ -529,8 +533,7 @@ describe('document and pane state-machine boundaries', () => {
         scroller
       );
 
-      const openHistory = await $('button[aria-label="Open note history"]');
-      await browser.execute((element: HTMLElement) => element.click(), openHistory);
+      await openHistoryShortcut();
       const history = await $('[data-testid="history-mode"]');
       await history.waitForExist();
       await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
@@ -601,8 +604,7 @@ describe('document and pane state-machine boundaries', () => {
   });
 
   it('confirms a complete Version Restore and isolates ordinary editor undo', async () => {
-    const openHistory = await $('button[aria-label="Open note history"]');
-    await browser.execute((element: HTMLElement) => element.click(), openHistory);
+    await openHistoryShortcut();
     const history = await $('[data-testid="history-mode"]');
     await history.waitForExist();
     await $('[data-revision-id="note-alpha-revision-34"]').click();

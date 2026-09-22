@@ -303,6 +303,8 @@ export function createNoteCommandController<
     const draft = {
       title: getDocumentTitle(note),
       bodyMarkdown: getDocumentMarkdown(note),
+      ...(note.working.tags ? { tags: [...note.working.tags] } : {}),
+      ...(note.working.tagsError ? { tagsError: note.working.tagsError } : {}),
       currentNoteId: getDocumentNoteId(note),
       currentNotePath: getDocumentPath(note)
     };
@@ -424,6 +426,8 @@ export function createNoteCommandController<
     const hasCurrentContent = hasContent({
       title: getDocumentTitle(note),
       bodyMarkdown: getDocumentMarkdown(note),
+      ...(note.working.tags ? { tags: [...note.working.tags] } : {}),
+      ...(note.working.tagsError ? { tagsError: note.working.tagsError } : {}),
       currentNoteId: getDocumentNoteId(note),
       currentNotePath: getDocumentPath(note)
     });

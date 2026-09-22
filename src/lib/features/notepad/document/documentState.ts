@@ -31,6 +31,8 @@ export type {
 export type DocumentHandle = `document:${string}`;
 
 export interface DocumentWorkingContent {
+  tags?: string[];
+  tagsError?: string;
   title: string;
   markdown: string;
 }
@@ -113,13 +115,18 @@ function identityEquals(
   );
 }
 
+export function tagsEqual(left: string[] = [], right: string[] = []) {
+  return left.length === right.length && left.every((tag) => right.includes(tag));
+}
+
 function contentEquals(
   left: DocumentWorkingContent,
   right: DocumentWorkingContent
 ) {
   return (
     left.title === right.title &&
-    left.markdown === right.markdown
+    left.markdown === right.markdown &&
+    tagsEqual(left.tags, right.tags)
   );
 }
 
@@ -138,6 +145,8 @@ export function externalDocumentSnapshotFromSession(
   return {
     content: {
       title: snapshot.title,
+      ...(snapshot.tags ? { tags: [...snapshot.tags] } : {}),
+      ...(snapshot.tagsError ? { tagsError: snapshot.tagsError } : {}),
       markdown: snapshot.bodyMarkdown
     },
     identity: identityFromBoundary(
@@ -148,6 +157,7 @@ export function externalDocumentSnapshotFromSession(
       ? {
           content: {
             title: snapshot.lastSavedTitle,
+            ...(snapshot.lastSavedTags ? { tags: [...snapshot.lastSavedTags] } : {}),
             markdown: snapshot.lastSavedMarkdown
           },
           identity: baselineIdentity
@@ -165,6 +175,8 @@ export function externalDocumentSnapshotFromCommittedNote(
   );
   const content = {
     title: committed.title,
+    ...(committed.tags ? { tags: [...committed.tags] } : {}),
+    ...(committed.tagsError ? { tagsError: committed.tagsError } : {}),
     markdown: committed.markdown
   };
   return {
@@ -225,6 +237,9 @@ export function documentToSessionSnapshot(
 ): SessionSnapshot {
   const baseline = document.savedBaseline;
   return {
+    ...(document.working.tags ? { tags: [...document.working.tags] } : {}),
+    ...(document.working.tagsError ? { tagsError: document.working.tagsError } : {}),
+    ...(baseline?.content.tags ? { lastSavedTags: [...baseline.content.tags] } : {}),
     title: document.working.title,
     bodyMarkdown: document.working.markdown,
     currentNoteId: getDocumentNoteId(document),
@@ -253,7 +268,8 @@ export function documentHasCleanBuffer(
     return (
       document.identity.kind === 'draft' &&
       document.working.title === '' &&
-      document.working.markdown === ''
+      document.working.markdown === '' &&
+      (document.working.tags?.length ?? 0) === 0
     );
   }
   return (
@@ -286,6 +302,13 @@ function advanceRevision(document: NoteDraftState) {
   dispatchDocumentOperation(document, {
     type: 'contentChanged'
   });
+}
+
+export function updateDocumentTags(document: NoteDraftState, tags: string[]) {
+  if (tagsEqual(document.working.tags, tags)) return false;
+  document.working.tags = [...tags];
+  advanceRevision(document);
+  return true;
 }
 
 export function updateDocumentTitle(
@@ -322,11 +345,31 @@ export function dispatchDocumentExternalSync(
   event: DocumentExternalSyncEvent
 ) {
   const previous = document.externalSync;
-  document.externalSync = transitionDocumentExternalSync(
-    previous,
-    event
-  );
-  return document.externalSync !== previous;
+  const next = transitionDocumentExternalSync(previous, event);
+  if (next === previous) return false;
+  if (event.type === 'keepWorking' && previous.kind === 'conflict') {
+    const tagsEdited = !tagsEqual(document.working.tags, document.savedBaseline?.content.tags);
+    if (previous.external.kind === 'snapshot') {
+      const external = previous.external.document.content;
+      // Invalid YAML cannot accept a tag patch, even after an explicit choice.
+      // Leave the conflict intact so a failed resolution cannot lose intent.
+      if (tagsEdited && external.tagsError) throw new Error(external.tagsError);
+      if (!tagsEdited) {
+        // Body-only edits still preserve independently changed disk metadata.
+        const tagsChanged = !tagsEqual(document.working.tags, external.tags);
+        document.working.tags = external.tags ? [...external.tags] : undefined;
+        document.working.tagsError = external.tagsError;
+        if (tagsChanged) advanceRevision(document);
+      }
+    }
+    // Keep local content, but compare publication with the disk version the
+    // user explicitly chose to replace. Deletion has no saved tag baseline.
+    document.savedBaseline = previous.external.kind === 'snapshot'
+      ? previous.external.document.savedBaseline
+      : null;
+  }
+  document.externalSync = next;
+  return true;
 }
 
 export function isDocumentOperationCurrent(
@@ -343,12 +386,14 @@ export function applySessionSnapshotToDocument(
   document: NoteDraftState,
   snapshot: SessionSnapshot,
   {
-    preserveWorking = false
-  }: { preserveWorking?: boolean } = {}
+    preserveWorking = false,
+    preserveTags = preserveWorking && !tagsEqual(document.working.tags, document.savedBaseline?.content.tags)
+  }: { preserveWorking?: boolean; preserveTags?: boolean } = {}
 ) {
   const external = externalDocumentSnapshotFromSession(
     snapshot
   );
+  const tagsChanged = !preserveTags && !tagsEqual(document.working.tags, external.content.tags);
   const titleChanged =
     !preserveWorking &&
     document.working.title !== external.content.title;
@@ -361,8 +406,11 @@ export function applySessionSnapshotToDocument(
   document.publication.warning = snapshot.commitWarning ?? null;
   if (!preserveWorking) {
     document.working = { ...external.content };
+  } else if (!preserveTags) {
+    document.working.tags = external.content.tags ? [...external.content.tags] : undefined;
+    document.working.tagsError = external.content.tagsError;
   }
-  if (titleChanged || markdownChanged) {
+  if (titleChanged || markdownChanged || tagsChanged) {
     advanceRevision(document);
   }
   dispatchDocumentExternalSync(document, {
@@ -375,12 +423,14 @@ export function applyCommittedNoteToDocument(
   document: NoteDraftState,
   committed: NoteSession,
   {
-    preserveWorking = false
-  }: { preserveWorking?: boolean } = {}
+    preserveWorking = false,
+    preserveTags = preserveWorking && !tagsEqual(document.working.tags, document.savedBaseline?.content.tags)
+  }: { preserveWorking?: boolean; preserveTags?: boolean } = {}
 ) {
   const external = externalDocumentSnapshotFromCommittedNote(
     committed
   );
+  const tagsChanged = !preserveTags && !tagsEqual(document.working.tags, external.content.tags);
   const titleChanged =
     !preserveWorking &&
     document.working.title !== external.content.title;
@@ -393,8 +443,11 @@ export function applyCommittedNoteToDocument(
   document.publication.warning = committed.commitWarning ?? null;
   if (!preserveWorking) {
     document.working = { ...external.content };
+  } else if (!preserveTags) {
+    document.working.tags = external.content.tags ? [...external.content.tags] : undefined;
+    document.working.tagsError = external.content.tagsError;
   }
-  if (titleChanged || markdownChanged) {
+  if (titleChanged || markdownChanged || tagsChanged) {
     advanceRevision(document);
   }
   dispatchDocumentExternalSync(document, {
@@ -408,6 +461,7 @@ export function restoreTransientDraftToDocument(
   content: DocumentWorkingContent,
   identity: { noteId: string | null; path: string | null }
 ) {
+  const tagsChanged = !tagsEqual(document.working.tags, content.tags);
   const titleChanged = document.working.title !== content.title;
   const markdownChanged =
     document.working.markdown !== content.markdown;
@@ -418,7 +472,7 @@ export function restoreTransientDraftToDocument(
   );
   document.savedBaseline = null;
   document.publication.warning = null;
-  if (titleChanged || markdownChanged) {
+  if (titleChanged || markdownChanged || tagsChanged) {
     advanceRevision(document);
   }
   dispatchDocumentExternalSync(document, {
@@ -437,8 +491,9 @@ export function externalSnapshotMatchesSavedBaseline(
   const baseline = document.savedBaseline;
   return Boolean(
     baseline &&
-      contentEquals(baseline.content, external.content) &&
-      identityEquals(baseline.identity, external.identity)
+    contentEquals(baseline.content, external.content) &&
+    document.working.tagsError === external.content.tagsError &&
+    identityEquals(baseline.identity, external.identity)
   );
 }
 

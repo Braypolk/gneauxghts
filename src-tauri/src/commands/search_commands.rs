@@ -542,6 +542,7 @@ pub(crate) async fn search_notes_hybrid(
     limit: usize,
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
+    current_tags: Option<Vec<String>>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     state
         .note_timeline()
@@ -556,6 +557,7 @@ pub(crate) async fn search_notes_hybrid(
             limit,
             semantic_weight,
             lexical_weight,
+            current_tags,
         ))
         .await
 }
@@ -571,14 +573,16 @@ async fn search_notes_hybrid_unchecked(
     limit: usize,
     semantic_weight: Option<f32>,
     lexical_weight: Option<f32>,
+    current_tags: Option<Vec<String>>,
 ) -> Result<Vec<NoteSearchResult>, String> {
     let _foreground_guard = state.foreground_guard();
     let cache_generation = result_cache_generation();
     let started_at = Instant::now();
     let notes_dir = prepare_notes_dir(&state, false)?;
 
-    let normalized_query = normalize_search_text(&query);
-    if normalized_query.is_empty() {
+    let tag_query = crate::tags::TagQuery::parse(&query);
+    let normalized_query = normalize_search_text(&tag_query.text);
+    if normalized_query.is_empty() && tag_query.tags.is_empty() {
         return Ok(Vec::new());
     }
 
@@ -586,7 +590,7 @@ async fn search_notes_hybrid_unchecked(
         .split_whitespace()
         .filter(|term| !term.is_empty())
         .collect::<Vec<_>>();
-    if query_terms.is_empty() {
+    if query_terms.is_empty() && tag_query.tags.is_empty() {
         return Ok(Vec::new());
     }
     let effective_limit = limit;
@@ -603,7 +607,10 @@ async fn search_notes_hybrid_unchecked(
     )?;
     let draft = resolved_current.draft;
     let cache_fingerprint = build_search_fingerprint(
-        &normalized_query,
+        &format!(
+            "{}|{:?}|{:?}",
+            normalized_query, tag_query.tags, current_tags
+        ),
         current_path.as_deref(),
         draft.hash.as_deref(),
         effective_limit,
@@ -616,7 +623,7 @@ async fn search_notes_hybrid_unchecked(
     let resolved_body = resolved_current.body.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
         state,
-        &query,
+        &tag_query.text,
         &notes_dir,
         current_path.as_deref(),
         &current_title,
@@ -624,6 +631,8 @@ async fn search_notes_hybrid_unchecked(
         draft.hash.as_deref(),
         &normalized_query,
         &query_terms,
+        &tag_query,
+        current_tags.as_deref(),
     )?;
     let settings = state.semantic.get_settings()?;
     let lexical_weight = lexical_weight.unwrap_or(settings.lexical_weight).max(0.0);
@@ -673,12 +682,34 @@ async fn search_notes_hybrid_unchecked(
     }
 
     let semantic = state.semantic.clone();
-    let semantic_query = query.clone();
+    let semantic_query = tag_query.text.clone();
+    let allowed_paths = if tag_query.tags.is_empty() {
+        None
+    } else {
+        Some(
+            state
+                .notes_index
+                .lock()
+                .map_err(|_| "Notes index unavailable")?
+                .entries
+                .iter()
+                .filter(|(path, note)| {
+                    tag_query.matches(if current_path.as_ref() == Some(*path) {
+                        current_tags.as_deref().unwrap_or(&note.tags)
+                    } else {
+                        &note.tags
+                    })
+                })
+                .map(|(path, _)| path.to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+        )
+    };
     let semantic_result = tauri::async_runtime::spawn_blocking(move || {
-        semantic.semantic_matches_for_text(
+        semantic.semantic_matches_for_text_scoped(
             &semantic_query,
             current_path_raw.as_deref(),
             effective_limit.saturating_mul(3).max(effective_limit),
+            allowed_paths.as_deref(),
         )
     })
     .await
@@ -1068,42 +1099,102 @@ fn collect_lexical_candidates(
     current_body_hash: Option<&str>,
     normalized_query: &str,
     query_terms: &[&str],
+    tag_query: &crate::tags::TagQuery,
+    current_tags: Option<&[String]>,
 ) -> Result<Vec<ScoredSearchResult>, String> {
-    let current_override = build_current_override_cached(
-        current_path,
-        current_title,
-        current_markdown,
-        current_body_hash,
-    );
-    let mut candidates = Vec::new();
-    if let Some(current_note) = current_override.as_ref() {
-        candidates.extend(search_note(
-            current_path,
-            current_note,
-            normalized_query,
-            query_terms,
-        ));
-    }
-
-    // Phase 5: `ensure_interactive_index` now write-throughs to the
-    // lexical mirror, so the search path no longer needs to clone the
-    // entire `notes_index.entries` and call `sync_with_notes_index`
-    // on every keystroke. Existing watcher + interactive entry points
-    // keep the Tantivy index in step with `notes_index`.
     state.ensure_interactive_index(
         notes_dir,
         INTERACTIVE_INDEX_REFRESH_MAX_AGE,
         "search_notes_all",
     )?;
-
-    candidates.extend(state.lexical.search(
-        query,
-        normalized_query,
-        query_terms,
-        MAX_SEARCH_RESULTS,
+    let index = state
+        .notes_index
+        .lock()
+        .map_err(|_| "Notes index unavailable")?;
+    let mut current_override = build_current_override_cached(
         current_path,
-    )?);
-
+        current_title,
+        current_markdown,
+        current_body_hash,
+    );
+    if let Some(note) = current_override.as_mut() {
+        let canonical = current_path.and_then(|path| index.entries.get(path));
+        // The editor sends body-only Markdown. Retain the catalog identity so
+        // current-content delivery can admit this override under its real note.
+        if let Some(canonical) = canonical {
+            note.note_id = canonical.note_id.clone();
+            note.document_kind = canonical.document_kind;
+        }
+        note.tags = current_tags.map(<[String]>::to_vec).unwrap_or_else(|| {
+            canonical.map(|note| note.tags.clone()).unwrap_or_default()
+        });
+    }
+    let mut candidates = Vec::new();
+    if tag_query.tags.is_empty() && !query_terms.is_empty() {
+        candidates.extend(state.lexical.search(
+            query,
+            normalized_query,
+            query_terms,
+            MAX_SEARCH_RESULTS,
+            current_path,
+        )?);
+    }
+    for (path, note) in index
+        .entries
+        .iter()
+        .filter(|(path, _)| Some(path.as_path()) != current_path)
+        .map(|(path, note)| (Some(path.as_path()), note))
+        .chain(current_override.as_ref().map(|note| (current_path, note)))
+    {
+        if note.document_kind != crate::note::DocumentKind::Note || !tag_query.matches(&note.tags) {
+            continue;
+        }
+        if query_terms.is_empty() {
+            let mut result = build_recent_result(path, note);
+            result.reason_labels = tag_query.tags.iter().map(|tag| format!("#{tag}")).collect();
+            candidates.push(ScoredSearchResult { score: 100, result });
+            continue;
+        }
+        if !tag_query.tags.is_empty() || path == current_path {
+            candidates.extend(search_note(path, note, normalized_query, query_terms));
+        }
+        let matching_tags: Vec<_> = note
+            .tags
+            .iter()
+            .filter(|tag| query_terms.iter().any(|term| tag.contains(term)))
+            .collect();
+        if matching_tags.is_empty() {
+            continue;
+        }
+        let labels: Vec<_> = matching_tags.iter().map(|tag| format!("#{tag}")).collect();
+        if tag_query.tags.is_empty()
+            && path != current_path
+            && !candidates.iter().any(|candidate| {
+                candidate.result.note_path.as_deref() == path.and_then(Path::to_str)
+            })
+        {
+            candidates.extend(search_note(path, note, normalized_query, query_terms));
+        }
+        let mut found = false;
+        for candidate in candidates.iter_mut().filter(|candidate| {
+            candidate.result.note_path.as_deref() == path.and_then(Path::to_str)
+        }) {
+            candidate.score += 24;
+            candidate.result.reason_labels.extend(labels.clone());
+            found = true;
+        }
+        // Tags alone qualify only when they account for the complete free-text query.
+        if !found
+            && query_terms
+                .iter()
+                .all(|term| matching_tags.iter().any(|tag| tag.contains(term)))
+        {
+            let mut result = build_recent_result(path, note);
+            result.section_label = "Tags".into();
+            result.reason_labels = labels;
+            candidates.push(ScoredSearchResult { score: 24, result });
+        }
+    }
     Ok(candidates)
 }
 
@@ -1236,7 +1327,12 @@ pub(super) fn merge_hybrid_candidates(
     for lexical_candidate in lexical_candidates {
         let mut result = lexical_candidate.result;
         let lexical_score = if max_lexical > 0.0 {
-            lexical_candidate.score as f32 / max_lexical
+            let score = lexical_candidate.score as f32 / max_lexical;
+            if result.section_label == "Tags" {
+                score.min(0.12)
+            } else {
+                score
+            }
         } else {
             0.0
         };
@@ -1612,5 +1708,121 @@ mod note_access_lookup_tests {
         assert_eq!(lookup.note_id_by_path.len(), 1);
         assert!(lookup.modified_by_note_id.contains_key(&keep_id));
         assert!(!lookup.note_id_by_path.values().any(|id| id != &keep_id));
+    }
+}
+
+#[tauri::command]
+pub(crate) async fn list_note_tags<R: tauri::Runtime>(
+    app: AppHandle<R>,
+) -> Result<Vec<String>, String> {
+    super::on_app_worker(app, |state| {
+        let notes_dir = prepare_notes_dir(state, false)?;
+        state.ensure_interactive_index(
+            &notes_dir,
+            INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+            "list_note_tags",
+        )?;
+        let index = state
+            .notes_index
+            .lock()
+            .map_err(|_| "Notes index unavailable")?;
+        let mut tags = index
+            .entries
+            .values()
+            .filter(|note| note.document_kind == crate::note::DocumentKind::Note)
+            .flat_map(|note| note.tags.iter().cloned())
+            .collect::<Vec<_>>();
+        tags.sort();
+        tags.dedup();
+        Ok(tags)
+    })
+    .await?
+}
+
+#[cfg(test)]
+mod tag_search_tests {
+    use super::*;
+    #[test]
+    fn tag_search_aliases_filter_before_limits_and_support_body_terms() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("tag-search-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("tag-search-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        for i in 0..16 {
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                format!("Unrelated {i}"),
+                "Contractor estimates".into(),
+                None,
+            )
+            .unwrap();
+        }
+        let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Budget".into(),
+            "---\ntags: [renovation]\nowner: secret-property\n---\n\nContractor estimates".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let search = |query: &str| {
+            tauri::async_runtime::block_on(search_notes_hybrid_unchecked(
+                &state,
+                query.into(),
+                None,
+                String::new(),
+                Some(String::new()),
+                None,
+                12,
+                None,
+                None,
+                None,
+            ))
+            .unwrap()
+        };
+        for query in [
+            "#renovation",
+            "tag:renovation",
+            "#RENOVATION contractor",
+            "tag:renovation contractor",
+        ] {
+            let results = search(query);
+            assert!(!results.is_empty(), "{query}");
+            assert!(
+                results.iter().all(|result| result.note_id == saved.note_id),
+                "{query}"
+            );
+        }
+        // The editor supplies body-only Markdown. Delivery must still resolve
+        // the open note's canonical identity through the current-content gate.
+        for query in ["#renovation", "tag:renovation"] {
+            let results = tauri::async_runtime::block_on(
+                state.note_timeline().current_content(AllowedScope::vault()).read_async(
+                    search_notes_hybrid_unchecked(
+                        &state, query.into(), saved.path.clone(), saved.title.clone(),
+                        Some(saved.markdown.clone()), None, 12, None, None,
+                        Some(vec!["renovation".into()]),
+                    )
+                )
+            ).unwrap();
+            assert!(results.iter().any(|result| result.note_id == saved.note_id),
+                "open-note tag query was removed by current-content delivery: {query}");
+        }
+        assert!(search("#reno").is_empty());
+        assert!(search("#renovation #missing").is_empty());
+        assert!(search("secret-property").is_empty());
+        assert!(search("renovation")
+            .iter()
+            .any(|result| result.note_id == saved.note_id
+                && result.reason_labels.contains(&"#renovation".into())));
+        assert!(search("renovation estimates")
+            .iter()
+            .any(|result| result.note_id == saved.note_id));
     }
 }

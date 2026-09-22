@@ -819,6 +819,7 @@ pub(crate) struct IndexedNote {
     pub(crate) title_lower: String,
     pub(crate) file_name: String,
     pub(crate) file_name_lower: String,
+    pub(crate) tags: Vec<String>,
     pub(crate) paragraphs: Vec<IndexedParagraph>,
     pub(crate) tasks: Vec<IndexedTask>,
 }
@@ -1413,6 +1414,7 @@ fn build_indexed_note_with_signature(
         created_at_millis,
         updated_at_millis,
         document_kind: note::document_kind(markdown),
+        tags: crate::tags::read_tags(markdown).unwrap_or_default(),
         title: title.clone(),
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
@@ -1483,6 +1485,7 @@ fn build_current_override_with_signature(
         created_at_millis,
         updated_at_millis,
         document_kind: note::document_kind(markdown),
+        tags: crate::tags::read_tags(markdown).unwrap_or_default(),
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),

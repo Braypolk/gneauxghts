@@ -1415,8 +1415,9 @@ impl ActiveSemanticState {
         activity_by_note_id: HashMap<String, NoteActivity>,
         notes_dir: &Path,
     ) -> Result<AtlasSearchResponse, String> {
-        let trimmed_query = query.trim().to_string();
-        if trimmed_query.is_empty() {
+        let tag_query = crate::tags::TagQuery::parse(&query);
+        let trimmed_query = tag_query.text.clone();
+        if trimmed_query.is_empty() && tag_query.tags.is_empty() {
             return Ok(AtlasSearchResponse {
                 status: "ready".to_string(),
                 reason: None,
@@ -1447,14 +1448,17 @@ impl ActiveSemanticState {
             });
         }
 
-        let query_embedding = self
-            .provider
-            .embed_texts(
-                std::slice::from_ref(&trimmed_query),
-                EmbeddingInputKind::Query,
-            )
-            .ok()
-            .and_then(|mut embeddings| embeddings.pop());
+        let query_embedding = if trimmed_query.is_empty() {
+            None
+        } else {
+            self.provider
+                .embed_texts(
+                    std::slice::from_ref(&trimmed_query),
+                    EmbeddingInputKind::Query,
+                )
+                .ok()
+                .and_then(|mut embeddings| embeddings.pop())
+        };
         let now = current_time_millis()?;
         let normalized_query = normalize_search_text(&trimmed_query);
         let terms = normalized_query
@@ -1465,6 +1469,13 @@ impl ActiveSemanticState {
 
         let mut matches = indexed_notes
             .into_iter()
+            .filter(|note| {
+                tag_query.matches(
+                    metadata
+                        .get(&note.note_path)
+                        .map_or(&[], |meta| meta.tags.as_slice()),
+                )
+            })
             .map(|note| {
                 let meta = metadata.get(&note.note_path);
                 let title = meta
@@ -1529,16 +1540,31 @@ impl ActiveSemanticState {
                     note_id,
                     note_path: note.note_path,
                     document_kind,
-                    score: score.clamp(0.0, 1.0),
+                    score: if trimmed_query.is_empty() {
+                        1.0
+                    } else {
+                        score.clamp(0.0, 1.0)
+                    },
                     semantic_score,
                     lexical_score,
                     structural_score,
-                    reason_labels: reason_labels(
-                        semantic_score,
-                        lexical_score,
-                        structural_score,
-                        access_score,
-                    ),
+                    reason_labels: {
+                        let mut labels = reason_labels(
+                            semantic_score,
+                            lexical_score,
+                            structural_score,
+                            access_score,
+                        );
+                        labels.extend(
+                            tags.iter()
+                                .filter(|tag| {
+                                    tag_query.tags.contains(tag)
+                                        || terms.iter().any(|term| tag.contains(term))
+                                })
+                                .map(|tag| format!("#{tag}")),
+                        );
+                        labels
+                    },
                 }
             })
             .filter(|item| {
@@ -1554,7 +1580,7 @@ impl ActiveSemanticState {
 
         Ok(AtlasSearchResponse {
             status: "ready".to_string(),
-            reason: query_embedding.is_none().then(|| {
+            reason: (query_embedding.is_none() && !trimmed_query.is_empty()).then(|| {
                 "Semantic query embedding unavailable; used lexical and recency scoring."
                     .to_string()
             }),
@@ -4439,8 +4465,8 @@ fn atlas_searchable_tags(
     if document_kind == DocumentKind::Note
         && !presentation_hash.starts_with(NOTE_PRESENTATION_ALGORITHM_VERSION)
     {
-        // Rows created before body-only tag extraction may contain frontmatter
-        // keys. Ignore them while the versioned background reconciliation
+        // Rows created before authored frontmatter tags may contain body hashtags
+        // or unrelated keys. Ignore them while the versioned background reconciliation
         // refreshes the metadata without re-embedding unchanged content.
         return Vec::new();
     }

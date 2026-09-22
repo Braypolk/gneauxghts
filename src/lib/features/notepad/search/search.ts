@@ -14,6 +14,7 @@ export interface SearchContext {
   currentPath: string | null;
   currentTitle: string;
   currentMarkdown: string;
+  currentTags?: string[];
 }
 
 export function isKeywordResult(result: SearchItem) {
@@ -33,6 +34,7 @@ export async function searchNotes(query: string, context: SearchContext) {
     (currentMarkdown, currentBodyHash) =>
       invoke<SearchItem[]>('search_notes_hybrid', {
         query,
+        ...(context.currentTags ? { currentTags: context.currentTags } : {}),
         currentPath: context.currentPath,
         currentTitle: context.currentTitle,
         currentMarkdown,

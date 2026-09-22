@@ -989,6 +989,24 @@ impl SemanticState {
         }
     }
 
+    pub(crate) fn semantic_matches_for_text_scoped(
+        &self,
+        text: &str,
+        exclude_note_path: Option<&str>,
+        limit: usize,
+        allowed_paths: Option<&[String]>,
+    ) -> Result<Vec<SemanticChunkMatch>, String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => state.semantic_matches_for_text_scoped(
+                text,
+                exclude_note_path,
+                limit,
+                allowed_paths,
+            ),
+            SemanticStateInner::Disabled(_) => Ok(Vec::new()),
+        }
+    }
+
     pub(crate) fn related_notes(
         &self,
         current_path: Option<&str>,
@@ -1221,13 +1239,26 @@ impl ActiveSemanticState {
         exclude_note_path: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
+        self.semantic_matches_for_text_scoped(text, exclude_note_path, limit, None)
+    }
+
+    fn semantic_matches_for_text_scoped(
+        &self,
+        text: &str,
+        exclude_note_path: Option<&str>,
+        limit: usize,
+        allowed_paths: Option<&[String]>,
+    ) -> Result<Vec<SemanticChunkMatch>, String> {
+        if allowed_paths.is_some_and(|paths| paths.is_empty()) {
+            return Ok(Vec::new());
+        }
         let started_at = Instant::now();
         let settings = self.get_settings()?;
         if !settings.semantic_search_enabled {
             return Ok(Vec::new());
         }
         let ann_status = self.ann.status_snapshot();
-        if !ann_status.loaded || ann_status.indexed_chunks == 0 {
+        if allowed_paths.is_none() && (!ann_status.loaded || ann_status.indexed_chunks == 0) {
             self.debug
                 .record_timing("ann", "query_skipped_unavailable", None, 0, |metrics| {
                     metrics.ann_query_skipped_count += 1;
@@ -1241,13 +1272,32 @@ impl ActiveSemanticState {
             .into_iter()
             .next()
             .ok_or_else(|| "Unable to embed semantic query".to_string())?;
-        let candidate_labels = self
-            .ann
-            .search(&query_embedding, limit.saturating_mul(8).max(64))?;
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
+        let candidate_labels = if let Some(paths) = allowed_paths {
+            let mut statement = connection
+                .prepare("SELECT ann_label FROM chunks WHERE note_path = ?1")
+                .map_err(|err| err.to_string())?;
+            let mut labels = Vec::new();
+            for path in paths {
+                let rows = statement
+                    .query_map([path], |row| row.get::<_, u64>(0))
+                    .map_err(|err| err.to_string())?;
+                for label in rows {
+                    labels.push(label.map_err(|err| err.to_string())?);
+                }
+            }
+            labels
+        } else {
+            self.ann
+                .search(&query_embedding, limit.saturating_mul(8).max(64))?
+        };
+        let mut chunks = Vec::new();
+        for labels in candidate_labels.chunks(400) {
+            chunks.extend(load_chunks_by_ann_labels(&connection, labels)?);
+        }
         let reranked_count = candidate_labels.len();
-        let mut matches = load_chunks_by_ann_labels(&connection, &candidate_labels)?
+        let mut matches = chunks
             .into_iter()
             .filter(|chunk| Path::new(&chunk.note_path).is_file())
             .filter(|chunk| exclude_note_path != Some(chunk.note_path.as_str()))

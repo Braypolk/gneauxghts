@@ -190,7 +190,10 @@ pub(crate) fn read_note_session_from_path(note_path: &Path) -> Result<NoteSessio
         .into_owned();
     let (title, body) = note::extract_file_name_title_and_body(&markdown, &fallback_title);
     let note_id = note::note_id_from_path_or_markdown(Some(note_path), &markdown);
+    let tags = crate::tags::read_tags(&markdown);
     Ok(NoteSession {
+        tags: tags.clone().unwrap_or_default(),
+        tags_error: tags.err(),
         note_id,
         title,
         markdown: body,

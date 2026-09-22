@@ -14,7 +14,10 @@ fn file_stem_title(path: Option<&str>) -> Option<String> {
 pub(crate) fn build_note_session_from_mutation(outcome: &NoteMutationResult) -> NoteSession {
     let path = outcome.path().to_string_lossy().into_owned();
     let title = file_stem_title(Some(&path)).unwrap_or_default();
+    let tags = crate::tags::read_tags(outcome.canonical_markdown());
     NoteSession {
+        tags: tags.clone().unwrap_or_default(),
+        tags_error: tags.err(),
         note_id: Some(outcome.note_id().as_str().to_string()),
         markdown: note::extract_file_name_title_and_body(outcome.canonical_markdown(), &title).1,
         title,
@@ -57,6 +60,24 @@ fn persist_note_session_with_source(
     let outcome = state
         .note_timeline()
         .save_note(source, &title, &markdown, current_path)
+        .map_err(|error| error.to_string())?;
+    if let Some(outcome) = &outcome {
+        outcome.report_degraded("note persistence");
+    }
+    Ok(outcome.as_ref().map(build_note_session_from_mutation))
+}
+
+pub(crate) fn persist_note_session_with_tags(
+    state: &AppState,
+    title: String,
+    markdown: String,
+    current_path: Option<String>,
+    source: MutationSource,
+    tags: &crate::tags::TagEdit,
+) -> Result<Option<NoteSession>, String> {
+    let outcome = state
+        .note_timeline()
+        .save_note_with_tags(source, &title, &markdown, current_path, Some(tags))
         .map_err(|error| error.to_string())?;
     if let Some(outcome) = &outcome {
         outcome.report_degraded("note persistence");

@@ -10,6 +10,7 @@ import { createEmptySessionSnapshot } from '$lib/features/notepad/session/sessio
 import {
   dispatchDocumentOperation,
   updateDocumentMarkdown,
+  documentHasCleanBuffer,
   updateDocumentTitle
 } from './documentState';
 import { documentRegistry } from './documentRegistry';
@@ -433,5 +434,65 @@ describe('documentEditingService', () => {
 
     expect(appliedMarkdown).toEqual(['programmatic', 'newer user edit']);
     expect(harness.note.working.markdown).toBe('newer user edit');
+  });
+});
+
+describe('authored note tags', () => {
+  it('uses the shared draft and ordinary autosave without replacing the body', () => {
+    const h = createHarness();
+    h.service.recordUserEdit('left', h.note, 'Body stays intact');
+    h.scheduleAutosave.mockClear();
+    expect(h.service.updateTags(h.note, ['renovation'])).toBe(true);
+    expect(h.note.working.markdown).toBe('Body stays intact');
+    expect(h.scheduleAutosave).toHaveBeenCalledExactlyOnceWith(h.note);
+    expect(documentHasCleanBuffer(h.note)).toBe(false);
+    expect(h.service.captureSave(h.note).tagEdit).toEqual({ previous: [], tags: ['renovation'] });
+  });
+
+  it('preserves a later tag edit while adopting an in-flight save baseline', async () => {
+    const h = createHarness();
+    h.service.updateTags(h.note, ['first']);
+    dispatchDocumentOperation(h.note, { type: 'start', operation: 'saving' });
+    const capture = h.service.captureSave(h.note);
+    h.service.updateTags(h.note, ['later']);
+    await h.service.adoptSavedResult(capture, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: '', tags: ['first'] });
+    expect(h.note.working.tags).toEqual(['later']);
+    expect(h.note.savedBaseline?.content.tags).toEqual(['first']);
+    expect(documentHasCleanBuffer(h.note)).toBe(false);
+    expect(h.service.captureSave(h.note).tagEdit).toEqual({ previous: ['first'], tags: ['later'] });
+  });
+
+  it('adopts externally changed tags while preserving newer body typing', async () => {
+    const h = createHarness();
+    await h.service.adoptCleanExternalRefresh(h.note, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: 'before', tags: ['old'] });
+    h.service.recordUserEdit('left', h.note, 'captured body');
+    dispatchDocumentOperation(h.note, { type: 'start', operation: 'saving' });
+    const capture = h.service.captureSave(h.note);
+    h.service.recordUserEdit('left', h.note, 'newer body');
+    await h.service.adoptSavedResult(capture, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: 'captured body', tags: ['external'] });
+    expect(h.note.working.markdown).toBe('newer body');
+    expect(h.note.working.tags).toEqual(['external']);
+    expect(h.service.captureSave(h.note).tagEdit).toBeUndefined();
+  });
+
+  it('keeps a tag removal made while the first tag save is in flight', async () => {
+    const h = createHarness();
+    h.service.updateTags(h.note, ['first']);
+    dispatchDocumentOperation(h.note, { type: 'start', operation: 'saving' });
+    const capture = h.service.captureSave(h.note);
+    h.service.updateTags(h.note, []);
+    await h.service.adoptSavedResult(capture, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: '', tags: ['first'] });
+    expect(h.note.working.tags).toEqual([]);
+    expect(h.service.captureSave(h.note).tagEdit).toEqual({ previous: ['first'], tags: [] });
+  });
+
+  it('treats externally refreshed tags as content and clears stale parse errors', async () => {
+    const h = createHarness();
+    h.note.working.tagsError = 'Invalid YAML';
+    await h.service.adoptCleanExternalRefresh(h.note, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: '', tags: ['external'] });
+    expect(h.note.working.tags).toEqual(['external']);
+    expect(h.note.working.tagsError).toBeUndefined();
+    expect(documentHasCleanBuffer(h.note)).toBe(true);
+    expect(h.service.captureSave(h.note).tagEdit).toBeUndefined();
   });
 });

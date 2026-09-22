@@ -40,9 +40,10 @@ async function edit(markdown: string) {
 
 async function openHistory() {
   const active = (await state()).activePaneId;
-  const open = await $(`[data-pane-id="${active}"] button[aria-label="Open note history"]`);
-  await open.waitForEnabled();
-  await browser.execute((element: HTMLElement) => element.click(), open);
+  await browser.execute((paneId: string) => {
+    const pane = document.querySelector<HTMLElement>(`[data-pane-id="${paneId}"]`);
+    pane?.dispatchEvent(new KeyboardEvent('keydown', { key: 'H', code: 'KeyH', metaKey: true, shiftKey: true, bubbles: true, cancelable: true }));
+  }, active);
   try {
     await $('[data-testid="historical-revision-diff"]').waitForExist({ timeout: 20_000 });
   } catch (error) {

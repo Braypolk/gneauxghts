@@ -18,6 +18,7 @@ mod secrets;
 mod semantic;
 mod services;
 mod state;
+mod tags;
 #[cfg(test)]
 mod test_support;
 mod time;
@@ -341,6 +342,7 @@ pub fn run() {
             commands::delete_task,
             commands::task_commands::prepare_task_document_mutation,
             commands::search_commands::search_notes_hybrid,
+            commands::search_commands::list_note_tags,
             commands::search_commands::get_related_notes,
             commands::search_commands::retrieve_note_context,
             commands::atlas_commands::get_vault_atlas,

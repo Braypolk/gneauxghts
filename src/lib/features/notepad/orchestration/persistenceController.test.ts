@@ -108,6 +108,17 @@ describe("persistenceController", () => {
     vi.unstubAllGlobals();
   });
 
+  it("saves tags and body in one existing note operation", async () => {
+    const note = createNoteDraftState(snapshot({ tags: ['old'], lastSavedTags: ['old'] }));
+    const editing = editingServiceFor(note);
+    editing.updateTags(note, ['new']);
+    const saveNoteSession = vi.fn().mockResolvedValue(committed({ tags: ['new'] }));
+    const controller = createNotepadPersistenceController({ getDocumentSession: () => note, saveNoteSession, documentEditing: editing });
+    await controller.enqueueSave(note);
+    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Saved', 'saved body', '/vault/Saved.md', { previous: ['old'], tags: ['new'] });
+    expect(controller.hasCleanBuffer(note)).toBe(true);
+  });
+
   it("schedules autosave through the note queue and clears clean buffers", async () => {
     const note = dirtyNote();
     const saveNoteSession = vi.fn().mockResolvedValue(

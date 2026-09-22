@@ -87,6 +87,10 @@ pub(crate) struct NoteSession {
     pub(crate) note_id: Option<String>,
     pub(crate) title: String,
     pub(crate) markdown: String,
+    #[serde(default)]
+    pub(crate) tags: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) tags_error: Option<String>,
     pub(crate) path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
@@ -520,9 +524,21 @@ pub(crate) async fn save_note<R: tauri::Runtime>(
     title: String,
     markdown: String,
     current_path: Option<String>,
+    tag_edit: Option<crate::tags::TagEdit>,
 ) -> Result<NoteSession, String> {
     on_app_worker(app, move |state| {
-        let outcome = persist_note_session_with_outcome(state, title, markdown, current_path)?;
+        let outcome = if let Some(edit) = tag_edit {
+            note_persistence::persist_note_session_with_tags(
+                state,
+                title,
+                markdown,
+                current_path,
+                crate::services::note_timeline::MutationSource::Editor,
+                &edit,
+            )?
+        } else {
+            persist_note_session_with_outcome(state, title, markdown, current_path)?
+        };
         outcome.ok_or_else(|| "Saved note session is missing".to_string())
     })
     .await?
@@ -534,9 +550,21 @@ pub(crate) async fn save_task_note<R: tauri::Runtime>(
     title: String,
     markdown: String,
     current_path: Option<String>,
+    tag_edit: Option<crate::tags::TagEdit>,
 ) -> Result<NoteSession, String> {
     on_app_worker(app, move |state| {
-        let outcome = persist_task_note_session_with_outcome(state, title, markdown, current_path)?;
+        let outcome = if let Some(edit) = tag_edit {
+            note_persistence::persist_note_session_with_tags(
+                state,
+                title,
+                markdown,
+                current_path,
+                crate::services::note_timeline::MutationSource::TaskAction,
+                &edit,
+            )?
+        } else {
+            persist_task_note_session_with_outcome(state, title, markdown, current_path)?
+        };
         outcome.ok_or_else(|| "Saved note session is missing".to_string())
     })
     .await?
@@ -1742,6 +1770,8 @@ mod tests {
             note_id: Some("note-1".to_string()),
             title: "Title".to_string(),
             markdown: "Body".to_string(),
+            tags: Vec::new(),
+            tags_error: None,
             path: Some("/notes/title.md".to_string()),
             commit_warning: None,
         };
@@ -1788,6 +1818,7 @@ mod tests {
                 "noteId": "note-1",
                 "title": "Title",
                 "markdown": "Body",
+                "tags": [],
                 "path": "/notes/title.md",
             })
         );

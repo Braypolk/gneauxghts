@@ -186,7 +186,8 @@
  * padding as `.cm-line`. Children then share the note's text measure.
  * (`--editor-*-padding` / handle lane come from `.notepad-shell`.)
  */
-.chat-content-lane {
+.chat-content-lane,
+.note-tags-lane {
   box-sizing: border-box;
   min-width: 0;
   max-width: 100%;

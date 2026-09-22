@@ -195,6 +195,7 @@
   const searchState = createNotepadSearchStore({
     getCurrentTitle: () => getDocumentTitle(getDocumentSession()),
     getCurrentMarkdown,
+    getCurrentTags: () => getDocumentSession().working.tags ?? [],
     getCurrentPath: () => getDocumentPath(getDocumentSession()),
     openSearchResult: (result) =>
       handleSearchResultSelect(result),
@@ -1322,6 +1323,11 @@
       if (!noteId) return;
       const isPinned = searchState.pinnedNotes.some((item) => item.noteId === noteId);
       await searchState.setPinned(noteId, !isPinned);
+    },
+    onNoteOptionsOpen: () => { transientUi.closeSlashMenu(); transientUi.closeSelectionMenu(); transientUi.closeWikilinkAutocomplete(); },
+    onUpdateTags: (paneId, documentHandle, tags) => {
+      const document = getPaneDocumentSession(paneId);
+      if (document.handle === documentHandle) documentEditing.updateTags(document, tags);
     },
     onOpenHistory: (paneId) => historyMode.enter(paneId),
     onKeepMyEdits: async (paneId) => {
