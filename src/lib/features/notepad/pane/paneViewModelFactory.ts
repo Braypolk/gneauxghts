@@ -63,6 +63,7 @@ export function createPaneViewModelFactory(
     const common = {
       paneId,
       ariaLabel: `Pane ${paneIndex + 1}`,
+      showActiveBorder: paneOrder.length > 1 && deps.getActivePaneId() === paneId && deps.getCollapsingPaneId() === null,
       bodyClass: `notepad-pane relative flex min-h-0 min-w-0 flex-1 flex-col ${stackClass} ${collapsingClass}`.trim(),
       frameClass: `relative flex min-h-0 min-w-0 flex-1 overflow-hidden ${stackClass}`,
       showCloseButton: canRemovePane(

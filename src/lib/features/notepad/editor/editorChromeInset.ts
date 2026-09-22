@@ -37,6 +37,7 @@ export function measureEditorChromeInset(
 export function editorChromeInset(editorShell: HTMLElement) {
   const pane = editorShell.closest('[role="group"]');
   let frame = 0;
+  let lastInset: number | undefined;
 
   function resolveOverlay() {
     return pane?.querySelector<HTMLElement>(OVERLAY_SELECTOR) ?? null;
@@ -53,6 +54,8 @@ export function editorChromeInset(editorShell: HTMLElement) {
       resolveOverlay(),
       resolveNav()
     );
+    if (inset === lastInset) return;
+    lastInset = inset;
     editorShell.style.setProperty(
       '--editor-overlay-inset',
       `${inset}px`

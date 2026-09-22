@@ -130,7 +130,7 @@ export function createNotepadCommands<TPaneId extends string>(
     beginCollapse: workspace.beginPaneCollapse,
     endCollapse: workspace.endPaneCollapse,
     settle: () => tick(),
-    wait: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    waitForMotion: deps.waitForPaneMotion,
     prefersReducedMotion: () =>
       typeof window !== 'undefined' &&
       typeof window.matchMedia === 'function' &&

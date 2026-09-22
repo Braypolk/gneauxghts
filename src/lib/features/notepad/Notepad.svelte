@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
+  import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
   import { appSettings } from "$lib/appSettings.svelte";
   import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
@@ -821,8 +822,21 @@
     });
   });
 
+  const paneLayoutMotion = createPaneLayoutMotion({
+    getShell: () => workspaceShell,
+    updateRelatedLayout: () => updateRelatedDrawerLayoutController(workspaceShell),
+  });
+
+  $effect.pre(() => {
+    const target = paneOrder.filter(id => id !== collapsingPaneId).join(",");
+    const ready = notepadRuntimeState.hasLoadedInitialSession;
+    untrack(() => paneLayoutMotion.update(target, ready));
+  });
+
   function updateRelatedDrawerLayout() {
-    updateRelatedDrawerLayoutController(workspaceShell);
+    if (!paneLayoutMotion.running) {
+      updateRelatedDrawerLayoutController(workspaceShell);
+    }
   }
 
   function clearSelectedRelatedText() {
@@ -842,10 +856,12 @@
   }
 
   function toggleRelatedPanel() {
+    paneLayoutMotion.cancel();
     toggleRelatedPanelController(workspaceShell);
   }
 
   function closeRelatedPanel() {
+    paneLayoutMotion.cancel();
     collapseRelatedPanelController(workspaceShell);
   }
 
@@ -918,6 +934,7 @@
     state: notepadState,
     maxVisiblePanes: MAX_VISIBLE_PANES,
     workspace: notepadWorkspaceCommands,
+    waitForPaneMotion: paneLayoutMotion.wait,
     panes: notepadPaneCommands,
     persistence,
     derivedViews: notepadDerivedViewCommands,
@@ -959,7 +976,6 @@
       splitWorkspace: commands.splitWorkspace,
       getPendingPaneCommandId: () =>
         workspaceStore.paneCommand.paneId,
-      resolvePreviousLocation: commands.resolvePreviousLocationForPaneCommand,
       resolvePaneCommandChoice: commands.resolvePaneCommandChoice,
       getActivePaneId: () => activePaneId,
       setPaneKind: commands.setPaneKind,
@@ -1452,6 +1468,7 @@
       };
     }
     return () => {
+      paneLayoutMotion.cancel();
       disposeNativeE2EBridge?.();
       unregisterTaskMutation();
       disposeSession();
@@ -1511,21 +1528,13 @@
     )}
   >
     <div
-      class="relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm transition-[margin-left,margin-right,width] duration-300 ease-out will-change-[margin-left,margin-right,width] sm:rounded-4xl sm:border"
+      class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm workspace-card-motion sm:rounded-4xl sm:border"
       style={getCardStyle(relatedState.panelPlacement)}
       data-testid="workspace-card"
     >
       <div
         class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"
       ></div>
-
-      {#if paneOrder.length === 2}
-        <div
-          class={`notepad-split-border pointer-events-none absolute top-0 bottom-0 z-20 hidden w-1/2 border-2 border-border rounded-t-4xl sm:block ${
-            paneOrder.indexOf(activePaneId) === 0 ? "left-0" : "right-0"
-          } ${collapsingPaneId ? "notepad-split-border--hiding" : ""}`}
-        ></div>
-      {/if}
 
       <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0">
         {#each paneOrder as paneId (paneId)}
@@ -1692,7 +1701,7 @@
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
     <!-- Match the editor card's bounds, including the space reserved for Related. -->
     <div
-      class="absolute inset-y-0 left-0 z-50 transition-[margin-left,margin-right,width] duration-300 ease-out"
+      class="absolute inset-y-0 left-0 z-50 workspace-card-motion"
       style={`${getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)} ${getCardStyle(relatedState.panelPlacement)}`}
     >
       <HistoryMode
@@ -1797,30 +1806,11 @@
     );
   }
 
-  .notepad-pane {
-    flex: 1 1 0;
-    min-width: 0;
-    opacity: 1;
-    transition:
-      flex-grow var(--pane-transition-duration) var(--pane-transition-ease),
-      flex-basis var(--pane-transition-duration) var(--pane-transition-ease),
-      opacity var(--pane-transition-duration) var(--pane-transition-ease);
-  }
-
-  .notepad-pane--collapsing {
-    flex-grow: 0;
-    flex-basis: 0;
-    opacity: 0;
-    overflow: hidden;
-    pointer-events: none;
-  }
-
-  .notepad-split-border {
-    transition: opacity var(--pane-transition-duration) var(--pane-transition-ease);
-  }
-
-  .notepad-split-border--hiding {
-    opacity: 0;
+  /* Pane changes share one geometry animation; ordinary Related toggles keep
+     their own transition when this temporary marker is absent. */
+  .notepad-shell:global([data-pane-motion]) .notepad-workspace-card,
+  .notepad-shell:global([data-pane-motion]) :global(.related-drawer) {
+    transition: none;
   }
 
   @media (min-width: 640px) {

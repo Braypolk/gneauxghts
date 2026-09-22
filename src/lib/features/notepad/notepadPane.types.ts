@@ -15,6 +15,7 @@ interface PaneViewModelBase {
   bodyClass: string;
   frameClass: string;
   showCloseButton: boolean;
+  showActiveBorder: boolean;
   titleClass: string;
   titlePlaceholder: string;
   titleDocument: NoteDraftState;

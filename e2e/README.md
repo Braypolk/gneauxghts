@@ -226,3 +226,29 @@ Current chat implementation and archived experiment status are indexed in
 structured query routing has been removed; the current typed interpretation is
 limited to note-activity inventories. Historical benchmark reports describe the
 code tested at their recorded dates, not additional active runtime pipelines.
+
+### Pane animation
+
+`pane-animation.spec.ts` in the browser suite samples real pane widths during
+opening and closing, including either close side, narrow/wide windows, Related,
+chat, reduced motion and interruption. It asserts intermediate geometry,
+consistent direction and stable cleanup rather than a fixed frame count.
+It also checks activation during entrance; the chat suite checks that a direct
+chat split neither mounts a temporary editor nor republishes unchanged insets.
+
+For the native WebKit check, build with `node e2e/support/buildNative.mjs`, then
+run `pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/pane-animation.spec.ts`.
+It uses the isolated native fixture, explicitly shows/focuses its window, and
+records frame intervals and widths for both close directions. Keep the desktop
+unlocked and avoid concurrent builds or benchmarks during this measurement.
+
+Populated chat restoration is covered by `browser/chat-pane-animation.spec.ts`
+and `native/chat-pane-animation.spec.ts`. The native fixture inserts 100 synthetic
+messages only after validating the disposable E2E vault root. It verifies complete
+history, initial scroll position, incremental rendering, and a generous 150 ms
+ceiling for a severe UI-thread stall in the debug build. Rebuild the native E2E
+binary after Rust changes. Run browser and native suites sequentially: both Vite
+servers generate shared SvelteKit files, which can reload an active browser test.
+Run these two native motion specs in separate invocations for fresh fixture
+vaults; they use the same fixture note title. Foreground-focus assertions require
+the native test window to stay active throughout the run.

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   import { LoaderCircle } from '@lucide/svelte';
   import type { ChatController } from '../controller.svelte';
   import type {
@@ -13,6 +14,7 @@
   import ChatMessage from './ChatMessage.svelte';
   import { resolveTargetMessageId } from './chatPanelHelpers';
   import {
+    createChatScrollScheduler,
     followLatestChatContent,
     isNearLatestChatContent,
     positionInitialChatScroll
@@ -62,6 +64,56 @@
   let appliedTargetAnchor: string | null = null;
   let previousScrollKey: string | null = null;
   let isFollowingLatest = $state(true);
+  const scroll = createChatScrollScheduler();
+  const scrollConversationId = $derived(conversation?.id ?? null);
+
+  $effect.pre(() => {
+    scrollConversationId;
+    messagesElement;
+    isInitializing;
+    isLoadingConversation;
+    // Cancel pending work before a root/conversation change and on teardown.
+    return scroll.cancel;
+  });
+
+  // Mount restored history in bounded batches so parsing Markdown and creating
+  // message components cannot monopolize a pane-opening animation frame.
+  let renderedConversationId = $state<string | null>(null);
+  let renderedCount = $state(0);
+  const visibleMessages = $derived(
+    renderedConversationId === conversation?.id
+      ? conversation.messages.slice(0, renderedCount)
+      : []
+  );
+  const isRenderingHistory = $derived(
+    Boolean(conversation && visibleMessages.length < conversation.messages.length)
+  );
+
+  $effect.pre(() => {
+    const current = conversation;
+    const loading = isInitializing || isLoadingConversation;
+    const count = current?.messages.length ?? 0;
+    let frame: number | undefined;
+    untrack(() => {
+      if (!current || loading) {
+        renderedConversationId = null;
+        renderedCount = 0;
+        return;
+      }
+      if (renderedConversationId !== current.id) {
+        renderedConversationId = current.id;
+        renderedCount = 0;
+      }
+      const renderBatch = () => {
+        renderedCount = Math.min(count, renderedCount + 8);
+        if (renderedCount < count) frame = requestAnimationFrame(renderBatch);
+      };
+      renderBatch();
+    });
+    return () => {
+      if (frame !== undefined) cancelAnimationFrame(frame);
+    };
+  });
 
   const isEmpty = $derived(!conversation || conversation.messages.length === 0);
 
@@ -96,7 +148,7 @@
   $effect(() => {
     const current = conversation;
     const root = messagesElement;
-    if (!current) {
+    if (!current || isInitializing || isLoadingConversation) {
       positionedConversationId = null;
       appliedTargetAnchor = null;
       previousScrollKey = null;
@@ -105,8 +157,7 @@
     }
     if (
       !root ||
-      isInitializing ||
-      isLoadingConversation ||
+      isRenderingHistory ||
       positionedConversationId === current.id
     ) return;
 
@@ -117,8 +168,9 @@
 
     // Correct for layout completed later in the frame (for example message
     // components with measured content) without introducing animation.
-    requestAnimationFrame(() => {
+    scroll.schedule('initial', () => {
       if (
+        messagesElement === root &&
         controller.getSnapshot().conversation?.id === current.id &&
         positionedConversationId === current.id
       ) {
@@ -138,16 +190,23 @@
       !anchor ||
       !messageId ||
       !root ||
+      isRenderingHistory ||
       positionedConversationId !== current.id ||
       targetKey === appliedTargetAnchor
     ) return;
     appliedTargetAnchor = targetKey;
-    requestAnimationFrame(() => {
+    isFollowingLatest = false;
+    scroll.schedule('anchor', () => {
+      if (messagesElement !== root || scrollConversationId !== current.id ||
+        appliedTargetAnchor !== targetKey) return;
       root
         .querySelector<HTMLElement>(
           `[data-chat-message-id="${CSS.escape(messageId)}"]`
         )
-        ?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        ?.scrollIntoView({
+          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+          block: 'center'
+        });
     });
   });
 
@@ -158,12 +217,13 @@
     if (
       !current ||
       !root ||
+      isRenderingHistory ||
       positionedConversationId !== current.id ||
       (scrollKey === previousScrollKey && !isSending) ||
       !isFollowingLatest
     ) return;
     previousScrollKey = scrollKey;
-    requestAnimationFrame(() => {
+    scroll.schedule('follow', () => {
       if (
         messagesElement === root &&
         positionedConversationId === current.id &&
@@ -175,6 +235,7 @@
   });
 
   function updateScrollFollowing(event: Event) {
+    if (isRenderingHistory) return;
     isFollowingLatest = isNearLatestChatContent(
       event.currentTarget as HTMLElement
     );
@@ -349,9 +410,10 @@
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
 <div
   bind:this={messagesElement}
-  class="min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
+  class="relative min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
   role="log"
   aria-live="polite"
+  aria-busy={isInitializing || isLoadingConversation || isRenderingHistory}
   onscroll={updateScrollFollowing}
   onpointerup={captureSelection}
   onkeyup={captureSelection}
@@ -372,8 +434,13 @@
       </p>
     </div>
   {:else if conversation}
-    <div class="chat-content-lane flex flex-col gap-5">
-      {#each conversation.messages as message (message.id)}
+    {#if isRenderingHistory}
+      <div class="absolute inset-0 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+        <LoaderCircle class="h-4 w-4 animate-spin" /> Loading conversation…
+      </div>
+    {/if}
+    <div class="chat-content-lane flex flex-col gap-5" class:invisible={isRenderingHistory} inert={isRenderingHistory} aria-hidden={isRenderingHistory || undefined}>
+      {#each visibleMessages as message (message.id)}
         <ChatMessage
           {message}
           {activity}

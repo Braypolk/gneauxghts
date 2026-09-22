@@ -413,17 +413,18 @@ fn current_conversation(
 }
 
 #[tauri::command]
-pub(crate) fn chat_get_conversation(
-    state: State<'_, AppState>,
-    service: State<'_, ChatService>,
+pub(crate) async fn chat_get_conversation<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     conversation_id: String,
 ) -> Result<ChatConversation, String> {
-    service.mark_projection_detached_if_needed(&conversation_id)?;
-    current_conversation(
-        &state,
-        &service,
-        service.get_conversation(&conversation_id)?,
-    )
+    super::on_app_worker(app.clone(), move |state| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or_else(|| "Application state unavailable".to_string())?;
+        service.mark_projection_detached_if_needed(&conversation_id)?;
+        current_conversation(state, &service, service.get_conversation(&conversation_id)?)
+    })
+    .await?
 }
 
 #[tauri::command]

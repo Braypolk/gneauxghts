@@ -136,6 +136,9 @@ export function createPaneCommandController<TPaneId extends string>(
           ? deps.getActivePaneId() === paneId
           : deps.getPaneCommandPaneId() === paneId,
       mutateWorkspace: async () => {
+        // Keep the picker when Previous has no target. Resolve once, inside
+        // this transition, so its stale-operation guard also covers the read.
+        if (choice === 'previous' && !previousLocation) return;
         const placeholderKey = placeholderDocument.handle;
         commandClaimed = true;
         deps.resetPaneCommand();
@@ -218,6 +221,7 @@ export function createPaneCommandController<TPaneId extends string>(
       },
       ensureEditors: true,
       complete: () => {
+        if (choice === 'previous' && !previousLocation) return;
         finalizePaneCommandSelection(paneId);
         if (choice === 'current' && sharedDocument) {
           deps.onDocumentPresented?.(sharedDocument);

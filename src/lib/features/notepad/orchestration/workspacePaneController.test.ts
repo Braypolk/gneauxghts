@@ -60,6 +60,11 @@ function harness(
   } = {}
 ) {
   const note = document();
+  const state = createNotepadState(note);
+  const ensurePaneEditors = vi.fn(async () => undefined);
+  const created = vi.fn();
+  const focusPane = vi.fn();
+  const touchLocation = vi.fn();
   const beginPaneCommand = vi.fn();
   const retireWorkspacePane =
     overrides.retireWorkspacePane ??
@@ -75,7 +80,7 @@ function harness(
   const pipeline =
     createPaneNavigationTransitionPipeline<PaneId>({
       assertWorkspaceInvariants: vi.fn(),
-      ensurePaneEditors: vi.fn(async () => undefined)
+      ensurePaneEditors
     });
   const memberships: Record<PaneId, ReturnType<typeof createPaneMembershipState>> = {
     left: createPaneMembershipState(true),
@@ -94,7 +99,7 @@ function harness(
   );
   const controller =
     createWorkspacePaneController<PaneId>({
-      state: createNotepadState(note),
+      state,
       maxVisiblePanes: 3,
       getPaneOrder:
         overrides.getPaneOrder ?? (() => ['left', 'right']),
@@ -104,8 +109,11 @@ function harness(
       createPane: overrides.createPane ?? (() => 'right'),
       completeWorkspacePaneCreation: (
         paneId: PaneId,
-        operationId: number
+        operationId: number,
+        documentHandle: string,
+        kind: string
       ) => {
+        created(paneId, documentHandle, kind);
         dispatchPaneMembership(paneId, {
           type: 'creationCompleted',
           operationId
@@ -169,10 +177,12 @@ function harness(
       activatePaneSession: vi.fn(),
       updateSelectedRelatedText: vi.fn(),
       touchCurrentLocation: vi.fn(),
-      touchLocation: vi.fn(),
+      touchLocation,
       bumpLocationHistoryEpoch: vi.fn(),
       onDocumentLeaving: overrides.onDocumentLeaving,
-      focusPane: vi.fn(),
+      focusPane,
+      activatePane: vi.fn(),
+      resetPaneCommand: vi.fn(),
       loadRecentNotes:
         overrides.loadRecentNotes ??
         vi.fn(async () => undefined),
@@ -181,7 +191,7 @@ function harness(
     } as never);
 
   return {
-    note,
+    note, state, created, ensurePaneEditors, focusPane, touchLocation,
     controller,
     retireWorkspacePane,
     disposePaneRuntime,
@@ -371,6 +381,20 @@ describe('workspace pane close lifecycle', () => {
 });
 
 describe('workspace pane creation lifecycle', () => {
+  it('creates chat with retained context and no throwaway editor or draft', async () => {
+    const h = harness({ getPaneOrder: () => ['left'] });
+    await h.controller.splitWorkspace('chat');
+    expect(h.created).toHaveBeenCalledWith('right', h.note.handle, 'chat');
+    expect(Object.keys(h.state.documentsByHandle)).toEqual([h.note.handle]);
+    expect(h.beginPaneCommand).not.toHaveBeenCalled();
+    expect(h.ensurePaneEditors).not.toHaveBeenCalled();
+    expect(h.touchLocation).toHaveBeenCalledWith('right', {
+      kind: 'editor', noteId: 'note', notePath: '/vault/note.md'
+    });
+    expect(h.focusPane).toHaveBeenCalledWith('right');
+    expect(h.getMembership('right').kind).toBe('ready');
+  });
+
   it('disposes a creating runtime when split preparation fails', async () => {
     const failure = new Error('recent notes unavailable');
     const disposePaneRuntime = vi.fn(async () => undefined);

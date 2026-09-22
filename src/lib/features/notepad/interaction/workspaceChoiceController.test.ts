@@ -6,9 +6,6 @@ const paneId = 'pane-1';
 function setup() {
   let canSplit = true;
   const splitWorkspace = vi.fn(async () => undefined);
-  const resolvePreviousLocation = vi.fn<
-    (paneId: string) => Promise<unknown | null>
-  >(async () => ({ noteId: 'previous' }));
   const resolvePaneCommandChoice = vi.fn(
     async () => undefined
   );
@@ -20,7 +17,6 @@ function setup() {
     canSplitWorkspace: () => canSplit,
     splitWorkspace,
     getPendingPaneCommandId: () => paneId,
-    resolvePreviousLocation,
     resolvePaneCommandChoice,
     getActivePaneId: () => paneId,
     setPaneKind,
@@ -29,7 +25,6 @@ function setup() {
   return {
     controller,
     splitWorkspace,
-    resolvePreviousLocation,
     resolvePaneCommandChoice,
     setPaneKind,
     goToPreviousLocation,
@@ -54,33 +49,18 @@ describe('workspace choice controller', () => {
     ).not.toHaveBeenCalled();
   });
 
-  it('keeps the picker open when Previous has no target', async () => {
+  it('delegates Previous resolution to the pane command transition', async () => {
     const harness = setup();
-    harness.resolvePreviousLocation.mockResolvedValue(null);
-
-    await harness.controller.splitWorkspaceIfAllowed(
-      'previous'
-    );
-
+    await harness.controller.splitWorkspaceIfAllowed('previous');
     expect(harness.splitWorkspace).toHaveBeenCalledOnce();
-    expect(
-      harness.resolvePaneCommandChoice
-    ).not.toHaveBeenCalled();
+    expect(harness.resolvePaneCommandChoice).toHaveBeenCalledWith(paneId, 'previous');
   });
 
-  it('resolves available choices after splitting', async () => {
+  it('creates a chat destination without an intermediate pane command', async () => {
     const harness = setup();
-
-    await harness.controller.splitWorkspaceIfAllowed(
-      'thoughtPartner'
-    );
-
-    expect(
-      harness.resolvePaneCommandChoice
-    ).toHaveBeenCalledWith(paneId, 'thoughtPartner');
-    expect(
-      harness.resolvePreviousLocation
-    ).toHaveBeenCalledWith(paneId);
+    await harness.controller.splitWorkspaceIfAllowed('thoughtPartner');
+    expect(harness.splitWorkspace).toHaveBeenCalledWith('chat');
+    expect(harness.resolvePaneCommandChoice).not.toHaveBeenCalled();
   });
 
   it('maps current-pane choices to editor, chat, and history transitions', async () => {

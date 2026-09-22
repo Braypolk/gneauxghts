@@ -57,7 +57,7 @@
 
 {#if placement === 'side'}
   <aside
-    class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch overflow-visible transition-[left] duration-300 ease-out will-change-[left]"
+    class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch overflow-visible related-drawer-motion"
     aria-label="Related notes panel"
     style={getRelatedDrawerStyle(reservedWidth)}
   >
@@ -80,7 +80,7 @@
 
       <div
         id="related-drawer-panel"
-        class={`absolute inset-y-0 left-0 flex w-full min-h-0 pr-4 transition-[opacity,transform] duration-300 ease-out ${
+        class={`absolute inset-y-0 left-0 flex w-full min-h-0 pr-4 related-panel-motion ${
           collapsed
             ? 'pointer-events-none -translate-x-3 opacity-0'
             : 'pointer-events-auto translate-x-0 opacity-100'
@@ -101,7 +101,7 @@
       ></div>
       <div
         id="related-drawer-panel"
-        class={`absolute top-0 right-0 bottom-[calc(var(--related-bottom-sheet-toggle-height)+0.75rem)] w-full overflow-hidden transition-[opacity,transform] duration-300 ease-out ${
+        class={`absolute top-0 right-0 bottom-[calc(var(--related-bottom-sheet-toggle-height)+0.75rem)] w-full overflow-hidden related-panel-motion ${
           collapsed
             ? 'pointer-events-none translate-y-0 opacity-0'
             : 'pointer-events-auto translate-y-0 opacity-100'

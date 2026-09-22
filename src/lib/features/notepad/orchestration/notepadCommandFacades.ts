@@ -132,6 +132,8 @@ export interface NotepadDerivedViewCommands<TPaneId extends string> {
 export interface NotepadCommandsDeps<TPaneId extends string> {
   state: NotepadState<TPaneId>;
   maxVisiblePanes: number;
+  /** View-owned completion; never changes workspace membership. */
+  waitForPaneMotion: () => Promise<void>;
   workspace: NotepadWorkspaceCommands<TPaneId>;
   panes: NotepadPaneCommands<TPaneId>;
   persistence: NotepadPersistenceCommands;

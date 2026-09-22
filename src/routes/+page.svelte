@@ -6,8 +6,8 @@
   // double its normal max width so each pane can occupy roughly a full normal
   // editor width. On narrower screens it still uses the full available width
   // (layout already provides side padding via `sm:px-4`). Treat a collapsing
-  // pane as already closed so the outer shell shrinks with the same timing as
-  // the inner collapse instead of snapping after the pane leaves the DOM.
+  // pane as already closed to expose the destination layout. The workspace
+  // motion helper interpolates measured dimensions before the next paint.
   let isSplit = $derived(
     workspaceStore.paneOrder.length === 2 && !workspaceStore.collapsingPaneId
   );
@@ -32,14 +32,10 @@
      `max-w-400` on the outer shell and `max-w-5xl` on the editor area. */
   .notepad-area-shell {
     max-width: 100rem;
-    transition:
-      max-width var(--pane-transition-duration) var(--pane-transition-ease);
   }
 
   .notepad-area {
     max-width: 64rem;
-    transition:
-      max-width var(--pane-transition-duration) var(--pane-transition-ease);
   }
 
   /* While split, the editor area may grow up to double its normal max width

@@ -1,5 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  createChatScrollScheduler,
   followLatestChatContent,
   isNearLatestChatContent,
   positionInitialChatScroll
@@ -67,5 +68,68 @@ describe('streaming chat scroll following', () => {
     followLatestChatContent(root);
 
     expect(root.scrollTop).toBe(2040);
+  });
+});
+
+
+describe('chat scroll scheduling', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  function frames() {
+    let next = 0;
+    const callbacks = new Map<number, FrameRequestCallback>();
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => {
+      callbacks.set(++next, callback);
+      return next;
+    });
+    vi.stubGlobal('cancelAnimationFrame', (id: number) => callbacks.delete(id));
+    return () => {
+      const ready = [...callbacks.values()];
+      callbacks.clear();
+      ready.forEach(callback => callback(0));
+    };
+  }
+
+  it('coalesces streaming updates into the latest scroll write', () => {
+    const paint = frames();
+    const scroll = createChatScrollScheduler();
+    const first = vi.fn();
+    const latest = vi.fn();
+    scroll.schedule('follow', first);
+    scroll.schedule('follow', latest);
+    paint();
+    expect(first).not.toHaveBeenCalled();
+    expect(latest).toHaveBeenCalledOnce();
+  });
+
+  it('prioritizes the newest anchor over initial correction and streaming', () => {
+    const paint = frames();
+    const scroll = createChatScrollScheduler();
+    const passive = vi.fn();
+    const oldAnchor = vi.fn();
+    const anchor = vi.fn();
+    scroll.schedule('follow', passive);
+    scroll.schedule('initial', passive);
+    scroll.schedule('anchor', oldAnchor);
+    scroll.schedule('anchor', anchor);
+    scroll.schedule('follow', passive);
+    paint();
+    expect(passive).not.toHaveBeenCalled();
+    expect(oldAnchor).not.toHaveBeenCalled();
+    expect(anchor).toHaveBeenCalledOnce();
+  });
+
+  it('cancels an obsolete conversation and permits new scroll work', () => {
+    const paint = frames();
+    const scroll = createChatScrollScheduler();
+    const obsolete = vi.fn();
+    const current = vi.fn();
+    scroll.schedule('anchor', obsolete);
+    scroll.cancel();
+    paint();
+    scroll.schedule('initial', current);
+    paint();
+    expect(obsolete).not.toHaveBeenCalled();
+    expect(current).toHaveBeenCalledOnce();
   });
 });

@@ -5,11 +5,8 @@ export interface WorkspaceChoiceControllerDeps<
   TPaneId extends string
 > {
   canSplitWorkspace: () => boolean;
-  splitWorkspace: () => Promise<void>;
+  splitWorkspace: (initialKind?: PaneKind) => Promise<void>;
   getPendingPaneCommandId: () => TPaneId | null;
-  resolvePreviousLocation: (
-    paneId: TPaneId
-  ) => Promise<unknown | null>;
   resolvePaneCommandChoice: (
     paneId: TPaneId,
     choice: PaneCommandChoice
@@ -35,22 +32,16 @@ export function createWorkspaceChoiceController<
   ) {
     if (!canSplitWorkspace()) return;
 
+    if (choice === 'thoughtPartner') {
+      await deps.splitWorkspace('chat');
+      return;
+    }
     await deps.splitWorkspace();
     if (!choice) return;
 
     const paneId = deps.getPendingPaneCommandId();
     if (!paneId) return;
 
-    // Preserve the picker when Previous is unavailable so it can explain the
-    // option instead of silently resolving to a blank pane.
-    const hasPrevious =
-      (await deps.resolvePreviousLocation(paneId)) !== null;
-    if (
-      choice === 'previous' &&
-      !hasPrevious
-    ) {
-      return;
-    }
     await deps.resolvePaneCommandChoice(paneId, choice);
   }
 

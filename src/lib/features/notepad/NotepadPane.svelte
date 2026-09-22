@@ -105,6 +105,9 @@
   onpointerdown={() => actions.onActivate(viewModel.paneId)}
   onfocusin={() => actions.onActivate(viewModel.paneId)}
 >
+  {#if viewModel.showActiveBorder}
+    <div data-pane-border={viewModel.paneId} class="pointer-events-none absolute inset-0 z-20 hidden rounded-t-4xl shadow-[inset_0_0_0_2px_var(--border)] sm:block"></div>
+  {/if}
   <div class={viewModel.frameClass}>
     {#if viewModel.paneKind === 'editor'}
       <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20">
@@ -310,6 +313,24 @@
 </div>
 
 <style>
+  .notepad-pane {
+    flex: 1 1 0;
+    min-width: 0;
+    opacity: 1;
+  }
+
+  .notepad-pane--collapsing {
+    flex-grow: 0;
+    flex-basis: 0;
+    opacity: 0;
+    overflow: hidden;
+    pointer-events: none;
+  }
+
+  :global([data-pane-motion]) .notepad-pane {
+    overflow: hidden;
+  }
+
   /*
    * The editor's vertical padding is composed here rather than on
    * `.notepad-shell` because both inputs are overridden on this element: the

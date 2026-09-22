@@ -142,7 +142,7 @@ export function createWorkspacePaneController<
     return result;
   }
 
-  async function splitWorkspace() {
+  async function splitWorkspace(initialKind: PaneKind = 'editor') {
     const order = deps.getPaneOrder();
     if (order.length >= deps.maxVisiblePanes) {
       const activePaneId = deps.getActivePaneId();
@@ -225,33 +225,51 @@ export function createWorkspacePaneController<
         if (creationOperationId === null) {
           throw new Error('Pane creation operation is missing.');
         }
-        const placeholderDraft =
-          createFreshDraftNote(deps.state);
+        // A known chat destination retains the source directly. It never needs
+        // a placeholder document, editor mount, or intermediate picker.
+        const initialDocument = initialKind === 'chat'
+          ? sharedDocument
+          : createFreshDraftNote(deps.state);
         deps.completeWorkspacePaneCreation(
           paneId,
           creationOperationId,
-          placeholderDraft.handle,
-          'editor'
+          initialDocument.handle,
+          initialKind
         );
         creationCompleted = true;
-        deps.beginPaneCommand(
-          paneId,
-          sharedDocument.handle,
-          'split',
-          sourcePaneId
-        );
-        deps.activatePaneSession(paneId);
+        if (initialKind === 'chat') {
+          deps.resetPaneCommand();
+          deps.touchLocation(paneId, {
+            kind: 'editor',
+            noteId: getDocumentNoteId(sharedDocument),
+            notePath: getDocumentPath(sharedDocument)
+          });
+        } else {
+          deps.beginPaneCommand(
+            paneId,
+            sharedDocument.handle,
+            'split',
+            sourcePaneId
+          );
+        }
+        if (initialKind === 'chat') deps.activatePane(paneId);
+        else deps.activatePaneSession(paneId);
         claimedTarget = true;
       },
       isCurrent: (paneId) =>
         !claimedTarget ||
         deps.getActivePaneId() === paneId,
-      ensureEditors: true,
+      ensureEditors: paneHasCapability(initialKind, 'edit-document'),
       complete: (paneId) => {
-        deps.updateSelectedRelatedText(paneId);
+        if (initialKind !== 'chat') deps.updateSelectedRelatedText(paneId);
       },
-      focus: (paneId) => {
-        deps.focusPaneEditorAtEnd(paneId);
+      focus: async (paneId) => {
+        if (initialKind === 'chat') {
+          await tick();
+          deps.focusPane(paneId);
+        } else {
+          deps.focusPaneEditorAtEnd(paneId);
+        }
       },
       onStale: async () => {
         if (!creationCompleted) await abandonCreation();

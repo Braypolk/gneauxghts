@@ -40,3 +40,32 @@ export function positionInitialChatScroll(
   }
   followLatestChatContent(root);
 }
+
+/** One scroll write per frame. Explicit navigation wins over passive following. */
+export function createChatScrollScheduler() {
+  const priorities = { follow: 0, initial: 1, anchor: 2 } as const;
+  let frame: number | undefined;
+  let pending: { priority: number; run: () => void } | undefined;
+
+  function cancel() {
+    if (frame !== undefined) cancelAnimationFrame(frame);
+    frame = undefined;
+    pending = undefined;
+  }
+
+  return {
+    cancel,
+    schedule(intent: keyof typeof priorities, run: () => void) {
+      const priority = priorities[intent];
+      if (pending && pending.priority > priority) return;
+      pending = { priority, run };
+      if (frame !== undefined) return;
+      frame = requestAnimationFrame(() => {
+        frame = undefined;
+        const task = pending;
+        pending = undefined;
+        task?.run();
+      });
+    }
+  };
+}

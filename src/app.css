@@ -102,12 +102,11 @@
    * up with note prose, not the wider cm-content box.
    */
   --content-readable-width: 100%;
-  /*
-   * Workspace pane motion. The duration is mirrored by
-   * PANE_TRANSITION_DURATION_MS so the close sequence can wait for the
-   * collapse before the pane leaves the DOM.
-   */
+  /* Pane geometry and opacity share these tokens. The view waits for actual
+     animation completion; there is no duplicate JavaScript duration. */
   --pane-transition-duration: 220ms;
+  --related-transition-duration: 300ms;
+  --related-transition-ease: cubic-bezier(0, 0, 0.2, 1);
   --pane-transition-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
   --selection-color: var(--foreground);
@@ -208,6 +207,7 @@
 @media (prefers-reduced-motion: reduce) {
   :root {
     --pane-transition-duration: 0ms;
+    --related-transition-duration: 0ms;
   }
 }
 
@@ -265,4 +265,18 @@ body {
 ::-moz-selection {
   background: var(--selection-background);
   color: var(--selection-color);
+}
+
+/* Related changes resize both the workspace card and its History overlay. */
+.workspace-card-motion {
+  transition: margin-left var(--related-transition-duration) var(--related-transition-ease),
+    margin-right var(--related-transition-duration) var(--related-transition-ease),
+    width var(--related-transition-duration) var(--related-transition-ease);
+}
+.related-drawer-motion {
+  transition: left var(--related-transition-duration) var(--related-transition-ease);
+}
+.related-panel-motion {
+  transition: opacity var(--related-transition-duration) var(--related-transition-ease),
+    transform var(--related-transition-duration) var(--related-transition-ease);
 }

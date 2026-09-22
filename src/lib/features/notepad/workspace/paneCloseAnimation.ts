@@ -1,16 +1,9 @@
-/**
- * Mirrors `--pane-transition-duration` in src/app.css. The close sequence has
- * to know how long the collapse takes so the pane leaves the DOM only after it
- * finishes; CSS owns the curve, this owns the wait.
- */
-export const PANE_TRANSITION_DURATION_MS = 220;
-
 export interface PaneCloseAnimationDeps<TPaneId extends string> {
   beginCollapse: (paneId: TPaneId) => void;
   endCollapse: (paneId: TPaneId) => void;
   /** Resolves once the collapsing class has been applied to the DOM. */
   settle: () => Promise<void>;
-  wait: (ms: number) => Promise<void>;
+  waitForMotion: () => Promise<void>;
   prefersReducedMotion: () => boolean;
 }
 
@@ -29,7 +22,7 @@ export function createPaneCloseAnimation<TPaneId extends string>(
       if (deps.prefersReducedMotion()) return;
       deps.beginCollapse(paneId);
       await deps.settle();
-      await deps.wait(PANE_TRANSITION_DURATION_MS);
+      await deps.waitForMotion();
     },
     /**
      * Clears the collapsed layout. Called once the pane is gone, and also when

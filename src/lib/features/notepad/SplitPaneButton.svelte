@@ -190,6 +190,8 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .split-pane-option { transition-duration: 0ms; }
+    .split-pane-option,
+    .split-pane-divider,
+    :global(.split-pane-indicator) { transition-duration: 0ms; }
   }
 </style>
