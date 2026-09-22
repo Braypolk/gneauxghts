@@ -3,8 +3,6 @@ import { tick } from 'svelte';
 const PANE = '.notepad-pane';
 const CARD = '.notepad-workspace-card';
 const CONTENT = '[data-pane-content]';
-const FADE_OUT_MS = 50;
-const FADE_IN_MS = 90;
 
 interface Geometry {
   width: number;
@@ -28,9 +26,9 @@ function geometry(element: HTMLElement): Geometry {
 /**
  * Presentation only: the workspace still owns pane membership and departure.
  * Capture before Svelte updates, measure the destination before paint, then
- * interpolate pane widths together. Only document/transcript bodies rewrap
- * while transparent; controls and titles remain visible and editors stay
- * mounted. No editor copies or per-frame DOM reads.
+ * interpolate pane widths together. Document/transcript bodies immediately
+ * take their final width and stay visible as the pane reveals them. Editors
+ * stay mounted. No editor copies or per-frame DOM reads.
  */
 export function createPaneLayoutMotion(deps: {
   getShell: () => HTMLElement | null;
@@ -62,9 +60,9 @@ export function createPaneLayoutMotion(deps: {
       `${PANE}, .related-drawer`
     )];
     const before = new Map(elements.map(element => [element, geometry(element)]));
-    const contentBefore = new Map(
+    const contentWidthsBefore = new Map(
       [...shell.querySelectorAll<HTMLElement>(CONTENT)]
-        .map(element => [element, geometry(element)])
+        .map(element => [element, element.getBoundingClientRect().width])
     );
     // Capture interrupted motion's displayed dimensions before cancelling it.
     cancel();
@@ -108,7 +106,6 @@ export function createPaneLayoutMotion(deps: {
       if (!Number.isFinite(duration) || duration <= 0 || !shell.animate) return;
       const options: KeyframeAnimationOptions = {
         duration,
-        delay: FADE_OUT_MS,
         easing: style.getPropertyValue('--pane-transition-ease').trim(),
         fill: 'both'
       };
@@ -117,11 +114,10 @@ export function createPaneLayoutMotion(deps: {
       const participants = [outer, area, card, ...panes, ...(drawer ? [drawer] : [])];
       // Read all destination geometry before installing any animation effects.
       const after = new Map(participants.map(element => [element, geometry(element)]));
-      const contentAfter = new Map(
+      const contentWidthsAfter = new Map(
         [...shell.querySelectorAll<HTMLElement>(CONTENT)]
-          .map(element => [element, geometry(element)])
+          .map(element => [element, element.getBoundingClientRect().width])
       );
-      const totalDuration = FADE_OUT_MS + duration + FADE_IN_MS;
       const add = (element: HTMLElement, from: Keyframe, to: Keyframe) => {
         animations.push(element.animate([from, to], options));
       };
@@ -147,22 +143,17 @@ export function createPaneLayoutMotion(deps: {
         });
         const content = pane.querySelector<HTMLElement>(CONTENT);
         if (content) {
-          const previous = contentBefore.get(content);
-          const destination = contentAfter.get(content)!;
+          const destinationWidth = contentWidthsAfter.get(content)!;
           // Closing content keeps its old width until its pane is removed.
-          const finalWidth = to.width > 1 ? destination.width : previous?.width ?? destination.width;
-          const initialWidth = previous?.width ?? finalWidth;
-          const width = (value: number) => ({
-            width: `${value}px`, minWidth: `${value}px`, maxWidth: `${value}px`
-          });
-          animations.push(content.animate([
-            { ...width(initialWidth), opacity: previous?.opacity ?? '0', offset: 0 },
-            { ...width(initialWidth), opacity: 0, offset: FADE_OUT_MS / totalDuration },
-            // Equal offsets make the width change discrete, at zero opacity.
-            { ...width(finalWidth), opacity: 0, offset: FADE_OUT_MS / totalDuration },
-            { ...width(finalWidth), opacity: 0, offset: (FADE_OUT_MS + duration) / totalDuration },
-            { ...width(finalWidth), opacity: to.width > 1 ? destination.opacity : 0, offset: 1 }
-          ], { duration: totalDuration, easing: 'linear', fill: 'both' }));
+          const finalWidth = to.width > 1
+            ? destinationWidth
+            : contentWidthsBefore.get(content) ?? destinationWidth;
+          const fixedWidth = {
+            width: `${finalWidth}px`, minWidth: `${finalWidth}px`, maxWidth: `${finalWidth}px`
+          };
+          // A constant effect holds the final wrapping while the surrounding
+          // pane animates. Cancelling it restores responsive sizing at rest.
+          add(content, fixedWidth, fixedWidth);
         }
       }
       if (drawer) {
@@ -175,7 +166,7 @@ export function createPaneLayoutMotion(deps: {
       // All effects share a start time, including on slower editor mounts.
       const start = document.timeline.currentTime;
       if (start !== null) for (const animation of animations) animation.startTime = start;
-      timeout = setTimeout(operation.finish, totalDuration + 100);
+      timeout = setTimeout(operation.finish, duration + 100);
       await Promise.allSettled(animations.map(animation => animation.finished));
     };
     void animate().catch(error => {

@@ -117,19 +117,13 @@ export function expectContinuousMotion(result: Awaited<ReturnType<typeof sampleP
       for (const frame of result.frames) {
         const pane = frame.panes.find(pane => pane.id === id);
         if (!pane) continue;
-        // Text must be hidden throughout the actual resize, not just dimmed
-        // while it keeps visibly wrapping at intermediate widths.
-        if (pane.width > Math.min(startWidth, finalWidth) + 1 &&
-            pane.width < Math.max(startWidth, finalWidth) - 1) {
-          expect(pane.content?.opacity).toBe(0);
-        }
+        // Content stays visible, with final wrapping from the first frame.
+        expect(pane.content?.opacity).toBe(1);
         const initialContent = result.before.panes.find(pane => pane.id === id)?.content;
         const finalContent = end.panes.find(pane => pane.id === id)?.content;
-        const widths = [initialContent?.width, finalContent?.width]
-          .filter((value): value is number => value !== undefined);
-        if (pane.content && widths.length) {
-          const contentWidth = pane.content.width;
-          expect(Math.min(...widths.map(value => Math.abs(value - contentWidth))))
+        const expectedWidth = finalContent?.width ?? initialContent?.width;
+        if (pane.content && expectedWidth !== undefined) {
+          expect(Math.abs(pane.content.width - expectedWidth))
             .toBeLessThanOrEqual(1);
         }
       }
