@@ -137,7 +137,7 @@
   });
 </script>
 
-<section class="settings-section">
+<section class="settings-section" data-settings-anchor="excluded-notes">
   <div class="flex items-start gap-3">
     <div class="rounded-xl bg-muted p-2 text-muted-foreground">
       <ShieldOff class="h-4 w-4" />
@@ -145,8 +145,7 @@
     <div class="min-w-0">
       <h3 class="text-sm font-medium">Excluded notes</h3>
       <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Excluded notes are never sent to AI or exposed through search, citations, or proposed changes,
-        regardless of a conversation’s vault-access setting.
+        Never shared with AI, even when a chat has full vault access.
       </p>
     </div>
   </div>
@@ -220,7 +219,7 @@
 
   <div class="mt-5 flex items-center justify-between">
     <h4 class="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-      Currently excluded
+      Excluded notes
     </h4>
     {#if !isLoading}
       <span class="text-xs tabular-nums text-muted-foreground">{excluded.length}</span>
@@ -232,7 +231,7 @@
       <LoaderCircle class="h-3.5 w-3.5 animate-spin" /> Loading exclusions…
     </div>
   {:else if excluded.length === 0}
-    <p class="mt-2 rounded-xl border border-dashed border-border px-3 py-4 text-center text-xs text-muted-foreground">
+    <p class="mt-2 text-xs text-muted-foreground">
       No notes are excluded.
     </p>
   {:else}

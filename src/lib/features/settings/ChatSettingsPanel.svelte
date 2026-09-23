@@ -117,19 +117,19 @@
 </script>
 
 {#if isLoading}
-  <div class="flex items-center gap-2 rounded-2xl border border-border/70 bg-background/40 px-5 py-5 text-sm text-muted-foreground">
+  <div class="flex items-center gap-2 rounded-lg border border-border/70 bg-background/40 px-5 py-5 text-sm text-muted-foreground">
     <LoaderCircle class="h-4 w-4 animate-spin" />
     Loading AI settings…
   </div>
 {:else}
   <div class="space-y-5">
-    <section class="settings-section">
+    <section class="settings-section" data-settings-anchor="api-keys">
       <div class="flex items-start gap-3">
         <div class="rounded-xl bg-muted p-2 text-muted-foreground"><KeyRound class="h-4 w-4" /></div>
         <div>
           <h3 class="text-sm font-medium">Provider API keys</h3>
           <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Each provider has its own key in your operating system credential store. Keys are never written to the vault or shown again.
+            Stored securely on this device, outside your vault.
           </p>
         </div>
       </div>
@@ -202,25 +202,25 @@
       </div>
       {#if credentialProvider === 'local'}
         <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-          Leave this unset for LM Studio or another unauthenticated local server. When set, it is sent as the bearer token for model discovery and chat requests.
+          Optional. Only needed if your local server requires authentication.
         </p>
       {/if}
     </section>
 
     {#if settings}
-      <section class="settings-section">
-        <h3 class="text-sm font-medium">Provider and defaults</h3>
-        <p class="mt-1 text-xs text-muted-foreground">These settings are stored with this vault. The API key remains machine-local.</p>
+      <section class="settings-section" data-settings-anchor="chat-defaults">
+        <h3 class="text-sm font-medium">Chat defaults</h3>
+        <p class="mt-1 text-xs text-muted-foreground">Saved with this vault. Applies to new chats.</p>
 
         <div class="mt-5 grid gap-4 sm:grid-cols-2">
-          <SettingsField label="Provider">
+          <SettingsField label="Provider" anchor="chat-provider">
             <select class="settings-control" bind:value={settings.provider}>
               <option value="openai">OpenAI Responses API</option>
               <option value="local">Local OpenAI-compatible</option>
             </select>
           </SettingsField>
           {#if settings.provider === 'openai'}
-            <SettingsField label="OpenAI model">
+            <SettingsField label="OpenAI model" anchor="chat-model">
               <input class="settings-control" bind:value={settings.openaiModel} list="openai-chat-models" spellcheck="false" />
               <datalist id="openai-chat-models">
                 {#each OPENAI_CHAT_MODELS as model (model.id)}
@@ -229,7 +229,7 @@
               </datalist>
             </SettingsField>
             {#if defaultReasoningOptions.length > 0}
-              <SettingsField label="Reasoning">
+              <SettingsField label="Reasoning" anchor="chat-reasoning">
                 <select class="settings-control" bind:value={settings.reasoningEffort}>
                   {#each defaultReasoningOptions as option (option.value)}
                     <option value={option.value}>{option.label}</option>
@@ -237,23 +237,23 @@
                 </select>
               </SettingsField>
             {/if}
-            <SettingsField label="Processing">
+            <SettingsField label="Processing" anchor="chat-processing">
               <select class="settings-control" bind:value={settings.serviceTier}>
                 <option value="standard">Standard</option>
                 <option value="flex">Flex — lower cost, slower</option>
               </select>
             </SettingsField>
-            <SettingsField label="OpenAI web access">
+            <SettingsField label="OpenAI web access" anchor="chat-web">
               <select class="settings-control" bind:value={settings.webAccess}>
                 <option value="auto">Auto — search when useful</option>
                 <option value="off">Off by default</option>
               </select>
             </SettingsField>
           {:else}
-            <SettingsField label="Local endpoint">
+            <SettingsField label="Local endpoint" anchor="chat-endpoint">
               <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="http://localhost:1234/v1" />
             </SettingsField>
-            <div class="sm:col-span-2">
+            <div class="sm:col-span-2" data-settings-anchor="chat-model">
               <LocalModelSettings
                 baseUrl={settings.localBaseUrl}
                 selectedModel={settings.localModel}
@@ -266,14 +266,14 @@
               />
             </div>
           {/if}
-          <SettingsField label="Default vault access">
+          <SettingsField label="Default vault access" anchor="chat-access">
             <select class="settings-control" bind:value={settings.defaultVaultAccess}>
               <option value="none">None</option>
               <option value="approved">Approved only</option>
               <option value="full">Full</option>
             </select>
           </SettingsField>
-          <SettingsField label="Map chat visibility">
+          <SettingsField label="Map chat visibility" anchor="chat-visibility">
             <select class="settings-control" bind:value={settings.atlasVisibility}>
               <option value="hidden">Hidden</option>
               <option value="remembered">Remembered</option>
@@ -282,13 +282,13 @@
           </SettingsField>
         </div>
 
-        <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-          LM Studio defaults to http://localhost:1234/v1. Local models must support OpenAI-compatible tool calling for vault search and reviewed note changes. Hosted OpenAI alone can use web search and Flex processing.
-        </p>
+        {#if settings.provider === 'local'}
+          <p class="mt-3 text-xs leading-relaxed text-muted-foreground">Vault search and note changes require a model with tool calling.</p>
+        {/if}
 
         {#if settings.provider === 'openai' && settings.serviceTier === 'flex'}
           <p class="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
-            Flex uses lower-cost capacity and may respond more slowly or be temporarily unavailable. Gneauxghts will not silently retry at Standard pricing.
+            Flex may be slower or temporarily unavailable. Requests never fall back to Standard pricing.
           </p>
         {/if}
 

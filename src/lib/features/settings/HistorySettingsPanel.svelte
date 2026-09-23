@@ -29,27 +29,27 @@
   const stateCopy: Record<HistoryHealthState, { title: string; detail: string }> = {
     healthy: {
       title: 'History is healthy',
-      detail: 'Current Markdown and retained Note Timelines are available.'
+      detail: 'No action needed.'
     },
     initializing: {
       title: 'History is initializing',
-      detail: 'Existing notes are receiving truthful Baseline Revisions in the background.'
+      detail: 'Preparing Note Timelines in the background.'
     },
     degraded: {
       title: 'History needs attention',
-      detail: 'Some notes could not be initialized. Current Markdown remains readable.'
+      detail: 'Some notes need another attempt. Your notes are still readable.'
     },
     warning: {
       title: 'A saved change needs history repair',
-      detail: 'Markdown was committed and is authoritative. Retry repairs history without replaying the write.'
+      detail: 'Your change was saved. Retry to repair its history.'
     },
     unavailable: {
       title: 'History is unavailable',
-      detail: 'Current Markdown remains readable, but new app-owned note changes are blocked until history recovers.'
+      detail: 'Notes are readable. Editing is paused until history recovers.'
     },
     corrupt: {
       title: 'History is corrupt',
-      detail: 'Current Markdown remains readable. Reset can replace damaged timelines with new Baseline Revisions.'
+      detail: 'Notes are readable. Reset to replace damaged timelines.'
     }
   };
 
@@ -66,7 +66,7 @@
 {#if historyHealth}
   {@const copy = stateCopy[historyHealth.state]}
   <div class="space-y-4">
-    <SettingsCard>
+    <SettingsCard anchor="history-health">
       <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <p class="text-sm font-semibold">{copy.title}</p>
@@ -93,15 +93,9 @@
     </SettingsCard>
 
     {#if historyHealth.storage}
-      <div class="grid gap-3 sm:grid-cols-2">
-        <SettingsCard variant="metric">
-          <p class="text-xs text-muted-foreground">Allocated storage</p>
-          <p class="mt-1 text-sm font-medium">{formatBytes(historyHealth.storage.allocatedBytes)} allocated</p>
-        </SettingsCard>
-        <SettingsCard variant="metric">
-          <p class="text-xs text-muted-foreground">Reclaimable storage</p>
-          <p class="mt-1 text-sm font-medium">{formatBytes(historyHealth.storage.reclaimableBytes)} reclaimable</p>
-        </SettingsCard>
+      <div class="flex flex-wrap gap-x-6 gap-y-2 px-1 py-2 text-xs text-muted-foreground">
+        <span>{formatBytes(historyHealth.storage.allocatedBytes)} allocated</span>
+        <span>{formatBytes(historyHealth.storage.reclaimableBytes)} reclaimable</span>
       </div>
     {/if}
 
@@ -109,10 +103,10 @@
       <SettingsCard class="border-amber-500/35">
         <p class="text-sm font-medium">Recovery reset</p>
         <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-          Back up your Markdown vault before resetting. Quit Gneauxghts before copying the vault if you also want a portable copy of any readable history.
+          Back up your Markdown vault before resetting. Quit the app first to include readable history.
         </p>
         <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-          Reset removes retained historical content, names, and citations, then makes each current note a new Baseline Revision. Current Markdown is not rewritten.
+          Reset deletes retained history, revision names, and citations. Current notes stay unchanged and become new Baseline Revisions.
         </p>
         {#if confirmingReset}
           <div class="mt-3 flex flex-wrap items-center gap-2">
@@ -141,13 +135,10 @@
       </SettingsCard>
     {/if}
 
-    <SettingsCard class="border-destructive/25">
+    <section data-settings-anchor="clear-history" class="border-t border-border pt-5">
       <p class="text-sm font-medium">Clear vault history</p>
       <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-        Remove retained history for all active notes and establish their current content as new Baseline Revisions. Missing and forgotten timelines are retained.
-      </p>
-      <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
-        Old history becomes inaccessible immediately. Allocated pages may remain listed as reclaimable storage while bounded compaction proceeds.
+        Permanently remove history for active notes. Current notes stay unchanged. Missing and forgotten timelines are retained.
       </p>
       {#if confirmingClear}
         <div class="mt-3 flex flex-wrap gap-2">
@@ -172,7 +163,7 @@
           onclick={() => (confirmingClear = true)}
         >Clear vault history</button>
       {/if}
-    </SettingsCard>
+    </section>
 
     {#if historyHealth.lastReset}
       <SettingsCard>

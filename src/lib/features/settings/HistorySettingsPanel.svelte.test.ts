@@ -45,7 +45,7 @@ describe('HistorySettingsPanel health and recovery states', () => {
     expect(body).toContain('512 bytes reclaimable');
     expect(body).toContain('Clear vault history');
     expect(body).toContain('active notes');
-    expect(body).toContain('new Baseline Revisions');
+    expect(body).toContain('Current notes stay unchanged');
     expect(body).toContain('Missing and forgotten timelines are retained');
   });
 

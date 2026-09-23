@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import ForgottenNotesPanel from './ForgottenNotesPanel.svelte';
 
 describe('ForgottenNotesPanel', () => {
-  it('makes permanent note purge and complete timeline deletion explicit', () => {
+  it('labels permanent deletion explicitly and explains the recovery window', () => {
     const body = render(ForgottenNotesPanel, {
       props: {
         forgottenNotes: [
@@ -32,8 +32,7 @@ describe('ForgottenNotesPanel', () => {
     }).body;
 
     expect(body).toContain('Permanently delete');
-    expect(body).toContain('complete Note Timeline');
-    expect(body).toContain('cannot be undone');
+    expect(body).toContain('Restore items before their deletion date');
     expect(body).not.toContain('>Delete selected<');
     expect(body).not.toContain('>Delete<');
   });

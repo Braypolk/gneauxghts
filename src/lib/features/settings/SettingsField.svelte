@@ -3,14 +3,16 @@
 
   let {
     label,
+    anchor,
     children
   }: {
     label: string;
+    anchor?: string;
     children: Snippet;
   } = $props();
 </script>
 
-<label class="grid gap-1.5 text-xs font-medium">
+<label data-settings-anchor={anchor} class="grid gap-1.5 text-xs font-medium">
   {label}
   {@render children()}
 </label>

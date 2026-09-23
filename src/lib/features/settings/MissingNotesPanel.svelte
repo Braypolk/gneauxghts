@@ -42,16 +42,18 @@
   }
 </script>
 
-<div class="border-t border-border/70 px-6 py-5">
+<div class="settings-section mb-7" data-settings-anchor="missing-notes">
   <div class="flex items-start justify-between gap-4">
     <div>
       <p class="text-sm font-medium">Missing Notes</p>
+      {#if missingNotes.length > 0}
       <p class="mt-0.5 text-xs text-muted-foreground">
-        Files deleted outside Gneauxghts remain recoverable until their captured deadline.
+        Recover files deleted outside the app.
       </p>
       <p class="mt-1 text-xs text-muted-foreground">
-        Recovery uses the last retained revision and will not overwrite a file that now occupies the old path.
+        Uses the last retained revision; will not overwrite an existing file.
       </p>
+      {/if}
     </div>
     <SettingsRefreshButton
       disabled={isLoading || isUpdating || loadingTimelineNoteId !== null}
@@ -60,10 +62,10 @@
   </div>
 
   {#if actionMessage}
-    <p class="mt-4 rounded-2xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">{actionMessage}</p>
+    <p class="mt-4 rounded-lg border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">{actionMessage}</p>
   {/if}
   {#if actionError}
-    <p class="mt-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">{actionError}</p>
+    <p class="mt-4 rounded-lg border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">{actionError}</p>
   {/if}
 
   {#if isLoading}
@@ -74,7 +76,7 @@
     <div class="mt-4 space-y-3">
       {#each missingNotes as note (note.noteId)}
         <article
-          class="rounded-2xl border border-border/70 bg-card/70 px-4 py-4"
+          class="border-b border-border/70 py-4"
           data-note-id={note.noteId}
         >
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -119,7 +121,7 @@
           </details>
 
           {#if pendingDelete === note.noteId}
-            <div class="mt-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-4 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100" role="alertdialog" aria-label="Confirm Missing Note deletion">
+            <div class="mt-4 rounded-lg border border-rose-300/70 bg-rose-50 px-4 py-4 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100" role="alertdialog" aria-label="Confirm Missing Note deletion">
               <p class="text-sm font-semibold">Permanently delete this Missing Note?</p>
               <p class="mt-1 text-xs">Its complete retained timeline will be purged. Any unrelated file at the old path remains untouched.</p>
               <div class="mt-3 flex gap-2">

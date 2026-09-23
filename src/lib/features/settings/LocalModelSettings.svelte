@@ -197,11 +197,10 @@
 
 <svelte:window onkeydown={handleWindowKeydown} />
 
-<div class="overflow-hidden rounded-2xl border border-border/80 bg-background/60">
+<div class="overflow-hidden rounded-lg border border-border/80 bg-background/60">
   <div class="flex items-center justify-between gap-3 border-b border-border/70 px-4 py-3">
     <div>
       <h4 class="text-sm font-semibold">Models</h4>
-      <p class="mt-0.5 text-xs text-muted-foreground">Select the model used for new chats.</p>
     </div>
     <div class="flex items-center gap-1.5">
       <button
@@ -301,7 +300,7 @@
     </div>
   {:else}
     <div class="px-4 py-5 text-sm text-muted-foreground">
-      No model is configured. Load one in LM Studio, refresh, or add its ID manually.
+      Load a model in LM Studio, then refresh—or add its ID.
     </div>
   {/if}
 
@@ -321,7 +320,7 @@
       onclick={closeEditor}
     ></button>
     <div
-      class="relative z-10 w-full max-w-lg rounded-2xl border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
+      class="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="local-model-editor-title"
@@ -342,9 +341,8 @@
       <div class="mt-5 flex gap-3 rounded-xl border border-amber-500/25 bg-amber-500/8 p-3">
         <TriangleAlert class="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
         <div>
-          <p class="text-xs font-medium">Proceed with caution</p>
           <p class="mt-1 text-xs leading-relaxed text-muted-foreground">
-            Enable only capabilities supported by both the model and the LM Studio runtime. Incorrect settings can cause request errors.
+            Enable only capabilities supported by the model and LM Studio to avoid request errors.
           </p>
         </div>
       </div>
@@ -352,9 +350,6 @@
       {#if reasoningOptions.length}
         <label class="mt-5 block">
           <span class="text-xs font-medium">Reasoning effort</span>
-          <span class="mt-1 block text-xs leading-relaxed text-muted-foreground">
-            Used by default whenever this model starts or joins a chat.
-          </span>
           <select
             class="settings-control mt-2 w-full"
             value={draftCapabilities.reasoningEffort}

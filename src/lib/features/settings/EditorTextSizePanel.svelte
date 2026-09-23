@@ -38,13 +38,10 @@
   }
 </script>
 
-<div class="settings-section">
+<div class="settings-section" data-settings-anchor="text-size">
   <div class="flex flex-col gap-4">
     <div>
       <p class="text-sm font-medium">Editor text size</p>
-      <p class="mt-0.5 text-xs text-muted-foreground">
-        Scales body text and headings in the notepad. Medium matches the current default.
-      </p>
     </div>
 
     <fieldset class="flex flex-wrap gap-2">
@@ -91,7 +88,6 @@
           value={editorTextSize.custom.bodyRem}
           oninput={handleBodySizeInput}
         />
-        <p class="text-xs text-muted-foreground">Paragraph and list text size.</p>
       </label>
 
       <label class="grid gap-2">
@@ -111,23 +107,24 @@
           oninput={handleHeadingScaleInput}
         />
         <p class="text-xs text-muted-foreground">
-          Relative to body size. 100% keeps medium heading proportions.
+          100% uses the default heading proportions.
         </p>
       </label>
     </div>
   {/if}
 
   <div
-    class="mt-5 border-t border-border/60 pt-5"
+    class="mt-4 rounded-lg bg-muted/30 px-5 py-4"
     style:font-size="{resolvedSizes.bodyRem}rem"
     aria-hidden="true"
   >
-    <p class="text-xs text-muted-foreground">Preview</p>
-    <p class="mt-3 font-bold leading-tight" style:font-size="{resolvedSizes.h1Rem}rem">Heading 1</p>
-    <p class="mt-2 font-bold leading-tight" style:font-size="{resolvedSizes.h2Rem}rem">Heading 2</p>
-    <p class="mt-2 font-bold leading-snug" style:font-size="{resolvedSizes.h3Rem}rem">Heading 3</p>
+    <p class="font-bold leading-tight" style:font-size="{resolvedSizes.h1Rem}rem">Room to think.</p>
+    {#if editorTextSize.preference === 'custom'}
+    <p class="mt-2 font-bold leading-tight" style:font-size="{resolvedSizes.h2Rem}rem">A space for your ideas</p>
+    <p class="mt-2 font-bold leading-snug" style:font-size="{resolvedSizes.h3Rem}rem">One thought at a time</p>
+    {/if}
     <p class="mt-3 leading-relaxed text-foreground/90">
-      Body text looks like this in the editor.
+      A place for your notes, ideas, and connections.
     </p>
   </div>
 </div>

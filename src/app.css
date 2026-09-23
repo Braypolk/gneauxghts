@@ -33,11 +33,11 @@
 
 /* Shared settings surface used across route-level and feature components. */
 @utility settings-section {
-  @apply rounded-2xl border border-border/70 bg-background/40 px-5 py-5 sm:px-6;
+  @apply border-b border-border/70 pb-5 pt-1;
 }
 
 @utility settings-control {
-  @apply h-10 rounded-xl border border-border bg-background px-3 text-sm;
+  @apply h-10 rounded-lg border border-border bg-background px-3 text-sm;
 }
 
 

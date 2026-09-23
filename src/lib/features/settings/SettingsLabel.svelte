@@ -2,4 +2,4 @@
   let { text }: { text: string } = $props();
 </script>
 
-<p class="text-xs uppercase tracking-[0.18em] text-muted-foreground">{text}</p>
+<p class="text-xs font-medium text-muted-foreground">{text}</p>

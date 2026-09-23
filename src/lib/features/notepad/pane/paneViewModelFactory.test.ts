@@ -10,7 +10,6 @@ import {
 import {
   INITIAL_PANE_ID
 } from '$lib/features/notepad/session/runtimeStore.svelte';
-import { PaneRuntime } from './paneRuntime.svelte';
 import { createPaneViewModelFactory } from './paneViewModelFactory';
 
 describe('pane view model document status', () => {
@@ -46,8 +45,6 @@ describe('pane view model document status', () => {
       getCollapsingPaneId: () => null,
       getPaneKind: () => 'editor',
       getPaneDocument: () => document,
-      getPaneRuntime: () =>
-        new PaneRuntime(INITIAL_PANE_ID),
       getChatBindings: () => {
         throw new Error('chat bindings are not used for an editor');
       },

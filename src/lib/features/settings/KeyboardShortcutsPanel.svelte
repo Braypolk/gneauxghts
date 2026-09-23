@@ -23,6 +23,11 @@
     items: keyboardShortcutDefinitions.filter((definition) => definition.group === group.id)
   }));
 
+  let { targetAnchor = null }: { targetAnchor?: string | null } = $props();
+  $effect(() => {
+    if (targetAnchor?.startsWith('shortcut-')) searchQuery = '';
+  });
+
   let recordingShortcutId = $state<KeyboardShortcutId | null>(null);
   let searchQuery = $state('');
   const conflictMap = $derived(getKeyboardShortcutConflicts(keyboardShortcuts.bindings));
@@ -123,13 +128,12 @@
 
 <svelte:window onkeydowncapture={handleWindowKeydownCapture} />
 
-<div class="space-y-6">
-  <div class="flex flex-col gap-4 rounded-2xl border border-border/70 bg-background/40 px-4 py-4 sm:px-5">
+<div class="shortcuts-panel space-y-6" data-settings-anchor="shortcuts">
+  <div class="flex flex-col gap-4 border-b border-border/70 pb-5">
     <div class="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
       <div>
-        <p class="text-sm font-medium">Custom keyboard shortcuts</p>
         <p class="mt-1 text-xs text-muted-foreground">
-          Click a shortcut button, press new keys, or clear it to disable. Conflicts are allowed but flagged.
+          Select a binding and press new keys. Clear to disable.
         </p>
       </div>
 
@@ -148,34 +152,29 @@
 
     <div class="grid gap-3 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-center">
       <label class="flex min-w-0 items-center gap-2 rounded-xl border border-border/70 bg-background/70 px-3 py-2">
-        <span class="shrink-0 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
-          Search
-        </span>
         <input
           class="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-muted-foreground/70"
           type="text"
           bind:value={searchQuery}
           placeholder="Filter shortcuts"
+          aria-label="Filter shortcuts"
           autocomplete="off"
         />
       </label>
-      <p class="text-xs text-muted-foreground lg:text-right">
-        Showing {visibleShortcutCount} of {keyboardShortcutDefinitions.length}
-      </p>
+      {#if searchQuery}<p class="text-xs text-muted-foreground lg:text-right">{visibleShortcutCount} results</p>{/if}
     </div>
   </div>
 
   {#if filteredGroups.length === 0}
-    <div class="rounded-2xl border border-dashed border-border/70 bg-background/30 px-4 py-6 text-sm text-muted-foreground">
+    <div class="rounded-lg border border-dashed border-border/70 bg-background/30 px-4 py-6 text-sm text-muted-foreground">
       No shortcuts match “{searchQuery.trim()}”.
     </div>
   {/if}
 
   {#each filteredGroups as group}
-    <section class="space-y-3 rounded-2xl border border-border/70 bg-background/40 px-4 py-4 sm:px-5">
+    <section class="space-y-3">
       <header class="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between">
         <h3 class="text-sm font-semibold">{group.label}</h3>
-        <p class="text-xs text-muted-foreground">{group.description}</p>
       </header>
 
       <div class="space-y-2">
@@ -186,11 +185,11 @@
           )}
           {@const isCustomized = isKeyboardShortcutCustomized(definition.id, keyboardShortcuts.bindings)}
           {@const conflictDescription = describeConflicts(definition)}
-          <div class="rounded-xl border border-border/60 bg-background/60 px-3 py-3">
-            <div class="grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-center">
+          <div data-settings-anchor={`shortcut-${definition.id}`} class="border-b border-border/60 py-3">
+            <div class="shortcut-row">
               <div class="min-w-0">
                 <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <p class="text-sm font-medium">{definition.label}</p>
+                  <p class="text-sm font-medium" title={definition.description}>{definition.label}</p>
                   {#if currentBinding === ''}
                     <span class="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] font-medium text-amber-700 dark:text-amber-300">
                       Disabled
@@ -202,10 +201,12 @@
                     </span>
                   {/if}
                 </div>
-                <p class="mt-1 text-xs text-muted-foreground">{definition.description}</p>
+                <p class="sr-only" id={`shortcut-help-${definition.id}`}>{definition.description}</p>
+                {#if isCustomized}
                 <p class="mt-1 text-[11px] text-muted-foreground">
                   Default: <ShortcutBinding binding={getEffectiveDefaultKeyboardShortcutBinding(definition.id)} />
                 </p>
+                {/if}
                 {#if conflictDescription}
                   <p class="mt-1 text-[11px] text-amber-700 dark:text-amber-300">
                     Also used by: {conflictDescription}
@@ -213,7 +214,7 @@
                 {/if}
               </div>
 
-              <div class="flex flex-col gap-2 xl:min-w-[22rem] xl:items-end">
+              <div class="shortcut-actions">
                 <button
                   type="button"
                   class={`inline-flex min-h-10 items-center justify-center rounded-xl border px-3 py-2 text-sm font-medium transition-colors ${
@@ -221,6 +222,8 @@
                       ? 'border-foreground bg-foreground text-background'
                       : 'border-border/70 bg-background hover:bg-accent'
                   }`}
+                  aria-label={`Change ${definition.label} shortcut, ${formatShortcutBinding(currentBinding)}`}
+                  aria-describedby={`shortcut-help-${definition.id}`}
                   aria-pressed={recordingShortcutId === definition.id}
                   onkeydown={(event) => handleRecordKeydown(definition.id, event)}
                   onblur={() => stopRecording(definition.id)}
@@ -233,17 +236,20 @@
                   {/if}
                 </button>
 
-                <div class="flex flex-wrap gap-2 xl:justify-end">
+                <div class="flex items-center gap-1">
+                  {#if currentBinding}
                   <button
                     type="button"
-                    class="rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-accent"
+                    class="min-h-9 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
                     onclick={() => clearShortcut(definition.id)}
                   >
                     Clear
                   </button>
+                  {/if}
+                  {#if isCustomized}
                   <button
                     type="button"
-                    class="rounded-full border border-border/70 bg-background px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-accent disabled:opacity-50"
+                    class="min-h-9 rounded-lg px-2 text-xs text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-50"
                     disabled={!isCustomized}
                     onclick={() => {
                       resetKeyboardShortcutBinding(definition.id);
@@ -252,6 +258,7 @@
                   >
                     Reset
                   </button>
+                  {/if}
                 </div>
               </div>
             </div>
@@ -261,3 +268,14 @@
     </section>
   {/each}
 </div>
+
+<style>
+  .shortcuts-panel { container-type: inline-size; }
+  .shortcut-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 16px; }
+  .shortcut-actions { display: flex; align-items: center; gap: 8px; }
+  @container (max-width: 460px) {
+    .shortcut-row { grid-template-columns: 1fr; gap: 8px; }
+    .shortcut-actions { flex-wrap: wrap; }
+    .shortcut-actions :global(button) { min-height: 44px; }
+  }
+</style>

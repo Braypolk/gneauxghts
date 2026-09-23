@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
+  import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
   import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
   import { appSettings } from "$lib/appSettings.svelte";
   import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
@@ -1291,7 +1292,6 @@
     getCollapsingPaneId: () => collapsingPaneId,
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
-    getPaneRuntime,
     getChatBindings: chatPaneAdapter.getBindings,
     isReviewingDocument: proposalOrchestration.isReviewingDocument,
     isNotePinned: (noteId) =>
@@ -1519,6 +1519,7 @@
 
 <div
   bind:this={workspaceShell}
+  use:suppressResizeTransitions
   class="notepad-shell relative h-full w-full min-h-0 overflow-visible"
 >
   <div
@@ -1816,6 +1817,12 @@
      their own transition when this temporary marker is absent. */
   .notepad-shell:global([data-pane-motion]) .notepad-workspace-card,
   .notepad-shell:global([data-pane-motion]) :global(.related-drawer) {
+    transition: none;
+  }
+
+  /* Window geometry must settle immediately, including the History overlay. */
+  .notepad-shell:global([data-window-resizing]) :global(.workspace-card-motion),
+  .notepad-shell:global([data-window-resizing]) :global(.related-drawer-motion) {
     transition: none;
   }
 

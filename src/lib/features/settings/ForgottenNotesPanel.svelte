@@ -44,16 +44,15 @@
   }
 </script>
 
-<div class="border-t border-border/70 px-6 py-5">
+<div class="settings-section mb-7" data-settings-anchor="forgotten-items">
   <div class="flex items-start justify-between gap-4">
     <div>
-      <p class="text-sm font-medium">Forgotten Items</p>
+      <p class="text-sm font-medium">Notes &amp; chats</p>
+      {#if forgottenNotes.length > 0}
       <p class="mt-0.5 text-xs text-muted-foreground">
-        Review notes and chats in `.forgotten`, then restore or permanently delete them.
+        Restore items before their deletion date.
       </p>
-      <p class="mt-1 text-xs text-muted-foreground">
-        Permanently deleting a note removes its file and complete Note Timeline. This cannot be undone.
-      </p>
+      {/if}
     </div>
 
     <SettingsRefreshButton
@@ -62,17 +61,18 @@
     />
   </div>
 
-  <div class="mt-6 rounded-3xl border border-border/70 bg-background/70 px-5 py-4">
+  <div class="mt-4">
     {#if forgottenActionMessage}
-      <p class="mb-4 rounded-2xl border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+      <p class="mb-4 rounded-lg border border-amber-300/70 bg-amber-50 px-4 py-3 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
         {forgottenActionMessage}
       </p>
     {/if}
     {#if forgottenActionError}
-      <p class="mb-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">
+      <p class="mb-4 rounded-lg border border-rose-300/70 bg-rose-50 px-4 py-3 text-sm text-rose-800 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100">
         {forgottenActionError}
       </p>
     {/if}
+    {#if forgottenNotes.length > 0}
     <div class="flex flex-wrap items-center justify-between gap-3">
       <label class="inline-flex items-center gap-2 text-sm font-medium">
         <input
@@ -104,6 +104,7 @@
       </div>
     </div>
 
+    {/if}
     {#if isLoadingForgottenNotes}
       <p class="mt-4 text-sm text-muted-foreground">Loading forgotten items…</p>
     {:else if forgottenNotes.length === 0}
@@ -111,7 +112,7 @@
     {:else}
       <div class="mt-4 space-y-3">
         {#each forgottenNotes as note}
-          <div class="rounded-2xl border border-border/70 bg-card/70 px-4 py-4">
+          <div class="border-b border-border/70 py-4">
             <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
               <div class="flex items-start gap-3">
                 <input
@@ -170,7 +171,7 @@
     {/if}
 
     {#if pendingPermanentDelete.length > 0}
-      <div class="mt-4 rounded-2xl border border-rose-300/70 bg-rose-50 px-4 py-4 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100" role="alertdialog" aria-label="Confirm permanent deletion">
+      <div class="mt-4 rounded-lg border border-rose-300/70 bg-rose-50 px-4 py-4 text-rose-900 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-100" role="alertdialog" aria-label="Confirm permanent deletion">
         <p class="text-sm font-semibold">Permanently delete {pendingPermanentDelete.length === 1 ? 'this item' : `${pendingPermanentDelete.length} items`}?</p>
         <p class="mt-1 text-xs leading-relaxed">
           For every selected note, its complete Note Timeline and retained revision names are removed with the file. This cannot be undone.

@@ -25,6 +25,7 @@
   } from '$lib/features/notepad/workspace/paneTopActions';
 
   interface Props {
+    /** Live editor state and DOM refs; readiness must not be copied into the view model. */
     pane: PaneRuntime;
     viewModel: PaneViewModel;
     actions: PaneWorkspaceActions;
@@ -260,7 +261,7 @@
               : ''
           }`}
         >
-          {#if !viewModel.isEditorReady}
+          {#if !pane.ui.isEditorReady}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
               <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
                 Loading editor
@@ -276,7 +277,7 @@
             use:editorAction={viewModel.editorLifecycle}
           ></div>
 
-          {#if appSettings.tagsVisible && viewModel.isEditorReady}
+          {#if appSettings.tagsVisible && pane.ui.isEditorReady}
             {#key viewModel.titleDocument.handle}
               {@const tagDocument = viewModel.titleDocument}
               <ScrollingNoteTags view={pane.controller?.view} tags={tagDocument.working.tags ?? []} error={tagDocument.working.tagsError} disabled={viewModel.titleReadonly} onChange={(tags) => actions.onUpdateTags(viewModel.paneId, tagDocument.handle, tags)} onDone={() => pane.controller?.view.focus()} />

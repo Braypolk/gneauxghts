@@ -1,5 +1,4 @@
 import type { PaneEditorLifecycle } from './paneEditorLifecycle';
-import type { PaneRuntime } from './paneRuntime.svelte';
 import type { PaneViewModel } from '../notepadPane.types';
 import type { ChatPaneBindings } from './chatPaneBindings';
 import type {
@@ -26,7 +25,6 @@ export interface PaneViewModelFactoryDeps {
   getCollapsingPaneId: () => NotepadPaneId | null;
   getPaneKind: (paneId: NotepadPaneId) => PaneKind;
   getPaneDocument: (paneId: NotepadPaneId) => NoteDraftState;
-  getPaneRuntime: (paneId: NotepadPaneId) => PaneRuntime;
   getChatBindings: (paneId: NotepadPaneId) => ChatPaneBindings;
   isReviewingDocument: (document: NoteDraftState) => boolean;
   isNotePinned: (noteId: string) => boolean;
@@ -96,7 +94,6 @@ export function createPaneViewModelFactory(
         canPin: noteId !== null,
         isPinned: noteId !== null && deps.isNotePinned(noteId),
         documentStatus: getDocumentStatusViewModel(document),
-        isEditorReady: deps.getPaneRuntime(paneId).ui.isEditorReady,
         isSlashMenuOpen:
           transientUiState.kind === 'slash-menu' &&
           transientUiState.paneId === paneId,

@@ -6,19 +6,21 @@
   let {
     variant = 'summary',
     class: className = '',
+    anchor,
     children
   }: {
     variant?: Variant;
     class?: string;
+    anchor?: string;
     children: Snippet;
   } = $props();
 
   const variantClass: Record<Variant, string> = {
-    summary: 'rounded-3xl border border-border/70 bg-background/70 px-5 py-4',
-    metric: 'rounded-2xl border border-border/70 bg-card/70 px-4 py-3'
+    summary: 'min-w-0 rounded-lg border border-border/70 bg-background/50 px-4 py-4 break-words',
+    metric: 'min-w-0 border-l border-border px-4 py-2 break-words'
   };
 </script>
 
-<div class={`${variantClass[variant]} ${className}`}>
+<div data-settings-anchor={anchor} class={`${variantClass[variant]} ${className}`}>
   {@render children()}
 </div>

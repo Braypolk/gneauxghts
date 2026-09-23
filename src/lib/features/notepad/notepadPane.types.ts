@@ -28,7 +28,6 @@ export interface EditorPaneViewModel extends PaneViewModelBase {
   canPin: boolean;
   isPinned: boolean;
   documentStatus: DocumentStatusViewModel;
-  isEditorReady: boolean;
   isSlashMenuOpen: boolean;
   isPaneCommandOpen: boolean;
   paneCommandHighlightedIndex: number;

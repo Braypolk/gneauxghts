@@ -1,6 +1,6 @@
 <script lang="ts">
-  import { Monitor, Moon, RefreshCcw, Sun, FolderOpen } from '@lucide/svelte';
-  import { onDestroy, onMount } from 'svelte';
+  import { Monitor, Moon, RefreshCcw, Sun, FolderOpen, Search, X, ArrowUpRight, Palette, Keyboard, Timer, Sparkles, ScanSearch, History, ArchiveRestore } from '@lucide/svelte';
+  import { onDestroy, onMount, tick } from 'svelte';
   import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
   import MissingNotesPanel from '$lib/features/settings/MissingNotesPanel.svelte';
   import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
@@ -29,27 +29,29 @@
     themeStore,
     type ThemePreference
   } from '$lib/theme.svelte';
-  import { createSettingsStore, type GeneralSection, type SettingsTab } from '$lib/features/settings/store.svelte';
+  import { createSettingsStore } from '$lib/features/settings/store.svelte';
   import { logDevError } from '$lib/logDevError';
 
-  const generalSectionsNav: {
-    id: GeneralSection;
-    label: string;
-    description: string;
-  }[] = [
-    { id: 'appearance', label: 'Appearance', description: 'Theme and editor text size' },
-    { id: 'shortcuts', label: 'Shortcuts', description: 'Customize keyboard shortcuts' },
-    {
-      id: 'forgetting',
-      label: 'Forgetting',
-      description: 'Forget button timing and trash retention'
-    },
-    { id: 'vault', label: 'Vault', description: 'Vault folders and note storage' },
-    { id: 'history', label: 'History', description: 'Timeline health, storage, and recovery' },
-    { id: 'ai', label: 'AI & Chat', description: 'Provider, API key, and chat defaults' },
-    { id: 'search', label: 'Semantic search', description: 'Local index and embeddings' }
-  ];
+  import { settingsCategories, settingsSearchEntries, searchSettings, type SettingsCategory, type SettingsSearchEntry } from '$lib/features/settings/settingsCatalog';
+  import { keyboardShortcutDefinitions } from '$lib/keyboardShortcuts.svelte';
+  import '$lib/features/settings/settings.css';
 
+  const categoryIcons = { appearance: Palette, shortcuts: Keyboard, forgetting: Timer, ai: Sparkles, search: ScanSearch, vault: FolderOpen, history: History, forgotten: ArchiveRestore };
+  const categoryGroups = [...new Set(settingsCategories.map((item) => item.group))];
+  const searchEntries: SettingsSearchEntry[] = [
+    ...settingsSearchEntries,
+    ...keyboardShortcutDefinitions.map((shortcut) => ({
+      id: `shortcut-${shortcut.id}`, category: 'shortcuts' as const,
+      title: shortcut.label, description: shortcut.description,
+      keywords: 'keyboard shortcut key binding hotkey', anchor: `shortcut-${shortcut.id}`
+    }))
+  ];
+  let query = $state('');
+  let searchInput: HTMLInputElement;
+  let content: HTMLDivElement;
+  let destination = $state<string | null>(null);
+  const searching = $derived(query.trim().length > 0);
+  const results = $derived(searchSettings(query, searchEntries));
   const themeIcons: Record<ThemePreference, typeof Monitor> = {
     auto: Monitor,
     light: Sun,
@@ -57,9 +59,55 @@
   };
 
   const settings = createSettingsStore();
-  const activeSectionMeta = $derived(
-    generalSectionsNav.find((s) => s.id === settings.activeGeneralSection) ?? generalSectionsNav[0]
-  );
+  const activeCategory = $derived(settings.activeTab === 'forgotten' ? 'forgotten' : settings.activeGeneralSection);
+  const activeSectionMeta = $derived(settingsCategories.find((item) => item.id === activeCategory)!);
+
+  async function selectCategory(category: SettingsCategory, anchor: string | null = null) {
+    destination = null;
+    query = '';
+    if (category === 'forgotten') {
+      settings.setActiveTab('forgotten');
+      void settings.loadForgottenNotes();
+    } else {
+      settings.setActiveTab('general');
+      settings.setActiveGeneralSection(category);
+    }
+    await tick();
+    content?.scrollTo({ top: 0 });
+    destination = anchor;
+    if (!anchor) content?.querySelector<HTMLElement>('#settings-category-title')?.focus({ preventScroll: true });
+  }
+
+  function clearSearch() {
+    query = '';
+    searchInput?.focus();
+  }
+
+  // Panels may load asynchronously. Reveal the destination as soon as its
+  // presentation anchor exists, without touching the setting's value.
+  $effect(() => {
+    const anchor = destination;
+    if (!anchor || !content || searching) return;
+    let highlighted: HTMLElement | null = null;
+    const reveal = () => {
+      const element = content.querySelector<HTMLElement>(`[data-settings-anchor="${anchor}"]`)
+        // Provider-specific fields may not apply to the current provider/model.
+        ?? (anchor.startsWith('chat-') ? content.querySelector<HTMLElement>('[data-settings-anchor="chat-defaults"]') : null);
+      if (!element) return false;
+      for (const details of content.querySelectorAll('details')) {
+        if (details.contains(element) || details === element) details.open = true;
+      }
+      element.tabIndex = -1;
+      element.classList.add('settings-destination');
+      element.scrollIntoView({ block: 'start', behavior: 'instant' });
+      element.focus({ preventScroll: true });
+      highlighted = element;
+      return true;
+    };
+    const observer = new MutationObserver(() => { if (reveal()) observer.disconnect(); });
+    if (!reveal()) observer.observe(content, { childList: true, subtree: true });
+    return () => { observer.disconnect(); highlighted?.classList.remove('settings-destination'); };
+  });
   let allForgottenSelected = $derived(
     settings.forgottenNotes.length > 0 &&
       settings.forgottenNotes.every((note) =>
@@ -96,142 +144,122 @@
 
 <svelte:document onvisibilitychange={handleVisibilityChange} />
 
-<div class="h-full w-full overflow-auto bg-background text-foreground">
-  <main class="mx-auto flex min-h-full w-full max-w-6xl items-start justify-center px-0 pb-6 sm:px-2 sm:pb-10">
-    <section class="mt-0 w-full overflow-hidden border-y border-border/80 bg-card/80 shadow-sm backdrop-blur-md sm:mt-2 sm:rounded-[1.75rem] sm:border">
-      <div class="px-4 py-4 sm:px-6 sm:py-5">
-        <p class="text-xs font-medium uppercase tracking-[0.24em] text-muted-foreground">Settings</p>
-      </div>
-
-      <div class="border-t border-border/70 px-4 py-3 sm:px-6 sm:py-4">
-        <div class="inline-flex items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1">
-          <button
-            class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              settings.activeTab === 'general'
-                ? 'bg-foreground text-background shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            type="button"
-            onclick={() => settings.setActiveTab('general')}
-          >
-            General
-          </button>
-          <button
-            class={`rounded-full px-4 py-2 text-sm font-medium transition-colors ${
-              settings.activeTab === 'forgotten'
-                ? 'bg-foreground text-background shadow-sm'
-                : 'text-muted-foreground hover:text-foreground'
-            }`}
-            type="button"
-            onclick={() => {
-              settings.setActiveTab('forgotten');
-              void settings.loadForgottenNotes();
-            }}
-          >
-            Forgotten Items
-          </button>
+<main class="settings-workspace w-full max-w-5xl border-y border-border sm:rounded-4xl sm:border" aria-label="Settings">
+  <aside class="settings-sidebar">
+    <div class="settings-sidebar-heading">
+      <h1>Settings</h1>
+    </div>
+    <nav aria-label="Settings categories">
+      {#each categoryGroups as group}
+        <div class="settings-nav-group">
+          <p class="settings-nav-label">{group}</p>
+          {#each settingsCategories.filter((item) => item.group === group) as item}
+            {@const Icon = categoryIcons[item.id]}
+            <button type="button" data-settings-section={item.id}
+              class="settings-nav-item" class:active={activeCategory === item.id && !searching}
+              aria-current={activeCategory === item.id && !searching ? 'page' : undefined}
+              onclick={() => void selectCategory(item.id)}>
+              <Icon size={16} strokeWidth={1.6} />
+              <span>{item.label}</span>
+            </button>
+          {/each}
         </div>
+      {/each}
+    </nav>
+  </aside>
+
+  <section class="settings-main" aria-label="Settings controls">
+    <div class="settings-toolbar">
+      <div class="settings-search">
+        <Search size={17} strokeWidth={1.7} aria-hidden="true" />
+        <input bind:this={searchInput} bind:value={query} type="search" aria-label="Search settings"
+          placeholder="Search settings…" autocomplete="off" spellcheck="false"
+          oninput={() => { destination = null; content?.scrollTo({ top: 0 }); }}
+          onkeydown={(event) => {
+            if (event.key === 'Escape') { event.preventDefault(); clearSearch(); }
+            if (event.key === 'Enter' && results.length > 0) {
+              event.preventDefault();
+              void selectCategory(results[0].category, results[0].anchor);
+            }
+          }} />
+        {#if query}
+          <button type="button" aria-label="Clear settings search" onclick={clearSearch}><X size={16} /></button>
+        {/if}
       </div>
+    </div>
 
+    <div class="settings-content" bind:this={content}>
       {#if settings.settingsLoadError}
-        <p class="border-t border-border/70 px-4 py-3 text-sm text-destructive sm:px-6" role="alert">
-          Settings could not be loaded: {settings.settingsLoadError}
-        </p>
+        <p class="mb-6 text-sm text-destructive" role="alert">Settings could not be loaded: {settings.settingsLoadError}</p>
       {/if}
-
-      {#if settings.activeTab === 'general'}
-      <div class="border-t border-border/70">
-        <div
-          class="flex flex-col lg:grid lg:grid-cols-[minmax(10.5rem,13.5rem)_minmax(0,1fr)] lg:items-start lg:divide-x lg:divide-border/70"
-        >
-          <nav
-            class="flex gap-2 overflow-x-auto overscroll-x-contain border-b border-border/70 px-4 py-3 [-ms-overflow-style:none] [scrollbar-width:none] sm:px-6 lg:sticky lg:top-4 lg:z-10 lg:max-h-[min(100vh-5rem,52rem)] lg:flex-col lg:overflow-y-auto lg:overflow-x-visible lg:border-b-0 lg:bg-card/90 lg:px-3 lg:py-6 lg:backdrop-blur-sm xl:px-4 [&::-webkit-scrollbar]:hidden"
-            aria-label="Settings categories"
-          >
-            {#each generalSectionsNav as item}
-              <button
-                type="button"
-                data-settings-section={item.id}
-                class={`shrink-0 rounded-xl border px-3 py-2 text-left transition-colors lg:w-full lg:px-3.5 lg:py-2.5 ${
-                  settings.activeGeneralSection === item.id
-                    ? 'border-border bg-foreground text-background shadow-sm'
-                    : 'border-transparent bg-muted/30 text-muted-foreground hover:bg-muted/50 hover:text-foreground'
-                }`}
-                aria-current={settings.activeGeneralSection === item.id ? 'page' : undefined}
-                onclick={() => settings.setActiveGeneralSection(item.id)}
-              >
-                <span class="block text-sm font-medium">{item.label}</span>
-                <span
-                  class={`mt-0.5 hidden text-xs leading-snug sm:block lg:mt-1 ${
-                    settings.activeGeneralSection === item.id ? 'text-background/75' : ''
-                  }`}
-                >
-                  {item.description}
-                </span>
-              </button>
+      {#if searching}
+        <div class="settings-page-heading">
+          <h2>Search results</h2>
+          <p role="status" aria-live="polite">{results.length} {results.length === 1 ? 'result' : 'results'} for “{query.trim()}”</p>
+        </div>
+        {#if results.length > 0}
+          <ul class="settings-results" aria-label="Settings search results">
+            {#each results as result (result.id)}
+              <li>
+                <button type="button" data-settings-result={result.id} onclick={() => void selectCategory(result.category, result.anchor)}>
+                  <span class="min-w-0">
+                    <span class="settings-result-category">{settingsCategories.find((item) => item.id === result.category)?.label}</span>
+                    <span class="settings-result-title">{result.title}</span>
+                    <span class="settings-result-description">{result.description}</span>
+                  </span>
+                  <ArrowUpRight size={17} aria-hidden="true" />
+                </button>
+              </li>
             {/each}
-          </nav>
-
-          <div class="min-w-0 px-4 pb-10 pt-5 sm:px-6 lg:px-8 lg:pb-12 lg:pt-8">
-            <header class="mb-6 border-b border-border/60 pb-5">
-              <h2 class="text-lg font-semibold tracking-tight">{activeSectionMeta.label}</h2>
-              <p class="mt-1 text-sm text-muted-foreground">{activeSectionMeta.description}</p>
-            </header>
-
+          </ul>
+        {:else}
+          <div class="settings-empty">
+            <Search size={28} strokeWidth={1.3} aria-hidden="true" />
+            <h3>No settings found</h3>
+            <p>Try a different word, like “theme”, “font”, or “API key”.</p>
+            <button type="button" onclick={clearSearch}>Clear search</button>
+          </div>
+        {/if}
+      {/if}
+      <!-- Keep mounted while searching so unsaved input and in-flight actions survive. -->
+      <div hidden={searching}>
+        <header class="settings-page-heading">
+          <h2 id="settings-category-title" tabindex="-1">{activeSectionMeta.label}</h2>
+        </header>
+        {#if settings.activeTab === 'general'}
             {#if settings.activeGeneralSection === 'appearance'}
               <div class="space-y-5">
-                <div class="settings-section">
-                  <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                    <div>
-                      <p class="text-sm font-medium">Theme</p>
-                      <p class="mt-0.5 text-xs text-muted-foreground">Auto follows your system appearance.</p>
-                    </div>
-
-                    <fieldset
-                      class="flex shrink-0 flex-wrap items-center gap-1 rounded-full border border-border/80 bg-background/60 p-1"
-                    >
-                      <legend class="sr-only">Theme preference</legend>
-
-                      {#each themeOptions as option}
-                        {@const Icon = themeIcons[option.id]}
-                        <label
-                          title={option.description}
-                          class={`flex cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
-                            themeStore.preference === option.id
-                              ? 'bg-foreground text-background shadow-sm'
-                              : 'text-muted-foreground hover:text-foreground'
-                          }`}
-                        >
-                          <input
-                            class="sr-only"
-                            type="radio"
-                            name="theme-preference"
-                            value={option.id}
-                            checked={themeStore.preference === option.id}
-                            onchange={() => void setThemePreference(option.id)}
-                          />
-                          <Icon class="h-3.5 w-3.5" />
-                          <span>{option.label}</span>
-                        </label>
-                      {/each}
-                    </fieldset>
-                  </div>
+                <div class="settings-section" data-settings-anchor="theme">
+                  <p class="text-sm font-medium">Theme</p>
+                  <p class="mt-1 text-xs text-muted-foreground">Auto follows your system.</p>
+                  <fieldset class="settings-theme-options">
+                    <legend class="sr-only">Theme preference</legend>
+                    {#each themeOptions as option}
+                      {@const Icon = themeIcons[option.id]}
+                      <label class="settings-theme-option" class:selected={themeStore.preference === option.id} title={option.description}>
+                        <input class="sr-only" type="radio" name="theme-preference" value={option.id}
+                          checked={themeStore.preference === option.id} onchange={() => void setThemePreference(option.id)} />
+                        <span class="settings-theme-preview settings-theme-preview--{option.id}" aria-hidden="true"></span>
+                        <span class="settings-theme-caption"><Icon size={14} />{option.label}</span>
+                      </label>
+                    {/each}
+                  </fieldset>
                 </div>
 
                 <EditorTextSizePanel />
               </div>
             {:else if settings.activeGeneralSection === 'shortcuts'}
-              <KeyboardShortcutsPanel />
+              <KeyboardShortcutsPanel targetAnchor={destination} />
             {:else if settings.activeGeneralSection === 'ai'}
               <ChatSettingsPanel />
             {:else if settings.activeGeneralSection === 'forgetting'}
               <div class="space-y-5">
-                <div class="settings-section">
+                <div class="settings-section" data-settings-anchor="forget-duration">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <p class="text-sm font-medium">Forget button duration</p>
                       <p class="mt-0.5 text-xs text-muted-foreground">
-                        Choose whether forgetting happens instantly or after a hold.
+                        Hold before forgetting, or choose Instant.
                       </p>
                     </div>
 
@@ -264,12 +292,12 @@
                   </div>
                 </div>
 
-                <div class="settings-section">
+                <div class="settings-section" data-settings-anchor="retention">
                   <div class="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
                     <div>
                       <p class="text-sm font-medium">Forgotten note retention</p>
                       <p class="mt-0.5 text-xs text-muted-foreground">
-                        Forgotten notes and chats move into `.forgotten` before they are permanently deleted.
+                        Time to recover forgotten notes and chats before permanent deletion.
                       </p>
                     </div>
 
@@ -306,35 +334,30 @@
                   </div>
                 </div>
 
-                <p class="text-center text-sm text-muted-foreground">
-                  To restore or permanently delete items in
-                  <code class="rounded bg-muted/50 px-1 py-0.5 text-xs">.forgotten</code>
-                  , open the
+                <p class="text-sm">
                   <button
                     type="button"
                     class="font-medium text-foreground underline decoration-border underline-offset-4 hover:decoration-foreground"
                     onclick={() => {
-                      settings.setActiveTab('forgotten');
-                      void settings.loadForgottenNotes();
+                      void selectCategory('forgotten');
                     }}
                   >
-                    Forgotten Items
+                    Manage forgotten items →
                   </button>
-                  tab.
                 </p>
               </div>
             {:else if settings.activeGeneralSection === 'vault'}
-              <div class="flex flex-col gap-4">
+              <div class="flex flex-col gap-4" data-settings-anchor="vault-folder">
           <div class="flex items-start justify-between gap-4">
             <div>
               <p class="text-sm font-medium">
-                {settings.usesVaultContainer ? 'Vault folders' : 'Vault Directory'}
+                {settings.usesVaultContainer ? 'Vault folders' : 'Notes folder'}
               </p>
               <p class="mt-0.5 text-xs text-muted-foreground">
                 {#if settings.usesVaultContainer}
-                  Create or select a vault folder under Files → On My iPhone → Gneauxghts. The new vault takes full effect after you restart the app.
+                  Choose a vault in Files → On My iPhone → Gneauxghts. Changes require a restart.
                 {:else if settings.vaultInfo?.canConfigurePath ?? true}
-                  Choose a folder for your notes. The new vault takes full effect after you restart the app.
+                  Folder changes take effect after restarting.
                 {:else}
                   Vault location cannot be configured on this build.
                 {/if}
@@ -353,7 +376,7 @@
             </p>
             {#if hasUnsavedVaultChange}
               <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                This folder is not applied yet. Save it, then restart the app.
+                Not applied. Apply for next launch, then restart.
               </p>
             {/if}
           </SettingsCard>
@@ -478,7 +501,7 @@
           </div>
 
           {#if vaultNeedsRestart}
-            <div class="rounded-3xl border border-amber-300/70 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
+            <div class="rounded-xl border border-amber-300/70 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
               <p class="font-medium">Restart required</p>
               <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
                 The app is still using
@@ -502,21 +525,23 @@
           {/if}
 
           {#if settings.vaultSaveError}
-            <div class="rounded-3xl border border-destructive/40 bg-destructive/10 px-5 py-4 text-sm text-destructive">
+            <div class="rounded-xl border border-destructive/40 bg-destructive/10 px-5 py-4 text-sm text-destructive">
               {settings.vaultSaveError}
             </div>
           {/if}
 
           {#if settings.vaultInfo?.pathConfigurationNote}
-            <div class="rounded-3xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
+            <div class="rounded-xl border border-sky-300/60 bg-sky-50 px-5 py-4 text-sm text-sky-700 dark:border-sky-900/60 dark:bg-sky-950/40 dark:text-sky-200">
               {settings.vaultInfo.pathConfigurationNote}
             </div>
           {/if}
 
           {#if settings.vaultInfo}
-            <div class="grid gap-4 md:grid-cols-3">
+            <details class="settings-disclosure" data-settings-anchor="vault-details">
+              <summary>Folder details · {settings.vaultInfo.noteCount} notes</summary>
+              <div class="mt-4 grid gap-4">
               <SettingsCard>
-                <SettingsLabel text="Active vault" />
+                <SettingsLabel text="Running Vault" />
                 <p class="mt-2 text-sm font-medium break-all">{settings.vaultInfo.runningPath}</p>
               </SettingsCard>
               <SettingsCard>
@@ -530,7 +555,8 @@
                   {settings.vaultInfo.isDefault ? 'Using default path' : 'Custom path'} · {settings.vaultInfo.requiresRestart ? 'next launch staged' : 'active selection'}
                 </p>
               </SettingsCard>
-            </div>
+              </div>
+            </details>
           {/if}
         </div>
             {:else if settings.activeGeneralSection === 'history'}
@@ -563,10 +589,8 @@
         {averageDuration}
       />
             {/if}
-          </div>
-        </div>
-      </div>
-      {:else}
+
+        {:else}
         <MissingNotesPanel
           missingNotes={settings.missingNotes}
           isLoading={settings.isLoadingForgottenNotes}
@@ -596,7 +620,9 @@
           {formatTimestamp}
           {formatForgottenRetention}
         />
-      {/if}
-    </section>
-  </main>
-</div>
+
+        {/if}
+      </div>
+    </div>
+  </section>
+</main>
