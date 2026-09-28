@@ -89,6 +89,7 @@ export function createNotepadCommands<TPaneId extends string>(
         persistence.cancelPendingAutosave,
       enqueueSave: persistence.enqueueSave,
       getNoteSaveQueue: persistence.getNoteSaveQueue,
+      isReviewingDocument: deps.isReviewingDocument,
       clearLastOpenedNote
     });
 

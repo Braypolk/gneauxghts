@@ -22,6 +22,7 @@
 
 <script lang="ts">
   import type { Snippet } from 'svelte';
+  import './searchControls.css';
   import {
     BookOpen,
     CaseSensitive,
@@ -344,7 +345,7 @@
       {@const shortcutLabel = choiceShortcutLabel(choice)}
       <button
         type="button"
-        class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-mode-button shared-search-control"
         class:shared-search-mode-button-active={isOpen && searchTypeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={searchTypeId === choice.id}
@@ -357,11 +358,10 @@
           <ChoiceIcon class="h-4 w-4" />
         {/if}
         <span class="shared-search-mode-label hidden min-[900px]:grid">
-          <span class:invisible={modifierHints.visible && Boolean(choiceShortcutLabel(choice))} class="col-start-1 row-start-1">
+          {#if modifierHints.visible && shortcutLabel}
+            {shortcutLabel}
+          {:else}
             {choice.shortLabel ?? choice.label}
-          </span>
-          {#if shortcutLabel}
-            <span class:invisible={!modifierHints.visible} class="col-start-1 row-start-1">{shortcutLabel}</span>
           {/if}
         </span>
       </button>
@@ -372,7 +372,7 @@
       {@const shortcutLabel = choiceShortcutLabel(choice)}
       <button
         type="button"
-        class="mobile-dense-touch-target shared-search-mode-button inline-flex h-8 min-w-8 items-center justify-center gap-1 rounded-full bg-transparent px-2 text-xs font-medium text-muted-foreground transition-[background-color,color,box-shadow] hover:bg-accent hover:text-accent-foreground disabled:pointer-events-none disabled:opacity-40"
+        class="mobile-dense-touch-target shared-search-mode-button shared-search-control"
         class:shared-search-mode-button-active={isOpen && scopeId === choice.id}
         aria-label={choice.ariaLabel ?? choice.label}
         aria-pressed={scopeId === choice.id}
@@ -383,11 +383,10 @@
       >
         <ChoiceIcon class="h-4 w-4" />
         <span class="shared-search-mode-label hidden min-[900px]:grid">
-          <span class:invisible={modifierHints.visible && Boolean(choiceShortcutLabel(choice))} class="col-start-1 row-start-1">
+          {#if modifierHints.visible && shortcutLabel}
+            {shortcutLabel}
+          {:else}
             {choice.shortLabel ?? choice.label}
-          </span>
-          {#if shortcutLabel}
-            <span class:invisible={!modifierHints.visible} class="col-start-1 row-start-1">{shortcutLabel}</span>
           {/if}
         </span>
       </button>
@@ -402,36 +401,18 @@
 </div>
 
 <style>
-  .shared-search-option-button,
-  .shared-search-mode-button {
+  .shared-search-option-button {
     box-shadow: inset 0 0 0 1px transparent;
   }
 
-  .shared-search-option-button-active,
-  .shared-search-mode-button-active {
+  .shared-search-option-button-active {
     background: var(--search-scope-control-active-bg);
     color: var(--search-scope-active-fg);
     box-shadow: inset 0 0 0 1px var(--search-scope-control-active-ring);
   }
 
-  .shared-search-mode-button-active:hover {
-    background: var(--search-scope-control-active-hover-bg);
-    color: var(--search-scope-active-fg);
-  }
-
-  .shared-search-mode-label {
-    max-width: 0;
-    opacity: 0;
-    overflow: hidden;
-    transform: translateX(-0.25rem);
-    transition:
-      max-width 180ms ease,
-      opacity 120ms ease,
-      transform 160ms ease;
-    white-space: nowrap;
-  }
-
   .shared-search-bar-shell {
+    container: search-bar / inline-size;
     --search-scope-bg: color-mix(in oklab, var(--background) 58%, transparent);
     --search-scope-border: color-mix(in oklab, var(--border) 34%, transparent);
     --search-scope-control-active-bg: color-mix(in oklab, var(--foreground) 18%, var(--background));
@@ -446,7 +427,9 @@
       flex-basis 220ms ease,
       max-width 220ms ease,
       background-color 160ms ease,
-      border-color 160ms ease;
+      border-color 160ms ease,
+      margin-left var(--search-layout-duration, 0ms) var(--search-layout-ease, ease),
+      margin-right var(--search-layout-duration, 0ms) var(--search-layout-ease, ease);
   }
 
   @media (min-width: 700px) {
@@ -466,13 +449,6 @@
       gap: 0.5rem;
       padding-left: 0.75rem;
     }
-  }
-
-  .shared-search-bar-shell[data-search-expanded='true'] .shared-search-mode-label {
-    max-width: 7.5rem;
-    opacity: 1;
-    transform: translateX(0);
-    transition-delay: 90ms, 110ms, 90ms;
   }
 
   .shared-search-bar-shell[data-search-expanded='true'] {

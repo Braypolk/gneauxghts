@@ -114,7 +114,7 @@
   {#if viewModel.showActiveBorder}
     <div data-pane-border={viewModel.paneId} class="pointer-events-none absolute inset-0 z-20 hidden rounded-t-4xl shadow-[inset_0_0_0_2px_var(--border)] sm:block"></div>
   {/if}
-  <div class={viewModel.frameClass}>
+  <div class={viewModel.frameClass} data-pane-frame>
     {#if viewModel.paneKind === 'editor'}
       <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20" class:has-split-actions={viewModel.showCloseButton}>
         <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>

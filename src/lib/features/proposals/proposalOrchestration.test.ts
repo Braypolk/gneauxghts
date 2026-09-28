@@ -10,6 +10,12 @@ import type {
 import type { ProposalReviewState } from './reviewExtension';
 import { createProposalReviewSession } from './reviewSession.svelte';
 import { createProposalOrchestration } from './proposalOrchestration';
+import { documentHasCleanBuffer, updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
+import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
+import { createDocumentDepartureController } from '$lib/features/notepad/orchestration/documentDepartureController';
+import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
+import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
 
 const path = '/vault/Plan.md';
 const preview: ProposalPreview = {
@@ -234,6 +240,72 @@ function setup(options: { opened?: boolean } = {}) {
 }
 
 describe('durable proposal editor review', () => {
+  it.each(['pane', 'workspace'] as const)(
+    'allows %s navigation with an unaccepted review and restores it without saving',
+    async (navigation) => {
+      const test = setup();
+      await test.orchestration.loadDurableProposal(test.request);
+      // The live editor bridge synchronously mirrors displayed Markdown into
+      // the shared document; the adapter used here has no mounted editor.
+      updateDocumentMarkdown(test.document, test.firstEditor.markdown);
+      const saveNoteSession = vi.fn();
+      const persistence = createNotepadPersistenceController({
+        getDocumentSession: () => test.document,
+        saveNoteSession,
+        documentEditing: { captureSave: vi.fn(), adoptSavedResult: vi.fn() },
+        shouldSuppressPersistence: test.session.isReviewingDocument
+      });
+      const finalizeWindow = vi.fn().mockResolvedValue(undefined);
+      const departure = createDocumentDepartureController({
+        getPaneDocument: () => test.document,
+        hasOtherEditingPane: () => false,
+        finalizeWindow,
+        flushAllPendingCursorSaves: vi.fn(),
+        saveCursorPositionForPane: vi.fn(),
+        clearLastOpenedNote: vi.fn().mockResolvedValue(undefined),
+        ...persistence,
+        isReviewingDocument: test.session.isReviewingDocument
+      });
+      const workspace = createWorkspacePersistenceService({
+        getDocuments: () => [test.document],
+        flushAllPaneCursorSaves: vi.fn(),
+        ...persistence,
+        isReviewingDocument: test.session.isReviewingDocument
+      });
+      const leave = () => navigation === 'pane'
+        ? departure.prepare('editor', test.document)
+        : workspace.flushAllForNavigation();
+
+      try {
+        await leave();
+        test.orchestration.suspendDocument(test.document, test.firstEditor.adapter);
+        const remounted = fakeEditor('Before');
+        test.setCurrentEditor(remounted);
+        expect(test.orchestration.restoreDocument(test.document)).toBe(true);
+        test.orchestration.attachEditor(test.document, remounted.adapter);
+
+        expect(remounted.markdown).toBe('After');
+        expect(remounted.adapter.readProposalReviewState?.()?.hunks[0].status).toBe('pending');
+        expect(test.document.savedBaseline?.content.markdown).toBe('Before');
+        expect(documentHasCleanBuffer(test.document)).toBe(false);
+        expect(saveNoteSession).not.toHaveBeenCalled();
+        expect(test.commit).not.toHaveBeenCalled();
+        expect(test.dismiss).not.toHaveBeenCalled();
+        expect(finalizeWindow).toHaveBeenCalledTimes(navigation === 'pane' ? 1 : 0);
+
+        // A review must not exempt an actual external-change conflict.
+        captureExternalSnapshotForTest(test.document, {
+          ...createEmptySessionSnapshot(),
+          bodyMarkdown: 'Changed outside the app'
+        }, 'watcher');
+        await expect(leave()).rejects.toThrow();
+        expect(saveNoteSession).not.toHaveBeenCalled();
+      } finally {
+        documentRegistry.dispose(test.document.handle);
+      }
+    }
+  );
+
   it('passively installs a proposal in an existing editor without navigating or focusing', async () => {
     const test = setup({ opened: true });
     const focusProposalHunk = vi.spyOn(

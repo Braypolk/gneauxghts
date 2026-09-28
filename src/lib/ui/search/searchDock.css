@@ -1,0 +1,17 @@
+/* Match the note toolbar's 44px actions, 8px wrapper padding and 2px border.
+ * A shared row height keeps search centered even when a page has no actions. */
+.search-dock-row {
+  --search-dock-padding: 0.5rem;
+  --search-dock-safe-area: env(safe-area-inset-bottom, 0px);
+  box-sizing: border-box;
+  min-height: calc(3.375rem + 2 * var(--search-dock-padding) + var(--search-dock-safe-area));
+  padding-block: var(--search-dock-padding);
+  padding-bottom: calc(var(--search-dock-padding) + var(--search-dock-safe-area));
+}
+
+@media (min-width: 640px) and (min-height: 560px) {
+  .search-dock-row {
+    --search-dock-padding: 1rem;
+    --search-dock-safe-area: 0px;
+  }
+}

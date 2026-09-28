@@ -52,7 +52,6 @@ export function createLayoutTheme() {
           'calc(var(--editor-left-padding) + var(--editor-handle-lane-width))',
         '--gn-editor-side-inset-right': 'var(--editor-right-padding)',
         color: 'var(--foreground)',
-        caretColor: 'var(--foreground)',
         overflowAnchor: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',

@@ -2,14 +2,18 @@
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
   import {
-    ChevronDown,
+    Bookmark,
+    Check,
     ExternalLink,
     Focus,
     Link as LinkIcon,
     LoaderCircle,
+    MessagesSquare,
+    StickyNote,
     X
   } from '@lucide/svelte';
   import { onMount, tick } from 'svelte';
+  import { DropdownMenu } from 'bits-ui';
   import { SvelteMap, SvelteSet } from 'svelte/reactivity';
   import {
     atlasLabelRenderKey,
@@ -24,6 +28,14 @@
   import type { AtlasCloud, AtlasNode } from '$lib/types/atlas';
 
   const atlas = atlasStore;
+  const chatVisibilityOptions = [
+    { value: 'hidden', label: 'Notes only' },
+    { value: 'remembered', label: 'Remembered chats' },
+    { value: 'all', label: 'All chats' }
+  ] as const;
+  const chatVisibilityLabel = $derived(
+    chatVisibilityOptions.find((option) => option.value === atlas.chatVisibility)?.label ?? 'Notes only'
+  );
   const NOTE_LABEL_MAX_LENGTH = 24;
   const CLOUD_LABEL_MAX_LENGTH = 22;
   const SEARCH_DIM_NODE_COLOR: [number, number, number] = [112, 121, 136];
@@ -721,7 +733,7 @@
     class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
   ></div>
 
-  <SearchDock class="atlas-search-dock">
+  <SearchDock pageInset class="atlas-search-dock">
     <SearchBar
       class="atlas-search-bar"
       value={atlas.searchQuery}
@@ -742,27 +754,41 @@
         atlas.matchWholeWord = enabled;
       }}
     >
-      <div class="atlas-map-tools flex shrink-0 items-center gap-1 rounded-full border border-border/80 bg-card/88 p-1 text-foreground shadow-lg backdrop-blur-md sm:contents">
-        <div class="relative shrink-0" data-search-focus-independent>
-          <label class="sr-only" for="atlas-chat-visibility">Chat visibility</label>
-          <select
-            id="atlas-chat-visibility"
-            class="h-10 max-w-[8.5rem] appearance-none rounded-full border border-transparent bg-muted/72 py-0 pr-8 pl-3 text-xs font-medium text-foreground outline-none transition-colors hover:bg-accent focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/25 sm:h-8 sm:max-w-none sm:pr-7 sm:pl-2.5 sm:font-normal"
-            value={atlas.chatVisibility}
-            title="Chat visibility in Map"
-            onchange={(event) => atlas.setChatVisibility(event.currentTarget.value as 'hidden' | 'remembered' | 'all')}
+      <div class="atlas-map-tools flex shrink-0 items-center gap-0.5 rounded-full border border-border/80 bg-card/88 p-1 text-muted-foreground shadow-lg backdrop-blur-md sm:contents" data-search-focus-independent>
+        <DropdownMenu.Root>
+          <DropdownMenu.Trigger
+            class="atlas-visibility-control shared-search-control mobile-dense-touch-target"
+            aria-label="Chat visibility"
+            title={`Chat visibility: ${chatVisibilityLabel}`}
           >
-            <option value="hidden">{isCompactViewport ? 'Notes' : 'Notes only'}</option>
-            <option value="remembered">{isCompactViewport ? 'Remembered' : 'Remembered chats'}</option>
-            <option value="all">All chats</option>
-          </select>
-          <ChevronDown class="pointer-events-none absolute top-1/2 right-2.5 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground sm:right-2 sm:h-3 sm:w-3" aria-hidden="true" />
-        </div>
+            {#if atlas.chatVisibility === 'hidden'}
+              <StickyNote class="pointer-events-none h-4 w-4" />
+            {:else if atlas.chatVisibility === 'remembered'}
+              <Bookmark class="pointer-events-none h-4 w-4" />
+            {:else}
+              <MessagesSquare class="pointer-events-none h-4 w-4" />
+            {/if}
+            <span class="shared-search-mode-label pointer-events-none hidden min-[900px]:grid" aria-hidden="true">
+              {chatVisibilityLabel}
+            </span>
+          </DropdownMenu.Trigger>
+          <DropdownMenu.Portal>
+            <DropdownMenu.Content side="top" align="end" sideOffset={8} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg">
+              <DropdownMenu.RadioGroup value={atlas.chatVisibility} onValueChange={(value) => atlas.setChatVisibility(value as 'hidden' | 'remembered' | 'all')}>
+                {#each chatVisibilityOptions as option (option.value)}
+                  <DropdownMenu.RadioItem value={option.value} aria-label={option.label} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent">
+                    <span class="h-4 w-4">{#if atlas.chatVisibility === option.value}<Check class="h-4 w-4" />{/if}</span>
+                    {option.label}
+                  </DropdownMenu.RadioItem>
+                {/each}
+              </DropdownMenu.RadioGroup>
+            </DropdownMenu.Content>
+          </DropdownMenu.Portal>
+        </DropdownMenu.Root>
         <button
           type="button"
-          class={`inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full transition-colors ${
-            atlas.showLinks ? 'bg-foreground text-background' : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-          }`}
+          class="shared-search-control mobile-dense-touch-target"
+          class:shared-search-mode-button-active={atlas.showLinks}
           aria-label="Toggle links"
           aria-pressed={atlas.showLinks}
           title="Toggle links"
@@ -772,7 +798,7 @@
         </button>
         <button
           type="button"
-          class="inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-foreground active:bg-accent/80"
+          class="shared-search-control mobile-dense-touch-target"
           aria-label="Fit map to view"
           title="Fit view"
           onclick={fitView}
@@ -833,7 +859,7 @@
 
   {#if atlas.selectedNode}
     <aside
-      class="atlas-node-inspector absolute inset-x-2 bottom-[calc(var(--search-dock-bottom-inset)+7rem)] z-20 flex max-h-[min(66%,34rem)] flex-col overflow-hidden rounded-[1.5rem] border border-border/80 bg-card/94 p-3 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:top-14 sm:right-5 sm:bottom-auto sm:max-h-[calc(100vh-5.5rem)] sm:w-[min(23rem,calc(100vw-2rem))] sm:rounded-2xl sm:bg-card/90 sm:p-4 sm:shadow-lg"
+      class="atlas-node-inspector absolute inset-x-2 bottom-[calc(var(--keyboard-inset-height,0px)+7rem)] z-20 flex max-h-[min(66%,34rem)] flex-col overflow-hidden rounded-[1.5rem] border border-border/80 bg-card/94 p-3 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:top-14 sm:right-5 sm:bottom-auto sm:max-h-[calc(100vh-5.5rem)] sm:w-[min(23rem,calc(100vw-2rem))] sm:rounded-2xl sm:bg-card/90 sm:p-4 sm:shadow-lg"
       aria-label={`Selected note: ${atlas.selectedNode.title}`}
     >
       <div class="flex items-start justify-between gap-3">
@@ -1016,7 +1042,7 @@
     </aside>
   {:else if atlas.selectedCloud}
     <aside
-      class="atlas-cloud-inspector absolute inset-x-2 bottom-[calc(var(--search-dock-bottom-inset)+7rem)] z-20 rounded-[1.5rem] border border-border/80 bg-card/94 p-4 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:right-4 sm:bottom-24 sm:w-[min(22rem,calc(100vw-2rem))] sm:bg-card/90 sm:shadow-lg"
+      class="atlas-cloud-inspector absolute inset-x-2 bottom-[calc(var(--keyboard-inset-height,0px)+7rem)] z-20 rounded-[1.5rem] border border-border/80 bg-card/94 p-4 text-foreground shadow-xl backdrop-blur-md sm:inset-x-auto sm:right-4 sm:bottom-24 sm:w-[min(22rem,calc(100vw-2rem))] sm:bg-card/90 sm:shadow-lg"
       aria-label={`Selected cloud: ${formatCloudLabelText(atlas.selectedCloud)}`}
     >
       <div class="flex items-start justify-between gap-3">
@@ -1071,16 +1097,35 @@
     content: none;
   }
 
-  :global(.atlas-search-bar) {
-    flex: 1 1 42rem;
-    max-width: 42rem;
+  :global(.atlas-visibility-control:focus-visible) {
+    outline: 2px solid var(--ring);
+    outline-offset: 2px;
   }
 
   :global(.atlas-search-bar > svg) {
     display: block;
   }
 
+  /* Below SearchBar's desktop breakpoint the note toolbar fills the remaining
+   * space between its two 54px actions. Reserve the same room for idle Map
+   * search: action widths, gaps, row padding, page gutters and card border. */
+  @media (min-width: 640px) and (max-width: 699px) {
+    :global(.atlas-search-bar[data-search-expanded='false']) {
+      max-width: calc(100vw - 13.875rem);
+    }
+  }
+
+  @media (min-width: 640px) and (max-width: 699px) and (max-height: 559px) {
+    :global(.atlas-search-bar[data-search-expanded='false']) {
+      max-width: calc(100vw - 10.875rem);
+    }
+  }
+
   @media (max-width: 639px) {
+    :global(.atlas-search-bar[data-search-expanded='false']) {
+      max-width: calc(100vw - 8.75rem);
+    }
+
     .atlas-map-tools {
       position: absolute;
       right: 0;

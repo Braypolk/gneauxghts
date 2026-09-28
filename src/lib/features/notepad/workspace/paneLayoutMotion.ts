@@ -3,6 +3,7 @@ import { tick } from 'svelte';
 const PANE = '.notepad-pane';
 const CARD = '.notepad-workspace-card';
 const CONTENT = '[data-pane-content]';
+const FRAME = '[data-pane-frame]';
 
 interface Geometry {
   width: number;
@@ -27,8 +28,9 @@ function geometry(element: HTMLElement): Geometry {
  * Presentation only: the workspace still owns pane membership and departure.
  * Capture before Svelte updates, measure the destination before paint, then
  * interpolate pane widths together. Document/transcript bodies immediately
- * take their final width and stay visible as the pane reveals them. Editors
- * stay mounted. No editor copies or per-frame DOM reads.
+ * take their final width and stay visible as the pane reveals them. Entering
+ * panes also hold their chrome and choice/composer layout at its final width.
+ * Editors stay mounted. No editor copies or per-frame DOM reads.
  */
 export function createPaneLayoutMotion(deps: {
   getShell: () => HTMLElement | null;
@@ -114,8 +116,14 @@ export function createPaneLayoutMotion(deps: {
       const participants = [outer, area, card, ...panes, ...(drawer ? [drawer] : [])];
       // Read all destination geometry before installing any animation effects.
       const after = new Map(participants.map(element => [element, geometry(element)]));
+      // New panes reveal one settled layout, including titles, choices and
+      // chat controls. Existing panes keep their fluid chrome and stable text.
+      const contentByPane = new Map(panes.map(pane => [
+        pane, pane.querySelector<HTMLElement>(before.has(pane) ? CONTENT : FRAME)
+      ]));
       const contentWidthsAfter = new Map(
-        [...shell.querySelectorAll<HTMLElement>(CONTENT)]
+        [...contentByPane.values()]
+          .filter((element): element is HTMLElement => element !== null)
           .map(element => [element, element.getBoundingClientRect().width])
       );
       const add = (element: HTMLElement, from: Keyframe, to: Keyframe) => {
@@ -141,7 +149,7 @@ export function createPaneLayoutMotion(deps: {
         }, {
           flexGrow: 0, flexShrink: 0, flexBasis: `${to.width}px`, opacity: to.opacity
         });
-        const content = pane.querySelector<HTMLElement>(CONTENT);
+        const content = contentByPane.get(pane);
         if (content) {
           const destinationWidth = contentWidthsAfter.get(content)!;
           // Closing content keeps its old width until its pane is removed.

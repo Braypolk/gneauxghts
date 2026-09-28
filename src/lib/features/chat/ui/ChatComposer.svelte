@@ -8,7 +8,6 @@
     Globe,
     Paperclip,
     Send,
-    Sparkles,
     Square,
     X
   } from '@lucide/svelte';
@@ -25,8 +24,6 @@
   import type {
     ChatActiveNoteSnapshot,
     ChatAttachmentInput,
-    ChatContextSelectionInput,
-    ChatContextSuggestion,
     ChatContextNote,
     ChatProvider,
     ChatReasoningEffort,
@@ -38,7 +35,6 @@
     chatConversationContextKey
   } from './chatPanelHelpers';
   import { createComposerDraftPersistence } from './composerDraftPersistence';
-  import { createContextSuggestionSearch } from './contextSuggestionSearch';
   import {
     chatModelChoices,
     type ChatModelChoice,
@@ -100,9 +96,6 @@
   let forceWebSearch = $state(false);
   let attachmentInput = $state<HTMLInputElement | null>(null);
   let contextAccessBusy = $state(false);
-  let contextSuggestions = $state<ChatContextSuggestion[]>([]);
-  let selectedContext = $state<ChatContextSuggestion[]>([]);
-  let contextSuggestionsLoading = $state(false);
   let composerContextKey: string | null = null;
   let creatingConversationFromDraft = false;
   let localModels = $state<LocalModel[]>([]);
@@ -200,14 +193,8 @@
     }
   });
 
-  const contextSearch = createContextSuggestionSearch({
-    apply: (response) => { contextSuggestions = response?.items ?? []; },
-    setLoading: (loading) => { contextSuggestionsLoading = loading; }
-  });
-
   onDestroy(() => {
     draftPersistence.dispose();
-    contextSearch.dispose();
   });
 
   $effect(() => {
@@ -219,14 +206,11 @@
     if (nextContextKey === composerContextKey) return;
     const hadContext = composerContextKey !== null;
     composerContextKey = nextContextKey;
-    contextSearch.clear();
     if (creatingConversationFromDraft) return;
 
     // Attachments are per-message and deliberately not carried across contexts.
     attachments = [];
     forceWebSearch = false;
-    contextSuggestions = [];
-    selectedContext = [];
     draft = '';
 
     const nextSlot = chatComposerDraftSlot(conversationId, draftSlot);
@@ -244,40 +228,6 @@
   $effect(() => {
     draftPersistence.record(draft);
   });
-
-  $effect(() => {
-    const prompt = draft.trim();
-    const access = effectiveVaultAccess;
-    const activeNoteId = contextNote?.noteId ?? null;
-    if (access === 'none' || prompt.split(/\s+/).filter(Boolean).length < 2) {
-      contextSearch.clear();
-      if (access === 'none') selectedContext = [];
-      return;
-    }
-    contextSearch.schedule(() => controller.suggestContext({
-      query: prompt,
-      vaultAccess: access,
-      excludeNoteId: activeNoteId,
-      limit: 4
-    }));
-  });
-
-  function toggleSuggestedContext(suggestion: ChatContextSuggestion) {
-    selectedContext = selectedContext.some((item) => item.noteId === suggestion.noteId)
-      ? selectedContext.filter((item) => item.noteId !== suggestion.noteId)
-      : [...selectedContext, suggestion];
-  }
-
-  function selectedContextInput(): ChatContextSelectionInput[] {
-    return selectedContext.map((item) => ({
-      noteId: item.noteId,
-      sectionLabel: item.sectionLabel,
-      startLine: item.startLine,
-      endLine: item.endLine,
-      blockAnchor: item.blockAnchor,
-      reason: item.reason
-    }));
-  }
 
   async function submit() {
     const content = draft.trim();
@@ -318,15 +268,12 @@
       content,
       attachments,
       forceWebSearch,
-      activeNote,
-      selectedContextInput()
+      activeNote
     );
     if (sent) {
       draft = '';
       attachments = [];
       forceWebSearch = false;
-      contextSuggestions = [];
-      selectedContext = [];
       // The text is now a real message. Clear it from the pane slot it may have
       // been typed into as well as the conversation slot it graduated to.
       const sentSlot = chatComposerDraftSlot(
@@ -574,32 +521,6 @@
             </button>
           </div>
         {/each}
-      </div>
-    {/if}
-
-    {#if selectedContext.length > 0 || contextSuggestions.length > 0 || contextSuggestionsLoading}
-      <div class="flex flex-wrap items-center gap-1.5 px-2 pb-1" aria-label="Related note context">
-        <span class="inline-flex items-center gap-1 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-          <Sparkles class="h-3 w-3" /> Related
-        </span>
-        {#each [...selectedContext, ...contextSuggestions.filter((item) => !selectedContext.some((selected) => selected.noteId === item.noteId))] as suggestion (suggestion.noteId)}
-          <button
-            type="button"
-            class="chat-composer-chip"
-            class:chat-composer-chip--on={selectedContext.some((item) => item.noteId === suggestion.noteId)}
-            aria-pressed={selectedContext.some((item) => item.noteId === suggestion.noteId)}
-            title={`${suggestion.title}: ${suggestion.excerpt}`}
-            onclick={() => toggleSuggestedContext(suggestion)}
-          >
-            {#if selectedContext.some((item) => item.noteId === suggestion.noteId)}
-              <Check class="h-3 w-3" />
-            {/if}
-            <span class="max-w-36 truncate">{suggestion.title}</span>
-          </button>
-        {/each}
-        {#if contextSuggestionsLoading && contextSuggestions.length === 0}
-          <span class="text-[11px] text-muted-foreground">Finding notes…</span>
-        {/if}
       </div>
     {/if}
 

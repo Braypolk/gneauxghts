@@ -406,7 +406,7 @@
       </div>
 
       <div
-        class="list-search-backdrop pointer-events-none absolute inset-x-0 bottom-0 z-20 min-h-12 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
+        class="search-dock-row list-search-backdrop pointer-events-none absolute inset-x-0 bottom-(--keyboard-inset-height) z-20 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
       ></div>
 
       <SearchDock>
@@ -435,8 +435,6 @@
 
 <style>
   .list-search-backdrop {
-    padding-top: 0.5rem;
-    padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0px));
     mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
     -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%);
     mask-size: 100% 100%;
@@ -459,11 +457,6 @@
   }
 
   @media (min-width: 640px) {
-    .list-search-backdrop {
-      padding-top: 1rem;
-      padding-bottom: 1rem;
-    }
-
     .task-row {
       margin-left: calc(var(--task-indent, 0) * 1.1rem);
     }

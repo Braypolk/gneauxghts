@@ -27,6 +27,7 @@
     type SearchBarHandle,
     type SearchChoice
   } from '$lib/ui/search/SearchBar.svelte';
+  import '$lib/ui/search/searchDock.css';
   import type { SearchItem } from '$lib/types/semantic';
   import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
@@ -414,16 +415,16 @@
     class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
   ></div>
-  <div class="notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] sm:gap-4 sm:px-6 sm:py-4">
+  <div class="search-dock-row notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 sm:gap-4 sm:px-6">
     {#if canUnforget}
       <button
         type="button"
-        class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent sm:h-11 sm:w-[134px] sm:px-6"
+        class="notepad-command-action notepad-command-action--restore mobile-touch-target inline-flex h-10 w-[54px] shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent sm:h-11 sm:w-[136px] sm:px-6"
         onclick={() => onUnforget()}
         aria-label={`Restore the last forgotten ${forgetItemLabel}`}
         title={`Restore forgotten ${forgetItemLabel}`}
       >
-        <span class="hidden sm:inline">unForget</span>
+        <span class="notepad-command-action-label hidden sm:inline">unForget</span>
         <Undo2 class="h-5 w-5 sm:hidden" />
       </button>
     {:else}
@@ -481,7 +482,7 @@
           disabled={!canForget}
           aria-expanded={commandBarState.isForgetConfirmOpen}
           aria-controls={commandBarState.isForgetConfirmOpen ? 'forget-confirm-popover' : undefined}
-          class={`mobile-touch-target relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-inherit sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5 ${
+          class={`notepad-command-action mobile-touch-target relative isolate inline-flex h-8 w-8 items-center justify-center overflow-hidden rounded-full p-0 font-medium transition-colors hover:bg-destructive/20 hover:text-destructive active:bg-destructive/15 active:text-destructive focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-destructive disabled:cursor-default disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-inherit sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5 ${
             commandBarState.isHoldingForget
               ? 'forget-hold-animation text-destructive'
               : ''
@@ -502,7 +503,7 @@
             style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
             aria-hidden="true"
           ></span>
-          <span class="relative z-10 hidden sm:inline">
+          <span class="notepad-command-action-label relative z-10 hidden sm:inline">
             Forget
           </span>
           <Eraser
@@ -675,6 +676,7 @@
     {/snippet}
 
     <SearchBar
+      class="notepad-search-bar"
       bind:this={searchBar}
       value={searchQuery}
       placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
@@ -703,13 +705,13 @@
       class="inline-flex shrink-0 items-center rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm"
     >
       <button
-        class="mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
+        class="notepad-command-action mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
         type="button"
         onclick={handleRemember}
         aria-label={rememberAriaLabel}
         title={rememberLabel}
       >
-        <span class="hidden sm:inline">{rememberLabel}</span>
+        <span class="notepad-command-action-label hidden sm:inline">{rememberLabel}</span>
         <SquarePen class="h-5 w-5 sm:hidden" />
       </button>
     </div>
@@ -717,6 +719,46 @@
 </div>
 
 <style>
+  [data-notepad-command-bar] {
+    container: note-toolbar / inline-size;
+  }
+
+  @container note-toolbar (max-width: 56rem) {
+    .notepad-command-action {
+      width: 2.75rem;
+      min-width: 2.75rem;
+      padding-inline: 0;
+    }
+
+    .notepad-command-action--restore {
+      width: 3.375rem;
+    }
+
+    .notepad-command-action-label {
+      display: none;
+    }
+
+    .notepad-command-action :global(svg) {
+      display: block;
+    }
+  }
+
+  .notepad-command-bar-content :global(.notepad-search-bar) {
+    /* The card reserves unequal space for Related. Balance that difference
+     * inside the toolbar so search stays centered in the full workspace.
+     * Margins participate in flex sizing, keeping expanded search clear of
+     * the buttons even when the Related drawer narrows the card. */
+    margin-left: max(0px, calc(var(--related-balance-width, 0px) - var(--related-reserved-width, 0px)));
+    margin-right: max(0px, calc(var(--related-reserved-width, 0px) - var(--related-balance-width, 0px)));
+    --search-layout-duration: var(--related-transition-duration);
+    --search-layout-ease: var(--related-transition-ease);
+  }
+
+  :global([data-window-resizing]) .notepad-command-bar-content :global(.notepad-search-bar),
+  :global([data-pane-motion]) .notepad-command-bar-content :global(.notepad-search-bar) {
+    --search-layout-duration: 0ms;
+  }
+
   @keyframes forget-hold-pulse {
     from {
       box-shadow:
@@ -746,7 +788,7 @@
   @media (max-height: 559px) {
     .notepad-command-bar-content {
       gap: 0.375rem;
-      padding: 0.5rem 0.625rem calc(0.5rem + env(safe-area-inset-bottom, 0px));
+      padding-inline: 0.625rem;
     }
   }
 

@@ -16,6 +16,7 @@ import {
   createPaneNavigationTransitionPipeline
 } from './paneNavigationTransitionPipeline';
 import { createLocationHistoryController, type LocationHistoryControllerDeps } from './locationHistoryController';
+import type { SearchItem } from '$lib/types/semantic';
 
 const paneId = 'pane-1';
 const otherPaneId = 'pane-2';
@@ -40,7 +41,10 @@ function chatLocation(): NavLocation {
   };
 }
 
-function setup(paneOrder: string[] = [paneId]) {
+function setup(
+  paneOrder: string[] = [paneId],
+  options: { loadRecentNotes?: () => Promise<SearchItem[] | null>; seedInitially?: boolean } = {}
+) {
   const kinds = new Map<string, PaneKind>(
     paneOrder.map((id) => [id, 'editor'])
   );
@@ -91,7 +95,7 @@ function setup(paneOrder: string[] = [paneId]) {
     getPaneTitleInput: () => null,
     activatePaneSession: vi.fn(),
     setPaneKind,
-    loadRecentNotes: vi.fn(async () => []),
+    loadRecentNotes: options.loadRecentNotes ?? vi.fn(async () => []),
     openNotePath,
     paneLifecycle: {} as never,
     updateSelectedRelatedText: vi.fn(),
@@ -99,7 +103,7 @@ function setup(paneOrder: string[] = [paneId]) {
     documentDeparture,
     transitions
   });
-  notepadLocationMru.seedMissing(paneId, []);
+  if (options.seedInitially !== false) notepadLocationMru.seedMissing(paneId, []);
   return {
     controller,
     transitions,
@@ -117,6 +121,25 @@ function setup(paneOrder: string[] = [paneId]) {
 describe('location history workspace invariants', () => {
   beforeEach(() => {
     notepadLocationMru.clearAll();
+  });
+
+  it('retries saved recent notes after a failed startup request', async () => {
+    const loadRecentNotes = vi.fn()
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([{
+        noteId: 'note-b', notePath: '/vault/B.md'
+      } as SearchItem]);
+    const { controller } = setup([paneId], {
+      loadRecentNotes,
+      seedInitially: false
+    });
+
+    expect(await controller.listLocationHistory()).toEqual([]);
+    expect(await controller.listLocationHistory()).toEqual([{
+      location: editorLocation('note-b', '/vault/B.md'),
+      label: 'B'
+    }]);
+    expect(loadRecentNotes).toHaveBeenCalledTimes(2);
   });
 
   it('restores chat as the previous location in a single-pane workspace', async () => {

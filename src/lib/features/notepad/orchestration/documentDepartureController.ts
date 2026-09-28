@@ -1,6 +1,7 @@
 import {
   documentCanLeaveWithoutCanonicalWrite,
-  documentHasCleanBuffer
+  documentHasCleanBuffer,
+  documentHasUnresolvedConflict
 } from '$lib/features/notepad/document/documentState';
 import type {
   NoteDraftState,
@@ -22,6 +23,8 @@ export interface DocumentDepartureControllerDeps<
   enqueueSave: (document: NoteDraftState) => Promise<void>;
   getNoteSaveQueue: (documentHandle: DocumentHandle) => Promise<void>;
   clearLastOpenedNote: () => Promise<void>;
+  /** The proposal session retains this working copy without a canonical save. */
+  isReviewingDocument?: (document: NoteDraftState) => boolean;
 }
 
 export interface PrepareDocumentDepartureOptions {
@@ -41,6 +44,11 @@ export interface PrepareDocumentDepartureOptions {
 export function createDocumentDepartureController<
   TPaneId extends string
 >(deps: DocumentDepartureControllerDeps<TPaneId>) {
+  function retainsProposalReview(document: NoteDraftState) {
+    return deps.isReviewingDocument?.(document) === true &&
+      !documentHasUnresolvedConflict(document);
+  }
+
   async function prepare(
     paneId: TPaneId,
     document: NoteDraftState,
@@ -55,14 +63,20 @@ export function createDocumentDepartureController<
       deps.cancelPendingAutosave(document);
       await deps.getNoteSaveQueue(document.handle);
       const documentAfterQueue = deps.getPaneDocument(paneId);
-      if (!documentCanLeaveWithoutCanonicalWrite(documentAfterQueue)) {
+      if (
+        !documentCanLeaveWithoutCanonicalWrite(documentAfterQueue) &&
+        !retainsProposalReview(documentAfterQueue)
+      ) {
         await deps.enqueueSave(documentAfterQueue);
       }
     }
 
     const authoritativeDocument =
       deps.getPaneDocument(paneId);
-    if (!documentHasCleanBuffer(authoritativeDocument)) {
+    if (
+      !documentHasCleanBuffer(authoritativeDocument) &&
+      !retainsProposalReview(authoritativeDocument)
+    ) {
       throw new Error('The note could not be saved before leaving the editor.');
     }
     if (finalize && !deps.hasOtherEditingPane(paneId, authoritativeDocument)) {

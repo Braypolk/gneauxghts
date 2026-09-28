@@ -10,6 +10,8 @@ export interface WorkspacePersistenceServiceDeps {
   getDocuments: () => Iterable<NoteDraftState>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
   enqueueSave: (document: NoteDraftState) => Promise<void>;
+  /** The proposal session retains this working copy without a canonical save. */
+  isReviewingDocument?: (document: NoteDraftState) => boolean;
 }
 
 /**
@@ -19,6 +21,13 @@ export interface WorkspacePersistenceServiceDeps {
 export function createWorkspacePersistenceService(
   deps: WorkspacePersistenceServiceDeps
 ) {
+  function needsCanonicalSave(document: NoteDraftState) {
+    return !documentHasCleanBuffer(document) && (
+      !deps.isReviewingDocument?.(document) ||
+      documentHasUnresolvedConflict(document)
+    );
+  }
+
   async function awaitAllSaveQueues(): Promise<void> {
     await Promise.all(
       [...documentRegistry.values()].map((runtime) => runtime.getSaveQueue())
@@ -35,9 +44,7 @@ export function createWorkspacePersistenceService(
     // A queue can still be publishing while its shared buffer looks clean.
     await awaitAllSaveQueues();
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const pending = documents.filter(
-        (document) => !documentHasCleanBuffer(document)
-      );
+      const pending = documents.filter(needsCanonicalSave);
       if (pending.length === 0) return;
       const conflict = pending.find(documentHasUnresolvedConflict);
       if (conflict) {
@@ -52,9 +59,7 @@ export function createWorkspacePersistenceService(
       await awaitAllSaveQueues();
     }
 
-    const unsaved = documents.filter(
-      (document) => !documentHasCleanBuffer(document)
-    );
+    const unsaved = documents.filter(needsCanonicalSave);
     if (unsaved.length > 0) {
       throw new Error(
         'Some note changes could not be saved before navigation.'

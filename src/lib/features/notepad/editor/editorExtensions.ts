@@ -36,6 +36,7 @@ import { createExternalLinkClickExtension } from './externalLinkExtension';
 import { createExternalSearchHighlightExtension } from './searchHighlightExtension';
 import { createBlockHandleExtension } from './blockHandleExtension';
 import { createViewStateTrackingExtension } from './viewStateTrackingExtension';
+import { createCursorExtension } from './cursorExtension';
 
 const unavailableImagesConfig: ImagesConfig = {
   assetRootPath: null,
@@ -97,9 +98,11 @@ export function createPaneExtensions(
   const slashMenuApi = createSlashMenuPlugin();
   const selectionMenuApi = createSelectionMenuPlugin();
   const extensions: Extension[] = [
+    EditorView.contentAttributes.of({ spellcheck: 'true' }),
     search(),
     createExternalSearchHighlightExtension(),
     createLayoutTheme(),
+    createCursorExtension(),
     dropCursor(),
     createOverlayScrollMargins(editorRoot),
     placeholder('Start typing here.'),

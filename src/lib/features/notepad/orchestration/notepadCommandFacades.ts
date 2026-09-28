@@ -124,7 +124,8 @@ export interface NotepadDerivedViewCommands<TPaneId extends string> {
   scheduleSearchIfNeeded: () => void;
   scheduleRelatedIfNeeded: (options?: { immediate?: boolean }) => void;
   clearSelectedRelatedText: () => void;
-  loadRecentNotes: () => Promise<SearchItem[]> | SearchItem[];
+  /** Null means the request failed or was superseded; [] is a successful empty result. */
+  loadRecentNotes: () => Promise<SearchItem[] | null> | SearchItem[] | null;
   setRecentlyForgotten: (value: ForgottenNote | null) => void;
   closeWikilinkAutocomplete: (paneId?: TPaneId) => void;
 }
@@ -143,6 +144,7 @@ export interface NotepadCommandsDeps<TPaneId extends string> {
   paneLifecycle: PaneEditorLifecycle<TPaneId>;
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
   canLeaveDocument?: (document: NoteDraftState) => boolean;
+  isReviewingDocument?: (document: NoteDraftState) => boolean;
   onNavigationBlocked?: () => void;
   onDocumentLeaving?: (
     paneId: TPaneId,

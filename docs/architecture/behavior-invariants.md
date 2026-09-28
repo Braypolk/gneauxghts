@@ -571,6 +571,12 @@ response. Backend-resolved settings are the source of default model identity.
 At most one proposal is editable globally. Other pending proposals remain
 queued and durable, and unresolved proposals survive restart.
 
+Navigating away from an unresolved review retains its working copy and hunk
+choices for return. Pane and workspace save barriers do not persist or require
+a clean baseline for that retained review. Ordinary edits in other documents
+still flush, and external-change conflicts and canonical collisions still block
+departure of a dirty document.
+
 ### Proposal recovery converges without duplicate writes
 
 If proposal content was persisted but its status update failed, recovery first

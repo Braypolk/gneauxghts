@@ -206,8 +206,9 @@ export class NotepadSearchStore {
       },
       'Failed to load recent notes:'
     );
-    result.applyIfLatest();
-    return result.items;
+    // A failed or superseded request must not become an authoritative empty
+    // seed for the session's location history.
+    return result.applyIfLatest() ? result.items : null;
   };
 
   #refreshRecentNotesNow = async () => {

@@ -59,6 +59,36 @@ describe('NotepadSearchStore', () => {
     expect(store.isSearching).toBe(false);
   });
 
+  it('distinguishes a failed recent-note load from a successful empty list', async () => {
+    const store = createStore();
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    try {
+      listRecentNotesMock.mockRejectedValueOnce(new Error('startup unavailable'));
+      listRecentNotesMock.mockResolvedValueOnce([]);
+
+      expect(await store.loadRecentNotes()).toBeNull();
+      expect(await store.loadRecentNotes()).toEqual([]);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it('does not seed history from a recent-note response superseded by a newer load', async () => {
+    const store = createStore();
+    let finishFirst!: (items: []) => void;
+    listRecentNotesMock.mockImplementationOnce(() => new Promise<[]>((resolve) => {
+      finishFirst = resolve;
+    }));
+    listRecentNotesMock.mockResolvedValueOnce([]);
+
+    const first = store.loadRecentNotes();
+    expect(await store.loadRecentNotes()).toEqual([]);
+    finishFirst([]);
+
+    expect(await first).toBeNull();
+    expect(store.recentNotes).toEqual([]);
+  });
+
   it('debounces search input and only fires highlight callbacks post-debounce', async () => {
     const onSearchHighlightsChange = vi.fn();
     const store = createNotepadSearchStore({

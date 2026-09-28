@@ -9,11 +9,13 @@ import { createEmptySessionSnapshot } from '$lib/features/notepad/session/sessio
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
 
 describe('workspacePersistenceService', () => {
-  it('flushes every open document before crossing a navigation barrier', async () => {
+  it('flushes ordinary edits while retaining a pending proposal at the navigation barrier', async () => {
     const left = createNoteDraftState();
     const right = createNoteDraftState();
+    const review = createNoteDraftState();
     updateDocumentMarkdown(left, 'left');
     updateDocumentMarkdown(right, 'right');
+    updateDocumentMarkdown(review, 'unaccepted proposal');
     const flushAllPaneCursorSaves = vi.fn();
     const cancelPendingAutosave = vi.fn();
     const enqueueSave = vi.fn(async (document) => {
@@ -25,20 +27,24 @@ describe('workspacePersistenceService', () => {
     });
     const service = createWorkspacePersistenceService({
       flushAllPaneCursorSaves,
-      getDocuments: () => [left, right],
+      getDocuments: () => [left, review, right],
       cancelPendingAutosave,
-      enqueueSave
+      enqueueSave,
+      isReviewingDocument: (document) => document === review
     });
 
     await service.flushAllForNavigation();
 
     expect(flushAllPaneCursorSaves).toHaveBeenCalledOnce();
-    expect(cancelPendingAutosave).toHaveBeenCalledTimes(2);
+    expect(cancelPendingAutosave).toHaveBeenCalledTimes(3);
     expect(cancelPendingAutosave).toHaveBeenNthCalledWith(1, left);
-    expect(cancelPendingAutosave).toHaveBeenNthCalledWith(2, right);
+    expect(cancelPendingAutosave).toHaveBeenNthCalledWith(2, review);
+    expect(cancelPendingAutosave).toHaveBeenNthCalledWith(3, right);
     expect(enqueueSave).toHaveBeenCalledTimes(2);
     expect(enqueueSave).toHaveBeenNthCalledWith(1, left);
     expect(enqueueSave).toHaveBeenNthCalledWith(2, right);
+    expect(review.working.markdown).toBe('unaccepted proposal');
+    expect(review.savedBaseline).toBeNull();
   });
 
   it('retries a document changed during its first save before allowing navigation', async () => {

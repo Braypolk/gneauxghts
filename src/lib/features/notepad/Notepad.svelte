@@ -661,6 +661,8 @@
     getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
     enqueueSave,
+    isReviewingDocument: (document) =>
+      getProposalOrchestration().isReviewingDocument(document),
   });
 
   const historyMode = new HistoryModeSession({
@@ -948,6 +950,8 @@
     canLeaveDocument: (document) =>
       !documentHasUnresolvedConflict(document) ||
       documentCanLeaveWithoutCanonicalWrite(document),
+    isReviewingDocument: (document) =>
+      getProposalOrchestration().isReviewingDocument(document),
     onDocumentLeaving: (paneId, document) => {
       proposalOrchestrationInstance?.suspendDocument(
         document,
@@ -1022,6 +1026,7 @@
   $effect(() => {
     void locationHistoryEpoch;
     void activePaneId;
+    if (!notepadRuntimeState.hasLoadedInitialSession) return;
     void refreshLocationHistory();
   });
 

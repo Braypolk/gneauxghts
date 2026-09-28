@@ -49,7 +49,8 @@ export interface LocationHistoryControllerDeps<TPaneId extends string> {
   getPaneTitleInput: (paneId: TPaneId) => HTMLInputElement | null;
   activatePaneSession: (paneId: TPaneId) => unknown;
   setPaneKind: (paneId: TPaneId, kind: PaneKind) => Promise<void>;
-  loadRecentNotes: () => Promise<SearchItem[]> | SearchItem[];
+  /** Null means no authoritative snapshot was loaded. */
+  loadRecentNotes: () => Promise<SearchItem[] | null> | SearchItem[] | null;
   openNotePath: (
     path: string | null,
     options: {
@@ -206,6 +207,7 @@ export function createLocationHistoryController<TPaneId extends string>(
   async function ensureLocationMruSeeded(paneId: TPaneId) {
     if (locationMru.isSeeded(paneId)) return;
     const recentNotes = await deps.loadRecentNotes();
+    if (recentNotes === null) return;
     if (locationMru.isSeeded(paneId)) return;
 
     const seeded = recentNotes

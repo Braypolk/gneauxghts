@@ -13,11 +13,12 @@ interface MotionFrame {
     id: string; left: number; width: number; opacity: number; sameEditor: boolean;
     content: { width: number; opacity: number } | null;
     controlsOpacity: number[];
+    layout: Record<string, { left: number; top: number; width: number; height: number }>;
   }[];
 }
 interface MotionResult { before: MotionFrame; frames: MotionFrame[]; maxGap: number }
 
-export type PaneMotionAction = 'open' | 'close-left' | 'close-right' | 'open-chat';
+export type PaneMotionAction = 'open' | 'close-left' | 'close-right' | 'open-chat' | 'open-current';
 
 /** Real workspace operation, sampled in the renderer with no per-frame IPC. */
 export async function samplePaneMotion(action: PaneMotionAction): Promise<MotionResult> {
@@ -44,6 +45,19 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       panes: [...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => ({
         id: pane.dataset.paneId!, left: pane.getBoundingClientRect().left, width: pane.getBoundingClientRect().width,
         opacity: Number(getComputedStyle(pane).opacity),
+        layout: Object.fromEntries([
+          '.notepad-editor-top-row', '.notepad-editor-title-wrap', '[data-pane-command]',
+          '.chat-panel-header', '.chat-panel-bottom'
+        ].flatMap(selector => {
+          const element = pane.querySelector<HTMLElement>(selector);
+          if (!element) return [];
+          const rect = element.getBoundingClientRect();
+          const parent = pane.getBoundingClientRect();
+          return [[selector, {
+            left: rect.left - parent.left, top: rect.top - parent.top,
+            width: rect.width, height: rect.height
+          }]];
+        })),
         controlsOpacity: [...pane.querySelectorAll<HTMLElement>(
           '.notepad-editor-top-overlay, .notepad-chat-top-actions, .chat-panel-header, .chat-panel-bottom, [data-pane-command]'
         )].map(control => {
@@ -78,12 +92,13 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       else done({ before, frames, maxGap: Math.max(...gaps) });
     };
     requestAnimationFrame(sample);
-    if (action === 'open' || action === 'open-chat') {
+    if (action === 'open' || action === 'open-chat' || action === 'open-current') {
       // Use the real split command. Quick choices are enabled by pointer entry.
       const button = document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!;
-      if (action === 'open-chat') {
+      if (action === 'open-chat' || action === 'open-current') {
         button.dispatchEvent(new PointerEvent('pointerenter'));
-        queueMicrotask(() => document.querySelector<HTMLElement>('button[aria-label="Split with thought partner"]')!.click());
+        const label = action === 'open-chat' ? 'Split with thought partner' : 'Split with current location';
+        queueMicrotask(() => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click());
       } else button.click();
     } else {
       const panes = [...document.querySelectorAll<HTMLElement>(paneSelector)];
@@ -91,6 +106,27 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
         .querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
     }
   }, action);
+}
+
+export function expectStableEntrance(result: MotionResult) {
+  const finalPane = result.frames.at(-1)!.panes.find(pane =>
+    !result.before.panes.some(previous => previous.id === pane.id))!;
+  expect(finalPane).toBeDefined();
+  expect(Object.keys(finalPane.layout).length).toBeGreaterThan(0);
+  const entering = result.frames.filter(frame => frame.moving)
+    .map(frame => frame.panes.find(pane => pane.id === finalPane.id))
+    .filter(pane => pane !== undefined);
+  expect(entering.length).toBeGreaterThan(1);
+  const shifts: { selector: string; dimension: string; pixels: number }[] = [];
+  for (const [selector, finalRect] of Object.entries(finalPane.layout)) {
+    const samples = entering.flatMap(pane => pane.layout[selector] ? [pane.layout[selector]] : []);
+    expect(samples.length).toBeGreaterThan(1);
+    for (const dimension of ['left', 'top', 'width', 'height'] as const) {
+      const drift = Math.max(...samples.map(rect => Math.abs(rect[dimension] - finalRect[dimension])));
+      if (drift > 1) shifts.push({ selector, dimension, pixels: drift });
+    }
+  }
+  expect(shifts).toEqual([]);
 }
 
 export function expectContinuousMotion(result: Awaited<ReturnType<typeof samplePaneMotion>>) {

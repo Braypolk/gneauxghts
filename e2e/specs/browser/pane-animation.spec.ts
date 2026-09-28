@@ -1,5 +1,5 @@
 import { browser, expect, $ } from '@wdio/globals';
-import { expectContinuousMotion, samplePaneMotion } from '../../support/paneMotion';
+import { expectContinuousMotion, expectStableEntrance, samplePaneMotion } from '../../support/paneMotion';
 
 async function ready(width = 1440) {
   await browser.setWindowSize(width, 1000);
@@ -15,6 +15,15 @@ async function chooseCurrent() {
 }
 
 describe('coordinated pane layout motion', () => {
+  for (const action of ['open', 'open-current', 'open-chat'] as const) {
+    it(`keeps the new pane layout stable during ${action}`, async () => {
+      await ready();
+      const opening = await samplePaneMotion(action);
+      expectContinuousMotion(opening);
+      expectStableEntrance(opening);
+    });
+  }
+
   it('keeps the active border attached when focus changes during entrance', async () => {
     await ready();
     const result = await browser.executeAsync((done: (result: { activated: boolean; errors: number[]; active?: string }) => void) => {
@@ -52,6 +61,7 @@ describe('coordinated pane layout motion', () => {
         await ready(width);
         const opening = await samplePaneMotion('open');
         expectContinuousMotion(opening);
+        expectStableEntrance(opening);
         expect(opening.frames.at(-1)!.panes).toHaveLength(2);
         await chooseCurrent();
         const closing = await samplePaneMotion(`close-${side}`);
