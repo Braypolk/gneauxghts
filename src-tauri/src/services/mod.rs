@@ -14,3 +14,5 @@ pub(crate) use background_index_queue::BackgroundIndexQueue;
 pub(crate) use current_document::{resolve_current_document, CurrentDocumentRequest};
 pub(crate) use note_catalog::NoteCatalog;
 pub(crate) mod evidence;
+
+pub(crate) mod tool_outcome;

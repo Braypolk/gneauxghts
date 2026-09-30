@@ -1,5 +1,9 @@
 # Current evidence integration
 
+Historical integration report. The later composable-capability refactor replaces
+terminal inventories and named period inputs; see [Architecture](../../ARCHITECTURE.md#agent-runtime)
+for current behavior. The measurements below describe the earlier implementation.
+
 September 21, 2026. This release combines scoped current-content search/read,
 line-level provenance and task evidence, stable passage citations, deterministic
 note-activity inventories, bounded optional research and explicit source-first

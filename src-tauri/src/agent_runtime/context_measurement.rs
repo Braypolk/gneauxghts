@@ -18,6 +18,7 @@ pub(super) struct Measurement {
     provider: AgentProvider,
     model: String,
     worker: bool,
+    result_schema: Option<Value>,
 }
 
 impl Measurement {
@@ -35,6 +36,7 @@ impl Measurement {
                 provider: request.provider.clone(),
                 model: request.model.clone(),
                 worker,
+                result_schema: request.output_schema.clone(),
             })
         })
     }
@@ -42,6 +44,12 @@ impl Measurement {
     async fn begin(&self, request: &CompletionRequest, capacity: Option<u64>) {
         self.unreported("attempt_superseded");
         let mut details = measure(request);
+        let formatter = usize::from(
+            super::usage_context::result_formatter_name(request, self.result_schema.as_ref())
+                .is_some(),
+        );
+        details["resultFormatterCount"] = json!(formatter);
+        details["executableToolCount"] = json!(request.tools.len().saturating_sub(formatter));
         details["phase"] = json!("request");
         details["runtimeInstance"] = json!(self.runtime);
         details["attempt"] = json!(self.sequence.fetch_add(1, Ordering::Relaxed) + 1);
@@ -395,6 +403,7 @@ mod tests {
                 provider: AgentProvider::Openai,
                 model: "mock".into(),
                 worker: false,
+                result_schema: None,
             });
             let forwarded = MeasuredModel {
                 inner: model.clone(),
@@ -528,6 +537,7 @@ mod tests {
             provider: AgentProvider::Openai,
             model: "mock".into(),
             worker: true,
+            result_schema: None,
         };
         measurement.unreported("attempt_superseded");
         *measurement.pending.lock().unwrap() =
@@ -557,6 +567,7 @@ mod tests {
             provider: AgentProvider::Openai,
             model: "mock".into(),
             worker: false,
+            result_schema: None,
         };
         measurement.finish(Some(0), Usage::new());
         measurement.finish(Some(0), Usage::new());
@@ -616,6 +627,7 @@ mod live_tests {
             let result = tauri::async_runtime::block_on(AgentRuntime::run(
                 AgentRuntimeRequest {
                     provider: AgentProvider::Local, model: model.clone(), api_key: None,
+                    output_schema: None,
                     local_base_url: endpoint.clone(), preamble: "Answer the last user instruction concisely. Earlier synthetic discussion is background data.".into(),
                     prompt: Message::user(prompt), history, enable_web: false, require_web: false,
                     flex: false, reasoning_effort: Some("medium".into()),

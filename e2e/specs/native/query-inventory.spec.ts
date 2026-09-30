@@ -32,7 +32,7 @@ const baseline = process.env.GNEAUX_QUERY_BASELINE === '1';
 const fixture = JSON.parse(readFileSync(resolve('e2e/fixtures/query-inventory.json'),'utf8')) as {
  notes:{title:string;body:string}[]; holdout:{id:string;question:string;expected:string;mode:string}[];
 };
-live('Shared queries and application-owned inventory', function() {
+live('Composable evidence capabilities', function() {
  this.timeout(360_000);
  const endpoint=process.env.GNEAUX_LIVE_ENDPOINT!;
  const model=process.env.GNEAUX_LIVE_MODEL!;
@@ -66,21 +66,21 @@ live('Shared queries and application-owned inventory', function() {
   await browser.refresh();await $('[data-testid="note-title"]').waitForExist({timeout:30_000});persist();
  });
  const cases=contextMeasurement?[
-  {id:'inventory_current',question:'Which notes did I edit today?',expected:'One model call, full assembled context diagnostics and persisted reload',mode:'normal'},
+  {id:'inventory_current',question:'Which notes did I edit today?',expected:'Discovery, reads, synthesis, full assembled context diagnostics and persisted reload',mode:'normal'},
   {id:'dense_evidence',question:'Read the evidence and summarize the Meridian events, commitments, and export decision. Cite each source. Distinguish canceled and planned events from completed ones.',expected:'Search and read results appear in later measured model requests',mode:'normal'},
   {id:'empty_research_scope',question:'Call research_notes exactly once with note_ids: [] and question: "Which notes match this intentionally empty selection?". The empty list is intentional. Do not broaden the scope. Report that no evidence is available.',expected:'Empty scope returns without starting worker inference',mode:'normal'},
   {id:'research_measurement',question:'Use research_notes once to investigate across the Meridian notes: which commitments and proposed changes remain unresolved, and what evidence is missing? Cite the evidence and identify gaps.',expected:'Worker measurements remain distinct from parent calls without exposing worker prose',mode:'normal'}
  ]:budget?[
-  {id:'inventory_current',question:'Which notes did I edit today?',expected:'All nine allowed notes once, complete, one model call',mode:'normal'},
-  {id:'inventory_sources',question:'Which notes did I edit today?',expected:'All nine allowed notes once, complete, one model call',mode:'sources'}
- ]:regression?fixture.holdout.filter(c=>c.id.startsWith('inventory_')):baseline?fixture.holdout.filter(c=>!c.id.startsWith('inventory_')):smoke?[{id:'smoke',question:'Which notes did I edit today?',expected:'All allowed current fixture notes, app-owned result, one model call',mode:'sources'}]:fixture.holdout;
+  {id:'inventory_current',question:'Which notes did I edit today?',expected:'Bounded activity discovery and cited synthesis; disclose any incomplete coverage',mode:'normal'},
+  {id:'inventory_sources',question:'Which notes did I edit today?',expected:'Bounded activity discovery and cited synthesis; disclose any incomplete coverage',mode:'sources'}
+ ]:regression?fixture.holdout.filter(c=>c.id.startsWith('inventory_')):baseline?fixture.holdout.filter(c=>!c.id.startsWith('inventory_')):smoke?[{id:'smoke',question:'Which notes did I edit today?',expected:'All allowed current fixture notes, validated citations and explicit dates',mode:'sources'}]:fixture.holdout;
  const selectedCases=cases.filter(c=>!process.env.GNEAUX_QUERY_CASE||c.id===process.env.GNEAUX_QUERY_CASE);
  assert(selectedCases.length>0,'Scenario filter matched no cases');
  const repetitions=Number(process.env.GNEAUX_QUERY_REPETITIONS||(smoke||baseline||budget||contextMeasurement?'1':'2'));
  assert(Number.isInteger(repetitions)&&repetitions>=1&&repetitions<=3);
  for(let repetition=0;repetition<repetitions;repetition++)for(const scenario of selectedCases){
   it(`${scenario.id} repetition ${repetition+1}`,async()=>{
-   const content=(scenario.mode==='sources'?'/sources ':'')+scenario.question;
+   const content=scenario.question+(scenario.mode==='sources'?' Show the supporting source passages and distinguish recorded facts from uncertainty.':'');
    let conversation:Conversation;
    const start=Date.now();
    if(smoke || (scenario.id==='inventory_current' && repetition===0)){
@@ -96,7 +96,7 @@ live('Shared queries and application-owned inventory', function() {
    await browser.waitUntil(async()=>{const c=await invoke<Conversation>('chat_get_conversation',{conversationId:conversation.id});answer=c.messages.find(m=>m.role==='assistant');if(scenario.mode==='sources'&&answer?.status==='streaming')assert.equal(answer.content,'');return Boolean(answer&&['complete','failed','cancelled'].includes(answer.status));},{timeout:300_000,interval:1000});assert(answer);
    const links=[...new Set([...answer.content.matchAll(/passage:([^\s)\]]+)/g)].map(m=>m[1]))];
    const resolutions:Record<string,unknown>[]=[];
-   for(const evidenceId of links){try{const r=await invoke<{source:{title:string};selection:unknown}>('chat_resolve_passage',{conversationId:conversation.id,evidenceId});resolutions.push({evidenceId,status:'resolved',...r});}catch(error){resolutions.push({evidenceId,status:'failed',error:String(error)});}}
+   for(const evidenceId of links){try{const r=await invoke<{source:{title:string};selection:unknown;historicalRevisionId?:string}>('chat_resolve_passage',{conversationId:conversation.id,evidenceId});resolutions.push({evidenceId,status:'resolved',...r});}catch(error){resolutions.push({evidenceId,status:'failed',error:String(error)});}}
    const events=answer.agentEvents.map(e=>e.event);
    results.push({id:scenario.id,repetition,question:content,expected:scenario.expected,status:answer.status,error:answer.error,answer:answer.content,latencyMillis:Date.now()-start,events,sources:answer.sources,resolutions});persist();
    assert.equal(answer.status,'complete',answer.error);
@@ -134,27 +134,35 @@ live('Shared queries and application-owned inventory', function() {
     const index=answer.sources.findIndex(s=>s.passage?.id===evidenceId);assert(index>=0);
     const source=answer.sources[index];const citationId=`${source.kind}:${source.noteId??source.url??source.title}:${source.anchor??index}`;
     const citation=await $(`[data-chat-note-citation-id=${JSON.stringify(citationId)}]`);await citation.waitForExist({timeout:15000});
-    const resolved=await invoke<{markdown:string;selection:{anchor:number;head:number}}>('chat_resolve_passage',{conversationId:conversation.id,evidenceId});assert(resolved.selection);
+    const resolved=await invoke<{markdown:string;selection:{anchor:number;head:number}|null;historicalRevisionId?:string}>('chat_resolve_passage',{conversationId:conversation.id,evidenceId});assert(resolved.selection||resolved.historicalRevisionId);
     await browser.execute((el:HTMLElement)=>el.scrollIntoView({block:'center'}),citation);
     await browser.saveScreenshot(resolve(output+'.png'));
     await browser.execute((el:HTMLElement)=>el.click(),citation);
-    await browser.waitUntil(async()=>browser.execute((noteId,selection)=>{
+    if(resolved.historicalRevisionId){
+     await $('[data-testid="historical-revision-diff"]').waitForExist({timeout:15000});
+     await $('button[aria-label="Back to workspace"]').click();
+     await $('[data-testid="history-mode"]').waitForExist({reverse:true});
+    }else{
+     assert(resolved.selection);
+     await browser.waitUntil(async()=>browser.execute((noteId,selection)=>{
      const state=(window as typeof window & {__GNEAUXGHTS_NATIVE_E2E__?:{readEditorState:()=>{noteId?:string;editor?:{selection:{anchor:number;head:number}}}}}).__GNEAUXGHTS_NATIVE_E2E__?.readEditorState();
-     return Boolean(state && state.noteId===noteId&&state.editor?.selection.anchor===selection.anchor&&state.editor?.selection.head===selection.head);
+     return Boolean(selection && state && state.noteId===noteId&&state.editor?.selection.anchor===selection.anchor&&state.editor?.selection.head===selection.head);
     },source.noteId,resolved.selection),{timeout:15000});
+    }
    }
    if(smoke||scenario.id.startsWith('inventory_')){
-    assert(answer.content.startsWith('**Notes with recorded editing activity**'));
-    assert.equal(events.filter(e=>e.type==='usageUpdated').length,1,'Inventory must not require a final model call');
-    const trace=events.filter(e=>e.type==='queryResolved').at(-1)?.details as {resolved?:{intent:{subject?:string|null};periods:{after:number;before:number}[]};inventory?:{notesReturned:number}}|undefined;
-    assert(trace?.resolved);assert(!trace.resolved.intent.subject);
-    assert.equal(trace.inventory?.notesReturned,scenario.id==='inventory_prior'?0:budget?9:4);
+    assert(events.filter(e=>e.type==='usageUpdated').length>=2,'Retrieval must return to the model for further work or synthesis');
+    type QueryTrace = {resolved?:{after:number;before:number};capability?:string;submitted?:{query?:string};result?:{notesReturned?:number;pageOffset?:number;coverageComplete?:boolean}};
+    const traces=events.filter(e=>e.type==='queryResolved').map(e=>e.details as QueryTrace);
+    const trace=traces.find(t=>t.resolved);
+    assert(trace?.resolved,'The agent must configure an explicit activity range');
+    const noteCount=new Set(answer.sources.filter(s=>s.passage).map(s=>s.noteId)).size;
+    if(scenario.id==='inventory_prior') assert.equal(noteCount,0);
+    else if(!budget) assert.equal(noteCount,4,'Read and cite each allowed fixture note');
     if(budget) {
-     assert.equal(links.length,9);
-     assert.equal((answer.content.match(/passage:/g)||[]).length,9,'One link per note');
-     assert(!answer.content.includes('Coverage is partial'));
-     assert.equal(answer.sources.filter(s=>s.passage).length,9);
-     assert(resolutions.every(r=>r.selection));
+     assert(noteCount>0&&noteCount<=9);
+     assert(resolutions.every(r=>r.selection||r.historicalRevisionId));
+     if(noteCount<9) assert(/partial|incomplete|limit|budget|could not|couldn't|unable/i.test(answer.content),'Disclose incomplete evidence coverage');
     }
     if(scenario.id==='inventory_prior') {
      // Node and the native app share the host timezone. Calendar arithmetic
@@ -164,7 +172,7 @@ live('Shared queries and application-owned inventory', function() {
      thisMonday.setDate(thisMonday.getDate() - (thisMonday.getDay()+6)%7);
      const priorMonday = new Date(thisMonday);
      priorMonday.setDate(priorMonday.getDate()-7);
-     assert.deepEqual([trace.resolved.periods[0].after,trace.resolved.periods[0].before],
+     assert.deepEqual([trace.resolved.after,trace.resolved.before],
       [priorMonday.getTime(),thisMonday.getTime()], 'Resolve the prior local calendar week');
     }
     await browser.refresh();await $('[data-testid="workspace-pane"]').waitForExist({timeout:30_000});

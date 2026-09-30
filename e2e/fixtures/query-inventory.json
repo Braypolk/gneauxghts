@@ -20,11 +20,11 @@
   "development": [
     {
       "question": "Which notes did I edit today?",
-      "expect": "text_activity inventory, no subject"
+      "expect": "explicit local date bounds; discover notes, read evidence and synthesize"
     },
     {
       "question": "How many notes did I work on last week?",
-      "expect": "notes count, prior calendar week, no subject"
+      "expect": "distinct notes count with explicit prior-week dates"
     },
     {
       "question": "Which Meridian meetings happened September 10\u201313, 2025?",
@@ -63,13 +63,13 @@
     {
       "id": "inventory_current",
       "question": "How many notes have recorded editing activity this week? List them.",
-      "expected": "All four allowed fixture notes exactly once; no excluded note; complete subset; one model call, terminal inventory",
+      "expected": "All four allowed fixture notes with citations; no excluded note; activity discovery followed by reads and synthesis",
       "mode": "normal"
     },
     {
       "id": "inventory_prior",
       "question": "What were the notes that I worked on last week?",
-      "expected": "No matches in fresh native fixture; correct prior calendar-week bounds; no subject; one model call",
+      "expected": "No matches in fresh native fixture; explicit correct prior calendar-week dates; tool results return to the model",
       "mode": "sources"
     },
     {

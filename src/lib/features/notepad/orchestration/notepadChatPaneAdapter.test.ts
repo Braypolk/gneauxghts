@@ -380,3 +380,14 @@ it.each(['properties', 'title', 'body'])('opens a validated %s source without in
   expect(openNote).toHaveBeenCalledWith(citation.notePath,expect.objectContaining({noteId:'note-1',revealEditorAfterOpen:true}));
   expect(focusPassage).not.toHaveBeenCalled();
 });
+
+
+it('opens a revalidated historical passage in its retained content revision', async () => {
+  const {adapter,openRevisionCitation,openNote,focusPassage}=setup();
+  const citation={...noteCitation(),noteId:'note-1',passage:{id:'history-1',noteId:'note-1',contentHash:'h',location:'body',start:0,end:3,excerpt:'old',revisions:[],historical:{revisionId:'deletion',contentRevisionId:'before-deletion',changeKind:'removed',timeEvidence:{kind:'committed' as const,committedAtMillis:100},source:'editor' as const}}};
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'',selection:null,historicalRevisionId:'before-deletion'});
+  await adapter.getBindings('chat').context.onOpenCitation(citation);
+  expect(openRevisionCitation).toHaveBeenCalledWith('chat',expect.objectContaining({revision:expect.objectContaining({revisionId:'before-deletion'})}));
+  expect(openNote).not.toHaveBeenCalled();
+  expect(focusPassage).not.toHaveBeenCalled();
+});

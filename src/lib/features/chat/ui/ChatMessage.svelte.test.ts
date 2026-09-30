@@ -88,7 +88,10 @@ describe('ChatMessage text rendering', () => {
       ]
     });
 
-    expect(body).toContain('aria-label="Activity, 0 of 1 actions complete. Toggle details"');
+    expect(body).toContain('Read note');
+    expect(body).toContain('Running');
+    expect(body).not.toContain('Toggle details');
+    expect(body).not.toContain('Working…');
     expect(body).toContain('Model turn 2 retried');
     expect(body).toContain('Inspect notes');
     expect(body).not.toContain('Step 1');
@@ -107,6 +110,7 @@ describe('ChatMessage text rendering', () => {
     expect(body).toContain('1 source');
     expect(body).toContain('Example');
     expect(body).toContain('data-chat-citation-id="web:example"');
+    expect(body).toContain('Show evidence');
     expect(body).toContain('aria-label="Source 1: Example"');
     expect(body).toContain('aria-label="Branch from here"');
   });

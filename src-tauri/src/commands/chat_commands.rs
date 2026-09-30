@@ -1530,6 +1530,11 @@ pub(crate) fn chat_resolve_passage(
     if crate::services::evidence::canonical_content_hash(&raw) != passage.content_hash {
         return Err("Passage changed".into());
     }
+    if let Some(proof) = &passage.historical {
+        return Ok(
+            json!({"source":source,"markdown":"","selection":null,"historicalRevisionId":proof.content_revision_id}),
+        );
+    }
     let (markdown, selection) =
         crate::services::evidence::editor_passage_navigation(&raw, &source.title, passage);
 

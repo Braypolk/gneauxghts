@@ -984,9 +984,9 @@ fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
     assert_contains_all(
         &tools,
         &[
-            ".tool(SearchEvidenceTool(self.clone()))",
-            ".tool(ReadEvidenceTool(self.clone()))",
-            ".tool(ResearchNotesTool(self.clone()))",
+            ".tool(ModelTool(SearchEvidenceTool(self.clone())))",
+            ".tool(ModelTool(ReadEvidenceTool(self.clone())))",
+            ".tool(ModelTool(ResearchNotesTool(self.clone())))",
         ],
     );
     let evidence = repository_file("src-tauri/src/services/evidence.rs");

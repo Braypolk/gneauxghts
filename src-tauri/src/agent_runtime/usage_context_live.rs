@@ -48,6 +48,7 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
     });
     let request = AgentRuntimeRequest {
         provider: AgentProvider::Local, model: model_name.clone(), api_key: None, local_base_url: endpoint.clone(),
+        output_schema: None,
         preamble: "Use the evidence tool to answer. Preserve its exact citation link. Explain incomplete coverage when applicable.".into(),
         prompt: Message::user("When does the synthetic project launch? Read available evidence, then continue to the next page if one exists before answering."),
         history: vec![], enable_web: false, require_web: false, flex: false, reasoning_effort: Some("medium".into()),
@@ -71,6 +72,7 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
         let cancelled = CancellationToken::new();
         let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
         let agent = configured_builder(model, &request, local_parameters(Some("medium")))
+            .unwrap()
             .add_hook(RuntimeEventHook {
                 on_event: sink.clone(),
                 cancelled: cancelled.clone(),
@@ -90,7 +92,6 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
                 permissions: None,
             },
             guard,
-            None,
             None,
             Some(context),
         )

@@ -84,6 +84,26 @@ are saved for separate semantic grading; passing execution is not a claim of
 answer correctness. Existing deterministic browser tests remain the primary
 coverage for chat controller lifecycle behavior.
 
+### Focused bounded research worker
+
+`e2e/specs/native/research-worker.spec.ts` is opt-in with
+`GNEAUX_RESEARCH_NATIVE=1` and the same explicit `GNEAUX_LIVE_ENDPOINT`,
+`GNEAUX_LIVE_MODEL` and `GNEAUX_LIVE_OUTPUT` variables above. After building the
+native artifact, run that spec alone with `pnpm exec wdio run
+e2e/wdio.native.conf.ts --spec e2e/specs/native/research-worker.spec.ts`.
+`GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` additionally records assembled request
+counters, separating the worker's three executable evidence tools from its
+structured result formatter, without recording private worker text.
+
+The real native chat must deliver actually read, validated worker evidence for
+current content, retained history and broad discovery. Parent direct retrieval
+cannot satisfy those cases. Valid partial delivery remains useful worker evidence
+and must keep its coverage limits. A separate excluded-scope case requires an
+explicit research failure followed by parent direct evidence. Every admitted
+passage resolves through production validation and an excluded canary must never
+appear. These model-dependent checks complement deterministic selection,
+isolation and budget contracts; one passing run does not guarantee all goals.
+
 ## Full Phase 1–3 gate
 
 ```bash
@@ -191,9 +211,13 @@ return and visible/focused final frames, then stops its owned app, server and
 scoped caffeinate. Run fixtures sequentially without source edits/heavy checks.
 
 
-### Source-first preview check
+### Evidence inspection
 
-Add `GNEAUX_SOURCE_FIRST_PREVIEW=1` to the opt-in native agent date-evidence invocation above. It exercises the composer preview toggle and four synthetic questions: retrospective event dates, checkbox/prose completions this week, a missing recovery-condition outcome, and an explicit-success control. It requires exact delivered quotations, correct grouping for those cases, no raw streaming answer, durable resolvable links, and the existing exclusion/edit invalidation checks. This is a bounded acceptance check, not a general accuracy benchmark.
+Sources and quotation requests use ordinary chat. Every sourced answer offers
+Show evidence for exact delivered excerpts, historical/current labels and recorded
+timing. The native date-evidence suite includes missing-outcome and explicit-success
+cases through that same runtime; citation resolution does not by itself establish
+answer quality. There is no source-preview toggle or alternate execution mode.
 
 If the native test ports are occupied, set `GNEAUXGHTS_E2E_PORT` (Vite) for both build and run, and `TAURI_WEBDRIVER_PORT` for the run. Defaults remain 1430 and 4445. Debug artifact admission checks its recorded dev port to prevent loading a different server. For example, build with `GNEAUXGHTS_E2E_PORT=1431 node e2e/support/buildNative.mjs`, then add `GNEAUXGHTS_E2E_PORT=1431 TAURI_WEBDRIVER_PORT=4446` to the test invocation.
 
@@ -207,8 +231,9 @@ After building the native E2E binary, run `GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS=
 Run `query-inventory.spec.ts` with `GNEAUX_QUERY_NATIVE=1` and
 `GNEAUX_INVENTORY_BUDGET=1` plus the existing local endpoint, model and output
 variables. It creates nine allowed synthetic notes and an excluded canary, runs
-ordinary and `/sources` inventories, and checks one model call, complete nine-note
-coverage, one passage link per note, exact navigation and persisted reload.
+ordinary and quotation-focused inventories, and checks further model work after retrieval,
+coverage or explicit budget gaps, passage links, exact current or historical
+navigation and persisted reload.
 Use an isolated dev/WebDriver port pair for concurrent checkouts.
 
 ### Context measurement only
@@ -223,8 +248,9 @@ measurements. Use the same diagnostics variable for the native app process.
 
 Current chat implementation and archived experiment status are indexed in
 [the integration record](../docs/architecture/current-evidence-integration.md). General
-structured query routing has been removed; the current typed interpretation is
-limited to note-activity inventories. Historical benchmark reports describe the
+structured query routing and terminal inventories have been removed. Evidence
+capabilities accept explicit date ranges and return intermediate results for
+further tools and synthesis; native inventory checks validate that composition. Historical benchmark reports describe the
 code tested at their recorded dates, not additional active runtime pipelines.
 
 ### Pane animation
@@ -252,3 +278,34 @@ servers generate shared SvelteKit files, which can reload an active browser test
 Run these two native motion specs in separate invocations for fresh fixture
 vaults; they use the same fixture note title. Foreground-focus assertions require
 the native test window to stay active throughout the run.
+
+
+### Activity follow-ups with retained history
+
+Build the native E2E binary, then run the actual chat runtime against a local
+model using synthetic notes in a disposable vault:
+
+```sh
+GNEAUX_ACTIVITY_NATIVE=1 \
+GNEAUX_LIVE_ENDPOINT=http://127.0.0.1:1234/v1 \
+GNEAUX_LIVE_MODEL=your-loaded-model \
+GNEAUX_LIVE_OUTPUT=/tmp/activity-followups.json \
+pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/activity-followups.spec.ts
+```
+
+The fixture records an explicit interval, then changes current status afterward.
+Two fresh conversations (override with `GNEAUX_LIVE_REPEATS=1..3`) must acquire
+retained change evidence and current-status evidence, finish successfully, exclude
+a private canary, and resolve their citations. The first turn goes through the
+composer and opens/highlights an actually cited current body passage. A new
+related status note is added before a follow-up, which must read it freshly.
+A final explicit research request must record a research outcome and read/cite
+historical evidence and independently read/cite the newly added current status
+through research or direct fallback. In-flight answer events
+are saved on the 300-second request deadline; a title citation may navigate
+without a body selection and is not used for the highlighting assertion. Review each saved answer against
+the included semantic rubric: recorded completion, superseded plans, cancellation,
+unchanged old backlog, inferred actions, and disclosed coverage. Passing citation
+checks alone does not establish answer quality. Offline evidence-contract tests
+cover fixed last-week dates, clock uncertainty, assistant-transcript exclusion,
+revoked access, cleared history, partial batches, and read continuations.

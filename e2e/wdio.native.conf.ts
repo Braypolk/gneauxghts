@@ -9,6 +9,7 @@ type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunne
 
 const ports = nativeE2EPorts();
 const scaleRun = process.env.GNEAUXGHTS_RELEASE_SCALE_RUN;
+const captureLogs = Boolean(scaleRun) || process.env.GNEAUXGHTS_E2E_LOGS === '1';
 const optimized = Boolean(scaleRun) || process.env.GNEAUXGHTS_E2E_OPTIMIZED === '1';
 const profile = optimized ? 'release' : 'debug';
 const { binary: application } = nativeE2EBinary(profile);
@@ -51,8 +52,8 @@ export const config: TestrunnerConfig = {
     'tauri',
     {
       driverProvider: 'embedded',
-      captureBackendLogs: Boolean(scaleRun),
-      captureFrontendLogs: Boolean(scaleRun),
+      captureBackendLogs: captureLogs,
+      captureFrontendLogs: captureLogs,
       embeddedPort: ports.driver,
       appArgs: [
         '--e2e-app-data-root',

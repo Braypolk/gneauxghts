@@ -112,25 +112,27 @@ fn retrieve_vault_notes_unchecked(
         .map(|n| n.note_id.clone())
         .collect();
     let mut evidence = EvidenceSession::default();
-    let page = evidence.search(
-        state,
-        Some(&eligible),
-        excluded_note_ids,
-        SearchRequest {
-            query: if query.trim().is_empty() {
-                ".*".into()
-            } else {
-                query.into()
+    let page = evidence
+        .search(
+            state,
+            Some(&eligible),
+            excluded_note_ids,
+            SearchRequest {
+                query: if query.trim().is_empty() {
+                    ".*".into()
+                } else {
+                    query.into()
+                },
+                mode: if query.trim().is_empty() {
+                    SearchMode::Regex
+                } else {
+                    SearchMode::Hybrid
+                },
+                limit: Some(limit.clamp(1, 20)),
+                ..Default::default()
             },
-            mode: if query.trim().is_empty() {
-                SearchMode::Regex
-            } else {
-                SearchMode::Hybrid
-            },
-            limit: Some(limit.clamp(1, 20)),
-            ..Default::default()
-        },
-    )?;
+        )
+        .map_err(|error| error.to_string())?;
     let index = state
         .notes_index
         .lock()

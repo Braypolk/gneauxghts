@@ -1,8 +1,10 @@
 ---
-status: accepted
+status: superseded in part by ADR-0009
 ---
 
 # Limit chat history access to current content
+
+The historical-prose restriction below is superseded for explicit activity queries by [ADR 0009](0009-allow-scoped-retained-activity-evidence.md). Restore restrictions remain unchanged.
 
 Ordinary chat may use Note Timelines only as Current-Content Provenance and activity metadata for notes allowed by the existing vault policy. It cannot search, quote, or recall removed historical prose. This keeps historical noise and deleted content out of ordinary model context while still allowing chat to answer when current information was introduced or changed.
 

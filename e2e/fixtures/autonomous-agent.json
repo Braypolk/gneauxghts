@@ -282,7 +282,7 @@
     {
       "id": "inventory",
       "query": "How many notes have recorded editing activity today? List them.",
-      "rubric": "All 50 allowed fixture notes exactly once, excluded private note absent. App-owned inventory with today\u2019s period; current blank startup note has no grant.",
+      "rubric": "Discover allowed notes using explicit local date bounds and paginate within shared budgets. Cite read evidence; report partial coverage if all 50 notes cannot be delivered. Excluded private note absent; current blank startup note has no grant.",
       "expectedPassages": []
     },
     {

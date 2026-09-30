@@ -1,6 +1,6 @@
 use super::*;
 use crate::services::note_timeline::{MutationSource, RevisionTimeEvidence};
-use query::ResolvedQuery;
+use query::ResolvedPeriod;
 
 const INVENTORY_BYTES: usize = 256_000;
 const INVENTORY_ROWS: usize = 50;
@@ -26,7 +26,7 @@ pub(crate) struct InventoryRow {
 }
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct InventoryResult {
-    pub(crate) query: ResolvedQuery,
+    pub(crate) query: ResolvedPeriod,
     pub(crate) rows: Vec<InventoryRow>,
     pub(crate) page_offset: usize,
     pub(crate) complete: bool,
@@ -60,21 +60,65 @@ fn activity(c: &Candidate, after: u64, before: u64) -> Vec<InventoryActivity> {
 }
 
 impl EvidenceSession {
+    pub(crate) fn activity_page(
+        &mut self,
+        state: &AppState,
+        allowed: Option<&HashSet<String>>,
+        excluded: &HashSet<String>,
+        mut request: SearchRequest,
+        resolved: ResolvedPeriod,
+    ) -> Result<Value, ToolError> {
+        if self.used() >= EVIDENCE_BYTES {
+            return Err(ToolError::evidence_budget());
+        }
+        request.limit = Some(request.limit.unwrap_or(8).clamp(1, 20));
+        let include_history = request.include_history;
+        let (inventory, _, _) = self.inventory(state, allowed, excluded, request, resolved)?;
+        let items: Vec<_> = inventory
+            .rows
+            .iter()
+            .map(|row| {
+                let candidate = &self.candidates[&row.evidence_id];
+                json!({"noteId":candidate.citation.note_id,"evidenceId":row.evidence_id,
+                "title":bounded(&row.title,240),"preview":bounded(&row.excerpt,PREVIEW_BYTES),
+                "exampleRecordedChange":row.activity.first(),"uncertain":row.uncertain})
+            })
+            .collect();
+        let payload = json!({"status":"ready","items":items,"notesReturned":items.len(),
+            "pageOffset":inventory.page_offset,"nextCursor":inventory.continuation,
+            "coverage":inventory.budgets["retrieval"]["coverage"],
+            "resolvedRange":inventory.query,
+            "delivery":{"complete":inventory.continuation.is_none() && !inventory.budgets["stopReasons"].as_array().is_some_and(|reasons| reasons.iter().any(|r| r == "inventory_item_bytes")),"hasMore":inventory.continuation.is_some(),"limits":inventory.budgets["stopReasons"]},
+            "historyScope":if include_history {"retained_changes"} else {"surviving_content"},
+            "meaning":"One example change per note; read evidence before citing, and search the same note/range for all matching passages. Counts are per page, not accomplishments."});
+        let size = serde_json::to_vec(&payload)
+            .map_err(|e| e.to_string())?
+            .len();
+        if !self.reserve(size) {
+            return Err(ToolError::evidence_budget());
+        }
+        Ok(payload)
+    }
+
     pub(crate) fn inventory(
         &mut self,
         state: &AppState,
         allowed: Option<&HashSet<String>>,
         excluded: &HashSet<String>,
         mut request: SearchRequest,
-        resolved: ResolvedQuery,
+        resolved: ResolvedPeriod,
     ) -> Result<
         (
             InventoryResult,
             Value,
             Vec<(PassageCitation, PathBuf, String)>,
         ),
-        String,
+        ToolError,
     > {
+        let limit = request
+            .limit
+            .unwrap_or(INVENTORY_ROWS)
+            .clamp(1, INVENTORY_ROWS);
         let cursor = request.cursor.take();
         let gathered = self.search_inner(state, allowed, excluded, request.clone(), true)?;
         let key = gathered["searchKey"]
@@ -89,7 +133,7 @@ impl EvidenceSession {
         let mut normalized = request.clone();
         self.normalize_request(&mut normalized)?;
         normalized.limit = None;
-        let period = &resolved.periods[0];
+        let period = &resolved;
         let mut notes: HashMap<String, Vec<(Candidate, Vec<InventoryActivity>)>> = HashMap::new();
         for id in ids {
             let c = self.candidates[&id].clone();
@@ -127,9 +171,7 @@ impl EvidenceSession {
                         )
                     })
                     .collect::<Vec<_>>(),
-                resolved.intent.target,
-                resolved.intent.operation,
-                &resolved.intent.conditions,
+                &resolved,
             ))
             .map_err(|e| e.to_string())?,
         );
@@ -138,7 +180,7 @@ impl EvidenceSession {
             Some(cursor) => {
                 let parts: Vec<_> = cursor.split(':').collect();
                 if parts.len() != 3 || parts[0] != "inventory" || parts[1] != signature {
-                    return Err("Inventory continuation is stale or belongs to another query; start a fresh search".into());
+                    return Err(ToolError::stale("Inventory continuation is stale or belongs to another query; start a fresh search"));
                 }
                 parts[2]
                     .parse::<usize>()
@@ -157,14 +199,14 @@ impl EvidenceSession {
         let mut sources = Vec::new();
         let total = notes.len();
         if offset > total {
-            return Err("Invalid inventory continuation offset".into());
+            return Err(ToolError::invalid("Invalid inventory continuation offset"));
         }
         let mut next_offset = offset;
         let mut inventory_bytes = 0;
         let mut stop_reasons = Vec::new();
         for (_, mut candidates) in notes.into_iter().skip(offset) {
             check_cancelled(&request)?;
-            if rows.len() >= INVENTORY_ROWS {
+            if rows.len() >= limit {
                 complete = false;
                 stop_reasons.push("display_rows");
                 gaps.push("Display limit reached; continue for more notes".into());
@@ -227,7 +269,9 @@ impl EvidenceSession {
             }
             let Some((path, title)) = validate_citation(state, &c.citation, allowed, excluded)
             else {
-                return Err("Evidence changed or is no longer allowed; search again".into());
+                return Err(ToolError::stale(
+                    "Evidence changed or is no longer allowed; search again",
+                ));
             };
             check_cancelled(&request)?;
             inventory_bytes += size;
@@ -250,7 +294,7 @@ impl EvidenceSession {
         let budgets = json!({
             "modelEvidence": {"usedBytes": self.used(), "limitBytes": EVIDENCE_BYTES},
             "inventory": {"usedBytes": inventory_bytes, "limitBytes": INVENTORY_BYTES, "accounting": "conservative serialized rows and sources allowance"},
-            "display": {"rows": rows.len(), "limitRows": INVENTORY_ROWS},
+            "display": {"rows": rows.len(), "limitRows": limit},
             "retrieval": {"candidateLimit": WORK_LIMIT, "coverage": gathered["coverage"]},
             "stopReasons": stop_reasons
         });
@@ -286,6 +330,7 @@ mod tests {
         ] {
             let c = Candidate {
                 citation: PassageCitation {
+                    historical: None,
                     id: "evidence".into(),
                     note_id: "note".into(),
                     content_hash: "hash".into(),

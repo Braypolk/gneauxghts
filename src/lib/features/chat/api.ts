@@ -670,6 +670,6 @@ export class TauriChatApi implements ChatApi {
 export const chatApi = new TauriChatApi();
 
 export async function resolveCurrentPassage(conversationId: string, evidenceId: string) {
-  const result = await invoke<{source: RawSource; markdown: string; selection: {anchor: number; head: number} | null}>("chat_resolve_passage", { conversationId, evidenceId });
+  const result = await invoke<{source: RawSource; markdown: string; historicalRevisionId?: string; selection: {anchor: number; head: number} | null}>("chat_resolve_passage", { conversationId, evidenceId });
   return {...result, source: normalizeSource(result.source)};
 }
