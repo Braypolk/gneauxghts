@@ -144,6 +144,7 @@ pub(crate) struct TaskListItem {
     note_title: String,
     section_label: Option<String>,
     text: String,
+    due_date: Option<String>,
     completed: bool,
     hidden: bool,
     note_hidden: bool,
@@ -672,6 +673,28 @@ pub(crate) async fn delete_task<R: tauri::Runtime>(
 ) -> Result<TaskListGroupPatch, String> {
     on_app_worker(app, move |state| {
         let patch = delete_task_impl(state, task_id, filter, show_hidden)?;
+        emit_task_note_changed(state, &patch);
+        Ok(patch)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn set_task_due_date<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    task_id: String,
+    due_date: Option<String>,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    on_app_worker(app, move |state| {
+        let patch = task_commands::set_task_due_date_with_view(
+            state,
+            task_id,
+            due_date,
+            filter,
+            show_hidden,
+        )?;
         emit_task_note_changed(state, &patch);
         Ok(patch)
     })
@@ -1792,6 +1815,7 @@ mod tests {
             note_title: "Title".to_string(),
             section_label: Some("Tasks".to_string()),
             text: "Ship beta".to_string(),
+            due_date: None,
             completed: false,
             hidden: true,
             note_hidden: false,
@@ -1833,6 +1857,7 @@ mod tests {
                 "noteTitle": "Title",
                 "sectionLabel": "Tasks",
                 "text": "Ship beta",
+                "dueDate": null,
                 "completed": false,
                 "hidden": true,
                 "noteHidden": false,

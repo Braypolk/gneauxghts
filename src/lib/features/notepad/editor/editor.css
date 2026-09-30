@@ -384,3 +384,18 @@
 .notepad-editor-shell .gn-editor-root .notepad-block-extent-indicator[data-show='true'] {
   opacity: 0.72;
 }
+
+.cm-gn-date-chip, .cm-gn-date-add {
+  font: inherit;
+  font-size: 0.78em;
+  border: 1px solid var(--border);
+  border-radius: 0.4rem;
+  background: var(--muted);
+  color: var(--muted-foreground);
+  padding: 0.05rem 0.35rem;
+  cursor: pointer;
+  vertical-align: baseline;
+}
+.cm-gn-date-chip:focus-visible, .cm-gn-date-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.cm-gn-date-add { margin-left: 0.5rem; opacity: 0; }
+.cm-line:hover .cm-gn-date-add, .cm-gn-date-add:focus-visible { opacity: 1; }

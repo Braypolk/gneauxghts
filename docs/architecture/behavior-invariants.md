@@ -197,6 +197,35 @@ uses ordinary persistence. It never writes behind the editor. If duplicate
 task text makes the intended task ambiguous, the mutation fails instead of
 guessing from stale positions.
 
+### Task deadlines are authored calendar dates
+
+A valid `@due(YYYY-MM-DD)` on a checkbox marker line is the task's explicit
+calendar deadline. Each nested task owns its own annotation. The first valid
+annotation wins; an explicit date edit consolidates valid duplicates, and removal
+clears only supported valid annotations. Invalid, escaped, code, and link text
+remain recoverable. Code examples are not projected as tasks. Deadline changes
+use the existing canonical task/open-document boundaries and retain task identity
+across date edits, external reconciliation, and note moves. Projection recognition
+timestamps never become authored creation dates.
+
+Due today becomes overdue on the next local calendar day. Completed tasks never
+appear in the actionable overdue filter. Date filters intersect the existing
+completion/hidden/search view; default note grouping/order remains unchanged.
+Relative labels and membership refresh at midnight and on resume without a
+Markdown mutation. Calendar day addition does not mean adding 24 elapsed hours.
+
+### Date/time text stays fixed and editable
+
+Date/time slash insertions resolve at invocation in the system locale/timezone
+and replace only the standalone invoked token as one undo step. Code, links and
+ordinary slash-containing words/paths do not invoke them. Chips are a presentation
+of current-locale date/time text, with no hidden authoring metadata or reactive
+clock value. Clicking a chip opens a typed/calendar picker; Apply edits only that
+text range. Plain date text in a task never becomes a deadline. Picking a wall-clock
+time during a daylight-saving gap does not silently reschedule the chosen text.
+Cancelling a picker edits nothing. If the editor document changes while its picker
+is open, Apply refuses the stale target and asks the user to reopen it.
+
 ### Save completion has a consistency boundary
 
 A successful save means canonical bytes and the required in-memory note

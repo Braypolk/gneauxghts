@@ -9,7 +9,7 @@ import {
 } from '$lib/features/notepad/document/documentState';
 import type {
   OpenTaskDocumentMutationHandler,
-  TaskDocumentMutationKind
+  TaskMutationPayload
 } from './taskMutationGateway';
 
 interface PreparedTaskDocumentMutation {
@@ -36,7 +36,7 @@ export interface OpenDocumentTaskMutationDeps {
   saveDocument: (document: NoteDraftState) => Promise<void>;
   prepare?: (request: {
     taskId: string;
-    mutationKind: TaskDocumentMutationKind;
+    mutationKind: TaskMutationPayload;
     workingMarkdown: string;
     bodyHash: string;
   }) => Promise<PreparedTaskDocumentMutation>;
@@ -54,7 +54,7 @@ export async function sha256Text(value: string): Promise<string> {
 
 function defaultPrepare(request: {
   taskId: string;
-  mutationKind: TaskDocumentMutationKind;
+  mutationKind: TaskMutationPayload;
   workingMarkdown: string;
   bodyHash: string;
 }) {
@@ -88,7 +88,7 @@ export function createOpenDocumentTaskMutationHandler(
   const hashMarkdown = deps.hashMarkdown ?? sha256Text;
   const maxPrepareAttempts = Math.max(1, deps.maxPrepareAttempts ?? 2);
 
-  return async ({ kind, taskId, noteId, notePath }) => {
+  return async ({ kind, taskId, noteId, notePath, dueDate }) => {
     let document = deps.findReferencedDocument(noteId, notePath);
     if (!document || documentHasCleanBuffer(document)) {
       return { status: 'use-canonical-command' };
@@ -107,7 +107,7 @@ export function createOpenDocumentTaskMutationHandler(
       const bodyHash = await hashMarkdown(workingMarkdown);
       const prepared = await prepare({
         taskId,
-        mutationKind: kind,
+        mutationKind: kind === 'setDueDate' ? { setDueDate: { dueDate: dueDate ?? null } } : kind,
         workingMarkdown,
         bodyHash
       });

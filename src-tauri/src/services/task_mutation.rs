@@ -24,11 +24,12 @@ use std::{
     path::{Path, PathBuf},
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
 pub(crate) enum TaskMutationKind {
     Toggle,
     Delete,
+    SetDueDate { due_date: Option<String> },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -78,6 +79,12 @@ pub(crate) fn transform_task_document(
     match mutation_kind {
         TaskMutationKind::Toggle => toggle_task_in_markdown(markdown, line_number, task_text),
         TaskMutationKind::Delete => delete_task_in_markdown(markdown, line_number, task_text),
+        TaskMutationKind::SetDueDate { due_date } => super::task_dates::set_due_date_in_markdown(
+            markdown,
+            line_number,
+            task_text,
+            due_date.as_deref(),
+        ),
     }
 }
 
@@ -331,7 +338,7 @@ mod tests {
     fn pure_transform_matches_legacy_toggle_and_delete_behavior() {
         let markdown = "# Tasks\n\n- [ ] Ship it\n- [ ] Keep";
         for kind in [TaskMutationKind::Toggle, TaskMutationKind::Delete] {
-            let actual = transform_task_document(kind, markdown, 3, "Ship it").unwrap();
+            let actual = transform_task_document(kind.clone(), markdown, 3, "Ship it").unwrap();
             let expected = match kind {
                 TaskMutationKind::Toggle => {
                     toggle_task_in_markdown(markdown, 3, "Ship it").unwrap()
@@ -339,6 +346,7 @@ mod tests {
                 TaskMutationKind::Delete => {
                     delete_task_in_markdown(markdown, 3, "Ship it").unwrap()
                 }
+                TaskMutationKind::SetDueDate { .. } => unreachable!(),
             };
             assert_eq!(actual, expected);
         }
@@ -434,6 +442,42 @@ mod tests {
             .unwrap()
             .expect("task remains");
         assert!(!unchanged.completed);
+    }
+
+    #[test]
+    fn due_preparation_and_commit_share_the_authoritative_transform() {
+        let working = "- [ ] Ship it\n  - [ ] Child @due(2026-10-01)\n";
+        let prepared = prepare_loaded_task(
+            target(),
+            TaskMutationKind::SetDueDate {
+                due_date: Some("2026-10-02".into()),
+            },
+            working,
+            &task_document_hash(working),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.updated_editor_markdown,
+            "- [ ] Ship it @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
+        );
+        let sink = FakeSink::new(working, None);
+        commit_loaded_task(
+            &sink,
+            target(),
+            TaskMutationKind::SetDueDate {
+                due_date: Some("2026-10-02".into()),
+            },
+        )
+        .unwrap();
+        assert_eq!(*sink.canonical.borrow(), prepared.updated_editor_markdown);
+        assert_eq!(sink.writes.get(), 1);
+        assert_eq!(
+            serde_json::to_value(TaskMutationKind::SetDueDate {
+                due_date: Some("2026-10-02".into())
+            })
+            .unwrap(),
+            serde_json::json!({"setDueDate": {"dueDate": "2026-10-02"}})
+        );
     }
 
     #[test]

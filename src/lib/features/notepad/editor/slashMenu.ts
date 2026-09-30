@@ -1,4 +1,7 @@
-import { Transaction } from '@codemirror/state';
+import { isolateHistory } from '@codemirror/commands';
+import { dateInsertGroups, dueMenuGroup, formatDateInsertion, slashTokenAtSelection, taskMarkerPattern } from './dateCommands';
+import { openTaskDueDatePicker } from './taskDateExtension';
+import { isDateTimePickerOpen } from '$lib/features/tasks/dateTimePicker';
 import { EditorView } from '@codemirror/view';
 import {
   applyBlockTypeSelection,
@@ -71,62 +74,28 @@ export interface SlashMenuAPI {
   hide: () => void;
 }
 
-export function getSlashMenuState(filter = ''): SlashMenuModel {
-  return buildEditorMenuModel(slashMenuGroups, filter);
+export function getSlashMenuState(filter = '', block = true, task = false, insert = true): SlashMenuModel {
+  return buildEditorMenuModel([...(block ? slashMenuGroups : []), ...(insert ? dateInsertGroups : []), ...(task ? [dueMenuGroup] : [])], filter);
 }
 
-function getSelectionLine(view: EditorView) {
-  const selection = view.state.selection.main;
-  if (!selection.empty) {
-    return null;
-  }
-  return view.state.doc.lineAt(selection.head);
-}
-
-function isSelectionAtEndOfLine(view: EditorView) {
-  const line = getSelectionLine(view);
-  if (!line) {
-    return false;
-  }
-  return view.state.selection.main.head === line.to;
-}
-
-function isSlashTriggerLine(view: EditorView): boolean {
-  const line = getSelectionLine(view);
-  if (!line) {
-    return false;
-  }
-  return line.text.startsWith('/');
-}
-
-function deleteSlashTriggerText(view: EditorView): void {
-  const line = getSelectionLine(view);
-  if (!line || !isSelectionAtEndOfLine(view)) {
+export function runSlashMenuSelection(view: EditorView, optionId: string) {
+  const token = slashTokenAtSelection(view.state);
+  if (dateInsertGroups[0].items.some((item) => item.id === optionId)) {
+    if (!token) return;
+    const insert = formatDateInsertion(optionId);
+    view.dispatch({ changes: { from: token.from, to: token.to, insert }, selection: { anchor: token.from + insert.length }, userEvent: 'input', annotations: isolateHistory.of('full') });
+    view.focus();
     return;
   }
-
-  view.dispatch(
-    view.state.update({
-      changes: { from: line.from, to: line.to, insert: '' },
-      selection: { anchor: line.from }
-    })
-  );
-}
-
-function runSlashMenuSelection(view: EditorView, optionId: string) {
-  if (!slashMenuOptionIds.has(optionId)) {
+  if (optionId === 'due') {
+    openTaskDueDatePicker(view, view.state.selection.main.head, token);
     return;
   }
-
-  if (isSlashTriggerLine(view)) {
-    deleteSlashTriggerText(view);
+  if (!slashMenuOptionIds.has(optionId)) return;
+  if (token?.block) {
+    view.dispatch({ changes: { from: token.from, to: token.to, insert: '' }, selection: { anchor: token.from } });
   }
-
   applyBlockTypeSelection(view, optionId);
-}
-
-function getCurrentText(view: EditorView) {
-  return getSelectionLine(view)?.text ?? null;
 }
 
 const slashControllers = new WeakMap<EditorView, SlashMenuController>();
@@ -138,6 +107,7 @@ class SlashMenuController {
   #programmaticPos: number | null = null;
   #menuState: SlashMenuModel = getSlashMenuState();
   #visible = false;
+  #dismissedFrom: number | null = null;
 
   constructor(view: EditorView) {
     this.#view = view;
@@ -148,7 +118,10 @@ class SlashMenuController {
   sync(view: EditorView) {
     const shouldShow = this.#shouldShow(view);
     if (!shouldShow || this.#menuState.size === 0) {
-      this.hide();
+      this.#programmaticPos = null;
+      this.#visible = false;
+      slashMenuFloatingReferenceByView.delete(this.#view);
+      emitSlashMenuUpdate(this.#view, { open: false });
       return;
     }
 
@@ -156,6 +129,7 @@ class SlashMenuController {
   }
 
   show(pos: number) {
+    this.#dismissedFrom = null;
     this.#programmaticPos = pos;
     this.#filter = '';
     this.#menuState = getSlashMenuState('');
@@ -164,6 +138,7 @@ class SlashMenuController {
   }
 
   hide() {
+    this.#dismissedFrom = slashTokenAtSelection(this.#view.state)?.from ?? null;
     this.#programmaticPos = null;
     this.#visible = false;
     slashMenuFloatingReferenceByView.delete(this.#view);
@@ -206,10 +181,13 @@ class SlashMenuController {
       return;
     }
 
-    runSlashMenuSelection(this.#view, item.id);
-    if (hideMenu) {
-      this.hide();
+    const programmaticPos = this.#programmaticPos;
+    if (hideMenu) this.hide();
+    if (item.id === 'due' && programmaticPos !== null) {
+      openTaskDueDatePicker(this.#view, programmaticPos);
+      return;
     }
+    runSlashMenuSelection(this.#view, item.id);
   }
 
   handleKeydown(event: KeyboardEvent) {
@@ -256,10 +234,7 @@ class SlashMenuController {
     if (event.key === 'Enter') {
       consumeMenuKeyEvent(event);
       const index = this.#hoverIndex;
-      this.hide();
-      queueMicrotask(() => {
-        this.runAtIndex(index, { hideMenu: false });
-      });
+      this.runAtIndex(index);
     }
   }
 
@@ -279,7 +254,7 @@ class SlashMenuController {
   }
 
   #shouldShow(view: EditorView) {
-    if (!view.hasFocus) {
+    if (!view.hasFocus || isDateTimePickerOpen()) {
       return false;
     }
 
@@ -287,22 +262,20 @@ class SlashMenuController {
       const maxPos = view.state.doc.length;
       this.#programmaticPos = Math.max(0, Math.min(this.#programmaticPos, maxPos));
       this.#filter = '';
-      this.#menuState = getSlashMenuState('');
+      this.#menuState = getSlashMenuState('', true, taskMarkerPattern.test(view.state.doc.lineAt(this.#programmaticPos).text), false);
       this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
       return true;
     }
 
-    if (!isSelectionAtEndOfLine(view)) {
+    const token = slashTokenAtSelection(view.state);
+    if (!token) {
+      this.#dismissedFrom = null;
       return false;
     }
-
-    const currentText = getCurrentText(view);
-    if (currentText == null || !currentText.startsWith('/')) {
-      return false;
-    }
-
-    this.#filter = currentText.slice(1);
-    this.#menuState = getSlashMenuState(this.#filter);
+    if (this.#dismissedFrom === token.from) return false;
+    this.#dismissedFrom = null;
+    this.#filter = token.filter;
+    this.#menuState = getSlashMenuState(this.#filter, token.block, token.task);
     this.#hoverIndex = Math.min(this.#hoverIndex, Math.max(0, this.#menuState.size - 1));
     return true;
   }
@@ -350,7 +323,7 @@ export function createSlashMenuPlugin() {
             return false;
           }
           queueMicrotask(() => {
-            if (!view.hasFocus) {
+            if (!view.hasFocus || isDateTimePickerOpen()) {
               controller.hide();
             }
           });

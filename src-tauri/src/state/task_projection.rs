@@ -132,7 +132,9 @@ fn collapse_whitespace(value: &str) -> String {
 }
 
 fn normalize_text(value: &str) -> String {
-    collapse_whitespace(value).to_lowercase()
+    let description = crate::services::task_dates::set_task_line_due_date(value, None)
+        .unwrap_or_else(|_| value.to_string());
+    collapse_whitespace(&description).to_lowercase()
 }
 
 fn generate_task_id(note_id: &str) -> String {
@@ -835,6 +837,30 @@ mod tests {
 
         assert_eq!(alpha_id, alpha_after, "alpha id should survive reorder");
         assert_eq!(beta_id, beta_after, "beta id should survive reorder");
+    }
+
+    #[test]
+    fn deadline_edits_reorder_external_refresh_and_moves_preserve_task_identity() {
+        let _guard = lock_test_env();
+        let _app_data = setup_app_data("task-projection-dates");
+        let path = PathBuf::from("/notes/Project.md");
+        let first = build_indexed_note(&path, "# Project\n\n- [ ] Alpha @due(2026-10-01)\n  - [ ] Child @due(2026-10-02)\n- [ ] Beta\n", 100);
+        let initial = reconcile_note_tasks(&path, Some(&first), &first.note_id, 100).unwrap();
+        let alpha_id = initial.tasks[0].task_id.clone();
+        let child_id = initial.tasks[1].task_id.clone();
+        let moved = PathBuf::from("/notes/Moved.md");
+        let mut next = build_indexed_note(&moved, "# Project\n\n- [ ] Beta\n- [ ] Alpha @due(2026-10-03)\n  - [ ] Child @due(2026-10-02)\n", 200);
+        next.note_id = first.note_id.clone();
+        let after = reconcile_note_tasks(&moved, Some(&next), &next.note_id, 200).unwrap();
+        assert_eq!(after.tasks[1].task_id, alpha_id);
+        assert_eq!(after.tasks[2].task_id, child_id);
+        assert_eq!(
+            crate::services::task_dates::task_due_date(&after.tasks[1].text).as_deref(),
+            Some("2026-10-03")
+        );
+        let reloaded = load_task_by_id(&alpha_id).unwrap().unwrap();
+        assert_eq!(reloaded.note_path, moved.to_string_lossy());
+        assert_eq!(reloaded.text, "Alpha @due(2026-10-03)");
     }
 
     #[test]

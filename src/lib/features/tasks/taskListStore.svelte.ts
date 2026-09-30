@@ -1,3 +1,4 @@
+import { localCalendarDate, matchesTaskDateFilter, taskDueDate, subscribeCalendarDay, type TaskDateFilter } from './taskDates';
 import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
 import { storePendingTaskTarget } from '$lib/taskNavigation';
@@ -16,6 +17,7 @@ export interface TaskItem {
   noteTitle: string;
   sectionLabel: string | null;
   text: string;
+  dueDate?: string | null;
   completed: boolean;
   hidden: boolean;
   noteHidden: boolean;
@@ -53,6 +55,17 @@ const TASK_FILTER_STORAGE_KEY = 'gneauxghts.master-task-filter';
 
 export class TaskListStore {
   filter = $state<TaskFilter>('all');
+  dateFilter = $state<TaskDateFilter>('all');
+  dueDateSort = $state(false);
+  today = $state(localCalendarDate());
+
+  get dateGroups(): TaskGroup[] {
+    return this.groups.map((group) => {
+      const displayTasks = group.displayTasks.filter((task) => matchesTaskDateFilter(task.text, task.completed, this.dateFilter, this.today));
+      if (this.dueDateSort) displayTasks.sort((a, b) => (taskDueDate(a.text) ?? '99999').localeCompare(taskDueDate(b.text) ?? '99999'));
+      return { ...group, displayTasks, displayCount: displayTasks.length };
+    }).filter((group) => group.displayCount > 0);
+  }
   showHidden = $state(false);
   groups = $state<TaskGroup[]>([]);
   togglingTaskKeys = $state<Record<string, boolean>>({});
@@ -262,6 +275,29 @@ export class TaskListStore {
     }
   }
 
+  async setDueDate(task: TaskItem, dueDate: string | null) {
+    if (this.mutatingNoteIds[task.noteId]) throw new Error('This note is still saving. Try again.');
+    this.#setNoteMutating(task.noteId, true);
+    try {
+      const routed = await routeTaskDocumentMutation({ kind: 'setDueDate', taskId: task.taskId, noteId: task.noteId, notePath: task.notePath, dueDate });
+      if (routed.status === 'applied-to-open-document') {
+        await this.refreshGroup(task.noteId);
+        return;
+      }
+      const patch = await invoke<TaskListGroupPatch>('set_task_due_date', { taskId: task.taskId, dueDate, ...this.#currentViewParams() });
+      if (patch.commitWarning) {
+        void this.load({ background: true });
+        this.errorMessage = 'Due date saved; the task list is waiting for synchronization.';
+      } else {
+        this.#applyGroupPatch(patch);
+        this.errorMessage = '';
+      }
+    } catch (error) {
+      this.errorMessage = 'Unable to update the due date.';
+      throw error;
+    } finally { this.#setNoteMutating(task.noteId, false); }
+  }
+
   async setNoteHidden(group: TaskGroup, hidden: boolean) {
     if (this.mutatingNoteIds[group.noteId]) return;
     this.#setNoteMutating(group.noteId, true);
@@ -373,6 +409,7 @@ export class TaskListStore {
   }
 
   initialize() {
+    const disposeDay = subscribeCalendarDay((today) => { this.today = today; });
     const storedFilter = this.#readStoredTaskFilter();
     if (storedFilter) {
       this.filter = storedFilter;
@@ -401,6 +438,7 @@ export class TaskListStore {
     void this.load();
 
     return () => {
+      disposeDay();
       this.#disposeNoteSaved?.();
       this.#disposeVaultNoteChanged?.();
       this.#disposeVaultChanged?.();

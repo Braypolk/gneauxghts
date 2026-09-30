@@ -36,6 +36,7 @@ import { createExternalLinkClickExtension } from './externalLinkExtension';
 import { createExternalSearchHighlightExtension } from './searchHighlightExtension';
 import { createBlockHandleExtension } from './blockHandleExtension';
 import { createViewStateTrackingExtension } from './viewStateTrackingExtension';
+import { createTaskDateExtension } from './taskDateExtension';
 import { createCursorExtension } from './cursorExtension';
 
 const unavailableImagesConfig: ImagesConfig = {
@@ -103,6 +104,7 @@ export function createPaneExtensions(
     createExternalSearchHighlightExtension(),
     createLayoutTheme(),
     createCursorExtension(),
+    createTaskDateExtension(),
     dropCursor(),
     createOverlayScrollMargins(editorRoot),
     placeholder('Start typing here.'),

@@ -339,6 +339,7 @@ pub fn run() {
             commands::set_note_order,
             commands::set_task_hidden,
             commands::toggle_task,
+            commands::set_task_due_date,
             commands::delete_task,
             commands::task_commands::prepare_task_document_mutation,
             commands::search_commands::search_notes_hybrid,

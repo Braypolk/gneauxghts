@@ -1308,11 +1308,14 @@ pub(crate) fn delete_task_in_markdown(
 /// identity anchor when duplicate task text exists.
 pub(crate) fn find_unambiguous_task_line(markdown: &str, task_text: &str) -> Result<usize, String> {
     let normalized_task_text = normalize_search_text(task_text);
+    let marker_lines = crate::services::task_dates::task_marker_lines(markdown);
     let matching_lines = markdown
         .replace("\r\n", "\n")
         .lines()
         .enumerate()
-        .filter(|(_, line)| task_line_matches(line, &normalized_task_text))
+        .filter(|(index, line)| {
+            marker_lines.contains(&(index + 1)) && task_line_matches(line, &normalized_task_text)
+        })
         .map(|(index, _)| index + 1)
         .collect::<Vec<_>>();
 
@@ -1599,6 +1602,7 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
     let mut section_label = None;
     let mut indent_levels = Vec::new();
     let mut tasks = Vec::new();
+    let marker_lines = crate::services::task_dates::task_marker_lines(&normalized);
 
     for (line_index, line) in lines.iter().enumerate() {
         let trimmed = line.trim();
@@ -1616,6 +1620,9 @@ fn build_tasks(markdown: &str) -> Vec<IndexedTask> {
             continue;
         }
 
+        if !marker_lines.contains(&(line_index + 1)) {
+            continue;
+        }
         if let Some((completed, text, indentation_width)) = parse_task_line(line) {
             let file_line = line_index + 1;
             tasks.push(IndexedTask {
@@ -1700,29 +1707,17 @@ fn parse_heading(line: &str) -> Option<String> {
     Some(heading.to_string())
 }
 
-pub(crate) fn parse_task_line(line: &str) -> Option<(bool, String, usize)> {
-    let indentation_width = indentation_width(line);
-    let trimmed = line.trim_start();
-    let rest = trimmed
-        .strip_prefix("* ")
-        .or_else(|| trimmed.strip_prefix("- "))?;
-    let (completed, text) = if let Some(text) = rest.strip_prefix("[ ]") {
-        (false, text)
-    } else if let Some(text) = rest
-        .strip_prefix("[x]")
-        .or_else(|| rest.strip_prefix("[X]"))
-    {
-        (true, text)
-    } else {
-        return None;
-    };
+static TASK_LINE: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
+    regex::Regex::new(r"^\s*(?:[-+*]|\d+[.)])\s+\[([ xX])\](?:\s+|$)(.*)$").unwrap()
+});
 
-    let text = collapse_whitespace(text);
+pub(crate) fn parse_task_line(line: &str) -> Option<(bool, String, usize)> {
+    let captures = TASK_LINE.captures(line.trim_end_matches(['\r', '\n']))?;
+    let text = collapse_whitespace(&captures[2]);
     if text.is_empty() {
         return None;
     }
-
-    Some((completed, text, indentation_width))
+    Some((&captures[1] != " ", text, indentation_width(line)))
 }
 
 fn indentation_width(line: &str) -> usize {
@@ -1771,29 +1766,11 @@ fn task_line_matches(line: &str, normalized_task_text: &str) -> bool {
 }
 
 fn toggle_task_line(line: &mut String) -> Option<()> {
-    let indentation_len = line.len() - line.trim_start().len();
-    let indentation = &line[..indentation_len];
-    let trimmed = &line[indentation_len..];
-    let (bullet, rest) = if let Some(rest) = trimmed.strip_prefix("* ") {
-        ("* ", rest)
-    } else if let Some(rest) = trimmed.strip_prefix("- ") {
-        ("- ", rest)
-    } else {
-        return None;
-    };
-
-    let toggled_rest = if let Some(rest) = rest.strip_prefix("[ ]") {
-        format!("[x]{rest}")
-    } else if let Some(rest) = rest
-        .strip_prefix("[x]")
-        .or_else(|| rest.strip_prefix("[X]"))
-    {
-        format!("[ ]{rest}")
-    } else {
-        return None;
-    };
-
-    *line = format!("{indentation}{bullet}{toggled_rest}");
+    let captures = TASK_LINE.captures(line)?;
+    let marker = captures.get(1)?;
+    let range = marker.range();
+    let replacement = if marker.as_str() == " " { "x" } else { " " };
+    line.replace_range(range, replacement);
     Some(())
 }
 
@@ -1806,6 +1783,19 @@ mod tests {
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
     use std::{collections::HashMap, fs};
+
+    #[test]
+    fn every_projected_marker_can_be_toggled_without_rewriting_its_prefix() {
+        for prefix in ["- ", "* ", "+ ", "1. ", "2) ", "  +   ", "\t3.\t"] {
+            let original = format!("{prefix}[ ] Ship @due(2026-10-02)  ");
+            let toggled = toggle_task_in_markdown(&original, 1, "Ship @due(2026-10-02)").unwrap();
+            assert_eq!(toggled, original.replacen("[ ]", "[x]", 1));
+            assert_eq!(
+                toggle_task_in_markdown(&toggled, 1, "Ship @due(2026-10-02)").unwrap(),
+                original
+            );
+        }
+    }
 
     // AppState resolves process-wide startup preferences even when a test only
     // exercises indexing. Keep every path disposable and hold the environment

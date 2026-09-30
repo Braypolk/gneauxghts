@@ -38,6 +38,9 @@ importers:
       '@floating-ui/dom':
         specifier: ^1.7.6
         version: 1.7.6
+      '@internationalized/date':
+        specifier: ^3.12.3
+        version: 3.12.3
       '@lezer/common':
         specifier: ^1.5.2
         version: 1.5.2

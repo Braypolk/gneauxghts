@@ -1,7 +1,8 @@
 <script lang="ts">
   import { afterNavigate } from '$app/navigation';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import {
+    CalendarDays,
     CheckCircle2,
     ChevronDown,
     ChevronRight,
@@ -20,6 +21,8 @@
     type TaskGroup,
     type TaskItem
   } from '$lib/features/tasks/taskListStore.svelte';
+  import { taskDescription, taskDueDate, formatDueDate } from '$lib/features/tasks/taskDates';
+  import { openDateTimePicker } from '$lib/features/tasks/dateTimePicker';
   import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import SearchDock from '$lib/ui/search/SearchDock.svelte';
   import { textMatchesSearch } from '$lib/ui/search/searchMatch';
@@ -38,9 +41,9 @@
   const normalizedSearchQuery = $derived(searchQuery.trim());
   const searchOptions = $derived({ matchCase, matchWholeWord });
   const visibleTaskGroups = $derived.by(() => {
-    if (normalizedSearchQuery === '') return taskList.groups;
+    if (normalizedSearchQuery === '') return taskList.dateGroups;
 
-    return taskList.groups
+    return taskList.dateGroups
       .map((group): TaskGroup | null => {
         const noteMatches = [group.noteTitle, group.fileName].some((value) =>
           textMatchesSearch(value, normalizedSearchQuery, searchOptions)
@@ -73,6 +76,12 @@
       textMatchesSearch(value, query, searchOptions)
     );
   }
+
+  let closeDatePicker: (() => void) | null = null;
+  function editDueDate(task: TaskItem) {
+    closeDatePicker = openDateTimePicker({ mode: 'due', title: taskDueDate(task.text) ? 'Edit due date' : 'Add due date', date: taskDueDate(task.text), onCommit: ({ date }) => taskList.setDueDate(task, date) });
+  }
+  onDestroy(() => closeDatePicker?.());
 
   function taskIndentStyle(depth: number) {
     return `--task-indent: ${Math.min(depth, 6)};`;
@@ -136,6 +145,15 @@
         <div class="flex flex-col gap-3 sm:gap-5">
           <div class="space-y-2">
             <p class="text-sm text-muted-foreground">{taskCountLabel}</p>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+            <label class="flex items-center gap-2">Due date
+              <select aria-label="Due date filter" bind:value={taskList.dateFilter} class="rounded-lg border border-border bg-background px-2 py-1 text-foreground">
+                <option value="all">All dates</option><option value="overdue">Overdue</option><option value="today">Today</option><option value="upcoming">Upcoming</option><option value="undated">No due date</option>
+              </select>
+            </label>
+            <label class="flex items-center gap-2"><input type="checkbox" bind:checked={taskList.dueDateSort} />Sort by due date</label>
           </div>
 
           <div class="flex items-center gap-2">
@@ -344,8 +362,11 @@
                                   task.completed ? 'text-muted-foreground line-through' : task.hidden ? 'text-muted-foreground' : 'text-foreground'
                                 }`}
                               >
-                                {task.text}
+                                {taskDescription(task.text)}
                               </span>
+                              {#if taskDueDate(task.text)}
+                                <button type="button" class="mt-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onclick={() => editDueDate(task)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Edit due date: ${taskDueDate(task.text)}`} title={taskDueDate(task.text) ?? ''}>{formatDueDate(taskDueDate(task.text)!, taskList.today, task.completed)}</button>
+                              {/if}
                               {#if task.sectionLabel}
                                 <span class="mt-0.5 block text-pretty text-[11px] font-medium text-muted-foreground">
                                   {task.sectionLabel}
@@ -354,6 +375,9 @@
                             </span>
 
                             <div class="flex shrink-0 items-center self-start sm:self-auto">
+                              {#if !taskDueDate(task.text)}
+                                <button type="button" class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent disabled:opacity-45 sm:h-auto sm:w-auto sm:px-2.5 sm:py-1.5" onclick={() => editDueDate(task)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Add due date: ${task.text}`} title="Add due date"><CalendarDays class="h-4 w-4" /></button>
+                              {/if}
                               <button
                                 type="button"
                                 class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors touch-manipulation hover:bg-accent hover:text-accent-foreground sm:h-auto sm:w-auto sm:gap-1 sm:px-2.5 sm:py-1.5 sm:text-xs sm:font-medium"

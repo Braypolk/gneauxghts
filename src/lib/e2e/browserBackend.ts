@@ -1,3 +1,5 @@
+import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
+
 type NoteFixture = {
   tags?: string[];
   noteId: string;
@@ -534,6 +536,33 @@ export function installBrowserE2eBackend() {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
 
+    if (command === 'list_tasks' || command === 'get_task_group' || command === 'set_task_due_date') {
+      let changedNoteId: string | null = null;
+      if (command === 'set_task_due_date') {
+        const [noteId, lineNumber] = String(args.taskId).split(':line:');
+        const note = notes.get(noteId);
+        if (!note) throw new Error('Task not found');
+        const lines = note.markdown.split('\n');
+        const index = Number(lineNumber) - 1;
+        if (!/^\s*[-*+]\s+\[[ xX]\]/.test(lines[index])) throw new Error('Task changed');
+        lines[index] = setTaskLineDueDate(lines[index], args.dueDate === null ? null : String(args.dueDate));
+        note.markdown = lines.join('\n');
+        changedNoteId = noteId;
+      }
+      const groups = [...notes.values()].map((note) => {
+        const displayTasks = note.markdown.split('\n').flatMap((line, index) => {
+          const match = /^(\s*)[-*+]\s+\[([ xX])\]\s+(.*)$/.exec(line);
+          if (!match) return [];
+          const completed = match[2].toLowerCase() === 'x';
+          if ((args.filter === 'open' && completed) || (args.filter === 'completed' && !completed)) return [];
+          return [{ noteId: note.noteId, notePath: note.path, taskId: `${note.noteId}:line:${index + 1}`, taskKey: `${note.noteId}:line:${index + 1}`, noteTitle: note.title, fileName: note.path.split('/').at(-1), text: match[3], dueDate: taskDueDate(match[3]), completed, depth: Math.floor(match[1].length / 2), hidden: false, noteHidden: false, noteCollapsed: false, sectionLabel: null, lineNumber: index + 1, editorLineNumber: index + 1, createdAtMillis: 0, updatedAtMillis: 0 }];
+        });
+        return { noteId: note.noteId, notePath: note.path, noteTitle: note.title, fileName: note.path.split('/').at(-1), noteHidden: false, noteCollapsed: false, displayTasks, displayCount: displayTasks.length, hiddenCount: 0, visibleCount: displayTasks.length };
+      }).filter((group) => group.displayCount > 0);
+      if (command === 'list_tasks') return groups;
+      const noteId = changedNoteId ?? String(args.noteId);
+      return { noteId, notePath: notes.get(noteId)?.path, group: groups.find((group) => group.noteId === noteId) ?? null };
+    }
     if (command === 'bootstrap_app') {
       return {
         vault: vaultInfo(),

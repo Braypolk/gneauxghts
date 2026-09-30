@@ -10,6 +10,8 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 - Surface recent notes and recent tasks directly from the search UI.
 - Build a master task list from Markdown checkboxes like `- [ ]` and `- [x]`.
 - Toggle task completion from the list view and jump back to the source note.
+- Insert fixed local date/time text with slash commands, edit date/time chips,
+  and set portable [task deadlines](docs/features/dates.md).
 - Hide or reorder task groups by note.
 - Blend semantic matches into keyword search.
 - Chat with a vault-aware note agent using hosted OpenAI or a local model

@@ -1,10 +1,11 @@
-export type TaskDocumentMutationKind = 'toggle' | 'delete';
+export type TaskDocumentMutationKind = 'toggle' | 'delete' | 'setDueDate';
 
 export interface TaskDocumentMutationRequest {
   kind: TaskDocumentMutationKind;
   taskId: string;
   noteId: string;
   notePath: string;
+  dueDate?: string | null;
 }
 
 export type TaskDocumentMutationResult =
@@ -41,3 +42,5 @@ export async function routeTaskDocumentMutation(
     ? openDocumentHandler(request)
     : { status: 'use-canonical-command' };
 }
+
+export type TaskMutationPayload = 'toggle' | 'delete' | { setDueDate: { dueDate: string | null } };

@@ -189,3 +189,18 @@ describe('open document task mutation', () => {
     ).rejects.toThrow('Resolve the note’s external-change conflict');
   });
 });
+
+describe('due dates through the open-document boundary', () => {
+  it('forwards deadline edits and removal as typed mutation payloads before ordinary saves', async () => {
+    for (const dueDate of ['2026-10-02', null]) {
+      const document = persistedDocument();
+      updateDocumentMarkdown(document, '- [ ] Ship it\nLocal work');
+      const prepare = vi.fn(async () => ({ taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md', baseHash: 'hash', updatedEditorMarkdown: dueDate ? `- [ ] Ship it @due(${dueDate})\nLocal work` : '- [ ] Ship it\nLocal work' }));
+      const saveDocument = vi.fn(async () => undefined);
+      const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown: async (_, markdown) => { updateDocumentMarkdown(document, markdown); }, saveDocument, prepare, hashMarkdown: async () => 'hash' });
+      await expect(handler({ kind: 'setDueDate', taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md', dueDate })).resolves.toEqual({ status: 'applied-to-open-document' });
+      expect(prepare).toHaveBeenCalledWith(expect.objectContaining({ mutationKind: { setDueDate: { dueDate } }, workingMarkdown: '- [ ] Ship it\nLocal work' }));
+      expect(saveDocument).toHaveBeenCalledWith(document);
+    }
+  });
+});

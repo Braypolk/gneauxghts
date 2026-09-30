@@ -188,6 +188,7 @@ fn make_task_list_item(
         file_name: record.file_name,
         note_title: record.note_title,
         section_label: record.section_label,
+        due_date: crate::services::task_dates::task_due_date(&record.text),
         text: record.text,
         completed: record.completed,
         hidden: record.hidden,
@@ -389,6 +390,22 @@ pub(crate) fn delete_task_with_view(
         state,
         task_id,
         TaskMutationKind::Delete,
+        filter,
+        show_hidden,
+    )
+}
+
+pub(crate) fn set_task_due_date_with_view(
+    state: &AppState,
+    task_id: String,
+    due_date: Option<String>,
+    filter: TaskFilter,
+    show_hidden: bool,
+) -> Result<TaskListGroupPatch, String> {
+    mutate_task_with_view(
+        state,
+        task_id,
+        TaskMutationKind::SetDueDate { due_date },
         filter,
         show_hidden,
     )
