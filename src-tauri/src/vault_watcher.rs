@@ -524,7 +524,12 @@ fn flush_dirty_batch(
             .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
         if let Some(chat_id) = owner {
             if let Some(chat) = app_handle.try_state::<ChatService>() {
-                let _ = chat.mark_projection_detached(&chat_id);
+                // A queued event can outlive self-save suppression or observe
+                // an in-flight publication. Compare current bytes with the
+                // committed chat receipt after that publication settles.
+                if !chat.mark_projection_detached_if_needed(&chat_id)? {
+                    continue;
+                }
             }
             let kind = crate::note::document_kind(&markdown);
             state.events.vault_document_changed(
@@ -550,7 +555,12 @@ fn flush_dirty_batch(
             .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
         if let Some(chat_id) = owner {
             if let Some(chat) = app_handle.try_state::<ChatService>() {
-                let _ = chat.mark_projection_detached(&chat_id);
+                // A queued event can outlive self-save suppression or observe
+                // an in-flight publication. Compare current bytes with the
+                // committed chat receipt after that publication settles.
+                if !chat.mark_projection_detached_if_needed(&chat_id)? {
+                    continue;
+                }
             }
             state.events.vault_document_changed(
                 &path,

@@ -66,19 +66,37 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
             .iter()
             .map(|i| i["evidenceId"].as_str().unwrap().into())
             .collect();
-        // Search paging and passage-read budgets are independent. A read can
-        // return fewer than eight requested IDs; continue with the unread IDs.
-        let mut consumed = 0;
-        while consumed < ids.len() {
-            let batch = &ids[consumed..(consumed + 8).min(ids.len())];
-            let (read, sources) = session
-                .read(&f.state, None, &HashSet::new(), batch, false)
+        // This lineage fixture exhaustively inspects every changed range in
+        // separate bounded read sessions. A real agent selects necessary ranges
+        // within one shared allowance; budget delivery has dedicated regressions.
+        for id in ids {
+            let mut reader = EvidenceSession::default();
+            let mut discovery = request.clone();
+            discovery.cursor = None;
+            loop {
+                let found = reader
+                    .search(&f.state, None, &HashSet::new(), discovery.clone())
+                    .unwrap();
+                if found["items"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|item| item["evidenceId"] == id)
+                {
+                    break;
+                }
+                discovery.cursor = Some(
+                    found["nextCursor"]
+                        .as_str()
+                        .expect("Selected fixture range must remain discoverable")
+                        .into(),
+                );
+            }
+            let (read, sources) = reader
+                .read(&f.state, None, &HashSet::new(), &[id], false)
                 .unwrap();
             let returned = read["items"].as_array().unwrap();
-            assert!(
-                !returned.is_empty(),
-                "fixture exhausted its evidence budget: {read}"
-            );
+            assert_eq!(returned.len(), 1);
             for (citation, _, _) in sources {
                 assert!(crate::services::evidence::validate_citation(
                     &f.state,
@@ -88,7 +106,6 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
                 )
                 .is_some());
             }
-            consumed += returned.len();
             items.extend(returned.iter().cloned());
         }
         match page["nextCursor"].as_str() {

@@ -860,13 +860,13 @@
   }
 
   function toggleRelatedPanel() {
-    paneLayoutMotion.cancel();
     toggleRelatedPanelController(workspaceShell);
+    paneLayoutMotion.retarget();
   }
 
   function closeRelatedPanel() {
-    paneLayoutMotion.cancel();
     collapseRelatedPanelController(workspaceShell);
+    paneLayoutMotion.retarget();
   }
 
   async function disposePaneRuntime(
@@ -1560,7 +1560,7 @@
       </div>
 
       <div
-        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) transition-[bottom] duration-180 ease-in-out"
+        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height)"
       >
         <NotepadCommandBar
           forget={{

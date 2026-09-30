@@ -16,3 +16,4 @@ pub(crate) use note_catalog::NoteCatalog;
 pub(crate) mod evidence;
 
 pub(crate) mod task_dates;
+pub(crate) mod tool_outcome;

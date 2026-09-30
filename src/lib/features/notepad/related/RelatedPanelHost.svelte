@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { innerWidth } from 'svelte/reactivity/window';
   import RelatedPanel from '$lib/features/notepad/related/RelatedPanel.svelte';
   import {
     getBottomSheetStyle,
@@ -39,6 +40,13 @@
     onScopeChange,
     onSelect
   }: Props = $props();
+
+  let toggleButton = $state<HTMLButtonElement | null>(null);
+
+  function closePanel() {
+    onClose();
+    toggleButton?.focus({ preventScroll: true });
+  }
 </script>
 
 {#snippet panel()}
@@ -50,7 +58,7 @@
     {loading}
     {hasSelection}
     {onScopeChange}
-    {onClose}
+    onClose={closePanel}
     {onSelect}
   />
 {/snippet}
@@ -59,10 +67,11 @@
   <aside
     class="related-drawer absolute top-0 bottom-0 z-20 flex min-h-0 items-stretch overflow-visible related-drawer-motion"
     aria-label="Related notes panel"
-    style={getRelatedDrawerStyle(reservedWidth)}
+    style={getRelatedDrawerStyle(reservedWidth, innerWidth.current)}
   >
     <div class="relative h-full min-h-0 w-full">
       <button
+        bind:this={toggleButton}
         type="button"
         class="related-drawer-handle group absolute top-1/2 z-10 flex translate-x-1/2 -translate-y-1/2 items-center outline-none right-[calc(-1*var(--related-drawer-gap))]"
         aria-expanded={!collapsed}
@@ -80,6 +89,8 @@
 
       <div
         id="related-drawer-panel"
+        inert={collapsed}
+        aria-hidden={collapsed}
         class={`absolute inset-y-0 left-0 flex w-full min-h-0 pr-4 related-panel-motion ${
           collapsed
             ? 'pointer-events-none -translate-x-3 opacity-0'
@@ -101,6 +112,8 @@
       ></div>
       <div
         id="related-drawer-panel"
+        inert={collapsed}
+        aria-hidden={collapsed}
         class={`absolute top-0 right-0 bottom-[calc(var(--related-bottom-sheet-toggle-height)+0.75rem)] w-full overflow-hidden related-panel-motion ${
           collapsed
             ? 'pointer-events-none translate-y-0 opacity-0'
@@ -111,6 +124,7 @@
       </div>
 
       <button
+        bind:this={toggleButton}
         type="button"
         class="pointer-events-auto absolute right-0 bottom-0 inline-flex h-11 items-center gap-2 rounded-full border border-border/70 bg-card px-4 py-2 text-xs font-medium text-muted-foreground shadow-sm transition hover:bg-muted hover:text-foreground"
         aria-expanded={!collapsed}

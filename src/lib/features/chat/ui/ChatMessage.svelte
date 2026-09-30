@@ -17,7 +17,7 @@
   import ContextTrigger from '$lib/components/ai-elements/context/context-trigger.svelte';
   import MessageContent from '$lib/components/ai-elements/message/core/message-content.svelte';
   import MessageRoot from '$lib/components/ai-elements/message/core/message.svelte';
-  import InlineCitation from '$lib/components/ai-elements/inline-citation/inline-citation.svelte';
+  import EvidenceSource from './EvidenceSource.svelte';
   import PlanContent from '$lib/components/ai-elements/plan/plan-content.svelte';
   import PlanDescription from '$lib/components/ai-elements/plan/plan-description.svelte';
   import PlanHeader from '$lib/components/ai-elements/plan/plan-header.svelte';
@@ -152,7 +152,7 @@
   <div class="mb-1.5 flex items-center justify-between gap-2 text-[11px] font-medium text-muted-foreground">
     <div class="flex items-center gap-2">
       <span>{message.role === 'assistant' ? 'Thought partner' : 'You'}</span>
-      {#if message.status === 'streaming'}
+      {#if message.status === 'streaming' && !toolParts.some((part) => part.status === 'running')}
         <span class="opacity-70">{activity ?? 'Working…'}</span>
       {/if}
       {#if message.status === 'cancelled'}
@@ -230,10 +230,7 @@
 
   <div class="flex w-full flex-col gap-2.5">
     {#if toolParts.length > 0}
-      <ChainOfThought
-        steps={toolParts}
-        open={message.status === 'streaming'}
-      />
+      <ChainOfThought steps={toolParts} />
     {/if}
     {#each visibleParts as part (part.id)}
       {#if part.type === 'text' && part.text}
@@ -366,7 +363,7 @@
       {:else if part.type === 'sources'}
         <Sources count={part.citations.length}>
           {#each part.citations as citation, index (citation.id)}
-            <InlineCitation
+            <EvidenceSource
               {citation}
               index={index + 1}
               href={citation.kind === 'web' ? safeWebCitationHref(citation.url) : undefined}

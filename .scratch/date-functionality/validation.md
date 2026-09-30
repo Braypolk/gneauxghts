@@ -1,6 +1,6 @@
 # Date functionality validation
 
-Completed September 29, 2026 (America/Denver). Implementation remains in this worktree; no merge or publication.
+Initial implementation validated September 29, 2026 (America/Denver). See the integration record below for the latest state.
 
 ## Automated checks
 
@@ -26,3 +26,9 @@ Baseline: `HEAD` at `ef6fed5`; comparison: `git diff HEAD`, with untracked date 
 Corrections preserve hardbreak spaces, nested/escaped/code-covered reference and inline-link labels, and continued code/link spans. Adding a deadline within unfinished protected text fails visibly. Additional fixes retain editable `h24` midnight time chips, toggle every projected task marker without rewriting its prefix, and close the task-list picker on route unmount. Twenty-three shared parser fixtures cover the complete frontend/backend contract.
 
 Post-cleanup checks: 961 frontend tests pass; four Chrome date journeys pass; type checks and production build pass. Focused Rust checks pass for all five date tests, 14 index tests, 12 task-service tests, five task-projection tests, and 19 architecture checks. `git diff --check` passes. Native macOS/Tauri UI remains untested. Changes are ready for merge review and remain unmerged in this worktree.
+
+## Main integration — September 30, 2026
+
+The user authorized merging to main. Feature commit `0466937` was integrated with main at `25454e6`. The sole conflict was the services module list; both `task_dates` and `tool_outcome` entries are retained. Architecture/invariant documentation merged with both features intact.
+
+The combined tree passes `pnpm check`, 965 frontend tests across 134 files, `pnpm build`, all four Chrome date journeys, 36 focused Rust library tests, and all 19 backend architecture checks. A browser run interrupted by concurrent build-generated Vite reloads was repeated after the build completed and passed. Native Tauri UI remains outside this validation. No remote push was requested.

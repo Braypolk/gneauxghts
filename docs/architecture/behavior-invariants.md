@@ -429,7 +429,10 @@ database row IDs or insertion order never define timeline identity or lineage.
 An app-owned write, move, or delete suppresses only the exact filesystem
 outcome it declared. Failed or uncommitted operations cannot hide later
 external changes, and a non-matching watcher event is external even inside a
-deduplication window.
+deduplication window. Managed chat projection observations additionally wait
+for app-owned publication to settle and compare current bytes with the committed
+SQLite receipt. A stale queued event or an in-flight app write cannot detach a
+conversation. Genuine external edits and deletion remain conflicts.
 
 ### Semantic search preserves the last usable result
 
@@ -483,15 +486,18 @@ lineage. Older restores without a selected-revision reference report unknown
 earlier lineage for returning ranges. Title provenance follows lifecycle
 predecessor order and ignores moves that preserve the filename title.
 
-### Chat activity and citations preserve the current-content boundary
+### Chat activity and citations preserve explicit evidence boundaries
 
 Activity and Current-Content Provenance enter chat only on demand. They reapply
 vault access, explicit turn grants, global exclusions, current eligibility, and
-canonical-byte checks. Activity answers carry only surviving modified ranges, their authoritative
-times, and Mutation Sources. Surrounding current context is labeled separately
+canonical-byte checks. Default current activity carries surviving modified ranges, authoritative times,
+and Mutation Sources. Explicit activity queries may additionally request retained
+added/removed body/property lines through the scoped read-only capability in ADR
+0009. Historical text must be labeled and checked against current content before
+it is treated as an actionable commitment. Surrounding current context is labeled separately
 and never presented as activity in the requested period. Ordinary intervals match half-open activity queries by overlap and
-uncertain clock-discontinuous evidence is marked explicitly. Removed prose and
-historical labels stay private. Explicit provenance/citation or temporal activity
+uncertain clock-discontinuous evidence is marked explicitly. Historical labels stay private; removed prose is available only through the
+explicit retained-activity interface. That interface grants no restore or write authority. Explicit provenance/citation or temporal activity
 requests finalize only the eligible notes needed as evidence; routine chat loading and health polling do not.
 
 Task activity includes current checkbox status and its retained status-change
@@ -506,35 +512,47 @@ Model citation references bind only to exact sources delivered to the originatin
 answer. The app constructs durable destinations; unknown references are unavailable
 and never resolved by title or fuzzy matching. Worker references are remapped on
 parent admission. Unvalidated streaming markers remain inert.
-Source-first preview is explicitly selected per turn. Only clauses from exact
-admitted read excerpts can be rendered, as literal quotations with app-built
-links; model prose and selection JSON never appear as streaming or failed partial
-answers. Invalid selections fail rather than falling back to synthesis. Related
-selections explicitly do not confirm the answer, and empty or incomplete selection
-does not establish factual absence. The preview has search/read tools only and
-preserves current scope and source validation.
-Plain date-based note inventories may finish through an app-owned typed result
-in either ordinary chat or source-first preview. They show exact surviving
-excerpts and recorded activity, with app-built links, without model selection
-JSON. Inventory proof admission does not consume model evidence allowance;
-separate result-byte, row and retrieval-work bounds remain enforced. One validated
-representative passage establishes each displayed note's membership. Its date is
-an example, not an exhaustive history; surrounding current context is labeled
-separately from changed text. Clock uncertainty alone does not establish that
-recorded bounds cross the requested date boundary.
-Distinct notes are counted once per page; incomplete results and uncertain
-timing are explicit. Baselines alone are not edits and mutation source does not
-prove personal authorship. Calendar arithmetic uses one named-timezone run
-anchor; a follow-up uses the previous period for the same date role, with fresh
-retrieval. A continuation is invalidated by scope, content or provenance changes.
-Query metadata may carry request meaning between turns, never old inventory
-counts or evidence facts. Occurrence, deadlines, adoption and inferred task
-status remain semantic judgments unless independently supported by evidence.
+Source and quotation requests use ordinary chat capabilities, context and streaming.
+Show evidence expands delivered source excerpts on the answer without another model
+call. Excerpts render as literal text, with current/historical labels and recorded
+timing; the panel does not claim exhaustive coverage or validate model prose.
+Read references require exact excerpt equality with an admitted passage, regardless
+of the user's requested response format.
+Every successful retrieval tool returns intermediate data and permits subsequent
+model/tool calls. The agent decides which capabilities to combine and when to
+answer; a search or activity inventory cannot terminate a run or replace the
+response contract. Ordinary chat can discover activity, read provenance, search
+other current content, plan, research and propose changes in one run.
+Capability restrictions only remove authority; child execution never restores
+capabilities absent from its parent. Evidence inspection does not change retrieval authority.
+
+Search, activity listing and research accept explicit half-open start/end ranges
+as ISO dates or offset-bearing RFC3339 timestamps, with an optional named timezone.
+Dates use local midnight and preserve DST; invalid, reversed, ambiguous or
+nonexistent boundaries fail rather than being guessed. The agent interprets the
+user's timeframe against the supplied run anchor. There are no named-period tool
+enums, question parsers or semantic workflow dispatchers. Independent tool calls
+may use different scopes or omit an activity filter; a child research invocation
+must retain its inherited scope and range.
+
+Distinct-note activity pages return one bounded preview and evidence ID per note,
+with a representative recorded-change interval, explicit coverage and continuation.
+Counts describe only that page's notes with matching recorded changes, not work
+completed. All matching passages require further search/read; the representative
+preview does not establish whole-note activity. Model-facing inventory previews consume the shared evidence allowance;
+private proof collection has separate bounded work/storage accounting. A preview
+is not a citable read. The agent reads selected IDs for canonical passage citations
+and may search for additional passages or unfinished commitments. A continuation
+is invalidated by scope, content or provenance changes. Query metadata can carry
+explicit configuration into a follow-up, never old result facts. Legacy events
+retain their date role during conversion; event/deadline dates are never re-used
+as text-activity bounds. All follow-ups retrieve fresh evidence.
 Current-passage citations validate stable identity, content hash and exact
 current range before opening and highlighting the current note. Renames resolve
 to the current location; stale or ambiguous passages are unavailable. Search
-cursors bind scope and canonical versions, and passage provenance pages use a
-separate continuation. Baseline known-since dates never imply creation or work.
+cursors bind scope and canonical versions, and read continuations preserve selected IDs and provenance positions without
+requiring callers to reconstruct offsets. Retained-change citations validate the
+exact revision, change kind, coordinates and text and open their content revision. Baseline known-since dates never imply creation or work.
 Legacy Revision Citations retain exact Note and Revision Identity and open that revision
 in global History Mode without navigating the invoking pane.
 Citation navigation seeks bounded surrounding context directly, independent of
@@ -552,18 +570,59 @@ current evidence. Automatic note context uses canonical bytes, never a pending
 proposal snapshot. Revalidation before each model call and final delivery stops
 an answer if admitted bytes or scoped search versions change.
 
-A research worker receives only its question, resolved scope/period, compact
-eligible references and search/read tools. It shares parent budgets and
+A research worker receives only its focused question, validated tool-facing scope
+and explicit range, compact eligible discovery hints and evidence discovery/read
+tools. Parent answer/planning/proposal instructions and internal query defaults do
+not cross this seam. Its independent closed result formatter is non-executable:
+it returns selection arguments, grants no application action, and keeps gathering
+tools usable before final submission. Schema formatting and bounded output retries
+do not replace backend validation of actually read IDs and closed gap codes.
+It shares parent budgets and
 cancellation, cannot delegate or mutate notes, and cannot change provider routing.
 Only backend-validated selected passages and gap codes return to the parent.
+Research may be invoked repeatedly within shared run budgets, with at most one
+active worker. Each invocation has its own twelve-call and 90-second limits. Its
+lease releases on every exit, including failure/cancellation, and all invocations
+contribute to cumulative usage without double-counting streaming usage updates.
 A standalone JSON fence may be removed before strict selection validation;
 surrounding prose, unknown fields, invalid gap codes and unread IDs remain invalid.
 An empty resolved scope returns without worker inference or broader access.
-Counter-only terminal diagnostics distinguish failure, empty scope, selected IDs
-and actually delivered passages; neither worker output nor private identifiers
-enter those events. A completed parent fallback does not prove worker success.
-A period cannot be bypassed through inherited undated evidence. Aggregate token
+Counter-only terminal diagnostics distinguish model/tool attempts, discovery/read
+calls, tool errors, failure, empty scope, selected IDs and actually delivered
+passages. Completed reads remain counted after failure without becoming delivered
+evidence; an empty selection without a reported gap is unavailable, not proof of
+no match. Neither worker output nor private identifiers
+enter those events. A completed parent fallback does not prove worker success. Invalid or empty
+selections and failed/timed-out workers return explicit partial outcomes with
+fixed reason/gap codes and direct-evidence recovery, never worker text or unread
+identifiers. A research return sizes its full parent-facing envelope against the
+shared allowance before charging or admitting passages. Undelivered selected IDs
+may transfer as candidates for a later explicit read, never as delivered evidence.
+A period cannot be bypassed through inherited undated evidence or direct canonical reads in a period-scoped worker; the parent performs current-status reads. Aggregate token
 exhaustion blocks subsequent model calls in both worker and parent.
+Worker reads inherit the invocation range when omitted and cannot widen it;
+continuations retain their original read options. Research-delivered items are
+already-read primary evidence. Completing a partial handoff requires only the
+remaining selected IDs, not repeated reads of the delivered items.
+
+### Tool failures preserve safe recovery instructions
+
+Recoverable application errors reach the model with actionable feedback through
+the shared tool registration adapter. Error origins choose stable codes,
+retryability and recovery actions; the adapter never classifies message wording.
+Known budget exhaustion must not look like missing note access. Unknown
+internal/provider diagnostics remain available to operators and are redacted
+from model feedback. Activity summaries retain safe error feedback and count
+delivered note identities; partial delivery must not appear as a complete read.
+
+Read pages prepare and serialize their complete envelope before reserving the
+shared evidence allowance or admitting citations. An undeliverable page consumes
+no evidence allowance. A failed selection cannot discard independent deliverable
+passages; per-item failures and bounded continuations preserve explicit gaps and
+progress. Page-level meaning is shared rather than repeated for each small
+passage. Ordinary reads default to compact proofs; expanded per-range lineage is opt-in and its requested/delivered coverage is explicit. Compact delivery preserves canonical validation, retained historical identity/timing and activitySupport. Canonical validation occurs during preparation and again at model/final
+admission. Recorded proposals are not outstanding commitments merely because
+completion evidence is absent.
 
 ### Interrupted runs preserve partial output
 
@@ -641,8 +700,10 @@ retries briefly but cannot reuse an earlier positive capacity. New retained mess
 conservative allowance; changed instructions/tools/model/history invalidate the
 baseline. Unknown usage or capacity retains existing limits. Near capacity,
 pending tools are skipped and at most one final model request retains evidence,
-citation identities and tool-call/result pairs with tools disabled and bounded
+citation identities and tool-call/result pairs with executable tools disabled and bounded
 output. Recent user and source-free assistant messages are not individually
 clipped to fit; existing recent-message and compaction rules still apply. The app
 never drops history silently to make a request fit. Cancellation,
 permissions, scope and final evidence-currentness checks remain authoritative.
+An existing non-executable structured result formatter may remain callable on the
+final request; no evidence retrieval or other application action remains callable.

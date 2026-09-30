@@ -78,6 +78,7 @@ fn live_answer_grounding_comparison() {
                     AgentRuntimeRequest {
                         provider: AgentProvider::Local,
                         model: model.clone(), api_key: None, local_base_url: endpoint.clone(),
+                        output_schema: None,
                         preamble: if refined { candidate.clone() } else { baseline.clone() },
                         prompt: rig_core::completion::Message::user(json!({
                             "question": case["question"], "currentEvidence": case["sources"], "resolvedPeriod":case["resolvedPeriod"],

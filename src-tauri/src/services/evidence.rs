@@ -1,6 +1,8 @@
+use crate::services::tool_outcome::{FailureCode, ToolError};
 pub(crate) mod inventory;
 pub(crate) mod query;
-pub(crate) use inventory::InventoryResult;
+mod reads;
+pub(crate) use reads::ReadRequest;
 // Current evidence: local retrieval, scope, ranking, cursors and canonical
 // validation live here. NoteTimeline alone reconstructs temporal provenance.
 use crate::{
@@ -33,13 +35,14 @@ pub(crate) struct SearchRequest {
     #[serde(skip)]
     pub(crate) cancelled: Option<tokio_util::sync::CancellationToken>,
     pub(crate) query: String,
-    pub(crate) interpretation: Option<query::QueryIntent>,
+    pub(crate) include_history: bool,
+    pub(crate) activity_range: Option<query::ActivityRange>,
     pub(crate) mode: SearchMode,
     pub(crate) note_ids: Option<Vec<String>>,
     pub(crate) folder: Option<String>,
     pub(crate) after: Option<u64>,
     pub(crate) before: Option<u64>,
-    pub(crate) period: Option<String>,
+    pub(crate) range_timezone: Option<String>,
     pub(crate) cursor: Option<String>,
     pub(crate) limit: Option<usize>,
 }
@@ -60,12 +63,14 @@ pub(crate) struct PassageCitation {
     pub(crate) note_id: String,
     pub(crate) content_hash: String,
     pub(crate) location: String,
-    /// UTF-8 byte offsets in the current body/properties/title, never JS offsets.
+    /// UTF-8 offsets in current content, or historical.content_revision_id when present.
     pub(crate) start: usize,
     pub(crate) end: usize,
     pub(crate) excerpt: String,
     #[serde(default)]
     pub(crate) revisions: Vec<RevisionCitation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) historical: Option<crate::services::note_timeline::HistoricalPassage>,
 }
 #[derive(Clone)]
 struct Candidate {
@@ -94,13 +99,14 @@ struct SearchBinding {
 #[derive(Default)]
 pub(crate) struct EvidenceSession {
     pub(crate) anchor: query::QueryAnchor,
-    pub(crate) requested_calendar: Option<query::RequestedCalendar>,
     candidates: HashMap<String, Candidate>,
     searches: HashMap<String, (String, String, Vec<String>, Value)>,
     admitted: HashMap<String, PassageCitation>,
     used_bytes: Arc<AtomicUsize>,
     sequence: usize,
     blocked_reads: HashSet<String>,
+    read_continuations: HashMap<String, reads::ReadContinuation>,
+    search_continuations: HashMap<String, (SearchRequest, bool)>,
 }
 
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
@@ -113,9 +119,9 @@ pub(crate) fn bounded(text: &str, bytes: usize) -> String {
 fn hash(text: &str) -> String {
     blake3::hash(text.as_bytes()).to_hex().to_string()
 }
-fn check_cancelled(request: &SearchRequest) -> Result<(), String> {
+fn check_cancelled(request: &SearchRequest) -> Result<(), ToolError> {
     if request.cancelled.as_ref().is_some_and(|c| c.is_cancelled()) {
-        return Err("Request cancelled".into());
+        return Err(ToolError::cancelled());
     }
     Ok(())
 }
@@ -135,27 +141,23 @@ fn body_at(raw: &str, title: &str, location: &str) -> String {
 }
 
 #[cfg(test)]
-pub(crate) fn resolve_period(request: &mut SearchRequest) -> Result<Option<Value>, String> {
+pub(crate) fn resolve_period(request: &mut SearchRequest) -> Result<Option<Value>, ToolError> {
     resolve_period_at(request, &query::QueryAnchor::default())
 }
 pub(crate) fn resolve_period_at(
     request: &mut SearchRequest,
     anchor: &query::QueryAnchor,
-) -> Result<Option<Value>, String> {
-    if let Some(period) = request.period.as_deref() {
-        if period != "this_week" || request.after.is_some() || request.before.is_some() {
-            return Err("Use period=this_week, or explicit after/before, not both".into());
+) -> Result<Option<Value>, ToolError> {
+    if let Some(range) = request.activity_range.take() {
+        if request.after.is_some() || request.before.is_some() {
+            return Err(ToolError::invalid(
+                "Use activity_range instead of internal numeric bounds",
+            ));
         }
-        let period = anchor.resolve(
-            &query::Period::Calendar {
-                unit: query::CalendarUnit::Week,
-                offset: 0,
-                full: false,
-            },
-            query::DateRole::TextActivity,
-        )?;
-        request.after = Some(period.after);
-        request.before = Some(period.before);
+        let resolved = range.resolve(anchor)?;
+        request.after = Some(resolved.after);
+        request.before = Some(resolved.before);
+        request.range_timezone = Some(resolved.timezone.clone());
     }
     if request.after.is_none() && request.before.is_none() {
         return Ok(None);
@@ -163,26 +165,13 @@ pub(crate) fn resolve_period_at(
     let after = request.after.unwrap_or(0);
     let before = request.before.unwrap_or(u64::MAX);
     if after >= before {
-        return Err("The activity period must be nonempty [after,before)".into());
+        return Err(ToolError::invalid(
+            "The activity period must be nonempty [after,before)",
+        ));
     }
     Ok(Some(
-        json!({"after":after,"before":before,"timezone":anchor.timezone,"weekStartsOn":"Monday","basis":"surviving_content_activity"}),
+        json!({"after":after,"before":before,"timezone":request.range_timezone.as_deref().unwrap_or(&anchor.timezone),"basis":if request.include_history {"retained_authored_changes"} else {"surviving_content_activity"}}),
     ))
-}
-
-#[cfg(test)]
-fn local_week_start(
-    now: chrono::DateTime<chrono::Local>,
-) -> Result<chrono::DateTime<chrono::Local>, String> {
-    use chrono::{Datelike, Local, TimeZone};
-    let monday =
-        now.date_naive() - chrono::Duration::days(now.weekday().num_days_from_monday().into());
-    Local
-        .from_local_datetime(&monday.and_hms_opt(0, 0, 0).unwrap())
-        .earliest()
-        .ok_or_else(|| {
-            "The local week boundary is unavailable; provide an explicit interval".into()
-        })
 }
 
 pub(crate) fn scope_ids(
@@ -190,7 +179,7 @@ pub(crate) fn scope_ids(
     allowed: Option<&HashSet<String>>,
     excluded: &HashSet<String>,
     request: &SearchRequest,
-) -> Result<HashSet<String>, String> {
+) -> Result<HashSet<String>, ToolError> {
     let index = state
         .notes_index
         .lock()
@@ -218,7 +207,7 @@ pub(crate) fn scope_ids(
 
 // Bind every search cursor to scope and current canonical versions. New matches,
 // removals and policy changes invalidate rather than shift an offset silently.
-fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, String> {
+fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, ToolError> {
     let index = state
         .notes_index
         .lock()
@@ -246,24 +235,19 @@ impl EvidenceSession {
     pub(crate) fn normalize_request(
         &self,
         request: &mut SearchRequest,
-    ) -> Result<Option<query::ResolvedQuery>, String> {
-        let Some(intent) = request.interpretation.clone() else {
+    ) -> Result<Option<query::ResolvedPeriod>, ToolError> {
+        let Some(range) = request.activity_range.take() else {
             return Ok(None);
         };
-        if !request.query.is_empty()
-            || request.period.is_some()
-            || request.after.is_some()
-            || request.before.is_some()
-        {
-            return Err("Use interpretation instead of legacy query/period/after/before fields; scope and cursor remain supported".into());
+        if request.after.is_some() || request.before.is_some() {
+            return Err(ToolError::invalid(
+                "Use activity_range instead of internal numeric bounds",
+            ));
         }
-        let resolved = self.anchor.normalize(&intent)?;
-        request.query = intent.subject.clone().unwrap_or_default();
-        let period = &resolved.periods[0];
-        request.after = Some(period.after);
-        request.before = Some(period.before);
-        // Keep the normalized meaning in the binding, but avoid recursively interpreting legacy fields.
-        request.interpretation = None;
+        let resolved = range.resolve(&self.anchor)?;
+        request.after = Some(resolved.after);
+        request.before = Some(resolved.before);
+        request.range_timezone = Some(resolved.timezone.clone());
         Ok(Some(resolved))
     }
     pub(crate) fn fork(&self) -> Self {
@@ -281,11 +265,20 @@ impl EvidenceSession {
         }
         fork
     }
-    pub(crate) fn accept_selected(&mut self, worker: &Self, ids: &[String]) {
+    pub(crate) fn accept_selected(
+        &mut self,
+        worker: &Self,
+        ids: &[String],
+        delivered: &[(PassageCitation, PathBuf, String)],
+    ) {
         for id in ids {
             if let Some(c) = worker.candidates.get(id) {
                 self.candidates.insert(id.clone(), c.clone());
-                self.admit(c.citation.clone());
+            }
+        }
+        for (citation, _, _) in delivered {
+            if ids.contains(&citation.id) {
+                self.admit(citation.clone());
             }
         }
     }
@@ -313,14 +306,14 @@ impl EvidenceSession {
             })
             .is_ok()
     }
-    pub(crate) fn admit_context(&mut self, text: &str, max: usize) -> Result<String, String> {
+    pub(crate) fn admit_context(&mut self, text: &str, max: usize) -> Result<String, ToolError> {
         let remaining = EVIDENCE_BYTES.saturating_sub(self.used());
         if remaining == 0 {
-            return Err("Evidence context budget exhausted; narrow the task".into());
+            return Err(ToolError::evidence_budget());
         }
         let text = bounded(text, max.min(remaining));
         if !self.reserve(text.len()) {
-            return Err("Evidence context budget exhausted".into());
+            return Err(ToolError::evidence_budget());
         }
         Ok(text)
     }
@@ -331,7 +324,7 @@ impl EvidenceSession {
         allowed: Option<&HashSet<String>>,
         excluded: &HashSet<String>,
         request: SearchRequest,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, ToolError> {
         self.search_inner(state, allowed, excluded, request, false)
     }
     fn search_inner(
@@ -341,11 +334,11 @@ impl EvidenceSession {
         excluded: &HashSet<String>,
         mut request: SearchRequest,
         collect_only: bool,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, ToolError> {
         let resolved = self.normalize_request(&mut request)?;
         check_cancelled(&request)?;
         if !collect_only && self.used() >= EVIDENCE_BYTES {
-            return Err("Evidence context budget exhausted".into());
+            return Err(ToolError::evidence_budget());
         }
         if request
             .note_ids
@@ -353,10 +346,12 @@ impl EvidenceSession {
             .is_some_and(|ids| ids.len() > WORK_LIMIT)
             || self.searches.len() >= 32
         {
-            return Err("Search scope or session work budget exceeded".into());
+            return Err(ToolError::work_budget(
+                "Search scope or session work budget exceeded",
+            ));
         }
         if request.query.len() > 1024 {
-            return Err("Query exceeds 1024 bytes".into());
+            return Err(ToolError::invalid("Query exceeds 1024 bytes"));
         }
         let ids = scope_ids(state, allowed, excluded, &request)?;
         let version = fingerprint(state, &ids)?;
@@ -370,35 +365,152 @@ impl EvidenceSession {
         })
         .map_err(|e| e.to_string())?;
         if let Some(cursor) = &request.cursor {
-            let (key, offset) = cursor.rsplit_once(':').ok_or("Invalid search cursor")?;
-            let offset: usize = offset.parse().map_err(|_| "Invalid search cursor")?;
+            let (key, offset) = cursor
+                .rsplit_once(':')
+                .ok_or_else(|| ToolError::invalid("Invalid search cursor"))?;
+            let offset: usize = offset
+                .parse()
+                .map_err(|_| ToolError::invalid("Invalid search cursor"))?;
             let (old_version, old_binding, result_ids, coverage) = self
                 .searches
                 .get(key)
-                .ok_or("Search cursor expired; search again")?
+                .ok_or_else(|| ToolError::stale("Search cursor expired; search again"))?
                 .clone();
             if version != old_version || binding != old_binding {
-                return Err("Search cursor is stale; search again".into());
+                return Err(ToolError::stale("Search cursor is stale; search again"));
             }
             if result_ids.iter().any(|id| {
                 self.candidates.get(id).is_none_or(|c| {
                     validate_citation(state, &c.citation, Some(&ids), excluded).is_none()
                 })
             }) {
-                return Err("Search cursor evidence is stale; search again".into());
+                return Err(ToolError::stale(
+                    "Search cursor evidence is stale; search again",
+                ));
             }
             return self.page(key, &result_ids, offset, limit, coverage);
         }
         let period = resolve_period_at(&mut request, &self.anchor)?;
         if request.query.trim().is_empty() && period.is_none() {
-            return Err("Provide a query or an activity period".into());
+            return Err(ToolError::invalid("Provide a query or an activity period"));
         }
         let mut candidates = Vec::new();
         let mut gaps = Vec::<String>::new();
         let mut semantic = "not_requested".to_string();
         let mut lexical = "not_requested".to_string();
         let mut inspected = 0;
-        if period.is_some() {
+        if request.include_history {
+            if period.is_none() {
+                return Err(ToolError::invalid(
+                    "include_history requires activity_range",
+                ));
+            }
+            if !request.query.is_empty()
+                && !matches!(request.mode, SearchMode::Literal | SearchMode::Regex)
+            {
+                return Err(ToolError::invalid("Historical changes support literal or regex content matching; omit query to discover all changes"));
+            }
+            let pattern = if request.mode == SearchMode::Regex {
+                Some(
+                    regex::RegexBuilder::new(&request.query)
+                        .size_limit(1_000_000)
+                        .build()
+                        .map_err(|_| ToolError::invalid("Invalid regex"))?,
+                )
+            } else {
+                None
+            };
+            let timeline = state.note_timeline();
+            let scope = AllowedScope::policy(Some(&ids), excluded);
+            let access = timeline.activity_history(scope);
+            let mut sorted_ids: Vec<_> = ids.iter().collect();
+            sorted_ids.sort();
+            for id in sorted_ids {
+                check_cancelled(&request)?;
+                if inspected >= WORK_LIMIT || candidates.len() >= WORK_LIMIT {
+                    gaps.push("Historical activity work budget exhausted".into());
+                    break;
+                }
+                inspected += 1;
+                let (changes, complete) = match access.changes(
+                    &crate::services::note_timeline::NoteIdentity::new(id),
+                    request.after.unwrap_or(0),
+                    request.before.unwrap_or(u64::MAX),
+                ) {
+                    Ok(changes) => changes,
+                    Err(_) => {
+                        gaps.push("Some retained history is unavailable".into());
+                        continue;
+                    }
+                };
+                if !complete {
+                    gaps.push("Some retained history exceeds the work budget".into());
+                }
+                let (path, title) = {
+                    let index = state.notes_index.lock().map_err(|_| "Notes unavailable")?;
+                    let (path, note) = index.get_note_by_note_id(id).ok_or("Note unavailable")?;
+                    (path.clone(), note.title.clone())
+                };
+                let raw = fs::read_to_string(&path).map_err(|_| "Note unavailable")?;
+                let current_hash = canonical_content_hash(&raw);
+                for change in changes {
+                    if !request.query.is_empty()
+                        && !pattern.as_ref().map_or_else(
+                            || change.text.contains(&request.query),
+                            |r| r.is_match(&change.text),
+                        )
+                    {
+                        continue;
+                    }
+                    let mut start = change.start;
+                    for text in passage_slices(&change.text) {
+                        if candidates.len() >= WORK_LIMIT {
+                            gaps.push("Historical passage budget exhausted".into());
+                            break;
+                        }
+                        let proof = change.proof.clone();
+                        let reference = hash(&format!(
+                            "history:{id}:{}:{}:{}:{start}:{}:{current_hash}",
+                            proof.revision_id,
+                            proof.change_kind,
+                            change.location,
+                            text.len()
+                        ));
+                        candidates.push(Candidate {
+                            citation: PassageCitation {
+                                id: reference,
+                                note_id: id.clone(),
+                                content_hash: current_hash.clone(),
+                                location: change.location.clone(),
+                                start,
+                                end: start + text.len(),
+                                excerpt: text.into(),
+                                revisions: vec![RevisionCitation {
+                                    note_id: id.clone(),
+                                    revision_id: proof.revision_id.clone(),
+                                    at_millis: proof.recorded_at_millis(),
+                                    time_evidence: Some(proof.time_evidence),
+                                    source: proof.source,
+                                    current_excerpt: text.into(),
+                                }],
+                                historical: Some(proof.clone()),
+                            },
+                            path: path.clone(),
+                            title: title.clone(),
+                            section: "Retained change (line granularity)".into(),
+                            score: 1.0,
+                            provenance: Some(json!({"kind":"retained_change", "change":proof})),
+                            context: String::new(),
+                            task: None,
+                        });
+                        start += text.len();
+                    }
+                    if start - change.start < change.text.len() {
+                        gaps.push("Some retained changed lines exceed the passage budget".into());
+                    }
+                }
+            }
+        } else if period.is_some() {
             // Resolve content with the same matcher before bounded timeline work.
             // This temporary session never sends its previews to either model.
             let mut matching = Self::default();
@@ -408,7 +520,8 @@ impl EvidenceSession {
                 let mut content_request = request.clone();
                 content_request.after = None;
                 content_request.before = None;
-                content_request.period = None;
+                content_request.activity_range = None;
+                content_request.range_timezone = None;
                 content_request.cursor = None;
                 let content = matching.search(state, Some(&ids), excluded, content_request)?;
                 lexical = content["coverage"]["lexical"]
@@ -550,7 +663,9 @@ impl EvidenceSession {
                         regex::RegexBuilder::new(&request.query)
                             .size_limit(1_000_000)
                             .build()
-                            .map_err(|_| "Invalid or oversized regular expression")?,
+                            .map_err(|_| {
+                                ToolError::invalid("Invalid or oversized regular expression")
+                            })?,
                     )
                 } else {
                     None
@@ -836,7 +951,7 @@ impl EvidenceSession {
         gaps.dedup();
         // Activity finalization advances timeline state but not canonical bytes.
         if fingerprint(state, &ids)? != version {
-            return Err("Content changed during search; retry".into());
+            return Err(ToolError::stale("Content changed during search; retry"));
         }
         self.sequence += 1;
         let key = format!("s{}", self.sequence);
@@ -844,7 +959,7 @@ impl EvidenceSession {
         for c in candidates {
             self.candidates.insert(c.citation.id.clone(), c);
         }
-        let coverage = json!({"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":EVIDENCE_BYTES,"usedBytes":self.used()}});
+        let coverage = json!({"historyScope":if request.include_history {"Retained body and property line changes; excludes discarded within-window states, cleared history, title and lifecycle events"} else {"Current content only; activity dates apply to surviving ranges"},"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":EVIDENCE_BYTES,"usedBytes":self.used()}});
         self.searches.insert(
             key.clone(),
             (version, binding, result_ids.clone(), coverage.clone()),
@@ -864,9 +979,9 @@ impl EvidenceSession {
         offset: usize,
         limit: usize,
         coverage: Value,
-    ) -> Result<Value, String> {
+    ) -> Result<Value, ToolError> {
         if offset > ids.len() {
-            return Err("Invalid search offset".into());
+            return Err(ToolError::invalid("Invalid search offset"));
         }
         let mut items = Vec::new();
         let mut next = offset;
@@ -884,13 +999,14 @@ impl EvidenceSession {
             }
             next += 1;
             self.admit(c.citation.clone());
-            items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":bounded(&c.title,240),"section":bounded(&c.section,160),"preview":preview,"score":c.score,"location":c.citation.location,"hasTemporalEvidence":c.provenance.is_some(),"task":c.task}));
+            items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":bounded(&c.title,240),"section":bounded(&c.section,160),"preview":preview,"score":c.score,"location":c.citation.location,"hasTemporalEvidence":c.provenance.is_some(),"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"task":c.task}));
         }
         Ok(
-            json!({"status":"ready","items":items,"nextCursor":(next<ids.len()).then(|| format!("{key}:{next}")),"truncated":next<ids.len(),"budgetExhausted":next==offset && next<ids.len(),"coverage":coverage}),
+            json!({"status":"ready","items":items,"nextCursor":(next<ids.len()).then(|| format!("{key}:{next}")),"truncated":next<ids.len(),"budgetExhausted":next==offset && next<ids.len(),"delivery":{"complete":next>=ids.len(),"hasMore":next<ids.len()},"coverage":coverage}),
         )
     }
 
+    #[cfg(test)]
     pub(crate) fn read(
         &mut self,
         state: &AppState,
@@ -898,9 +1014,10 @@ impl EvidenceSession {
         excluded: &HashSet<String>,
         ids: &[String],
         include_provenance: bool,
-    ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), String> {
+    ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), ToolError> {
         self.read_page(state, allowed, excluded, ids, include_provenance, 0)
     }
+    #[cfg(test)]
     pub(crate) fn read_page(
         &mut self,
         state: &AppState,
@@ -909,135 +1026,122 @@ impl EvidenceSession {
         ids: &[String],
         include_provenance: bool,
         provenance_offset: usize,
-    ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), String> {
+    ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), ToolError> {
         if ids.len() > 8 {
-            return Err("Read at most eight evidence IDs per call".into());
+            return Err(ToolError::invalid(
+                "Read at most eight evidence IDs per call",
+            ));
         }
-        let read_key = serde_json::to_string(&(ids, include_provenance, provenance_offset))
-            .map_err(|e| e.to_string())?;
-        if self.blocked_reads.contains(&read_key) {
-            return Err("This read cannot progress within the remaining allowance; use admitted evidence or narrow the request".into());
-        }
-        let mut items = Vec::new();
-        let mut sources = Vec::new();
-        let mut bytes = 0;
-        let mut truncation_reason = None;
-        for id in ids {
-            let mut c = self
-                .candidates
-                .get(id)
-                .ok_or("Unknown evidence ID; search first")?
-                .clone();
-            let mut next_provenance_offset = None;
-            if include_provenance && c.provenance.is_none() {
-                let timeline = state.note_timeline();
-                let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
-                let current = access
-                    .provenance(&crate::services::note_timeline::NoteIdentity::new(
-                        &c.citation.note_id,
-                    ))
-                    .map_err(|_| "Current provenance is pending or unavailable")?
-                    .ok_or("Current provenance is unavailable")?;
-                let lines = if c.citation.location == "properties" {
-                    &current.properties
-                } else {
-                    &current.body
-                };
-                let mut offset = 0;
-                // Group equal provenance across disjoint ranges before paging;
-                // otherwise per-word lineage repeats the same dates excessively.
-                let mut groups: Vec<(Value, Vec<Value>, Vec<RevisionCitation>)> = Vec::new();
-                for line in lines {
-                    for range in &line.ranges {
-                        let start = offset + range.start;
-                        let end = offset + range.end;
-                        if start >= c.citation.end || end <= c.citation.start {
-                            continue;
-                        }
-                        let p = &range.provenance;
-                        let value = serde_json::to_value(p).map_err(|e| e.to_string())?;
-                        let span = json!({"start":start.max(c.citation.start),"end":end.min(c.citation.end)});
-                        if let Some((_, spans, _)) = groups.iter_mut().find(|(v, _, _)| *v == value)
-                        {
-                            spans.push(span);
-                        } else {
-                            let proofs = [&p.introduced_at, &p.last_changed_at, &p.restored_at]
-                                .into_iter()
-                                .flatten()
-                                .chain(std::iter::once(&p.known_since))
-                                .filter_map(|e| {
-                                    Some(RevisionCitation {
-                                        note_id: c.citation.note_id.clone(),
-                                        revision_id: e.record_id.clone(),
-                                        at_millis: e.at_millis,
-                                        time_evidence: e.time_evidence,
-                                        source: e.source?,
-                                        current_excerpt: c.citation.excerpt.clone(),
-                                    })
-                                })
-                                .collect();
-                            groups.push((value, vec![span], proofs));
-                        }
-                    }
-                    offset += line.text.len();
-                }
-                let mut ranges = Vec::new();
-                let mut provenance_bytes = 0;
-                for (index, (provenance, spans, proofs)) in
-                    groups.into_iter().enumerate().skip(provenance_offset)
-                {
-                    let entry = json!({"ranges":spans,"provenance":provenance});
-                    let size = entry.to_string().len();
-                    if provenance_bytes + size > 2800 {
-                        if ranges.is_empty() {
-                            return Err("A provenance group exceeds the read budget; use a narrower passage".into());
-                        }
-                        next_provenance_offset = Some(index);
-                        break;
-                    }
-                    provenance_bytes += size;
-                    ranges.push(entry);
-                    c.citation.revisions.extend(proofs);
-                }
-                c.provenance = Some(json!(ranges));
-            }
-            let Some((path, title)) = validate_citation(state, &c.citation, allowed, excluded)
-            else {
-                return Err("Evidence changed or is no longer allowed; search again".into());
+        self.deliver_read(
+            state,
+            allowed,
+            excluded,
+            reads::ReadContinuation::selection(ids, include_provenance, provenance_offset),
+            reads::ReadPresentation::Normal,
+        )
+    }
+    fn prepare_read_item(
+        &self,
+        state: &AppState,
+        allowed: Option<&HashSet<String>>,
+        excluded: &HashSet<String>,
+        id: &str,
+        include_provenance: bool,
+        provenance_offset: usize,
+    ) -> Result<(Value, PassageCitation, PathBuf, String), ToolError> {
+        let mut c = self
+            .candidates
+            .get(id)
+            .ok_or_else(|| ToolError::invalid("Unknown evidence ID; search first"))?
+            .clone();
+        let mut next_provenance_offset = None;
+        if include_provenance
+            && c.provenance.is_none()
+            && c.citation.historical.is_none()
+            && c.citation.location != "title"
+        {
+            let timeline = state.note_timeline();
+            let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
+            let current = access
+                .provenance(&crate::services::note_timeline::NoteIdentity::new(
+                    &c.citation.note_id,
+                ))
+                .map_err(|_| ToolError::provenance("Current provenance is pending or unavailable"))?
+                .ok_or_else(|| ToolError::provenance("Current provenance is unavailable"))?;
+            let lines = if c.citation.location == "properties" {
+                &current.properties
+            } else {
+                &current.body
             };
-            let size = c.citation.excerpt.len()
-                + c.context.len()
-                + c.task.as_ref().map_or(0, |task| task.to_string().len())
-                + c.provenance.as_ref().map_or(0, |p| p.to_string().len());
-            if bytes + size > READ_BYTES {
-                truncation_reason = Some(if size > READ_BYTES {
-                    "item_too_large"
-                } else {
-                    "read_capacity"
-                });
-                break;
+            let mut offset = 0;
+            // Group equal provenance across disjoint ranges before paging;
+            // otherwise per-word lineage repeats the same dates excessively.
+            let mut groups: Vec<(Value, Vec<Value>, Vec<RevisionCitation>)> = Vec::new();
+            for line in lines {
+                for range in &line.ranges {
+                    let start = offset + range.start;
+                    let end = offset + range.end;
+                    if start >= c.citation.end || end <= c.citation.start {
+                        continue;
+                    }
+                    let p = &range.provenance;
+                    let value = serde_json::to_value(p).map_err(|e| e.to_string())?;
+                    let span =
+                        json!({"start":start.max(c.citation.start),"end":end.min(c.citation.end)});
+                    if let Some((_, spans, _)) = groups.iter_mut().find(|(v, _, _)| *v == value) {
+                        spans.push(span);
+                    } else {
+                        let proofs = [&p.introduced_at, &p.last_changed_at, &p.restored_at]
+                            .into_iter()
+                            .flatten()
+                            .chain(std::iter::once(&p.known_since))
+                            .filter_map(|e| {
+                                Some(RevisionCitation {
+                                    note_id: c.citation.note_id.clone(),
+                                    revision_id: e.record_id.clone(),
+                                    at_millis: e.at_millis,
+                                    time_evidence: e.time_evidence,
+                                    source: e.source?,
+                                    current_excerpt: c.citation.excerpt.clone(),
+                                })
+                            })
+                            .collect();
+                        groups.push((value, vec![span], proofs));
+                    }
+                }
+                offset += line.text.len();
             }
-            if !self.reserve(size + c.title.len() + 512) {
-                truncation_reason = Some("run_budget");
-                break;
+            let mut ranges = Vec::new();
+            let mut provenance_bytes = 0;
+            for (index, (provenance, spans, proofs)) in
+                groups.into_iter().enumerate().skip(provenance_offset)
+            {
+                let entry = json!({"ranges":spans,"provenance":provenance});
+                let size = entry.to_string().len();
+                if provenance_bytes + size > 2800 {
+                    if ranges.is_empty() {
+                        return Err(ToolError::provenance(
+                            "A provenance group exceeds the read budget; use a narrower passage",
+                        ));
+                    }
+                    next_provenance_offset = Some(index);
+                    break;
+                }
+                provenance_bytes += size;
+                ranges.push(entry);
+                c.citation.revisions.extend(proofs);
             }
-            bytes += size;
-            self.admit(c.citation.clone());
-            items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":title,"location":c.citation.location,"start":c.citation.start,"end":c.citation.end,"contentHash":c.citation.content_hash,"excerpt":c.citation.excerpt,"supportingContext":c.context,"provenance":c.provenance,"task":c.task,"nextProvenanceOffset":next_provenance_offset,"citation":format!("[{}](passage:{id})",title)}));
-            sources.push((c.citation.clone(), path, title));
+            c.provenance = Some(json!(ranges));
         }
-        if items.is_empty() && matches!(truncation_reason, Some("run_budget" | "item_too_large")) {
-            self.blocked_reads.insert(read_key);
-        }
-        Ok((
-            json!({"status":if items.is_empty() && truncation_reason.is_some() {"limited"} else {"ready"},"truncationReason":truncation_reason,"retryable":truncation_reason == Some("read_capacity"),"remainingEvidenceBytes":EVIDENCE_BYTES.saturating_sub(self.used()),"items":items,"truncated":items.len()<ids.len(),"usedEvidenceBytes":self.used(),"evidenceByteBudget":EVIDENCE_BYTES,"notesRead":sources.iter().map(|(c,_,_)| &c.note_id).collect::<HashSet<_>>().len()}),
-            sources,
-        ))
+        let Some((path, title)) = validate_citation(state, &c.citation, allowed, excluded) else {
+            return Err(ToolError::stale(
+                "Evidence changed or is no longer allowed; search again",
+            ));
+        };
+        let item = json!({"evidenceId":id,"noteId":c.citation.note_id,"title":title,"location":c.citation.location,"start":c.citation.start,"end":c.citation.end,"contentHash":c.citation.content_hash,"excerpt":c.citation.excerpt,"supportingContext":c.context,"provenance":c.provenance,"task":c.task,"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"evidenceRole":if c.citation.historical.is_some() || c.section == "Activity" {"changed_passage"} else {"current_context"},"nextProvenanceOffset":next_provenance_offset,"citation":format!("[{}](passage:{id})",title)});
+        Ok((item, c.citation, path, title))
     }
-    pub(crate) fn read_is_blocked(&self, ids: &[String], provenance: bool, offset: usize) -> bool {
-        serde_json::to_string(&(ids, provenance, offset))
-            .is_ok_and(|key| self.blocked_reads.contains(&key))
-    }
+
     pub(crate) fn is_current(
         &self,
         state: &AppState,
@@ -1075,6 +1179,7 @@ impl EvidenceSession {
 fn overlaps(a: &Candidate, b: &Candidate) -> bool {
     let (a, b) = (&a.citation, &b.citation);
     a.note_id == b.note_id
+        && a.historical == b.historical
         && a.location == b.location
         && a.end.min(b.end).saturating_sub(a.start.max(b.start)) * 2
             > (a.end - a.start).min(b.end - b.start)
@@ -1188,6 +1293,7 @@ fn make_candidate_at(
     let reference = hash(&format!("{id}:{content_hash}:{location}:{start}:{end}"));
     Some(Candidate {
         citation: PassageCitation {
+            historical: None,
             id: reference,
             note_id: id.into(),
             content_hash,
@@ -1261,6 +1367,21 @@ pub(crate) fn validate_citation(
     }
     if canonical_content_hash(&raw) != citation.content_hash {
         return None;
+    }
+    if let Some(proof) = &citation.historical {
+        let timeline = state.note_timeline();
+        let access = timeline.activity_history(AllowedScope::policy(allowed, excluded));
+        return access
+            .validate(
+                &crate::services::note_timeline::NoteIdentity::new(&citation.note_id),
+                proof,
+                &citation.location,
+                citation.start,
+                citation.end,
+                &citation.excerpt,
+            )
+            .ok()?
+            .then_some((path, title));
     }
     if body_at(&raw, &title, &citation.location).get(citation.start..citation.end)?
         != citation.excerpt

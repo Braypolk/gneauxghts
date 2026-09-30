@@ -44,8 +44,8 @@ export function createPaneLayoutMotion(deps: {
     active?.finish();
   }
 
-  function update(nextTarget: string, enabled: boolean) {
-    if (nextTarget === target) return;
+  function update(nextTarget: string, enabled: boolean, retarget = false) {
+    if (nextTarget === target && !retarget) return;
     const initial = target === undefined;
     target = nextTarget;
     const shell = deps.getShell();
@@ -185,7 +185,16 @@ export function createPaneLayoutMotion(deps: {
   return {
     update,
     cancel,
+    /** Related can change the destination while panes are moving. Capture the
+     * displayed geometry before cancelling, just as for membership changes. */
+    retarget() {
+      if (active && target !== undefined) update(target, true, true);
+    },
     get running() { return active !== undefined; },
-    wait: () => finished
+    async wait() {
+      // A close must wait through retargeting too, rather than remove its pane
+      // when the superseded animation resolves.
+      while (active) await finished;
+    }
   };
 }

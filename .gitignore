@@ -13,6 +13,11 @@ vite.config.ts.timestamp-*
 .pnpm-store/
 .pnpm-store-v11/
 
+# Local live-chat diagnostic reports; keep the issue/spec Markdown files.
+.scratch/chat-reliability/*.json
+.scratch/chat-reliability/*.png
+.scratch/chat-reliability/artifacts/
+
 # Rust
 target/
 **/target/

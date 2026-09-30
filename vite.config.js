@@ -95,8 +95,9 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // Native code and local issue/evaluation artifacts do not affect the UI.
+      // Live E2E reports must not reload the WebView during citation checks.
+      ignored: ["**/src-tauri/**", "**/.scratch/**"],
     },
   },
 }));

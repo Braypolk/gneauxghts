@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import { EditorView } from '@codemirror/view';
 import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
+import { navigationScrollBehavior } from '$lib/ui/motion';
 
 function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
   if (node.nodeType === Node.TEXT_NODE) {
@@ -49,7 +50,7 @@ export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNu
     const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
     scrollElement.scrollTo({
       top: Math.max(0, Math.min(targetTop, maxScrollTop)),
-      behavior: 'smooth'
+      behavior: navigationScrollBehavior()
     });
   }
   return true;
@@ -65,13 +66,15 @@ export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLEl
   view.focus();
 
   if (!point) {
-    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    target.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
     return;
   }
   const anchor = Math.max(0, Math.min(view.state.doc.length, view.posAtDOM(point.node, point.offset)));
-  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: true }));
+  // The explicit target scroll below owns positioning; CodeMirror must not
+  // start a second scroll during its next layout pass.
+  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: false }));
 
-  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
 }
 
 export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
@@ -84,13 +87,9 @@ export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
   if (!view) return;
 
   const anchor = view.state.doc.length;
-  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: true }));
+  // CodeMirror owns the end position so virtualized content need not be in DOM.
+  view.dispatch(view.state.update({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) }));
   view.focus();
-
-  const point = findLastSelectionPoint(surface);
-  const selectionTarget =
-    point?.node instanceof HTMLElement ? point.node : point?.node.parentElement ?? surface;
-  selectionTarget.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function normalizePlainText(value: string) {

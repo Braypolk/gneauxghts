@@ -139,8 +139,8 @@ its snapshot.
 
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability is intentionally absent until its
-app-owned current-turn proposal path is implemented; ordinary chat can receive
-only the current-content capability. Revision and Lifecycle Event identities
+app-owned current-turn proposal path is implemented; ordinary chat can receive the current-content capability and the scoped read-only
+activity-history capability from ADR 0009. Revision and Lifecycle Event identities
 likewise cannot be minted by callers; their durable issuer belongs inside
 `NoteTimeline`.
 
@@ -464,7 +464,9 @@ session cannot mistake an older restore for the new result.
 `agent_run_coordinator.rs` is the chat-to-runtime handoff.
 `agent_runtime.rs` adapts the selected provider to an app-owned request and
 event protocol. `ChatService` retains durable run lifecycle and context
-assembly. Provider and runtime-library types do not cross those seams.
+assembly. It serializes managed transcript publication (filesystem bytes and
+SQLite hash receipts) with conflict classification. The watcher rechecks current
+projection bytes after publication; queued own-write events cannot detach chats. Provider and runtime-library types do not cross those seams.
 
 `services/evidence.rs` owns current evidence search, ranking, scoped/versioned
 cursors, passage reads and canonical citation validation. `search_evidence` uses
@@ -475,8 +477,11 @@ uses the compatibility adapter in `services/retrieval.rs`; its metadata date
 filters are distinct from agent surviving-content activity periods.
 
 NoteTimeline remains the sole owner of activity reconstruction and range
-provenance. Evidence consumes its allowed current-content capability and keeps
-only surviving modified ranges, with surrounding current text labeled separately.
+provenance. Evidence consumes allowed current-content provenance and, for explicit activity
+queries with `include_history`, the read-only `activity_history` capability. The
+latter reconstructs retained added/removed body and property lines through the
+private timeline store. Historical text is separate from current status; surrounding
+current context is labeled separately.
 Monday-start local weeks resolve to half-open intervals. Baseline knowledge is
 not an introduction date; Editing Window uncertainty remains intact.
 
@@ -484,7 +489,7 @@ Current-passage citations bind stable note identity, canonical content hash,
 exact UTF-8 coordinates and optional retained revision evidence. Delivery and
 navigation revalidate current bytes and permissions, recovering explicit grants
 from the originating run. The UI opens the current note and focuses the exact,
-unambiguous passage. Legacy Revision Citations still enter History Mode.
+unambiguous passage. Historical passage citations instead bind retained UTF-8 coordinates and a validated change proof, and open the retained content revision in History Mode. Legacy Revision Citations also enter History Mode.
 `passage_json` is an additive chat-store migration; canonical Markdown and
 canonical history formats do not change.
 
@@ -498,46 +503,66 @@ Transcripts and branches persist durable destinations, never depend on the
 run-local registry, and continue to revalidate on navigation. Link integrity
 is distinct from whether a claim is supported by its cited passage.
 
-The optional `/sources` turn command selects the source-first preview. Its
-composer control edits the existing draft; the saved user message retains the
-choice on retry without another settings or persistence owner. ChatService uses
-a selection-only prompt and search/read tool set, suppresses raw model text, and
-renders validated selections through `chat/source_first.rs`. The existing
-run-local citation registry owns stable clause IDs for exact admitted excerpts.
-Supporting context is not selectable activity. Code escapes source Markdown and
-constructs durable links; source grouping remains a model interpretation.
-Invalid selections fail explicitly without a free-form fallback. Existing scope,
-budget, cancellation and final freshness checks apply.
+Evidence presentation belongs to the answer. The expandable Show evidence section
+renders exact delivered excerpts as literal text, identifies current passages and
+retained changes, and displays recorded timing without implying complete coverage.
+Citation admission checks exact excerpt bytes for every read. Source links retain
+the same access/freshness validation and current/revision navigation.
+Requests for sources or quotations use the ordinary prompt, history, streaming,
+provider policy and capability set. There is no source-preview command, composer
+mode, restricted registry or selection-only terminal renderer. Legacy `/sources`
+message text remains ordinary user content when retried; saved answers/citations
+are unchanged. Model-written quotations remain distinct from the exact excerpts
+in the evidence panel; citation identity does not validate semantic entailment.
 
-The evidence service owns a narrow typed note-inventory interpretation and an
-immutable run anchor. Calendar expressions resolve in the named local timezone.
-The structured contract accepts only listing/counting notes by recorded text
-activity; other questions use ordinary evidence search/read. Older query events
-can still decode their date roles, without treating event or deadline dates as
-text activity. Plain activity inventories group current surviving
-provenance by Note Identity and return a typed terminal result through the
-existing runtime. The citation owner renders bounded exact excerpts and recorded
-activity metadata directly, without a final model selection or synthesis call.
-Runtime tool calls are serialized so this terminal result stops subsequent tools.
-Inventories retain scope, cancellation and final source validation. Inventory
-admission is separate from the model evidence allowance: pages have a 50-note
-limit and a conservative 256,000-byte charge covering serialized rows and durable
-sources. Each row keeps one validated representative passage, preferring definite
-then recent timing. The renderer shows one linked title, an example recorded edit,
-and bounded current context explicitly distinguished from edited text. Clock
-uncertainty and actual date-boundary crossing are separate labels. QueryResolved
-inventory diagnostics identify model evidence, inventory, display and retrieval
-bounds and stop reasons.
-Continuation cursors bind normalized bounds, scope, canonical versions and ordered
-provenance; each page reports its own count. QueryResolved events reuse the durable
-run event store. Follow-ups receive only the primary root query's interpretation,
-resolved periods and opaque continuation, never earlier result facts as evidence.
-Nonretryable empty reads report their limiting budget and cannot be repeated.
-One standalone relative calendar phrase in the user's request can restrict the
-tool's period schema and validation; compound or ambiguous phrases are left for
-interpretation. The guard never reads note prose. Invalid interpretations receive
-one correction, then stop. The former experimental general routing and its
-environment flag have been removed.
+`agent_tools/capabilities.rs` owns shared composition instructions and the
+application-owned capability sets: evidence,
+working-note reads, proposals, research, and planning. Capability restrictions
+intersect the parent's grants; worker identity and response presentation do not
+choose tools inside the runtime. Ordinary chat exposes the complete set. The
+agent chooses and sequences available tools to fulfill the user's objective;
+retrieval never chooses a final response format or terminates a successful run.
+
+Search, activity listing and research accept the same explicit `activity_range`:
+start inclusive and end exclusive, each an ISO date or RFC3339 timestamp, with
+an optional named timezone for local dates. The model interprets the user's
+wording against the supplied run instant and local timezone. The evidence owner
+validates dates, timezone boundaries and scope; it does not parse the question,
+restrict tools to named periods, or route semantic intents. Activity bounds filter recorded text changes, not event dates, deadlines or accomplishments.
+`include_history` requires those bounds and includes retained superseded/removed
+lines; it supports literal/regex content filters, while semantic current searches
+remain separate. Scope excludes non-note transcripts. Each call
+can select its own query, scope and range; only a research worker's inherited
+scope/range is mandatory within that worker.
+
+`list_note_activity` returns bounded intermediate data grouped by Note Identity,
+with one representative evidence ID, preview and recorded change per note. This
+is discovery only; search with the same scope/range retrieves the other changed
+passages, preserving different revisions at overlapping offsets.
+`search_evidence` discovers passages; `read_evidence` accepts selected IDs or a
+known note ID and delivers canonical current content or labeled historical changes,
+with compact validated citations and interval support. Expanded per-range provenance is opt-in; historical identity and timing remain present without expansion. `read_working_note`
+is reserved for proposal preparation. Read continuations preserve remaining IDs,
+provenance position, and options. Search continuations preserve scope/range/configuration;
+model callers pass cursor only. Delivery completeness is separate from retrieval coverage.
+Passing an activity range to a read returns backend-checked `activitySupport`:
+supported, uncertain, or not_established. Broad current reads and baseline dates
+do not establish whole-passage activity. This check does not validate semantic entailment. Activity results can
+be followed by reads, unrelated searches, planning, research and proposals.
+The private inventory collection keeps a conservative 256,000-byte storage-proof
+allowance; model-facing pages contain at most 20 bounded previews (8 by default)
+and consume the same 24,000-byte evidence allowance as other tools. Counts are
+per page and coverage/uncertainty remain explicit. Cursors bind range, scope,
+canonical versions and provenance. Model references are issued only on reads.
+
+QueryResolved events retain explicit submitted configuration, resolved range and
+continuation in the existing durable event store. Follow-ups receive only this
+configuration, never earlier result facts as evidence. Legacy query events are
+converted to explicit ranges only for text activity; other date roles never
+become edit filters. Invalid inputs return tool errors for correction within the
+ordinary run guardrails. Nonretryable empty reads report their limiting budget
+and cannot be repeated. No terminal inventory path or question-specific router
+exists.
 
 
 Automatic active/selected/link context uses current canonical bytes. Editing
@@ -556,25 +581,57 @@ per-operation reuse rules, never caches across freshness boundaries. Repeated
 payloads still consume the model evidence allowance.
 
 The runtime's `research_notes` worker has a separate prompt/history and only
-search/read tools. It retains the parent's provider/model routing, shares the
+evidence discovery/read tools. Its role contract gathers and selects evidence rather
+than inheriting the full assistant's answer, planning and proposal instructions.
+The final JSON contract applies after intermediate tool calls. Its prompt contains
+the focused question, tool-facing scope and explicit range, discovery hints and run
+instant; hints are unread metadata, and internal normalized bounds/default queries
+are not model inputs. It retains the parent's provider/model routing, shares the
 run guard and evidence-byte budget, and returns selected issued/read IDs and gap
 codes. The backend resolves passages; worker prose and intermediate transcripts
-never enter parent context. One worker is allowed, with twelve tool calls and a
-90-second timeout, under the parent call/token/time limits. Period-scoped workers
-must obtain their own temporal candidates. Provider failure remains explicit;
+never enter parent context. One worker may run at a time, with twelve tool calls and a
+90-second timeout per invocation, under shared parent call/token/time and evidence
+limits. The agent may invoke research again for another question or scope; a
+lease is released on every exit, and cumulative usage includes all invocations. Period-scoped workers
+must obtain their own temporal candidates; direct canonical reads for current-status checks remain with the parent. Provider failure remains explicit;
 there is no local-to-hosted fallback.
+Worker reads inherit the invocation's explicit range when omitted, reject a wider
+submitted range, and preserve cursor-owned options. The handoff identifies already
+read primary items separately from remaining selected candidates: the parent can
+cite delivered items directly and read only remaining IDs, preserving room for
+independent current-context retrieval in the shared allowance.
+
+`AgentRuntimeRequest.output_schema` is an optional app-owned result contract,
+independent of executable capability grants. The private adapter uses the pinned
+engine's Tool output mode so schema formatting does not suppress gathering calls
+on local backends. Its appended result formatter is non-executable: the engine
+returns its arguments rather than dispatching an application action. Research
+uses a closed evidence-ID/gap schema; accidental terminal prose receives the
+engine's bounded output retry under the same call/token/time limits. The evidence
+owner still rejects unread IDs, unknown fields/gaps and oversized selections.
+Isolation clears any parent result schema before assigning the worker contract.
+During context finishing, only this appended formatter remains callable; all
+executable tools are removed. The private compatibility check matches the final
+definition's exact result schema, including collision-renamed formatters, and is
+covered through the production streaming runner. Measurement separates formatter
+count from executable tool count without recording their definitions or content.
 
 An empty resolved research scope returns `empty_scope` without starting worker
 inference or widening access. Selection accepts raw JSON or one standalone JSON
 code fence; both undergo the same closed-schema, gap-code and actually-read-ID
 validation. Surrounding prose is rejected. Durable `ResearchCompleted` events
 report fixed stage/outcome/reason codes and counters, including selected versus
-actually delivered passages. They never contain worker text, identifiers, scope
+actually delivered passages, model/tool attempts, discovery/read calls and tool
+errors. Completed reads remain counted after failure/timeout, without becoming
+delivered evidence. Empty selection preserves a supplied closed gap code; absent
+one it reports unavailable rather than asserting no matching evidence. Events never contain worker text, identifiers, scope
 values or raw provider errors, and do not add user-visible answer parts.
 
 Initial evidence limits are byte-based estimates: 24,000 admitted bytes per run,
 6,000 per read, 480 per preview, and 8 candidates per page (20 maximum).
-Search cursors and per-passage provenance continuation offsets are separate.
+Model-facing search and read cursors retain their configuration inside the evidence
+session; internal provenance offsets are not model inputs. Historical proofs are
+persisted additively in passage JSON and navigation opens their content revision.
 The legacy prompt/history hook has a 128,000-byte admission ceiling; shared measured
 usage has a 400,000-token ceiling and 96 tool calls within fifteen minutes.
 Opt-in `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` wraps the completion model inside the
@@ -609,6 +666,13 @@ request diagnostics off; worker events retain their worker identity.
 These bounds are implementation defaults, not measured quality guarantees.
 Fixture measurements and unmeasured live-provider questions are recorded in
 [the evaluation report](.scratch/current-evidence/evaluation.md).
+
+Application tools register through `agent_tools/feedback.rs`. It preserves exact,
+known application validation/recovery messages across Rig's error normalization;
+unknown dependency diagnostics retain redacted feedback. Parent and research use
+the same registration seam. Durable activity summaries consume only model-safe
+feedback (including text errors), count distinct delivered notes, and distinguish
+incomplete delivery. They do not persist raw arguments or internal error strings.
 
 The protocol keeps run identity, structured activity, plans, usage,
 cancellation, bounded guardrails, and transient permission requests under

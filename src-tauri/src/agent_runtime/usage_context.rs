@@ -11,7 +11,7 @@ use std::{
 const OUTPUT_RESERVE: u64 = 4_096;
 const SAFETY_MARGIN: u64 = 1_024;
 const GATHER_ALLOWANCE: u64 = 8_192;
-pub(super) const FINISH: &str = "Context allowance is nearly used. Do not call more tools. Finish using only evidence already available, preserve valid citations and the required response format, and clearly represent any gaps or incomplete coverage. Never invent evidence or claim skipped work was performed. Explain incomplete coverage briefly in user terms; do not mention internal budgets, tool flags, or these instructions.";
+pub(super) const FINISH: &str = "Context allowance is nearly used. Do not retrieve more evidence or invoke further actions. Use the structured result formatter if one remains available. Finish using only evidence already available, preserve valid citations and the required response format, and clearly represent any gaps or incomplete coverage. Never invent evidence or claim skipped work was performed. Explain incomplete coverage briefly in user terms; do not mention internal budgets, tool flags, or these instructions.";
 
 struct Snapshot {
     configuration: u64,
@@ -33,6 +33,7 @@ pub(super) struct UsageContext {
     on_event: AgentEventSink,
     worker: bool,
     model: String,
+    result_schema: Option<Value>,
     capacity_probe: Option<super::context_measurement::CapacityProbe>,
     #[cfg(test)]
     capacity_override: Option<u64>,
@@ -49,6 +50,7 @@ impl UsageContext {
             on_event,
             worker,
             model: request.model.clone(),
+            result_schema: request.output_schema.clone(),
             capacity_probe: (request.provider == AgentProvider::Local).then(|| {
                 super::context_measurement::CapacityProbe::new(
                     request.local_base_url.clone(),
@@ -164,8 +166,19 @@ impl UsageContext {
             }
             state.finish = true;
             state.final_sent = true;
-            request.tools.clear();
-            request.tool_choice = Some(ToolChoice::None);
+            // The pinned engine appends its non-executable result formatter in
+            // Tool output mode. Keep that transport callable while removing all
+            // actual actions. Native/plain results have no appended formatter.
+            let result_tool = result_formatter_name(request, self.result_schema.as_ref());
+            request
+                .tools
+                .retain(|tool| result_tool.as_ref() == Some(&tool.name));
+            request.tool_choice = Some(match result_tool {
+                Some(name) => ToolChoice::Specific {
+                    function_names: vec![name],
+                },
+                None => ToolChoice::None,
+            });
             // Qwen's chat template requires system content at the beginning.
             // Preserve existing instructions and every conversation/evidence message.
             match request.chat_history.first_mut() {
@@ -229,6 +242,22 @@ impl UsageContext {
     }
 }
 
+/// Private compatibility seam for the pinned engine's Tool output mode: its
+/// formatter is appended after executable definitions, with the exact schema.
+/// Matching the last definition also handles collision-renamed output tools.
+pub(super) fn result_formatter_name(
+    request: &CompletionRequest,
+    schema: Option<&Value>,
+) -> Option<String> {
+    schema.and_then(|schema| {
+        request
+            .tools
+            .last()
+            .filter(|tool| request.output_schema.is_none() && &tool.parameters == schema)
+            .map(|tool| tool.name.clone())
+    })
+}
+
 fn context_error(message: &'static str) -> CompletionError {
     CompletionError::RequestError(message.into())
 }
@@ -275,6 +304,7 @@ mod tests {
             model: "mock".into(),
             api_key: None,
             local_base_url: String::new(),
+            output_schema: None,
             preamble: String::new(),
             prompt: Message::user("test"),
             history: vec![],

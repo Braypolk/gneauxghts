@@ -1,7 +1,12 @@
+mod capabilities;
+mod feedback;
+pub(crate) use capabilities::instructions as capability_instructions;
+use capabilities::{Capabilities, Capability};
+use feedback::ModelTool;
 mod research;
 use research::{ResearchNotesTool, ResearchRuntime};
 mod evidence;
-use evidence::{ReadEvidenceTool, SearchEvidenceTool};
+use evidence::{ListNoteActivityTool, ReadEvidenceTool, SearchEvidenceTool};
 mod current_history;
 pub(crate) use current_history::filter_revision_sources;
 
@@ -131,11 +136,9 @@ pub(crate) struct AgentToolContext {
     research_runtime: Arc<Mutex<Option<ResearchRuntime>>>,
     cancellation: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
     research_usage: Arc<Mutex<crate::agent_runtime::AgentUsage>>,
-    research_started: Arc<AtomicBool>,
+    research_active: Arc<AtomicBool>,
     research_only: bool,
-    source_first: bool,
-    inventory: Arc<Mutex<Option<crate::services::evidence::InventoryResult>>>,
-    query_failures: Arc<AtomicUsize>,
+    capabilities: Capabilities,
     primary_query_recorded: Arc<AtomicBool>,
     worker_calls: Arc<AtomicUsize>,
     worker_scope: Option<Arc<HashSet<String>>>,
@@ -189,11 +192,9 @@ impl AgentToolContext {
             research_runtime: Arc::new(Mutex::new(None)),
             cancellation: Arc::new(Mutex::new(None)),
             research_usage: Arc::new(Mutex::new(Default::default())),
-            research_started: Arc::new(AtomicBool::new(false)),
+            research_active: Arc::new(AtomicBool::new(false)),
             research_only: false,
-            source_first: false,
-            inventory: Arc::new(Mutex::new(None)),
-            query_failures: Arc::new(AtomicUsize::new(0)),
+            capabilities: Capabilities::assistant(),
             primary_query_recorded: Arc::new(AtomicBool::new(false)),
             worker_calls: Arc::new(AtomicUsize::new(0)),
             worker_scope: None,
@@ -208,23 +209,25 @@ impl AgentToolContext {
     where
         M: CompletionModel,
     {
-        if self.research_only || self.source_first {
-            return builder
-                .tool(SearchEvidenceTool(self.clone()))
-                .tool(ReadEvidenceTool(self.clone()))
-                .build();
+        let mut builder = builder.dynamic_tools(Vec::new());
+        for capability in self.capabilities.iter() {
+            builder = match capability {
+                Capability::Evidence => builder
+                    .tool(ModelTool(SearchEvidenceTool(self.clone())))
+                    .tool(ModelTool(ListNoteActivityTool(self.clone())))
+                    .tool(ModelTool(ReadEvidenceTool(self.clone()))),
+                Capability::WorkingNotes => builder
+                    .tool(ModelTool(GetActiveNoteTool(self.clone())))
+                    .tool(ModelTool(ReadNoteTool(self.clone()))),
+                Capability::Proposals => builder
+                    .tool(ModelTool(ProposeNoteEditsTool(self.clone())))
+                    .tool(ModelTool(ProposeNoteRewriteTool(self.clone())))
+                    .tool(ModelTool(ProposeCreateNoteTool(self.clone()))),
+                Capability::Research => builder.tool(ModelTool(ResearchNotesTool(self.clone()))),
+                Capability::Planning => builder.tool(ModelTool(UpdatePlanTool(self.clone()))),
+            };
         }
-        builder
-            .tool(ResearchNotesTool(self.clone()))
-            .tool(GetActiveNoteTool(self.clone()))
-            .tool(SearchEvidenceTool(self.clone()))
-            .tool(ReadEvidenceTool(self.clone()))
-            .tool(ReadNoteTool(self.clone()))
-            .tool(ProposeNoteEditsTool(self.clone()))
-            .tool(ProposeNoteRewriteTool(self.clone()))
-            .tool(ProposeCreateNoteTool(self.clone()))
-            .tool(UpdatePlanTool(self.clone()))
-            .build()
+        builder.build()
     }
 
     pub(crate) fn set_event_sink(&self, sink: crate::agent_runtime::AgentEventSink) {
@@ -409,8 +412,9 @@ impl AgentToolContext {
             );
         }
         let (path, title, _) = self.resolve_note(note_id)?;
-        let raw = fs::read_to_string(&path)
-            .map_err(|error| AgentToolError(format!("Unable to read active note: {error}")))?;
+        let raw = fs::read_to_string(&path).map_err(|error| {
+            AgentToolError::internal(format!("Unable to read active note: {error}"))
+        })?;
         let working = canonical_working_note(&raw);
         let authoritative = ActiveNoteSnapshot {
             note_id: Some(note_id.to_string()),
@@ -449,7 +453,9 @@ impl AgentToolContext {
             "contentHash":authoritative.body_hash,
             "selection":authoritative.selection,
             "truncated":truncated,
-            "pendingChanges":working.pending_changes
+            "pendingChanges":working.pending_changes,
+            "sourceKind":"working_note",
+            "evidenceMeaning":"For proposal preparation; use read_evidence for authoritative answers"
         }))
     }
 
@@ -470,7 +476,7 @@ impl AgentToolContext {
         if self
             .service
             .excluded_note_ids()
-            .map_err(AgentToolError)?
+            .map_err(AgentToolError::from)?
             .contains(note_id)
         {
             return Ok(false);
@@ -480,7 +486,7 @@ impl AgentToolContext {
         }
         self.service
             .note_is_allowed(&self.access, note_id)
-            .map_err(AgentToolError)
+            .map_err(AgentToolError::from)
     }
 
     fn surface(&self, note_id: &str) {
@@ -572,19 +578,18 @@ impl AgentToolContext {
     }
 
     fn resolve_note(&self, note_id: &str) -> Result<(PathBuf, String, u64), AgentToolError> {
-        let state = self
-            .app
-            .try_state::<AppState>()
-            .ok_or_else(|| AgentToolError("The notes index is unavailable".to_string()))?;
+        let state = self.app.try_state::<AppState>().ok_or_else(|| {
+            AgentToolError::internal("The notes index is unavailable".to_string())
+        })?;
         let index = state
             .notes_index
             .lock()
-            .map_err(|_| AgentToolError("Notes index lock poisoned".to_string()))?;
+            .map_err(|_| AgentToolError::internal("Notes index lock poisoned".to_string()))?;
         let (path, indexed) = index
             .get_note_by_note_id(note_id)
-            .ok_or_else(|| AgentToolError("Note not found".to_string()))?;
+            .ok_or_else(|| AgentToolError::internal("Note not found".to_string()))?;
         if indexed.document_kind != DocumentKind::Note {
-            return Err(AgentToolError(
+            return Err(AgentToolError::internal(
                 "Only ordinary notes are available".to_string(),
             ));
         }
@@ -596,7 +601,7 @@ impl AgentToolContext {
         let Some(proposal) = self
             .service
             .pending_agent_proposal_for_note(note_id)
-            .map_err(AgentToolError)?
+            .map_err(AgentToolError::from)?
         else {
             return Ok(WorkingNote {
                 body: note::strip_frontmatter(raw).to_string(),
@@ -607,7 +612,7 @@ impl AgentToolContext {
         };
         let preview: ProposalPreview =
             serde_json::from_value(proposal.preview).map_err(|error| {
-                AgentToolError(format!("Stored proposal preview is invalid: {error}"))
+                AgentToolError::internal(format!("Stored proposal preview is invalid: {error}"))
             })?;
         let expected_disk_hash = proposal
             .base_hash
@@ -664,8 +669,8 @@ impl AgentToolContext {
         let pending = self
             .service
             .pending_agent_proposal_for_note(note_id)
-            .map_err(AgentToolError)?
-            .ok_or_else(|| AgentToolError("Pending proposal disappeared".to_string()))?;
+            .map_err(AgentToolError::from)?
+            .ok_or_else(|| AgentToolError::internal("Pending proposal disappeared".to_string()))?;
         let expected_disk_hash = pending
             .base_hash
             .unwrap_or_else(|| working.disk_hash.clone());
@@ -678,9 +683,7 @@ impl AgentToolContext {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("{0}")]
-pub(crate) struct AgentToolError(String);
+pub(crate) use crate::services::tool_outcome::ToolError as AgentToolError;
 
 #[derive(Clone)]
 struct GetActiveNoteTool(AgentToolContext);
@@ -721,12 +724,12 @@ fn truncate_active_body(note: &ActiveNoteSnapshot) -> (String, bool) {
 async fn run_blocking_tool<T, F>(operation: F) -> Result<T, AgentToolError>
 where
     T: Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
+    F: FnOnce() -> Result<T, AgentToolError> + Send + 'static,
 {
     tauri::async_runtime::spawn_blocking(operation)
         .await
-        .map_err(|error| AgentToolError(format!("Tool worker failed: {error}")))?
-        .map_err(AgentToolError)
+        .map_err(|error| AgentToolError::internal(format!("Tool worker failed: {error}")))?
+        .map_err(AgentToolError::from)
 }
 
 #[derive(Clone)]
@@ -740,7 +743,7 @@ struct ReadArgs {
 }
 
 impl Tool for ReadNoteTool {
-    const NAME: &'static str = "read_note";
+    const NAME: &'static str = "read_working_note";
     type Error = AgentToolError;
     type Args = ReadArgs;
     type Output = Value;
@@ -775,7 +778,7 @@ impl Tool for ReadNoteTool {
         }
         let (path, title, _) = self.0.resolve_note(&args.note_id)?;
         let raw = fs::read_to_string(&path)
-            .map_err(|error| AgentToolError(format!("Unable to read note: {error}")))?;
+            .map_err(|error| AgentToolError::internal(format!("Unable to read note: {error}")))?;
         let working = self.0.working_note(&args.note_id, &raw)?;
         let body = working.body.as_str();
         let start_line = args.start_line.unwrap_or(1).max(1);
@@ -792,16 +795,14 @@ impl Tool for ReadNoteTool {
                 content.push('\n');
             }
             if line.len() > max_chars {
-                return Err(AgentToolError("This line exceeds the editing read budget; use focused evidence or a smaller note before a full rewrite".into()));
+                return Err(AgentToolError::read_capacity("This line exceeds the editing read budget; use focused evidence or a smaller note before a full rewrite"));
             }
             content.push_str(line);
             end_line = index + 1;
         }
         let admitted = self.0.admit_context(&content, 6000)?;
         if admitted.len() != content.len() {
-            return Err(AgentToolError(
-                "Evidence budget exhausted; narrow the task".into(),
-            ));
+            return Err(AgentToolError::evidence_budget());
         }
         self.0.surface(&args.note_id);
         self.0.record_read(
@@ -828,7 +829,9 @@ impl Tool for ReadNoteTool {
             "hasMore":end_line < lines.len(),
             "content":content,
             "contentHash":working.content_hash,
-            "pendingChanges":working.pending_changes
+            "pendingChanges":working.pending_changes,
+            "sourceKind":"working_note",
+            "evidenceMeaning":"For proposal preparation; use read_evidence for authoritative answers"
         }))
     }
 }
@@ -911,10 +914,10 @@ impl Tool for ProposeNoteEditsTool {
             .0
             .proposal_lock
             .lock()
-            .map_err(|_| AgentToolError("Proposal lock poisoned".to_string()))?;
+            .map_err(|_| AgentToolError::internal("Proposal lock poisoned".to_string()))?;
         let (path, title, _) = self.0.resolve_note(&args.note_id)?;
         let raw = fs::read_to_string(&path)
-            .map_err(|error| AgentToolError(format!("Unable to read note: {error}")))?;
+            .map_err(|error| AgentToolError::internal(format!("Unable to read note: {error}")))?;
         let working = self.0.working_note(&args.note_id, &raw)?;
         if let Some(error) =
             self.0
@@ -945,7 +948,7 @@ impl Tool for ProposeNoteEditsTool {
                     message
                 } else {
                     format!(
-                        "{message} Repeated local-model edit failures are not retryable; stop calling tools and briefly ask the user to retry or use a stronger model."
+                        "{message} Repeated local-model edit failures are not retryable. Do not repeat this failed edit; continue independent work and report the unresolved proposal."
                     )
                 };
                 return Ok(
@@ -954,10 +957,12 @@ impl Tool for ProposeNoteEditsTool {
             }
         };
         self.0.proposal_failures.store(0, Ordering::Relaxed);
-        let payload = serde_json::to_value(&args)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
-        let preview_value = serde_json::to_value(&preview)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
+        let payload = serde_json::to_value(&args).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
+        let preview_value = serde_json::to_value(&preview).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
         let proposal = self
             .0
             .service
@@ -973,7 +978,7 @@ impl Tool for ProposeNoteEditsTool {
                 &payload,
                 &preview_value,
             )
-            .map_err(AgentToolError)?;
+            .map_err(AgentToolError::from)?;
         self.0.emit_proposal(&proposal);
         Ok(json!({"status":"pending_review","proposalId":proposal.id,"title":title}))
     }
@@ -1031,14 +1036,14 @@ impl Tool for ProposeNoteRewriteTool {
             .0
             .proposal_lock
             .lock()
-            .map_err(|_| AgentToolError("Proposal lock poisoned".to_string()))?;
+            .map_err(|_| AgentToolError::internal("Proposal lock poisoned".to_string()))?;
         let (path, title, _) = self.0.resolve_note(&args.note_id)?;
         let raw = fs::read_to_string(&path)
-            .map_err(|error| AgentToolError(format!("Unable to read note: {error}")))?;
+            .map_err(|error| AgentToolError::internal(format!("Unable to read note: {error}")))?;
         let working = self.0.working_note(&args.note_id, &raw)?;
         if !self.0.was_fully_read(&args.note_id, &working.content_hash) {
             return Ok(
-                json!({"status":"error","retryable":true,"code":"note_not_fully_read","message":"Read the complete current note with read_note, paging from line 1 until hasMore is false, before proposing a complete rewrite."}),
+                json!({"status":"error","retryable":true,"code":"note_not_fully_read","message":"Read the complete current note with read_working_note, paging from line 1 until hasMore is false, before proposing a complete rewrite."}),
             );
         }
         if let Some(error) =
@@ -1069,10 +1074,12 @@ impl Tool for ProposeNoteRewriteTool {
                 );
             }
         };
-        let payload = serde_json::to_value(&args)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
-        let preview_value = serde_json::to_value(&preview)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
+        let payload = serde_json::to_value(&args).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
+        let preview_value = serde_json::to_value(&preview).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
         let proposal = self
             .0
             .service
@@ -1088,7 +1095,7 @@ impl Tool for ProposeNoteRewriteTool {
                 &payload,
                 &preview_value,
             )
-            .map_err(AgentToolError)?;
+            .map_err(AgentToolError::from)?;
         self.0.emit_proposal(&proposal);
         Ok(json!({"status":"pending_review","proposalId":proposal.id,"title":title}))
     }
@@ -1140,14 +1147,16 @@ impl Tool for ProposeCreateNoteTool {
             .0
             .proposal_lock
             .lock()
-            .map_err(|_| AgentToolError("Proposal lock poisoned".to_string()))?;
+            .map_err(|_| AgentToolError::internal("Proposal lock poisoned".to_string()))?;
         let preview =
             preview_note_creation(self.0.service.notes_root(), &args.title, &args.markdown)
-                .map_err(AgentToolError)?;
-        let payload = serde_json::to_value(&args)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
-        let preview_value = serde_json::to_value(&preview)
-            .map_err(|error| AgentToolError(format!("Unable to store proposal: {error}")))?;
+                .map_err(AgentToolError::from)?;
+        let payload = serde_json::to_value(&args).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
+        let preview_value = serde_json::to_value(&preview).map_err(|error| {
+            AgentToolError::internal(format!("Unable to store proposal: {error}"))
+        })?;
         let proposal = self
             .0
             .service
@@ -1163,7 +1172,7 @@ impl Tool for ProposeCreateNoteTool {
                 &payload,
                 &preview_value,
             )
-            .map_err(AgentToolError)?;
+            .map_err(AgentToolError::from)?;
         self.0.emit_proposal(&proposal);
         Ok(json!({
             "status":"pending_review",
@@ -1234,7 +1243,7 @@ impl Tool for UpdatePlanTool {
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
         if args.entries.is_empty() || args.entries.len() > 12 {
-            return Err(AgentToolError(
+            return Err(AgentToolError::internal(
                 "Plan must contain 1 to 12 steps".to_string(),
             ));
         }
@@ -1242,7 +1251,7 @@ impl Tool for UpdatePlanTool {
         for (index, entry) in args.entries.into_iter().enumerate() {
             let text = entry.text.trim();
             if text.is_empty() || text.chars().count() > 240 {
-                return Err(AgentToolError(
+                return Err(AgentToolError::internal(
                     "Each plan step must contain 1 to 240 characters".to_string(),
                 ));
             }
@@ -1250,7 +1259,9 @@ impl Tool for UpdatePlanTool {
                 entry.status.as_str(),
                 "pending" | "inProgress" | "completed"
             ) {
-                return Err(AgentToolError("Invalid plan step status".to_string()));
+                return Err(AgentToolError::internal(
+                    "Invalid plan step status".to_string(),
+                ));
             }
             entries.push(AgentPlanEntry {
                 id: entry

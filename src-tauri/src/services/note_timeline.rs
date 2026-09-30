@@ -2,6 +2,8 @@
 // history boundary. Storage and post-publication coordination remain private
 // implementation details so callers depend only on the closed domain contract.
 mod activity;
+mod activity_history;
+pub(crate) use activity_history::*;
 mod editing_window_capture;
 mod editing_window_policy;
 mod forgotten;

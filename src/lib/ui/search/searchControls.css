@@ -54,7 +54,10 @@
 }
 
 @container search-bar (max-width: 28rem) {
-  .shared-search-mode-label {
-    display: none;
+  .shared-search-bar-shell[data-search-expanded='true'] .shared-search-mode-label {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-0.25rem);
+    transition-delay: 0ms;
   }
 }

@@ -499,7 +499,7 @@
           onkeyup={commandBarState.handleForgetKeyUp}
         >
           <span
-            class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/55 transition-[transform,opacity] duration-150 ease-linear"
+            class="absolute inset-0 z-0 origin-left rounded-[inherit] bg-destructive/55"
             style="transform: scaleX(var(--forget-progress, 0)); opacity: calc(0.14 + (var(--forget-progress, 0) * 0.58));"
             aria-hidden="true"
           ></span>

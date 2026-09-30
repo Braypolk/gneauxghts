@@ -1,4 +1,5 @@
 import type { PendingTaskTarget } from '$lib/taskNavigation';
+import { navigationScrollBehavior } from '$lib/ui/motion';
 import type { SearchItem } from '$lib/types/semantic';
 import {
   findBestEditorTarget,
@@ -57,7 +58,7 @@ export async function navigateToSectionTarget(
   await waitForEditorPaint();
 
   if (sectionLabel === 'Title') {
-    titleShell?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    titleShell?.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
     if (shouldFocus) {
       focusTitleAtEnd();
     }
@@ -73,7 +74,7 @@ export async function navigateToSectionTarget(
   }
 
   if (!shouldFocus) {
-    targetBlock.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    targetBlock.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
     return;
   }
 

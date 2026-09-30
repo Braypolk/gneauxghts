@@ -73,7 +73,9 @@
   class:split-pane-control--split={splitMode}
   role="group"
   aria-label="Pane actions"
-  onpointerleave={() => (splitMode = false)}
+  onpointerleave={() => {
+    if (!controlElement?.contains(document.activeElement)) splitMode = false;
+  }}
   onfocusout={handleFocusOut}
 >
   {#each quickOptions as option, index}
@@ -82,6 +84,8 @@
       type="button"
       class="split-pane-option absolute top-0 inline-flex h-9 w-9 items-center justify-center rounded-full border border-transparent bg-muted/72 text-xs font-semibold text-muted-foreground shadow-sm outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-35"
       class:split-pane-option--current={option.choice === 'current'}
+      inert={option.choice === 'current' && !splitMode}
+      aria-hidden={option.choice === 'current' && !splitMode}
       style={`--split-pane-position: ${quickOptions.length - index}`}
       aria-label={optionLabel(option.choice)}
       title={optionLabel(option.choice)}
