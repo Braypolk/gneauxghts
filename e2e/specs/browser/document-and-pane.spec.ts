@@ -710,7 +710,7 @@ describe('document and pane state-machine boundaries', () => {
     const openSettings = await $('a[aria-label="Settings"]');
     await browser.execute((element: HTMLElement) => element.click(), openSettings);
     await $('[aria-label="Settings categories"]').waitForExist();
-    const historyCategory = await $('[aria-label="Settings categories"] button:nth-of-type(5)');
+    const historyCategory = await $('[aria-label="Settings categories"] button[data-settings-section="history"]');
     await historyCategory.waitForExist();
     await browser.execute((element: HTMLElement) => element.click(), historyCategory);
     await browser.waitUntil(async () => (await $('body').getText()).includes('16 KB allocated'));

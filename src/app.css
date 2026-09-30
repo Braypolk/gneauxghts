@@ -210,6 +210,16 @@
     --pane-transition-duration: 0ms;
     --related-transition-duration: 0ms;
   }
+
+  /* Cover shared controls, disclosures, search, map fades and loading icons as
+   * well as workspace geometry. Keep state changes and progress visible. */
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
 }
 
 html,

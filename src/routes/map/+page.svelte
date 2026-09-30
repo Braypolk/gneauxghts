@@ -307,7 +307,6 @@
     const nextCompactViewport = window.innerWidth < 640 || window.innerHeight < 560;
     if (isCompactViewport === nextCompactViewport) return;
     isCompactViewport = nextCompactViewport;
-    renderDeck();
   }
 
   function buildLayers() {
@@ -366,7 +365,6 @@
         onClick: ({ object }: { object?: AtlasCloud }) => {
           if (!object) return;
           atlas.selectCloud(object);
-          renderDeck();
         },
         onHover: ({ object }: { object?: AtlasCloud }) => {
           handleCloudHover(object ?? null);
@@ -520,12 +518,8 @@
 
   const renderedLayers = $derived.by(() => buildLayers());
 
-  function renderDeck() {
-    if (!deck) return;
-    deck.setProps({
-      viewState,
-      layers: buildLayers()
-    });
+  function syncDeckViewState() {
+    deck?.setProps({ viewState });
   }
 
   function syncDeckLayers() {
@@ -559,7 +553,7 @@
     if (!nextViewState) return;
     viewState = nextViewState;
     atlas.setZoom(Math.pow(2, viewState.zoom));
-    renderDeck();
+    syncDeckViewState();
   }
 
   function nextAnimationFrame() {
@@ -587,25 +581,21 @@
     if (atlas.hoveredNodeId === (node?.id ?? null)) return;
     isHoveringNote = node !== null;
     atlas.hoverNode(node);
-    renderDeck();
   }
 
   function handleCloudHover(cloud: AtlasCloud | null) {
     if (atlas.hoveredCloudId === (cloud?.id ?? null)) return;
     atlas.hoverCloud(cloud);
-    renderDeck();
   }
 
   function handleNodeClick(node: AtlasNode | null) {
     if (!node) return;
     atlas.selectNode(node);
-    renderDeck();
   }
 
   function handleKeydown(event: KeyboardEvent) {
     if (event.key === 'Escape') {
       atlas.clearSelection();
-      renderDeck();
       return;
     }
     if (event.key === 'Enter' && atlas.selectedNode) {
@@ -622,25 +612,19 @@
       event.preventDefault();
       viewState = { ...viewState, zoom: Math.min(4, viewState.zoom + 0.35) };
       atlas.setZoom(Math.pow(2, viewState.zoom));
-      renderDeck();
+      syncDeckViewState();
       return;
     }
     if (event.key === '-') {
       event.preventDefault();
       viewState = { ...viewState, zoom: Math.max(-4, viewState.zoom - 0.35) };
       atlas.setZoom(Math.pow(2, viewState.zoom));
-      renderDeck();
+      syncDeckViewState();
     }
   }
 
   function attachContainer(element: HTMLDivElement) {
     containerEl = element;
-    if (deck) {
-      deck.setProps({
-        viewState,
-        layers: renderedLayers
-      });
-    }
     return () => {
       if (containerEl === element) containerEl = null;
     };
@@ -695,7 +679,6 @@
         onClick: ({ object }: { object?: unknown }) => {
           if (!object) {
             atlas.clearSelection();
-            renderDeck();
           }
         }
       });
@@ -704,7 +687,6 @@
         return;
       }
       deck = nextDeck;
-      renderDeck();
       await nextAnimationFrame();
       await nextAnimationFrame();
       if (mounted) {
@@ -982,7 +964,6 @@
                         class="min-w-0 flex-1 px-2.5 py-2 text-left text-xs"
                         onclick={() => {
                           atlas.selectNode(item.node);
-                          renderDeck();
                         }}
                       >
                         <span class="block truncate font-medium text-foreground">{item.node.title}</span>
@@ -1013,7 +994,6 @@
                         class="min-w-0 flex-1 px-2.5 py-2 text-left text-xs"
                         onclick={() => {
                           atlas.selectNode(item.node);
-                          renderDeck();
                         }}
                       >
                         <span class="flex min-w-0 items-center justify-between gap-2">
@@ -1077,7 +1057,7 @@
             zoom: Math.max(viewState.zoom, 1.2)
           };
           atlas.setZoom(Math.pow(2, viewState.zoom));
-          renderDeck();
+          syncDeckViewState();
         }}
       >
         <Focus class="h-4 w-4" />

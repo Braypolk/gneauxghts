@@ -1,6 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   import { LoaderCircle } from '@lucide/svelte';
+  import { navigationScrollBehavior } from '$lib/ui/motion';
   import type { ChatController } from '../controller.svelte';
   import type {
     ChatAttachmentInput,
@@ -204,7 +205,7 @@
           `[data-chat-message-id="${CSS.escape(messageId)}"]`
         )
         ?.scrollIntoView({
-          behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+          behavior: navigationScrollBehavior(),
           block: 'center'
         });
     });
