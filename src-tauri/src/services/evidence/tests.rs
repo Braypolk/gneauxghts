@@ -217,25 +217,6 @@ fn long_paragraph_slices_reach_tail_without_splitting_unicode() {
 }
 
 #[test]
-fn local_week_uses_calendar_midnight_and_explicit_half_open_bounds() {
-    use chrono::{Datelike, Local, TimeZone};
-    let mut request = SearchRequest {
-        period: Some("this_week".into()),
-        ..Default::default()
-    };
-    let period = resolve_period(&mut request).unwrap().unwrap();
-    let start = Local
-        .timestamp_millis_opt(period["after"].as_u64().unwrap() as i64)
-        .unwrap();
-    assert_eq!(start.weekday(), chrono::Weekday::Mon);
-    assert_eq!(
-        start.time(),
-        chrono::NaiveTime::from_hms_opt(0, 0, 0).unwrap()
-    );
-    assert!(request.before.unwrap() > request.after.unwrap());
-}
-
-#[test]
 fn lexical_normalization_is_resolved_back_to_exact_current_markdown() {
     let body = "# Context\n\n  First line\n\tCafé second line\n";
     let (start, end) = current_text_range(body, "First line Café second line").unwrap();
@@ -252,6 +233,7 @@ fn period_worker_has_no_inherited_undated_ids() {
         Candidate {
             task: None,
             citation: PassageCitation {
+                historical: None,
                 id: "outside-period".into(),
                 note_id: "n".into(),
                 content_hash: "h".into(),
@@ -271,8 +253,12 @@ fn period_worker_has_no_inherited_undated_ids() {
     );
     let selected = parent.fork();
     let mut receiver = EvidenceSession::default();
-    receiver.accept_selected(&selected, &["outside-period".into()]);
+    receiver.accept_selected(&selected, &["outside-period".into()], &[]);
     assert!(receiver.candidates.contains_key("outside-period"));
+    assert!(
+        receiver.admitted.is_empty(),
+        "Undelivered selections must not be admitted as evidence"
+    );
     let mut worker = parent.fork_for_period(true);
     assert!(worker.candidates.is_empty());
     worker.admit_context("shared", 6).unwrap();
@@ -393,6 +379,7 @@ fn navigation_maps_unicode_duplicate_ranges_after_hidden_title() {
     let raw = "# Example\n\n☕ repeated\nrepeated";
     let start = raw.rfind("repeated").unwrap();
     let passage = PassageCitation {
+        historical: None,
         id: "p".into(),
         note_id: "n".into(),
         content_hash: canonical_content_hash(raw),
@@ -408,25 +395,188 @@ fn navigation_maps_unicode_duplicate_ranges_after_hidden_title() {
 }
 
 #[test]
-fn local_week_preserves_spring_and_fall_dst_boundaries() {
-    if std::env::var_os("GNEAUX_DST_PROBE").is_none() {
-        let status = std::process::Command::new(std::env::current_exe().unwrap())
-            .args([
-                "--exact",
-                "services::evidence::tests::local_week_preserves_spring_and_fall_dst_boundaries",
-            ])
-            .env("TZ", "America/New_York")
-            .env("GNEAUX_DST_PROBE", "1")
-            .status()
-            .unwrap();
-        assert!(status.success());
-        return;
+fn read_budget_never_charges_passages_discarded_by_response_overhead() {
+    let _guard = crate::test_support::lock_test_env();
+    let data = crate::test_support::TestDir::new("read-budget-data");
+    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+    let notes = crate::test_support::TestDir::new("read-budget-notes");
+    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+    let state = AppState::new(
+        SemanticState::new_disabled("disabled"),
+        EventBus::disabled(),
+    )
+    .unwrap();
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &state,
+        "Budget project".into(),
+        format!("# Project\n\n{}", "Review vendor options. ".repeat(65)),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    for remaining in (100..5000).step_by(100) {
+        let mut session = EvidenceSession::default();
+        let used_before = EVIDENCE_BYTES - remaining;
+        session.used_bytes.store(used_before, Ordering::SeqCst);
+        let result = session.read_request(
+            &state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: saved.note_id.clone(),
+                include_provenance: Some(false),
+                ..Default::default()
+            },
+        );
+        match result {
+            Err(error) => {
+                assert_eq!(error.code, FailureCode::EvidenceBudget, "{error}");
+                assert_eq!(
+                    session.used(),
+                    used_before,
+                    "Undelivered read consumed allowance at {remaining} remaining bytes"
+                );
+                assert!(
+                    session.admitted.is_empty(),
+                    "Undelivered citations must not become admitted"
+                );
+            }
+            Ok((payload, citations)) => {
+                let items = payload["items"].as_array().unwrap();
+                assert_eq!(items.len(), citations.len());
+                assert!(
+                    payload.to_string().len() <= remaining,
+                    "Response exceeds allowance"
+                );
+                assert!(
+                    payload.to_string().len() <= READ_BYTES,
+                    "Response exceeds page capacity"
+                );
+            }
+        }
     }
-    use chrono::{Datelike, Local, TimeZone};
-    for (month, day, elapsed_hours) in [(3, 8, 155), (11, 1, 157)] {
-        let now = Local.with_ymd_and_hms(2026, month, day, 12, 0, 0).unwrap();
-        let start = local_week_start(now).unwrap();
-        assert_eq!(start.weekday(), chrono::Weekday::Mon);
-        assert_eq!(now.signed_duration_since(start).num_hours(), elapsed_hours);
+}
+
+#[test]
+fn research_and_mixed_read_pages_preserve_deliverable_evidence_within_budget() {
+    let _guard = crate::test_support::lock_test_env();
+    let data = crate::test_support::TestDir::new("research-budget-data");
+    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+    let notes = crate::test_support::TestDir::new("research-budget-notes");
+    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+    let state = AppState::new(
+        SemanticState::new_disabled("disabled"),
+        EventBus::disabled(),
+    )
+    .unwrap();
+    crate::commands::note_persistence::persist_note_session_with_outcome(
+        &state,
+        "Vendor review".into(),
+        "Confirm vendor review with Larissa.".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    state
+        .lexical
+        .sync_with_notes_index(&state.notes_index.lock().unwrap().entries)
+        .unwrap();
+    let mut initial = EvidenceSession::default();
+    let discovery = initial
+        .search(
+            &state,
+            None,
+            &HashSet::new(),
+            SearchRequest {
+                query: "Larissa".into(),
+                mode: SearchMode::Literal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let id = discovery["items"][0]["evidenceId"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let mut partials = 0;
+    for research in [false, true] {
+        for remaining in (100..3000).step_by(50) {
+            let mut session = EvidenceSession::default();
+            session.candidates = initial.candidates.clone();
+            session
+                .used_bytes
+                .store(EVIDENCE_BYTES - remaining, Ordering::SeqCst);
+            let before = session.used();
+            let result = if research {
+                session.read_research(
+                    &state,
+                    None,
+                    &HashSet::new(),
+                    &[id.clone()],
+                    None,
+                    vec!["coverage_incomplete".into()],
+                )
+            } else {
+                session.read(
+                    &state,
+                    None,
+                    &HashSet::new(),
+                    &[id.clone(), "unknown-evidence-id".into()],
+                    false,
+                )
+            };
+            match result {
+                Err(_) => {
+                    assert_eq!(
+                        session.used(),
+                        before,
+                        "Failed page charged undelivered evidence"
+                    );
+                    assert!(session.admitted.is_empty());
+                }
+                Ok((page, sources)) => {
+                    assert_eq!(
+                        sources.len(),
+                        1,
+                        "A valid selected passage must remain deliverable"
+                    );
+                    assert!(page.to_string().len() <= remaining);
+                    assert!(session.used() - before >= page.to_string().len());
+                    assert_eq!(
+                        page["items"][0]["excerpt"],
+                        "Confirm vendor review with Larissa."
+                    );
+                    if research {
+                        assert_eq!(page["status"], "partial");
+                        assert!(page["nextCursor"].is_null());
+                        assert!(page["remainingEvidenceIds"].as_array().unwrap().is_empty());
+                    } else if !page["failures"].as_array().unwrap().is_empty() {
+                        partials += 1;
+                        assert_eq!(page["status"], "partial");
+                        assert_eq!(page["delivery"]["complete"], false);
+                    } else {
+                        assert!(page["nextCursor"].is_string());
+                        let used = session.used();
+                        let next = session
+                            .read_request(
+                                &state,
+                                None,
+                                &HashSet::new(),
+                                ReadRequest {
+                                    cursor: page["nextCursor"].as_str().map(str::to_string),
+                                    ..Default::default()
+                                },
+                            )
+                            .unwrap_err();
+                        assert_eq!(next.payload()["recovery"]["action"], "correct_request");
+                        assert_eq!(session.used(), used);
+                    }
+                }
+            }
+        }
     }
+    assert!(
+        partials > 0,
+        "Mixed reads did not deliver a valid passage alongside the explicit failure"
+    );
 }

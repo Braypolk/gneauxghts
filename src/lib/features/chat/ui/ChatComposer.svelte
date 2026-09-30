@@ -91,7 +91,6 @@
   ];
 
   let draft = $state('');
-  const sourceFirst = $derived(/^\/sources(?:\s|$)/.test(draft.trimStart()));
   let attachments = $state<ChatAttachmentInput[]>([]);
   let forceWebSearch = $state(false);
   let attachmentInput = $state<HTMLInputElement | null>(null);
@@ -231,10 +230,6 @@
 
   async function submit() {
     const content = draft.trim();
-    if (sourceFirst && (!content.replace(/^\/sources\s*/, '').trim() || attachments.length > 0 || forceWebSearch)) {
-      onActionError('Add a question for the source-first preview, remove attachments, and turn off web search.');
-      return;
-    }
     if ((!content && attachments.length === 0) || snapshot.isSending) return;
     let activeNote: ChatActiveNoteSnapshot | null = null;
     try {
@@ -556,21 +551,6 @@
           >
             <Paperclip class="h-3.5 w-3.5" />
           </button>
-
-        <button
-          type="button"
-          class="chat-composer-chip"
-          class:chat-composer-chip--on={sourceFirst}
-          aria-label="Source-first preview"
-          aria-pressed={sourceFirst}
-          title="Show exact note quotations with source links"
-          disabled={snapshot.isSending || snapshot.isLoadingConversation}
-          onclick={() => {
-            if (!sourceFirst) forceWebSearch = false;
-            draft = sourceFirst ? draft.trimStart().replace(/^\/sources\s*/, '') : `/sources ${draft}`;
-            composerElement?.focus();
-          }}
-        >Sources preview</button>
 
         <ModelSelector
           options={modelOptions}

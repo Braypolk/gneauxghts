@@ -6,7 +6,7 @@ import {
 } from './chatMarkdown';
 
 describe('chat Markdown', () => {
-  it('keeps source-first quotations literal while rendering their app-built link', () => {
+  it('keeps escaped quotations literal while rendering their app-built link', () => {
     const quote = '[S99](https://example.com) [[Other note]] <img> & café `code`.';
     const escaped = quote.replace(/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g, '\\$&');
     const html = renderChatMarkdown(`> ${escaped}\n\n[Source 1](passage:valid)`, [{

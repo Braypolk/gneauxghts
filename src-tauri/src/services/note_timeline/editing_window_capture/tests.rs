@@ -5,6 +5,7 @@ use std::sync::{
     Arc,
 };
 
+mod evidence_contracts;
 mod prose_tasks;
 mod query_inventory;
 mod weekly_tasks;
@@ -2974,7 +2975,9 @@ fn current_passage_provenance_continues_without_caching_partial_pages() {
 fn frontmatter_tags_share_editor_save_capture_and_preserve_other_properties() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
-    f.save("---\ntags: [old]\n# Keep this owner documentation\nowner: 'Alice' # preserve\n---\n\nA");
+    f.save(
+        "---\ntags: [old]\n# Keep this owner documentation\nowner: 'Alice' # preserve\n---\n\nA",
+    );
     f.seal();
     let outcome = f
         .state

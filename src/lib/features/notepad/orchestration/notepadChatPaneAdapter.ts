@@ -170,6 +170,15 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
             const navigation = await resolveCurrentPassage(conversationId, citation.passage.id);
             const resolved = navigation.source;
             if (resolved.kind !== 'note' || !resolved.passage) throw new Error('The current passage is unavailable.');
+            if (navigation.historicalRevisionId && resolved.passage.historical) {
+              const proof = resolved.passage.historical;
+              await deps.openRevisionCitation(paneId, { ...resolved, revision: {
+                noteId: resolved.noteId, revisionId: navigation.historicalRevisionId,
+                atMillis: resolved.passage.revisions[0]?.atMillis ?? 0,
+                source: proof.source, currentExcerpt: resolved.passage.excerpt
+              }});
+              return;
+            }
             const target = getNearestEditorPaneId(deps.getPaneOrder(), deps.getPaneKind, paneId) ?? paneId;
             deps.setActivePane(target);
             await deps.openNote(resolved.notePath, { noteId: resolved.noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: Boolean(navigation.selection) });

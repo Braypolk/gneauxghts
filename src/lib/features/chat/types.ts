@@ -293,6 +293,7 @@ export interface RevisionCitation {
 export interface PassageCitation {
   id: string; noteId: string; contentHash: string; location: string;
   start: number; end: number; excerpt: string; revisions: RevisionCitation[];
+  historical?: { revisionId: string; contentRevisionId: string; changeKind: string; timeEvidence: import('$lib/types/history').RevisionTimeEvidence; source: import('$lib/features/history/historyModeMachine').HistoryMutationSource };
 }
 
 export type ChatCitation =

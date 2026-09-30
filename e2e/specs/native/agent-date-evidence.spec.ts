@@ -4,7 +4,6 @@ import { basename, dirname, join, resolve } from 'node:path';
 import { browser, $ } from '@wdio/globals';
 
 // Live inference is explicitly opt-in; ordinary native suites never call a model.
-const preview = process.env.GNEAUX_SOURCE_FIRST_PREVIEW === '1';
 const live = process.env.GNEAUX_LIVE_NATIVE === '1' ? describe : describe.skip;
 type Note = { noteId: string; path: string; title: string; markdown: string };
 type Source = { kind: string; title: string; excerpt: string; noteId?: string; url?: string;
@@ -50,7 +49,7 @@ live('Live local agent date evidence in a disposable native vault', function () 
   function persist() {
     assert(output, 'An explicit output path is required');
     mkdirSync(dirname(resolve(output)), { recursive: true });
-    writeFileSync(output, JSON.stringify({ endpoint, model, preview,
+    writeFileSync(output, JSON.stringify({ endpoint, model,
       method: 'Native Tauri app, real ChatService/AgentRuntime/tools, synthetic vault, lexical retrieval. First question submitted through the Svelte composer; later questions use production IPC. Quality graded separately.',
       notes: [tasks, meetings, deadlines, conditions, success].filter((n): n is Note => Boolean(n)).map(n => ({ title: n.title, markdown: n.markdown })),
       results }, null, 2));
@@ -77,7 +76,7 @@ live('Live local agent date evidence in a disposable native vault', function () 
     await invoke('set_semantic_settings', { settings: { ...semantic, semanticSearchEnabled: false } });
     tasks = await save('Cobalt task log', '- [ ] Send Cobalt proposal\n- [ ] Investigate Cobalt migration\n\nPlan to deploy Cobalt Friday.');
     tasks = await save(tasks.title, '- [x] Send Cobalt proposal\n- [ ] Investigate Cobalt migration\n\nPlan to deploy Cobalt Friday.', tasks.path);
-    if (preview) {
+    {
       const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
       tasks = await save(tasks.title, tasks.markdown + `\n\nOn ${today}, I completed the Cobalt access review.\nInvoice 42 paid; Cobalt payment receipt filed by me.`, tasks.path);
       success = await save('Cedar recovery result', 'Cedar may resume only after route B passes a witnessed recovery drill. Route B passed the witnessed Cedar recovery drill on September 11, 2026 at 14:00. The office printer needs toner.');
@@ -99,7 +98,6 @@ live('Live local agent date evidence in a disposable native vault', function () 
     await browser.waitUntil(async () => {
       const conversation = await invoke<Conversation>('chat_get_conversation', { conversationId });
       answer = conversation.messages.find(m => m.role === 'assistant' && (!messageId || m.id === messageId));
-      if (preview && answer?.status === 'streaming') assert.equal(answer.content, '', 'Unvalidated preview text must stay hidden');
       return Boolean(answer && ['complete', 'failed', 'cancelled'].includes(answer.status));
     }, { timeout: 240_000, interval: 1000, timeoutMsg: 'Native agent did not reach a terminal message state' });
     assert(answer);
@@ -122,34 +120,6 @@ live('Live local agent date evidence in a disposable native vault', function () 
       sources: answer.sources.map(s => ({ title: s.title, excerpt: s.excerpt, passage: s.passage })), resolutions });
     persist();
     assert.equal(answer.status, 'complete', answer.error);
-    if (preview) {
-      assert(answer.content.startsWith('**Source-first preview**'));
-      assert(answer.content.includes('Selection may be incomplete.'));
-      const quotes = answer.content.split('\n').filter(line => line.startsWith('> '))
-        .map(line => line.slice(2).replace(/\\([!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~])/g, '$1'));
-      assert(quotes.length > 0, 'Preview must contain exact quotations');
-      for (const quote of quotes) assert(answer.sources.some(source => source.excerpt.includes(quote)), `Quotation must match a delivered source: ${quote}`);
-      assert(!answer.content.includes('"confirmed":'), 'Raw selection JSON must not appear');
-      const supporting = answer.content.split('**Supporting evidence**')[1]?.split('**Related evidence')[0] ?? '';
-      const related = answer.content.split('**Related evidence')[1] ?? '';
-      if (id === 'meetings_ui') {
-        assert(supporting.includes('July 8'), 'Actual event date must be retained');
-        assert(!supporting.includes('July 11'), 'Scheduled workshop is not confirmed held');
-        assert(related.includes('July 11'), 'Unknown workshop outcome must be visible');
-      } else if (id === 'checkbox_week') {
-        assert(supporting.includes('Send Cobalt proposal'), 'Marked completion must be selected');
-        assert(supporting.includes('I completed the Cobalt access review'), 'Explicit prose completion must be selected');
-        assert(!supporting.includes('Invoice 42 paid'), 'Unknown payer and work date cannot establish my completion this week');
-        assert(!supporting.includes('Investigate Cobalt migration'), 'Open task cannot count as completed');
-      } else if (id === 'condition_success') {
-        assert(supporting.includes('Route B passed the witnessed Cedar recovery drill'), 'Explicit success must remain supporting evidence');
-        assert(!answer.content.includes('printer'), 'Unrelated evidence must be omitted');
-      } else if (id === 'condition_outcome') {
-        assert.equal(supporting, '', 'Missing drill outcome does not establish condition met');
-        assert(related.includes('No route B drill result is recorded'), 'Missing outcome must be visible');
-        assert(!answer.content.includes('printer'), 'Unrelated evidence must be omitted');
-      }
-    }
     assert(events.some(e => e.event.name === 'search_evidence'), 'Actual agent must choose search');
     assert(events.some(e => e.event.name === 'read_evidence'), 'Actual agent must read evidence');
     assert(links.length > 0, 'Answer must contain supplied current-passage links');
@@ -166,22 +136,14 @@ live('Live local agent date evidence in a disposable native vault', function () 
 
   it('searches for dated events through the real Svelte composer and opens a citation', async () => {
     const questionText = 'Which Cobalt meetings actually took place July 6–12, 2026? Separate confirmed meetings from plans.';
-    const question = preview ? `/sources ${questionText}` : questionText;
+    const question = questionText;
     const open = await $('button[aria-label="Open thought partner in this pane"]');
     await open.waitForExist();
     await browser.execute((el: HTMLElement) => el.click(), open);
     const composer = await $('[data-testid="workspace-pane"][data-pane-kind="chat"] textarea');
     await composer.waitForEnabled({ timeout: 30_000 });
     await composer.setValue(questionText);
-    if (preview) {
-      const toggle = await $('button[aria-label="Source-first preview"]');
-      await toggle.click();
-      assert.equal(await toggle.getAttribute('aria-pressed'), 'true');
-      assert.equal(await composer.getValue(), question);
-      await toggle.click();
-      assert.equal(await composer.getValue(), questionText, 'Turning preview off preserves the question');
-      await toggle.click();
-    }
+    assert.equal(await $('button[aria-label="Source-first preview"]').isExisting(), false);
     const started = Date.now();
     await $('button[aria-label="Send message"]').click();
     await browser.waitUntil(async () => {
@@ -214,19 +176,17 @@ live('Live local agent date evidence in a disposable native vault', function () 
     results.push({ id: 'citation_ui', status: 'highlighted', title: source.title, selection: resolved.selection }); persist();
   });
 
-  for (const scenario of (preview ? [
+  for (const scenario of [
     { id: 'checkbox_week', question: 'Which Cobalt tasks were marked complete or did I explicitly complete this week? Separate items with unknown completion dates.', expected: 'Send Cobalt proposal marked complete this week; explicitly dated access review completed. Invoice payer unknown and receipt work date unknown. Open migration and deployment plan are not completions.' },
     { id: 'condition_outcome', question: 'Has Cobalt met its route B recovery condition?', expected: 'No confirmed outcome; quote missing drill result and relevant condition/schedule as related evidence. Do not infer failure or success.' },
-    { id: 'condition_success', question: 'Has Cedar met its route B recovery condition?', expected: 'Recorded successful witnessed drill confirms the condition. Preserve this definite result; omit printer.' }
-  ] : [
-    { id: 'checkbox_week', question: 'Which Cobalt tasks were marked complete this week?', expected: 'Only Send Cobalt proposal is marked complete. Investigate migration stays open; deployment is a plan.' },
+    { id: 'condition_success', question: 'Has Cedar met its route B recovery condition?', expected: 'Recorded successful witnessed drill confirms the condition. Preserve this definite result; omit printer.' },
     { id: 'deadline_week', question: 'Which Cobalt deadlines are currently scheduled for September 14–20, 2026?', expected: 'Inspection report due September 18. Contract moved to September 23; old September 16 superseded. Meeting date is not deadline or submission evidence.' }
-  ])) {
+  ]) {
     it(`runs ${scenario.id} through production chat IPC and tools`, async () => {
       const c = await invoke<Conversation>('chat_create_conversation', { request: {
         title: `Native ${scenario.id}`, provider: 'local', model, access: 'full', reasoningEffort: 'medium' } });
       const started = Date.now();
-      const receipt = await invoke<Receipt>('chat_send_message', { request: { conversationId: c.id, content: preview ? `/sources ${scenario.question}` : scenario.question,
+      const receipt = await invoke<Receipt>('chat_send_message', { request: { conversationId: c.id, content: scenario.question,
         activeNote: null, attachments: [], selectedContext: [], forceWebSearch: false } });
       const answer = await completed(c.id, receipt.assistantMessageId);
       await record(scenario.id, scenario.question, c.id, answer, started, scenario.expected);
