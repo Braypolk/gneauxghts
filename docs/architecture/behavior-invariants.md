@@ -220,11 +220,16 @@ Date/time slash insertions resolve at invocation in the system locale/timezone
 and replace only the standalone invoked token as one undo step. Code, links and
 ordinary slash-containing words/paths do not invoke them. Chips are a presentation
 of current-locale date/time text, with no hidden authoring metadata or reactive
-clock value. Clicking a chip opens a typed/calendar picker; Apply edits only that
-text range. Plain date text in a task never becomes a deadline. Picking a wall-clock
+clock value. Clicking a chip selects its existing note text for native inline
+editing and opens a calendar/time picker without moving keyboard focus. Typing
+uses ordinary note edits and dismisses the picker; undo restores the edited text.
+Calendar/time Apply edits only the originally selected text range. The formatting
+toolbar stays hidden while this picker owns the selection.
+Plain date text in a task never becomes a deadline. Picking a wall-clock
 time during a daylight-saving gap does not silently reschedule the chosen text.
-Cancelling a picker edits nothing. If the editor document changes while its picker
-is open, Apply refuses the stale target and asks the user to reopen it.
+Cancelling a picker applies none of its pending calendar/time choices; native note
+edits remain ordinary authored edits. Inline pickers close when the editor document
+changes. Due-date Apply refuses a stale document and asks the user to reopen it.
 
 ### Save completion has a consistency boundary
 

@@ -78,8 +78,8 @@
   }
 
   let closeDatePicker: (() => void) | null = null;
-  function editDueDate(task: TaskItem) {
-    closeDatePicker = openDateTimePicker({ mode: 'due', title: taskDueDate(task.text) ? 'Edit due date' : 'Add due date', date: taskDueDate(task.text), onCommit: ({ date }) => taskList.setDueDate(task, date) });
+  function editDueDate(task: TaskItem, reference: HTMLElement) {
+    closeDatePicker = openDateTimePicker({ reference, mode: 'due', title: taskDueDate(task.text) ? 'Edit due date' : 'Add due date', date: taskDueDate(task.text), onCommit: ({ date }) => taskList.setDueDate(task, date) });
   }
   onDestroy(() => closeDatePicker?.());
 
@@ -365,7 +365,7 @@
                                 {taskDescription(task.text)}
                               </span>
                               {#if taskDueDate(task.text)}
-                                <button type="button" class="mt-1 rounded-md border border-border bg-muted px-1.5 py-0.5 text-xs text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring" onclick={() => editDueDate(task)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Edit due date: ${taskDueDate(task.text)}`} title={taskDueDate(task.text) ?? ''}>{formatDueDate(taskDueDate(task.text)!, taskList.today, task.completed)}</button>
+                                <button type="button" class="mt-1 rounded-sm text-xs text-muted-foreground underline decoration-muted-foreground/25 decoration-dotted underline-offset-4 hover:text-foreground hover:decoration-muted-foreground/60 focus-visible:ring-2 focus-visible:ring-ring" onclick={(event) => editDueDate(task, event.currentTarget)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Edit due date: ${taskDueDate(task.text)}`} title={taskDueDate(task.text) ?? ''}>{formatDueDate(taskDueDate(task.text)!, taskList.today, task.completed)}</button>
                               {/if}
                               {#if task.sectionLabel}
                                 <span class="mt-0.5 block text-pretty text-[11px] font-medium text-muted-foreground">
@@ -376,7 +376,7 @@
 
                             <div class="flex shrink-0 items-center self-start sm:self-auto">
                               {#if !taskDueDate(task.text)}
-                                <button type="button" class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent disabled:opacity-45 sm:h-auto sm:w-auto sm:px-2.5 sm:py-1.5" onclick={() => editDueDate(task)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Add due date: ${task.text}`} title="Add due date"><CalendarDays class="h-4 w-4" /></button>
+                                <button type="button" class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent disabled:opacity-45 sm:h-auto sm:w-auto sm:px-2.5 sm:py-1.5" onclick={(event) => editDueDate(task, event.currentTarget)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Add due date: ${task.text}`} title="Add due date"><CalendarDays class="h-4 w-4" /></button>
                               {/if}
                               <button
                                 type="button"

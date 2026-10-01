@@ -1,9 +1,9 @@
 <script lang="ts">
-  import * as floatingUi from '@floating-ui/dom';
-  import type { VirtualElement } from '@floating-ui/dom';
-  import type { EditorView } from '@codemirror/view';
+  import { CalendarDays, CalendarCheck, Clock, CalendarClock, CalendarRange } from '@lucide/svelte';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
+  import { editorFloatingReference } from './editorFloatingReference';
   import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
-  import type { PaneSlashMenuModel, SlashMenuGroupWithItems } from '$lib/features/notepad/editor/slashMenu';
+  import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/slashMenu';
   import {
     getSlashMenuFloatingReference,
     slashMenuActivateGroupFromUi,
@@ -12,6 +12,14 @@
     slashMenuPickFromUi,
     slashMenuSetHoverFromUi
   } from '$lib/features/notepad/editor/slashMenu';
+
+  const insertCommandIcons: Record<string, typeof CalendarDays> = {
+    date: CalendarDays,
+    today: CalendarCheck,
+    time: Clock,
+    now: CalendarClock,
+    due: CalendarRange
+  };
 
   interface Props {
     menu: PaneSlashMenuModel;
@@ -22,114 +30,25 @@
 
   let bodyEl = $state<HTMLDivElement | null>(null);
   let panelEl = $state<HTMLDivElement | null>(null);
-  let panelStyle = $state('position: fixed; left: 0; top: 0; visibility: hidden;');
-
-  function buildCoordsSlashMenuReference(view: EditorView, anchorPos: number): VirtualElement {
-    return {
-      getBoundingClientRect() {
-        const coords =
-          view.coordsAtPos(anchorPos) ??
-          view.coordsAtPos(Math.max(0, Math.min(anchorPos, view.state.doc.length)));
-        if (!coords) {
-          return new DOMRect(0, 0, 1, 1);
-        }
-        const width = Math.max(1, coords.right - coords.left);
-        const height = Math.max(1, coords.bottom - coords.top);
-        return {
-          x: coords.left,
-          y: coords.top,
-          left: coords.left,
-          top: coords.top,
-          right: coords.left + width,
-          bottom: coords.top + height,
-          width,
-          height
-        };
-      }
-    };
-  }
-
-  function getSlashMenuPositionReference(view: EditorView, anchorPos: number): VirtualElement {
-    const handle = getSlashMenuFloatingReference(view);
-    if (handle) {
-      return {
-        getBoundingClientRect: () => {
-          const r = handle.getBoundingClientRect();
-          if (r.width < 0.5 || r.height < 0.5) {
-            return buildCoordsSlashMenuReference(view, anchorPos).getBoundingClientRect();
-          }
-          return r;
-        }
-      };
-    }
-    return buildCoordsSlashMenuReference(view, anchorPos);
-  }
-
-  async function updatePosition() {
-    if (!menu.open || !panelEl) {
-      panelStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
-      return;
-    }
-
-    const view = menu.view;
-    const anchorPos = menu.anchorPos;
-    const reference = getSlashMenuPositionReference(view, anchorPos);
-    const boundary = boundsElement ?? undefined;
-
-    const { x, y } = await floatingUi.computePosition(reference, panelEl, {
-      strategy: 'fixed',
-      placement: 'bottom-start',
-      middleware: [
-        floatingUi.offset(10),
-        floatingUi.flip({
-          fallbackPlacements: ['top-start', 'bottom-end', 'top-end'],
-          padding: 16,
-          ...(boundary ? { boundary } : {})
-        }),
-        floatingUi.shift({
-          padding: 16,
-          ...(boundary ? { boundary } : {})
-        }),
-        floatingUi.size({
-          padding: 16,
-          ...(boundary ? { boundary } : {}),
-          apply({ availableHeight, elements }) {
-            const floating = elements.floating;
-            const tabs = floating.querySelector<HTMLElement>('.slash-tabs');
-            const chrome = (tabs?.offsetHeight ?? 0) + 12;
-            const forBody = Math.max(120, Math.floor(availableHeight - chrome));
-            const body = floating.querySelector<HTMLElement>('.slash-menu-body');
-            if (body) {
-              body.style.maxHeight = `${forBody}px`;
-            } else {
-              floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
-            }
-          }
-        })
-      ]
-    });
-
-    panelStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible;`;
-  }
+  let panelStyle = $state(hiddenFloatingPanelStyle);
 
   $effect(() => {
-    const isOpen = menu.open;
-    const currentPanel = panelEl;
     const currentMenu = menu;
-
-    if (!isOpen || !currentPanel || currentMenu.open === false) {
-      panelStyle = 'position: fixed; left: 0; top: 0; visibility: hidden;';
+    const currentPanel = panelEl;
+    if (!currentMenu.open || !currentPanel) {
+      panelStyle = hiddenFloatingPanelStyle;
       return;
     }
-
-    const view = currentMenu.view;
-    const anchorPos = currentMenu.anchorPos;
-    const reference = getSlashMenuPositionReference(view, anchorPos);
-
-    void updatePosition();
-
-    return floatingUi.autoUpdate(reference, currentPanel, () => {
-      void updatePosition();
+    const reference = editorFloatingReference(
+      currentMenu.view, currentMenu.anchorPos, getSlashMenuFloatingReference(currentMenu.view)
+    );
+    return positionFloatingPanel(reference, currentPanel, (style) => { panelStyle = style; }, {
+      boundsElement,
+      resize(availableHeight) {
+        const chrome = (currentPanel.querySelector<HTMLElement>('.slash-tabs')?.offsetHeight ?? 0) + 12;
+        const body = currentPanel.querySelector<HTMLElement>('.slash-menu-body');
+        if (body) body.style.maxHeight = `${Math.max(0, availableHeight - chrome)}px`;
+      }
     });
   });
 
@@ -190,6 +109,7 @@
             <h6 class="slash-group-title">{group.label}</h6>
             <ul class="slash-items">
               {#each group.items as item (item.index)}
+                {@const InsertIcon = insertCommandIcons[item.id]}
                 <li
                   data-slash-index={item.index}
                   class="slash-item"
@@ -198,9 +118,13 @@
                   onpointerdown={(e) => e.preventDefault()}
                   onpointerup={() => slashMenuPickFromUi(menu.view, item.index)}
                 >
-                  <span class="slash-item-icon" aria-hidden="true"
-                    >{@html blockTypeIcons[item.id] ?? ''}</span
-                  >
+                  <span class="slash-item-icon" aria-hidden="true">
+                    {#if InsertIcon}
+                      <InsertIcon strokeWidth={1.8} />
+                    {:else}
+                      {@html blockTypeIcons[item.id] ?? ''}
+                    {/if}
+                  </span>
                   <span class="slash-item-label">{item.label}</span>
                 </li>
               {/each}
@@ -311,11 +235,18 @@
     background: color-mix(in oklab, var(--accent) 88%, var(--background));
   }
 
+  .slash-item-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 1.125rem;
+    color: inherit;
+  }
+
   .slash-item-icon :global(svg) {
     display: block;
-    width: 1.35rem;
-    height: 1.35rem;
-    opacity: 0.92;
+    width: 1.125rem;
+    height: 1.125rem;
   }
 
   .slash-item-label {

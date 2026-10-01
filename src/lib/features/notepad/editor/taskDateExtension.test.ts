@@ -14,7 +14,7 @@ vi.mock('$lib/features/tasks/dateTimePicker', () => ({
 function editor(doc: string) {
   let state = EditorState.create({ doc, extensions: [createMarkdownLanguage(), history()] });
   const view = {
-    dom: { isConnected: true },
+    dom: { isConnected: true, closest: () => null },
     get state() { return state; },
     dispatch(spec: TransactionSpec) { state = state.update(spec).state; },
     focus() {}

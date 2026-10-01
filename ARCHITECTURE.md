@@ -400,7 +400,10 @@ annotations; command responses derive them from the existing task text projectio
 without a separate stored deadline authority. Explicit deadline transforms retain
 unsupported text and use the same task and Note Timeline mutation boundaries.
 Editor date/time chips and due controls dispatch ordinary isolated CodeMirror edits
-through the shared runtime; their modal owns only temporary picker input and focus.
+through the shared runtime; their anchored picker owns only temporary input and focus,
+and shares floating-panel positioning with the slash menu. Plain date/time typing
+stays in the selected native editor text, with ordinary undo and persistence; any
+document edit dismisses the inline picker before it can apply a stale range.
 The task list derives date filters and optional within-note sorting from that
 Markdown text, with a local-calendar clock for midnight and resume refresh.
 

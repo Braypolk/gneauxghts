@@ -387,15 +387,19 @@
 
 .cm-gn-date-chip, .cm-gn-date-add {
   font: inherit;
-  font-size: 0.78em;
-  border: 1px solid var(--border);
-  border-radius: 0.4rem;
-  background: var(--muted);
-  color: var(--muted-foreground);
-  padding: 0.05rem 0.35rem;
+  border: 0;
+  border-radius: 0.15rem;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  text-decoration: underline dotted color-mix(in oklab, var(--muted-foreground) 28%, transparent);
+  text-underline-offset: 0.2em;
   cursor: pointer;
   vertical-align: baseline;
 }
+.cm-gn-date-chip:hover, .cm-gn-date-add:hover {
+  text-decoration-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
+}
 .cm-gn-date-chip:focus-visible, .cm-gn-date-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.cm-gn-date-add { margin-left: 0.5rem; opacity: 0; }
+.cm-gn-date-add { margin-left: 0.5rem; color: var(--muted-foreground); opacity: 0; }
 .cm-line:hover .cm-gn-date-add, .cm-gn-date-add:focus-visible { opacity: 1; }

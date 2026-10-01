@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view';
+import { isDateTimePickerOpen } from '$lib/features/tasks/dateTimePicker';
 import {
   applyBlockTypeSelection,
   blockTypeMenuGroups
@@ -70,7 +71,7 @@ class SelectionMenuController {
 
   sync(view: EditorView) {
     const range = getSelectionRange(view);
-    if (!view.hasFocus || !range) {
+    if (!view.hasFocus || !range || isDateTimePickerOpen()) {
       this.hide();
       return;
     }
