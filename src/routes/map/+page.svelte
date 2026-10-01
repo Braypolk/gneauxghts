@@ -449,7 +449,8 @@
         autoHighlight: true,
         highlightColor: [foreground[0], foreground[1], foreground[2], 34],
         onHover: ({ object }: { object?: AtlasNode }) => handleNodeHover(object ?? null),
-        onClick: ({ object }: { object?: AtlasNode }) => handleNodeClick(object ?? null)
+        onClick: ({ object }: { object?: AtlasNode }, event: { type: string }) =>
+          handleNodeClick(object ?? null, event)
       }),
       new TextLayer({
         id: 'atlas-cloud-labels',
@@ -588,9 +589,11 @@
     atlas.hoverCloud(cloud);
   }
 
-  function handleNodeClick(node: AtlasNode | null) {
+  function handleNodeClick(node: AtlasNode | null, event: { type: string }) {
     if (!node) return;
     atlas.selectNode(node);
+    // Use the picked node; single-click selection is delayed during gesture recognition.
+    if (event.type === 'dblclick') void openNode(node);
   }
 
   function handleKeydown(event: KeyboardEvent) {
@@ -707,11 +710,9 @@
 <svelte:window onkeydown={handleKeydown} onresize={updateViewportMode} />
 
 <div class="atlas-surface relative h-full w-full overflow-hidden text-white">
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     {@attach attachContainer}
     {@attach syncDeckLayers}
-    ondblclick={() => void openSelectedNode()}
     class={`absolute inset-0 transition-opacity duration-100 ${isDeckVisible ? 'opacity-100' : 'opacity-0'} ${isHoveringNote ? 'cursor-pointer' : 'cursor-grab'}`}
   ></div>
 

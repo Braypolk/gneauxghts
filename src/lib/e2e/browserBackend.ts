@@ -1,4 +1,5 @@
 import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
+import type { VaultAtlasResponse } from '$lib/types/atlas';
 
 type NoteFixture = {
   tags?: string[];
@@ -535,6 +536,24 @@ export function installBrowserE2eBackend() {
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
+
+    if (command === 'get_vault_atlas') {
+      return {
+        status: 'ready', reason: null, revision: 1, generatedAtMillis: 1,
+        structuralGeneration: 'browser-map', labelGeneration: null,
+        publishedAtMillis: 1, stale: false, publishInProgress: false,
+        nodes: [...notes.values()].map((note, index) => ({
+          id: note.noteId, noteId: note.noteId, notePath: note.path,
+          title: note.title, fileName: note.path.split('/').at(-1)!, documentKind: 'note',
+          x: index === 0 ? -200 : 200, y: 0, radius: 5,
+          cloudId: null, parentCloudId: null, childCloudId: null,
+          clusterId: null, subclusterId: null, centrality: 0, importance: 0,
+          lastViewedAtMillis: null, createdAtMillis: 1, updatedAtMillis: 1,
+          preview: note.markdown.slice(0, 80), tags: note.tags ?? [], isolated: true
+        })),
+        links: [], clouds: []
+      } satisfies VaultAtlasResponse;
+    }
 
     if (command === 'list_tasks' || command === 'get_task_group' || command === 'set_task_due_date') {
       let changedNoteId: string | null = null;
