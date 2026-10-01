@@ -172,19 +172,35 @@ The semantic layer is local-first and optional.
 - Semantic indexing metadata is stored in the app data directory, not inside your note files.
 - Search can blend lexical and semantic results.
 
-### Development Runtime Requirements
+### In-app setup
 
-Semantic features depend on a local `llama-server` runtime in development.
+Open **Settings → Search → Set up local search**. Gneauxghts installs any
+missing runtime and embedding model in its device-local app data folder, starts
+the model, and schedules indexing. Setup stays in the app; no terminal, package
+manager, or administrator access is needed. Keyword search remains available
+during setup. Interrupted downloads can be retried with the same button.
+
+Runtime downloads use pinned official llama.cpp release assets with SHA-256
+verification. The complete runtime directory (including shared libraries) is
+published only after its executable starts successfully. The current pin is
+[`b11312`](https://github.com/ggml-org/llama.cpp/releases/tag/b11312), with assets
+for macOS, Windows CPU, and Ubuntu CPU on arm64 and x64.
+
+### Development runtime overrides
+
+Developers can also supply a local `llama-server` runtime.
 
 Gneauxghts will look for `llama-server` in this order:
 
 1. A bundled runtime in packaged builds
-2. `GNEAUXGHTS_LLAMA_SERVER_BIN`
-3. `llama-server` on `PATH`
-4. `/opt/homebrew/bin/llama-server`
-5. `/usr/local/bin/llama-server`
+2. The runtime installed by in-app setup
+3. `GNEAUXGHTS_LLAMA_SERVER_BIN`
+4. `llama-server` on `PATH`
+5. `/opt/homebrew/bin/llama-server`
+6. `/usr/local/bin/llama-server`
 
-Semantic indexing does not download a model automatically. Use Download embedding model in Settings, or place the GGUF model in the app's semantic model cache. The current implementation is wired for:
+Semantic indexing does not download files automatically. Use Set up local search
+in Settings, or place the GGUF model in the app's semantic model cache. The current implementation is wired for:
 
 - Model repo: `jinaai/jina-embeddings-v5-text-nano-retrieval`
 - Expected file: `jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf`

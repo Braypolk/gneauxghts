@@ -111,6 +111,49 @@ describe('searchable settings workspace', () => {
     expect(await model.getValue()).toBe('unsaved-model');
   });
 
+  it('sets up a missing runtime and model without leaving Settings', async () => {
+    const contract = JSON.parse(readFileSync('src-tauri/test-fixtures/contracts/app-events.json', 'utf8'));
+    const status = contract.events.find((event: { channel: string }) => event.channel === 'semantic-status-changed').payload as SemanticStatus;
+    status.modelAvailable = false;
+    status.model.runtimeBinaryPath = null;
+    status.model.error = null;
+    await browser.execute((initial) => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+      const original = native.invoke;
+      native.invoke = async (cmd, args) => {
+        const result = await original(cmd, args);
+        if (cmd === 'get_settings_view') return { ...(result as object), semanticStatus: initial, semanticSettings: initial.settings };
+        if (cmd === 'get_semantic_status') return initial;
+        if (cmd === 'download_semantic_embedding_model') {
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          initial.model.runtimeBinaryPath = '/app/semantic/runtime/llama-server';
+          return { alreadyPresent: false, path: '/app/model.gguf' };
+        }
+        if (cmd === 'prepare_semantic_model') {
+          initial.modelAvailable = true;
+          initial.model.available = true;
+          initial.model.ready = true;
+          initial.model.loading = false;
+        }
+        return result;
+      };
+    }, status);
+    await category('search').click();
+    await $('button[aria-label="Refresh semantic search"]').click();
+    const setup = await $('.semantic-index').$('button=Set up local search');
+    await setup.waitForDisplayed();
+    await setup.click();
+    await $('p*=Downloading any missing files').waitForDisplayed();
+    expect(await setup.isEnabled()).toBe(false);
+    await $('p=Local search is set up. Your notes will now be indexed.').waitForDisplayed();
+    await $('h3=Ready to use').waitForDisplayed();
+    expect(await browser.getUrl()).toContain('/settings');
+    const actions = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations
+      .filter(entry => ['download_semantic_embedding_model', 'prepare_semantic_model', 'retry_semantic_index'].includes(entry.command))
+      .map(entry => entry.command));
+    expect(actions).toEqual(['download_semantic_embedding_model', 'prepare_semantic_model', 'retry_semantic_index']);
+  });
+
   it('keeps semantic controls focused, reveals maintenance from search, and preserves action wiring', async () => {
     await $('label:has(input[name="theme-preference"][value="light"])').click();
     const contract = JSON.parse(readFileSync('src-tauri/test-fixtures/contracts/app-events.json', 'utf8'));
@@ -171,12 +214,28 @@ describe('searchable settings workspace', () => {
     await $('button=Clear map cache').click();
     await $('p*=Map cache cleared').waitForDisplayed();
     await $('button=Rebuild semantic index').click();
-    await browser.waitUntil(async () => browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.some(entry => entry.command === 'rebuild_semantic_index')));
+    const rebuildConfirmation = await $('[aria-label="Confirm search index rebuild"]');
+    await rebuildConfirmation.waitForDisplayed();
+    expect(await rebuildConfirmation.getText()).toContain('may take a while');
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(
+      entry => entry.command === 'rebuild_semantic_index'
+    ))).toHaveLength(0);
+    await rebuildConfirmation.$('button=Cancel').click();
+    await rebuildConfirmation.waitForExist({ reverse: true });
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(
+      entry => entry.command === 'rebuild_semantic_index'
+    ))).toHaveLength(0);
+    await $('button=Rebuild semantic index').click();
+    await rebuildConfirmation.$('button=Confirm rebuild').click();
+    await rebuildConfirmation.waitForExist({ reverse: true });
+    await browser.waitUntil(async () => browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(
+      entry => entry.command === 'rebuild_semantic_index'
+    ).length === 1));
     await search().setValue('download model');
     await $('[data-settings-result="download-model"]').click();
     await expectDestination('semantic-download');
-    await $('button=Download embedding model').click();
-    await $('p=Embedding model is already installed.').waitForDisplayed();
+    await $('button=Set up local search').click();
+    await $('p=Local search is set up. Your notes will now be indexed.').waitForDisplayed();
     await search().setValue('embedding model');
     await $('[data-settings-result="embedding"]').click();
     await expectDestination('semantic-model');

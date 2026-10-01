@@ -90,7 +90,15 @@ describe('semantic search readiness', () => {
     expect(readiness({ modelAvailable: false, model: { ...freshStatus.model, error: 'Failed' } }))
       .toMatchObject({ guidance: 'Action needed', action: 'prepare_semantic_model' });
     expect(readiness({ modelAvailable: false, model: { ...freshStatus.model, runtimeBinaryPath: null } }))
-      .toMatchObject({ title: 'Local runtime is missing' });
+      .toMatchObject({ title: 'Set up local search', action: 'download', actionLabel: 'Set up local search' });
+  });
+
+  it('offers in-app setup on a fresh install even after a failed startup', () => {
+    const html = renderPanel({ ...freshStatus, modelAvailable: false, model: {
+      ...freshStatus.model, runtimeBinaryPath: null, error: 'Runtime missing'
+    } });
+    expect(html.split('<details')[0]).toContain('>Set up local search</button>');
+    expect(html).not.toContain('Reinstall');
   });
 
   it('does not confuse queued work with active indexing', () => {

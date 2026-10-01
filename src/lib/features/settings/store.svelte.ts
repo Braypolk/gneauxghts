@@ -607,16 +607,19 @@ export class SettingsStore {
   };
 
   downloadEmbeddingModel = async () => {
+    if (this.isRunningAction) return;
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
     try {
-      const result = await invoke<SemanticModelDownloadResult>(
+      this.semanticLayerMessage = 'Setting up local search… Downloading any missing files. You can keep using the app.';
+      await invoke<SemanticModelDownloadResult>(
         'download_semantic_embedding_model'
       );
-      this.semanticLayerMessage = result.alreadyPresent
-        ? 'Embedding model is already installed.'
-        : 'Embedding model downloaded successfully.';
+      this.semanticLayerMessage = 'Starting local search… The first load can take a few minutes.';
+      await invoke('prepare_semantic_model');
+      await retrySemanticIndex();
+      this.semanticLayerMessage = 'Local search is set up. Your notes will now be indexed.';
       this.semanticLayerError = null;
       await this.loadSemanticState();
     } catch (error) {

@@ -1,4 +1,5 @@
 use super::debug::SemanticDebugState;
+use super::runtime_install::RuntimeInstaller;
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -105,6 +106,8 @@ pub(crate) struct JinaLlamaEmbeddingProvider {
     client: Option<Client>,
     model_dir: PathBuf,
     bundled_runtime_path: Option<PathBuf>,
+    runtime_installer: RuntimeInstaller,
+    setup: Mutex<()>,
     debug: Arc<SemanticDebugState>,
     runtime: Mutex<ProviderRuntimeState>,
     dimensions: usize,
@@ -157,6 +160,8 @@ impl JinaLlamaEmbeddingProvider {
         Ok(Self {
             client: Some(client),
             model_dir: app_data_dir.join("semantic").join("models"),
+            runtime_installer: RuntimeInstaller::new(&app_data_dir),
+            setup: Mutex::new(()),
             bundled_runtime_path,
             debug,
             runtime: Mutex::new(ProviderRuntimeState {
@@ -170,7 +175,7 @@ impl JinaLlamaEmbeddingProvider {
     fn ensure_server_ready(&self) -> Result<u16, String> {
         let model_source = self.resolve_model_source()?;
         let runtime_binary = self.resolve_runtime_binary().ok_or_else(|| {
-            "Missing `llama-server`. Install llama.cpp or set GNEAUXGHTS_LLAMA_SERVER_BIN."
+            "Local search needs setup. Open Settings → Search and choose Set up local search."
                 .to_string()
         })?;
 
@@ -416,13 +421,10 @@ impl JinaLlamaEmbeddingProvider {
             return Ok(ModelSource::LocalFile(model_path));
         }
 
-        let error = format!(
-            "Model file missing from {}. Use Download embedding model in Settings (Search), or place {} in this folder.",
-            self.model_dir.display(),
-            MODEL_FILENAME
-        );
-        self.update_runtime_error(error.clone());
-        Err(error)
+        Err(
+            "Local search needs its model. Open Settings → Search and choose Set up local search."
+                .to_string(),
+        )
     }
 
     fn download_gguf_from_huggingface(&self) -> Result<(), String> {
@@ -513,6 +515,10 @@ impl JinaLlamaEmbeddingProvider {
             return self.bundled_runtime_path.clone();
         }
 
+        if let Some(installed) = self.runtime_installer.installed_binary() {
+            return Some(installed);
+        }
+
         let env_candidate = env::var_os("GNEAUXGHTS_LLAMA_SERVER_BIN")
             .map(PathBuf::from)
             .filter(|path| path.is_file());
@@ -522,7 +528,13 @@ impl JinaLlamaEmbeddingProvider {
 
         let path_candidate = env::var_os("PATH").and_then(|raw_path| {
             env::split_paths(&raw_path)
-                .map(|directory| directory.join("llama-server"))
+                .map(|directory| {
+                    directory.join(if cfg!(windows) {
+                        "llama-server.exe"
+                    } else {
+                        "llama-server"
+                    })
+                })
                 .find(|candidate| candidate.is_file())
         });
         if path_candidate.is_some() {
@@ -774,12 +786,12 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
         let loading = !ready && runtime_error.is_none() && can_prepare;
         let status = if ready {
             "ready".to_string()
+        } else if runtime_binary_path.is_none() {
+            "local search needs setup in Settings → Search".to_string()
+        } else if cached_model_path.is_none() {
+            "model missing; use Set up local search in Settings → Search".to_string()
         } else if !runtime_status.is_empty() {
             runtime_status
-        } else if runtime_binary_path.is_none() {
-            "llama-server runtime not installed".to_string()
-        } else if cached_model_path.is_none() {
-            "model missing; use Download embedding model in Settings".to_string()
         } else {
             "waiting for local runtime".to_string()
         };
@@ -849,7 +861,25 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
     }
 
     fn download_model_if_needed(&self) -> Result<SemanticModelDownloadResult, String> {
+        let _setup = self
+            .setup
+            .lock()
+            .map_err(|_| "Local search setup lock poisoned".to_string())?;
         self.shutdown_server();
+        if self.resolve_runtime_binary().is_none() {
+            let download_client = Client::builder()
+                .connect_timeout(Duration::from_secs(30))
+                .timeout(Duration::from_secs(600))
+                .user_agent(concat!("Gneauxghts/", env!("CARGO_PKG_VERSION")))
+                .build()
+                .map_err(|err| err.to_string())?;
+            self.runtime_installer.install(&download_client)?;
+        }
+        // A previous failed start must not make completed setup unavailable.
+        if let Ok(mut runtime) = self.runtime.lock() {
+            runtime.last_error = None;
+            runtime.status = "waiting for local runtime".to_string();
+        }
         if let Some(path) = self.cached_model_path() {
             return Ok(SemanticModelDownloadResult {
                 already_present: true,

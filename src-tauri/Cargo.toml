@@ -35,6 +35,9 @@ base64 = "0.22"
 blake3 = "1.5"
 getrandom = "0.3"
 sha2 = "0.10"
+flate2 = "1"
+tar = "0.4"
+zip = { version = "2", default-features = false, features = ["deflate"] }
 hnswlib-rs = "0.10"
 leiden-rs = { version = "0.8.1", default-features = false, features = ["rayon"] }
 ndarray = "0.17"

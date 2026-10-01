@@ -19,8 +19,9 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
     description: 'Turn on Search beyond exact words to include matches by meaning. Background indexing is managed separately below.'
   };
   if (!status.model.runtimeBinaryPath) return {
-    state: 'attention', guidance: 'Setup required', title: 'Local runtime is missing',
-    description: 'Reinstall the app with its local runtime to use semantic search. Keyword search still works.'
+    state: 'attention', guidance: 'Setup required', title: 'Set up local search',
+    description: 'Download the files for private, on-device search here in the app. Keyword search works while you set up.',
+    action: 'download', actionLabel: 'Set up local search'
   };
   if (status.model.error) return {
     state: 'attention', guidance: 'Action needed', title: 'The model needs attention',
@@ -28,9 +29,9 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
     action: 'prepare_semantic_model', actionLabel: 'Prepare local model'
   };
   if (!status.modelAvailable) return {
-    state: 'attention', guidance: 'Setup required', title: 'Download the search model',
+    state: 'attention', guidance: 'Setup required', title: 'Set up local search',
     description: 'One download enables private, on-device semantic search. Keyword search already works.',
-    action: 'download', actionLabel: 'Download model'
+    action: 'download', actionLabel: 'Set up local search'
   };
   if (status.indexingPaused) return {
     state: 'paused', guidance: 'Updates paused', title: 'Automatic indexing is paused',

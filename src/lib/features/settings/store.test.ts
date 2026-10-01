@@ -143,6 +143,41 @@ describe('SettingsStore actions', () => {
     expect(store.isUpdatingForgottenNotes).toBe(false);
   });
 
+  it('finishes local search setup by starting the model and retrying indexing', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    const download = deferred<{ alreadyPresent: boolean; path: string }>();
+    invokeMock.mockImplementation((command: string) => command === 'download_semantic_embedding_model'
+      ? download.promise : Promise.resolve(undefined));
+
+    const setup = store.downloadEmbeddingModel();
+    expect(store.isRunningAction).toBe(true);
+    expect(store.semanticLayerMessage).toContain('Downloading any missing files');
+    await store.downloadEmbeddingModel();
+    expect(invokeMock).toHaveBeenCalledOnce();
+    download.resolve({ alreadyPresent: true, path: '/app/model.gguf' });
+    await setup;
+
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      'download_semantic_embedding_model', 'prepare_semantic_model', 'retry_semantic_index'
+    ]);
+    expect(store.semanticLayerMessage).toBe('Local search is set up. Your notes will now be indexed.');
+    expect(store.semanticLayerError).toBeNull();
+    expect(store.isRunningAction).toBe(false);
+    expect(loadSettingsViewSliceMock).toHaveBeenCalledOnce();
+  });
+
+  it('keeps failed setup retryable without starting a missing model', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore();
+    invokeMock.mockRejectedValueOnce('Download interrupted. Try setup again.');
+    await store.downloadEmbeddingModel();
+    expect(invokeMock).toHaveBeenCalledOnce();
+    expect(store.semanticLayerError).toBe('Download interrupted. Try setup again.');
+    expect(store.semanticLayerMessage).toBeNull();
+    expect(store.isRunningAction).toBe(false);
+  });
+
   it('surfaces committed recovery warnings in settings', async () => {
     const { createSettingsStore } = await import('./store.svelte');
     const store = createSettingsStore();

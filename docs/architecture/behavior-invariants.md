@@ -452,6 +452,13 @@ Automatic retries are bounded and cannot overwrite newer queued work. The UI
 distinguishes fresh, stale, rebuilding, and degraded states and offers an
 explicit retry.
 
+Local search setup stays inside Settings. Its explicit setup action installs
+any missing device-local runtime and model, starts the model, and schedules
+indexing. Ordinary embedding requests never download executable code. Runtime
+downloads are pinned and checksum-verified; extraction and executable startup
+must succeed before the complete runtime directory becomes discoverable.
+Interrupted setup remains retryable, and keyword search stays available.
+
 ### Editing Windows preserve explicit boundaries
 
 The first distinct successful Editor publication starts a fixed five-minute

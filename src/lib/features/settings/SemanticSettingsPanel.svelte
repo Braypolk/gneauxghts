@@ -53,12 +53,20 @@
 
   let isRefreshing = $state(false);
   let refreshError = $state<string | null>(null);
+  let confirmingRebuild = $state<'status' | 'maintenance' | null>(null);
   const busy = $derived(isSaving || isRunningAction || isRefreshing);
   const readiness = $derived(semanticStatus && semanticSettings ? searchReadiness(semanticStatus, semanticSettings) : null);
 
   function resolveAction() {
     if (readiness?.action === 'download') void downloadEmbeddingModel();
+    else if (readiness?.action === 'rebuild_semantic_index') confirmingRebuild = 'status';
     else if (readiness?.action) void runAction(readiness.action);
+  }
+
+  function confirmRebuild() {
+    if (busy) return;
+    confirmingRebuild = null;
+    void runAction('rebuild_semantic_index');
   }
 
   async function refresh() {
@@ -72,6 +80,16 @@
 
 {#snippet action(label: string, onclick: () => void, primary = false)}
   <button class="semantic-button" class:primary type="button" disabled={busy} {onclick}>{label}</button>
+{/snippet}
+
+{#snippet rebuildConfirmation()}
+  <div class="semantic-rebuild-confirmation" role="group" aria-label="Confirm search index rebuild">
+    <p role="status">Rebuilding reprocesses all your notes and may take a while, especially in a large vault.</p>
+    <div class="semantic-actions">
+      {@render action('Confirm rebuild', confirmRebuild, true)}
+      {@render action('Cancel', () => confirmingRebuild = null)}
+    </div>
+  </div>
 {/snippet}
 
 <div class="semantic-panel" class:standalone={!embedded}>
@@ -121,7 +139,7 @@
           <h3>{readiness.title}</h3>
           <p>{readiness.description}</p>
         </div>
-        {#if readiness.action}
+        {#if readiness.action && confirmingRebuild !== 'status'}
           <div class="semantic-actions">
             {@render action(readiness.actionLabel!, resolveAction, true)}
           </div>
@@ -131,6 +149,9 @@
           </div>
         {/if}
       </div>
+      {#if confirmingRebuild === 'status'}
+        {@render rebuildConfirmation()}
+      {/if}
       {#if readiness.state === 'working' && semanticStatus.progressTotal > 0}
         <progress class="semantic-progress" aria-label="Indexing progress" value={semanticStatus.progressCurrent} max={semanticStatus.progressTotal}></progress>
       {/if}
@@ -154,7 +175,7 @@
         <h3>Embedding model</h3>
         <p class="semantic-model-name">{semanticStatus.model.label}</p>
         {#if !semanticStatus.modelAvailable}
-        <p>{!semanticStatus.platformSupported ? 'Unavailable on this device.' : semanticStatus.model.error ? 'Needs attention · see the message above.' : semanticSettings.semanticSearchEnabled ? 'Setup incomplete · see the step above.' : 'Not installed. Download it in Maintenance when needed.'}</p>
+        <p>{!semanticStatus.platformSupported ? 'Unavailable on this device.' : semanticStatus.model.error ? 'Needs attention · see the message above.' : semanticSettings.semanticSearchEnabled ? 'Setup incomplete · see the step above.' : 'Not installed. Use Set up local search in Maintenance when needed.'}</p>
         {/if}
       </div>
       {#if semanticStatus.modelAvailable}
@@ -176,16 +197,19 @@
           {#if semanticStatus.platformSupported}{@render action('Prepare local model', () => void runAction('prepare_semantic_model'))}{/if}
         </div>
         <div class="semantic-row" data-settings-anchor="semantic-rebuild">
-          <div class="semantic-row-copy"><h4>Rebuild search index</h4><p>Reprocess your notes and rebuild their semantic matches.</p></div>
-          {#if semanticStatus.platformSupported}{@render action('Rebuild semantic index', () => void runAction('rebuild_semantic_index'))}{/if}
+          <div class="semantic-row-copy">
+            <h4>Rebuild search index</h4><p>Reprocess your notes and rebuild their semantic matches.</p>
+            {#if confirmingRebuild === 'maintenance'}{@render rebuildConfirmation()}{/if}
+          </div>
+          {#if semanticStatus.platformSupported && confirmingRebuild !== 'maintenance'}{@render action('Rebuild semantic index', () => confirmingRebuild = 'maintenance')}{/if}
         </div>
         <div class="semantic-row" data-settings-anchor="semantic-cache">
           <div class="semantic-row-copy"><h4>Map layout cache</h4><p>Clear saved positions so the next Map open generates a new layout.</p></div>
           {#if semanticStatus.platformSupported}{@render action('Clear map cache', () => void clearAtlasCache())}{/if}
         </div>
         <div class="semantic-row" data-settings-anchor="semantic-download">
-          <div class="semantic-row-copy"><h4>Model files</h4><p>Download or verify the model files.</p></div>
-          {#if semanticStatus.platformSupported}{@render action('Download embedding model', () => void downloadEmbeddingModel())}{/if}
+          <div class="semantic-row-copy"><h4>Local search files</h4><p>Install any missing runtime and model files, then start search.</p></div>
+          {#if semanticStatus.platformSupported}{@render action('Set up local search', () => void downloadEmbeddingModel())}{/if}
         </div>
       </div>
     </details>
@@ -378,6 +402,9 @@
   .semantic-model { padding-block: 20px; }
   .semantic-panel .semantic-model-name { color: var(--foreground); font-size: 13px; overflow-wrap: anywhere; }
   .semantic-actions { display: flex; align-items: center; flex-wrap: wrap; justify-content: flex-end; gap: 8px; flex-shrink: 0; }
+  .semantic-rebuild-confirmation { margin-top: 12px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--muted); }
+  .semantic-rebuild-confirmation .semantic-actions { justify-content: flex-start; margin-top: 10px; }
+  .semantic-panel .semantic-rebuild-confirmation p { margin-top: 0; }
   .semantic-panel :global(.semantic-button) { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: 34px; padding: 7px 11px; border: 1px solid var(--border); border-radius: 7px; background: var(--card); font-size: 11px; font-weight: 500; white-space: nowrap; }
   .semantic-panel :global(.semantic-button:hover) { background: var(--muted); }
   .semantic-panel :global(.semantic-button.primary) { background: var(--foreground); border-color: var(--foreground); color: var(--background); }

@@ -10,6 +10,7 @@ pub(crate) mod embed;
 pub(crate) mod indexer;
 pub(crate) mod note_ann;
 pub(crate) mod related;
+mod runtime_install;
 pub(crate) mod similarity;
 
 use self::{

@@ -49,6 +49,7 @@ state references, independently of Tauri dispatch.
 | One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
+| Device-local search runtime and model setup | `JinaLlamaEmbeddingProvider`; private `RuntimeInstaller` verifies and publishes pinned runtime files, and setup uses semantic work admission |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
 | Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
 
