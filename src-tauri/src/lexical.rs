@@ -1,7 +1,7 @@
 use crate::{
     index::{FileSignature, IndexedNote},
     note::DocumentKind,
-    search::{build_search_preview, NoteSearchResult, ScoredSearchResult, TextRange},
+    search::{build_search_preview, search_note, NoteSearchResult, ScoredSearchResult, TextRange},
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -246,6 +246,56 @@ impl LexicalIndex {
         Ok((results, count))
     }
 
+    /// Search the usable lexical projection and fall back to catalog paragraphs
+    /// for notes that have not caught up yet. Both decisions share one lexical
+    /// snapshot, so background completion cannot duplicate or omit a note.
+    pub(crate) fn search_with_catalog(
+        &self,
+        entries: &HashMap<PathBuf, IndexedNote>,
+        query_text: &str,
+        normalized_query: &str,
+        query_terms: &[&str],
+        limit: usize,
+        exclude_path: Option<&Path>,
+    ) -> Result<Vec<ScoredSearchResult>, String> {
+        let inner = self
+            .inner
+            .lock()
+            .map_err(|_| "Lexical index lock poisoned".to_string())?;
+        let mut results = entries
+            .iter()
+            .filter(|(path, note)| {
+                Some(path.as_path()) != exclude_path
+                    && note.document_kind == DocumentKind::Note
+                    && inner.signatures.get(path.to_string_lossy().as_ref())
+                        != Some(note.signature())
+            })
+            .flat_map(|(path, note)| search_note(Some(path), note, normalized_query, query_terms))
+            .collect::<Vec<_>>();
+        // Pending replacements use catalog bytes, rather than returning an
+        // old indexed paragraph alongside the fallback result.
+        results.extend(
+            self.search_locked(
+                &inner,
+                query_text,
+                normalized_query,
+                query_terms,
+                limit,
+                exclude_path,
+            )?
+            .into_iter()
+            .filter(|candidate| {
+                candidate.result.note_path.as_deref().is_some_and(|path| {
+                    entries
+                        .get(Path::new(path))
+                        .is_some_and(|note| inner.signatures.get(path) == Some(note.signature()))
+                })
+            }),
+        );
+        Ok(results)
+    }
+
+    #[cfg(test)]
     pub(crate) fn search(
         &self,
         query_text: &str,
@@ -258,6 +308,25 @@ impl LexicalIndex {
             .inner
             .lock()
             .map_err(|_| "Lexical index lock poisoned".to_string())?;
+        self.search_locked(
+            &inner,
+            query_text,
+            normalized_query,
+            query_terms,
+            limit,
+            exclude_path,
+        )
+    }
+
+    fn search_locked(
+        &self,
+        inner: &LexicalIndexInner,
+        query_text: &str,
+        normalized_query: &str,
+        query_terms: &[&str],
+        limit: usize,
+        exclude_path: Option<&Path>,
+    ) -> Result<Vec<ScoredSearchResult>, String> {
         if inner.signatures.is_empty() {
             return Ok(Vec::new());
         }
@@ -463,5 +532,45 @@ mod tests {
             .search("wording", "wording", &["wording"], 10, None)
             .expect("search after remove")
             .is_empty());
+    }
+
+    #[test]
+    fn pending_replacements_search_current_content_without_stale_or_duplicate_results() {
+        let index = LexicalIndex::new().unwrap();
+        let path = PathBuf::from("notes/changing.md");
+        let old = build_indexed_note(&path, "# Changing\n\nshared obsoleteword", 42);
+        let current = build_indexed_note(&path, "# Changing\n\nshared replacementword", 43);
+        let mut entries = HashMap::from([(path.clone(), current)]);
+        let search = |query: &str, exclude| {
+            index
+                .search_with_catalog(&entries, query, query, &[query], 10, exclude)
+                .unwrap()
+        };
+
+        assert_eq!(
+            search("replacementword", None).len(),
+            1,
+            "an entirely empty lexical index still searches discovered notes"
+        );
+        index.upsert_note(&path, &old).unwrap();
+        assert!(search("obsoleteword", None).is_empty());
+        let results = search("shared", None);
+        assert_eq!(results.len(), 1);
+        assert!(results[0].result.excerpt.contains("replacementword"));
+        assert!(
+            search("replacementword", Some(path.as_path())).is_empty(),
+            "the open-note override must remain the only source for its path"
+        );
+
+        index.upsert_note(&path, &entries[&path]).unwrap();
+        assert_eq!(search("shared", None).len(), 1);
+        entries.remove(&path);
+        assert!(
+            index
+                .search_with_catalog(&entries, "shared", "shared", &["shared"], 10, None)
+                .unwrap()
+                .is_empty(),
+            "a removed catalog note is no longer searchable"
+        );
     }
 }

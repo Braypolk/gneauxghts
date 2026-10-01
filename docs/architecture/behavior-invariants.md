@@ -441,6 +441,12 @@ conversation. Genuine external edits and deletion remain conflicts.
 
 ### Semantic search preserves the last usable result
 
+Discovered ordinary notes are keyword-searchable as soon as they enter the
+note catalog. While their lexical projection is missing or outdated, search
+uses the current catalog paragraphs without waiting for background indexing
+or embeddings. Once the lexical projection catches up, search uses it without
+adding duplicate fallback results.
+
 A transient indexing failure keeps the last good result visible as stale.
 Automatic retries are bounded and cannot overwrite newer queued work. The UI
 distinguishes fresh, stale, rebuilding, and degraded states and offers an

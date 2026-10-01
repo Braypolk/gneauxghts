@@ -1131,7 +1131,8 @@ fn collect_lexical_candidates(
     }
     let mut candidates = Vec::new();
     if tag_query.tags.is_empty() && !query_terms.is_empty() {
-        candidates.extend(state.lexical.search(
+        candidates.extend(state.lexical.search_with_catalog(
+            &index.entries,
             query,
             normalized_query,
             query_terms,
@@ -1523,6 +1524,106 @@ fn structural_boost_from_semantic(
         boost -= 0.2;
     }
     boost
+}
+
+#[cfg(test)]
+mod pending_keyword_tests {
+    use super::*;
+    use crate::{app::EventBus, semantic::SemanticState, test_support::TestDir};
+
+    #[test]
+    fn bulk_notes_are_keyword_searchable_before_background_indexing_finishes() {
+        let _env = crate::test_support::lock_test_env();
+        let data = TestDir::new("pending-keyword-data");
+        crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+        let notes = TestDir::new("pending-keyword-notes");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        state.background_index_queue.wait_until_idle_for_test();
+        let pause = state.foreground_guard();
+        for i in 0..64 {
+            std::fs::write(
+                notes.path().join(format!("Imported {i}.md")),
+                format!("# Imported {i}\n\nquartzmarker{i} new content\n"),
+            )
+            .unwrap();
+        }
+        state.prewarm_notes_index(notes.path()).unwrap();
+        let target = notes.path().join("Imported 63.md");
+        let indexed = notes.path().join("Imported 0.md");
+        let indexed_note = state.notes_index.lock().unwrap().entries[&indexed].clone();
+        state.lexical.upsert_note(&indexed, &indexed_note).unwrap();
+        assert_eq!(state.notes_index.lock().unwrap().entries.len(), 64);
+        assert!(!state.lexical.contains_signature_for_test(&target));
+
+        let search = |query: &str| {
+            tauri::async_runtime::block_on(
+                state
+                    .note_timeline()
+                    .current_content(AllowedScope::vault())
+                    .read_async(search_notes_hybrid_unchecked(
+                        &state,
+                        query.into(),
+                        None,
+                        String::new(),
+                        Some(String::new()),
+                        None,
+                        12,
+                        None,
+                        None,
+                        None,
+                    )),
+            )
+            .unwrap()
+        };
+        for query in ["quartzmarker63", "Imported 63"] {
+            let results = search(query);
+            let result = results
+                .iter()
+                .find(|r| r.note_path.as_deref() == target.to_str())
+                .expect("pending note is searchable by body and title");
+            assert!(result.reason_labels.iter().any(|label| label == "keyword"));
+            assert!(result.note_id.is_some());
+            assert!(!result.highlight_ranges.is_empty());
+        }
+        assert!(
+            !state.lexical.contains_signature_for_test(&target),
+            "keyword search must not force background indexing to finish"
+        );
+        assert_eq!(
+            search("quartzmarker0").len(),
+            1,
+            "indexed notes must not acquire duplicate fallback results"
+        );
+
+        drop(pause);
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while (0..64).any(|i| {
+            !state
+                .lexical
+                .contains_signature_for_test(&notes.path().join(format!("Imported {i}.md")))
+        }) {
+            assert!(
+                Instant::now() < deadline,
+                "background queue failed to drain"
+            );
+            std::thread::sleep(Duration::from_millis(25));
+        }
+        invalidate_result_caches();
+        let results = search("quartzmarker63");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].note_path.as_deref(), target.to_str());
+        assert!(results[0]
+            .reason_labels
+            .iter()
+            .any(|label| label == "keyword"));
+        state.stop_rebuildable_projection_work().unwrap();
+        crate::state::set_notes_root_override(None).unwrap();
+    }
 }
 
 #[cfg(test)]
