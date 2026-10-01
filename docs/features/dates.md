@@ -30,3 +30,16 @@ The master list combines its existing completion and hidden filters with:
 | No due date | Tasks without a valid annotation |
 
 Default note grouping and Markdown order remain unchanged. Sort by due date sorts within each note, ascending, with undated tasks last. Completed tasks never appear as actionable overdue work. Labels and filters refresh at local midnight and when the app resumes, without changing your Markdown.
+
+## Chat
+
+Chat and note research understand these fixed date/time insertions and portable
+`@due` deadlines. Each request uses your current editor date order, hour format
+and timezone. Chat reads current checkbox lines to compare deadlines with local
+today, keeps child dates separate, and distinguishes completed tasks and plain
+date text. Date edits are prepared as proposals for your review.
+
+Current settings do not establish how older or imported numeric dates were
+written. Chat should ask when such dates are ambiguous. Note activity during a
+period and task deadlines during that period require different evidence; editing
+a note last week does not make its tasks due last week.

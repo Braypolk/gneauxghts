@@ -41,6 +41,7 @@ import {
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
+import { currentDateTimeContext } from './dateTimeContext';
 
 interface RawChatSettings {
   provider: ChatProvider;
@@ -465,7 +466,8 @@ export class TauriChatApi implements ChatApi {
         attachments: input.attachments ?? [],
         forceWebSearch: input.forceWebSearch,
         activeNote: input.activeNote ?? null,
-        selectedContext: input.selectedContext ?? []
+        selectedContext: input.selectedContext ?? [],
+        dateTimeContext: currentDateTimeContext()
       }
     });
     this.#messageConversations.set(raw.userMessageId, raw.conversationId);
@@ -499,7 +501,9 @@ export class TauriChatApi implements ChatApi {
   async retryMessage(messageId: string) {
     const conversationId = this.#messageConversations.get(messageId);
     if (!conversationId) throw new Error('Reopen the conversation before retrying this message.');
-    const raw = await invoke<RawReceipt>(CHAT_COMMANDS.retryMessage, { conversationId, messageId });
+    const raw = await invoke<RawReceipt>(CHAT_COMMANDS.retryMessage, {
+      conversationId, messageId, dateTimeContext: currentDateTimeContext()
+    });
     this.#activeRequests.set(raw.requestId, raw.conversationId);
     const now = Date.now();
     const assistantMessage = this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now);

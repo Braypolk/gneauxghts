@@ -105,6 +105,8 @@ pub(crate) struct SendMessageRequest {
     active_note: Option<ActiveNoteSnapshot>,
     #[serde(default)]
     selected_context: Vec<ChatContextSelectionInput>,
+    #[serde(default)]
+    date_time_context: Option<crate::chat::date_time::DateTimeContext>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -1017,6 +1019,7 @@ pub(crate) async fn chat_send_message(
             force_web_search: request.force_web_search,
             active_note: request.active_note,
             selected_context,
+            date_time_context: request.date_time_context,
         },
         app,
     )
@@ -1145,6 +1148,7 @@ pub(crate) async fn chat_retry_message(
     state: State<'_, AppState>,
     conversation_id: String,
     message_id: String,
+    date_time_context: Option<crate::chat::date_time::DateTimeContext>,
 ) -> Result<ChatRequestAccepted, String> {
     let conversation = service.get_conversation(&conversation_id)?;
     let assistant = conversation
@@ -1186,6 +1190,7 @@ pub(crate) async fn chat_retry_message(
             conversation_id,
             user_message_id: user.id.clone(),
             failed_assistant_message_id: message_id,
+            date_time_context,
         },
         app,
     )

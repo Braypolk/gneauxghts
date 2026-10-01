@@ -11,10 +11,15 @@ type ReadEvidenceArgs = crate::services::evidence::ReadRequest;
 
 impl AgentToolContext {
     pub(crate) fn query_anchor_label(&self) -> String {
-        self.evidence
+        let mut label = self
+            .evidence
             .lock()
             .map(|e| e.anchor.label())
-            .unwrap_or_else(|_| "Unavailable".into())
+            .unwrap_or_else(|_| "Unavailable".into());
+        if let Some(context) = &self.date_time_context {
+            label.push_str(&context.prompt_context());
+        }
+        label
     }
     pub(super) fn admit_passages(
         &self,

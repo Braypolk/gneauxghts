@@ -18,6 +18,150 @@ fn week() -> ActivityRange {
 }
 
 #[test]
+fn evidence_contracts_read_authored_task_deadlines_without_inheriting_or_promoting_dates() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("- [ ] Parent @due(2026-10-02) @due(2026-10-04)\n  - [ ] Child @due(2026-10-01)\n  - [ ] Undated child\n- [x] Done @due(2026-09-01)\n- [ ] Plain date 10/03/2026 9:30 AM\n- [ ] Invalid @due(2026-02-30)\n- [ ] Escaped \\@due(2026-10-05)\n- [ ] Code `@due(2026-10-06)`\n- [ ] Link [@due(2026-10-07)](https://example.com)\n\n```markdown\n- [ ] Example @due(2026-10-08)\n```");
+    let mut session = EvidenceSession::default();
+    let (result, sources) = session
+        .read_request(
+            &f.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: Some(f.note.as_str().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let metadata: Vec<_> = result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|item| item["taskDates"]["items"].as_array())
+        .flatten()
+        .collect();
+    assert_eq!(
+        metadata.len(),
+        9,
+        "Only actual checkbox marker lines, including undated tasks"
+    );
+    assert_eq!(
+        metadata
+            .iter()
+            .map(|task| task["dueDate"].clone())
+            .collect::<Vec<_>>(),
+        vec![
+            json!("2026-10-02"),
+            json!("2026-10-01"),
+            json!(null),
+            json!("2026-09-01"),
+            json!(null),
+            json!(null),
+            json!(null),
+            json!(null),
+            json!(null)
+        ]
+    );
+    assert_eq!(metadata[3]["completed"], true);
+    for item in result["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|item| item["location"] == "body" && !item["taskDates"].is_null())
+    {
+        assert_eq!(item["taskDates"]["complete"], true);
+        let excerpt = item["excerpt"].as_str().unwrap();
+        let passage_start = item["start"].as_u64().unwrap() as usize;
+        for task in item["taskDates"]["items"].as_array().unwrap() {
+            let start = task["start"].as_u64().unwrap() as usize - passage_start;
+            let end = task["end"].as_u64().unwrap() as usize - passage_start;
+            assert_eq!(task["text"], &excerpt[start..end]);
+            assert!(!task["text"].as_str().unwrap().contains("Example"));
+        }
+    }
+    assert!(sources
+        .iter()
+        .all(|source| crate::services::evidence::validate_citation(
+            &f.state,
+            &source.0,
+            None,
+            &HashSet::new()
+        )
+        .is_some()));
+    let excluded = HashSet::from([f.note.as_str().to_string()]);
+    assert!(
+        session
+            .read_request(
+                &f.state,
+                None,
+                &excluded,
+                ReadRequest {
+                    note_id: Some(f.note.as_str().into()),
+                    ..Default::default()
+                }
+            )
+            .is_err(),
+        "Deadline metadata must not bypass note exclusions"
+    );
+    let ids = sources
+        .iter()
+        .filter(|source| source.0.location == "body")
+        .map(|source| source.0.id.clone())
+        .collect();
+    f.save("- [ ] Parent @due(2026-11-01)");
+    let stale = session
+        .read_request(
+            &f.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                evidence_ids: ids,
+                ..Default::default()
+            },
+        )
+        .unwrap_err();
+    assert_eq!(
+        stale.code,
+        crate::services::tool_outcome::FailureCode::StaleEvidence,
+        "Changed deadlines must invalidate old metadata"
+    );
+}
+
+#[test]
+fn evidence_contracts_dense_deadlines_are_bounded_and_report_omitted_metadata() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save(
+        &(0..17)
+            .map(|i| format!("- [ ] Task {i} @due(2026-10-01)\n"))
+            .collect::<String>(),
+    );
+    let mut session = EvidenceSession::default();
+    let (page, _) = session
+        .read_request(
+            &f.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: Some(f.note.as_str().into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let body = page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["location"] == "body")
+        .unwrap();
+    assert_eq!(body["taskDates"]["items"].as_array().unwrap().len(), 16);
+    assert_eq!(body["taskDates"]["complete"], false);
+    assert!(body["excerpt"].as_str().unwrap().contains("Task 16"));
+    assert!(serde_json::to_vec(&page).unwrap().len() <= 6000);
+}
+
+#[test]
 fn evidence_contracts_reconstruct_changed_lines_then_check_current_status() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
@@ -65,6 +209,10 @@ fn evidence_contracts_reconstruct_changed_lines_then_check_current_status() {
                 .unwrap();
             for item in result["items"].as_array().unwrap() {
                 assert_eq!(item["sourceKind"], "retained_note_change");
+                assert!(
+                    item["taskDates"].is_null(),
+                    "Retained text is not current deadline metadata"
+                );
                 assert_eq!(item["activitySupport"]["status"], "supported", "{item}");
                 passages.push(item["excerpt"].as_str().unwrap().to_string());
             }

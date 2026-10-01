@@ -17,6 +17,7 @@ vite.config.ts.timestamp-*
 .scratch/chat-reliability/*.json
 .scratch/chat-reliability/*.png
 .scratch/chat-reliability/artifacts/
+.scratch/chat-date-context/artifacts/
 
 # Rust
 target/

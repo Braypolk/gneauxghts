@@ -539,6 +539,22 @@ remain separate. Scope excludes non-note transcripts. Each call
 can select its own query, scope and range; only a research worker's inherited
 scope/range is mandatory within that worker.
 
+Sends and retries snapshot the editor's current Intl locale, numeric Gregorian
+date order, hour cycle and IANA timezone into optional turn-local configuration.
+The validated timezone sets the run reference; legacy callers retain the backend
+local default. The configuration is not persisted authoring provenance and cannot
+reinterpret older note text. Parent and research prompts share date-reading
+semantics; reviewed-edit guidance stays in the parent.
+
+Current body reads optionally include bounded `taskDates` metadata from the same
+Markdown checkbox and portable `@due` parsers used by tasks. Entries cover only
+complete delivered marker lines with exact text and canonical UTF-8 coordinates; clipping or
+more than sixteen entries marks the metadata incomplete. They consume the same
+read/evidence budgets and inherit permission, hash and citation checks. Historical
+reads do not claim current deadlines. The agent composes current reads and local
+calendar comparisons for deadline questions, and working-note reads plus reviewed
+proposals for edits.
+
 `list_note_activity` returns bounded intermediate data grouped by Note Identity,
 with one representative evidence ID, preview and recorded change per note. This
 is discovery only; search with the same scope/range retrieves the other changed

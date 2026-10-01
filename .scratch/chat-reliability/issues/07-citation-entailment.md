@@ -41,3 +41,11 @@ body read. Earlier failed output also exposed internal failure fields. The
 final worker run reads and cites both current bodies and renders the interval
 correctly, but this fixture does not resolve general semantic entailment.
 See [worker validation](../worker-validation.md); this issue remains open.
+
+2026-09-30: Chat date integration live runs also demonstrated a resolvable body
+citation paired with an inconsistent classification of a fenced-code example
+as open/undated work. Shared instructions alone did not resolve it in the first
+repeat. Exact checkbox text was added to canonical parsed deadline metadata;
+the final parent and research samples classified the fixture correctly. See
+[date validation](../../chat-date-context/validation.md) for failed/intermediate
+and final artifacts. General semantic evaluation remains open.

@@ -1138,7 +1138,26 @@ impl EvidenceSession {
                 "Evidence changed or is no longer allowed; search again",
             ));
         };
-        let item = json!({"evidenceId":id,"noteId":c.citation.note_id,"title":title,"location":c.citation.location,"start":c.citation.start,"end":c.citation.end,"contentHash":c.citation.content_hash,"excerpt":c.citation.excerpt,"supportingContext":c.context,"provenance":c.provenance,"task":c.task,"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"evidenceRole":if c.citation.historical.is_some() || c.section == "Activity" {"changed_passage"} else {"current_context"},"nextProvenanceOffset":next_provenance_offset,"citation":format!("[{}](passage:{id})",title)});
+        let task_dates = if c.citation.location == "body" && c.citation.historical.is_none() {
+            let raw = fs::read_to_string(&path)
+                .map_err(|_| ToolError::stale("Note changed while reading task deadlines"))?;
+            if canonical_content_hash(&raw) != c.citation.content_hash {
+                return Err(ToolError::stale(
+                    "Note changed while reading task deadlines",
+                ));
+            }
+            Some(crate::services::task_dates::passage_task_dates(
+                &body_at(&raw, &title, "body"),
+                c.citation.start,
+                c.citation.end,
+            ))
+        } else {
+            None
+        };
+        let mut item = json!({"evidenceId":id,"noteId":c.citation.note_id,"title":title,"location":c.citation.location,"start":c.citation.start,"end":c.citation.end,"contentHash":c.citation.content_hash,"excerpt":c.citation.excerpt,"supportingContext":c.context,"provenance":c.provenance,"task":c.task,"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"evidenceRole":if c.citation.historical.is_some() || c.section == "Activity" {"changed_passage"} else {"current_context"},"nextProvenanceOffset":next_provenance_offset,"citation":format!("[{}](passage:{id})",title)});
+        if let Some(metadata) = task_dates.filter(|value| !value.is_null()) {
+            item["taskDates"] = metadata;
+        }
         Ok((item, c.citation, path, title))
     }
 

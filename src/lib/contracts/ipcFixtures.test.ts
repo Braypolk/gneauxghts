@@ -77,6 +77,7 @@ describe('Rust-owned IPC contract fixtures', () => {
 
   it('pins nested chat send and proposal commit argument names', async () => {
     const { TauriChatApi } = await import('$lib/features/chat/api');
+    const { currentDateTimeContext } = await import('$lib/features/chat/dateTimeContext');
     const api = new TauriChatApi();
     const send = commandFixture.commands.chat_send_message;
     const commit = commandFixture.commands.commit_agent_proposal;
@@ -85,7 +86,13 @@ describe('Rust-owned IPC contract fixtures', () => {
     await api.sendMessage(
       send.args!.request as Parameters<(typeof api)['sendMessage']>[0]
     );
-    expect(invokeMock).toHaveBeenLastCalledWith('chat_send_message', send.args);
+    expect(invokeMock).toHaveBeenLastCalledWith('chat_send_message', {
+      ...send.args,
+      request: {
+        ...(send.args!.request as Record<string, unknown>),
+        dateTimeContext: currentDateTimeContext()
+      }
+    });
 
     invokeMock.mockResolvedValueOnce(commit.result);
     await api.commitAgentProposal(

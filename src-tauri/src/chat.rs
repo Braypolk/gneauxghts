@@ -1,4 +1,5 @@
 pub(crate) mod citations;
+pub(crate) mod date_time;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use blake3::Hasher;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -250,11 +251,13 @@ pub(crate) enum ChatRequest {
         force_web_search: bool,
         active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
         selected_context: Vec<ChatRunContextItem>,
+        date_time_context: Option<date_time::DateTimeContext>,
     },
     Retry {
         conversation_id: String,
         user_message_id: String,
         failed_assistant_message_id: String,
+        date_time_context: Option<date_time::DateTimeContext>,
     },
 }
 
@@ -384,6 +387,7 @@ struct ActiveChatRun {
     force_web_search: bool,
     active_note: Option<crate::agent_tools::ActiveNoteSnapshot>,
     selected_context: Vec<ChatRunContextItem>,
+    date_time_context: Option<date_time::DateTimeContext>,
     cancelled: CancellationToken,
     automatic_title_fallback: Option<String>,
     _work: ChatWorkLease,
@@ -1914,6 +1918,17 @@ impl ChatService {
             } => conversation_id.clone(),
         };
         let conversation = self.get_conversation(&conversation_id)?;
+        let date_time_context = match &request {
+            ChatRequest::New {
+                date_time_context, ..
+            }
+            | ChatRequest::Retry {
+                date_time_context, ..
+            } => date_time_context.clone(),
+        };
+        if let Some(context) = &date_time_context {
+            context.validate()?;
+        }
         if conversation.summary.detached {
             return Err(
                 "Resolve the externally edited transcript before continuing this chat".to_string(),
@@ -2136,6 +2151,7 @@ impl ChatService {
             force_web_search,
             active_note,
             selected_context,
+            date_time_context,
             cancelled,
             automatic_title_fallback,
             _work: work,
@@ -2398,6 +2414,7 @@ impl ChatService {
                 .map(|item| item.note_id.clone())
                 .collect(),
             provider == crate::agent_runtime::AgentProvider::Local,
+            run.date_time_context.clone(),
         );
         let previous_query = conversation
             .messages
@@ -2422,7 +2439,7 @@ impl ChatService {
         let mut prompt = latest_user.content.clone();
         {
             prompt.push_str(&format!(
-                "\n\nQuery reference instant and local timezone: {}",
+                "\n\nQuery reference instant, local timezone and editor date/time conventions: {}",
                 tools.query_anchor_label()
             ));
         }

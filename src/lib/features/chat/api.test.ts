@@ -12,6 +12,24 @@ describe('TauriChatApi', () => {
     listenMock.mockReset();
   });
 
+  it('supplies current editor date conventions on new messages and retries', async () => {
+    invokeMock.mockResolvedValue({
+      requestId: 'request-date', conversationId: 'chat-date',
+      userMessageId: 'user-date', assistantMessageId: 'assistant-date'
+    });
+    const { TauriChatApi } = await import('./api');
+    const api = new TauriChatApi();
+    await api.sendMessage({ conversationId: 'chat-date', content: 'What is due today?' });
+    const context = invokeMock.mock.calls[0][1].request.dateTimeContext;
+    expect(context).toEqual({
+      locale: expect.any(String), timeZone: expect.any(String),
+      dateOrder: expect.arrayContaining(['year', 'month', 'day']),
+      hourCycle: expect.stringMatching(/^h(?:11|12|23|24)$/)
+    });
+    await api.retryMessage('assistant-date');
+    expect(invokeMock.mock.calls[1][1].dateTimeContext).toEqual(context);
+  });
+
   it('defaults automatic web access for settings from older vaults', async () => {
     invokeMock.mockResolvedValue({
       provider: 'openai', model: 'test-model', serviceTier: 'standard',
@@ -147,7 +165,8 @@ describe('TauriChatApi', () => {
         attachments: [],
         forceWebSearch: true,
         activeNote: null,
-        selectedContext: []
+        selectedContext: [],
+        dateTimeContext: expect.any(Object)
       }
     });
     expect(receipt.userMessage.content).toBe('Hello');
@@ -183,7 +202,8 @@ describe('TauriChatApi', () => {
         attachments: [attachment],
         forceWebSearch: undefined,
         activeNote: null,
-        selectedContext: []
+        selectedContext: [],
+        dateTimeContext: expect.any(Object)
       }
     });
     expect(receipt.userMessage.attachments).toEqual([
@@ -474,7 +494,8 @@ describe('TauriChatApi', () => {
         attachments: [],
         forceWebSearch: undefined,
         activeNote,
-        selectedContext: []
+        selectedContext: [],
+        dateTimeContext: expect.any(Object)
       }
     });
   });
@@ -508,7 +529,8 @@ describe('TauriChatApi', () => {
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_send_message', {
       request: {
         conversationId: 'chat-1', content: 'Compare these', attachments: [],
-        forceWebSearch: undefined, activeNote: null, selectedContext
+        forceWebSearch: undefined, activeNote: null, selectedContext,
+        dateTimeContext: expect.any(Object)
       }
     });
   });

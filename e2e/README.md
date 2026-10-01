@@ -309,3 +309,26 @@ unchanged old backlog, inferred actions, and disclosed coverage. Passing citatio
 checks alone does not establish answer quality. Offline evidence-contract tests
 cover fixed last-week dates, clock uncertainty, assistant-transcript exclusion,
 revoked access, cleared history, partial batches, and read continuations.
+
+### Editor date conventions and task deadlines
+
+Build the native E2E binary, then use a configured local model in a disposable
+synthetic vault:
+
+```sh
+GNEAUX_CHAT_DATES_NATIVE=1 \
+GNEAUX_LIVE_ENDPOINT=http://127.0.0.1:1234/v1 \
+GNEAUX_LIVE_MODEL=your-loaded-model \
+GNEAUX_LIVE_OUTPUT=/tmp/chat-dates.json \
+pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-dates.spec.ts
+```
+
+Three fresh conversations check current deadline evidence, validated research
+reads, and a pending reviewed edit with British numeric date order. The proposal
+must resolve `01/02/2027` to February 1, consolidate only the parent's valid
+annotations, preserve children and unrelated text, and leave canonical Markdown
+unchanged. Excluded notes stay inaccessible and body citations must resolve.
+Inspect saved answers for correct overdue/today/tomorrow classification, completed
+and undated children, invalid/code examples and stated coverage. Citation checks
+alone do not prove those claims. Each request records partial output on its
+300-second deadline; the model endpoint and output path must be explicit.

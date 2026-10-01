@@ -553,6 +553,23 @@ enums, question parsers or semantic workflow dispatchers. Independent tool calls
 may use different scopes or omit an activity filter; a child research invocation
 must retain its inherited scope and range.
 
+Chat sends and retries capture current editor locale, numeric date order, hour
+cycle and timezone as optional validated turn-local configuration. The timezone
+sets the reference anchor shared with research, not an older note's authoring
+format. Old ambiguous numeric dates remain ambiguous. Fixed wall-clock text has
+no implicit UTC offset and date-only deadlines never shift through UTC or DST.
+
+Canonical current body evidence may carry task deadline metadata for complete
+delivered checkbox lines only, with exact line text and canonical coordinates.
+The existing parser determines valid annotations,
+first-valid precedence and completion; children never inherit dates. Metadata is
+bounded to sixteen entries, reports omitted/clipped lines, and consumes the same
+payload allowance under existing access/freshness checks. Historical reads cannot
+establish current task deadlines. Deadline comparisons use the reference's local
+calendar day, exclude completed tasks from actionable overdue work, and never
+reuse deadline dates as recorded-activity filters. Date edits remain exact reviewed
+proposals; the research worker receives reading semantics, not edit instructions.
+
 Distinct-note activity pages return one bounded preview and evidence ID per note,
 with a representative recorded-change interval, explicit coverage and continuation.
 Counts describe only that page's notes with matching recorded changes, not work

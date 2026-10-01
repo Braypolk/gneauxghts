@@ -143,6 +143,7 @@ pub(crate) struct AgentToolContext {
     worker_calls: Arc<AtomicUsize>,
     worker_scope: Option<Arc<HashSet<String>>>,
     worker_period: Option<crate::services::evidence::SearchRequest>,
+    date_time_context: Option<crate::chat::date_time::DateTimeContext>,
     local_model: bool,
     proposal_failures: Arc<AtomicUsize>,
     event_sink: Arc<Mutex<Option<crate::agent_runtime::AgentEventSink>>>,
@@ -171,7 +172,12 @@ impl AgentToolContext {
         active_note: Option<ActiveNoteSnapshot>,
         run_grants: HashSet<String>,
         local_model: bool,
+        date_time_context: Option<crate::chat::date_time::DateTimeContext>,
     ) -> Self {
+        let mut evidence = crate::services::evidence::EvidenceSession::default();
+        if let Some(context) = &date_time_context {
+            evidence.anchor.timezone = context.time_zone.clone();
+        }
         Self {
             app,
             service,
@@ -185,7 +191,7 @@ impl AgentToolContext {
             surfaced: Arc::new(Mutex::new(HashSet::new())),
             read_coverage: Arc::new(Mutex::new(HashMap::new())),
             sources: Arc::new(Mutex::new(Vec::new())),
-            evidence: Arc::new(Mutex::new(Default::default())),
+            evidence: Arc::new(Mutex::new(evidence)),
             passage_references: Arc::new(Mutex::new(Default::default())),
             context_versions: Arc::new(Mutex::new(HashMap::new())),
             proposal_lock: Arc::new(Mutex::new(())),
@@ -199,6 +205,7 @@ impl AgentToolContext {
             worker_calls: Arc::new(AtomicUsize::new(0)),
             worker_scope: None,
             worker_period: None,
+            date_time_context,
             local_model,
             proposal_failures: Arc::new(AtomicUsize::new(0)),
             event_sink: Arc::new(Mutex::new(None)),

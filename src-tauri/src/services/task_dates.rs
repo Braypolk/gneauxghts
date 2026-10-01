@@ -174,6 +174,38 @@ pub(crate) fn task_due_date(text: &str) -> Option<String> {
         .map(|(_, _, date)| date.clone())
 }
 
+/// Read metadata only for complete canonical checkbox lines inside a delivered
+/// passage. Use the full Markdown parser to exclude code/link examples and the
+/// existing annotation parser for effective deadlines; never infer from prose.
+pub(crate) fn passage_task_dates(markdown: &str, start: usize, end: usize) -> serde_json::Value {
+    let markers = task_marker_lines(markdown);
+    let mut offset = 0;
+    let mut items = Vec::new();
+    let mut complete = true;
+    for (index, line) in markdown.split_inclusive('\n').enumerate() {
+        let content = line.trim_end_matches(['\r', '\n']);
+        let line_end = offset + content.len();
+        if markers.contains(&(index + 1)) && offset < end && line_end > start {
+            if offset < start || line_end > end || items.len() == 16 {
+                complete = false;
+            } else if let Some((completed, _, _)) = crate::index::parse_task_line(line) {
+                items.push(serde_json::json!({"start":offset,"end":line_end,
+                    "text":content,"completed":completed,"dueDate":task_due_date(content)}));
+            } else {
+                // Markdown recognized a checkbox that the task projection cannot
+                // interpret. Do not advertise exhaustive metadata for this read.
+                complete = false;
+            }
+        }
+        offset += line.len();
+    }
+    if items.is_empty() && complete {
+        serde_json::Value::Null
+    } else {
+        serde_json::json!({"basis":"current_checkbox_lines","items":items,"complete":complete})
+    }
+}
+
 pub(crate) fn set_task_line_due_date(text: &str, date: Option<&str>) -> Result<String, String> {
     if date.is_some_and(|date| !valid_calendar_date(date)) {
         return Err("Choose a valid calendar date".into());
@@ -259,6 +291,18 @@ pub(crate) fn set_due_date_in_markdown(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn passage_task_dates_reports_unprojectable_checkbox_lines() {
+        for markdown in [
+            "> - [ ] Quoted @due(2027-01-01)\n",
+            "- [ ] \n",
+            "- [ ] Ordinary @due(2027-02-01)\n> - [ ] Quoted @due(2027-01-01)\n",
+        ] {
+            let metadata = super::passage_task_dates(markdown, 0, markdown.len());
+            assert_eq!(metadata["complete"], false, "{markdown}");
+        }
+    }
+
     use super::*;
     #[test]
     fn portable_markdown_fixture_matches_frontend_contract() {

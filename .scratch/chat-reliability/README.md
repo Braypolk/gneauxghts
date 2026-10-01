@@ -1,6 +1,8 @@
 # Chat work index
 
-The implemented milestones are complete. Start with
+The earlier implemented milestones are complete. Editor date integration is complete; see its
+[validation](../chat-date-context/validation.md) for the latest date/deadline
+checks. Start with
 [worker validation](worker-validation.md) for the latest live results and
 [pre-commit cleanup](cleanup.md) for the final review and targeted correction.
 The earlier [native chat validation](validation.md) establishes composer,
@@ -26,6 +28,7 @@ and proposed steps are retained with their answers as implementation history.
 | Evidence displayed with answers | [Spec](../answer-evidence/spec.md) | [Validation](../answer-evidence/validation.md) |
 | Tool feedback and useful activity | [Spec](../chat-tool-failures/spec.md) | [Validation](../chat-tool-failures/validation.md) |
 | Reliability and bounded research | [Spec](spec.md) | [Worker validation](worker-validation.md) |
+| Editor date conventions and deadlines | [Spec](../chat-date-context/spec.md) | [Validation](../chat-date-context/validation.md) |
 
 ## Local artifacts
 
