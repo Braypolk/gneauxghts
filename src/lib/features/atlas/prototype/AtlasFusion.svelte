@@ -25,6 +25,8 @@
   let fullText = $state<string | null>(null);
   let readStatus = $state<'idle' | 'loading' | 'error'>('idle');
   let readSequence = 0, wheelTime = 0;
+  let zoomFrame = 0, pendingZoomDelta = 0;
+  let pendingZoomPoint: Point | null = null;
   let lastQuery = $state('');
   let lastSearchDataset = $state('');
   const palette = ['#6a9fac', '#aa8cbd', '#ad9a69', '#7f9c7d', '#b58895', '#879aca'];
@@ -271,11 +273,34 @@
   }
   function movePan(event: PointerEvent) { if (!drag) return; const point = canvasPoint(event); panX = drag.originalX + point.x - drag.x; panY = drag.originalY + point.y - drag.y; }
   function stopPan(event: PointerEvent) { drag = null; if (svgElement.hasPointerCapture(event.pointerId)) svgElement.releasePointerCapture(event.pointerId); }
-  function zoomAt(event: WheelEvent) {
-    event.preventDefault(); const point = canvasPoint(event), next = Math.max(0.7, Math.min(8, zoom * (event.deltaY < 0 ? 1.13 : 1 / 1.13)));
+  function setZoomAt(next: number, point: Point) {
+    next = Math.max(0.7, Math.min(8, next));
     const ratio = next / zoom; panX = point.x - width / 2 - (point.x - width / 2 - panX) * ratio; panY = point.y - height / 2 - (point.y - height / 2 - panY) * ratio; zoom = next;
   }
-  function reset() { zoom = 1; panX = 0; panY = 0; }
+  function clearZoomQueue() {
+    if (zoomFrame) cancelAnimationFrame(zoomFrame);
+    zoomFrame = 0; pendingZoomDelta = 0; pendingZoomPoint = null;
+  }
+  function zoomAt(event: WheelEvent) {
+    event.preventDefault();
+    if (!event.deltaY || !Number.isFinite(event.deltaY)) return;
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? height : 1;
+    const pixels = Math.max(-100, Math.min(100, event.deltaY * unit));
+    // Trackpads send many tiny pixel deltas. Scale by distance, not event count;
+    // browsers represent pinch-to-zoom as small Ctrl+wheel deltas.
+    pendingZoomDelta = Math.max(-0.15, Math.min(0.15, pendingZoomDelta - pixels * (event.ctrlKey ? 0.006 : 0.0012)));
+    pendingZoomPoint = canvasPoint(event);
+    if (zoomFrame) return;
+    zoomFrame = requestAnimationFrame(() => {
+      const delta = pendingZoomDelta, point = pendingZoomPoint;
+      zoomFrame = 0; pendingZoomDelta = 0; pendingZoomPoint = null;
+      if (point) setZoomAt(zoom * Math.exp(delta), point);
+    });
+  }
+  function stepZoom(direction: number) {
+    clearZoomQueue(); setZoomAt(zoom * Math.pow(1.15, direction), { x: width / 2, y: height / 2 });
+  }
+  function reset() { clearZoomQueue(); zoom = 1; panX = 0; panY = 0; }
   $effect(() => {
     const text = query.trim();
     const dataset = `${response.structuralGeneration}:${response.revision}:${response.nodes.length}`;
@@ -290,7 +315,7 @@
   onMount(() => {
     const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0 && entry.contentRect.height > 0) { if (anchor) anchor = { x: anchor.x * entry.contentRect.width / width, y: anchor.y * entry.contentRect.height / height }; width = entry.contentRect.width; height = entry.contentRect.height; } });
     if (plotElement) observer.observe(plotElement);
-    return () => observer.disconnect();
+    return () => { observer.disconnect(); clearZoomQueue(); };
   });
 </script>
 
@@ -303,7 +328,7 @@
     <label><input type="checkbox" bind:checked={allLinks}/>All links</label>
     <label>Activity <select bind:value={activityMode} aria-label="Fusion activity encoding"><option value="recency">Last opened</option>{#if activity?.countAvailable}<option value="frequency">Opening activity</option>{/if}</select></label>
     <label><input type="checkbox" bind:checked={showChildren}/>Subtopics</label>
-    <div class="map-controls"><button onclick={() => zoom = Math.max(0.7, zoom / 1.3)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(1)}×</span><button onclick={() => zoom = Math.min(8, zoom * 1.3)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Reset view</button></div>
+    <div class="map-controls"><button onclick={() => stepZoom(-1)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(1)}×</span><button onclick={() => stepZoom(1)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Reset view</button></div>
   </div>
   <div class="plot" bind:this={plotElement}>
     <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Original Atlas geometry with all ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan} onwheel={zoomAt}>
