@@ -63,16 +63,82 @@
   let incident = $derived(eligibleLinks.filter((link) => link.sourceId === focusId || link.targetId === focusId).sort((a, b) => b.strength - a.strength));
   let incidentIds = $derived(new Set(incident.map((link) => link.id)));
   let relatedNodeIds = $derived(new Set(incident.flatMap((link) => [link.sourceId, link.targetId])));
-  let topIds = $derived.by(() => {
-    const result = new Set<string>();
-    const perNode = new Map<string, AtlasLink[]>();
-    for (const link of eligibleLinks) for (const id of [link.sourceId, link.targetId]) perNode.set(id, [...(perNode.get(id) ?? []), link]);
-    for (const links of perNode.values()) links.sort((a, b) => b.strength - a.strength).slice(0, 2).forEach((link) => result.add(link.id));
-    return result;
-  });
-  let links = $derived(eligibleLinks.filter((link) => allLinks || topIds.has(link.id) || incidentIds.has(link.id)));
+  // Quiet overview; exploring a note reveals its connections without a permanent web of edges.
+  let links = $derived(eligibleLinks.filter((link) => allLinks || incidentIds.has(link.id)));
   const screen = (point: Point): Point => ({ x: width / 2 + (point.x - width / 2) * zoom + panX, y: height / 2 + (point.y - height / 2) * zoom + panY });
   const pixels = (point: Point): Point => point;
+  let filenameZoom = $derived(width < 450 ? 6 : 4);
+  let showFilenames = $derived(zoom >= filenameZoom);
+  let filenameLabels = $derived.by(() => {
+    if (!showFilenames) return [];
+    const boxes: { x: number; y: number; width: number; height: number }[] = [];
+    // Every visible note gets a full filename, including when no note is selected.
+    // Placement depends on geometry alone, so hovering and searching don't shuffle labels.
+    const labels = geometry.nodes.map((mark) => ({ mark, point: screen(mark) }))
+      .filter(({ point }) => point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height)
+      // Place long filenames first; short names can occupy the gaps they leave.
+      .sort((a, b) => (b.mark.node.fileName || b.mark.node.title).length - (a.mark.node.fileName || a.mark.node.title).length || a.point.y - b.point.y)
+      .map(({ mark, point }) => {
+        const name = mark.node.fileName || mark.node.title;
+        const maxChars = Math.max(16, Math.floor(Math.min(176, width * 0.42) / 6.7));
+        const lines: string[] = [];
+        let remaining = name;
+        while (remaining.length > maxChars) {
+          const space = remaining.lastIndexOf(' ', maxChars);
+          const split = space > maxChars / 2 ? space + 1 : maxChars;
+          lines.push(remaining.slice(0, split)); remaining = remaining.slice(split);
+        }
+        lines.push(remaining);
+        const labelWidth = Math.max(...lines.map((line) => line.length)) * 6.7 + 10;
+        const labelHeight = lines.length * 14 + 6;
+        let box = { x: point.x + 10, y: point.y - labelHeight / 2, width: labelWidth, height: labelHeight };
+        let bestCost = Infinity;
+        let foundSpace = false;
+        const overlapArea = (option: typeof box) => boxes.reduce((sum, other) => sum + Math.max(0, Math.min(option.x + labelWidth + 3, other.x + other.width + 3) - Math.max(option.x, other.x))
+          * Math.max(0, Math.min(option.y + labelHeight + 2, other.y + other.height + 2) - Math.max(option.y, other.y)), 0);
+        for (let i = 0; i < 220; i++) {
+          const angle = i < 2 ? (i ? Math.PI : 0) : i * 2.4;
+          const radius = i < 2 ? labelWidth / 2 + 10 : 20 + Math.sqrt(i) * 17;
+          const option = { x: Math.max(6, Math.min(width - labelWidth - 6, point.x + Math.cos(angle) * radius - labelWidth / 2)),
+            y: Math.max(32, Math.min(height - 36 - labelHeight, point.y + Math.sin(angle) * radius - labelHeight / 2)), width: labelWidth, height: labelHeight };
+          const overlap = overlapArea(option);
+          const cost = overlap * 100 + Math.hypot(option.x + labelWidth / 2 - point.x, option.y + labelHeight / 2 - point.y);
+          if (cost < bestCost) { box = option; bestCost = cost; }
+          if (!overlap) { foundSpace = true; break; }
+        }
+        // Dense clusters can exhaust local placements while there is room elsewhere.
+        if (!foundSpace) {
+          let nearest = Infinity;
+          for (let y = 32; y <= height - 36 - labelHeight; y += 10) for (let x = 6; x <= width - labelWidth - 6; x += 10) {
+            const option = { x, y, width: labelWidth, height: labelHeight };
+            const distance = Math.hypot(x + labelWidth / 2 - point.x, y + labelHeight / 2 - point.y);
+            if (distance < nearest && !overlapArea(option)) { box = option; nearest = distance; }
+          }
+        }
+        boxes.push(box);
+        return { ...box, point, lines, node: mark.node, color: mark.color };
+      });
+    const overlaps = labels.some((a, index) => labels.slice(index + 1).some((b) => a.x < b.x + b.width && a.x + a.width > b.x && a.y < b.y + b.height && a.y + a.height > b.y));
+    if (overlaps && labels.length) {
+      // When local annotations collide, use clean columns with leaders rather than
+      // hiding filenames. This fallback is most useful in a compact split pane.
+      const columns = Math.max(1, Math.floor((width - 12) / (Math.max(...labels.map((label) => label.width)) + 8)));
+      const columnWidth = (width - 12) / columns;
+      const bins: { labels: typeof labels; height: number }[] = Array.from({ length: columns }, () => ({ labels: [], height: 0 }));
+      for (const label of labels) {
+        const bin = bins.reduce((best, candidate) => candidate.height < best.height ? candidate : best);
+        bin.labels.push(label); bin.height += label.height + 4;
+      }
+      for (const [index, bin] of bins.entries()) {
+        let y = 32 + Math.max(0, (height - 68 - bin.height) / 2);
+        for (const label of bin.labels.sort((a, b) => a.point.y - b.point.y)) {
+          label.x = 6 + columnWidth * index + (columnWidth - label.width) / 2;
+          label.y = y; y += label.height + 4;
+        }
+      }
+    }
+    return labels;
+  });
   let cardPosition = $derived.by(() => {
     const point = pixels(anchor ?? { x: width / 2, y: height / 2 });
     const cardWidth = Math.min(width < 600 ? 228 : 268, Math.max(186, width - 26));
@@ -94,7 +160,7 @@
   });
   let callouts = $derived.by(() => {
     const focus = byId.get(focusId ?? '');
-    if (!focus) return [];
+    if (!focus || showFilenames) return [];
     const candidates = [focus, ...incident.slice(0, 4).map((link) => byId.get(link.sourceId === focusId ? link.targetId : link.sourceId)!)];
     const used = new Set<string>();
     const boxes: { x: number; y: number; width: number; height: number }[] = [];
@@ -112,6 +178,7 @@
     });
   });
   let topicLabels = $derived.by(() => {
+    if (showFilenames) return [];
     const boxes = callouts.map((item) => ({ x: item.x, y: item.y, width: item.width, height: item.height }));
     return geometry.clouds.filter((item) => !item.cloud.parentId || showChildren && zoom > 1.4)
       .sort((a, b) => b.cloud.noteCount - a.cloud.noteCount).map((item) => {
@@ -132,14 +199,19 @@
     const value = activity?.counts[node.id];
     return activity?.countAvailable && typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null;
   }
-  function activityColor(node: AtlasNode) {
+  function activityShape(node: AtlasNode): 'circle' | 'diamond' | 'triangle' {
     if (activityMode === 'frequency' && activity?.countAvailable) {
       const count = usage(node);
-      return count === null ? '#979da5' : count >= 2 ? '#4f74ac' : count > 0 ? '#83a4b3' : '#bd9a61';
+      return count === null ? 'triangle' : count > 0 ? 'circle' : 'diamond';
     }
-    if (!node.lastViewedAtMillis) return '#bd9654';
+    if (!node.lastViewedAtMillis) return 'triangle';
     const days = Math.max(0, (Date.now() - node.lastViewedAtMillis) / 86400000);
-    return days <= 7 ? '#5c89b0' : days <= 30 ? '#7aa4ad' : days <= 90 ? '#a4b4b5' : '#98a5ae';
+    return days <= 7 ? 'circle' : 'diamond';
+  }
+  function glyphPath(shape: 'circle' | 'diamond' | 'triangle', x: number, y: number, r: number) {
+    if (shape === 'circle') return `M${x - r},${y}a${r},${r} 0 1,0 ${r * 2},0a${r},${r} 0 1,0 ${-r * 2},0`;
+    if (shape === 'diamond') return `M${x},${y - r * 1.2}L${x + r * 1.2},${y}L${x},${y + r * 1.2}L${x - r * 1.2},${y}Z`;
+    return `M${x},${y - r * 1.2}L${x + r * 1.2},${y + r}L${x - r * 1.2},${y + r}Z`;
   }
   function activityText(node: AtlasNode) {
     const last = node.lastViewedAtMillis ? `Last opened ${daysAgo(node.lastViewedAtMillis).toLowerCase()}` : 'No recorded opening';
@@ -193,14 +265,14 @@
     return { x: point.x, y: point.y };
   }
   function startPan(event: PointerEvent) {
-    if (event.button !== 0 || (event.target as Element).closest('[data-node-id]')) return;
+    if (event.button !== 0 || (event.target as Element).closest('[role="button"]')) return;
     const point = canvasPoint(event); drag = { id: event.pointerId, ...point, originalX: panX, originalY: panY };
     svgElement.setPointerCapture(event.pointerId);
   }
   function movePan(event: PointerEvent) { if (!drag) return; const point = canvasPoint(event); panX = drag.originalX + point.x - drag.x; panY = drag.originalY + point.y - drag.y; }
   function stopPan(event: PointerEvent) { drag = null; if (svgElement.hasPointerCapture(event.pointerId)) svgElement.releasePointerCapture(event.pointerId); }
   function zoomAt(event: WheelEvent) {
-    event.preventDefault(); const point = canvasPoint(event), next = Math.max(0.7, Math.min(5, zoom * (event.deltaY < 0 ? 1.13 : 1 / 1.13)));
+    event.preventDefault(); const point = canvasPoint(event), next = Math.max(0.7, Math.min(8, zoom * (event.deltaY < 0 ? 1.13 : 1 / 1.13)));
     const ratio = next / zoom; panX = point.x - width / 2 - (point.x - width / 2 - panX) * ratio; panY = point.y - height / 2 - (point.y - height / 2 - panY) * ratio; zoom = next;
   }
   function reset() { zoom = 1; panX = 0; panY = 0; }
@@ -231,7 +303,7 @@
     <label><input type="checkbox" bind:checked={allLinks}/>All links</label>
     <label>Activity <select bind:value={activityMode} aria-label="Fusion activity encoding"><option value="recency">Last opened</option>{#if activity?.countAvailable}<option value="frequency">Opening activity</option>{/if}</select></label>
     <label><input type="checkbox" bind:checked={showChildren}/>Subtopics</label>
-    <div class="map-controls"><button onclick={() => zoom = Math.max(0.7, zoom / 1.3)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(1)}×</span><button onclick={() => zoom = Math.min(5, zoom * 1.3)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Reset view</button></div>
+    <div class="map-controls"><button onclick={() => zoom = Math.max(0.7, zoom / 1.3)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(1)}×</span><button onclick={() => zoom = Math.min(8, zoom * 1.3)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Reset view</button></div>
   </div>
   <div class="plot" bind:this={plotElement}>
     <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Original Atlas geometry with all ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan} onwheel={zoomAt}>
@@ -251,13 +323,22 @@
               <title>{mark.node.title || mark.node.fileName}</title>
               {#if collected}<circle cx={mark.x} cy={mark.y} r={8 / zoom} fill="none" stroke="var(--color-foreground)" stroke-width={1 / zoom}/>{/if}
               {#if focusId === mark.node.id}<circle cx={mark.x} cy={mark.y} r={10 / zoom} fill="none" stroke="#6f87b6" stroke-width={1.7 / zoom}/>{/if}
-              <circle cx={mark.x} cy={mark.y} r={5.8 / Math.sqrt(zoom)} fill="none" stroke={activityColor(mark.node)} stroke-width={1.3 / zoom} opacity="0.9"/>
-              <circle cx={mark.x} cy={mark.y} r={3 / Math.sqrt(zoom)} fill={mark.color} stroke="var(--color-background)" stroke-width={0.6 / zoom}/>
+              <path class="activity-glyph" data-activity-shape={activityShape(mark.node)} d={glyphPath(activityShape(mark.node), mark.x, mark.y, 4.5 / zoom)} fill={mark.color} stroke="var(--color-background)" stroke-width={0.7 / zoom}/>
               <circle cx={mark.x} cy={mark.y} r={8 / zoom} fill="transparent"/>
             </g>
           {/each}
         </g>
         <g class="map-labels">{#each topicLabels as label (label.item.cloud.id)}<line x1={label.point.x} y1={label.point.y} x2={label.x + label.width / 2} y2={label.y + 10} stroke={label.item.color} stroke-width="0.6" opacity="0.45"/><text x={label.x + label.width / 2} y={label.y + 15} text-anchor="middle" font-size={label.item.cloud.parentId ? 11 : 13} font-weight="550" fill="var(--color-muted-foreground)" stroke="var(--color-background)" stroke-width="3.5" paint-order="stroke">{label.label}</text>{/each}</g>
+        <g class="filename-labels">
+          {#each filenameLabels as label (label.node.id)}
+            <line x1={label.point.x} y1={label.point.y} x2={Math.max(label.x, Math.min(label.x + label.width, label.point.x))} y2={Math.max(label.y, Math.min(label.y + label.height, label.point.y))} stroke={label.color} stroke-width="0.7" opacity="0.6" pointer-events="none"/>
+            <g role="button" tabindex="0" data-filename-id={label.node.id} aria-label={`Pin ${label.node.fileName || label.node.title}`} onclick={() => pin(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(label.node); } }} opacity={matchesQuery(label.node, query) ? 1 : 0.4}>
+              <title>{label.node.fileName || label.node.title}</title>
+              <rect x={label.x} y={label.y} width={label.width} height={label.height} rx="3" fill="var(--color-background)" fill-opacity="0.92" stroke={focusId === label.node.id ? '#6f87b6' : 'none'}/>
+              <text x={label.x + 5} y={label.y + 14} font-size="11" font-family="ui-monospace, monospace" font-weight={focusId === label.node.id ? '650' : '450'} fill="var(--color-foreground)">{#each label.lines as line, index}<tspan x={label.x + 5} dy={index ? 14 : 0}>{line}</tspan>{/each}</text>
+            </g>
+          {/each}
+        </g>
         {#if active && anchor}{@const activePoint = screen(active)}<line x1={activePoint.x} y1={activePoint.y} x2={anchor.x} y2={anchor.y} stroke="#748fba" stroke-width="1" stroke-dasharray="3 3" opacity="0.4"/>{/if}
         <g class="callouts">{#each callouts as item (item.node.id)}<line x1={item.point.x} y1={item.point.y} x2={item.x + item.width / 2} y2={item.y + 9} stroke={item.focused ? '#6f87b6' : 'var(--color-muted-foreground)'} stroke-width="0.7" opacity="0.65"/><rect x={item.x} y={item.y} width={item.width} height="22" rx="3" fill="var(--color-background)" opacity="0.93"/><text x={item.x + 5} y={item.y + 15} font-size="13" font-weight={item.focused ? '650' : '450'} fill="var(--color-foreground)">{(item.node.title || item.node.fileName).slice(0, 27)}</text>{/each}</g>
       </g>
@@ -276,8 +357,8 @@
         <div class="reader-footer"><span>{eligibleLinks.filter((link) => link.sourceId === active.node.id || link.targetId === active.node.id).length} eligible connections</span><div><button onclick={() => onToggle(active!.node.id)}>{selectedIds.includes(active.node.id) ? '✓ Collected' : '+ Collect'}</button>{#if readSource}<button disabled={readStatus === 'loading'} onclick={loadSource}>{readStatus === 'loading' ? 'Loading…' : fullText !== null ? 'Reload source' : 'Read full source'}</button>{:else}<button onclick={() => onPreview(active!.node)}>Read source</button>{/if}</div>{#if readStatus === 'error'}<small>Could not load this source. Try again.</small>{/if}{#if !pool.length}<small>This browsing pool has no notes. Choose another scope.</small>{/if}</div>
       </article>
     {/if}
-    <div class="legend"><span><i class="amber"></i>{activityMode === 'frequency' ? 'Low / idle activity' : 'No recorded opening'}</span>{#if activityMode === 'frequency' && activity?.countAvailable}<span><i class="unknown"></i>No recorded opening</span><span><i class="cool"></i>Higher activity weight</span>{:else}<span><i class="cool"></i>Recently opened</span>{/if}<span>Solid: explicit · dashed: similar</span></div>
-    <div class="map-tip">{query.trim() && !matching.length ? 'No search matches. All vault notes remain on the map.' : active ? '↑ ↓ or wheel over the card to browse. Drag the map to pan.' : 'Hover to read a glimpse. Click a note to pin its preview.'}</div>
+    <div class="legend"><span><i class="circle"></i>{activityMode === 'frequency' ? 'Positive activity' : 'Opened within 7 days'}</span><span><i class="diamond"></i>{activityMode === 'frequency' ? 'Idle activity' : 'Opened earlier'}</span><span><i class="triangle"></i>{activityMode === 'frequency' ? 'No activity record' : 'No recorded opening'}</span><span>Color: topic · solid: linked · dashed: similar</span></div>
+    <div class="map-tip">{query.trim() && !matching.length ? 'No search matches. All vault notes remain on the map.' : active ? '↑ ↓ or wheel over the card to browse. Drag the map to pan.' : showFilenames ? `${filenameLabels.length} filenames in view · click a name to read · drag to explore` : `Zoom to ${filenameZoom.toFixed(1)}× for filenames · hover or click to read`}</div>
   </div>
   <footer><span>{activityMode === 'frequency' && activity?.countAvailable ? 'Activity weight decays with idle time; it is not a lifetime open count.' : 'Opening recency is separate from semantic importance.'}</span><span title={activity?.notice}>{activity?.notice || 'Opening activity counts unavailable; showing recorded recency.'}</span></footer>
 </section>
@@ -287,6 +368,6 @@
   .hover-preview{position:absolute;width:208px;max-height:88px;overflow:hidden;pointer-events:none;z-index:4;background:color-mix(in srgb,var(--color-background) 97%,transparent);border:1px solid var(--color-border);border-radius:6px;padding:8px;box-shadow:0 4px 13px #00000012}.hover-preview strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600}.hover-preview p{font-size:9px;line-height:1.5;color:var(--color-muted-foreground);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;margin:4px 0}.hover-preview>span{font-size:8px;color:var(--color-muted-foreground)}.anchor-dot{position:absolute;transform:translate(-50%,-50%);width:9px;height:9px;border:2px solid #748fba;border-radius:50%;pointer-events:none;background:var(--color-background);z-index:2}
   .reader{position:absolute;z-index:3;display:flex;flex-direction:column;gap:0;overflow:hidden;padding:11px;background:color-mix(in srgb,var(--color-background) 98%,transparent);border:1px solid #7b8fae;border-radius:9px;box-shadow:0 7px 22px #00000018}.reader-heading{display:flex;align-items:center;justify-content:space-between;font-size:8px;color:var(--color-muted-foreground)}.reader-heading button{font-size:16px;line-height:1}.reader h2{font-size:13px;font-weight:620;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin:6px 0 3px}.activity-detail{font-size:8px;color:var(--color-muted-foreground);margin:0 0 7px}.browse{display:flex;justify-content:space-between;align-items:center;gap:7px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);padding:6px 0;font-size:9px}.browse label,.browse>div{display:flex;gap:5px;align-items:center}.browse select{font-size:9px;padding:3px;max-width:114px}.browse button{font-size:12px;border:1px solid var(--color-border);border-radius:3px;width:20px;height:20px}.browse>div>span{font-size:8px;white-space:nowrap}.reader-excerpt,.full-source{flex:1;min-height:0;overflow:auto;margin:8px 0;font-size:11px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.reader-excerpt{overflow:hidden;display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:5;line-clamp:5}.full-source{font-size:10px;padding-right:3px;overscroll-behavior:contain}.reader-footer{border-top:1px solid var(--color-border);padding-top:7px;font-size:8px;color:var(--color-muted-foreground)}.reader-footer>div{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.reader-footer button{padding:4px 6px;border:1px solid var(--color-border);border-radius:4px;font-size:9px;color:var(--color-foreground)}.reader-footer small{display:block;margin-top:4px;font-size:8px}
   .reader-heading,.reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}
-  .legend{position:absolute;bottom:10px;left:12px;display:flex;flex-wrap:wrap;gap:10px;font-size:8px;color:var(--color-muted-foreground);pointer-events:none;background:color-mix(in srgb,var(--color-background) 80%,transparent);padding:4px 5px;border-radius:4px}.legend span{display:flex;gap:4px;align-items:center}.legend i{display:inline-block;border:1.5px solid;border-radius:50%;width:8px;height:8px}.legend .amber{border-color:#bd9654}.legend .cool{border-color:#5c89b0}.legend .unknown{border-color:#979da5}.map-tip{position:absolute;top:8px;left:12px;max-width:65%;font-size:9px;color:var(--color-muted-foreground);background:color-mix(in srgb,var(--color-background) 85%,transparent);padding:4px 6px;border-radius:4px;pointer-events:none}footer{display:flex;gap:5px 15px;justify-content:space-between;padding:5px 12px;font-size:8px;color:var(--color-muted-foreground)}footer>span:last-child{max-width:50%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .legend{position:absolute;bottom:10px;left:12px;display:flex;flex-wrap:wrap;gap:10px;font-size:8px;color:var(--color-muted-foreground);pointer-events:none;background:color-mix(in srgb,var(--color-background) 80%,transparent);padding:4px 5px;border-radius:4px}.legend span{display:flex;gap:4px;align-items:center}.legend i{display:inline-block;background:var(--color-muted-foreground);width:8px;height:8px;flex-shrink:0}.legend .circle{border-radius:50%}.legend .diamond{transform:rotate(45deg);width:7px;height:7px;margin:0 1px}.legend .triangle{clip-path:polygon(50% 0,100% 100%,0 100%);width:10px;height:9px}.map-tip{position:absolute;top:8px;left:12px;max-width:65%;font-size:9px;color:var(--color-muted-foreground);background:color-mix(in srgb,var(--color-background) 85%,transparent);padding:4px 6px;border-radius:4px;pointer-events:none}footer{display:flex;gap:5px 15px;justify-content:space-between;padding:5px 12px;font-size:8px;color:var(--color-muted-foreground)}footer>span:last-child{max-width:50%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   @media(max-width:850px){.controls{gap:7px}.controls input[type=range]{width:45px}.map-controls{margin-left:0}header p{font-size:9px}.legend{gap:6px}.map-tip{font-size:8px}.reader{padding:9px}footer>span:last-child{max-width:45%}}@media(max-width:560px){header p,header>span{display:none}.reader .activity-detail{display:block;font-size:8px;line-height:1.2;margin:0 0 4px}.reader h2{margin:4px 0}.reader .browse{padding:4px 0}.reader .reader-footer>span{display:none}.reader .reader-footer{padding-top:4px}.reader .reader-footer>div{margin-top:0}.reader .reader-excerpt{margin:5px 0;font-size:10px}.controls{font-size:9px;padding:5px 8px}.controls select{font-size:9px}.controls input[type=range]{width:40px}.legend span:last-child{display:none}.map-tip{max-width:85%}footer>span:last-child{display:none}}
 </style>
