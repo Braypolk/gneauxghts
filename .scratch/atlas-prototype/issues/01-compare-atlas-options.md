@@ -22,3 +22,5 @@ Original `/map` and `atlasStore` SHA-1 fingerprints remain `a5dad06356e88be6b4e2
 ## Comments
 
 2026-10-02: Four subagents each implemented a distinct visual encoding. The parent integrated shared lenses, snapshot loading, selection/source inspection and compact comparison chrome. Browser testing prompted a matrix detail lens, larger radial labels and collision handling for dates. These changes respond to observed issues in the real 166-note snapshot rather than smooth demo data alone.
+
+2026-10-03: User approved the revised visualizations as useful tests and requested four more. No individual winner chosen; E–H are tracked in [issue 02](02-four-more-visualizations.md).

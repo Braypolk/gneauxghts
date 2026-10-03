@@ -12,6 +12,7 @@ let snapshot = null;
 let vaultRoot = null;
 let source = 'demo';
 let snapshotNotice = '';
+let snapshotActivity = {counts:{},countAvailable:false,notice:'Opening activity unavailable; cached last-viewed timestamps only.'};
 if (!args.includes('--demo')) {
   try {
     const config = vaultArgument >= 0 ? {notesRoot:args[vaultArgument + 1]} : await json(join(homedir(), 'Library/Application Support/com.braypolkinghorne.gneauxghts/.gneauxghts-state.json'));
@@ -42,6 +43,21 @@ if (!args.includes('--demo')) {
       const rows = JSON.parse(execFileSync('/usr/bin/sqlite3', ['-readonly', '-json', join(vaultRoot, '.gneauxghts/app-state.sqlite3'), 'SELECT note_id, last_viewed_at_millis FROM app_state_note_activity'], {encoding:'utf8'}));
       const activity = new Map(rows.map(row => [row.note_id, row.last_viewed_at_millis]));
       for (const node of snapshot.nodes) node.lastViewedAtMillis = activity.get(node.noteId) ?? null;
+      // Existing app ranking weight: one counted open per 8h, minus one per 36h idle.
+      // Read separately so an older DB without counts still supplies valid timestamps.
+      try {
+        const countedRows = JSON.parse(execFileSync('/usr/bin/sqlite3', ['-readonly', '-json', join(vaultRoot, '.gneauxghts/app-state.sqlite3'), 'SELECT note_id, last_viewed_at_millis, open_count FROM app_state_note_activity'], {encoding:'utf8'}));
+        const counted = new Map(countedRows.map(row => [row.note_id,row]));
+        const now = Date.now();
+        const counts = {};
+        for (const node of snapshot.nodes) {
+          const row = counted.get(node.noteId);
+          if (!row) continue;
+          const idleSteps = row.last_viewed_at_millis > 0 ? Math.floor(Math.max(0,now - row.last_viewed_at_millis) / (36 * 60 * 60 * 1000)) : 0;
+          counts[node.id] = Math.max(0,Number(row.open_count) - idleSteps);
+        }
+        snapshotActivity = {counts,countAvailable:true,notice:'App-recorded opening activity: 8-hour counting cooldown, minus one per 36 hours idle. Last viewed can include restored sessions. This is a recent activity weight, not lifetime views.'};
+      } catch { /* Timestamp-only compatibility with earlier app-state schemas. */ }
     } catch { snapshotNotice = 'Open-history data unavailable; review order uses the cached timestamps.'; }
     if (!snapshot.nodes.length) throw new Error('No readable notes in the cached Atlas.');
     source = 'vault';
@@ -74,7 +90,7 @@ const server = await createServer({
       ${marker}`);
     },
     transformIndexHtml() {
-      return [{tag:'script',attrs:{type:'module'},children:`const badge=document.createElement('a');badge.href='/map/prototype?variant=treemap';badge.textContent='Atlas lab · read-only comparison';badge.style.cssText='position:fixed;top:5px;left:12px;z-index:9999;font:11px system-ui;color:#74958c;text-decoration:none';document.body.append(badge);`}];
+      return [{tag:'script',attrs:{type:'module'},children:`const badge=document.createElement('a');badge.href='/map/prototype?variant=fusion';badge.textContent='Atlas lab · read-only comparison';badge.style.cssText='position:fixed;top:5px;left:12px;z-index:9999;font:11px system-ui;color:#74958c;text-decoration:none';document.body.append(badge);`}];
     },
     configureServer(vite) {
       vite.middlewares.use('/__atlas-prototype', async (req, res) => {
@@ -82,7 +98,7 @@ const server = await createServer({
         res.setHeader('Cache-Control','no-store');
         const respond = (data) => res.end(JSON.stringify(data));
         try {
-          if (req.url?.startsWith('/snapshot')) return respond({response:snapshot || demo,source,notice:snapshotNotice});
+          if (req.url?.startsWith('/snapshot')) return respond({response:snapshot || demo,source,notice:snapshotNotice,activity:snapshot ? snapshotActivity : {counts:{},countAvailable:false,notice:'Fictional last-viewed timestamps; no opening counts in this demo.'}});
           if (req.method !== 'POST' || req.url !== '/command') {res.statusCode=404; return respond({error:'Not found'});}
           let raw=''; for await (const chunk of req) raw += chunk;
           const {command,args={},source:requestedSource}=JSON.parse(raw);
@@ -110,7 +126,7 @@ const server = await createServer({
 });
 demo = (await server.ssrLoadModule('/src/lib/features/atlas/prototype/demo.ts')).createDemoAtlas();
 await server.listen();
-console.log('Open http://127.0.0.1:1422/map/prototype?variant=treemap');
+console.log('Open http://127.0.0.1:1422/map/prototype?variant=fusion');
 console.log('Original Atlas comparison: http://127.0.0.1:1422/map');
 const close=async()=>{await server.close();process.exit(0);};
 process.on('SIGINT',close);process.on('SIGTERM',close);
