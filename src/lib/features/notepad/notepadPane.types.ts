@@ -26,6 +26,7 @@ interface PaneViewModelBase {
 export interface EditorPaneViewModel extends PaneViewModelBase {
   paneKind: 'editor';
   canPin: boolean;
+  canOpenFileLocation: boolean;
   isPinned: boolean;
   documentStatus: DocumentStatusViewModel;
   isSlashMenuOpen: boolean;
@@ -65,6 +66,7 @@ export interface PaneWorkspaceActions {
   onUpdateTags: (paneId: NotepadPaneId, documentHandle: NoteDraftState["handle"], tags: string[]) => void;
   onTogglePin: (paneId: NotepadPaneId) => void | Promise<void>;
   onOpenHistory: (paneId: NotepadPaneId) => void | Promise<void>;
+  onOpenFileLocation: (paneId: NotepadPaneId) => void | Promise<void>;
   onKeepMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;
   onLoadDiskVersion: (paneId: NotepadPaneId) => void | Promise<void>;
   onCopyMyEdits: (paneId: NotepadPaneId) => void | Promise<void>;

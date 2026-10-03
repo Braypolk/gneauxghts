@@ -13,6 +13,7 @@ import {
 } from '$lib/features/notepad/workspace/paneCapabilities';
 import {
   getDocumentNoteId,
+  getDocumentPath,
   getDocumentStatusViewModel
 } from '$lib/features/notepad/document/documentState';
 import type {
@@ -92,6 +93,7 @@ export function createPaneViewModelFactory(
         ...common,
         paneKind,
         canPin: noteId !== null,
+        canOpenFileLocation: getDocumentPath(document) !== null,
         isPinned: noteId !== null && deps.isNotePinned(noteId),
         documentStatus: getDocumentStatusViewModel(document),
         isSlashMenuOpen:
