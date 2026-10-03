@@ -151,8 +151,30 @@ class PaneEditorSession<TPaneId extends string> {
         return 'unavailable';
       }
 
+      let presented: boolean;
+      try {
+        presented = await lifecycle.finishEditorPresentation(document, {
+          restoreCursor: true,
+          isCurrent: () => this.#state.kind === 'mounting' &&
+            this.deps.paneShouldMountEditor(this.paneId) &&
+            this.deps.getPaneDocument(this.paneId).handle === document.handle
+        });
+      } catch (error) {
+        await lifecycle.destroyEditor();
+        this.#dispatch({ type: 'mountFailed' });
+        throw error;
+      }
+      if (this.#state.kind !== 'mounting') {
+        await lifecycle.destroyEditor();
+        return this.#isDisposalRequested() ? 'disposed' : 'stale';
+      }
+      if (!presented) {
+        await lifecycle.destroyEditor();
+        this.#dispatch({ type: 'mountFailed' });
+        return this.deps.getPaneDocument(this.paneId).handle === document.handle
+          ? 'unavailable' : 'stale';
+      }
       this.#dispatch({ type: 'mountCompleted' });
-      lifecycle.restoreCursorPositionForDocument(document);
       this.deps.onEditorMounted?.(this.paneId, document);
       return 'applied';
     });
@@ -261,7 +283,11 @@ class PaneEditorSession<TPaneId extends string> {
 
       await this.deps
         .getEditorLifecycleController(this.paneId)
-        .replaceEditorContent(markdown, options);
+        .replaceEditorContent(markdown, {
+          ...options,
+          isCurrent: () => this.#state.kind === 'mounted' &&
+            this.deps.paneShouldMountEditor(this.paneId)
+        });
       if (
         options.expectedDocument &&
         this.deps.getPaneDocument(this.paneId) !==
@@ -337,12 +363,24 @@ class PaneEditorSession<TPaneId extends string> {
           {
             restoreCursor,
             expectedDocument: document,
+            isCurrent: () => this.#state.kind === 'mounted' &&
+              this.deps.paneShouldMountEditor(this.paneId),
             suppressReadyReset: true
           }
         );
-      } else if (restoreCursor) {
-        lifecycle.restoreCursorPositionForDocument(document);
+      } else {
+        const presented = await lifecycle.finishEditorPresentation(document, {
+          restoreCursor,
+          isCurrent: () => this.#state.kind === 'mounted' &&
+            this.deps.paneShouldMountEditor(this.paneId) &&
+            this.deps.getPaneDocument(this.paneId).handle === document.handle
+        });
+        if (!presented) {
+          return this.#isDisposalRequested() ? 'disposed' : 'stale';
+        }
       }
+      if (this.#isDisposalRequested()) return 'disposed';
+      if (this.deps.getPaneDocument(this.paneId) !== document) return 'stale';
       return this.deps.getPaneRuntime(this.paneId).controller
         ? 'applied'
         : 'unavailable';

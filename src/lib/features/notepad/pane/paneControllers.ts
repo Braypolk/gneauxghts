@@ -1,4 +1,5 @@
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import type { ImageViewerSession } from '../images/imageViewerModel';
 import {
   createEditorLifecycleController
 } from '$lib/features/notepad/editor/editorLifecycleController';
@@ -15,6 +16,7 @@ import {
 } from '$lib/features/notepad/document/documentState';
 
 export interface PaneControllerSetupDeps<TPaneId extends string> {
+  openImageViewer?: (paneId: TPaneId, session: ImageViewerSession) => void;
   getPaneRuntime: (paneId: TPaneId) => PaneRuntime;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
   activatePaneSession: (paneId: TPaneId) => unknown;
@@ -69,6 +71,7 @@ export function createPaneControllers<TPaneId extends string>(
     getSharedEditorResources: (document: NoteDraftState): SharedEditorResources =>
       getSharedEditorResources(document),
     getViewCallbacks: () => ({
+      onOpenImageViewer: (session) => { deps.activatePaneSession(paneId); deps.openImageViewer?.(paneId, session); },
       onOpenLink: (rawTarget) => {
         deps.activatePaneSession(paneId);
         void deps.openWikilink(paneId, rawTarget);

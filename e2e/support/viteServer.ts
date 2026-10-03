@@ -22,6 +22,7 @@ export async function startVite(mode: 'browser' | 'native' | 'native-preview', p
   viteProcess = spawn('pnpm', ['exec', 'vite', ...(mode === 'native-preview' ? ['preview'] : []), '--strictPort', '--host', '127.0.0.1', '--port', String(port)], {
     cwd: process.cwd(),
     env: { ...process.env, [envName]: 'true' },
+    detached: process.platform !== 'win32',
     stdio: ['ignore', 'pipe', 'pipe']
   });
   viteProcess.stdout?.on('data', (chunk) => process.stdout.write(`[vite:e2e] ${chunk}`));
@@ -33,10 +34,16 @@ export async function stopVite() {
   const processToStop = viteProcess;
   viteProcess = null;
   if (!processToStop || processToStop.killed) return;
-  processToStop.kill('SIGTERM');
+  if (process.platform !== 'win32' && processToStop.pid) process.kill(-processToStop.pid, 'SIGTERM');
+  else processToStop.kill('SIGTERM');
   await Promise.race([
     new Promise<void>((resolve) => processToStop.once('exit', () => resolve())),
     new Promise<void>((resolve) => setTimeout(resolve, 2_000))
   ]);
-  if (!processToStop.killed) processToStop.kill('SIGKILL');
+  if (processToStop.exitCode === null) {
+    try {
+      if (process.platform !== 'win32' && processToStop.pid) process.kill(-processToStop.pid, 'SIGKILL');
+      else processToStop.kill('SIGKILL');
+    } catch { /* The owned process group has already exited. */ }
+  }
 }

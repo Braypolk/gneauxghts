@@ -40,6 +40,15 @@
   }: Props = $props();
 
   let optionsButton = $state<HTMLButtonElement | null>(null);
+  let showEditorLoadingIndicator = $state(false);
+  $effect(() => {
+    showEditorLoadingIndicator = false;
+    if (viewModel.paneKind !== 'editor' || pane.ui.isEditorReady) return;
+    // Fast presentations should not flash a loading label. This timer only
+    // controls feedback; the editor lifecycle still owns readiness.
+    const timer = setTimeout(() => { showEditorLoadingIndicator = true; }, 150);
+    return () => clearTimeout(timer);
+  });
   let historyRequested = false;
   let titleDraft = $state<string | null>(null);
   let titleDraftDocument = $state<PaneViewModel['titleDocument'] | null>(null);
@@ -261,7 +270,7 @@
               : ''
           }`}
         >
-          {#if !pane.ui.isEditorReady}
+          {#if !pane.ui.isEditorReady && showEditorLoadingIndicator}
             <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
               <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
                 Loading editor
@@ -272,6 +281,8 @@
           <div
             bind:this={pane.refs.editorRoot}
             data-testid="note-editor"
+            aria-busy={!pane.ui.isEditorReady}
+            class:editor-loading={!pane.ui.isEditorReady}
             data-pane-content
             class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
             use:editorAction={viewModel.editorLifecycle}
@@ -341,6 +352,12 @@
 </div>
 
 <style>
+  /* Keep layout measurable while parsing and scroll restoration finish. */
+  .editor-loading {
+    visibility: hidden;
+    pointer-events: none;
+  }
+
   .notepad-pane {
     flex: 1 1 0;
     min-width: 0;

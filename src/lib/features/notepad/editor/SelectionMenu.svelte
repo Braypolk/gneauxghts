@@ -93,12 +93,15 @@
           ...(boundary ? { boundary } : {}),
           apply({ availableHeight, elements }) {
             const floating = elements.floating;
-            const blockPanel = floating.querySelector<HTMLElement>('.selection-block-panel');
+            const body = floating.querySelector<HTMLElement>('.selection-menu-body');
             const toolbar = floating.querySelector<HTMLElement>('.selection-toolbar');
-            const chrome = (toolbar?.offsetHeight ?? 0) + 8;
-            const forBody = Math.max(120, Math.floor(availableHeight - chrome));
-            if (blockPanel) {
-              blockPanel.style.maxHeight = `${forBody}px`;
+            const tabs = floating.querySelector<HTMLElement>('.selection-tabs');
+            // Constrain the scroll viewport itself so its last row cannot be
+            // clipped by a shorter, non-scrollable parent. Include both headers
+            // and the panel borders in the available-height budget.
+            const chrome = (toolbar?.offsetHeight ?? 0) + (tabs?.offsetHeight ?? 0) + 4;
+            if (body) {
+              body.style.maxHeight = `${Math.max(0, Math.min(320, Math.floor(availableHeight - chrome)))}px`;
             } else {
               floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
             }

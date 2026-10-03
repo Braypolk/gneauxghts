@@ -44,11 +44,10 @@ function setup() {
   const openSearchResult = vi.fn(async () => undefined);
   const openRecentTask = vi.fn(async () => undefined);
   const afterRender = vi.fn(async () => undefined);
-  const openContext = {} as OpenContext;
+  const openContext = { clearSearch } as unknown as OpenContext;
   const navigationContext = {} as NavigationContext;
   const controller = createNavigationSelectionController({
     getSearchMode: () => searchMode,
-    clearSearch,
     resetPaneCommand,
     getNavigationPaneId: () => paneId,
     activatePane,
@@ -81,7 +80,7 @@ function setup() {
 }
 
 describe('navigation selection controller', () => {
-  it('routes non-note search results to chat and clears search', async () => {
+  it('routes non-note search results to chat while retaining search', async () => {
     const harness = setup();
     harness.openChatProjection.mockResolvedValue(true);
     const result = searchResult({
@@ -99,7 +98,7 @@ describe('navigation selection controller', () => {
       'Chats/Ideas/Part 001.md',
       'message-1'
     );
-    expect(harness.clearSearch).toHaveBeenCalledOnce();
+    expect(harness.clearSearch).not.toHaveBeenCalled();
     expect(
       harness.openSearchResult
     ).not.toHaveBeenCalled();
@@ -115,7 +114,7 @@ describe('navigation selection controller', () => {
     await harness.controller.handleSearchResultSelect(result);
 
     expect(harness.resetPaneCommand).toHaveBeenCalledOnce();
-    expect(harness.clearSearch).toHaveBeenCalledOnce();
+    expect(harness.clearSearch).not.toHaveBeenCalled();
     expect(harness.activatePane).toHaveBeenCalledWith(paneId);
     expect(harness.afterRender).toHaveBeenCalledOnce();
     expect(harness.focusSearchRange).toHaveBeenCalledWith(

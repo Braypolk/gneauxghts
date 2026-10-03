@@ -5,6 +5,58 @@ import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 
 describe('paneEditorLifecycle', () => {
+  for (const transition of ['mount', 'bind'] as const) {
+    it(`cancels presentation when disposed during ${transition} measurement`, async () => {
+      const document = createNoteDraftState(createEmptySessionSnapshot());
+      const runtime = {
+        controller: null as unknown | null,
+        refs: { editorRoot: {} },
+        setIsEditorReady: vi.fn()
+      };
+      let release!: () => void;
+      const barrier = new Promise<void>(resolve => { release = resolve; });
+      let entered!: () => void;
+      const measuring = new Promise<void>(resolve => { entered = resolve; });
+      let ready = false;
+      let presentations = 0;
+      const onEditorMounted = vi.fn();
+      const lifecycle = createPaneEditorLifecycle({
+        getPaneIds: () => ['pane'],
+        getPaneRuntime: () => runtime as never,
+        getEditorLifecycleController: () => ({
+          createEditor: async () => { runtime.controller = { view: {} }; },
+          swapEditorBuffer: async () => { ready = false; return true; },
+          destroyEditor: async () => { runtime.controller = null; },
+          finishEditorPresentation: async (_document: unknown, { isCurrent }: { isCurrent: () => boolean }) => {
+            if (++presentations === (transition === 'mount' ? 1 : 2)) {
+              entered();
+              await barrier;
+            }
+            if (!isCurrent()) return false;
+            ready = true;
+            return true;
+          }
+        }) as never,
+        getPaneDocument: () => document,
+        paneShouldMountEditor: () => true,
+        onEditorMounted,
+        closeWikilinkAutocomplete: vi.fn()
+      });
+      if (transition === 'bind') await lifecycle.mountPaneEditor('pane');
+      const operation = transition === 'mount'
+        ? lifecycle.mountPaneEditor('pane')
+        : lifecycle.bindDocument('pane', document);
+      await measuring;
+      const disposal = lifecycle.disposePane('pane');
+      release();
+      await expect(operation).resolves.toBe('disposed');
+      await disposal;
+      expect(runtime.controller).toBeNull();
+      expect(ready).toBe(false);
+      expect(onEditorMounted).toHaveBeenCalledTimes(transition === 'mount' ? 0 : 1);
+    });
+  }
+
   it('restores an exact captured view state through the serialized pane owner', async () => {
     const document = createNoteDraftState(createEmptySessionSnapshot());
     const restoreEditorViewStateForDocument = vi.fn().mockResolvedValue(true);
@@ -20,6 +72,7 @@ describe('paneEditorLifecycle', () => {
           createEditor: async () => {
             runtime.controller = { view: {} };
           },
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn(),
           restoreEditorViewStateForDocument
         }) as never,
@@ -62,6 +115,7 @@ describe('paneEditorLifecycle', () => {
         ({
           createEditor: () => createEditor(paneId),
           destroyEditor: vi.fn(),
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn(),
           saveCursorPositionForDocument: vi.fn()
         }) as never,
@@ -97,6 +151,7 @@ describe('paneEditorLifecycle', () => {
             runtime.controller = { paneId: 'pane' };
           },
           destroyEditor,
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn(),
           saveCursorPositionForDocument: vi.fn()
         }) as never,
@@ -144,6 +199,7 @@ describe('paneEditorLifecycle', () => {
             runtime.controller = { paneId: 'pane' };
           },
           destroyEditor,
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn(),
           saveCursorPositionForDocument: vi.fn()
         }) as never,
@@ -179,6 +235,7 @@ describe('paneEditorLifecycle', () => {
         ({
           createEditor,
           destroyEditor: vi.fn(),
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn(),
           saveCursorPositionForDocument: vi.fn()
         }) as never,
@@ -231,6 +288,7 @@ describe('paneEditorLifecycle', () => {
           replaceEditorContentInPlace: replaceInPlace,
           destroyEditor,
           saveCursorPositionForDocument: vi.fn(),
+          finishEditorPresentation: vi.fn(async () => true),
           restoreCursorPositionForDocument: vi.fn()
         }) as never,
       getPaneDocument: () => document,

@@ -74,6 +74,32 @@ class DateChip extends WidgetType {
     });
     return button;
   }
+  coordsAt(dom: HTMLElement) {
+    if (this.label !== '+') return null;
+    // This zero-length control sits after the task text. Its button box
+    // includes line-height and a margin, so measuring it makes the caret
+    // taller and shifts it away from the actual insertion point.
+    const line = dom.closest('.cm-line');
+    if (!line) return null;
+    const walker = document.createTreeWalker(line, NodeFilter.SHOW_TEXT);
+    walker.currentNode = dom;
+    while (walker.previousNode()) {
+      const text = walker.currentNode;
+      if (!text.textContent?.length) continue;
+      const range = document.createRange();
+      range.setStart(text, text.textContent.length - 1);
+      range.setEnd(text, text.textContent.length);
+      const rects = range.getClientRects();
+      const rect = rects[rects.length - 1];
+      if (!rect) return null;
+      // WebKit's collapsed range can include line leading. Use the last
+      // character for height, and the collapsed range only for its x position.
+      range.collapse(false);
+      const left = range.getClientRects()[0]?.left ?? rect.right;
+      return { left, right: left, top: rect.top, bottom: rect.bottom };
+    }
+    return null;
+  }
   ignoreEvent() { return true; }
 }
 

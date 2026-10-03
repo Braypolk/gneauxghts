@@ -12,7 +12,7 @@ describe('optional inline note tags', () => {
     await browser.execute(() => localStorage.removeItem('gneauxghts.tags-visible'));
     await browser.refresh();
     await $('[data-testid="note-title"]').waitForDisplayed({ timeout: 30_000 });
-    await $('span=Loading editor').waitForExist({ reverse: true });
+    await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
   });
 
   it('reveals tags without saving, edits through autosave, and keeps the body intact', async () => {

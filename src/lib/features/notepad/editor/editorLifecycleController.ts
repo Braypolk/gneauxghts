@@ -34,30 +34,17 @@ import {
   getDocumentNoteId,
   getDocumentPath
 } from '$lib/features/notepad/document/documentState';
-
-function nextAnimationFrame() {
-  return new Promise<void>((resolve) => {
-    if (typeof requestAnimationFrame === 'function') {
-      let settled = false;
-      const finish = () => {
-        if (settled) return;
-        settled = true;
-        clearTimeout(fallback);
-        resolve();
-      };
-      const fallback = setTimeout(finish, 50);
-      requestAnimationFrame(finish);
-      return;
-    }
-    resolve();
-  });
-}
+import {
+  nextEditorFrame as nextAnimationFrame,
+  settleEditorPresentation
+} from './editorPresentation';
 
 interface ReplaceEditorContentOptions {
   preserveScroll?: boolean;
   restoreCursor?: boolean;
   cursorPosition?: EditorViewState | null | undefined;
   expectedDocument?: NoteDraftState | null;
+  isCurrent?: () => boolean;
   /** When true, do not flip the pane to a loading state while the editor is torn down and recreated. */
   suppressReadyReset?: boolean;
 }
@@ -105,6 +92,7 @@ export function createEditorLifecycleController({
   }
 
   async function createEditor(initialValue: string) {
+    setIsEditorReady(false);
     const editorRoot = getEditorRoot();
     if (!(await prepareEditor(editorRoot)) || !editorRoot) {
       return;
@@ -129,7 +117,6 @@ export function createEditorLifecycleController({
     bindSlashMenuViewToPane(controller.view, getPaneId());
     bindSelectionMenuViewToPane(controller.view, getPaneId());
     setController(controller);
-    setIsEditorReady(true);
   }
 
   /**
@@ -147,6 +134,7 @@ export function createEditorLifecycleController({
       return false;
     }
 
+    setIsEditorReady(false);
     await tick();
 
     const ok = swapEditorRuntime(controller, {
@@ -164,6 +152,34 @@ export function createEditorLifecycleController({
     }
     bindSlashMenuViewToPane(controller.view, getPaneId());
     bindSelectionMenuViewToPane(controller.view, getPaneId());
+    return true;
+  }
+
+  async function finishEditorPresentation(
+    document: NoteDraftState,
+    {
+      restoreCursor = false,
+      isCurrent = () => true
+    }: { restoreCursor?: boolean; isCurrent?: () => boolean } = {}
+  ) {
+    const controller = getController();
+    if (!controller) return false;
+    const canPresent = () =>
+      isCurrent() &&
+      getController() === controller &&
+      getDocumentSession().handle === document.handle;
+    if (!canPresent()) return false;
+    const position = restoreCursor ? loadViewStateForDocument(document) : null;
+    if (position) {
+      restoreCursorPosition(controller, position, {
+        scrollIntoView: typeof position.scrollTop !== 'number'
+      });
+    }
+    const settled = await settleEditorPresentation(controller.view, canPresent, {
+      scrollTop: position?.scrollTop,
+      scrollSelectionIntoView: Boolean(position && typeof position.scrollTop !== 'number')
+    });
+    if (!settled || !canPresent()) return false;
     setIsEditorReady(true);
     return true;
   }
@@ -310,10 +326,11 @@ export function createEditorLifecycleController({
       restoreCursor = false,
       cursorPosition = undefined,
       expectedDocument = null,
+      isCurrent = () => true,
       suppressReadyReset = false
     }: ReplaceEditorContentOptions = {}
   ) {
-    if (expectedDocument && getDocumentSession() !== expectedDocument) {
+    if (!isCurrent() || (expectedDocument && getDocumentSession() !== expectedDocument)) {
       return;
     }
 
@@ -326,14 +343,14 @@ export function createEditorLifecycleController({
     }
     await destroyEditor();
 
-    if (expectedDocument && getDocumentSession() !== expectedDocument) {
+    if (!isCurrent() || (expectedDocument && getDocumentSession() !== expectedDocument)) {
       return;
     }
 
     await createEditor(nextMarkdown);
 
     if (restoreCursor) {
-      if (expectedDocument && getDocumentSession() !== expectedDocument) {
+      if (!isCurrent() || (expectedDocument && getDocumentSession() !== expectedDocument)) {
         return;
       }
 
@@ -355,7 +372,7 @@ export function createEditorLifecycleController({
       try {
         await waitForEditorPaint();
 
-        if (expectedDocument && getDocumentSession() !== expectedDocument) {
+        if (!isCurrent() || (expectedDocument && getDocumentSession() !== expectedDocument)) {
           return;
         }
 
@@ -391,13 +408,14 @@ export function createEditorLifecycleController({
       }
     }
 
-    if (shouldRestoreFocus) {
-      getController()?.view.focus();
-    }
-
     if (preserveScroll) {
       await tick();
       restoreEditorScrollTop(scrollTop);
+    }
+    const presented = await finishEditorPresentation(document, { isCurrent });
+    if (presented && shouldRestoreFocus) {
+      await tick();
+      getController()?.view.focus();
     }
   }
 
@@ -520,6 +538,7 @@ export function createEditorLifecycleController({
     destroyEditor,
     createEditor,
     swapEditorBuffer,
+    finishEditorPresentation,
     captureEditorViewState,
     saveCursorPositionForDocument,
     restoreCursorPositionForDocument,

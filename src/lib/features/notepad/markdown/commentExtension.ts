@@ -1,19 +1,11 @@
 import { tags } from '@lezer/highlight';
 
-import { punctuationPattern } from './highlightExtension';
-
-const commentDelimiter = { resolve: 'InlineComment', mark: 'InlineCommentMark' };
-
 interface CommentInlineContext {
   char(pos: number): number;
-  slice(from: number, to: number): string;
-  addDelimiter(
-    delim: { resolve: string; mark: string },
-    from: number,
-    to: number,
-    open: boolean,
-    close: boolean
-  ): number;
+  readonly end: number;
+  elt(name: string, from: number, to: number, children?: readonly unknown[]): unknown;
+  addElement(element: unknown): number;
+
 }
 
 /**
@@ -39,20 +31,15 @@ export const commentMarkdownExtension = {
           return -1;
         }
 
-        const before = cx.slice(pos - 1, pos);
-        const after = cx.slice(pos + 2, pos + 3);
-        const spaceBefore = /\s|^$/.test(before);
-        const spaceAfter = /\s|^$/.test(after);
-        const punctBefore = punctuationPattern.test(before);
-        const punctAfter = punctuationPattern.test(after);
-
-        return cx.addDelimiter(
-          commentDelimiter,
-          pos,
-          pos + 2,
-          !spaceAfter && (!punctAfter || spaceBefore || punctBefore),
-          !spaceBefore && (!punctBefore || spaceAfter || punctAfter)
-        );
+        for (let end = pos + 2; end + 1 < cx.end; end++) {
+          if (cx.char(end) === 37 && cx.char(end + 1) === 37) {
+            return cx.addElement(cx.elt('InlineComment', pos, end + 2, [
+              cx.elt('InlineCommentMark', pos, pos + 2),
+              cx.elt('InlineCommentMark', end, end + 2)
+            ]));
+          }
+        }
+        return -1;
       },
       after: 'Emphasis'
     }

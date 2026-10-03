@@ -1,4 +1,5 @@
 import type { EditorView } from '@codemirror/view';
+import type { ImageViewerSession } from '../images/imageViewerModel';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import {
   slashMenuHideFromUi,
@@ -21,6 +22,7 @@ import {
 } from '$lib/features/notepad/editor/selectionMenuBridge';
 import {
   transitionPaneTransientUi,
+  type PaneTransientUiAction,
   type PaneTransientUiState
 } from './paneTransientUiState';
 
@@ -41,11 +43,29 @@ export interface PaneTransientUiDeps<TPaneId extends string> {
 
 /** Mutual exclusion and pane ownership for slash, selection and wikilink UI. */
 export class PaneTransientUiController<TPaneId extends string> {
-  active = $state<PaneTransientUiState<TPaneId>>({
+  active = $state.raw<PaneTransientUiState<TPaneId>>({
     kind: 'none'
   });
 
   constructor(private readonly deps: PaneTransientUiDeps<TPaneId>) {}
+
+  private transition(action: PaneTransientUiAction<TPaneId>) {
+    const current = this.active;
+    const next = transitionPaneTransientUi<TPaneId>(current, action);
+    // Closed menu notifications during modal teardown must not republish the
+    // unchanged surface from the retiring component's reactive snapshot.
+    if (next !== current) this.active = next;
+  }
+
+  openImageViewer(paneId: TPaneId, session: ImageViewerSession) {
+    this.closeImageViewer();
+    this.closeSlashMenu(); this.closeSelectionMenu(); this.closeWikilinkAutocomplete();
+    this.transition({ type: 'open-image-viewer', paneId, session });
+  }
+
+  closeImageViewer(paneId: TPaneId | null = null) {
+    this.transition({ type: 'close', kind: 'image-viewer', paneId });
+  }
 
   registerBridgeListeners(
     resolvePaneId: (paneKey: string) => TPaneId | null
@@ -76,9 +96,7 @@ export class PaneTransientUiController<TPaneId extends string> {
       this.deps.getEditorCapabilities(id)?.closeSelectionMenu();
       this.deps.getPaneRuntime(id).setSelectionMenu({ open: false });
     }
-    this.active = transitionPaneTransientUi<TPaneId>(
-      this.active,
-      {
+    this.transition({
         type: 'close',
         kind: 'selection-menu',
         paneId
@@ -92,9 +110,7 @@ export class PaneTransientUiController<TPaneId extends string> {
       this.deps.getEditorCapabilities(id)?.closeSlashMenu();
       this.deps.getPaneRuntime(id).setSlashMenu({ open: false });
     }
-    this.active = transitionPaneTransientUi<TPaneId>(
-      this.active,
-      {
+    this.transition({
         type: 'close',
         kind: 'slash-menu',
         paneId
@@ -105,9 +121,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   closeWikilinkAutocomplete(paneId: TPaneId | null = null) {
     if (paneId) {
       this.deps.getWikilinkController(paneId).closeWikilinkAutocomplete();
-      this.active = transitionPaneTransientUi<TPaneId>(
-        this.active,
-        {
+      this.transition({
           type: 'close',
           kind: 'wikilink-autocomplete',
           paneId
@@ -118,9 +132,7 @@ export class PaneTransientUiController<TPaneId extends string> {
     for (const id of this.deps.getVisiblePaneIds()) {
       this.deps.getWikilinkController(id).closeWikilinkAutocomplete();
     }
-    this.active = transitionPaneTransientUi<TPaneId>(
-      this.active,
-      {
+    this.transition({
         type: 'close',
         kind: 'wikilink-autocomplete'
       }
@@ -130,6 +142,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   closeExcept(paneId: TPaneId) {
     for (const id of this.deps.getVisiblePaneIds()) {
       if (id === paneId) continue;
+      this.closeImageViewer(id);
       this.closeSlashMenu(id);
       this.closeSelectionMenu(id);
       this.closeWikilinkAutocomplete(id);
@@ -143,9 +156,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   ) {
     if (!snapshot.open) {
       this.deps.getPaneRuntime(paneId).setSlashMenu({ open: false });
-      this.active = transitionPaneTransientUi<TPaneId>(
-        this.active,
-        {
+      this.transition({
           type: 'close',
           kind: 'slash-menu',
           paneId
@@ -162,9 +173,8 @@ export class PaneTransientUiController<TPaneId extends string> {
       if (id !== paneId) this.closeSlashMenu(id);
     }
     this.closeWikilinkAutocomplete();
-    this.active = transitionPaneTransientUi<TPaneId>(
-      this.active,
-      {
+    this.closeImageViewer();
+    this.transition({
         type: 'open',
         kind: 'slash-menu',
         paneId
@@ -187,9 +197,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   ) {
     if (!snapshot.open) {
       this.deps.getPaneRuntime(paneId).setSelectionMenu({ open: false });
-      this.active = transitionPaneTransientUi<TPaneId>(
-        this.active,
-        {
+      this.transition({
           type: 'close',
           kind: 'selection-menu',
           paneId
@@ -206,10 +214,9 @@ export class PaneTransientUiController<TPaneId extends string> {
       if (id !== paneId) this.closeSelectionMenu(id);
     }
     this.closeWikilinkAutocomplete();
+    this.closeImageViewer();
     this.closeSlashMenu(paneId);
-    this.active = transitionPaneTransientUi<TPaneId>(
-      this.active,
-      {
+    this.transition({
         type: 'open',
         kind: 'selection-menu',
         paneId
@@ -229,6 +236,7 @@ export class PaneTransientUiController<TPaneId extends string> {
 
   updateWikilinkState(paneId: TPaneId, next: WikilinkAutocompleteState) {
     if (next.active) {
+      this.closeImageViewer();
       this.closeSlashMenu();
       this.closeSelectionMenu();
       for (const id of this.deps.getVisiblePaneIds()) {
@@ -236,23 +244,9 @@ export class PaneTransientUiController<TPaneId extends string> {
       }
     }
     this.deps.getPaneRuntime(paneId).setWikilinkAutocomplete(next);
-    this.active = next.active
-      ? transitionPaneTransientUi<TPaneId>(
-          this.active,
-          {
-            type: 'open',
-            kind: 'wikilink-autocomplete',
-            paneId
-          }
-        )
-      : transitionPaneTransientUi<TPaneId>(
-          this.active,
-          {
-            type: 'close',
-            kind: 'wikilink-autocomplete',
-            paneId
-          }
-        );
+    this.transition(next.active
+      ? { type: 'open', kind: 'wikilink-autocomplete', paneId }
+      : { type: 'close', kind: 'wikilink-autocomplete', paneId });
   }
 
   handleActiveWikilinkChange(

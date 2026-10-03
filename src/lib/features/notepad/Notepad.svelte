@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
+  import ImageViewer from "./images/ImageViewer.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
   import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
@@ -497,12 +498,16 @@
   // ---------------------------------------------------------------------------
   // Per-pane controllers (editor + wikilink) — built once, reused everywhere.
   // ---------------------------------------------------------------------------
+  $effect(() => { if (historyMode.isActive) transientUi.closeImageViewer(); });
+
   const paneControllerSetupDeps: PaneControllerSetupDeps<PaneId> = {
+    openImageViewer: (paneId, session) => { if (!historyMode.isActive) transientUi.openImageViewer(paneId, session); },
     getPaneRuntime,
     getPaneDocument: getPaneDocumentSession,
     activatePaneSession,
     cancelPendingAutosave: (note) => cancelPendingAutosave(note),
     closeEditorTransientUi: (paneId) => {
+      transientUi.closeImageViewer(paneId);
       closeSlashMenu(paneId);
       closeSelectionMenu(paneId);
       closeWikilinkAutocomplete(paneId);
@@ -1216,7 +1221,6 @@
     handleRelatedItemSelect,
   } = createNavigationSelectionController<PaneId>({
       getSearchMode: () => searchState.searchMode,
-      clearSearch,
       resetPaneCommand: workspaceStore.resetPaneCommand,
       getNavigationPaneId,
       activatePane: activatePaneSession,
@@ -1267,7 +1271,7 @@
   function handleHistoryAwareGlobalKeydown(event: KeyboardEvent) {
     // History owns its keyboard handling, including Escape in inline renaming.
     // Capturing Escape here would close history before the field can cancel it.
-    if (!historyMode.isActive) {
+    if (!historyMode.isActive && activeTransientUi.kind !== "image-viewer") {
       handleGlobalKeydown(event);
     }
   }
@@ -1440,10 +1444,10 @@
     let disposeNativeE2EBridge: (() => void) | null = null;
     // Explicit E2E builds include inspection, selection and citation actions in
     // optimized native tests too; ordinary builds erase this branch.
-    if (import.meta.env.VITE_E2E_NATIVE === "true") {
+    if (import.meta.env.VITE_E2E_NATIVE === "true" || import.meta.env.VITE_E2E_BROWSER === "true") {
       const nativeE2EWindow = window as NativeE2EWindow;
       const nativeE2EBridge = {
-        readEditorState: (): NativeE2EEditorState => {
+        readEditorState: () => {
           const paneId = activePaneId;
           const paneDocument = getPaneDocumentSession(paneId);
           const controller = getPaneRuntime(paneId).controller;
@@ -1709,6 +1713,12 @@
     />
   {/if}
   </div>
+
+  {#if activeTransientUi.kind === "image-viewer"}
+    {#key activeTransientUi.session}
+      <ImageViewer session={activeTransientUi.session} onClose={() => transientUi.closeImageViewer()} />
+    {/key}
+  {/if}
 
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
     <!-- Match the editor card's bounds, including the space reserved for Related. -->

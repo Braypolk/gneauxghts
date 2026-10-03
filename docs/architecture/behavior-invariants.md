@@ -57,6 +57,14 @@ after a different Next-launch Vault Selection has been staged. Backend readiness
 does not itself mean the mounted editor has adopted the session, and obsolete
 mount work never applies to a later editor lifetime.
 
+Initial editor mount and note navigation reveal the new body only after Markdown
+formatting covers the restored viewport and its layout/scroll have settled.
+Loading keeps the editor measurable but hides its content. Parsing runs in
+bounded slices through the existing serialized pane lifecycle; obsolete or
+disposed work cannot reveal a document.
+Already formatted, stable viewports need no repeated frame waits. The loading
+label appears only after 150 ms; its absence is not an editor readiness signal.
+
 ### Remember changes only the invoking pane
 
 Remember persists one canonical document and rebinds only the invoking pane to
@@ -476,6 +484,24 @@ revision, and stale generation/window callbacks cannot resurrect deleted history
 
 ## Chat
 
+### Surviving transcripts recover missing conversations
+
+When vault-local chat data is lost, startup discovers complete managed transcripts
+in `Chats` and restores missing conversations to the chat list. Existing database
+conversations win over Markdown. Recovery retains stable conversation and message
+identities, title, creation date, part order, visible terminal status, source links,
+and explicitly remembered quotes, without rewriting the surviving files. Imports
+commit atomically; damaged or ambiguous conversations cannot leave partial rows.
+Forgotten folders are not reactivated. Imported projection receipts retain the
+ordinary external-edit conflict boundary.
+
+Legacy Markdown lacks attachment bytes, tool events, proposals, per-message dates,
+provider configuration, access grants, and authoritative evidence metadata.
+Recovery uses current provider defaults, starts with no vault access, and omits
+potentially note-based recovered answers from fresh model context. Source links
+remain display links; remembered quotes do not invent historical offsets.
+Attachment inventories remain visible with an unavailable-content notice.
+
 ### Provenance explains only current authored content
 
 Current-Content Provenance is available only through the allowed current-note
@@ -742,3 +768,28 @@ never drops history silently to make a request fit. Cancellation,
 permissions, scope and final evidence-currentness checks remain authoritative.
 An existing non-executable structured result formatter may remain callable on the
 final request; no evidence retrieval or other application action remains callable.
+
+
+## Image interactions
+
+- Markdown remains the image layout authority: size commands patch its suffix
+  without rewriting destinations, titles, labels or encoding. Wiki and standard
+  Markdown embeds resolve only contained local assets; backend canonicalization
+  rejects traversal and symlink escapes.
+- Image widgets and interaction state belong to one editor view. Asset loading
+  shares bytes through document resources, never DOM, selection or gesture state.
+- Image mutations use the shared editor undo root and ordinary note saving.
+  Selection/source visibility, viewer zoom/pan and unfinished resize previews
+  never create authored edits or Editing Window boundaries.
+- A resize commits once at pointer release. Escape, pointer cancellation, blur,
+  document mutation, read-only takeover and destruction cancel previews and
+  listeners. A resize's trailing click cannot open the viewer.
+- Paste keeps the selected authored text until every file has saved. A failed or
+  canceled job retains it; retry reuses successful files. Results from a retired
+  view or a changed replacement range cannot insert into a different document.
+- The viewer shares the existing transient owner. Closing returns focus, scroll
+  and selection only to a still-live origin. Image-list changes, replacement and
+  history/review takeover invalidate it. Gallery navigation includes offscreen
+  images and never changes note layout.
+- Embed delete/cut/undo do not delete asset files. Note history versions authored
+  references and dimensions, rather than historical image bytes.

@@ -533,9 +533,33 @@ export function installBrowserE2eBackend() {
   let nextHistoryPageDelayMillis = 0;
   let pendingSave: { release: () => void; promise: Promise<void>; fail: boolean } | null = null;
 
+  const imageAssets = new Map<string, string>();
+  let imageSaveFailures = 0;
+  let imageSaveDelay = 0;
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
+
+    if (command === 'read_image_asset_fingerprint') {
+      const asset = imageAssets.get(String(args.fileName));
+      if (!asset) throw new Error('Image asset was not found');
+      return asset;
+    }
+    if (command === 'read_image_asset_data_url') {
+      const asset = imageAssets.get(String(args.fileName));
+      if (!asset) throw new Error('Image asset was not found');
+      return asset;
+    }
+    if (command === 'store_pasted_image') {
+      if (imageSaveDelay) await new Promise(resolve => setTimeout(resolve, imageSaveDelay));
+      if (imageSaveFailures > 0) { imageSaveFailures--; throw new Error('Image save failed'); }
+      const original = String(args.originalName ?? 'pasted.png');
+      let fileName = original, suffix = 1;
+      while (imageAssets.has(fileName)) fileName = original.replace(/(\.[^.]+)$/, ` ${suffix++}$1`);
+      const bytes = args.bytes as number[];
+      imageAssets.set(fileName, `data:${args.mimeType ?? 'image/png'};base64,${btoa(String.fromCharCode(...bytes))}`);
+      return { fileName, filePath: `/browser-vault/assets/${fileName}` };
+    }
 
     if (command === 'get_vault_atlas') {
       return {
@@ -907,6 +931,10 @@ export function installBrowserE2eBackend() {
       pendingSave = { release, promise, fail };
     },
     releaseSave() { const held = pendingSave; pendingSave = null; held?.release(); },
+    seedImageAsset(name: string) {
+      imageAssets.set(name, `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#527db5"/><circle cx="600" cy="400" r="180" fill="#eebe56"/></svg>')}`);
+    },
+    configureImageSave(failures = 0, delayMillis = 0) { imageSaveFailures = failures; imageSaveDelay = delayMillis; },
     seedRevisionChat() { revisionChatEnabled = true; },
     seedLargeHistory() { largeHistoryEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
@@ -929,6 +957,8 @@ declare global {
       invocations: InvokeRecord[];
       holdSave(fail?: boolean): void;
       releaseSave(): void;
+      seedImageAsset(name: string): void;
+      configureImageSave(failures?: number, delayMillis?: number): void;
       seedRevisionChat(): void;
       seedLargeHistory(): void;
       delayNextHistoryPage(delayMillis?: number): void;

@@ -628,19 +628,33 @@ pub(super) fn strip_inline_code(line: &str) -> String {
 }
 
 pub(super) fn binary_asset_name(target: &str) -> Option<String> {
-    let target = target
-        .trim()
-        .trim_matches(['<', '>'])
-        .split(['|', '#', '?'])
-        .next()
-        .unwrap_or_default()
-        .trim()
-        .replace("\\(", "(")
-        .replace("\\)", ")");
-    if target.is_empty() || target.contains(':') {
+    let target = target.trim().trim_matches(['<', '>']);
+    let mut escaped = false;
+    let end = target.char_indices().find_map(|(index, character)| {
+        if escaped { escaped = false; return None; }
+        if character == '\\' { escaped = true; return None; }
+        matches!(character, '|' | '#' | '?').then_some(index)
+    }).unwrap_or(target.len());
+    let target = target[..end].trim();
+    let mut characters = target.chars().peekable();
+    let mut unescaped = String::new();
+    while let Some(character) = characters.next() {
+        if character == '\\' && characters.peek().is_some_and(|next| next.is_ascii_punctuation()) {
+            unescaped.push(characters.next()?);
+        } else {
+            unescaped.push(character);
+        }
+    }
+    let target = unescaped;
+    let bytes = target.as_bytes();
+    for (index, byte) in bytes.iter().enumerate() {
+        if *byte == b'%' && (index + 2 >= bytes.len() || !bytes[index + 1].is_ascii_hexdigit() || !bytes[index + 2].is_ascii_hexdigit()) { return None; }
+    }
+    let target = percent_encoding::percent_decode_str(&target).decode_utf8().ok()?;
+    if target.is_empty() || target.contains([':', '\\', '\0', '?', '#']) {
         return None;
     }
-    let mut components = Path::new(&target)
+    let mut components = Path::new(&*target)
         .components()
         .map(|component| match component {
             std::path::Component::Normal(component) => component.to_str(),
@@ -688,6 +702,8 @@ pub(super) fn balanced_markdown_destination(target: &str) -> Option<(&str, usize
 
 pub(super) fn referenced_binary_assets(markdown: &str) -> Vec<String> {
     let mut assets = HashSet::new();
+    let mut definitions = HashMap::new();
+    let mut reference_labels = HashSet::new();
     let mut in_fence = false;
     for line in markdown.lines() {
         let trimmed = line.trim_start();
@@ -699,6 +715,33 @@ pub(super) fn referenced_binary_assets(markdown: &str) -> Vec<String> {
             continue;
         }
         let visible = strip_inline_code(line);
+        if let Some(definition) = visible.trim_start().strip_prefix('[') {
+            if let Some((label, target)) = definition.split_once("]:") {
+                let target = target.trim();
+                let destination = if let Some(target) = target.strip_prefix('<') {
+                    target.split('>').next().unwrap_or_default()
+                } else { target.split_ascii_whitespace().next().unwrap_or_default() };
+                if let Some(name) = binary_asset_name(destination) {
+                    definitions.entry(label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()).or_insert(name);
+                }
+            }
+        }
+        let mut image_remainder = visible.as_str();
+        while let Some(start) = image_remainder.find("![") {
+            let target = &image_remainder[start + 2..];
+            let Some(end) = target.find(']') else { break; };
+            let label = &target[..end];
+            let after = &target[end + 1..];
+            if let Some(reference) = after.strip_prefix('[') {
+                if let Some(end) = reference.find(']') {
+                    let reference = if end == 0 { label } else { &reference[..end] };
+                    reference_labels.insert(reference.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase());
+                }
+            } else if !after.starts_with('(') {
+                reference_labels.insert(label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase());
+            }
+            image_remainder = after;
+        }
         let mut remainder = visible.as_str();
         while let Some(start) = remainder.find("[[") {
             let target = &remainder[start + 2..];
@@ -730,6 +773,9 @@ pub(super) fn referenced_binary_assets(markdown: &str) -> Vec<String> {
             }
             remainder = &target[consumed..];
         }
+    }
+    for label in reference_labels {
+        if let Some(name) = definitions.get(&label) { assets.insert(name.clone()); }
     }
     let mut assets = assets.into_iter().collect::<Vec<_>>();
     assets.sort();

@@ -891,3 +891,23 @@ fn forgotten_note_history_requires_recovery_before_inspection_or_version_restore
     assert_eq!(access.revisions().unwrap().len(), 3);
     crate::state::set_notes_root_override(None).unwrap();
 }
+
+#[test]
+fn image_asset_names_decode_once_and_agree_with_local_rendering() {
+    use super::history_mode::{binary_asset_name, referenced_binary_assets};
+    assert_eq!(binary_asset_name("assets/photos/a%20b.png"), Some("photos/a b.png".into()));
+    assert_eq!(binary_asset_name(r"assets/a\|b.png"), Some("a|b.png".into()));
+    assert_eq!(binary_asset_name(r"assets/a\_b.png"), Some("a_b.png".into()));
+    assert_eq!(binary_asset_name("a%2520b.png"), Some("a%20b.png".into()));
+    for invalid in ["assets/%2e%2e/private.png", "https://example.test/a.png", "a%ZZ.png", "a%00b.png"] {
+        assert_eq!(binary_asset_name(invalid), None);
+    }
+    assert_eq!(referenced_binary_assets("![Citrus|200](<assets/photos/a%20b.png> \"title\")"), vec!["photos/a b.png"]);
+}
+
+#[test]
+fn historical_missing_images_resolve_used_reference_definitions() {
+    use super::history_mode::referenced_binary_assets;
+    assert_eq!(referenced_binary_assets("![Photo|200][photo]\n\n[photo]: <assets/a%20b.png> \"title\"\n[unused]: unused.png"), vec!["a b.png"]);
+    assert_eq!(referenced_binary_assets("![photo][]\n\n[photo]: a.png"), vec!["a.png"]);
+}

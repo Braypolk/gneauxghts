@@ -1,4 +1,5 @@
 import { EditorView } from '@codemirror/view';
+import { selectedImage } from '../images/imageState';
 import { isDateTimePickerOpen } from '$lib/features/tasks/dateTimePicker';
 import {
   applyBlockTypeSelection,
@@ -45,7 +46,7 @@ export type PaneSelectionMenuModel =
 
 function getSelectionRange(view: EditorView) {
   const selection = view.state.selection.main;
-  if (selection.empty) {
+  if (selection.empty || selectedImage(view.state)) {
     return null;
   }
   return {

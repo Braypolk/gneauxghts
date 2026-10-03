@@ -311,6 +311,7 @@ pub fn run() {
             commands::retry_history_recovery,
             commands::reset_corrupt_history,
             commands::asset_commands::read_image_asset_data_url,
+            commands::asset_commands::read_image_asset_fingerprint,
             commands::asset_commands::store_pasted_image,
             commands::set_vault_directory,
             commands::prepare_restart,

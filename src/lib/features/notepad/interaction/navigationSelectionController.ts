@@ -14,7 +14,6 @@ export interface NavigationSelectionControllerDeps<
   TPaneId extends string
 > {
   getSearchMode: () => SearchMode;
-  clearSearch: () => void;
   resetPaneCommand: () => void;
   getNavigationPaneId: () => TPaneId;
   activatePane: (paneId: TPaneId) => void;
@@ -62,7 +61,6 @@ export function createNavigationSelectionController<
         result.blockAnchor ?? null
       ))
     ) {
-      deps.clearSearch();
       return;
     }
 
@@ -71,7 +69,6 @@ export function createNavigationSelectionController<
       deps.getSearchMode() === 'current' &&
       result.currentMatchRange
     ) {
-      deps.clearSearch();
       const paneId = deps.getNavigationPaneId();
       deps.activatePane(paneId);
       await afterRender();
@@ -84,7 +81,8 @@ export function createNavigationSelectionController<
     }
 
     await deps.openSearchResult(
-      deps.getOpenContext(),
+      // Choosing a search result keeps the query available for further matches.
+      { ...deps.getOpenContext(), clearSearch: () => {} },
       deps.getNavigationContext(),
       result
     );

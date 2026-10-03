@@ -94,7 +94,9 @@
 
 /* Fenced code block: per-line background, rounded at the first/last line so
    the block reads as one rounded surface while each line stays on normal block
-   flow (no wrapping container that would disturb caret geometry). */
+   flow (no wrapping container that would disturb caret geometry). Vertical
+   spacing must be padding: CodeMirror's height map does not include line
+   margins, so they accumulate an offset in click and arrow-key hit testing. */
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line {
   font-family: var(--font-mono);
   font-size: 0.92rem;
@@ -106,15 +108,13 @@
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line-start {
   border-top-left-radius: 0.75rem;
   border-top-right-radius: 0.75rem;
-  padding-top: 0.4rem;
-  margin-top: 0.5rem;
+  padding-top: 0.9rem;
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-block-line-end {
   border-bottom-left-radius: 0.75rem;
   border-bottom-right-radius: 0.75rem;
-  padding-bottom: 0.4rem;
-  margin-bottom: 0.5rem;
+  padding-bottom: 0.9rem;
 }
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-gn-code-fence {
@@ -329,33 +329,6 @@
   font-size: 0.92rem;
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed {
-  display: inline-flex;
-  position: relative;
-  margin: 0.5rem 0;
-  border-radius: 1rem;
-  overflow: hidden;
-  background: color-mix(in oklab, var(--muted) 74%, var(--background));
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed img {
-  display: block;
-  max-width: 100%;
-  height: auto;
-}
-
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed-resize-handle {
-  position: absolute;
-  right: 0.35rem;
-  bottom: 0.35rem;
-  width: 0.95rem;
-  height: 0.95rem;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--foreground) 72%, transparent);
-  box-shadow: 0 0 0 2px color-mix(in oklab, var(--background) 84%, transparent);
-  cursor: nwse-resize;
-}
-
 .notepad-editor-shell .gn-editor-root .notepad-block-drop-indicator {
   position: fixed;
   z-index: 7;
@@ -401,5 +374,35 @@
   text-decoration-color: color-mix(in oklab, var(--muted-foreground) 65%, transparent);
 }
 .cm-gn-date-chip:focus-visible, .cm-gn-date-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
-.cm-gn-date-add { margin-left: 0.5rem; color: var(--muted-foreground); opacity: 0; }
+.cm-gn-date-add { margin-left: 1.5rem; color: var(--muted-foreground); opacity: 0; }
 .cm-line:hover .cm-gn-date-add, .cm-gn-date-add:focus-visible { opacity: 1; }
+
+/* Each editor view owns its image elements; block widgets have no vertical margins. */
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed {
+  position: relative; display: inline-block; width: fit-content; max-width: 100%; vertical-align: middle; border-radius: 4px; cursor: pointer; line-height: 0;
+}
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn div.gn-image-embed {
+  display: block;
+  margin-left: var(--gn-editor-side-inset-left, 0px);
+  margin-right: var(--gn-editor-side-inset-right, 0px);
+  max-width: calc(100% - var(--gn-editor-side-inset-left, 0px) - var(--gn-editor-side-inset-right, 0px));
+}
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed img {
+  display: block; width: 100%; max-width: 100%; height: auto; object-fit: contain;
+}
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed[data-selected="true"] { outline: 2px solid var(--ring, #829aff); outline-offset: 2px; cursor: zoom-in; }
+.gn-image-toolbar { position: absolute; right: 6px; top: 6px; display: flex; gap: 4px; opacity: 0; line-height: 1.4; }
+.gn-image-embed:hover .gn-image-toolbar, .gn-image-embed:focus-within .gn-image-toolbar, .gn-image-embed[data-selected="true"] .gn-image-toolbar { opacity: 1; }
+.gn-image-toolbar button, .gn-image-status button, .gn-image-upload-placeholder button {
+  background: var(--background); color: var(--foreground); border: 1px solid var(--border); border-radius: 4px; padding: 3px 7px; font-size: 12px; cursor: pointer;
+}
+.gn-image-status { line-height: 1.5; font-size: 12px; color: var(--muted-foreground); }
+.gn-image-embed[data-broken="true"] { min-width: 48px; min-height: 64px; border: 1px dashed var(--border); padding: 8px; }
+.gn-image-embed[data-broken="true"] img { display: none !important; }
+.gn-image-resize-handle { position:absolute; width:12px; height:12px; padding:0; border:1px solid var(--background); border-radius:2px; background:var(--ring, #829aff); display:none; z-index:2; }
+.gn-image-embed[data-selected="true"] .gn-image-resize-handle { display:block; }
+.gn-image-embed[data-readonly="true"] .gn-image-resize-handle { display:none; }
+.gn-image-resize-nw { top:-5px; left:-5px; cursor:nwse-resize; }
+.gn-image-resize-ne { top:-5px; right:-5px; cursor:nesw-resize; }
+.gn-image-resize-sw { bottom:-5px; left:-5px; cursor:nesw-resize; }
+.gn-image-resize-se { bottom:-5px; right:-5px; cursor:nwse-resize; }

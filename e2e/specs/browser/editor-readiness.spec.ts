@@ -7,7 +7,7 @@ async function expectReady(title: string, body: string) {
   const content = await $('[data-testid="note-editor"] .cm-content');
   await content.waitForDisplayed();
   expect(await content.getText()).toContain(body);
-  await $('span=Loading editor').waitForExist({ reverse: true });
+  await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
   expect(await content.getAttribute('contenteditable')).toBe('true');
   await $('[data-testid="note-tags"]').waitForExist();
   expect(await $('[data-testid="note-tags"] input[aria-label="Add tag"]').isExisting()).toBe(true);
@@ -34,8 +34,17 @@ describe('editor readiness', () => {
     await search.setValue('Beta note');
     const result = await $('button[aria-label="Open search result: Beta note.md"]');
     await result.waitForExist();
-    await browser.execute((element: HTMLElement) => element.click(), result);
+    await browser.keys('Enter');
     await expectReady('Beta note', 'Beta body is independent from Alpha.');
+    expect(await search.getValue()).toBe('Beta note');
+
+    await search.click();
+    await $('button[aria-label="Search this note only"]').click();
+    await search.setValue('independent');
+    await $('button[aria-label^="Open search result:"]').waitForExist();
+    await browser.keys('Enter');
+    expect(await search.getValue()).toBe('independent');
+    expect(await $('[data-testid="note-editor"] .cm-content').isFocused()).toBe(true);
 
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await browser.execute(() => {

@@ -1,7 +1,9 @@
+import type { ImageViewerSession } from '../images/imageViewerModel';
 export const PANE_TRANSIENT_UI_KINDS = [
   'slash-menu',
   'selection-menu',
-  'wikilink-autocomplete'
+  'wikilink-autocomplete',
+  'image-viewer'
 ] as const;
 
 export type PaneTransientUiKind =
@@ -14,6 +16,7 @@ export type PaneTransientUiKind =
  */
 export type PaneTransientUiState<TPaneId extends string> =
   | { kind: 'none' }
+  | { kind: 'image-viewer'; paneId: TPaneId; session: ImageViewerSession }
   | {
       kind: 'slash-menu';
       paneId: TPaneId;
@@ -30,9 +33,10 @@ export type PaneTransientUiState<TPaneId extends string> =
 export type PaneTransientUiAction<TPaneId extends string> =
   | {
       type: 'open';
-      kind: PaneTransientUiKind;
+      kind: Exclude<PaneTransientUiKind, 'image-viewer'>;
       paneId: TPaneId;
     }
+  | { type: 'open-image-viewer'; paneId: TPaneId; session: ImageViewerSession }
   | {
       type: 'close';
       kind: PaneTransientUiKind;
@@ -45,6 +49,7 @@ export function transitionPaneTransientUi<
   state: PaneTransientUiState<TPaneId>,
   action: PaneTransientUiAction<TPaneId>
 ): PaneTransientUiState<TPaneId> {
+  if (action.type === 'open-image-viewer') return { kind: 'image-viewer', paneId: action.paneId, session: action.session };
   if (action.type === 'open') {
     return {
       kind: action.kind,

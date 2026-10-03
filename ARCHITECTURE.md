@@ -390,6 +390,30 @@ preparation and publication. No independent tag writer or durable tag store exis
 interactive query grammar. The note catalog and semantic metadata carry derived
 tag values; embeddings and Atlas structure hashes remain content-based.
 
+### Images
+
+`images/` projects wiki and Markdown image embeds from authored Markdown into a
+complete-document inventory. Each pane owns its direct CodeMirror decorations,
+DOM, rendered/source selection and pointer gestures. Image elements are never
+shared between views. Document resources own only the bounded asset loader,
+which coalesces reads and checks file metadata within the immutable Running Vault.
+
+Width, reset, deletion, cut and successful imports dispatch ordinary isolated
+editor transactions through `EditorDocumentRuntime`; they share its undo root and
+the existing save/Editing Window path. Paste jobs preserve selected text until
+success, map unaffected ranges, reuse partial successes, and discard results after
+replacement, navigation, read-only takeover or view destruction. Removing an
+embed never removes asset bytes.
+
+The modal viewer is a payload of `PaneTransientUiController.active`, alongside
+existing mutually exclusive editor surfaces. It pins the note's full image list,
+maps its origin through non-image edits, and closes on inventory or lifetime
+invalidation. Native dialog modality supplies focus trapping and background
+inertness. Source display, viewer transforms and temporary drag styles are
+pane-local, ephemeral state. Closed menu notifications do not republish unchanged
+transient state during focus restoration. History continues to show literal
+Markdown diffs and resolves encoded local asset references for missing-file checks.
+
 ### Tasks
 
 Closed or clean-note mutations go through `TaskMutationService.commit` and the
@@ -471,6 +495,14 @@ event protocol. `ChatService` retains durable run lifecycle and context
 assembly. It serializes managed transcript publication (filesystem bytes and
 SQLite hash receipts) with conflict classification. The watcher rechecks current
 projection bytes after publication; queued own-write events cannot detach chats. Provider and runtime-library types do not cross those seams.
+
+At startup, `ChatService` recovers missing conversation identities from surviving
+managed Markdown in `Chats` through its private transcript recovery module.
+Each import commits messages and projection hash receipts atomically without
+rewriting files or replacing existing database conversations. Legacy transcripts
+cannot reconstruct runtime events, attachment bytes, permissions, or evidence
+provenance; recovered chats start with no vault access and conservative assistant
+history evidence markers. SQLite remains authoritative after recovery.
 
 `services/evidence.rs` owns current evidence search, ranking, scoped/versioned
 cursors, passage reads and canonical citation validation. `search_evidence` uses

@@ -3,6 +3,7 @@ import type { EditorView } from '@codemirror/view';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { EditorDocumentRuntime } from './editorDocumentRuntime';
+import type { ImageViewerSession } from '../images/imageViewerModel';
 
 export interface EditorSelection {
   anchor: number;
@@ -26,6 +27,7 @@ export interface EditorController {
 }
 
 export interface EditorViewCallbacks {
+  onOpenImageViewer?: (session: ImageViewerSession) => void;
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;
   onViewStateChange: () => void;

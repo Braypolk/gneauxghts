@@ -5,6 +5,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 // without a real DOM/editor.
 let capturedOnMarkdownChange: ((markdown: string) => void) | null = null;
 
+vi.mock('./editorPresentation', async (importOriginal) => ({
+  ...await importOriginal<typeof import('./editorPresentation')>(),
+  settleEditorPresentation: vi.fn(async () => true)
+}));
+
 vi.mock('$lib/features/notepad/editor/editor', () => ({
   createEditor: vi.fn(async ({ onMarkdownChange }) => {
     capturedOnMarkdownChange = onMarkdownChange;
@@ -36,7 +41,10 @@ vi.mock('$lib/features/notepad/navigation/navigation', () => ({
 }));
 
 import { createEditorLifecycleController } from './editorLifecycleController';
+import { settleEditorPresentation } from './editorPresentation';
+import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 import {
+  createEditor,
   readCursorPosition,
   replaceEditorContent,
   restoreCursorPosition
@@ -155,6 +163,96 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       { anchor: 0, head: 0 },
       { scrollIntoView: true }
     );
+  });
+});
+
+describe('editor presentation readiness', () => {
+  function harness() {
+    let document = createNoteDraftState({ ...createEmptySessionSnapshot(), title: 'First', bodyMarkdown: 'body' });
+    let editor: import('./types').EditorController | null = null;
+    let ready = false;
+    const lifecycle = createEditorLifecycleController({
+      getController: () => editor,
+      getPaneId: () => 'primary',
+      setController: value => { editor = value; },
+      getEditorShell: () => null,
+      getEditorRoot: () => ({}) as never,
+      getDocumentSession: () => document,
+      setIsEditorReady: value => { ready = value; },
+      setIsApplyingProgrammaticUpdate: () => {},
+      handleEditorMarkdownChange: () => {},
+      getSharedEditorResources: () => ({}) as never,
+      getViewCallbacks: () => ({}) as never,
+      closeTransientUi: () => {}
+    });
+    return {
+      lifecycle,
+      get document() { return document; },
+      get ready() { return ready; },
+      switchDocument() {
+        document = createNoteDraftState({ ...createEmptySessionSnapshot(), title: 'Second', bodyMarkdown: 'other' });
+      }
+    };
+  }
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it('stays loading until formatting and measurement finish', async () => {
+    let finish!: (settled: boolean) => void;
+    vi.mocked(settleEditorPresentation).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const h = harness();
+    await h.lifecycle.createEditor('body');
+    const presentation = h.lifecycle.finishEditorPresentation(h.document);
+    expect(h.ready).toBe(false);
+    finish(true);
+    await expect(presentation).resolves.toBe(true);
+    expect(h.ready).toBe(true);
+  });
+
+  it('does not reveal a document that became obsolete while measuring', async () => {
+    let finish!: (settled: boolean) => void;
+    vi.mocked(settleEditorPresentation).mockReturnValueOnce(new Promise(resolve => { finish = resolve; }));
+    const h = harness();
+    await h.lifecycle.createEditor('body');
+    const presentation = h.lifecycle.finishEditorPresentation(h.document);
+    h.switchDocument();
+    finish(true);
+    await expect(presentation).resolves.toBe(false);
+    expect(h.ready).toBe(false);
+  });
+
+  it('restores keyboard focus after a recreated editor becomes visible', async () => {
+    const h = harness();
+    const focus = vi.fn(() => { expect(h.ready).toBe(true); });
+    vi.mocked(createEditor)
+      .mockResolvedValueOnce({ view: { hasFocus: true } } as never)
+      .mockResolvedValueOnce({ view: { focus } } as never);
+    await h.lifecycle.createEditor('body');
+    await h.lifecycle.finishEditorPresentation(h.document);
+
+    await h.lifecycle.replaceEditorContent('replacement', { restoreCursor: true });
+
+    expect(focus).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a recreated editor hidden if its pane is disposed while settling', async () => {
+    const h = harness();
+    await h.lifecycle.createEditor('body');
+    await h.lifecycle.finishEditorPresentation(h.document);
+    let finish!: (settled: boolean) => void;
+    let entered!: () => void;
+    const measuring = new Promise<void>(resolve => { entered = resolve; });
+    vi.mocked(settleEditorPresentation).mockImplementationOnce(() => {
+      entered();
+      return new Promise(resolve => { finish = resolve; });
+    });
+    let current = true;
+    const replacement = h.lifecycle.replaceEditorContent('replacement', { isCurrent: () => current });
+    await measuring;
+    current = false;
+    finish(true);
+    await replacement;
+    expect(h.ready).toBe(false);
   });
 });
 

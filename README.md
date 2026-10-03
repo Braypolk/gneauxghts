@@ -115,6 +115,25 @@ click a tag in a selected note’s details to highlight its peers.
 - `Cmd+Shift+L` opens the previous note or chat location in a split pane
 - `Enter` in the title field jumps into the editor body
 
+## Images
+
+Images in notes support both `![[photo.png|200]]` and
+`![Caption|200](assets/photo.png "Optional title")`, including local Markdown
+reference images. Files resolve within the vault's `assets` folder; encoded
+spaces and contained subfolders work.
+
+Hover for Zoom and source controls. Click an image once to select it for deletion
+or editing; click it again to open the note's image gallery. Arrow keys also select
+an image, and Space or Zoom opens the gallery directly. Enter reveals editable Markdown with
+its preview, and Tab targets the width. On a selected image, `+` / `=` / `-` change
+width by 50 pixels, `0` clears the size, and a corner drag resizes proportionally.
+Backspace/Delete remove the embed; Cmd/Ctrl-C and Cmd/Ctrl-X copy/cut its Markdown.
+These edits share the note's undo history and never delete the asset file.
+
+In the viewer, Left/Right browse images, `+` / `=` / `-` zoom, `0` fits, dragging pans,
+and Escape returns to the originating editor position. Failed clipboard imports
+retain selected text and offer Retry/Cancel; retry reuses files already saved.
+
 ## Stack
 
 - Tauri 2
@@ -163,6 +182,20 @@ Build a release app:
 ```bash
 pnpm tauri build
 ```
+
+Development and test builds use packed debugging symbols. On macOS this keeps
+full debug information in `.dSYM` bundles instead of leaving new loose object
+files in `target/debug/deps` after every incremental rebuild. Incremental
+compilation remains enabled; symbol packing adds a little linking time.
+
+Run `pnpm test:build:artifacts` on macOS to verify that repeated edits, builds,
+and tests keep dependency output stable. Cargo still retains artifacts from
+old dependency, feature, and toolchain combinations. To discard the debug
+output between development milestones, stop development builds and run
+`pnpm clean:rust:debug`. This preserves release apps and installers, but removes
+ordinary debug executables, which must be rebuilt before running them again.
+The separately pinned native E2E copies remain; rebuild those whenever their
+source changes.
 
 ## Semantic Search
 

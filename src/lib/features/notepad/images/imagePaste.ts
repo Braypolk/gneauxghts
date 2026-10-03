@@ -1,135 +1,101 @@
-import { RangeSetBuilder, StateEffect, StateField } from '@codemirror/state';
-import { Decoration, EditorView, WidgetType } from '@codemirror/view';
-import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
-
-interface PlaceholderEntry {
-  id: symbol;
-  from: number;
-  to: number;
+import { StateEffect, StateField, Transaction } from '@codemirror/state';
+import { isolateHistory } from '@codemirror/commands';
+import { Decoration, EditorView, ViewPlugin, WidgetType } from '@codemirror/view';
+import type { StoredImageAsset } from '../model/types';
+import type { ImagesConfig } from './imageConfig';
+interface Upload {
+  id: symbol; from: number; to: number; original: string; files: File[];
+  assets: (StoredImageAsset | null)[]; error: boolean; pending: boolean;
 }
-
-const addPlaceholderEffect = StateEffect.define<{ id: symbol; pos: number }>();
-const removePlaceholderEffect = StateEffect.define<{ id: symbol }>();
-
-class UploadPlaceholderWidget extends WidgetType {
-  override toDOM() {
-    const placeholder = document.createElement('span');
-    placeholder.className = 'gn-image-upload-placeholder';
-    placeholder.textContent = 'Saving image...';
-    return placeholder;
-  }
-}
-
-const placeholderField = StateField.define<readonly PlaceholderEntry[]>({
-  create() {
-    return [];
-  },
-  update(value, transaction) {
-    let next = value.map((entry) => ({
-      ...entry,
-      from: transaction.changes.mapPos(entry.from, -1),
-      to: transaction.changes.mapPos(entry.to, 1)
-    }));
-
-    for (const effect of transaction.effects) {
-      if (effect.is(addPlaceholderEffect)) {
-        next = [...next, { id: effect.value.id, from: effect.value.pos, to: effect.value.pos }];
-      } else if (effect.is(removePlaceholderEffect)) {
-        next = next.filter((entry) => entry.id !== effect.value.id);
-      }
+const setUpload = StateEffect.define<Upload>();
+const removeUpload = StateEffect.define<symbol>();
+const uploads = StateField.define<readonly Upload[]>({
+  create: () => [],
+  update(value, tr) {
+    const next = value.filter(job => {
+      let touched = tr.isUserEvent('input.external-reset');
+      tr.changes.iterChangedRanges((from, to) => {
+        if (from <= job.to && to >= job.from) touched = true;
+      });
+      return !touched;
+    }).map(job => ({ ...job, from: tr.changes.mapPos(job.from, 1), to: tr.changes.mapPos(job.to, -1) }));
+    for (const effect of tr.effects) {
+      if (effect.is(removeUpload)) { const index = next.findIndex(job => job.id === effect.value); if (index >= 0) next.splice(index, 1); }
+      if (effect.is(setUpload)) { const index = next.findIndex(job => job.id === effect.value.id); if (index >= 0) next[index] = effect.value; else next.push(effect.value); }
     }
-
-    return next;
-  },
-  provide(field) {
-    return EditorView.decorations.from(field, (entries) => {
-      const builder = new RangeSetBuilder<Decoration>();
-      for (const entry of entries) {
-        builder.add(
-          entry.from,
-          entry.from,
-          Decoration.widget({
-            widget: new UploadPlaceholderWidget(),
-            side: -1
-          })
-        );
-      }
-      return builder.finish();
-    });
+    return next.sort((a, b) => a.from - b.from);
   }
 });
-
-function findUploadPlaceholder(view: EditorView, id: symbol) {
-  return view.state.field(placeholderField).find((entry) => entry.id === id)?.from ?? -1;
+class UploadWidget extends WidgetType {
+  constructor(readonly job: Upload, readonly retry: () => void, readonly cancel: () => void) { super(); }
+  override eq(other: UploadWidget) { return this.job.id === other.job.id && this.job.error === other.job.error && this.job.pending === other.job.pending; }
+  override toDOM() {
+    const element = document.createElement('span'); element.className = 'gn-image-upload-placeholder'; element.contentEditable = 'false';
+    element.setAttribute('role', 'status'); element.textContent = this.job.error ? 'Image save failed. ' : 'Saving image… ';
+    for (const [label, run] of [...(this.job.error ? [['Retry', this.retry] as const] : []), ['Cancel', this.cancel] as const]) {
+      const button = document.createElement('button'); button.type = 'button'; button.textContent = label;
+      button.onclick = event => { event.preventDefault(); event.stopPropagation(); run(); }; element.append(button);
+    }
+    return element;
+  }
+  override ignoreEvent() { return true; }
 }
-
 export function createImagePasteExtension(config: ImagesConfig) {
-  return [
-    placeholderField,
-    EditorView.domEventHandlers({
-      paste: (event, view) => {
-        if (!(event instanceof ClipboardEvent)) {
-          return false;
-        }
-
-        const imageFiles = Array.from(event.clipboardData?.files ?? []).filter((file) =>
-          file.type.startsWith('image/')
-        );
-        if (imageFiles.length === 0) {
-          return false;
-        }
-
-        event.preventDefault();
-        const placeholderId = Symbol('notepad image upload');
-        const selection = view.state.selection.main;
-        let changes = null as { from: number; to: number; insert: string } | null;
-        let insertPos = selection.from;
-
-        if (!selection.empty) {
-          changes = { from: selection.from, to: selection.to, insert: '' };
-          insertPos = selection.from;
-        }
-
-        view.dispatch(
-          view.state.update({
-            ...(changes ? { changes } : {}),
-            effects: addPlaceholderEffect.of({ id: placeholderId, pos: insertPos })
-          })
-        );
-
-        void Promise.all(imageFiles.map((file) => config.storePastedImage(file)))
-          .then((assets) => {
-            const placeholderPos = findUploadPlaceholder(view, placeholderId);
-            if (placeholderPos < 0) {
-              return;
-            }
-
-            const embedMarkdown = assets.map((asset) => `![[${asset.fileName}]]`).join('\n\n');
-            const insertEnd = placeholderPos + embedMarkdown.length;
-            view.dispatch(
-              view.state.update({
-                changes: { from: placeholderPos, to: placeholderPos, insert: embedMarkdown },
-                selection: { anchor: insertEnd },
-                effects: removePlaceholderEffect.of({ id: placeholderId }),
-                scrollIntoView: true
-              })
-            );
-          })
-          .catch((error) => {
-            console.error('Failed to store pasted image:', error);
-            if (findUploadPlaceholder(view, placeholderId) < 0) {
-              return;
-            }
-
-            view.dispatch(
-              view.state.update({
-                effects: removePlaceholderEffect.of({ id: placeholderId })
-              })
-            );
-          });
-
-        return true;
-      }
-    })
-  ];
+  const lifecycle = ViewPlugin.fromClass(class { alive = true; destroy() { this.alive = false; } });
+  function find(view: EditorView, id: symbol) { return view.state.field(uploads, false)?.find(job => job.id === id); }
+  async function run(view: EditorView, id: symbol) {
+    const owner = view.plugin(lifecycle), job = find(view, id);
+    if (!owner || !job || job.pending || view.state.readOnly) return;
+    view.dispatch({ effects: setUpload.of({ ...job, pending: true, error: false }) });
+    const results = await Promise.allSettled(job.files.map((file, index) => job.assets[index] ? Promise.resolve(job.assets[index]!) : config.storePastedImage(file)));
+    const current = find(view, id);
+    if (!owner.alive || view.plugin(lifecycle) !== owner || !current || view.state.readOnly) return;
+    const assets = results.map(result => result.status === 'fulfilled' ? result.value : null);
+    if (assets.some(asset => !asset)) {
+      view.dispatch({ effects: setUpload.of({ ...current, assets, pending: false, error: true }) }); return;
+    }
+    if (view.state.sliceDoc(current.from, current.to) !== current.original) {
+      view.dispatch({ effects: removeUpload.of(id) }); return;
+    }
+    const markdown = assets.map(asset => `![[${asset!.fileName}]]`).join('\n\n');
+    view.dispatch({ changes: { from: current.from, to: current.to, insert: markdown },
+      selection: { anchor: current.from + markdown.length }, effects: removeUpload.of(id), scrollIntoView: true,
+      annotations: [Transaction.userEvent.of('input.image.paste'), isolateHistory.of('full')] });
+  }
+  const placeholders = StateField.define({
+    create: () => Decoration.none,
+    update(_value, tr) {
+      return Decoration.set(tr.state.field(uploads).map(job => Decoration.widget({
+        side: -1, widget: new UploadWidget(job,
+          () => { const view = views.get(job.id); if (view) void run(view, job.id); },
+          () => { const view = views.get(job.id); if (view && find(view, job.id)) view.dispatch({ effects: removeUpload.of(job.id) }); })
+      }).range(job.from)), true);
+    },
+    provide: field => EditorView.decorations.from(field)
+  });
+  // View bindings are scoped to this extension and removed with each job/lifetime.
+  const views = new Map<symbol, EditorView>();
+  const cleanup = ViewPlugin.fromClass(class {
+    update(update: import('@codemirror/view').ViewUpdate) {
+      const current = update.state.field(uploads);
+      for (const id of views.keys()) if (!current.some(job => job.id === id)) views.delete(id);
+      if (update.state.readOnly && current.length) queueMicrotask(() => {
+        if (update.view.plugin(lifecycle)?.alive && update.view.state.readOnly)
+          update.view.dispatch({ effects: update.view.state.field(uploads).map(job => removeUpload.of(job.id)) });
+      });
+    }
+    destroy() { views.clear(); }
+  });
+  return [uploads, placeholders, lifecycle, cleanup, EditorView.domEventHandlers({
+    paste(event, view) {
+      if (view.state.readOnly || view.composing || view.state.selection.ranges.length !== 1) return false;
+      const files = Array.from(event.clipboardData?.files ?? []).filter(file => file.type.startsWith('image/'));
+      if (!files.length) return false;
+      event.preventDefault();
+      const selection = view.state.selection.main, id = Symbol('image import');
+      const job: Upload = { id, from: selection.from, to: selection.to, original: view.state.sliceDoc(selection.from, selection.to), files,
+        assets: files.map(() => null), error: false, pending: false };
+      views.set(id, view); view.dispatch({ effects: setUpload.of(job) }); void run(view, id); return true;
+    }
+  })];
 }

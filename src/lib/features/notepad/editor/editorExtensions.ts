@@ -1,3 +1,4 @@
+import { imageResizeHistory } from '../images/imageResizeHistory';
 import { history, historyKeymap } from '@codemirror/commands';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
@@ -51,6 +52,7 @@ export function createRootState(markdown: string) {
     doc: markdown,
     extensions: [
       history(),
+      imageResizeHistory,
       keymap.of(historyKeymap),
       createMarkdownBaseExtensions()
     ]
@@ -111,7 +113,7 @@ export function createPaneExtensions(
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
     createExternalLinkClickExtension(),
-    createImageEmbedsExtension(imagesConfig),
+    createImageEmbedsExtension(imagesConfig, (view) => sharedResources?.resolveViewCallbacks(view) ?? null),
     ...createImagePasteExtension(imagesConfig),
     ...slashMenuApi.extension,
     ...selectionMenuApi.extension,

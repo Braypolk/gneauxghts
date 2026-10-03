@@ -16,6 +16,8 @@ declare global {
       invocations: BrowserE2EInvocation[];
       holdSave(fail?: boolean): void;
       releaseSave(): void;
+      seedImageAsset(name: string): void;
+      configureImageSave(failures?: number, delayMillis?: number): void;
       seedRevisionChat(): void;
       seedLargeHistory(): void;
       delayNextHistoryPage(delayMillis?: number): void;

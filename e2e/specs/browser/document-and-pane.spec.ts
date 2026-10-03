@@ -22,7 +22,7 @@ async function waitForNote(title: string) {
   await browser.waitUntil(async () => (await input.getValue()) === title, {
     timeoutMsg: `Expected active note title to become ${title}`
   });
-  await $('span=Loading editor').waitForExist({ reverse: true });
+  await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
 }
 
 async function openRecentNote(title: string) {

@@ -1,5 +1,6 @@
 pub(crate) mod citations;
 pub(crate) mod date_time;
+mod recovery;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use blake3::Hasher;
 use rusqlite::{params, Connection, OptionalExtension};
@@ -1068,6 +1069,7 @@ impl ChatService {
             let _ = self.write_projection(&conversation_id, false);
         }
         self.backfill_default_conversation_titles()?;
+        self.recover_transcript_conversations()?;
         Ok(())
     }
 

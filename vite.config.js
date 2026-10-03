@@ -35,6 +35,8 @@ function curatedLanguageData() {
 
 // https://vite.dev/config/
 export default defineConfig(async () => ({
+  cacheDir: process.env.VITE_E2E_BROWSER === 'true' ? 'node_modules/.vite-e2e-browser'
+    : process.env.VITE_E2E_NATIVE === 'true' ? 'node_modules/.vite-e2e-native' : undefined,
   plugins: [curatedLanguageData(), sveltekit(), tailwindcss()],
   build: {
     rollupOptions: {
@@ -87,7 +89,7 @@ export default defineConfig(async () => ({
     port: 1420,
     strictPort: true,
     host: host || false,
-    hmr: host
+    hmr: process.env.VITE_E2E_BROWSER === 'true' || process.env.VITE_E2E_NATIVE === 'true' ? false : host
       ? {
           protocol: "ws",
           host,

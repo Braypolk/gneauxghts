@@ -11,6 +11,19 @@ use std::{
 };
 
 #[tauri::command]
+pub(crate) fn read_image_asset_fingerprint(
+    state: tauri::State<'_, AppState>,
+    file_name: String,
+) -> Result<String, String> {
+    let assets_dir = prepare_notes_dir(&state, false)?.join(ASSETS_DIRECTORY_NAME);
+    let path = resolve_asset_image_path(&assets_dir, &file_name)?;
+    let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
+    let modified = metadata.modified().map_err(|err| err.to_string())?
+        .duration_since(std::time::UNIX_EPOCH).map_err(|err| err.to_string())?.as_nanos();
+    Ok(format!("{}:{modified}", metadata.len()))
+}
+
+#[tauri::command]
 pub(crate) fn read_image_asset_data_url(
     state: tauri::State<'_, AppState>,
     file_name: String,
@@ -72,10 +85,10 @@ pub(super) fn resolve_asset_image_path(
     }
 
     let file_path = Path::new(trimmed);
-    if file_path.components().count() != 1
-        || file_path.file_name().and_then(OsStr::to_str) != Some(trimmed)
+    if trimmed.contains(['\\', ':'])
+        || !file_path.components().all(|part| matches!(part, std::path::Component::Normal(_)))
     {
-        return Err("Image asset path must be a file name".to_string());
+        return Err("Image asset path must be relative to the assets folder".to_string());
     }
 
     let asset_path = assets_dir.join(trimmed);
@@ -83,7 +96,12 @@ pub(super) fn resolve_asset_image_path(
         return Err("Image asset was not found".to_string());
     }
 
-    Ok(asset_path)
+    let root = assets_dir.canonicalize().map_err(|err| err.to_string())?;
+    let canonical = asset_path.canonicalize().map_err(|err| err.to_string())?;
+    if !canonical.starts_with(&root) {
+        return Err("Image asset is outside the assets folder".to_string());
+    }
+    Ok(canonical)
 }
 
 pub(super) fn mime_type_from_asset_name(file_name: &str) -> &'static str {

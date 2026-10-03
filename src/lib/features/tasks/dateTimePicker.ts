@@ -13,6 +13,7 @@ export interface DateTimePickerOptions {
   boundsElement?: HTMLElement | null;
   editInNote?: boolean;
   onCommit: (value: PickerValue) => Promise<void> | void;
+  /** Called after unmount; when provided, the caller owns focus restoration. */
   onClose?: (restoreFocus: boolean) => void;
 }
 let activeClose: DateTimePickerClose | null = null;
@@ -31,8 +32,10 @@ export function openDateTimePicker(options: DateTimePickerOptions): DateTimePick
     activeClose = null;
     void unmount(component).then(() => {
       target.remove();
-      if (restoreFocus && !activeClose && previousFocus?.isConnected) previousFocus.focus();
-      options.onClose?.(restoreFocus);
+      // Editors restore focus through EditorView.focus(), including WebKit's
+      // scroll-preserving fallback. A native focus first can jump to an old caret.
+      if (options.onClose) options.onClose(restoreFocus);
+      else if (restoreFocus && !activeClose && previousFocus?.isConnected) previousFocus.focus({ preventScroll: true });
     });
   };
   const component = mount(DateTimePicker, { target, props: { options, close } });

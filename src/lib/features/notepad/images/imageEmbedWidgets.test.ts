@@ -1,62 +1,48 @@
 import { describe, expect, it } from 'vitest';
-import { EditorState } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
-import {
-  buildImageEmbedDecorations,
-  selectionIntersectsImageEmbed
-} from './imageEmbedWidgets';
-
-function createView(doc: string, anchor: number, head = anchor) {
-  // Headless stub: buildImageEmbedDecorations only reads state (and stores the
-  // view reference on widgets — it does not mount DOM in this path).
-  return {
-    state: EditorState.create({
-      doc,
-      selection: { anchor, head }
-    })
-  } as EditorView;
-}
-
-describe('selectionIntersectsImageEmbed', () => {
-  const ranges = [{ from: 10, to: 30 }];
-
-  it('detects overlapping selection', () => {
-    expect(selectionIntersectsImageEmbed({ from: 15, to: 15 }, ranges)).toBe(true);
-    expect(selectionIntersectsImageEmbed({ from: 5, to: 12 }, ranges)).toBe(true);
+import { EditorSelection, EditorState } from '@codemirror/state';
+import { EditorView } from '@codemirror/view';
+import { createImageEmbedsExtension } from './imageEmbeds';
+import { defaultImagesConfig } from './imageConfig';
+import { imageState, imageSourceEffect, selectedImage } from './imageState';
+function state(doc: string) { return EditorState.create({ doc, extensions: createImageEmbedsExtension(defaultImagesConfig) }); }
+describe('pane image rendering state', () => {
+  it('keeps a whole image selection rendered and reveals explicitly edited source with a preview', () => {
+    let current = state('before\n\n![[shot.png]]\n\nafter');
+    const image = current.field(imageState).images[0];
+    current = current.update({ selection: EditorSelection.range(image.from, image.to) }).state;
+    expect(selectedImage(current)?.target.fileName).toBe('shot.png');
+    const rendered = current.facet(EditorView.decorations)[0];
+    expect(typeof rendered).not.toBe('function');
+    current = current.update({ selection: { anchor: image.from + 3 }, effects: imageSourceEffect.of(image.from) }).state;
+    expect(selectedImage(current)).toBeNull();
+    expect(current.field(imageState).sourceFrom).toBe(image.from);
+    current = current.update({ selection: { anchor: current.doc.length } }).state;
+    expect(current.field(imageState).sourceFrom).toBeNull();
   });
-
-  it('ignores adjacent or distant selection', () => {
-    expect(selectionIntersectsImageEmbed({ from: 10, to: 10 }, ranges)).toBe(false);
-    expect(selectionIntersectsImageEmbed({ from: 30, to: 30 }, ranges)).toBe(false);
-    expect(selectionIntersectsImageEmbed({ from: 0, to: 5 }, ranges)).toBe(false);
+  it('shares inventory on selection changes and keeps source state local to each pane', () => {
+    const a = state('![[shot.png]]'), b = state('![[shot.png]]');
+    const changed = a.update({ selection: { anchor: 4 }, effects: imageSourceEffect.of(0) }).state;
+    expect(changed.field(imageState).images).toBe(a.field(imageState).images);
+    expect(b.field(imageState).sourceFrom).toBeNull();
+    expect(b.field(imageState).lifetime).not.toBe(a.field(imageState).lifetime);
+  });
+  it('maps explicit source mode through edits above the image', () => {
+    let current = state('text\n\n![[shot.png]]');
+    current = current.update({ selection: { anchor: 10 }, effects: imageSourceEffect.of(6) }).state;
+    current = current.update({ changes: { from: 0, insert: 'more ' } }).state;
+    expect(current.field(imageState).sourceFrom).toBe(11);
   });
 });
 
-describe('buildImageEmbedDecorations', () => {
-  it('returns embed ranges even when selection hides the widget', () => {
-    const doc = 'before ![[shot.png]] after';
-    const from = doc.indexOf('![[');
-    const to = doc.indexOf(']]') + 2;
-    const view = createView(doc, from + 2);
-
-    const built = buildImageEmbedDecorations(view);
-    expect(built.ranges).toEqual([{ from, to }]);
-    expect(built.decorations.size).toBe(0);
-  });
-
-  it('builds decorations when selection is outside the embed', () => {
-    const doc = 'before ![[shot.png]] after';
-    const view = createView(doc, 0);
-
-    const built = buildImageEmbedDecorations(view);
-    expect(built.ranges).toHaveLength(1);
-    expect(built.decorations.size).toBeGreaterThan(0);
-  });
-
-  it('builds decorations without requiring an asset root path', () => {
-    const view = createView('![[shot.png]]', 0);
-    const built = buildImageEmbedDecorations(view);
-    expect(built.ranges).toHaveLength(1);
-    expect(built.decorations.size).toBeGreaterThan(0);
-  });
+it('retains the latest valid preview during an intermediate invalid destination', () => {
+  let current = state('![[shot.png]]');
+  current = current.update({ selection: EditorSelection.range(3, 11), effects: imageSourceEffect.of(0) }).state;
+  current = current.update({ changes: { from: 3, to: 11, insert: 'b' }, selection: { anchor: 4 } }).state;
+  expect(current.field(imageState).images).toHaveLength(0);
+  expect(current.field(imageState).sourcePreview?.assetName).toBe('shot.png');
+  expect(current.field(imageState).sourceFrom).toBe(0);
+  current = current.update({ changes: { from: 4, insert: '.png' }, selection: { anchor: 8 } }).state;
+  expect(current.field(imageState).sourcePreview?.assetName).toBe('b.png');
+  current = current.update({ selection: { anchor: current.doc.length } }).state;
+  expect(current.field(imageState).sourcePreview).toBeNull();
 });

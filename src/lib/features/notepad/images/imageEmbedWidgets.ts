@@ -1,391 +1,170 @@
-import { invoke } from '@tauri-apps/api/core';
-import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, type DecorationSet, EditorView, WidgetType } from '@codemirror/view';
-import {
-  forEachImageEmbed,
-  formatImageEmbedTarget,
-  type ParsedImageEmbedTarget
-} from '$lib/features/notepad/images/imageEmbedParser';
-
-const MAX_IMAGE_ASSET_URL_CACHE_ENTRIES = 128;
-const MAX_IMAGE_EMBED_ELEMENT_CACHE_ENTRIES = 256;
-
-const imageAssetUrlCache = new Map<string, string>();
-const pendingImageAssetUrlLoads = new Map<string, Promise<string>>();
-const imageEmbedElementCache = new Map<string, CachedImageEmbedElement>();
-
-interface ImageEmbedWidgetState {
-  view: EditorView;
-  from: number;
-  to: number;
-  target: ParsedImageEmbedTarget;
+import type { ImageEmbedMatch } from './imageEmbedParser';
+import { selectedImage } from './imageState';
+export interface ImageEmbedRange { from: number; to: number }
+export function selectionIntersectsImageEmbed(selection: { from: number; to: number }, ranges: readonly ImageEmbedRange[]) {
+  return ranges.some(range => selection.from < range.to && selection.to > range.from);
 }
-
-interface CachedImageEmbedElement {
-  container: HTMLSpanElement;
-  image: HTMLImageElement;
-  resizeHandle: HTMLSpanElement;
-  state: ImageEmbedWidgetState;
+export function availableImageWidth(view: EditorView, element: HTMLElement) {
+  const line = element.closest<HTMLElement>('.cm-line');
+  const style = getComputedStyle(line ?? element);
+  const inset = line ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight)
+    : parseFloat(style.marginLeft) + parseFloat(style.marginRight);
+  return Math.max(48, (line?.clientWidth ?? view.contentDOM.clientWidth) - (inset || 0));
 }
-
-function setBoundedCacheEntry<K, V>(cache: Map<K, V>, key: K, value: V, maxEntries: number) {
-  if (cache.has(key)) {
-    cache.delete(key);
-  }
-  cache.set(key, value);
-
-  while (cache.size > maxEntries) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey === undefined) {
-      break;
-    }
-    cache.delete(oldestKey);
-  }
+export interface ImageWidgetActions {
+  select(view: EditorView, image: ImageEmbedMatch): void;
+  source(view: EditorView, image: ImageEmbedMatch, size?: boolean): void;
+  resize(view: EditorView, image: ImageEmbedMatch, width: number): void;
+  open(view: EditorView, image: ImageEmbedMatch): void;
+  load(name: string, refresh?: boolean): Promise<string>;
+  listen(cancel: () => void): () => void;
 }
-
-function getBoundedCacheEntry<K, V>(cache: Map<K, V>, key: K) {
-  const value = cache.get(key);
-  if (value === undefined) {
-    return null;
-  }
-
-  cache.delete(key);
-  cache.set(key, value);
-  return value;
+interface MountedImage {
+  ref: ImageEmbedMatch; alive: boolean; generation: number; cancel: (() => void) | null;
+  image: HTMLImageElement; status: HTMLElement; load(refresh?: boolean): void;
+  suppressClick: boolean;
+  selectedOnPointerDown: boolean | null;
 }
-
-async function loadImageAssetUrl(fileName: string) {
-  const cached = getBoundedCacheEntry(imageAssetUrlCache, fileName);
-  if (cached) {
-    return cached;
-  }
-
-  const pending = pendingImageAssetUrlLoads.get(fileName);
-  if (pending) {
-    return pending;
-  }
-
-  const nextLoad = invoke<string>('read_image_asset_data_url', { fileName })
-    .then((dataUrl) => {
-      setBoundedCacheEntry(
-        imageAssetUrlCache,
-        fileName,
-        dataUrl,
-        MAX_IMAGE_ASSET_URL_CACHE_ENTRIES
-      );
-      pendingImageAssetUrlLoads.delete(fileName);
-      return dataUrl;
-    })
-    .catch((error) => {
-      pendingImageAssetUrlLoads.delete(fileName);
-      throw error;
-    });
-
-  pendingImageAssetUrlLoads.set(fileName, nextLoad);
-  return nextLoad;
-}
-
-function preserveEditorScrollPosition(view: EditorView, runUpdate: () => void) {
-  const scrollContainer = view.scrollDOM;
-  const previousTop = scrollContainer.scrollTop;
-  const previousLeft = scrollContainer.scrollLeft;
-
-  runUpdate();
-
-  scrollContainer.scrollTop = previousTop;
-  scrollContainer.scrollLeft = previousLeft;
-
-  queueMicrotask(() => {
-    scrollContainer.scrollTop = previousTop;
-    scrollContainer.scrollLeft = previousLeft;
-  });
-}
-
-function updateImageEmbedElement(
-  cachedElement: CachedImageEmbedElement,
-  target: ParsedImageEmbedTarget
-) {
-  const { container, image } = cachedElement;
-  cachedElement.state = {
-    ...cachedElement.state,
-    target
-  };
-
-  container.style.width = target.width ? `${target.width}px` : '';
-  container.style.maxHeight = target.height ? `${target.height}px` : '';
-  image.style.width = target.width ? `${target.width}px` : '';
-  image.style.height = target.height ? `${target.height}px` : 'auto';
-  image.alt = target.fileName;
-  image.dataset.fileName = target.fileName;
-
-  const cachedUrl = getBoundedCacheEntry(imageAssetUrlCache, target.fileName);
-  if (cachedUrl) {
-    container.dataset.loading = 'false';
-    container.dataset.broken = 'false';
-    if (image.src !== cachedUrl) {
-      image.src = cachedUrl;
-    }
-    return;
-  }
-
-  if (container.dataset.loading === 'true' && image.dataset.fileName === target.fileName) {
-    return;
-  }
-
-  container.dataset.loading = 'true';
-  container.dataset.broken = 'false';
-  void loadImageAssetUrl(target.fileName)
-    .then((dataUrl) => {
-      if (
-        !container.isConnected &&
-        imageEmbedElementCache.get(container.dataset.widgetKey ?? '')?.container !== container
-      ) {
-        return;
-      }
-
-      if (image.dataset.fileName !== target.fileName) {
-        return;
-      }
-
-      container.dataset.loading = 'false';
-      container.dataset.broken = 'false';
-      if (image.src !== dataUrl) {
-        image.src = dataUrl;
-      }
-    })
-    .catch((error) => {
-      if (image.dataset.fileName !== target.fileName) {
-        return;
-      }
-
-      console.error('Failed to load image asset:', error);
-      container.dataset.loading = 'false';
-      container.dataset.broken = 'true';
-      image.alt = `Missing image: ${target.fileName}`;
-    });
-}
-
-function dispatchSelection(view: EditorView, anchor: number) {
-  view.dispatch(
-    view.state.update({
-      selection: { anchor },
-      scrollIntoView: true
-    })
-  );
-}
-
-function createImageEmbedElement(
-  widgetKey: string,
-  view: EditorView,
-  from: number,
-  to: number,
-  target: ParsedImageEmbedTarget
-) {
-  const cachedElement = getBoundedCacheEntry(imageEmbedElementCache, widgetKey);
-  if (cachedElement) {
-    cachedElement.state = { view, from, to, target };
-    updateImageEmbedElement(cachedElement, target);
-    return cachedElement.container;
-  }
-
-  const container = document.createElement('span');
-  container.className = 'gn-image-embed';
-  container.contentEditable = 'false';
-  container.dataset.widgetKey = widgetKey;
-
-  const image = document.createElement('img');
-  // Eager: src is set asynchronously to a data: URL after IPC. Lazy loading
-  // can skip decoding for zero-size widgets and leave the image blank forever.
-  image.decoding = 'async';
-
-  image.addEventListener('load', () => {
-    container.dataset.loading = 'false';
-    container.dataset.broken = 'false';
-  });
-
-  image.addEventListener('error', () => {
-    container.dataset.loading = 'false';
-    container.dataset.broken = 'true';
-    image.alt = `Missing image: ${image.dataset.fileName ?? 'image'}`;
-  });
-
-  const resizeHandle = document.createElement('span');
-  resizeHandle.className = 'gn-image-embed-resize-handle';
-  resizeHandle.title = 'Drag to resize image';
-  resizeHandle.contentEditable = 'false';
-
-  const nextCachedElement: CachedImageEmbedElement = {
-    container,
-    image,
-    resizeHandle,
-    state: {
-      view,
-      from,
-      to,
-      target
-    }
-  };
-
-  resizeHandle.addEventListener('pointerdown', (event) => {
-    event.preventDefault();
-    event.stopPropagation();
-
-    const currentState = nextCachedElement.state;
-    const startX = event.clientX;
-    const startWidth =
-      Math.round(nextCachedElement.image.getBoundingClientRect().width) ||
-      currentState.target.width ||
-      320;
-    const maxWidth = Math.max(96, currentState.view.dom.getBoundingClientRect().width - 32);
-    let currentWidth = startWidth;
-
-    const applyPreviewWidth = (width: number) => {
-      currentWidth = Math.max(96, Math.min(width, maxWidth));
-      nextCachedElement.container.style.width = `${currentWidth}px`;
-      nextCachedElement.image.style.width = `${currentWidth}px`;
-      nextCachedElement.image.style.height = 'auto';
-    };
-
-    const stopTracking = () => {
-      window.removeEventListener('pointermove', handlePointerMove, true);
-      window.removeEventListener('pointerup', handlePointerUp, true);
-      window.removeEventListener('pointercancel', handlePointerCancel, true);
-    };
-
-    const commitWidth = () => {
-      stopTracking();
-      const activeState = nextCachedElement.state;
-      const nextWidth = Math.max(96, Math.round(currentWidth));
-      const nextTarget: ParsedImageEmbedTarget = {
-        fileName: activeState.target.fileName,
-        width: nextWidth,
-        height: null
-      };
-      const nextMarkdown = formatImageEmbedTarget(nextTarget);
-      preserveEditorScrollPosition(activeState.view, () => {
-        activeState.view.dispatch(
-          activeState.view.state.update({
-            changes: { from: activeState.from, to: activeState.to, insert: nextMarkdown }
-          })
-        );
-      });
-    };
-
-    const handlePointerMove = (moveEvent: PointerEvent) => {
-      moveEvent.preventDefault();
-      const deltaX = moveEvent.clientX - startX;
-      applyPreviewWidth(startWidth + deltaX);
-    };
-
-    const handlePointerUp = (upEvent: PointerEvent) => {
-      upEvent.preventDefault();
-      commitWidth();
-    };
-
-    const handlePointerCancel = () => {
-      stopTracking();
-    };
-
-    window.addEventListener('pointermove', handlePointerMove, true);
-    window.addEventListener('pointerup', handlePointerUp, true);
-    window.addEventListener('pointercancel', handlePointerCancel, true);
-  });
-
-  container.appendChild(image);
-  container.appendChild(resizeHandle);
-  container.addEventListener('pointerdown', (event) => {
-    if (event.target === resizeHandle) {
-      return;
-    }
-
-    event.preventDefault();
-    const currentState = nextCachedElement.state;
-    const selectionPos = Math.max(0, Math.min(currentState.from + 2, currentState.view.state.doc.length));
-    dispatchSelection(currentState.view, selectionPos);
-    currentState.view.focus();
-  });
-
-  setBoundedCacheEntry(
-    imageEmbedElementCache,
-    widgetKey,
-    nextCachedElement,
-    MAX_IMAGE_EMBED_ELEMENT_CACHE_ENTRIES
-  );
-  updateImageEmbedElement(nextCachedElement, target);
-  return container;
-}
-
-class ImageEmbedWidget extends WidgetType {
-  constructor(
-    private readonly widgetKey: string,
-    private readonly view: EditorView,
-    private readonly from: number,
-    private readonly to: number,
-    private readonly target: ParsedImageEmbedTarget
-  ) {
-    super();
-  }
-
+const mounted = new WeakMap<HTMLElement, MountedImage>();
+export class ImageEmbedWidget extends WidgetType {
+  constructor(readonly ref: ImageEmbedMatch, readonly selected: boolean,
+    readonly block: boolean, readonly actions: ImageWidgetActions, readonly readOnly = false) { super(); }
   override eq(other: ImageEmbedWidget) {
-    return (
-      this.widgetKey === other.widgetKey &&
-      this.from === other.from &&
-      this.to === other.to &&
-      this.target.fileName === other.target.fileName &&
-      this.target.width === other.target.width &&
-      this.target.height === other.target.height
-    );
+    return this.ref.source === other.ref.source && this.ref.from === other.ref.from &&
+      this.ref.to === other.ref.to && this.ref.target.fileName === other.ref.target.fileName &&
+      this.ref.target.width === other.ref.target.width && this.ref.target.height === other.ref.target.height &&
+      this.selected === other.selected && this.block === other.block && this.readOnly === other.readOnly;
   }
-
-  override toDOM() {
-    return createImageEmbedElement(this.widgetKey, this.view, this.from, this.to, this.target);
-  }
-
-  override ignoreEvent() {
-    return false;
-  }
-}
-
-export interface ImageEmbedRange {
-  from: number;
-  to: number;
-}
-
-export interface ImageEmbedDecorationBuild {
-  decorations: DecorationSet;
-  /** All embed spans in the doc (including those hidden because selection intersects). */
-  ranges: ImageEmbedRange[];
-}
-
-export function selectionIntersectsImageEmbed(
-  selection: { from: number; to: number },
-  ranges: readonly ImageEmbedRange[]
-) {
-  return ranges.some((range) => selection.from < range.to && selection.to > range.from);
-}
-
-export function buildImageEmbedDecorations(view: EditorView): ImageEmbedDecorationBuild {
-  const builder = new RangeSetBuilder<Decoration>();
-  const ranges: ImageEmbedRange[] = [];
-
-  const selection = view.state.selection.main;
-  const text = view.state.doc.toString();
-  forEachImageEmbed(text, ({ from, to, target, widgetKey }) => {
-    ranges.push({ from, to });
-    // Hide the widget (show raw markdown) while the caret/selection touches
-    // the embed so the source remains editable.
-    if (selection.from < to && selection.to > from) {
-      return;
+  override toDOM(view: EditorView) {
+    const container = document.createElement(this.block ? 'div' : 'span');
+    container.className = 'gn-image-embed'; container.contentEditable = 'false';
+    const image = document.createElement('img'); image.draggable = false;
+    const status = document.createElement('span'); status.className = 'gn-image-status';
+    const data: MountedImage = { ref: this.ref, alive: true, generation: 0, cancel: null, image, status, suppressClick: false, selectedOnPointerDown: null,
+      load: (refresh = false) => {
+        const generation = ++data.generation;
+        status.replaceChildren(); status.textContent = 'Loading image…'; container.dataset.loading = 'true';
+        const name = data.ref.assetName;
+        const fail = () => {
+          if (!data.alive || generation !== data.generation) return;
+          container.dataset.loading = 'false'; container.dataset.broken = 'true';
+          status.textContent = data.ref.error ?? 'Image unavailable. ';
+          if (name) {
+            const retry = document.createElement('button'); retry.type = 'button'; retry.textContent = 'Retry';
+            retry.onclick = event => { event.stopPropagation(); data.load(true); }; status.append(retry);
+          }
+        };
+        if (!name) { fail(); return; }
+        image.onload = () => { if (!data.alive || generation !== data.generation) return;
+          status.replaceChildren(); container.dataset.loading = 'false'; container.dataset.broken = 'false'; view.requestMeasure(); };
+        image.onerror = fail;
+        void this.actions.load(name, refresh).then(url => {
+          if (data.alive && generation === data.generation) image.src = url;
+        }, fail);
+      }
+    };
+    mounted.set(container, data);
+    const toolbar = document.createElement('span'); toolbar.className = 'gn-image-toolbar';
+    const button = (label: string, text: string, action: () => void) => {
+      const result = document.createElement('button'); result.type = 'button'; result.title = label;
+      result.setAttribute('aria-label', label); result.textContent = text;
+      result.onpointerdown = event => event.stopPropagation();
+      result.onclick = event => { event.preventDefault(); event.stopPropagation(); action(); };
+      return result;
+    };
+    toolbar.append(button('Zoom image', 'Zoom', () => this.actions.open(view, data.ref)),
+      button('Edit image source', '</>', () => this.actions.source(view, data.ref)));
+    container.append(image, status, toolbar);
+    const isSelected = () => {
+      const selected = selectedImage(view.state);
+      return selected?.from === data.ref.from && selected.to === data.ref.to;
+    };
+    container.onpointerdown = event => {
+      if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
+      data.suppressClick = false;
+      // Selection changes immediately; decide activation from the state before it.
+      data.selectedOnPointerDown = isSelected();
+      event.preventDefault(); event.stopPropagation(); this.actions.select(view, data.ref);
+    };
+    container.onclick = event => {
+      const open = data.selectedOnPointerDown ?? isSelected();
+      data.selectedOnPointerDown = null;
+      if (data.suppressClick) { data.suppressClick = false; event.preventDefault(); event.stopPropagation(); return; }
+      if ((event.target as HTMLElement).closest('button')) return;
+      event.preventDefault(); event.stopPropagation();
+      if (open && isSelected()) this.actions.open(view, data.ref);
+      else this.actions.select(view, data.ref);
+    };
+    for (const corner of ['nw', 'ne', 'sw', 'se']) {
+      const handle = button(`Resize image ${corner}`, '', () => {});
+      handle.className = `gn-image-resize-handle gn-image-resize-${corner}`;
+      handle.tabIndex = -1;
+      handle.onpointerdown = event => {
+        event.preventDefault(); event.stopPropagation();
+        if (event.button !== 0 || view.state.readOnly || view.state.selection.ranges.length !== 1) return;
+        data.suppressClick = true;
+        this.actions.select(view, data.ref);
+        data.cancel?.();
+        const start = image.getBoundingClientRect();
+        const startX = event.clientX, startY = event.clientY;
+        const signX = corner.endsWith('w') ? -1 : 1, signY = corner.startsWith('n') ? -1 : 1;
+        const ratio = start.height / Math.max(1, start.width);
+        const maximum = availableImageWidth(view, container);
+        let width = start.width;
+        let moved = false;
+        const gesture = new AbortController();
+        const stopListening = this.actions.listen(() => cancel(false));
+        const reset = () => { gesture.abort(); stopListening(); data.cancel = null;
+          if (handle.hasPointerCapture(event.pointerId)) handle.releasePointerCapture(event.pointerId);
+          container.style.width = data.ref.target.width ? `${data.ref.target.width}px` : '';
+          image.style.height = data.ref.target.height ? `${data.ref.target.height}px` : 'auto'; view.requestMeasure(); };
+        const cancel = (restoreFocus = true) => { reset(); if (restoreFocus && data.alive) view.focus(); };
+        data.cancel = () => cancel(false);
+        image.style.height = 'auto';
+        if (event.isTrusted) handle.setPointerCapture(event.pointerId);
+        handle.addEventListener('lostpointercapture', () => cancel(), { signal: gesture.signal });
+        window.addEventListener('pointermove', move => {
+          if (move.pointerId !== event.pointerId) return;
+          const dx = (move.clientX - startX) * signX, dy = (move.clientY - startY) * signY;
+          width = Math.min(maximum, Math.max(48, Math.round(start.width + (dx + dy * ratio) / (1 + ratio * ratio))));
+          moved ||= Math.abs(width - start.width) >= 2;
+          container.style.width = `${width}px`; view.requestMeasure();
+        }, { signal: gesture.signal });
+        window.addEventListener('pointerup', up => {
+          if (up.pointerId !== event.pointerId) return;
+          reset(); if (moved && data.alive) this.actions.resize(view, data.ref, width);
+          if (data.alive) view.focus();
+        }, { signal: gesture.signal });
+        window.addEventListener('pointercancel', () => cancel(), { signal: gesture.signal });
+        window.addEventListener('blur', () => cancel(false), { signal: gesture.signal });
+        window.addEventListener('keydown', key => { if (key.key === 'Escape') { key.preventDefault(); key.stopPropagation(); cancel(); } }, { capture: true, signal: gesture.signal });
+      };
+      container.append(handle);
     }
-
-    builder.add(
-      from,
-      to,
-      Decoration.replace({
-        widget: new ImageEmbedWidget(widgetKey, view, from, to, target)
-      })
-    );
-  });
-
-  return { decorations: builder.finish(), ranges };
+    this.updateDOM(container, view); data.load(); return container;
+  }
+  override updateDOM(dom: HTMLElement, view: EditorView) {
+    const data = mounted.get(dom);
+    if (!data || data.ref.target.fileName !== this.ref.target.fileName || (dom.tagName === 'DIV') !== this.block) return false;
+    data.ref = this.ref;
+    dom.dataset.selected = String(this.selected); dom.dataset.fileName = this.ref.target.fileName;
+    dom.dataset.readonly = String(this.readOnly);
+    if (!data.cancel) {
+      dom.style.width = this.ref.target.width ? `${this.ref.target.width}px` : '';
+      data.image.style.height = this.ref.target.height ? `${this.ref.target.height}px` : 'auto';
+    }
+    data.image.alt = this.ref.syntax === 'markdown' ? view.state.sliceDoc(this.ref.labelFrom, this.ref.sizeFrom) : this.ref.target.fileName;
+    return true;
+  }
+  override ignoreEvent() { return true; }
+  override destroy(dom: HTMLElement) {
+    const data = mounted.get(dom); if (!data) return;
+    data.cancel?.(); data.alive = false; data.generation++;
+    data.image.onload = data.image.onerror = null; mounted.delete(dom);
+  }
 }
+export function imageDecoration(image: ImageEmbedMatch, selected: boolean, block: boolean, actions: ImageWidgetActions, readOnly: boolean) {
+  return Decoration.replace({ widget: new ImageEmbedWidget(image, selected, block, actions, readOnly), block });
+}
+export type { DecorationSet };

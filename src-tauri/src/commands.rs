@@ -1768,6 +1768,28 @@ mod tests {
     }
 
     #[test]
+    fn resolve_asset_image_path_accepts_contained_subfolders() {
+        let temp = TestDir::new("commands-image-assets-subfolder");
+        let assets_dir = temp.path().join("assets");
+        fs::create_dir_all(assets_dir.join("photos")).expect("create subfolder");
+        fs::write(assets_dir.join("photos/a b.png"), b"image").expect("write image");
+        assert!(resolve_asset_image_path(&assets_dir, "photos/a b.png").is_ok());
+        assert!(resolve_asset_image_path(&assets_dir, "/photos/a b.png").is_err());
+        assert!(resolve_asset_image_path(&assets_dir, "photos/../../a.png").is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn resolve_asset_image_path_rejects_symlink_escape() {
+        let temp = TestDir::new("commands-image-assets-symlink");
+        let assets_dir = temp.path().join("assets");
+        fs::create_dir_all(&assets_dir).expect("create assets");
+        fs::write(temp.path().join("outside.png"), b"private").expect("outside file");
+        std::os::unix::fs::symlink(temp.path().join("outside.png"), assets_dir.join("escape.png")).expect("symlink");
+        assert!(resolve_asset_image_path(&assets_dir, "escape.png").is_err());
+    }
+
+    #[test]
     fn read_image_asset_data_url_from_assets_dir_encodes_image_bytes() {
         let temp = TestDir::new("commands-image-assets-data-url");
         let assets_dir = temp.path().join("assets");
