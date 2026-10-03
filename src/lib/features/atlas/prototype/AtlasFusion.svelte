@@ -61,10 +61,11 @@
   let pool = $derived(scope === 'search' ? matching : scope === 'topic' ? response.nodes.filter((node) => byId.get(node.id)?.rootId === origin?.rootId)
     : scope === 'connected' ? response.nodes.filter((node) => originConnections.has(node.id)) : response.nodes);
   let poolIndex = $derived(pool.findIndex((node) => node.id === activeId));
-  let focusId = $derived(hoveredId ?? activeId);
+  // A pinned note owns the neighborhood until closed or another note is chosen.
+  let focusId = $derived(activeId ?? hoveredId);
   let incident = $derived(eligibleLinks.filter((link) => link.sourceId === focusId || link.targetId === focusId).sort((a, b) => b.strength - a.strength));
   let incidentIds = $derived(new Set(incident.map((link) => link.id)));
-  let relatedNodeIds = $derived(new Set(incident.flatMap((link) => [link.sourceId, link.targetId])));
+  let relatedNodeIds = $derived(new Set([...(focusId ? [focusId] : []), ...incident.flatMap((link) => [link.sourceId, link.targetId])]));
   // Quiet overview; exploring a note reveals its connections without a permanent web of edges.
   let links = $derived(eligibleLinks.filter((link) => allLinks || incidentIds.has(link.id)));
   const screen = (point: Point): Point => ({ x: width / 2 + (point.x - width / 2) * zoom + panX, y: height / 2 + (point.y - height / 2) * zoom + panY });
@@ -74,9 +75,10 @@
   let filenameLabels = $derived.by(() => {
     if (!showFilenames) return [];
     const boxes: { x: number; y: number; width: number; height: number }[] = [];
-    // Every visible note gets a full filename, including when no note is selected.
-    // Placement depends on geometry alone, so hovering and searching don't shuffle labels.
+    // Overview names every visible note; pinning keeps only that note's neighborhood.
+    // Hovering doesn't change the pinned label set or its placement.
     const labels = geometry.nodes.map((mark) => ({ mark, point: screen(mark) }))
+      .filter(({ mark }) => !activeId || relatedNodeIds.has(mark.node.id))
       .filter(({ point }) => point.x >= 0 && point.x <= width && point.y >= 0 && point.y <= height)
       // Place long filenames first; short names can occupy the gaps they leave.
       .sort((a, b) => (b.mark.node.fileName || b.mark.node.title).length - (a.mark.node.fileName || a.mark.node.title).length || a.point.y - b.point.y)
