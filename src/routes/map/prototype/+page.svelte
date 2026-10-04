@@ -10,6 +10,7 @@
   import { createDemoAtlas } from '$lib/features/atlas/prototype/demo';
   import SearchBar from '$lib/ui/search/SearchBar.svelte';
   import SearchDock from '$lib/ui/search/SearchDock.svelte';
+  import { Focus } from '@lucide/svelte';
 
   let response = $state.raw<VaultAtlasResponse>(createDemoAtlas());
   let activity = $state<{counts:Record<string,number>;countAvailable:boolean;notice:string}>({counts:{},countAvailable:false,notice:''});
@@ -51,11 +52,13 @@
     {:else}
       <AtlasFusion {response} {activity} {query} {readSource}>
         {#snippet search(fitMap)}
-          <SearchDock pageInset>
-            <SearchBar value={query} placeholder="Find notes" ariaLabel="Search map notes"
+          <SearchDock pageInset class="atlas-search-dock">
+            <SearchBar class="atlas-search-bar" value={query} placeholder="Find notes" ariaLabel="Search map notes"
               showPlaceholderWhenIdle={true} shortcut={{enabled:true}}
               onValueChange={(value) => query = value}>
-              <button class="fit-map shared-search-control mobile-dense-touch-target" data-search-focus-independent onclick={fitMap} aria-label="Fit map" title="Fit all notes in the map">Fit map</button>
+              <div class="atlas-map-tools flex shrink-0 items-center gap-0.5 rounded-full border border-border/80 bg-card/88 p-1 text-muted-foreground shadow-lg backdrop-blur-md sm:contents" data-search-focus-independent>
+                <button type="button" class="shared-search-control mobile-dense-touch-target" onclick={fitMap} aria-label="Fit map to view" title="Fit view"><Focus class="h-4 w-4" /></button>
+              </div>
             </SearchBar>
           </SearchDock>
         {/snippet}
@@ -70,6 +73,16 @@
 <style>
   .atlas-preview{position:relative;height:100%;width:100%;min-height:0;overflow:hidden;color:var(--color-foreground)}
   .loading{position:absolute;inset:0;display:grid;place-content:center;font-size:14px;color:var(--color-muted-foreground)}
-  .fit-map{font-size:12px;font-weight:500;white-space:nowrap;width:auto;padding-inline:12px}
+  :global(.atlas-preview .atlas-search-bar > svg){display:block}
+  @media(min-width:640px) and (max-width:699px){
+    :global(.atlas-preview .atlas-search-bar[data-search-expanded='false']){max-width:calc(100vw - 13.875rem)}
+  }
+  @media(min-width:640px) and (max-width:699px) and (max-height:559px){
+    :global(.atlas-preview .atlas-search-bar[data-search-expanded='false']){max-width:calc(100vw - 10.875rem)}
+  }
+  @media(max-width:639px){
+    :global(.atlas-preview .atlas-search-bar[data-search-expanded='false']){max-width:calc(100vw - 8.75rem)}
+    .atlas-map-tools{position:absolute;right:0;bottom:calc(100% + .5rem)}
+  }
   .demo-notice{position:absolute;top:16px;left:16px;font-size:11px;color:var(--color-muted-foreground);pointer-events:none}
 </style>

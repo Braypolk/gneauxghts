@@ -1,6 +1,7 @@
 <script lang="ts">
   // V3 experiment: topic geography with spaced dots and zoom-faded plain names, inspired by Obsidian.
   import { onMount, type Snippet } from 'svelte';
+  import { ChevronDown } from '@lucide/svelte';
   import type { AtlasNode, AtlasLink, VaultAtlasResponse } from '$lib/types/atlas';
   import { matchesQuery, daysAgo } from './types';
   type Activity = { counts: Record<string, number>; countAvailable: boolean; notice: string };
@@ -408,12 +409,14 @@
       <div class="hover-preview" style:left={`${hoverPosition.x}px`} style:top={`${hoverPosition.y}px`}><strong>{hovered.node.title || hovered.node.fileName}</strong><p>{excerptText(hovered.node.preview) || 'No excerpt available.'}</p><span>{activityText(hovered.node)} · click to pin</span></div>
     {/if}
   </div>
-  <button class="regions-toggle" aria-label={panelOpen ? 'Close Atlas info' : 'Show Atlas regions'} aria-expanded={panelOpen} onclick={() => { if (panelOpen) closeCard(); else panelOpen = true; }}>{panelOpen ? 'Close info' : 'Regions'}</button>
-  {#if panelOpen}
-  <aside class="dock" aria-label="Atlas info panel">
+  <aside class="dock" class:dock-open={panelOpen} aria-label="Atlas info">
+    <button class="regions-toggle" aria-label={panelOpen ? 'Collapse Atlas info' : 'Show Atlas regions'} aria-expanded={panelOpen} aria-controls="atlas-info-body" onclick={() => { if (panelOpen) closeCard(); else panelOpen = true; }}>
+      <span>{active ? 'Note' : 'Regions'}</span><ChevronDown class="info-chevron" />
+    </button>
+    {#if panelOpen}
+    <div class="info-body" id="atlas-info-body">
     {#if active}
       <article class="reader" onwheel={wheelCard} aria-label="Note reader">
-        <div class="reader-heading"><span>Note</span><button onclick={closeCard} aria-label="Close note reader">×</button></div>
         <h2>{(active.node.fileName || active.node.title).replace(/\.md$/i, '')}</h2><p class="activity-detail">{activityText(active.node)}</p>
         <div class="browse"><span>{query.trim() ? 'Search matches' : 'Connected notes'}</span><div><button disabled={!pool.length} onclick={() => cycle(-1)} aria-label="Previous Atlas note">↑</button><span>{poolIndex >= 0 ? poolIndex + 1 : '–'} / {pool.length}</span><button disabled={!pool.length} onclick={() => cycle(1)} aria-label="Next Atlas note">↓</button></div></div>
         {#if fullText !== null}<div class="full-source" tabindex="0" role="textbox" aria-readonly="true" aria-label="Full note source">{fullText}</div>{:else}<div class="reader-excerpt">{excerptText(active.node.preview) || 'No excerpt available for this note.'}</div>{/if}
@@ -423,19 +426,20 @@
     {#if !active}
       {#key inspectedRegionId}<section class="region-guide" aria-label="Region guide">
         {#if inspectedRegion}
-          <div class="guide-heading"><strong>Notes in this region</strong><div><button onclick={() => { inspectedRegionId = null; reset(); }}>All regions</button><button onclick={closeCard} aria-label="Close region info">×</button></div></div>
+          <div class="guide-heading"><strong>Notes in this region</strong><div><button onclick={() => { inspectedRegionId = null; reset(); }}>All regions</button></div></div>
           <label class="rename">Region name<input aria-label="Region name" value={inspectedRegion.name} oninput={(event) => regionNames = { ...regionNames, [inspectedRegion.cloud.id]: event.currentTarget.value }}/></label>
           <p class="region-count">{inspectedRegion.cloud.noteCount} notes · examples from this region</p>
           <div class="region-examples">{#each inspectedRegion.examples as node (node.id)}<button onclick={() => pin(node)}><strong>{node.title || node.fileName}</strong><span>{excerptText(node.preview).slice(0, 150)}</span></button>{/each}</div>
         {:else}
-          <div class="guide-heading"><strong>Regions · {regions.length}</strong><button onclick={closeCard} aria-label="Close region info">×</button></div>
+          <div class="guide-heading"><strong>Regions · {regions.length}</strong></div>
           <p class="guide-help">Example notes give each region context. Select a region to see more or rename it.</p>
           <div class="region-list">{#each regions as region (region.cloud.id)}<button onclick={() => inspectRegion(region.cloud.id)}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => node.title || node.fileName).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
         {/if}
       </section>{/key}
     {/if}
+    </div>
+    {/if}
   </aside>
-  {/if}
   </div>
   {@render search(reset)}
 </section>
@@ -450,11 +454,17 @@
   @media(prefers-reduced-motion:reduce){.note-name text{transition:none}}
   button{cursor:pointer;color:var(--color-foreground)}button:disabled{opacity:.4;cursor:default}
   button:focus-visible,.full-source:focus-visible,input:focus-visible{outline:2px solid var(--color-ring);outline-offset:2px}
-  .regions-toggle{position:absolute;right:20px;top:16px;z-index:10;padding:8px 13px;border:1px solid var(--color-border);border-radius:20px;background:color-mix(in srgb,var(--color-background) 90%,transparent);font-size:12px;backdrop-filter:blur(12px)}
-  .dock{position:absolute;right:20px;top:60px;width:min(340px,calc(100% - 40px));height:min(560px,calc(100% - 170px));z-index:12;border:1px solid var(--color-border);border-radius:16px;background:color-mix(in srgb,var(--color-background) 94%,transparent);overflow:hidden;box-shadow:0 10px 35px #0003;backdrop-filter:blur(16px)}
+  .dock{position:absolute;right:20px;top:16px;width:110px;height:40px;z-index:12;border:1px solid var(--color-border);border-radius:20px;background:color-mix(in srgb,var(--color-background) 94%,transparent);overflow:hidden;backdrop-filter:blur(16px);transform-origin:top right;transition:width 220ms cubic-bezier(.2,.8,.2,1),height 220ms cubic-bezier(.2,.8,.2,1),border-radius 220ms,box-shadow 220ms}
+  .dock-open{width:min(340px,calc(100% - 40px));height:min(560px,calc(100% - 140px));border-radius:16px;box-shadow:0 10px 35px #0003}
+  .regions-toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;height:39px;padding:8px 13px;font-size:12px;text-align:left}
+  .regions-toggle:hover{background:var(--color-accent)}
+  .regions-toggle :global(.info-chevron){width:14px;height:14px;flex-shrink:0;transition:transform 220ms}
+  .dock-open .regions-toggle :global(.info-chevron){transform:rotate(180deg)}
+  .info-body{height:calc(100% - 39px);overflow:hidden;animation:info-reveal 180ms ease both}
+  @keyframes info-reveal{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
+  @media(prefers-reduced-motion:reduce){.dock,.regions-toggle :global(.info-chevron){transition:none}.info-body{animation:none}}
   .reader{height:100%;display:flex;flex-direction:column;overflow:hidden;padding:18px}
-  .reader-heading,.guide-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--color-muted-foreground)}
-  .reader-heading button{font-size:22px;width:28px;height:28px}
+  .guide-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--color-muted-foreground)}
   .reader h2{font-size:20px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;margin:10px 0 6px}
   .activity-detail{font-size:11px;line-height:1.5;color:var(--color-muted-foreground);margin:0 0 12px}
   .browse{display:flex;justify-content:space-between;align-items:center;gap:8px;border-block:1px solid var(--color-border);padding:9px 0;font-size:11px;color:var(--color-muted-foreground)}
@@ -462,7 +472,7 @@
   .reader-excerpt,.full-source{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin:12px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
   .reader-footer{display:flex;flex-wrap:wrap;align-items:center;gap:9px;border-top:1px solid var(--color-border);padding-top:12px;color:var(--color-muted-foreground);font-size:10px}
   .reader-footer button,.guide-heading button{padding:7px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:11px;min-height:30px}
-  .reader-heading,.reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}
+  .reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}
   .region-guide{height:100%;overflow:auto;padding:18px;overscroll-behavior:contain}
   .guide-heading{font-size:14px;color:var(--color-foreground)}.guide-heading>div{display:flex;gap:5px}
   .guide-help,.region-count{font-size:12px;line-height:1.6;color:var(--color-muted-foreground);margin:12px 0}
@@ -476,5 +486,5 @@
   .region-examples strong{display:block;font-size:13px;font-weight:550}.region-examples span{display:block;font-size:12px;line-height:1.6;color:var(--color-muted-foreground);margin-top:6px}
   .hover-preview{position:absolute;width:208px;max-height:88px;overflow:hidden;pointer-events:none;z-index:4;background:color-mix(in srgb,var(--color-background) 97%,transparent);border:1px solid var(--color-border);border-radius:6px;padding:8px;box-shadow:0 4px 13px #00000012}
   .hover-preview strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600}.hover-preview p{font-size:9px;line-height:1.5;color:var(--color-muted-foreground);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;margin:4px 0}.hover-preview>span{font-size:8px;color:var(--color-muted-foreground)}
-  @container(max-width:450px){.regions-toggle{right:12px;top:12px}.dock{inset:auto 12px 100px;width:auto;height:min(52%,460px);border-radius:14px}.reader,.region-guide{padding:14px}.reader h2{font-size:17px;margin:5px 0}.activity-detail{margin-bottom:7px}.browse{padding:6px 0}.reader-excerpt,.full-source{margin:8px 0}.reader-footer{padding-top:8px}}
+  @container(max-width:450px){.dock{right:12px;top:12px}.dock-open{width:calc(100% - 24px);height:min(560px,calc(100% - 124px));border-radius:14px}.reader,.region-guide{padding:14px}.reader h2{font-size:17px;margin:5px 0}.activity-detail{margin-bottom:7px}.browse{padding:6px 0}.reader-excerpt,.full-source{margin:8px 0}.reader-footer{padding-top:8px}}
 </style>
