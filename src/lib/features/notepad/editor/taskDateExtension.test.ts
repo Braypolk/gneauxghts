@@ -48,10 +48,41 @@ describe('editor task date commits', () => {
     openTaskDueDatePicker(view, token.from, token);
     view.dispatch({ selection: { anchor: 0 } });
     pickerOptions().onCommit({ date: '2026-10-02', time: null });
-    expect(view.state.doc.toString()).toBe('- [ ] Parent @due(2026-10-01)\n  - [ ] Child @due(2026-10-02) ');
+    expect(view.state.doc.toString()).toBe('- [ ] Parent @due(2026-10-01)\n  - [ ] Child due @due(2026-10-02) ');
     expect(undo()).toBe(true);
     expect(view.state.doc.toString()).toBe(doc);
     expect(redo()).toBe(true);
-    expect(view.state.doc.toString()).toContain('Child @due(2026-10-02)');
+    expect(view.state.doc.toString()).toContain('Child due @due(2026-10-02)');
+  });
+
+  it('keeps custom wording through date changes and removal, with undo', () => {
+    const doc = '- [ ] Send proposal by @due(2026-10-01), before lunch';
+    const { view, undo } = editor(doc);
+    openTaskDueDatePicker(view, 0);
+    pickerOptions().onCommit({ date: '2026-10-02', time: null });
+    expect(view.state.doc.toString()).toBe('- [ ] Send proposal by @due(2026-10-02), before lunch');
+    openTaskDueDatePicker(view, 0);
+    pickerOptions().onCommit({ date: null, time: null });
+    expect(view.state.doc.toString()).toBe('- [ ] Send proposal by, before lunch');
+    expect(undo()).toBe(true);
+    expect(view.state.doc.toString()).toBe('- [ ] Send proposal by @due(2026-10-02), before lunch');
+    expect(undo()).toBe(true);
+    expect(view.state.doc.toString()).toBe(doc);
+  });
+
+  it('selects only an existing nested deadline for typing, preserving neighboring dates and undo', () => {
+    const doc = '- [ ] Parent due @due(2026-10-01)\n  - [ ] Child by @due(2026-10-02), before lunch';
+    const { view, undo } = editor(doc);
+    const focus = vi.spyOn(view, 'focus');
+    openTaskDueDatePicker(view, doc.indexOf('Child'));
+    const selection = view.state.selection.main;
+    expect(view.state.sliceDoc(selection.from, selection.to)).toBe('2026-10-02');
+    expect(pickerOptions().editInNote).toBe(true);
+    expect(focus).toHaveBeenCalled();
+    expect(view.state.doc.toString()).toBe(doc);
+    view.dispatch({ changes: { from: selection.from, to: selection.to, insert: '2026-10-03' }, userEvent: 'input' });
+    expect(view.state.doc.toString()).toBe('- [ ] Parent due @due(2026-10-01)\n  - [ ] Child by @due(2026-10-03), before lunch');
+    expect(undo()).toBe(true);
+    expect(view.state.doc.toString()).toBe(doc);
   });
 });

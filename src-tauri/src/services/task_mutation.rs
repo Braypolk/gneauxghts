@@ -458,7 +458,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             prepared.updated_editor_markdown,
-            "- [ ] Ship it @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
+            "- [ ] Ship it due @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
         );
         let sink = FakeSink::new(working, None);
         commit_loaded_task(

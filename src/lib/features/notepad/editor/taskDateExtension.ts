@@ -21,18 +21,25 @@ export function openTaskDueDatePicker(view: EditorView, pos: number, token?: { f
   if (!taskMarkerPattern.test(line.text) || isExcludedDateContext(view.state, line.from)) return;
   const expectedDoc = view.state.doc;
   const text = token ? line.text.slice(0, token.from - line.from) + line.text.slice(token.to - line.from) : line.text;
+  const annotation = dueAnnotations(text)[0];
+  const editInNote = !!annotation && !token;
+  const dateFrom = annotation ? line.from + annotation.from + '@due('.length : pos;
+  if (editInNote) view.focus();
   const close = openDateTimePicker({
     mode: 'due', title: taskDueDate(text) ? 'Edit due date' : 'Add due date', date: taskDueDate(text),
-    reference: editorFloatingReference(view, token?.from ?? pos, anchorElement),
+    editInNote,
+    reference: editorFloatingReference(view, token?.from ?? dateFrom, anchorElement),
     boundsElement: view.dom.closest<HTMLElement>('[data-pane-id]'),
     onCommit: ({ date }) => {
       if (!view.dom.isConnected || view.state.doc !== expectedDoc) throw new Error('The note changed while the picker was open. Cancel and reopen the task date.');
       const insert = setTaskLineDueDate(text, date);
+      close();
       view.dispatch({ changes: { from: line.from, to: line.to, insert }, selection: { anchor: Math.min(view.state.selection.main.head, line.from + insert.length) }, userEvent: 'input', annotations: isolateHistory.of('full') });
     },
     onClose: (restoreFocus) => pickerClosed(view, close, restoreFocus)
   });
-  pickerClosers.set(view, { close, editInNote: false });
+  pickerClosers.set(view, { close, editInNote });
+  if (editInNote) view.dispatch({ selection: { anchor: dateFrom, head: dateFrom + annotation.date.length } });
   return close;
 }
 

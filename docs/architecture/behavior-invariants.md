@@ -216,6 +216,11 @@ use the existing canonical task/open-document boundaries and retain task identit
 across date edits, external reconciliation, and note moves. Projection recognition
 timestamps never become authored creation dates.
 
+Adding a deadline inserts ordinary editable `due` wording before its annotation
+unless the task already ends with that word. Editing an existing deadline keeps
+the first annotation's position and surrounding authored wording; removing it
+preserves that wording. Display formatting never adds a `Due` prefix of its own.
+
 Due today becomes overdue on the next local calendar day. Completed tasks never
 appear in the actionable overdue filter. Date filters intersect the existing
 completion/hidden/search view; default note grouping/order remains unchanged.
@@ -238,6 +243,12 @@ time during a daylight-saving gap does not silently reschedule the chosen text.
 Cancelling a picker applies none of its pending calendar/time choices; native note
 edits remain ordinary authored edits. Inline pickers close when the editor document
 changes. Due-date Apply refuses a stale document and asks the user to reopen it.
+Clicking an existing deadline in an editor selects only the ISO date inside its
+annotation for native typing, retaining editor focus and the portable annotation
+syntax. Like ordinary inline dates, its picker has no date textbox and closes
+on note edits. Direct typing uses ordinary saving and undo; calendar Apply and
+deadline removal keep their existing task-date transform. Adding a deadline or
+editing from the master task list retains the popup date input.
 
 ### Save completion has a consistency boundary
 
