@@ -1,5 +1,5 @@
 <script lang="ts">
-  // V3 experiment: one block layout at every zoom; blocks, titles and topic boundaries share one camera.
+  // V3 experiment: original topic geography with dots and zoom-faded plain names, inspired by Obsidian.
   import { onMount } from 'svelte';
   import type { AtlasNode, AtlasLink } from '$lib/types/atlas';
   import { matchesQuery, daysAgo, type PrototypeProps } from './types';
@@ -20,6 +20,7 @@
   let hoveredId = $state<string | null>(null);
   let zoom = $state(1), panX = $state(0), panY = $state(0);
   let showChildren = $state(false);
+  let labelZoom = $state(0.55);
   let plotElement = $state<HTMLDivElement | null>(null);
   let svgElement: SVGSVGElement;
   let width = $state(1000), height = $state(560);
@@ -75,119 +76,64 @@
     const name = (node.fileName || node.title).replace(/\.md$/i, '');
     return name.length > titleLimit ? `${name.slice(0, titleLimit - 1).trimEnd()}…` : name;
   }
-  // Pack within each original root, then separate whole regions. Individual
-  // notes cannot spill into a neighboring region to solve a global collision.
-  let blockLayout = $derived.by(() => {
-    const roots = new Map(geometry.clouds.filter((item) => !item.cloud.parentId).map((item) => [item.cloud.id, item]));
-    const groups = [...new Set(geometry.nodes.map((mark) => mark.rootId ?? mark.node.id))].map((id) => {
-      const marks = geometry.nodes.filter((mark) => (mark.rootId ?? mark.node.id) === id);
-      const anchor = roots.get(id)?.center ?? marks[0];
-      const placed: { x: number; y: number; width: number; height: number }[] = [];
-      const tiles = [...marks].sort((a, b) => a.y - b.y || a.x - b.x || a.node.id.localeCompare(b.node.id)).map((mark) => {
-        const lines: string[] = [];
-        let remaining = tileTitle(mark.node);
-        while (remaining.length > 25) {
-          const space = remaining.lastIndexOf(' ', 25), split = space > 10 ? space : 25;
-          lines.push(remaining.slice(0, split)); remaining = remaining.slice(split).trimStart();
-        }
-        lines.push(remaining);
-        const tileWidth = 190, tileHeight = Math.max(48, lines.length * 16 + 16);
-        const local = { x: mark.x - anchor.x, y: mark.y - anchor.y };
-        let box = { x: local.x - tileWidth / 2, y: local.y - tileHeight / 2, width: tileWidth, height: tileHeight };
-        const collides = (candidate: typeof box) => placed.some((other) => candidate.x < other.x + other.width + 14 && candidate.x + candidate.width + 14 > other.x && candidate.y < other.y + other.height + 14 && candidate.y + candidate.height + 14 > other.y);
-        for (let ring = 0; collides(box); ring++) {
-          const radius = 20 + ring * 16, attempts = Math.max(12, Math.ceil(radius / 8));
-          let found = false;
-          for (let i = 0; i < attempts; i++) {
-            const angle = i / attempts * Math.PI * 2;
-            const candidate = { ...box, x: local.x + Math.cos(angle) * radius - tileWidth / 2, y: local.y + Math.sin(angle) * radius - tileHeight / 2 };
-            if (!collides(candidate)) { box = candidate; found = true; break; }
-          }
-          if (found) break;
-        }
-        placed.push(box);
-        return { ...box, node: mark.node, rootId: mark.rootId, color: mark.color, lines };
-      });
-      const center = { x: (Math.min(...tiles.map((tile) => tile.x)) + Math.max(...tiles.map((tile) => tile.x + tile.width))) / 2,
-        y: (Math.min(...tiles.map((tile) => tile.y)) + Math.max(...tiles.map((tile) => tile.y + tile.height))) / 2 };
-      for (const tile of tiles) { tile.x -= center.x; tile.y -= center.y; }
-      const radius = Math.max(...tiles.flatMap((tile) => [Math.hypot(tile.x, tile.y), Math.hypot(tile.x + tile.width, tile.y), Math.hypot(tile.x, tile.y + tile.height), Math.hypot(tile.x + tile.width, tile.y + tile.height)])) + 80;
-      return { id, anchor, x: anchor.x, y: anchor.y, radius, tiles };
-    });
-    // Start by dilating the original arrangement, retaining its compass ordering.
-    // Resolve the remaining close pairs by moving complete regions, not notes.
-    const nearestRatios = groups.map((a) => {
-      const neighbors = groups.filter((b) => a !== b).map((b) => ({ distance: Math.hypot(a.anchor.x - b.anchor.x, a.anchor.y - b.anchor.y), needed: a.radius + b.radius + 110 })).sort((a, b) => a.distance - b.distance);
-      return neighbors.length ? neighbors[0].needed / Math.max(1, neighbors[0].distance) : 1;
-    }).sort((a, b) => a - b);
-    const dilation = Math.max(1, nearestRatios[Math.floor(nearestRatios.length / 2)] ?? 1);
-    for (const group of groups) { group.x *= dilation; group.y *= dilation; }
-    for (let pass = 0; pass < 240; pass++) {
-      let maximumOverlap = 0;
-      for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
-        const a = groups[i], b = groups[j];
-        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
-        const overlap = a.radius + b.radius + 110 - distance;
-        if (overlap <= 0) continue;
-        maximumOverlap = Math.max(maximumOverlap, overlap);
-        const angle = (i * 7 + j * 3) * 2.4;
-        const ux = distance > 0.001 ? dx / distance : Math.cos(angle), uy = distance > 0.001 ? dy / distance : Math.sin(angle);
-        const shift = (overlap + 0.1) / 2;
-        a.x -= ux * shift; a.y -= uy * shift; b.x += ux * shift; b.y += uy * shift;
-      }
-      if (maximumOverlap < 0.1) break;
-    }
-    return groups.flatMap((group) => group.tiles.map((tile) => ({ ...tile, x: tile.x + group.x, y: tile.y + group.y })));
-  });
-  let blockById = $derived(new Map(blockLayout.map((tile) => [tile.node.id, { ...tile, center: { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 } }])));
-  function softenHull(points: Point[]) {
-    let current = points;
-    for (let pass = 0; pass < 2; pass++) {
-      current = current.flatMap((a, i) => {
-        const b = current[(i + 1) % current.length];
-        return [{ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 }];
-      });
-    }
-    return current;
-  }
-  // Same radial envelope and smoothing approach as original Atlas, with the
-  // actual block corners contributing extent instead of just dot centers.
-  let blockClouds = $derived(geometry.clouds.map((item) => {
-    const members = blockLayout.filter((tile) => item.cloud.parentId ? item.cloud.memberNodeIds.includes(tile.node.id) : tile.rootId === item.cloud.id);
-    if (!members.length) return { ...item, points: [], labelPoint: { x: 0, y: 0 } };
-    const minX = Math.min(...members.map((tile) => tile.x)), maxX = Math.max(...members.map((tile) => tile.x + tile.width));
-    const minY = Math.min(...members.map((tile) => tile.y)), maxY = Math.max(...members.map((tile) => tile.y + tile.height));
-    const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
-    const corners = members.flatMap((tile) => [{ x: tile.x, y: tile.y }, { x: tile.x + tile.width, y: tile.y }, { x: tile.x + tile.width, y: tile.y + tile.height }, { x: tile.x, y: tile.y + tile.height }]);
-    const radial = Array.from({ length: 64 }, (_, i) => {
-      const angle = i / 64 * Math.PI * 2, dx = Math.cos(angle), dy = Math.sin(angle);
-      const extent = Math.max(...corners.map((point) => (point.x - center.x) * dx + (point.y - center.y) * dy));
-      const radius = Math.max(80, extent + 54);
-      return { x: center.x + dx * radius, y: center.y + dy * radius };
-    });
-    return { ...item, points: softenHull(radial), labelPoint: { x: (minX + maxX) / 2, y: minY - 22 } };
-  }).filter((item) => item.points.length));
+  // Restore the original Atlas geography. Labels never move nodes or clouds.
+  let dotById = $derived(new Map(geometry.nodes.map((mark) => [mark.node.id, mark])));
+  let graphClouds = $derived(geometry.clouds.map((item) => ({ ...item,
+    labelPoint: { x: item.center.x, y: Math.min(...item.points.map((point) => point.y)) - 14 }
+  })).filter((item) => item.points.length));
   let worldBounds = $derived.by(() => {
-    const points = blockClouds.flatMap((cloud) => cloud.points).concat(blockLayout.flatMap((tile) => [{ x: tile.x, y: tile.y }, { x: tile.x + tile.width, y: tile.y + tile.height }]));
+    const points = graphClouds.flatMap((cloud) => cloud.points).concat(geometry.nodes);
     const minX = points.length ? Math.min(...points.map((point) => point.x)) : -100;
     const maxX = points.length ? Math.max(...points.map((point) => point.x)) : 100;
     const minY = points.length ? Math.min(...points.map((point) => point.y)) : -100;
     const maxY = points.length ? Math.max(...points.map((point) => point.y)) : 100;
     return { center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 }, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
   });
-  let fitScale = $derived(Math.min(Math.max(1, width - 32) / worldBounds.width, Math.max(1, height - 32) / worldBounds.height));
+  let fitScale = $derived(Math.min(Math.max(1, width - 48) / worldBounds.width, Math.max(1, height - 48) / worldBounds.height));
   let cameraScale = $derived(zoom);
   const screen = (point: Point): Point => ({ x: width / 2 + (point.x - worldBounds.center.x) * cameraScale + panX, y: height / 2 + (point.y - worldBounds.center.y) * cameraScale + panY });
-  let filenameLabels = $derived(blockLayout.filter((tile) => !activeId || relatedNodeIds.has(tile.node.id)));
-  function tileConnection(link: AtlasLink) {
-    const a = blockById.get(link.sourceId)!, b = blockById.get(link.targetId)!;
-    const edge = (tile: typeof a, other: typeof a) => {
-      const dx = other.center.x - tile.center.x, dy = other.center.y - tile.center.y;
-      const factor = Math.min((tile.width / 2) / Math.max(0.001, Math.abs(dx)), (tile.height / 2) / Math.max(0.001, Math.abs(dy)));
-      return { x: tile.center.x + dx * factor, y: tile.center.y + dy * factor };
-    };
-    const start = edge(a, b), end = edge(b, a);
-    return `M${start.x},${start.y}L${end.x},${end.y}`;
+  let explicitDegree = $derived.by(() => {
+    const counts = new Map<string, Set<string>>();
+    for (const link of response.links.filter((link) => link.kind === 'wikilink')) {
+      if (!counts.has(link.sourceId)) counts.set(link.sourceId, new Set());
+      if (!counts.has(link.targetId)) counts.set(link.targetId, new Set());
+      counts.get(link.sourceId)!.add(link.targetId); counts.get(link.targetId)!.add(link.sourceId);
+    }
+    return new Map([...counts].map(([id, neighbors]) => [id, neighbors.size]));
+  });
+  const dotRadius = (id: string) => 5 + Math.min(5, Math.sqrt(explicitDegree.get(id) ?? 0));
+  const visibleRadius = (id: string) => Math.max(2, Math.min(12, dotRadius(id) * Math.sqrt(cameraScale)));
+  let labelSize = $derived(Math.max(9, Math.min(18, 12 * Math.pow(cameraScale, 0.3))));
+  let labelOpacity = $derived.by(() => {
+    const value = Math.max(0, Math.min(1, (cameraScale - Number(labelZoom) * 0.55) / (Number(labelZoom) * 0.65)));
+    return value * value * (3 - 2 * value);
+  });
+  // Labels stay attached below their dot. Fade and omit collisions rather than
+  // displacing names into detached callouts or changing the spatial layout.
+  let filenameLabels = $derived.by(() => {
+    const boxes: { left: number; right: number; top: number; bottom: number }[] = [];
+    const priority = (id: string) => id === activeId ? 0 : id === hoveredId ? 1 : query.trim() && matchesQuery(byId.get(id)!.node, query) ? 2 : relatedNodeIds.has(id) ? 3 : 4;
+    const candidates = geometry.nodes.filter((mark) => !activeId || relatedNodeIds.has(mark.node.id)).map((mark) => {
+      const point = screen(mark), title = tileTitle(mark.node);
+      const emphasized = mark.node.id === focusId || (!!focusId && relatedNodeIds.has(mark.node.id));
+      const opacity = emphasized ? 1 : labelOpacity;
+      const y = point.y + visibleRadius(mark.node.id) + labelSize + 4;
+      const textWidth = [...title].reduce((sum, char) => sum + ('ilI.,:;!| '.includes(char) ? 0.3 : 'MW@%'.includes(char) ? 0.85 : 0.56), 0) * labelSize;
+      return { ...mark, title, x: point.x, y, opacity, box: { left: point.x - textWidth / 2 - 4, right: point.x + textWidth / 2 + 4, top: y - labelSize - 2, bottom: y + 4 } };
+    }).filter((label) => label.opacity > 0.01 && label.box.right > 0 && label.box.left < width && label.box.bottom > 0 && label.box.top < height)
+      .sort((a, b) => priority(a.node.id) - priority(b.node.id) || a.node.id.localeCompare(b.node.id));
+    return candidates.filter((label) => {
+      const overlaps = boxes.some((box) => label.box.left < box.right && label.box.right > box.left && label.box.top < box.bottom && label.box.bottom > box.top);
+      if (overlaps && label.node.id !== activeId && label.node.id !== hoveredId) return false;
+      boxes.push(label.box); return true;
+    });
+  });
+  function dotConnection(link: AtlasLink) {
+    const a = dotById.get(link.sourceId)!, b = dotById.get(link.targetId)!;
+    const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
+    if (distance < 0.001) return '';
+    const start = Math.min(visibleRadius(a.node.id) / cameraScale, distance / 2), end = Math.min(visibleRadius(b.node.id) / cameraScale, distance / 2);
+    return `M${a.x + dx / distance * start},${a.y + dy / distance * start}L${b.x - dx / distance * end},${b.y - dy / distance * end}`;
   }
   const regionName = (id: string, fallback: string | null) => regionNames[id]?.trim() || fallback || 'Unlabelled region';
   let regions = $derived(geometry.clouds.filter((item) => !item.cloud.parentId).map((item) => ({
@@ -197,18 +143,17 @@
   let inspectedRegion = $derived(regions.find((item) => item.cloud.id === inspectedRegionId));
   function inspectRegion(id: string) {
     closeCard(); inspectedRegionId = id;
-    const region = blockClouds.find((item) => item.cloud.id === id);
+    const region = graphClouds.find((item) => item.cloud.id === id);
     if (!region) return;
     const x = (Math.min(...region.points.map((point) => point.x)) + Math.max(...region.points.map((point) => point.x))) / 2;
     const y = (Math.min(...region.points.map((point) => point.y)) + Math.max(...region.points.map((point) => point.y))) / 2;
-    clearZoomQueue(); zoom = 1;
-    panX = worldBounds.center.x - x; panY = worldBounds.center.y - y;
+    clearZoomQueue(); zoom = Math.max(0.75, Math.min(1.5, Math.min((width - 48) / Math.max(1, Math.max(...region.points.map((point) => point.x)) - Math.min(...region.points.map((point) => point.x))), (height - 48) / Math.max(1, Math.max(...region.points.map((point) => point.y)) - Math.min(...region.points.map((point) => point.y))))));
+    panX = (worldBounds.center.x - x) * zoom; panY = (worldBounds.center.y - y) * zoom;
   }
   let hoverPosition = $derived.by(() => {
-    const tile = hovered ? blockById.get(hovered.node.id) : null;
-    const point = tile ? screen({ x: tile.x + tile.width, y: tile.y }) : { x: 0, y: 0 };
-    const x = point.x + 224 <= width ? point.x + 8 : point.x - (tile?.width ?? 0) * cameraScale - 224;
-    return { x: Math.max(8, Math.min(width - 216, x)), y: Math.max(8, Math.min(height - 88, point.y)) };
+    const point = hovered ? screen(hovered) : { x: 0, y: 0 };
+    const x = point.x + 224 <= width ? point.x + 12 : point.x - 224;
+    return { x: Math.max(8, Math.min(width - 216, x)), y: Math.max(8, Math.min(height - 88, point.y - 100)) };
   });
   function usage(node: AtlasNode): number | null {
     const value = activity?.counts[node.id];
@@ -282,7 +227,7 @@
   function movePan(event: PointerEvent) { if (!drag) return; const point = canvasPoint(event); panX = drag.originalX + point.x - drag.x; panY = drag.originalY + point.y - drag.y; }
   function stopPan(event: PointerEvent) { drag = null; if (svgElement.hasPointerCapture(event.pointerId)) svgElement.releasePointerCapture(event.pointerId); }
   function setZoomAt(next: number, point: Point) {
-    next = Math.max(Math.min(0.04, fitScale * 0.5), Math.min(4, next));
+    next = Math.max(Math.min(0.04, fitScale * 0.5), Math.min(12, next));
     const ratio = next / zoom; panX = point.x - width / 2 - (point.x - width / 2 - panX) * ratio; panY = point.y - height / 2 - (point.y - height / 2 - panY) * ratio; zoom = next;
   }
   function clearZoomQueue() {
@@ -335,45 +280,59 @@
 
 <svelte:window onkeydown={keyBrowse}/>
 <section class="fusion" aria-label="Atlas fusion hybrid visualization">
-  <header><div><h1>Atlas, with your notes within reach.</h1><p>Spaced topic islands · titles scale with zoom · read without covering the map</p></div><span>{response.nodes.length} notes{query.trim() ? ` · ${matching.length} matches` : ''}</span></header>
+  <header><div><h1>Atlas, with your notes within reach.</h1><p>Topic islands · dots and zoom-faded names · read beside the map</p></div><span>{response.nodes.length} notes{query.trim() ? ` · ${matching.length} matches` : ''}</span></header>
   <div class="controls">
     <label>Connections <select bind:value={kind} aria-label="Fusion connection type"><option value="both">Linked + similar</option><option value="wikilink">Explicit links</option><option value="semantic">Semantic matches</option></select></label>
     <label>Strength <input type="range" min="0" max="1" step="0.05" bind:value={threshold} aria-label="Fusion connection strength"/><output>{Number(threshold).toFixed(2)}</output></label>
     <label><input type="checkbox" bind:checked={allLinks}/>All links</label>
     <label>Activity <select bind:value={activityMode} aria-label="Fusion activity encoding"><option value="none">Off</option><option value="recency">Last opened</option>{#if activity?.countAvailable}<option value="frequency">Opening activity</option>{/if}</select></label>
     <label><input type="checkbox" bind:checked={showChildren}/>Subtopics</label>
+    <label title="Lower values reveal names sooner; overlapping names wait for more space.">Names <input type="range" min="0.15" max="1.5" step="0.05" bind:value={labelZoom} aria-label="Fusion name fade threshold"/></label>
     <div class="map-controls"><button onclick={() => stepZoom(-1)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(2)}×</span><button onclick={() => stepZoom(1)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Fit map</button></div>
   </div>
   <div class="workbench" bind:this={workbenchElement}>
   <div class="plot" bind:this={plotElement}>
-    <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Atlas block map with all ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan} onwheel={zoomAt}>
-      <title>One stable block layout with titles and topic boundaries that scale together.</title>
+    <svg bind:this={svgElement} viewBox={`0 0 ${width} ${height}`} role="img" aria-label={`Atlas dot map with all ${response.nodes.length} notes`} onpointerdown={startPan} onpointermove={movePan} onpointerup={stopPan} onpointercancel={stopPan} onwheel={zoomAt}>
+      <title>Stable topic geography with compact dots and plain names that fade in as you zoom.</title>
       <defs><clipPath id="atlas-fusion-clip"><rect width={width} height={height}/></clipPath></defs>
       <g clip-path="url(#atlas-fusion-clip)">
         <g class="map-world" transform={`translate(${width / 2 + panX} ${height / 2 + panY}) scale(${cameraScale}) translate(${-worldBounds.center.x} ${-worldBounds.center.y})`}>
-          {#each blockClouds.filter((item) => !item.cloud.parentId || showChildren) as item (item.cloud.id)}
+          {#each graphClouds.filter((item) => !item.cloud.parentId || showChildren) as item (item.cloud.id)}
             <polygon data-cloud-id={item.cloud.id} points={item.points.map((point) => `${point.x},${point.y}`).join(' ')} fill={item.color} fill-opacity={item.cloud.parentId ? 0.05 : 0.1} stroke={item.color} stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray={item.cloud.parentId ? '5 5' : 'none'}/>
+
+          {/each}
+          <g class="tile-links" pointer-events="none">{#each links as link (link.id)}
+            {@const emphasized = !!hoveredId && hoveredId !== focusId && (link.sourceId === hoveredId || link.targetId === hoveredId)}
+            <path data-link-source={link.sourceId} data-link-target={link.targetId} d={dotConnection(link)} fill="none" stroke={link.kind === 'wikilink' ? 'var(--color-foreground)' : 'color-mix(in srgb, #967aa9 65%, var(--color-foreground))'} vector-effect="non-scaling-stroke" stroke-width={emphasized ? 2.4 : incidentIds.has(link.id) ? 1.5 : 0.7} stroke-dasharray={link.kind === 'semantic' ? '6 5' : 'none'} opacity={emphasized ? 1 : incidentIds.has(link.id) ? 0.75 : 0.1}/>
+          {/each}</g>
+          <g class="graph-dots">
+            {#each geometry.nodes as mark (mark.node.id)}
+              <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${mark.node.fileName || mark.node.title}`}
+                opacity={activeId && !relatedNodeIds.has(mark.node.id) ? 0.18 : matchesQuery(mark.node, query) ? 1 : 0.25}
+                onmouseenter={() => hoveredId = mark.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = mark.node.id} onblur={() => hoveredId = null}
+                onclick={() => pin(mark.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(mark.node); } }}>
+                <title>{mark.node.fileName || mark.node.title}</title>
+                <circle class="dot-hit" cx={mark.x} cy={mark.y} r={Math.max(visibleRadius(mark.node.id), 8) / cameraScale} fill="transparent"/>
+                <path class="dot-body" data-activity-shape={activityShape(mark.node)} d={glyphPath(activityShape(mark.node), mark.x, mark.y, visibleRadius(mark.node.id) / cameraScale)} fill={mark.color} stroke={focusId === mark.node.id ? 'var(--color-foreground)' : 'none'} stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+                {#if selectedIds.includes(mark.node.id)}<text x={mark.x + 10} y={mark.y - 8} font-size="10" fill="var(--color-foreground)">✓</text>{/if}
+              </g>
+            {/each}
+          </g>
+          {#each graphClouds.filter((item) => !item.cloud.parentId || showChildren) as item (item.cloud.id)}
             <g role="button" tabindex="0" data-region-id={item.cloud.id} aria-label={`Explore region ${regionName(item.cloud.id, item.cloud.label)}`} onclick={() => inspectRegion(item.cloud.parentId ?? item.cloud.id)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspectRegion(item.cloud.parentId ?? item.cloud.id); } }}>
               <text x={item.labelPoint.x} y={item.labelPoint.y} text-anchor="middle" font-size="20" font-weight="550" fill="var(--color-muted-foreground)">{regionName(item.cloud.id, item.cloud.label).slice(0, 32)}</text>
             </g>
           {/each}
-          <g class="tile-links" pointer-events="none">{#each links as link (link.id)}
-            {@const emphasized = !!hoveredId && hoveredId !== focusId && (link.sourceId === hoveredId || link.targetId === hoveredId)}
-            <path data-link-source={link.sourceId} data-link-target={link.targetId} d={tileConnection(link)} fill="none" stroke={link.kind === 'wikilink' ? 'var(--color-foreground)' : 'color-mix(in srgb, #967aa9 65%, var(--color-foreground))'} vector-effect="non-scaling-stroke" stroke-width={emphasized ? 2.4 : incidentIds.has(link.id) ? 1.5 : 0.7} stroke-dasharray={link.kind === 'semantic' ? '6 5' : 'none'} opacity={emphasized ? 1 : incidentIds.has(link.id) ? 0.75 : 0.1}/>
-          {/each}</g>
+        </g>
         <g class="filename-labels">
           {#each filenameLabels as label (label.node.id)}
-            <g class="note-tile" role="button" tabindex="0" data-node-id={label.node.id} data-filename-id={label.node.id} data-root-id={label.rootId} aria-label={`Pin ${label.node.fileName || label.node.title}`}
+            <g class="note-name" role="button" tabindex="0" data-filename-id={label.node.id} aria-label={`Read ${label.node.fileName || label.node.title}`}
               onmouseenter={() => hoveredId = label.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = label.node.id} onblur={() => hoveredId = null}
               onclick={() => pin(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(label.node); } }}>
               <title>{label.node.fileName || label.node.title}</title>
-              <rect class="tile-body" x={label.x} y={label.y} width={label.width} height={label.height} rx="6" fill={`color-mix(in srgb, ${label.color} 35%, var(--color-background))`} stroke={focusId === label.node.id ? 'var(--color-foreground)' : label.color} stroke-width={focusId === label.node.id ? 2.5 : 1}/>
-              {#if activityMode !== 'none'}<path class="activity-glyph" data-activity-shape={activityShape(label.node)} d={glyphPath(activityShape(label.node), label.x + 11, label.y + 16, 3.5)} fill="var(--color-foreground)"/>{/if}
-              <text x={label.x + (activityMode === 'none' ? 12 : 22)} y={label.y + 20} font-size="12" font-weight={focusId === label.node.id ? '650' : '500'} fill="var(--color-foreground)" opacity={matchesQuery(label.node, query) ? 1 : 0.55}>{#each label.lines as line, index}<tspan x={label.x + (activityMode === 'none' ? 12 : 22)} dy={index ? 16 : 0}>{line}</tspan>{/each}</text>
-              {#if selectedIds.includes(label.node.id)}<text x={label.x + label.width - 7} y={label.y + label.height - 6} text-anchor="end" font-size="9" fill="var(--color-muted-foreground)">✓</text>{/if}
+              <text x={label.x} y={label.y} text-anchor="middle" font-size={labelSize} font-weight={focusId === label.node.id ? '600' : '400'} fill="var(--color-foreground)" stroke="var(--color-background)" stroke-width="3" stroke-linejoin="round" paint-order="stroke" opacity={label.opacity}>{label.title}</text>
             </g>
           {/each}
-        </g>
         </g>
       </g>
       {#if !response.nodes.length}<text x={width / 2} y={height / 2} text-anchor="middle" fill="var(--color-muted-foreground)">No notes in this snapshot.</text>{/if}
@@ -414,7 +373,7 @@
 </section>
 
 <style>
-  .fusion{container-type:inline-size;height:100%;min-height:0;display:flex;flex-direction:column;color:var(--color-foreground);outline:none}header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px 8px}h1{font-size:16px;font-weight:620;letter-spacing:-.025em;margin:0 0 3px}header p{font-size:10px;color:var(--color-muted-foreground);margin:0}header>span{font-size:10px;white-space:nowrap;color:var(--color-muted-foreground)}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:11px;padding:6px 12px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);font-size:10px;color:var(--color-muted-foreground)}.controls label{display:flex;align-items:center;gap:5px}.controls input[type=range]{width:65px;accent-color:#829fae}.controls input[type=checkbox]{accent-color:#829fae}output{width:23px}select{font-size:10px;background:var(--color-background);color:var(--color-foreground);border:1px solid var(--color-border);border-radius:4px;padding:4px}.map-controls{margin-left:auto;display:flex;align-items:center;gap:5px}.map-controls button{border:1px solid var(--color-border);padding:3px 6px;border-radius:4px;color:var(--color-foreground)}button{cursor:pointer}button:disabled{opacity:.4;cursor:default}button:focus-visible,select:focus-visible,.reader:focus-visible,.full-source:focus-visible{outline:2px solid var(--color-ring);outline-offset:2px}.plot{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--color-background)}svg{width:100%;height:100%;max-height:100%;touch-action:none;user-select:none;cursor:grab}svg:active{cursor:grabbing}svg g[role=button]{cursor:pointer;outline:none}svg g[role=button]:focus-visible>.tile-body{stroke:var(--color-ring);stroke-width:2px}.note-tile:hover>.tile-body{stroke:var(--color-foreground);stroke-width:2.5px}
+  .fusion{container-type:inline-size;height:100%;min-height:0;display:flex;flex-direction:column;color:var(--color-foreground);outline:none}header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px 8px}h1{font-size:16px;font-weight:620;letter-spacing:-.025em;margin:0 0 3px}header p{font-size:10px;color:var(--color-muted-foreground);margin:0}header>span{font-size:10px;white-space:nowrap;color:var(--color-muted-foreground)}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:11px;padding:6px 12px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);font-size:10px;color:var(--color-muted-foreground)}.controls label{display:flex;align-items:center;gap:5px}.controls input[type=range]{width:65px;accent-color:#829fae}.controls input[type=checkbox]{accent-color:#829fae}output{width:23px}select{font-size:10px;background:var(--color-background);color:var(--color-foreground);border:1px solid var(--color-border);border-radius:4px;padding:4px}.map-controls{margin-left:auto;display:flex;align-items:center;gap:5px}.map-controls button{border:1px solid var(--color-border);padding:3px 6px;border-radius:4px;color:var(--color-foreground)}button{cursor:pointer}button:disabled{opacity:.4;cursor:default}button:focus-visible,select:focus-visible,.reader:focus-visible,.full-source:focus-visible{outline:2px solid var(--color-ring);outline-offset:2px}.plot{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--color-background)}svg{width:100%;height:100%;max-height:100%;touch-action:none;user-select:none;cursor:grab}svg:active{cursor:grabbing}svg g[role=button]{cursor:pointer;outline:none}svg g[role=button]:focus-visible>.dot-body,.note-dot:hover>.dot-body{stroke:var(--color-foreground);stroke-width:2px}.note-name:focus-visible>text{fill:var(--color-ring)}
   .hover-preview{position:absolute;width:208px;max-height:88px;overflow:hidden;pointer-events:none;z-index:4;background:color-mix(in srgb,var(--color-background) 97%,transparent);border:1px solid var(--color-border);border-radius:6px;padding:8px;box-shadow:0 4px 13px #00000012}.hover-preview strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600}.hover-preview p{font-size:9px;line-height:1.5;color:var(--color-muted-foreground);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;margin:4px 0}.hover-preview>span{font-size:8px;color:var(--color-muted-foreground)}
   .workbench{flex:1;min-height:360px;display:grid;grid-template-columns:minmax(0,1fr) 304px;overflow:hidden}.dock{min-height:0;min-width:0;border-left:1px solid var(--color-border);background:var(--color-background);overflow:hidden}.reader{height:100%;display:flex;flex-direction:column;gap:0;overflow:hidden;padding:12px;background:var(--color-background)}.reader-heading{display:flex;align-items:center;justify-content:space-between;font-size:8px;color:var(--color-muted-foreground)}.reader-heading button{font-size:16px;line-height:1}.reader h2{font-size:13px;font-weight:620;line-height:1.35;white-space:normal;overflow-wrap:anywhere;margin:6px 0 3px}.activity-detail{font-size:8px;color:var(--color-muted-foreground);margin:0 0 7px}.browse{display:flex;justify-content:space-between;align-items:center;gap:7px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);padding:6px 0;font-size:9px}.browse label,.browse>div{display:flex;gap:5px;align-items:center}.browse select{font-size:9px;padding:3px;max-width:114px}.browse button{font-size:12px;border:1px solid var(--color-border);border-radius:3px;width:20px;height:20px}.browse>div>span{font-size:8px;white-space:nowrap}.reader-excerpt,.full-source{flex:1;min-height:0;overflow:auto;margin:8px 0;font-size:11px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.reader-excerpt{overflow:auto;overscroll-behavior:contain}.full-source{font-size:10px;padding-right:3px;overscroll-behavior:contain}.reader-footer{border-top:1px solid var(--color-border);padding-top:7px;font-size:8px;color:var(--color-muted-foreground)}.reader-footer>div{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.reader-footer button{padding:4px 6px;border:1px solid var(--color-border);border-radius:4px;font-size:9px;color:var(--color-foreground)}.reader-footer small{display:block;margin-top:4px;font-size:8px}
   .reader-heading,.reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}
