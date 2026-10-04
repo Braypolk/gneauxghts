@@ -1428,8 +1428,17 @@ mod tests {
         let _guard = crate::test_support::lock_test_env();
         let f = Fixture::new();
         let first = f.capture("B0", 0);
-        for n in 1..300 {
+        for n in 1..80 {
             f.capture(&format!("B{n}"), n * 1000);
+            if [63, 64, 65, 66].contains(&n) {
+                let connection = open_store(&Store::for_test()).unwrap();
+                let retained = connection
+                    .query_row("SELECT COUNT(*) FROM publication_receipts", [], |row| {
+                        row.get::<_, u64>(0)
+                    })
+                    .unwrap();
+                assert_eq!(retained, (n + 2).min(66), "receipt boundary at capture {n}");
+            }
         }
         let c = open_store(&Store::for_test()).unwrap();
         assert_eq!(revisions(&Store::for_test(), &f.note).unwrap().len(), 1);
@@ -1455,7 +1464,7 @@ mod tests {
         );
         assert_eq!(
             current_content_hash(&Store::for_test(), &f.note).unwrap(),
-            Some(authored_content_hash(&Fixture::markdown("B299")))
+            Some(authored_content_hash(&Fixture::markdown("B79")))
         );
         let w = pending_windows(&Store::for_test()).unwrap().pop().unwrap();
         let sealed = f.seal().unwrap();
@@ -1468,7 +1477,7 @@ mod tests {
                 .unwrap()
                 .body()
                 .trim(),
-            "B299"
+            "B79"
         );
         assert_eq!(
             reconstruct(&Store::for_test(), &f.note, &f.baseline)

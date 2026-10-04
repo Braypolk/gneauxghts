@@ -12,7 +12,9 @@ pub(crate) use config::{
     VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
 };
 #[cfg(test)]
-pub(crate) use config::{inject_vault_config_publication_failure_once, vault_data_dir, vault_root};
+pub(crate) use config::{
+    inject_vault_config_publication_failure_once, vault_data_dir, vault_root, TestPathSnapshot,
+};
 
 #[cfg(test)]
 pub(crate) fn ensure_vault_scaffold(vault_root: &std::path::Path) -> Result<VaultManifest, String> {
@@ -36,16 +38,16 @@ pub(crate) use persistence::{
 };
 #[cfg(test)]
 pub(crate) use persistence::{
-    db_insert_forgotten_note, db_remove_forgotten_note, db_set_forgotten_original_path,
-    inject_note_publication_failure_once, persist_note, write_last_opened_and_recents, write_state,
-    write_unpruned_state,
+    clear_note_publication_failure_for_test, db_insert_forgotten_note, db_remove_forgotten_note,
+    db_set_forgotten_original_path, inject_note_publication_failure_once,
+    write_last_opened_and_recents, write_state, write_unpruned_state,
 };
 
 #[cfg(test)]
 mod tests {
     use super::{
         derive_file_stem, derive_file_stem_from_title_and_markdown, forgotten_notes_root,
-        initialize_app_data_dir, persist_note, read_state, resolve_note_id_from_path, write_state,
+        initialize_app_data_dir, read_state, resolve_note_id_from_path, write_state,
         ForgottenItemKind, PersistedForgottenNote, PersistedState,
     };
     use crate::test_support::{lock_test_env, TestDir};
@@ -54,6 +56,26 @@ mod tests {
         sync::{Arc, Barrier},
         thread,
     };
+
+    fn save(
+        state: &crate::index::AppState,
+        title: &str,
+        markdown: &str,
+        path: Option<&std::path::Path>,
+    ) -> Result<Option<String>, String> {
+        crate::commands::note_persistence::persist_note_session_with_outcome(
+            state,
+            title.into(),
+            markdown.into(),
+            path.map(|p| p.to_string_lossy().into_owned()),
+        )
+        .map(|session| {
+            session.and_then(|session| {
+                assert!(session.commit_warning.is_none());
+                session.path
+            })
+        })
+    }
 
     #[test]
     fn derive_file_stem_sanitizes_invalid_characters_and_truncates() {
@@ -77,6 +99,7 @@ mod tests {
 
     #[test]
     fn atomic_create_note_never_replaces_an_occupied_path() {
+        let _guard = lock_test_env();
         let temp = TestDir::new("state-atomic-create-note");
         let occupied = temp.path().join("Occupied.md");
         fs::write(&occupied, "Unrelated content").unwrap();
@@ -91,13 +114,13 @@ mod tests {
 
     #[test]
     fn persist_note_renames_existing_file_when_title_changes() {
-        let temp = TestDir::new("state-persist-note");
-        let notes_dir = temp.path();
+        let fixture = crate::test_support::TestVault::new("state-persist-note");
+        let notes_dir = fixture.notes.path();
         let original_path = notes_dir.join("First Note.md");
         fs::write(&original_path, "Old content").expect("write original note");
 
-        let saved_path = persist_note(
-            notes_dir,
+        let saved_path = save(
+            &fixture.state,
             "Second Note",
             "Fresh content",
             Some(original_path.as_path()),
@@ -115,17 +138,16 @@ mod tests {
 
     #[test]
     fn concurrent_new_notes_reserve_distinct_paths() {
-        let temp = TestDir::new("state-persist-concurrent-new-notes");
-        let notes_dir = temp.path().to_path_buf();
+        let fixture = crate::test_support::TestVault::new("state-persist-concurrent-new-notes");
         let start = Arc::new(Barrier::new(2));
 
         let paths = thread::scope(|scope| {
             let handles = ["Left body", "Right body"].map(|body| {
                 let start = Arc::clone(&start);
-                let notes_dir = notes_dir.clone();
+                let state = &fixture.state;
                 scope.spawn(move || {
                     start.wait();
-                    persist_note(&notes_dir, "Shared title", body, None)
+                    save(state, "Shared title", body, None)
                         .expect("persist note")
                         .expect("saved path")
                 })
@@ -148,15 +170,15 @@ mod tests {
 
     #[test]
     fn persist_note_keeps_existing_nested_folder_when_title_changes() {
-        let temp = TestDir::new("state-persist-note-nested");
-        let notes_dir = temp.path();
+        let fixture = crate::test_support::TestVault::new("state-persist-note-nested");
+        let notes_dir = fixture.notes.path();
         let nested_dir = notes_dir.join("Projects");
         fs::create_dir_all(&nested_dir).expect("create nested dir");
         let original_path = nested_dir.join("First Note.md");
         fs::write(&original_path, "Old content").expect("write original note");
 
-        let saved_path = persist_note(
-            notes_dir,
+        let saved_path = save(
+            &fixture.state,
             "Second Note",
             "Fresh content",
             Some(original_path.as_path()),
@@ -172,14 +194,14 @@ mod tests {
 
     #[test]
     fn persist_note_rejects_chat_projection_paths_without_mutating_them() {
-        let temp = TestDir::new("state-persist-chat-projection");
-        let notes_dir = temp.path();
+        let fixture = crate::test_support::TestVault::new("state-persist-chat-projection");
+        let notes_dir = fixture.notes.path();
         let projection_path = notes_dir.join("Part 001.md");
         let projection = "---\ngneauxghts:\n  id: transcript-1\n  kind: chatTranscript\n  chat_id: chat-1\n  part: 1\n  projection_hash: abc\n---\n\nTranscript";
         fs::write(&projection_path, projection).expect("write projection");
 
-        let error = persist_note(
-            notes_dir,
+        let error = save(
+            &fixture.state,
             "Renamed transcript",
             "Changed",
             Some(projection_path.as_path()),

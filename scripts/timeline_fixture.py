@@ -163,7 +163,7 @@ def clone(cache):
             shutil.copytree(cache / name, run / name)
         # Paths are test geometry, not authored payload. No revision bytes, identities,
         # hashes, generations, or app observation attestations are rewritten.
-        with sqlite3.connect(run / 'vault' / DB) as db:
+        with closing(sqlite3.connect(run / 'vault' / DB)) as db, db:
             for table, columns in {
                 'timeline_heads': ['current_path'],
                 'prepared_intents': ['target_path'],

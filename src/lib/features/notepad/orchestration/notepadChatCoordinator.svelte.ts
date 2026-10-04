@@ -165,7 +165,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     proposal: ChatAgentProposal
   ): Promise<boolean> {
     const request = await this.durableProposalReviewRequest(
-      paneId,
       proposal
     );
     if (!request) return false;
@@ -180,7 +179,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
   ): Promise<boolean> {
     try {
       const request = await this.durableProposalReviewRequest(
-        paneId,
         proposal
       );
       if (!request) return false;
@@ -224,7 +222,6 @@ export class NotepadChatCoordinator<TPaneId extends string> {
   }
 
   private async durableProposalReviewRequest(
-    paneId: TPaneId,
     proposal: ChatAgentProposal
   ): Promise<DurableProposalReviewRequest | null> {
     let pendingProposal = proposal;
@@ -247,15 +244,21 @@ export class NotepadChatCoordinator<TPaneId extends string> {
 
     const preview = storedUpdatePreview(pendingProposal);
     if (!preview) return null;
-    const controller = this.getController(paneId);
     return {
       proposalId: pendingProposal.id,
       noteId: pendingProposal.noteId,
       preview,
-      commit: (markdown: string) =>
-        controller.keepProposal(pendingProposal.id, markdown),
-      dismiss: () =>
-        controller.dismissProposal(pendingProposal.id)
+      // A document review outlives its originating chat pane and route. Its
+      // durable settlement must not call a disposed pane controller.
+      commit: async (markdown: string) => {
+        const result = await this.api.commitAgentProposal(pendingProposal.id, markdown);
+        if (result.status === 'committed') this.removeResolvedProposal(pendingProposal.id);
+        return result;
+      },
+      dismiss: async () => {
+        await this.api.dismissAgentProposal(pendingProposal.id);
+        this.removeResolvedProposal(pendingProposal.id);
+      }
     };
   }
 

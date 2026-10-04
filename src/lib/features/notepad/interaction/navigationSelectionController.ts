@@ -1,6 +1,7 @@
 import { tick } from 'svelte';
 import type {
   NavigationContext,
+  NavigationContextSource,
   OpenContext
 } from '$lib/features/notepad/navigation/openFlow';
 import type { SearchMode } from '$lib/features/notepad/search/search';
@@ -23,7 +24,7 @@ export interface NavigationSelectionControllerDeps<
   ) => void;
   saveCursorPosition: () => void;
   getOpenContext: () => OpenContext;
-  getNavigationContext: () => NavigationContext;
+  getNavigationContext: (paneId?: TPaneId) => NavigationContext;
   openChatProjection: (
     paneId: TPaneId,
     notePath: string | null,
@@ -31,12 +32,12 @@ export interface NavigationSelectionControllerDeps<
   ) => Promise<boolean>;
   openSearchResult: (
     openContext: OpenContext,
-    navigationContext: NavigationContext,
+    navigationContext: NavigationContextSource,
     result: SearchItem
   ) => Promise<void>;
   openRecentTask: (
     openContext: OpenContext,
-    navigationContext: NavigationContext,
+    navigationContext: NavigationContextSource,
     task: RecentTaskItem
   ) => Promise<void>;
   afterRender?: () => Promise<void>;
@@ -50,6 +51,10 @@ export function createNavigationSelectionController<
   TPaneId extends string
 >(deps: NavigationSelectionControllerDeps<TPaneId>) {
   const afterRender = deps.afterRender ?? tick;
+  function navigationContextForSelection(): NavigationContextSource {
+    const paneId = deps.getNavigationPaneId();
+    return () => deps.getNavigationContext(paneId);
+  }
 
   async function handleSearchResultSelect(result: SearchItem) {
     if (
@@ -83,7 +88,7 @@ export function createNavigationSelectionController<
     await deps.openSearchResult(
       // Choosing a search result keeps the query available for further matches.
       { ...deps.getOpenContext(), clearSearch: () => {} },
-      deps.getNavigationContext(),
+      navigationContextForSelection(),
       result
     );
     deps.saveCursorPosition();
@@ -117,7 +122,7 @@ export function createNavigationSelectionController<
     deps.resetPaneCommand();
     await deps.openRecentTask(
       deps.getOpenContext(),
-      deps.getNavigationContext(),
+      navigationContextForSelection(),
       task
     );
     deps.saveCursorPosition();
@@ -141,7 +146,7 @@ export function createNavigationSelectionController<
     deps.resetPaneCommand();
     await deps.openSearchResult(
       deps.getOpenContext(),
-      deps.getNavigationContext(),
+      navigationContextForSelection(),
       {
         noteId: item.noteId,
         notePath: item.notePath,

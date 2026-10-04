@@ -1046,8 +1046,11 @@ mod tests {
                     .unwrap();
             });
             queue.stop();
-            assert_eq!(batch_rx.recv().unwrap(), Some(vec![pending]));
-            assert!(!reconcile_rx.recv().unwrap());
+            assert_eq!(
+                batch_rx.recv_timeout(Duration::from_secs(5)).unwrap(),
+                Some(vec![pending])
+            );
+            assert!(!reconcile_rx.recv_timeout(Duration::from_secs(5)).unwrap());
         });
         queue.push([PathBuf::from("/disposable-vault/Late.md")]);
         assert_eq!(wait_for_flushable_batch(&queue), None);
@@ -1056,12 +1059,16 @@ mod tests {
     #[test]
     fn rename_matching_uses_catalog_hash_when_semantic_indexing_is_unavailable() {
         let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("watcher-rename-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        let notes = crate::test_support::TestDir::new("watcher-rename-vault");
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
         let state = AppState::new(
             SemanticState::new_disabled("disabled"),
             EventBus::disabled(),
         )
         .unwrap();
-        let path = PathBuf::from("/vault/Rename.md");
+        let path = notes.path().join("Rename.md");
         let markdown = "Rename body";
         state
             .upsert_note_indexes(

@@ -1,4 +1,12 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { resetBrowserWorkspace, waitForNote } from '../../support/browserWorkspace';
+import { waitForTwoAnimationFrames } from '../../support/animationFrames';
+
+declare global {
+  interface Window {
+    __pendingNoteOpen?: { entered: boolean; release: () => void; cleanup: () => void };
+  }
+}
 
 async function expectReady(title: string, body: string) {
   await browser.waitUntil(async () =>
@@ -64,6 +72,51 @@ describe('editor readiness', () => {
       await $('[data-pane-kind="chat"]').waitForExist();
       await shortcut('l');
       await expectReady('Beta note', 'Beta body is independent from Alpha.');
+    }
+  });
+
+  it('keeps a newer search interaction when an older note open completes', async () => {
+    await resetBrowserWorkspace();
+    const search = await $('[data-testid="note-search-input"]');
+    await search.click();
+    await $('button[aria-label="Search all notes"]').click();
+    await search.setValue('Beta note');
+    await $('button[aria-label="Open search result: Beta note.md"]').waitForExist();
+    await browser.execute(() => {
+      const ipc = window.__TAURI_INTERNALS__;
+      const original = ipc.invoke;
+      const gate: NonNullable<Window['__pendingNoteOpen']> = { entered: false, release: () => {}, cleanup: () => {} };
+      window.__pendingNoteOpen = gate;
+      ipc.invoke = <T>(command: string, args: Record<string, unknown>) => {
+        if (command === 'open_note') return new Promise<T>((resolve, reject) => {
+          gate.entered = true;
+          gate.release = () => {
+            gate.release = () => {};
+            original<T>(command, args).then(resolve, reject);
+          };
+        });
+        return original<T>(command, args);
+      };
+      gate.cleanup = () => {
+        gate.release();
+        ipc.invoke = original;
+        delete window.__pendingNoteOpen;
+      };
+    });
+    try {
+      await browser.keys('Enter');
+      await browser.waitUntil(() => browser.execute(() => window.__pendingNoteOpen!.entered));
+      await search.click();
+      await search.setValue('Alpha note');
+      await $('button[aria-label="Open search result: Alpha note.md"]').waitForExist();
+      await expect(search).toBeFocused();
+      await browser.execute(() => window.__pendingNoteOpen!.release());
+      await waitForNote('Beta note');
+      await waitForTwoAnimationFrames();
+      await expect(search).toBeFocused();
+      await expect($('button[aria-label="Open search result: Alpha note.md"]')).toBeDisplayed();
+    } finally {
+      await browser.execute(() => window.__pendingNoteOpen?.cleanup());
     }
   });
 });

@@ -1,18 +1,9 @@
 use super::*;
-use crate::{app::EventBus, semantic::SemanticState};
 
 #[test]
 fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
-    let _guard = crate::test_support::lock_test_env();
-    let data = crate::test_support::TestDir::new("evidence-data");
-    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("evidence-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let vault = crate::test_support::TestVault::new("evidence");
+    let state = &vault.state;
     let fixture: Value = serde_json::from_str(include_str!("fixtures.json")).unwrap();
     let mut id_map = HashMap::new();
     for n in fixture["notes"].as_array().unwrap() {
@@ -33,9 +24,47 @@ fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
         .lexical
         .sync_with_notes_index(&state.notes_index.lock().unwrap().entries)
         .unwrap();
-    if let Ok(output) = std::env::var("GNEAUX_EVAL_OUTPUT") {
-        evaluate_fixture(&state, &fixture, &id_map, &output);
+    // Empty searches consume a search slot but no evidence bytes. The issued
+    // cursor from slot 32 must remain usable even when new searches are refused.
+    let mut capacity = EvidenceSession::default();
+    for index in 0..31 {
+        capacity
+            .search(
+                &state,
+                None,
+                &HashSet::new(),
+                SearchRequest {
+                    query: format!("unfindable-capacity-{index}"),
+                    mode: SearchMode::Literal,
+                    ..Default::default()
+                },
+            )
+            .unwrap();
     }
+    let mut last = SearchRequest {
+        query: ".".into(),
+        mode: SearchMode::Regex,
+        limit: Some(1),
+        ..Default::default()
+    };
+    let first = capacity
+        .search(&state, None, &HashSet::new(), last.clone())
+        .unwrap();
+    last.cursor = Some(first["nextCursor"].as_str().unwrap().to_string());
+    assert_eq!(
+        capacity
+            .search(&state, None, &HashSet::new(), last.clone())
+            .unwrap()["items"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    last.cursor = None;
+    assert!(capacity
+        .search(&state, None, &HashSet::new(), last)
+        .is_err());
+
     let excluded = HashSet::from([id_map["private"].clone()]);
     for q in fixture["questions"].as_array().unwrap() {
         let mut session = EvidenceSession::default();
@@ -173,7 +202,6 @@ fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
     }
     assert!(!session.is_current(&state, None, &excluded));
     assert!(!missing.is_current(&state, None, &excluded));
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
@@ -265,115 +293,6 @@ fn period_worker_has_no_inherited_undated_ids() {
     assert_eq!(parent.used(), 6);
 }
 
-// Offline contract comparison. The reformulation lane is scripted, not a live
-// LLM worker benchmark; provider tokens and semantic quality remain unmeasured.
-fn evaluate_fixture(
-    state: &AppState,
-    fixture: &Value,
-    ids: &HashMap<String, String>,
-    output: &str,
-) {
-    let excluded = HashSet::from([ids["private"].clone()]);
-    let mut results = Vec::new();
-    for question in fixture["questions"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .chain(fixture["semanticQuestions"].as_array().unwrap())
-    {
-        let query = question["query"].as_str().unwrap();
-        let expected = question["expectedPassages"].as_array().unwrap();
-        let terms: Vec<_> = query
-            .split(|c: char| !c.is_alphanumeric())
-            .filter(|s| s.len() > 1)
-            .map(str::to_lowercase)
-            .collect();
-        let baseline: Vec<_> = state
-            .notes_index
-            .lock()
-            .unwrap()
-            .entries
-            .values()
-            .filter(|n| !excluded.contains(&n.note_id))
-            .filter_map(|n| {
-                n.paragraphs
-                    .iter()
-                    .find(|p| terms.iter().any(|t| p.text_lower.contains(t)))
-                    .map(|p| p.text.clone())
-            })
-            .collect();
-        let baseline_hits = expected
-            .iter()
-            .filter(|e| {
-                baseline
-                    .iter()
-                    .any(|t| t.contains(e["text"].as_str().unwrap()))
-            })
-            .count();
-        for lane in ["direct_lexical", "scripted_reformulation"] {
-            let start = std::time::Instant::now();
-            let parent = EvidenceSession::default();
-            let mut session = if lane == "scripted_reformulation" {
-                parent.fork()
-            } else {
-                parent
-            };
-            let queries: Vec<&str> = if lane == "scripted_reformulation" {
-                question["reformulations"]
-                    .as_array()
-                    .map(|qs| qs.iter().filter_map(Value::as_str).collect())
-                    .unwrap_or(vec![query])
-            } else {
-                vec![query]
-            };
-            let mut returned = Vec::new();
-            let mut valid = 0;
-            let mut coverage = Vec::new();
-            for q in queries {
-                let page = session
-                    .search(
-                        state,
-                        None,
-                        &excluded,
-                        SearchRequest {
-                            query: q.into(),
-                            mode: SearchMode::Lexical,
-                            limit: Some(20),
-                            ..Default::default()
-                        },
-                    )
-                    .unwrap();
-                coverage.push(page["coverage"].clone());
-                let selected: Vec<String> = page["items"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|i| i["evidenceId"].as_str().unwrap().into())
-                    .take(8)
-                    .collect();
-                let (_, sources) = session
-                    .read(state, None, &excluded, &selected, false)
-                    .unwrap();
-                for (c, _, _) in sources {
-                    valid += usize::from(validate_citation(state, &c, None, &excluded).is_some());
-                    returned.push(c);
-                }
-            }
-            let hits = expected
-                .iter()
-                .filter(|e| {
-                    returned.iter().any(|c| {
-                        c.note_id == ids[e["note"].as_str().unwrap()]
-                            && c.excerpt.contains(e["text"].as_str().unwrap())
-                    })
-                })
-                .count();
-            results.push(json!({"query":query,"lane":lane,"expectedPassages":expected.iter().map(|e| &e["id"]).collect::<Vec<_>>(),"expectedCount":expected.len(),"passageHits":hits,"baselinePassageHits":baseline_hits,"returnedCitations":returned.len(),"returnedPassages":returned.iter().map(|c| &c.excerpt).collect::<Vec<_>>(),"validCitations":valid,"evidenceBytes":session.used(),"estimatedEvidenceTokens":session.used().div_ceil(4),"providerTokens":null,"latencyMillis":start.elapsed().as_secs_f64()*1000.0,"coverage":coverage}));
-        }
-    }
-    fs::write(output, serde_json::to_string_pretty(&json!({"method":"offline lexical + scripted reformulation; not live model delegation","semanticModel":"disabled","results":results})).unwrap()).unwrap();
-}
-
 #[test]
 fn navigation_maps_unicode_duplicate_ranges_after_hidden_title() {
     let raw = "# Example\n\n☕ repeated\nrepeated";
@@ -396,16 +315,8 @@ fn navigation_maps_unicode_duplicate_ranges_after_hidden_title() {
 
 #[test]
 fn read_budget_never_charges_passages_discarded_by_response_overhead() {
-    let _guard = crate::test_support::lock_test_env();
-    let data = crate::test_support::TestDir::new("read-budget-data");
-    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("read-budget-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let vault = crate::test_support::TestVault::new("read-budget");
+    let state = &vault.state;
     let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
         &state,
         "Budget project".into(),
@@ -459,16 +370,8 @@ fn read_budget_never_charges_passages_discarded_by_response_overhead() {
 
 #[test]
 fn research_and_mixed_read_pages_preserve_deliverable_evidence_within_budget() {
-    let _guard = crate::test_support::lock_test_env();
-    let data = crate::test_support::TestDir::new("research-budget-data");
-    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("research-budget-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let vault = crate::test_support::TestVault::new("research-budget");
+    let state = &vault.state;
     crate::commands::note_persistence::persist_note_session_with_outcome(
         &state,
         "Vendor review".into(),
@@ -579,4 +482,201 @@ fn research_and_mixed_read_pages_preserve_deliverable_evidence_within_budget() {
         partials > 0,
         "Mixed reads did not deliver a valid passage alongside the explicit failure"
     );
+}
+
+#[test]
+fn operation_snapshots_reduce_reads_and_never_authorize_a_changed_note() {
+    let vault = crate::test_support::TestVault::new("evidence-snapshot");
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Long".into(),
+        "x".repeat(24_000),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let id = saved.note_id.unwrap();
+    SNAPSHOT_READS.with(|n| n.set(0));
+    // The former per-slice construction path loaded canonical bytes each time.
+    for _ in 0..10 {
+        CanonicalSnapshot::load(&vault.state, &id).unwrap();
+    }
+    let repeated = SNAPSHOT_READS.with(|n| n.replace(0));
+    let mut snapshots = HashMap::new();
+    let mut candidates = Vec::new();
+    for offset in (0..24_000).step_by(2400) {
+        candidates.push(
+            cached_candidate(
+                &vault.state,
+                &mut snapshots,
+                &id,
+                &"x".repeat(2400),
+                "body",
+                "Current",
+                1.0,
+                Some(offset),
+            )
+            .unwrap(),
+        );
+    }
+    assert_eq!(repeated, 10);
+    assert_eq!(SNAPSHOT_READS.with(|n| n.get()), 1);
+    assert!(
+        validate_citation(&vault.state, &candidates[0].citation, None, &HashSet::new()).is_some()
+    );
+    let mut session = EvidenceSession::default();
+    let (page, _) = session
+        .read_request(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: Some(id.clone()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let cursor = page["nextCursor"].as_str().unwrap().to_string();
+    let continuation = session.read_continuations[&cursor].clone();
+    for index in 0..127 {
+        session
+            .read_continuations
+            .insert(format!("held-{index}"), continuation.clone());
+    }
+    assert!(session
+        .read_request(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                cursor: Some(cursor),
+                ..Default::default()
+            }
+        )
+        .is_ok());
+    assert!(session
+        .read_request(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: Some(id),
+                ..Default::default()
+            }
+        )
+        .is_err());
+    let raw = fs::read_to_string(saved.path.as_ref().unwrap()).unwrap();
+    fs::write(
+        saved.path.unwrap(),
+        raw.replace(&"x".repeat(24_000), "Changed"),
+    )
+    .unwrap();
+    assert!(
+        validate_citation(&vault.state, &candidates[0].citation, None, &HashSet::new()).is_none()
+    );
+}
+
+#[test]
+fn hybrid_composition_merges_agreement_widens_allowed_scope_and_reports_failure() {
+    let vault = crate::test_support::TestVault::new("evidence-hybrid");
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Hybrid".into(),
+        "alpha common\n\nomega semantic".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let id = saved.note_id.unwrap();
+    let ids = HashSet::from([id.clone()]);
+    let item = |path: &str, text: &str| crate::semantic::SemanticChunkMatch {
+        note_path: path.into(),
+        note_title: "Hybrid".into(),
+        section_label: "Body".into(),
+        excerpt: text.into(),
+        match_text: text.into(),
+        score: 1.0,
+        start_line: 1,
+        end_line: 1,
+        document_kind: DocumentKind::Note,
+        block_anchor: None,
+    };
+    let mut snapshots = HashMap::new();
+    let lexical = cached_candidate(
+        &vault.state,
+        &mut snapshots,
+        &id,
+        "alpha common",
+        "body",
+        "Body",
+        reciprocal_rank(0),
+        None,
+    )
+    .unwrap();
+    let mut candidates = vec![lexical.clone()];
+    let mut semantic = "ready".to_string();
+    let mut gaps = Vec::new();
+    let mut widths = Vec::new();
+    collect_semantic_candidates(
+        &vault.state,
+        &SearchRequest::default(),
+        &ids,
+        &mut snapshots,
+        &mut candidates,
+        &mut semantic,
+        &mut gaps,
+        |width| {
+            widths.push(width);
+            if width == 64 {
+                return Ok((0..64).map(|_| item("excluded.md", "private")).collect());
+            }
+            Ok(vec![
+                item(saved.path.as_ref().unwrap(), "alpha common"),
+                item(saved.path.as_ref().unwrap(), "omega semantic"),
+                item(saved.path.as_ref().unwrap(), "stale semantic bytes"),
+            ])
+        },
+    )
+    .unwrap();
+    assert_eq!(widths, vec![64, 256]);
+    assert_eq!(candidates.len(), 2);
+    assert!(candidates[0].score > lexical.score);
+    assert_eq!(candidates[1].citation.excerpt, "omega semantic");
+    let mut bounded_widths = Vec::new();
+    collect_semantic_candidates(
+        &vault.state,
+        &SearchRequest::default(),
+        &ids,
+        &mut snapshots,
+        &mut candidates,
+        &mut semantic,
+        &mut gaps,
+        |width| {
+            bounded_widths.push(width);
+            Ok((0..width).map(|_| item("excluded.md", "private")).collect())
+        },
+    )
+    .unwrap();
+    assert_eq!(bounded_widths, vec![64, 256, 1024, WORK_LIMIT]);
+    assert_eq!(candidates.len(), 2);
+    assert!(gaps
+        .iter()
+        .any(|gap| gap == "Semantic candidate coverage is incomplete"));
+    let retained = candidates.len();
+    collect_semantic_candidates(
+        &vault.state,
+        &SearchRequest::default(),
+        &ids,
+        &mut snapshots,
+        &mut candidates,
+        &mut semantic,
+        &mut gaps,
+        |_| Err("provider unavailable".into()),
+    )
+    .unwrap();
+    assert_eq!(candidates.len(), retained);
+    assert_eq!(semantic, "error");
+    assert!(gaps
+        .iter()
+        .any(|gap| gap.contains("lexical results remain")));
 }

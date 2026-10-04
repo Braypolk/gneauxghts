@@ -1,8 +1,9 @@
+import { createCommandView } from '../editor/commandTestSupport';
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import { history, undo } from '@codemirror/commands';
 import { ensureSyntaxTree, syntaxTree } from '@codemirror/language';
-import { EditorState, Transaction, type Range, type TransactionSpec } from '@codemirror/state';
-import type { Decoration, EditorView } from '@codemirror/view';
+import { EditorState, type Range } from '@codemirror/state';
+import type { Decoration } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
 
 import { decorateBlockquote } from './decorations/blockquote';
@@ -144,17 +145,6 @@ describe('heading decorator', () => {
 });
 
 describe('inline formatting decorator', () => {
-  it('marks strong content and conceals both emphasis markers', () => {
-    const specs = collect('a **bold** b', decorateInlineFormatting);
-    expect(classes(specs)).toContain('cm-gn-strong');
-    const conceals = specs.filter((s) => s.isReplace);
-    expect(conceals).toHaveLength(2);
-  });
-
-  it('renders underscore and asterisk italics', () => {
-    expect(classes(collect('_italic_', decorateInlineFormatting))).toContain('cm-gn-emphasis');
-    expect(classes(collect('*Italic text*', decorateInlineFormatting))).toContain('cm-gn-emphasis');
-  });
 
   it('renders underscore bold markers', () => {
     expect(classes(collect('__Bold text__', decorateInlineFormatting))).toContain('cm-gn-strong');
@@ -164,17 +154,6 @@ describe('inline formatting decorator', () => {
     const specs = collect('_italic_', decorateInlineFormatting, () => true);
     expect(classes(specs)).toContain('cm-gn-emphasis');
     expect(specs.some((s) => s.isReplace)).toBe(false);
-  });
-
-  it('handles strikethrough', () => {
-    const specs = collect('~~gone~~', decorateInlineFormatting);
-    expect(classes(specs)).toContain('cm-gn-strikethrough');
-  });
-
-  it('handles highlight markers', () => {
-    const specs = collect('==Highlighted text==', decorateInlineFormatting);
-    expect(classes(specs)).toContain('cm-gn-highlight');
-    expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
   });
 
   it('lets a non-empty selection own the highlight fill', () => {
@@ -198,12 +177,6 @@ describe('inline formatting decorator', () => {
     expect(classes(caretOnly)).not.toContain(
       'cm-gn-highlight cm-gn-selection-overlap'
     );
-  });
-
-  it('handles Obsidian comment markers', () => {
-    const specs = collect('Visible %%hidden note%% text', decorateInlineFormatting);
-    expect(classes(specs)).toContain('cm-gn-comment');
-    expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
   });
 
   it('supports nested bold and italic', () => {
@@ -280,31 +253,16 @@ describe('list decorator', () => {
   });
 
   it('toggles a task marker as one undoable source edit', () => {
-    let state = EditorState.create({ doc: '- [ ] todo', extensions: [history()] });
-    const view = {
-      get state() {
-        return state;
-      },
-      dispatch(spec: Transaction | TransactionSpec) {
-        const transaction =
-          spec instanceof Transaction ? spec : state.update(spec);
-        state = transaction.state;
-      }
-    } as unknown as EditorView;
+    const { view } = createCommandView({ doc: '- [ ] todo', extensions: [history()] });
 
     expect(toggleTaskMarker(view, 4, false)).toBe(true);
-    expect(state.doc.toString()).toBe('- [x] todo');
+    expect(view.state.doc.toString()).toBe('- [x] todo');
     expect(undo(view)).toBe(true);
-    expect(state.doc.toString()).toBe('- [ ] todo');
+    expect(view.state.doc.toString()).toBe('- [ ] todo');
   });
 });
 
 describe('code block decorator', () => {
-  it('marks inline code and conceals its backticks', () => {
-    const specs = collect('text `code` text', decorateCodeBlocks);
-    expect(classes(specs)).toContain('cm-gn-code-inline');
-    expect(specs.filter((s) => s.isReplace)).toHaveLength(2);
-  });
 
   it('decorates fenced code lines and conceals the fences', () => {
     const specs = collect('```js\nconst x = 1;\n```', decorateCodeBlocks);
@@ -345,4 +303,9 @@ describe('link decorator', () => {
     expect(classes(specs)).toContain('cm-gn-link-url');
     expect(specs.some((s) => s.hasWidget)).toBe(false);
   });
+});
+
+it('does not rebuild document-wide decorations for viewport-only movement', () => {
+  const state = EditorState.create({ doc: '# heading' });
+  expect(markdownDecorationsNeedRebuild({ startState: state, state, docChanged: false, selectionSet: false, viewportChanged: true })).toBe(false);
 });

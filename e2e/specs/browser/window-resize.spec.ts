@@ -1,4 +1,5 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 interface ResizeFrame {
   viewport: number;
@@ -8,31 +9,68 @@ interface ResizeFrame {
 
 declare global {
   interface Window {
-    __workspaceResizeSamples: Promise<ResizeFrame[]>;
+    __workspaceResizeSamples: Promise<{ frames: ResizeFrame[]; error?: string }>;
+    __cancelWorkspaceResizeSamples?: () => void;
   }
 }
 
 async function resizeAndSample(width: number) {
   await browser.execute(() => {
+    window.__cancelWorkspaceResizeSamples?.();
     window.__workspaceResizeSamples = new Promise(resolve => {
-      window.addEventListener('resize', () => {
-        const frames: ResizeFrame[] = [];
-        const start = performance.now();
-        const sample = () => {
-          const rect = document.querySelector('[data-testid="workspace-card"]')!
-            .getBoundingClientRect();
-          frames.push({ viewport: window.innerWidth, left: rect.left, width: rect.width });
-          if (performance.now() - start < 500) requestAnimationFrame(sample);
-          else resolve(frames);
-        };
-        requestAnimationFrame(sample);
-      }, { once: true });
+      const frames: ResizeFrame[] = [];
+      let frameId = 0;
+      let finished = false;
+      let observedResize = false;
+      let stableSince: number | null = null;
+      const finish = (error?: string) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(deadline);
+        cancelAnimationFrame(frameId);
+        window.removeEventListener('resize', onResize);
+        delete window.__cancelWorkspaceResizeSamples;
+        resolve({ frames, ...(error ? { error } : {}) });
+      };
+      const deadline = setTimeout(() => finish('Resize event or stable layout frames were not observed'), 5000);
+      const sample = () => {
+        if (finished) return;
+        const card = document.querySelector('[data-testid="workspace-card"]');
+        if (!card) { finish('Workspace card disappeared during resize'); return; }
+        const rect = card.getBoundingClientRect();
+        const frame = { viewport: window.innerWidth, left: rect.left, width: rect.width };
+        const previous = frames.at(-1);
+        frames.push(frame);
+        const stable = previous?.viewport === frame.viewport &&
+          Math.abs(previous.left - frame.left) <= 0.1 && Math.abs(previous.width - frame.width) <= 0.1 &&
+          !document.querySelector('[data-pane-motion]') &&
+          !card.getAnimations({ subtree: true }).some(animation =>
+            (animation.playState === 'running' || animation.pending) &&
+            animation.effect?.getTiming().iterations !== Infinity);
+        stableSince = stable ? stableSince ?? performance.now() : null;
+        if (frames.length > 3 && stableSince !== null && performance.now() - stableSince >= 100) finish();
+        else frameId = requestAnimationFrame(sample);
+      };
+      const onResize = () => {
+        if (observedResize) return;
+        observedResize = true;
+        frameId = requestAnimationFrame(sample);
+      };
+      window.__cancelWorkspaceResizeSamples = () => finish('Resize sampling cancelled');
+      window.addEventListener('resize', onResize);
     });
   });
-  await browser.setWindowSize(width, 1000);
-  const frames = await browser.executeAsync((done: (frames: ResizeFrame[]) => void) => {
-    void window.__workspaceResizeSamples.then(done);
-  });
+  let result: { frames: ResizeFrame[]; error?: string };
+  try {
+    await browser.setWindowSize(width, 1000);
+    result = await browser.executeAsync((done: (result: { frames: ResizeFrame[]; error?: string }) => void) => {
+      void window.__workspaceResizeSamples.then(done);
+    });
+  } finally {
+    await browser.execute(() => window.__cancelWorkspaceResizeSamples?.());
+  }
+  if (result.error) throw new Error(result.error);
+  const frames = result.frames;
   const final = frames.at(-1)!;
   const settledViewport = frames.filter(frame => frame.viewport === final.viewport);
   expect(settledViewport.length).toBeGreaterThan(3);
@@ -50,7 +88,7 @@ describe('window resize layout', () => {
       await browser.url('/');
       await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
       if (expanded) await $('button[aria-label="Expand related notes"]').click();
-      await browser.pause(400);
+      await waitForWorkspaceAnimationSettled();
       await resizeAndSample(900);
       await resizeAndSample(1440);
     });

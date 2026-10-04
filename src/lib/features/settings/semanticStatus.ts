@@ -38,7 +38,7 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
     description: status.indexUsable ? 'Existing matches are available. Resume to include new and edited notes.' : 'Resume indexing to make your notes available for semantic search.',
     action: 'resume_semantic_indexing', actionLabel: 'Resume indexing'
   };
-  if (shouldShowSemanticRetry(status)) return {
+  if (status.health === 'degraded' || status.retryExhausted) return {
     state: 'attention', guidance: 'Action needed', title: 'Indexing needs a retry',
     description: status.indexUsable ? 'Existing matches are available, but recent changes could not be indexed.' : 'Your notes could not be indexed. Retry to finish setting up search.',
     action: 'retry_semantic_index', actionLabel: 'Retry now'
@@ -66,26 +66,4 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
       ? 'Your index is up to date. New and edited notes will be indexed automatically.'
       : 'Setup is complete. Notes will be indexed automatically as you add them.'
   };
-}
-
-export function semanticStatusLabel(status: SemanticStatus): string {
-  switch (status.health) {
-    case 'paused':
-      return 'Paused';
-    case 'degraded':
-      return status.indexUsable ? 'Degraded · using last good index' : 'Degraded';
-    case 'stale':
-      return status.indexUsable ? 'Stale · using last good index' : 'Stale';
-    case 'working':
-      if (status.progressTotal > 0) {
-        return `${status.currentJobLabel ?? 'Indexing'} ${status.progressCurrent}/${status.progressTotal}`;
-      }
-      return status.currentJobLabel ?? 'Indexing';
-    case 'fresh':
-      return 'Ready';
-  }
-}
-
-export function shouldShowSemanticRetry(status: SemanticStatus): boolean {
-  return status.health === 'degraded' || status.retryExhausted;
 }

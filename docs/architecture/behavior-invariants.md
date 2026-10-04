@@ -455,6 +455,10 @@ uses the current catalog paragraphs without waiting for background indexing
 or embeddings. Once the lexical projection catches up, search uses it without
 adding duplicate fallback results.
 
+Reopening Atlas revalidates its retained display against the backend even when
+its previous response was ready. Chat-default changes and Atlas visibility changes
+persist independently; an older snapshot in either screen cannot revert the other.
+
 A transient indexing failure keeps the last good result visible as stale.
 Automatic retries are bounded and cannot overwrite newer queued work. The UI
 distinguishes fresh, stale, rebuilding, and degraded states and offers an
@@ -685,11 +689,25 @@ passage. Ordinary reads default to compact proofs; expanded per-range lineage is
 admission. Recorded proposals are not outstanding commitments merely because
 completion evidence is absent.
 
+### Request acceptance and completion are durable units
+
+Accepting a request commits its user message, attachments, assistant placeholder,
+run identity, and context together. A failed admission leaves no partial turn.
+Managed transcript publication follows admission; a projection failure cannot
+turn an accepted request into a rejected send. Completion commits the terminal
+message, citation sources, usage, and run receipt together before emitting success.
+A failed terminal transaction never announces completion or uncommitted sources;
+when storage remains available it marks the retained partial message failed so
+retry is available. If storage is unavailable, startup recovery settles the run.
+
 ### Interrupted runs preserve partial output
 
 A crash or interruption keeps the partial assistant message, marks it
 incomplete, and makes retry available after restart. Retry creates a traceable
-continuation without erasing the interrupted output.
+continuation without erasing the interrupted output. Its original user message
+and context come from the same durable run, including repeated retries after
+newer turns. Checkpoint branches remap that lineage to copied messages; transcript
+proximity cannot replace missing run identity.
 
 ### Related context is explicit and repeatable
 
@@ -704,6 +722,14 @@ reasoning and tool arguments are not exposed.
 
 ### Draft chats expose their complete configuration
 
+Starting a new draft or selecting another conversation retires pending selection
+and configuration results from the old target. A successfully created branch or
+conversation may remain durable without replacing a newer visible selection.
+First send captures the originating draft and configuration; only that draft's
+successful promotion can clear its composer. Creation followed by failed send
+preserves the created conversation and unsent content for retry. Duplicate
+terminal delivery cannot invoke completion effects more than once.
+
 Provider, model, reasoning effort, vault access, web, and attachment choices
 are available before a conversation is persisted. The first send applies the
 draft choices atomically. Settings supplies defaults for new chats; composer
@@ -717,8 +743,21 @@ response. Backend-resolved settings are the source of default model identity.
 
 ### One proposal review is editable
 
+The active review's editable body and hunk state follow its document lifetime,
+not any pane. Leaving the last pane or workspace route retains that state and
+autosave protection; returning reconnects to the same document root. In-flight
+durable settlement converges once across route disposal. Reopening does not restore
+from a second snapshot. Stale pane widgets cannot resolve another review. Terminal
+resolution saves any remaining ordinary edits before releasing an unreferenced
+document. Failed follow-on persistence leaves that document available and reports
+an error without repeating the already completed durable proposal action.
+
 At most one proposal is editable globally. Other pending proposals remain
-queued and durable, and unresolved proposals survive restart.
+queued and durable, and unresolved proposals survive restart. An edited, partially
+resolved or conflicted review must be resolved before another proposal replaces it.
+Confirmed Reload Disk reads the reviewed document even when another note is visible;
+it discards review text through canonical adoption and cannot save that discarded text.
+Repeated clicks while dismissal or reload is pending do not repeat those operations.
 
 Navigating away from an unresolved review retains its working copy and hunk
 choices for return. Pane and workspace save barriers do not persist or require

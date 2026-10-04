@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
+  import { createNativeContractProbe, type NativeContractProbe } from "$lib/e2e/nativeContractProbe";
   import ImageViewer from "./images/ImageViewer.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
@@ -44,21 +45,9 @@
   import { createNotepadProposalAdapter } from "$lib/features/notepad/orchestration/notepadProposalAdapter";
   import { NotepadChatCoordinator } from "$lib/features/notepad/orchestration/notepadChatCoordinator.svelte";
   import { createNotepadChatPaneAdapter } from "$lib/features/notepad/orchestration/notepadChatPaneAdapter";
-  import {
-    createPaneSessionController,
-    getSplitSourceNote,
-    paneCommandNoteLabel,
-  } from "$lib/features/notepad/orchestration/paneSessionController";
+  import { paneCommandNoteLabel } from "$lib/features/notepad/pane/paneViewModelFactory";
   import { createNotepadPersistenceController } from "$lib/features/notepad/orchestration/persistenceController";
-  import {
-    createNotepadCommands,
-    type LocationHistoryEntry,
-  } from "$lib/features/notepad/orchestration/notepadCommands";
-  import {
-    createNotepadWorkspaceCommands,
-    type NotepadDerivedViewCommands,
-    type NotepadPaneCommands,
-  } from "$lib/features/notepad/orchestration/notepadCommandFacades";
+  import { createNotepadWorkspaceSession, type LocationHistoryEntry } from "$lib/features/notepad/orchestration/notepadWorkspaceSession";
   import { createRelatedNotesStore } from "$lib/features/notepad/related/store.svelte";
   import { createNotepadSearchStore } from "$lib/features/notepad/search/store.svelte";
   import { createSearchReturnFocus } from "$lib/features/notepad/search/searchReturnFocus";
@@ -153,6 +142,7 @@
   type NativeE2EWindow = Window & {
     __GNEAUXGHTS_NATIVE_E2E__?: {
       readEditorState: () => NativeE2EEditorState;
+      contractProbe: NativeContractProbe;
       openRevisionCitation: (citation: Extract<import("$lib/features/chat/types").ChatCitation, { kind: "note" }>) => Promise<void>;
       setEditorSelection: (anchor: number, head: number) => boolean;
     };
@@ -414,22 +404,11 @@
     return getDocumentMarkdown(getDocumentSession());
   }
 
-  const paneSessionController = createPaneSessionController<PaneId>({
-    getPaneOrder: () => paneOrder,
-    getActivePaneId: () => activePaneId,
-    getPaneKind,
-    getPaneDocumentSession,
-    activatePaneSession,
-    setPaneDocumentSession,
-  });
-
-  const {
-    getEditorPaneIds,
-    getNavigationPaneId,
-    getNextPaneId,
-    getPaneIdsForDocument,
-    getVisiblePaneIds,
-  } = paneSessionController;
+  const getEditorPaneIds = () => workspaceStore.getEditorPaneIds();
+  const getNavigationPaneId = () => workspaceStore.getNavigationPaneId();
+  const getNextPaneId = (paneId = workspaceStore.activePaneId, direction: 1 | -1 = 1) => workspaceStore.getNextPaneId(paneId, direction);
+  const getPaneIdsForDocument = (document: NoteDraftState) => workspaceStore.getPaneIdsForDocument(document.handle);
+  const getVisiblePaneIds = () => workspaceStore.paneOrder;
 
   const {
     updatePaneWikilinkState,
@@ -458,11 +437,18 @@
     focusInputAtEnd(getPaneTitleInput(paneId));
   }
 
+  const navigationLifetime = new AbortController();
+
   function getNavigationContext(
     paneId: PaneId = getNavigationPaneId(),
   ): NavigationContext {
     const paneDocument = getPaneDocumentSession(paneId);
+    const editorRoot = getPaneEditorRoot(paneId);
     return {
+      signal: navigationLifetime.signal,
+      isCurrent: () => getVisiblePaneIds().includes(paneId) &&
+        getPaneDocumentSession(paneId).handle === paneDocument.handle &&
+        getPaneEditorRoot(paneId) === editorRoot,
       editorRoot: getPaneEditorRoot(paneId),
       titleShell: getPaneRuntime(paneId).refs.titleShell,
       currentNoteId: getDocumentNoteId(paneDocument),
@@ -553,12 +539,7 @@
     );
   }
 
-  /** Install an unresolved note review into every currently mounted pane. */
-  function presentProposalReview(document: NoteDraftState) {
-    for (const paneId of getPaneIdsForDocument(document)) {
-      const editor = editorCapabilities.get(paneId);
-      if (editor) proposalOrchestrationInstance?.attachEditor(document, editor);
-    }
+  function discoverPendingProposals(document: NoteDraftState) {
     void chatCoordinator.showPendingProposalsForDocument(document);
   }
 
@@ -570,7 +551,7 @@
     getPaneDocument: getPaneDocumentSession,
     paneShouldMountEditor,
     onEditorMounted: (_paneId, document) => {
-      presentProposalReview(document);
+      discoverPendingProposals(document);
     },
     closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId),
   });
@@ -879,12 +860,6 @@
     document: NoteDraftState | null,
   ) {
     const runtime = getPaneRuntime(paneId);
-    if (document) {
-      proposalOrchestrationInstance?.suspendDocument(
-        document,
-        editorCapabilities.get(paneId) ?? null,
-      );
-    }
     closeWikilinkAutocomplete(paneId);
     closeSlashMenu(paneId);
     closeSelectionMenu(paneId);
@@ -898,77 +873,43 @@
 
   // ---------------------------------------------------------------------------
   // High-level commands (open / forget / unforget / remember / split / close /
-  // setKind / pane-command / switch-pane). Encapsulated in notepadCommands so
+  // setKind / pane-command / switch-pane). Owned by the workspace session so
   // the component does not own every flow body.
   // ---------------------------------------------------------------------------
-  const notepadWorkspaceCommands = createNotepadWorkspaceCommands<PaneId>(
-    workspaceStore,
-    {
-      getFocusEl: () => paneCommandFocusEl,
-    },
-  );
-
-  const notepadPaneCommands: NotepadPaneCommands<PaneId> = {
-    getPaneKind,
-    getPaneDocument: getPaneDocumentSession,
-    getNavigationDocument: getDocumentSession,
-    getNavigationPaneId,
-    getNextPaneId,
-    getPaneRuntime,
-    getDocumentByHandle,
-    activatePaneSession,
-    setPaneDocumentSession,
-    getPaneTitleInput,
-    getPaneEditorRoot,
-    focusPaneEditor,
-    focusPaneEditorAtEnd,
-    focusPaneChat,
-    createPane: createPaneRuntime,
-    disposePaneRuntime,
-    updateSelectedRelatedText,
-    closeWikilinkAutocomplete,
-  };
-
-  const notepadDerivedViewCommands: NotepadDerivedViewCommands<PaneId> = {
-    clearSearch,
-    scheduleSearchIfNeeded: scheduleSearch,
-    scheduleRelatedIfNeeded: scheduleRelated,
-    clearSelectedRelatedText,
-    loadRecentNotes,
-    setRecentlyForgotten,
-    closeWikilinkAutocomplete,
-  };
-
-  const commands = createNotepadCommands<PaneId>({
+  const commands = createNotepadWorkspaceSession({
     state: notepadState,
+    workspace: workspaceStore,
     maxVisiblePanes: MAX_VISIBLE_PANES,
-    workspace: notepadWorkspaceCommands,
-    waitForPaneMotion: paneLayoutMotion.wait,
-    panes: notepadPaneCommands,
+    canSplitWorkspace: () => canSplitWorkspace(),
     persistence,
-    derivedViews: notepadDerivedViewCommands,
     documents,
     documentEditing,
     paneLifecycle,
+    presentation: {
+      getPaneTitleInput,
+      focusPaneEditor,
+      focusPaneEditorAtEnd,
+      focusPaneChat,
+      createPane: createPaneRuntime,
+      disposePaneRuntime,
+      closeTransientUiExcept,
+      updateSelectedRelatedText,
+      closeWikilinkAutocomplete,
+      waitForPaneMotion: paneLayoutMotion.wait,
+    },
+    derivedViews: {
+      discoverPendingProposals,
+      clearSearch,
+      scheduleSearchIfNeeded: scheduleSearch,
+      scheduleRelatedIfNeeded: scheduleRelated,
+      clearSelectedRelatedText,
+      loadRecentNotes,
+    },
     forgottenNoteRetentionPreference: () =>
       appSettings.forgottenNoteRetentionPreference,
-    canLeaveDocument: (document) =>
-      !documentHasUnresolvedConflict(document) ||
-      documentCanLeaveWithoutCanonicalWrite(document),
     isReviewingDocument: (document) =>
       getProposalOrchestration().isReviewingDocument(document),
-    onDocumentLeaving: (paneId, document) => {
-      proposalOrchestrationInstance?.suspendDocument(
-        document,
-        editorCapabilities.get(paneId) ?? null,
-      );
-    },
-    onDocumentOpened: (document) => {
-      proposalOrchestrationInstance?.restoreDocument(document);
-    },
-    onDocumentPresented: (document) => {
-      presentProposalReview(document);
-    },
+
   });
   touchPaneLocationForHistory = commands.touchCurrentLocation;
   commands.setLocationHistoryEpochListener((epoch) => {
@@ -997,7 +938,7 @@
     void locationHistoryEpoch;
     if (paneCommandPaneId === null) {
       return paneCommandNoteLabel(
-        getSplitSourceNote(notepadState, paneCommandSourceDocumentHandle),
+        paneCommandSourceDocumentHandle ? notepadState.documentsByHandle[paneCommandSourceDocumentHandle] : null,
       );
     }
     return commands.paneCommandCurrentLocationLabel(paneCommandPaneId);
@@ -1064,36 +1005,13 @@
     },
   });
 
-  const proposalAdapter = createNotepadProposalAdapter<PaneId>({
-    maxVisiblePanes: MAX_VISIBLE_PANES,
-    getPaneOrder: () => paneOrder,
-    getActivePaneId: () => activePaneId,
-    getPaneKind,
-    getPaneDocument: getPaneDocumentSession,
-    setPaneDocument: setPaneDocumentSession,
-    getPaneIdsForDocument,
+  const { orchestration: proposalOrchestration } = createNotepadProposalAdapter({
+    workspace: workspaceStore,
+    state: notepadState,
+    commands,
+    documentEditing,
     getEditor: (paneId) => editorCapabilities.get(paneId) ?? null,
-    canSplitWorkspace,
-    splitWorkspace: splitWorkspaceIfAllowed,
-    createSplitPane: commands.splitWorkspace,
-    getPendingPaneCommandId: () => workspaceStore.paneCommand.paneId,
-    resolvePaneCommandChoice: commands.resolvePaneCommandChoice,
-    setPaneKind: commands.setPaneKind,
-    setActivePane: workspaceStore.setActivePaneId,
-    activatePane: commands.activatePane,
-    openNote: commands.openNotePath,
-    paneLifecycle,
-    scheduleAutosave,
-    refreshCurrentNote: async () => {
-      await commands.refreshCurrentNoteIfChanged();
-    },
-    acknowledgeDocumentCommit:
-      commands.acknowledgeDocumentCommit,
   });
-  const {
-    orchestration: proposalOrchestration,
-    getNearestEditorPaneId,
-  } = proposalAdapter;
   proposalOrchestrationInstance = proposalOrchestration;
 
   const chatPaneAdapter = createNotepadChatPaneAdapter<PaneId>({
@@ -1111,7 +1029,6 @@
     getPaneSelectedText: (paneId) =>
       editorCapabilities.get(paneId)?.readSelection()?.selectedText?.trim() ||
       null,
-    getEditorPaneIds,
     setActivePane: workspaceStore.setActivePaneId,
     openNote: commands.openNotePath,
     focusPassage: (paneId, selection) => editorCapabilities.get(paneId)?.focusSelection(selection, { scrollIntoView: true }) ?? false,
@@ -1423,11 +1340,14 @@
       })();
     },
     dispose: () => {
+      navigationLifetime.abort();
+      commands.dispose();
       documents.saveCursorPositionForDocument();
       // Browser history and modified/default anchor navigation can bypass the
       // app-shell barrier. Keep this best-effort defensive flush until those
       // platform departure routes can be synchronously vetoed.
       void workspacePersistence.flushAllForNavigation();
+      proposalOrchestration.dispose();
       chatCoordinator.dispose();
       syncCurrentFileSearchHighlights("", "all");
       searchState.dispose();
@@ -1446,7 +1366,9 @@
     // optimized native tests too; ordinary builds erase this branch.
     if (import.meta.env.VITE_E2E_NATIVE === "true" || import.meta.env.VITE_E2E_BROWSER === "true") {
       const nativeE2EWindow = window as NativeE2EWindow;
+      const contractProbe = createNativeContractProbe();
       const nativeE2EBridge = {
+        contractProbe,
         readEditorState: () => {
           const paneId = activePaneId;
           const paneDocument = getPaneDocumentSession(paneId);
@@ -1477,6 +1399,7 @@
       };
       nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__ = nativeE2EBridge;
       disposeNativeE2EBridge = () => {
+        contractProbe.dispose();
         if (nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__ === nativeE2EBridge) {
           delete nativeE2EWindow.__GNEAUXGHTS_NATIVE_E2E__;
         }

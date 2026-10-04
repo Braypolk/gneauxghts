@@ -381,20 +381,22 @@ mod tests {
     use super::*;
     use std::{sync::Mutex, time::Duration};
 
-    fn wait_for_registration(broker: &AgentPermissionBroker, permission_id: &str) {
-        for _ in 0..100 {
-            if broker
-                .inner
-                .lock()
-                .unwrap()
-                .pending
-                .contains_key(permission_id)
-            {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(1));
+    struct ObservedEvents {
+        events: Mutex<Vec<AgentEvent>>,
+        changed: std::sync::Condvar,
+    }
+    impl ObservedEvents {
+        fn lock(&self) -> std::sync::LockResult<std::sync::MutexGuard<'_, Vec<AgentEvent>>> {
+            self.events.lock()
         }
-        panic!("permission request was not registered");
+    }
+
+    fn wait_for_registration(events: &ObservedEvents, permission_id: &str) {
+        let received = events.events.lock().unwrap();
+        let (received, _) = events.changed.wait_timeout_while(received, Duration::from_secs(2), |events| {
+            !events.iter().any(|event| matches!(event, AgentEvent::PermissionRequested { request } if request.identity.permission_id == permission_id))
+        }).unwrap();
+        assert!(received.iter().any(|event| matches!(event, AgentEvent::PermissionRequested { request } if request.identity.permission_id == permission_id)), "permission request was not registered");
     }
 
     fn request(permission_id: &str, run_id: &str, scope: &str) -> AgentPermissionRequest {
@@ -414,12 +416,18 @@ mod tests {
         }
     }
 
-    fn sink() -> (Arc<Mutex<Vec<AgentEvent>>>, AgentEventSink) {
-        let events = Arc::new(Mutex::new(Vec::new()));
+    fn sink() -> (Arc<ObservedEvents>, AgentEventSink) {
+        let events = Arc::new(ObservedEvents {
+            events: Mutex::new(Vec::new()),
+            changed: std::sync::Condvar::new(),
+        });
         let captured = Arc::clone(&events);
         (
             events,
-            Arc::new(move |event| captured.lock().unwrap().push(event)),
+            Arc::new(move |event| {
+                captured.events.lock().unwrap().push(event);
+                captured.changed.notify_all();
+            }),
         )
     }
 
@@ -428,7 +436,7 @@ mod tests {
         tauri::async_runtime::block_on(async {
             let broker = AgentPermissionBroker::default();
             let request = request("permission-1", "run-1", "command:echo");
-            let (_, sink) = sink();
+            let (events, sink) = sink();
             let waiting = tauri::async_runtime::spawn({
                 let broker = broker.clone();
                 let request = request.clone();
@@ -438,7 +446,7 @@ mod tests {
                         .await
                 }
             });
-            wait_for_registration(&broker, "permission-1");
+            wait_for_registration(&events, "permission-1");
             let mut wrong = request.identity.clone();
             wrong.tool_call_id = "wrong-call".to_string();
             assert!(broker
@@ -520,7 +528,7 @@ mod tests {
                 let sink = Arc::clone(&sink);
                 async move { broker.request(first, CancellationToken::new(), sink).await }
             });
-            wait_for_registration(&broker, "permission-1");
+            wait_for_registration(&events, "permission-1");
             broker
                 .decide(AgentPermissionDecisionCommand {
                     identity: first.identity.clone(),
@@ -539,7 +547,7 @@ mod tests {
                 let sink = Arc::clone(&sink);
                 async move { broker.request(second, CancellationToken::new(), sink).await }
             });
-            wait_for_registration(&broker, "permission-2");
+            wait_for_registration(&events, "permission-2");
             broker
                 .decide(AgentPermissionDecisionCommand {
                     identity: second.identity.clone(),
@@ -614,7 +622,7 @@ mod tests {
                 let sink = Arc::clone(&sink);
                 async move { broker.request(denied, CancellationToken::new(), sink).await }
             });
-            wait_for_registration(&broker, "permission-1");
+            wait_for_registration(&events, "permission-1");
             broker
                 .decide(AgentPermissionDecisionCommand {
                     identity: denied.identity,
@@ -634,7 +642,7 @@ mod tests {
                 let sink = Arc::clone(&sink);
                 async move { broker.request(cancelled, token, sink).await }
             });
-            wait_for_registration(&broker, "permission-2");
+            wait_for_registration(&events, "permission-2");
             token.cancel();
             assert_eq!(
                 waiting.await.unwrap().unwrap(),
@@ -651,7 +659,7 @@ mod tests {
                         .await
                 }
             });
-            wait_for_registration(&broker, "permission-3");
+            wait_for_registration(&events, "permission-3");
             broker.finish_run("run-1");
             assert_eq!(
                 waiting.await.unwrap().unwrap(),
@@ -680,7 +688,10 @@ mod tests {
             let broker = AgentPermissionBroker::default();
             let request = request("permission-restart", "run-restart", "command:echo");
             let (registered_tx, registered_rx) = std::sync::mpsc::channel();
-            let events = Arc::new(Mutex::new(Vec::new()));
+            let events = Arc::new(ObservedEvents {
+                events: Mutex::new(Vec::new()),
+                changed: std::sync::Condvar::new(),
+            });
             let captured = Arc::clone(&events);
             let sink: AgentEventSink = Arc::new(move |event| {
                 if matches!(event, AgentEvent::PermissionRequested { .. }) {

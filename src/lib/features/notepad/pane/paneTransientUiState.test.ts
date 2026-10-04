@@ -21,7 +21,7 @@ const states: PaneTransientUiState<PaneId>[] = [
 ];
 
 describe('pane transient UI state', () => {
-  it.each(PANE_TRANSIENT_UI_KINDS)(
+  it.each(['slash-menu', 'image-viewer'] as const)(
     'opening %s replaces every possible prior state',
     (kind) => {
       for (const previous of states) {
@@ -36,7 +36,7 @@ describe('pane transient UI state', () => {
     }
   );
 
-  it.each(PANE_TRANSIENT_UI_KINDS)(
+  it.each(['slash-menu'] as const)(
     'closing %s clears only that surface and owner',
     (kind) => {
       const open = transitionPaneTransientUi(

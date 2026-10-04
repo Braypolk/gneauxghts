@@ -52,6 +52,8 @@ enum BackgroundJob {
 struct QueueInner {
     #[cfg(test)]
     waiting_for_job: bool,
+    #[cfg(test)]
+    waiting_for_foreground: bool,
     /// FIFO of jobs waiting to be processed. We collapse repeated jobs for
     /// the same path on enqueue, so the deque holds at most one pending
     /// job per path.
@@ -105,6 +107,21 @@ impl BackgroundIndexQueue {
         assert!(state.waiting_for_job, "worker did not reach its idle wait");
     }
 
+    #[cfg(test)]
+    pub(crate) fn wait_until_foreground_pause_for_test(&self) {
+        let (lock, wake) = &*self.inner;
+        let state = lock.lock().expect("queue state");
+        let (state, _) = wake
+            .wait_timeout_while(state, Duration::from_secs(5), |state| {
+                !state.waiting_for_foreground
+            })
+            .expect("foreground pause notification");
+        assert!(
+            state.waiting_for_foreground,
+            "worker did not acknowledge foreground activity"
+        );
+    }
+
     pub(crate) fn enqueue_upsert(&self, path: PathBuf, note: IndexedNote, generation: u64) {
         self.enqueue(DeferredCatalogProjection::all(
             generation,
@@ -128,6 +145,10 @@ impl BackgroundIndexQueue {
         let mut state = lock.lock().expect("background index queue lock poisoned");
         if state.stopping && !matches!(job, BackgroundJob::Shutdown) {
             return;
+        }
+        #[cfg(test)]
+        {
+            state.waiting_for_job = false;
         }
         if let Some(path) = path {
             // Coalesce: if there's already a job for this path, replace it
@@ -216,9 +237,18 @@ fn run_worker(
             if matches!(state.jobs.front(), Some(BackgroundJob::Apply(_)))
                 && foreground_activity.is_busy()
             {
+                #[cfg(test)]
+                {
+                    state.waiting_for_foreground = true;
+                    cvar.notify_all();
+                }
                 drop(state);
                 thread::sleep(FOREGROUND_BACKOFF);
                 continue;
+            }
+            #[cfg(test)]
+            {
+                state.waiting_for_foreground = false;
             }
             let job = state.jobs.pop_front().expect("non-empty queue");
             // Drop the path -> position mapping. If callers race during the

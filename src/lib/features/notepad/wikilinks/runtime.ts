@@ -81,10 +81,12 @@ export function createWikilinkRuntime({
       return;
     }
 
-    void loadWikilinkSuggestions(nextActiveWikilink);
+    return loadWikilinkSuggestions(nextActiveWikilink);
   }
 
   function selectWikilinkSuggestion(suggestionValue: string) {
+    const state = getState();
+    if (!state.active || !state.suggestions.some(suggestion => suggestion.value === suggestionValue)) return;
     if (!insertWikilinkSuggestion(getEditorController(), getState().activeWikilink, suggestionValue)) {
       return;
     }
@@ -153,7 +155,7 @@ export function createWikilinkRuntime({
           stopPendingAutosave: cancelPendingAutosave,
           openNotePath
         },
-        getNavigationContext(),
+        getNavigationContext,
         resolved
       );
       saveCursorPositionForNote();

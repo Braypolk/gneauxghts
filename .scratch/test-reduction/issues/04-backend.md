@@ -1,0 +1,6 @@
+# Other backend/architecture test reduction
+
+Status: ready-for-agent
+Progress: Complete. Approved audit map implemented; independent review and combined acceptance passed. See ../validation.md and module result.
+
+Read ../04-backend-audit.md for exact removals, surviving coverage and rejected cuts. Delete redundant scenarios and dead helpers only. Preserve unique failure/race/platform contracts. No production changes, disabled tests or case merging for count optics. Record before/after cases and lines, run targeted checks, then independent review and combined acceptance.

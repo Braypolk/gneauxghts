@@ -1,8 +1,6 @@
 use super::index_bridge::read_indexed_note_from_path;
 use super::search_commands::build_draft_ref;
-use super::{
-    prepare_notes_dir, NoteLinkSuggestion, ResolvedNoteLink, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-};
+use super::{prepare_notes_dir, NoteLinkSuggestion, ResolvedNoteLink};
 use crate::{
     index::{
         build_current_override, collapse_whitespace, normalize_search_text, AppState, IndexedNote,
@@ -228,11 +226,7 @@ fn resolve_wikilink_note_path(
         }
     }
 
-    state.ensure_interactive_index(
-        notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "resolve_wikilink_note_path",
-    )?;
+    state.ensure_interactive_index(notes_dir, "resolve_wikilink_note_path")?;
     let index = state
         .notes_index
         .lock()
@@ -371,11 +365,7 @@ fn build_note_suggestions(
         }
     }
 
-    state.ensure_interactive_index(
-        notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "build_note_suggestions",
-    )?;
+    state.ensure_interactive_index(notes_dir, "build_note_suggestions")?;
     let index = state
         .notes_index
         .lock()
@@ -589,3 +579,6 @@ pub(super) fn resolve_note_link_target(
         line_number: None,
     })
 }
+
+#[cfg(test)]
+mod helper_tests;

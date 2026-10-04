@@ -17,8 +17,8 @@ slowSearch('native chat typing with slow related-note suggestions', function () 
   it('paints typed text promptly and runs only the latest queued search', async () => {
     assert.equal(process.env.GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS, '2000', 'Run with the bounded native search delay');
     await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', { settings: { ...settings, provider: 'local', model: 'typing-fixture', localModel: 'typing-fixture',
+    const { atlasVisibility: _visibility, ...defaults } = await invoke<Record<string, unknown>>('chat_get_settings');
+    await invoke('chat_set_defaults', { defaults: { ...defaults, provider: 'local', model: 'typing-fixture', localModel: 'typing-fixture',
       localBaseUrl: 'http://127.0.0.1:9/v1', defaultAccess: 'full', webAccess: 'off' } });
     await invoke('chat_set_local_model_capabilities', { model: 'typing-fixture', capabilities: { tools: false, images: false, audio: false, video: false, reasoningEffort: 'medium' } });
     const semantic = await invoke<Record<string, unknown>>('get_semantic_settings');
@@ -38,37 +38,82 @@ slowSearch('native chat typing with slow related-note suggestions', function () 
     const samples = await browser.executeAsync((done: (value: { paints: number[]; maxInFlight: number; queries: string[]; finalText: string; error?: string }) => void) => {
       const events = (window as unknown as { __TAURI__: { event: { listen: (name: string, callback: (event: { payload: { phase: string; query?: string } }) => void) => Promise<() => void> } } }).__TAURI__.event;
       const queries: string[] = [];
+      const paints: number[] = [];
       let inFlight = 0;
       let maxInFlight = 0;
-      const pause = (ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms));
+      let finished = false;
+      let unlisten: (() => void) | undefined;
+      const pending = new Set<() => void>();
+      const textarea = document.querySelector<HTMLTextAreaElement>('[data-pane-kind="chat"] textarea');
+      const finish = (error?: string) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(overallDeadline);
+        for (const cancel of [...pending]) cancel();
+        unlisten?.();
+        unlisten = undefined;
+        done({ paints, maxInFlight, queries, finalText: textarea?.value ?? '', ...(error ? { error } : {}) });
+      };
+      const overallDeadline = setTimeout(() => finish('Chat typing measurement exceeded its wall deadline'), 20_000);
+      const pause = (ms: number) => new Promise<void>(resolve => {
+        const cancel = () => { clearTimeout(timer); pending.delete(cancel); resolve(); };
+        const timer = setTimeout(cancel, ms);
+        pending.add(cancel);
+      });
+      const twoFrames = () => new Promise<boolean>(resolve => {
+        let settled = false;
+        let frameId = 0;
+        const complete = (painted: boolean) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(deadline);
+          cancelAnimationFrame(frameId);
+          pending.delete(cancel);
+          resolve(painted);
+        };
+        const cancel = () => complete(false);
+        const deadline = setTimeout(cancel, 5000);
+        pending.add(cancel);
+        frameId = requestAnimationFrame(() => {
+          if (finished || settled) return;
+          frameId = requestAnimationFrame(() => complete(!finished));
+        });
+      });
       void (async () => {
-        const paints: number[] = [];
-        const textarea = document.querySelector<HTMLTextAreaElement>('[data-pane-kind="chat"] textarea')!;
-        let unlisten: (() => void) | undefined;
         try {
-          unlisten = await events.listen('e2e://context-search', ({ payload }) => {
+          const release = await events.listen('e2e://context-search', ({ payload }) => {
+            if (finished) return;
             if (payload.phase === 'started') {
               queries.push(payload.query!);
               maxInFlight = Math.max(maxInFlight, ++inFlight);
             } else if (payload.phase === 'finished') inFlight -= 1;
           });
+          if (finished) { release(); return; }
+          unlisten = release;
+          if (!textarea) throw new Error('Missing chat composer');
           textarea.focus();
           let text = 'typing project ';
           for (const char of 'abcdef') {
+            if (finished) return;
             text += char;
             const started = performance.now();
             textarea.value = text;
             textarea.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: char }));
-            await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+            if (!await twoFrames()) {
+              finish('Chat typing paint exceeded its wall deadline');
+              return;
+            }
+            if (finished) return;
             paints.push(performance.now() - started);
             await pause(450); // Each keystroke outlasts the 350ms search debounce.
           }
+          if (finished) return;
           const deadline = performance.now() + 10_000;
-          while ((inFlight > 0 || queries.at(-1) !== text) && performance.now() < deadline) await pause(50);
+          while (!finished && (inFlight > 0 || queries.at(-1) !== text) && performance.now() < deadline) await pause(50);
+          if (finished) return;
           if (inFlight > 0) throw new Error('Suggestion requests did not settle');
-          done({ paints, maxInFlight, queries, finalText: textarea.value });
-        } catch (error) { done({ paints, maxInFlight, queries, finalText: textarea.value, error: String(error) }); }
-        finally { unlisten?.(); }
+          finish();
+        } catch (error) { finish(String(error)); }
       })();
     });
     console.log('CHAT_TYPING_NATIVE', JSON.stringify(samples));

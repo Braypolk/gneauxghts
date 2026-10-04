@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, untrack } from 'svelte';
+  import { onMount } from 'svelte';
   import type {
     ChatController,
     ChatControllerState
@@ -82,12 +82,7 @@
     onReviewAgentProposal
   }: Props = $props();
 
-  // The first render must reflect the controller, not a duplicated placeholder
-  // state. A placeholder briefly styled full-vault chats as approved-only while
-  // the component waited for onMount to copy the real snapshot.
-  let snapshot = $state<ChatControllerState>(
-    untrack(() => controller.getSnapshot())
-  );
+  const snapshot = $derived($controller);
   let titleDraft = $state('');
   let actionError = $state<string | null>(null);
   let previewAttachment = $state<ChatAttachmentInput | null>(null);
@@ -129,15 +124,15 @@
     return () => notify(null);
   });
 
+  $effect(() => {
+    const nextConversationId = snapshot.conversation?.id ?? null;
+    if (nextConversationId !== reportedConversationId) {
+      reportedConversationId = nextConversationId;
+      onConversationChange?.(nextConversationId);
+    }
+  });
+
   onMount(() => {
-    const unsubscribe = controller.subscribe((next) => {
-      snapshot = next;
-      const nextConversationId = next.conversation?.id ?? null;
-      if (nextConversationId !== reportedConversationId) {
-        reportedConversationId = nextConversationId;
-        onConversationChange?.(nextConversationId);
-      }
-    });
 
     if (
       autoInitialize &&
@@ -166,7 +161,6 @@
     document.addEventListener('keydown', onKeyDown);
 
     return () => {
-      unsubscribe();
       document.removeEventListener('pointerdown', onPointerDown);
       document.removeEventListener('keydown', onKeyDown);
     };

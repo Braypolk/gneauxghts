@@ -206,3 +206,17 @@ describe('getWikilinkAtPosition', () => {
     expect(getWikilinkAtPosition(createState(doc), '[[target]]'.length)).toBeNull();
   });
 });
+
+it('uses parser code context in the actual bracket input handler', async () => {
+  const { EditorView } = await import('@codemirror/view');
+  const { createCommandView } = await import('../editor/commandTestSupport');
+  const { createWikilinksExtension } = await import('./wikilinks');
+  const { createMarkdownLanguage } = await import('../markdown/markdownLanguage');
+  for (const [source, expected] of [['[', true], ['````\n```\n[\n````', false], ['~~~\n```\n[\n~~~', false], ['before `[` after', false], ['    [', false]] as const) {
+    const from = source.indexOf('[') + 1;
+    const { view } = createCommandView({ doc: source, selection: { anchor: from }, extensions: [createMarkdownLanguage(), createWikilinksExtension({ resolveCallbacks: () => ({}) })] });
+    const handled = view.state.facet(EditorView.inputHandler).some(handler => handler(view, from, from, '[', () => view.state.update({})));
+    expect(handled, source).toBe(expected);
+    expect(view.state.doc.toString()).toBe(expected ? '[[]]' : source);
+  }
+});

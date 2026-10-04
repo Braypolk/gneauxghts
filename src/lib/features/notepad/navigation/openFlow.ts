@@ -1,21 +1,44 @@
+import { captureFocusIntent } from './focusIntent';
 import type { PendingTaskTarget } from '$lib/taskNavigation';
 import { navigationScrollBehavior } from '$lib/ui/motion';
 import type { SearchItem } from '$lib/types/semantic';
 import {
-  findBestEditorTarget,
-  focusEditorAtDocumentLine,
-  focusEditorTarget,
+  revealEditorTextTarget,
   waitForEditorPaint
 } from '$lib/features/notepad/navigation/navigation';
 import { isSemanticOnlyResult } from '$lib/features/notepad/search/search';
 import type { RecentTaskItem, ResolvedNoteLink } from '$lib/features/notepad/model/types';
 
 export interface NavigationContext {
+  signal?: AbortSignal;
   editorRoot: HTMLDivElement | null;
   titleShell: HTMLDivElement | null;
   currentNoteId: string | null;
   currentNotePath: string | null;
   focusTitleAtEnd: () => void;
+  isCurrent?: () => boolean;
+}
+
+export type NavigationContextSource = () => NavigationContext;
+
+// Keep the same interaction admission through both the note load and later paint.
+async function withNavigationFocus(
+  getContext: NavigationContextSource,
+  action: (getCurrentContext: NavigationContextSource) => Promise<void>
+) {
+  const intent = captureFocusIntent(getContext().signal);
+  try {
+    await action(() => {
+      const context = getContext();
+      return { ...context, isCurrent: () => intent.isCurrent() && (context.isCurrent?.() ?? true) };
+    });
+  } finally {
+    intent.dispose();
+  }
+}
+
+function matchesTarget(ctx: NavigationContext, noteId: string | null, path: string | null) {
+  return (ctx.isCurrent?.() ?? true) && (noteId ? ctx.currentNoteId === noteId : !!path && ctx.currentNotePath === path);
 }
 
 export interface OpenContext {
@@ -50,12 +73,14 @@ async function ensureNoteContext(
 }
 
 export async function navigateToSectionTarget(
-  { editorRoot, titleShell, focusTitleAtEnd }: NavigationContext,
+  ctx: NavigationContext,
   sectionLabel: string,
   matchText: string,
   shouldFocus = true
 ) {
   await waitForEditorPaint();
+  if (ctx.isCurrent && !ctx.isCurrent()) return;
+  const { editorRoot, titleShell, focusTitleAtEnd } = ctx;
 
   if (sectionLabel === 'Title') {
     titleShell?.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
@@ -65,117 +90,100 @@ export async function navigateToSectionTarget(
     return;
   }
 
-  const paragraphMatch = sectionLabel.match(/^Paragraph (\d+)$/);
-  const paragraphIndex = paragraphMatch ? Number(paragraphMatch[1]) - 1 : undefined;
-  const targetBlock = findBestEditorTarget(editorRoot, matchText || sectionLabel, paragraphIndex);
-
-  if (!targetBlock) {
-    return;
-  }
-
-  if (!shouldFocus) {
-    targetBlock.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
-    return;
-  }
-
-  focusEditorTarget(editorRoot, targetBlock);
+  revealEditorTextTarget(editorRoot, matchText || sectionLabel, { focus: shouldFocus });
 }
 
 export async function navigateToPendingTaskTarget(
   ctx: NavigationContext,
   target: PendingTaskTarget
 ) {
-  const { currentNoteId, currentNotePath, editorRoot } = ctx;
-  if (
-    (currentNoteId && currentNoteId !== target.noteId) ||
-    (!currentNoteId && (!currentNotePath || currentNotePath !== target.notePath))
-  ) {
-    return;
-  }
-
+  const { editorRoot } = ctx;
+  if (!matchesTarget(ctx, target.noteId, target.notePath)) return;
   await waitForEditorPaint();
+  if (!matchesTarget(ctx, target.noteId, target.notePath)) return;
 
-  if (target.editorLineNumber != null) {
-    if (focusEditorAtDocumentLine(editorRoot, target.editorLineNumber)) {
-      return;
-    }
-  }
-
-  const sectionLabel = target.sectionLabel?.trim() ?? '';
-  if (sectionLabel) {
-    await navigateToSectionTarget(ctx, sectionLabel, target.text, true);
-    return;
-  }
-
-  const targetBlock = findBestEditorTarget(editorRoot, target.text);
-  if (targetBlock) {
-    focusEditorTarget(editorRoot, targetBlock);
-  }
+  // Indexed body coordinates are hints: verify the task text before focusing.
+  // A shifted or deleted task must never target an unrelated/clamped line.
+  revealEditorTextTarget(editorRoot, target.text, { preferredLine: target.editorLineNumber });
 }
 
 export async function openSearchResult(
   openContext: OpenContext,
-  navigationContext: NavigationContext,
+  getNavigationContext: NavigationContextSource,
   result: SearchItem
 ) {
-  const shouldFocus = !isSemanticOnlyResult(result);
-  await ensureNoteContext(openContext, result.noteId ?? null, result.notePath ?? null, {
-    focusEditorAfterOpen: shouldFocus
+  return withNavigationFocus(getNavigationContext, async getCurrentContext => {
+    const shouldFocus = !isSemanticOnlyResult(result);
+    await ensureNoteContext(openContext, result.noteId ?? null, result.notePath ?? null, {
+      focusEditorAfterOpen: shouldFocus
+    });
+    const navigationContext = getCurrentContext();
+    if (!matchesTarget(navigationContext, result.noteId, result.notePath)) return;
+    openContext.clearSearch();
+
+    // A title-only result identifies the note, not a body destination. Keep the
+    // note's remembered cursor/scroll state instead of manufacturing an editor
+    // anchor from the title match.
+    if (result.sectionLabel === 'Title') {
+      return;
+    }
+
+    await navigateToSectionTarget(
+      navigationContext,
+      result.sectionLabel,
+      result.matchText,
+      shouldFocus
+    );
   });
-  openContext.clearSearch();
-
-  // A title-only result identifies the note, not a body destination. Keep the
-  // note's remembered cursor/scroll state instead of manufacturing an editor
-  // anchor from the title match.
-  if (result.sectionLabel === 'Title') {
-    return;
-  }
-
-  await navigateToSectionTarget(
-    navigationContext,
-    result.sectionLabel,
-    result.matchText,
-    shouldFocus
-  );
 }
+
 
 export async function openRecentTask(
   openContext: OpenContext,
-  navigationContext: NavigationContext,
+  getNavigationContext: NavigationContextSource,
   task: RecentTaskItem
 ) {
-  await ensureNoteContext(openContext, task.noteId, task.notePath, {
-    focusEditorAfterOpen: true
-  });
-  openContext.clearSearch();
+  return withNavigationFocus(getNavigationContext, async getCurrentContext => {
+    await ensureNoteContext(openContext, task.noteId, task.notePath, {
+      focusEditorAfterOpen: true
+    });
+    const navigationContext = getCurrentContext();
+    if (!matchesTarget(navigationContext, task.noteId, task.notePath)) return;
+    openContext.clearSearch();
 
-  await navigateToPendingTaskTarget(navigationContext, {
-    noteId: task.noteId,
-    notePath: task.notePath,
-    text: task.text,
-    lineNumber: task.lineNumber,
-    sectionLabel: null
+    await navigateToPendingTaskTarget(navigationContext, {
+      noteId: task.noteId,
+      notePath: task.notePath,
+      text: task.text,
+      lineNumber: task.lineNumber,
+      sectionLabel: null
+    });
   });
 }
 
+
 export async function openResolvedNoteLink(
   openContext: Omit<OpenContext, 'clearSearch'>,
-  navigationContext: NavigationContext,
+  getNavigationContext: NavigationContextSource,
   target: ResolvedNoteLink
 ) {
-  await ensureNoteContext(
-    {
-      ...openContext,
-      clearSearch: () => {}
-    },
-    target.noteId,
-    target.notePath,
-    { focusEditorAfterOpen: true }
-  );
+  return withNavigationFocus(getNavigationContext, async getCurrentContext => {
+    await ensureNoteContext(
+      {
+        ...openContext,
+        clearSearch: () => {}
+      },
+      target.noteId,
+      target.notePath,
+      { focusEditorAfterOpen: true }
+    );
 
-  await navigateToSectionTarget(
-    navigationContext,
-    target.sectionLabel,
-    target.matchText
-  );
+    const navigationContext = getCurrentContext();
+    if (!matchesTarget(navigationContext, target.noteId, target.notePath)) return;
+    await navigateToSectionTarget(
+      navigationContext,
+      target.sectionLabel,
+      target.matchText
+    );
+  });
 }

@@ -522,7 +522,9 @@ export function createEditorLifecycleController({
         scrollIntoView: typeof savedScrollTop !== 'number'
       });
       if (typeof savedScrollTop === 'number') {
-        void settleEditorScrollTop(savedScrollTop);
+        // The next navigation may reveal a task/section; no old restoration
+        // frame may overwrite its viewport after this pane operation resolves.
+        await settleEditorScrollTop(savedScrollTop);
       }
       return;
     }

@@ -23,7 +23,6 @@ function deps(hasLoadedInitialSession = false): NotepadSessionLifecycleDeps {
     openChatProjection: vi.fn().mockResolvedValue(undefined), focusNavigationPane: vi.fn(), onVaultNoteChanged: vi.fn(), dispose: vi.fn()
   };
 }
-async function settle() { for (let i = 0; i < 15; i++) await Promise.resolve(); }
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.bootstrap.mockResolvedValue(payload);
@@ -36,11 +35,12 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals());
 it('ignores late bootstrap after unmount and allows only the new mount to apply and subscribe', async () => {
   const old = deferred<typeof payload>();
-  mocks.bootstrap.mockReturnValueOnce(old.promise).mockResolvedValueOnce(payload);
+  const entered = deferred<void>();
+  mocks.bootstrap.mockImplementationOnce(() => { entered.resolve(); return old.promise; }).mockResolvedValueOnce(payload);
   const d = deps(); const lifecycle = createNotepadSessionLifecycle(d);
-  const unmount = lifecycle.mount(); await settle(); unmount();
-  const unmountNew = lifecycle.mount(); await settle();
-  old.resolve({ ...payload, session: { ...payload.session, title: 'obsolete' } }); await settle();
+  const unmount = lifecycle.mount(); await entered.promise; unmount();
+  const unmountNew = lifecycle.mount(); await unmountNew.ready;
+  old.resolve({ ...payload, session: { ...payload.session, title: 'obsolete' } }); await unmount.ready;
   expect(d.applySession).toHaveBeenCalledTimes(1);
   expect(d.applySession).toHaveBeenCalledWith(payload.session);
   expect(d.applyAssetRoot).toHaveBeenCalledTimes(1);
@@ -53,12 +53,12 @@ it('ignores late bootstrap after unmount and allows only the new mount to apply 
 it('keeps editing unavailable after bootstrap failure and admits a later successful retry', async () => {
   mocks.bootstrap.mockRejectedValue(new Error('bootstrap unavailable'));
   const d = deps(); const lifecycle = createNotepadSessionLifecycle(d);
-  const unmount = lifecycle.mount(); await settle();
+  const unmount = lifecycle.mount(); await unmount.ready;
   expect(d.applySession).not.toHaveBeenCalled(); expect(d.applyAssetRoot).not.toHaveBeenCalled();
   expect(d.markInitialSessionLoaded).not.toHaveBeenCalled(); expect(mocks.subscribe).not.toHaveBeenCalled();
   unmount();
   mocks.bootstrap.mockResolvedValue(payload);
-  const unmountRetry = lifecycle.mount(); await settle();
+  const unmountRetry = lifecycle.mount(); await unmountRetry.ready;
   expect(d.applySession).toHaveBeenCalledWith(payload.session);
   expect(d.applyAssetRoot).toHaveBeenCalledOnce();
   expect(d.markInitialSessionLoaded).toHaveBeenCalledOnce();
@@ -67,7 +67,7 @@ it('keeps editing unavailable after bootstrap failure and admits a later success
 it('uses the shared running vault on remount after another vault is staged', async () => {
   mocks.vaultInfo = { runningPath: '/running-a', selectedPath: '/staged-b' };
   const d = deps(true);
-  const unmount = createNotepadSessionLifecycle(d).mount(); await settle();
+  const unmount = createNotepadSessionLifecycle(d).mount(); await unmount.ready;
   expect(d.applySession).not.toHaveBeenCalled();
   expect(d.bindVaultScope).toHaveBeenCalledWith('/running-a');
   expect(d.applyAssetRoot).toHaveBeenCalledWith('/running-a/assets', expect.any(Function));
@@ -76,10 +76,11 @@ it('uses the shared running vault on remount after another vault is staged', asy
 });
 it.each(['ensurePaneEditors', 'refreshCurrentNote', 'openNote'] as const)('does not continue initialization after delayed %s loses its mount', async (stage) => {
   const pending = deferred<void>(); const d = deps();
-  vi.mocked(d[stage]).mockReturnValue(pending.promise);
+  const entered = deferred<void>();
+  vi.mocked(d[stage]).mockImplementation(() => { entered.resolve(); return pending.promise; });
   if (stage === 'openNote') mocks.taskTarget.mockReturnValue({ notePath: '/vault/note.md', noteId: 'note' });
-  const unmount = createNotepadSessionLifecycle(d).mount(); await settle();
-  expect(d[stage]).toHaveBeenCalledOnce(); unmount(); pending.resolve(); await settle();
+  const unmount = createNotepadSessionLifecycle(d).mount(); await entered.promise;
+  expect(d[stage]).toHaveBeenCalledOnce(); unmount(); pending.resolve(); await unmount.ready;
   expect(d.focusNavigationPane).not.toHaveBeenCalled(); expect(mocks.subscribe).not.toHaveBeenCalled();
   if (stage === 'ensurePaneEditors') expect(d.refreshCurrentNote).not.toHaveBeenCalled();
   if (stage === 'openNote') expect(d.navigateToTaskTarget).not.toHaveBeenCalled();

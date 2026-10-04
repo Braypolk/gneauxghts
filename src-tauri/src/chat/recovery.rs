@@ -305,9 +305,6 @@ fn import_conversation(
         short_id(&chat.id)
     );
     let detached = directory != notes_root.join("Chats").join(expected_folder);
-    connection
-        .execute_batch("PRAGMA foreign_keys=ON;")
-        .map_err(|error| error.to_string())?;
     let transaction = connection
         .transaction()
         .map_err(|error| error.to_string())?;
@@ -541,25 +538,6 @@ mod tests {
         let connection = service.connection().unwrap();
         connection
             .execute("DELETE FROM chat_conversations WHERE id = ?1", [&id])
-            .unwrap();
-        // The connection's FK cascade is not enabled outside initialization.
-        connection
-            .execute(
-                "DELETE FROM chat_messages WHERE conversation_id = ?1",
-                [&id],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "DELETE FROM chat_projection_files WHERE conversation_id = ?1",
-                [&id],
-            )
-            .unwrap();
-        connection
-            .execute(
-                "DELETE FROM chat_excerpts WHERE conversation_id = ?1",
-                [&id],
-            )
             .unwrap();
         connection.execute("INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES ('recovery-answer', ?1, 1, 'user', 'complete', 'Keep me', 1, 1)", [&existing.summary.id]).unwrap();
         drop(connection);

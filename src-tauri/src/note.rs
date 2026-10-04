@@ -559,9 +559,12 @@ pub(crate) fn timestamp_millis_to_rfc3339(timestamp_millis: u64) -> String {
     timestamp_seconds_to_rfc3339(timestamp_millis / 1_000)
 }
 
+// Managed frontmatter uses UTC whole seconds (YYYY-MM-DDTHH:MM:SSZ).
+// Keep that narrow grammar; accepting offsets/fractions is a separate format change.
 pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<u64> {
     let value = value.trim();
-    if value.len() < 20 {
+    if value.len() != 20 || [0..4, 5..7, 8..10, 11..13, 14..16, 17..19]
+        .iter().any(|range| !value.as_bytes()[range.clone()].iter().all(u8::is_ascii_digit)) {
         return None;
     }
     let year = value.get(0..4)?.parse::<i64>().ok()?;
@@ -581,8 +584,17 @@ pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<u64> {
         || !(1..=31).contains(&day)
         || !(0..=23).contains(&hour)
         || !(0..=59).contains(&minute)
-        || !(0..=60).contains(&second)
+        || !(0..=59).contains(&second)
     {
+        return None;
+    }
+    let days_in_month = match month {
+        2 if year % 4 == 0 && (year % 100 != 0 || year % 400 == 0) => 29,
+        2 => 28,
+        4 | 6 | 9 | 11 => 30,
+        _ => 31,
+    };
+    if day > days_in_month {
         return None;
     }
     let days = days_from_civil(year, month, day);
@@ -637,6 +649,37 @@ mod tests {
         parse_rfc3339_millis, prepare_note_markdown, reject_chat_projection_write,
         replace_authored_content, timestamp_millis_to_rfc3339, DocumentKind,
     };
+
+    #[test]
+    fn managed_timestamps_reject_impossible_calendar_days() {
+        for value in ["2026-02-29T00:00:00Z", "2026-02-31T00:00:00Z", "2026-04-31T00:00:00Z", "2100-02-29T00:00:00Z"] {
+            assert_eq!(parse_rfc3339_millis(value), None, "{value}");
+        }
+        for value in ["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-04-30T00:00:00Z"] {
+            let parsed = parse_rfc3339_millis(value).unwrap();
+            assert_eq!(timestamp_millis_to_rfc3339(parsed), value);
+        }
+    }
+
+    #[test]
+    fn managed_timestamp_grammar_and_epoch_boundaries_are_explicit() {
+        assert_eq!(parse_rfc3339_millis("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_rfc3339_millis(" 1970-01-01T00:00:01Z "), Some(1_000));
+        for value in [
+            "1969-12-31T23:59:59Z", "2026-00-01T00:00:00Z",
+            "2026-13-01T00:00:00Z", "2026-01-00T00:00:00Z",
+            "2026-01-01T24:00:00Z", "2026-01-01T00:60:00Z",
+            "2026-01-01T00:00:61Z", "2026-01-01 00:00:00Z",
+            "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.000Z",
+            "2026-01-01T00:00:00z", "2026-1-01T00:00:00Z",
+            "2026-é1-01T00:00:00Z", "2026-+1-01T00:00:00Z",
+            "2026-01-+1T00:00:00Z", "2026-01-01T+1:00:00Z",
+            "2026-01-01T00:+1:00Z", "2026-01-01T00:00:+1Z",
+            "2026-01-01T00:00:60Z", "1969-12-31T23:59:60Z",
+        ] {
+            assert_eq!(parse_rfc3339_millis(value), None, "{value}");
+        }
+    }
 
     #[test]
     fn managed_timestamp_parser_round_trips_app_frontmatter_format() {

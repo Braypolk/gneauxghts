@@ -21,8 +21,12 @@ import type { NotepadChatCoordinator } from './notepadChatCoordinator.svelte';
 type ProposalOrchestration = ReturnType<typeof createProposalOrchestration>;
 
 export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
-  coordinator: NotepadChatCoordinator<TPaneId>;
-  proposal: ProposalOrchestration;
+  coordinator: Pick<NotepadChatCoordinator<TPaneId>,
+    "getController" | "getTargetAnchor" | "selectionActions" | "setSurfaceHandle" | "reviewAgentProposal">;
+  proposal: Pick<ProposalOrchestration,
+    "keepAll" | "undoAll" | "reviewNext" | "retryCommit" | "copyCurrent" | "reloadDisk"> & {
+      session: Pick<ProposalOrchestration["session"], "snapshot">;
+    };
   getPaneOrder: () => TPaneId[];
   getPaneKind: (paneId: TPaneId) => PaneKind;
   getPaneDocument: (paneId: TPaneId) => NoteDraftState;
@@ -34,7 +38,6 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
   ) => void;
   touchPaneLocation: (paneId: TPaneId) => void;
   getPaneSelectedText: (paneId: TPaneId) => string | null;
-  getEditorPaneIds: () => TPaneId[];
   setActivePane: (paneId: TPaneId) => void;
   openNote: (
     notePath: string,

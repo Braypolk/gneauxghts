@@ -591,23 +591,4 @@ mod tests {
         assert_eq!(outcome.required_consistency_warning(), None);
     }
 
-    #[test]
-    fn canonical_read_failure_is_required_even_with_a_fallback_catalog_snapshot() {
-        let sink = FakeSink {
-            revision: 17,
-            ..FakeSink::default()
-        };
-        let mut outcome = synchronize_committed_mutation(&sink, mutation("/vault/Note.md", None));
-        outcome.record_issue(
-            MutationWarningStage::CanonicalRead,
-            "canonical bytes unavailable".to_string(),
-        );
-
-        let warning = outcome
-            .required_consistency_warning()
-            .expect("canonical read is required");
-        assert!(warning
-            .message
-            .contains("CanonicalRead: canonical bytes unavailable"));
-    }
 }

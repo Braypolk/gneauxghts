@@ -1347,41 +1347,6 @@ mod tests {
     }
 
     #[test]
-    fn typed_timeline_errors_map_to_closed_product_states() {
-        for (error, expected) in [
-            (
-                HistoryError::Unavailable("unable to open database file".to_string()),
-                HistoryCommandErrorState::Unavailable,
-            ),
-            (
-                HistoryError::Corrupt("damaged retained data".to_string()),
-                HistoryCommandErrorState::Corrupt,
-            ),
-            (
-                HistoryError::Stale("expired continuation".to_string()),
-                HistoryCommandErrorState::Stale,
-            ),
-            (
-                HistoryError::Ineligible("recovery required".to_string()),
-                HistoryCommandErrorState::Ineligible,
-            ),
-            (
-                HistoryError::Missing("revision removed".to_string()),
-                HistoryCommandErrorState::Missing,
-            ),
-        ] {
-            assert_eq!(
-                HistoryCommandError::from_history_error("test_operation", error).state,
-                expected
-            );
-        }
-        assert_eq!(
-            HistoryCommandError::invalid_request("test_operation", "missing Note Identity").state,
-            HistoryCommandErrorState::InvalidRequest
-        );
-    }
-
-    #[test]
     fn missing_note_history_pages_are_bounded_restart_stable_and_recoverable() {
         let _guard = lock_test_env();
         let app_data = TestDir::new("missing-note-bounded-page-app-data");

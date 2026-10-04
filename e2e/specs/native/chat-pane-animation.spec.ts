@@ -38,7 +38,6 @@ describe('native populated chat motion', () => {
     await invoke('plugin:window|show', { label: 'main' });
     await invoke('plugin:window|set_focus', { label: 'main' });
     await browser.waitUntil(async () => browser.execute(() => document.visibilityState === 'visible' && document.hasFocus()));
-    await browser.pause(500);
     const vault = await invoke<{runningPath: string}>('get_vault_info');
     const root = realpathSync(join(vault.runningPath, '..', '..'));
     if (dirname(root) !== realpathSync(tmpdir()) || !basename(root).startsWith('gneauxghts-native-e2e-')) {
@@ -46,9 +45,9 @@ describe('native populated chat motion', () => {
     }
     const conversation = await invoke<{id: string}>('chat_create_conversation', {request: {title: 'Populated motion fixture'}});
     execFileSync('python3', ['-c', `
-import json, sqlite3, sys
+import contextlib, json, sqlite3, sys
 fixture = json.load(sys.stdin)
-with sqlite3.connect(fixture['database']) as db:
+with contextlib.closing(sqlite3.connect(fixture['database'])) as db, db:
     for message in fixture['messages']:
         db.execute('INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES (?, ?, ?, ?, ?, ?, 1, ?)', (message['id'], fixture['id'], message['ordinal'], message['role'], 'complete', message['content'], message['createdAtMillis']))
 `], {input: JSON.stringify({database: join(vault.runningPath, '.gneauxghts', 'ai.sqlite3'), id: conversation.id, messages: chatHistoryFixture().messages})});
@@ -56,6 +55,7 @@ with sqlite3.connect(fixture['database']) as db:
       await invoke('plugin:window|set_focus', { label: 'main' });
       await browser.waitUntil(async () => browser.execute(() => document.hasFocus()));
       const opening = await samplePaneMotion('open-chat');
+      expect(opening.frames.every(frame => frame.focused && frame.visible)).toBe(true);
       console.log('CHAT_NATIVE_MOTION', JSON.stringify({ round, opening }));
       expect(opening.frames.some(frame => frame.messages > 0 && frame.messages < 100)).toBe(true);
       // A severe UI-thread stall should fail this fixture, without promising 60fps
@@ -68,7 +68,8 @@ with sqlite3.connect(fixture['database']) as db:
         const log = document.querySelector<HTMLElement>('[role="log"]')!;
         return log.scrollHeight - log.clientHeight - log.scrollTop;
       })).toBeLessThanOrEqual(2);
-      await samplePaneMotion('close-right');
+      const closing = await samplePaneMotion('close-right');
+      expect(closing.frames.every(frame => frame.focused && frame.visible)).toBe(true);
     }
   });
 });

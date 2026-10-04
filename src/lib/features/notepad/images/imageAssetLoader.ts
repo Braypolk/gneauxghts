@@ -1,6 +1,7 @@
 /** Document-owned bytes only. DOM, selections and gestures belong to each view. */
 export function createImageAssetLoader(read: (name: string) => Promise<string>, root: () => string | null,
-  fingerprint?: (name: string) => Promise<string>) {
+  fingerprint?: (name: string) => Promise<string>,
+  limits = { entries: 128, bytes: 24 * 1024 * 1024 }) {
   const cache = new Map<string, { url: string; fingerprint: string }>();
   const pending = new Map<string, Promise<string>>();
   let generation = 0, bytes = 0;
@@ -19,7 +20,7 @@ export function createImageAssetLoader(read: (name: string) => Promise<string>, 
         if (generation === epoch) {
           if (hit) bytes -= hit.url.length;
           cache.set(key, { url, fingerprint: stamp }); bytes += url.length;
-          while (cache.size > 128 || bytes > 24 * 1024 * 1024) {
+          while (cache.size > limits.entries || bytes > limits.bytes) {
             const oldest = cache.keys().next().value;
             if (oldest === undefined) break;
             bytes -= cache.get(oldest)!.url.length; cache.delete(oldest);

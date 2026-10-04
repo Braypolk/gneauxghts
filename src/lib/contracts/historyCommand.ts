@@ -64,7 +64,7 @@ export class HistoryCommandFailure extends Error {
 }
 
 function isHistoryCommandErrorState(value: unknown): value is HistoryCommandErrorState {
-  return typeof value === 'string' && value in COMMAND_FAILURES;
+  return typeof value === 'string' && Object.hasOwn(COMMAND_FAILURES, value);
 }
 
 export function toHistoryCommandFailure(error: unknown): HistoryCommandFailure {

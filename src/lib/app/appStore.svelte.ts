@@ -1,7 +1,9 @@
 import { startupMark, observeStartupReadiness } from '$lib/e2e/startupMetrics';
 import { invoke } from '@tauri-apps/api/core';
-import { listen, type UnlistenFn } from '@tauri-apps/api/event';
-import type { SemanticStatus } from '$lib/types/semantic';
+import { listen } from '@tauri-apps/api/event';
+import { ListenerScope } from './listenerScope';
+import type { HistoryHealthReport } from '$lib/types/history';
+import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
 import type { VaultInfo } from '$lib/types/vault';
 import {
   loadBootstrapPayload,
@@ -39,7 +41,7 @@ type NoteSavedPayload = {
   revision: number;
 };
 
-export type AppSnapshotAdmission = Readonly<{
+type AppSnapshotAdmission = Readonly<{
   generation: number;
   vault: number | null;
   semanticStatus: number | null;
@@ -54,10 +56,13 @@ type AppSnapshot = {
   indexRevision?: number;
 };
 
-type ListenerAdmission = {
-  unlisteners: UnlistenFn[];
-  admit: () => void;
-};
+export interface SettingsViewPayload {
+  vault: VaultInfo;
+  historyHealth: HistoryHealthReport;
+  semanticStatus: SemanticStatus;
+  semanticSettings: SemanticSettings;
+  semanticDebug: SemanticDebugSnapshot;
+}
 
 export class AppStore {
   vaultInfo = $state<VaultInfo | null>(null);
@@ -73,7 +78,7 @@ export class AppStore {
   #noteSavedListeners = new Set<Listener<NoteSavedPayload>>();
   #vaultChangedListeners = new Set<Listener<VaultInfo>>();
 
-  #unlisteners: UnlistenFn[] = [];
+  #listenerScope: ListenerScope | null = null;
   #generation = 0;
   #snapshotRevisions = { vault: 0, semanticStatus: 0, indexRevision: 0 };
   #bootstrapPromise: Promise<BootstrapAppResult> | null = null;
@@ -82,38 +87,30 @@ export class AppStore {
   async bootstrap(): Promise<BootstrapAppResult> {
     if (this.#bootstrapPromise) return this.#bootstrapPromise;
     const generation = this.#generation;
-    const admission = this.beginSnapshotAdmission(
+    const admission = this.#beginSnapshotAdmission(
       'vault',
       'semanticStatus',
       'indexRevision'
     );
-    let attemptListeners: UnlistenFn[] = [];
+    const scope = new ListenerScope();
+    this.#listenerScope = scope;
     const attempt = (async () => {
       // Establish event admission while the backend restores canonical Markdown.
       // Editable session application still waits for both, so the first save
       // cannot outrun its note-saved listener.
-      const [bootstrap, listeners] = await Promise.allSettled([
+      const [bootstrap, listeners] = await Promise.all([
         loadBootstrapPayload().then(payload => {
           startupMark('canonical-bootstrap-payload', { noteId: payload.session.currentNoteId });
           observeStartupReadiness(payload.session.currentNoteId);
           return payload;
         }),
-        this.#createListeners(generation).then((listenerAdmission) => {
-          attemptListeners = listenerAdmission.unlisteners;
-          return listenerAdmission;
-        })
+        this.#createListeners(generation, scope)
       ]);
-      if (bootstrap.status === 'rejected') {
-        for (const unlisten of attemptListeners) unlisten();
-        throw bootstrap.reason;
-      }
-      if (listeners.status === 'rejected') throw listeners.reason;
-      const payload = bootstrap.value;
+      const payload = bootstrap;
       if (generation !== this.#generation) return payload;
-      this.#unlisteners.push(...listeners.value.unlisteners);
-      listeners.value.admit();
+      listeners();
       startupMark('bootstrap-listeners-admitted');
-      this.admitSnapshot(
+      this.#admitSnapshot(
         {
           vault: payload.vault,
           semanticStatus: payload.semanticStatus,
@@ -129,6 +126,8 @@ export class AppStore {
     try {
       return await attempt;
     } catch (error) {
+      scope.close();
+      if (this.#listenerScope === scope) this.#listenerScope = null;
       if (this.#bootstrapPromise === attempt) this.#bootstrapPromise = null;
       if (generation === this.#generation) this.ready = false;
       throw error;
@@ -144,14 +143,8 @@ export class AppStore {
   }
 
   #detachListeners() {
-    for (const unlisten of this.#unlisteners) {
-      try {
-        unlisten();
-      } catch (error) {
-        logDevError('[AppStore] dispose unlisten failed', error);
-      }
-    }
-    this.#unlisteners = [];
+    this.#listenerScope?.close();
+    this.#listenerScope = null;
   }
 
   subscribeVaultNoteChanged(listener: Listener<VaultNoteChangedPayload>): () => void {
@@ -174,7 +167,7 @@ export class AppStore {
     return () => this.#vaultChangedListeners.delete(listener);
   }
 
-  beginSnapshotAdmission(...slices: AppSnapshotSlice[]): AppSnapshotAdmission {
+  #beginSnapshotAdmission(...slices: AppSnapshotSlice[]): AppSnapshotAdmission {
     const claimed = new Set(slices);
     for (const slice of claimed) this.#snapshotRevisions[slice] += 1;
     return {
@@ -189,7 +182,7 @@ export class AppStore {
     };
   }
 
-  admitSnapshot(snapshot: AppSnapshot, admission: AppSnapshotAdmission) {
+  #admitSnapshot(snapshot: AppSnapshot, admission: AppSnapshotAdmission) {
     const admitted = { vault: false, semanticStatus: false, indexRevision: false };
     if (admission.generation !== this.#generation) return admitted;
     if (
@@ -222,16 +215,30 @@ export class AppStore {
     return admitted;
   }
 
+  async loadSettingsView() {
+    const admission = this.#beginSnapshotAdmission('vault', 'semanticStatus');
+    const view = await invoke<SettingsViewPayload>('get_settings_view');
+    this.#admitSnapshot({ vault: view.vault, semanticStatus: view.semanticStatus }, admission);
+    return { historyHealth: view.historyHealth, semanticSettings: view.semanticSettings, semanticDebug: view.semanticDebug };
+  }
+
+  async stageVaultSelection(path: string | null): Promise<VaultInfo | null> {
+    const admission = this.#beginSnapshotAdmission('vault');
+    const vault = await invoke<VaultInfo>('set_vault_directory', { path });
+    this.#admitSnapshot({ vault }, admission);
+    return this.vaultInfo;
+  }
+
   async refreshVaultInfo(): Promise<void> {
-    const admission = this.beginSnapshotAdmission('vault');
+    const admission = this.#beginSnapshotAdmission('vault');
     const vault = await invoke<VaultInfo>('get_vault_info');
-    this.admitSnapshot({ vault }, admission);
+    this.#admitSnapshot({ vault }, admission);
   }
 
   async refreshSemanticStatus(): Promise<void> {
-    const admission = this.beginSnapshotAdmission('semanticStatus');
+    const admission = this.#beginSnapshotAdmission('semanticStatus');
     const semanticStatus = await invoke<SemanticStatus>('get_semantic_status');
-    this.admitSnapshot({ semanticStatus }, admission);
+    this.#admitSnapshot({ semanticStatus }, admission);
   }
 
   #dispatchToListeners<T>(channel: string, listeners: Set<Listener<T>>, payload: T): void {
@@ -244,19 +251,16 @@ export class AppStore {
     }
   }
 
-  async #createListeners(generation: number): Promise<ListenerAdmission> {
+  async #createListeners(generation: number, scope: ListenerScope): Promise<() => void> {
     let admitted = false;
     const pendingEvents: Array<() => void> = [];
-    const attach = async <T>(channel: string, callback: (payload: T) => void) => {
-      const unlisten = await listen<T>(channel, (event) => {
-        if (generation !== this.#generation) return;
+    const attach = <T>(channel: string, callback: (payload: T) => void) =>
+      scope.acquire(() => listen<T>(channel, (event) => {
+        if (scope.closed || generation !== this.#generation) return;
         if (admitted) callback(event.payload);
         else pendingEvents.push(() => callback(event.payload));
-      });
-      if (generation !== this.#generation) unlisten();
-      return unlisten;
-    };
-    const results = await Promise.allSettled([
+      }));
+    await Promise.all([
       attach<VaultNoteChangedPayload>('vault-note-changed', (payload) => {
         this.#dispatchToListeners('vault-note-changed', this.#vaultNoteChangedListeners, payload);
       }),
@@ -276,21 +280,10 @@ export class AppStore {
         this.#dispatchToListeners('vault-changed', this.#vaultChangedListeners, payload);
       })
     ]);
-    const attached = results.flatMap((result) =>
-      result.status === 'fulfilled' ? [result.value] : []
-    );
-    const failure = results.find((result) => result.status === 'rejected');
-    if (failure?.status === 'rejected') {
-      for (const unlisten of attached) unlisten();
-      throw failure.reason;
-    }
-    if (generation !== this.#generation) return { unlisteners: [], admit: () => undefined };
-    return {
-      unlisteners: attached,
-      admit: () => {
-        admitted = true;
-        for (const applyEvent of pendingEvents.splice(0)) applyEvent();
-      }
+    return () => {
+      if (scope.closed || generation !== this.#generation) return;
+      admitted = true;
+      for (const applyEvent of pendingEvents.splice(0)) applyEvent();
     };
   }
 }

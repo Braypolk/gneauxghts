@@ -10,7 +10,23 @@ Run:
 pnpm test:e2e:browser
 ```
 
-This starts Vite on port 1421 with `VITE_E2E_BROWSER=true`, installs a deterministic in-browser implementation of Tauri IPC, and lets `@wdio/tauri-service` drive the real Svelte application in Chrome. The fixture is development-only and is inert in normal development and release builds.
+This starts an owned Vite server on port 1421 (override with `GNEAUXGHTS_E2E_BROWSER_PORT`) with `VITE_E2E_BROWSER=true`, installs a deterministic in-browser implementation of Tauri IPC, and lets `@wdio/tauri-service` drive the real Svelte application in Chrome. The fixture is development-only and is inert in normal development and release builds.
+
+Chrome runs headless by default with a 1440×1000 initial window size, so browser
+tests do not open desktop windows or take focus. Specs can still resize the window
+to test narrower layouts. Failure screenshots are still captured. To watch a browser test while
+debugging, explicitly opt in:
+
+```bash
+GNEAUXGHTS_E2E_HEADED=1 pnpm test:e2e:browser
+```
+
+Ordinary frontend, support, Python and Rust tests also run without desktop
+windows. Native Tauri tests are a separate, visible-app opt-in: several assert
+actual OS focus and visible rendering, and can take focus repeatedly. The headed
+browser flag does not change native behavior. Run native checks when the desktop
+is available, or in a separate machine/VM desktop session; do not hide/minimize
+them to claim a passing focus or paint check.
 
 Covered regressions:
 
@@ -28,7 +44,7 @@ Run:
 pnpm test:e2e:native
 ```
 
-The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The lifecycle and timeline specs run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`.
+The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The seven deterministic smoke specs (lifecycle, command/event transport, timeline, editing windows, images, pane motion and chat pane motion) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`.
 
 Covered checks:
 
@@ -109,10 +125,46 @@ isolation and budget contracts; one passing run does not guarantee all goals.
 ```bash
 pnpm check
 pnpm test
+pnpm test:timeline:fixture:checks
 cargo test --manifest-path src-tauri/Cargo.toml
 pnpm test:e2e:browser
 pnpm test:e2e:native
 ```
+
+`pnpm test` runs the Node support checks once, then all frontend Vitest tests. `pnpm check` remains part of
+the gate: it checks typed application access as well as Svelte and E2E sources.
+`pnpm test:support` runs dependency-free Node checks for disposable fixture
+containment, native binary admission, owned server admission/cancellation and bounded
+WebDriver transport; the Python fixture checks are separate. The server checks bind
+disposable localhost ports. `.github/workflows/tests.yml` runs the ordinary
+frontend/types/Node/Python and Rust gates; graphical and live-provider lanes require
+the corresponding environment and remain explicit.
+Run `pnpm test:build:artifacts` when changing Rust build profiles or artifact
+handling; it deliberately performs repeated Cargo builds on macOS. Live-provider
+and large-history release probes below remain opt-in and are not part of this gate.
+
+## Execution lanes
+
+`pnpm test:e2e:native:list` lists the deterministic smoke files without building
+or launching the app. `pnpm test:e2e:native:run` runs exactly those files in fresh
+invocations. `pnpm test:e2e:native:measurement` selects measurement scenarios;
+its 1 MiB sustained-edit case reports observations and has no latency pass/fail
+budget. Chat typing additionally requires the explicit context-delay setting
+below. `node e2e/support/nativeSuite.mjs live --list` lists the provider-dependent
+lane; running it still requires each scenario's explicit opt-in, endpoint, model
+and artifact path. Passing a live execution/citation contract does not grade prose.
+
+Browser scenarios are split by document isolation, proposal review, external sync,
+panes, History selection/return, missing-note recovery and citation navigation.
+Independent cases reset local/session storage on an inert same-origin page before
+mounting the application. The strict backend fixture rejects unknown commands and
+note identities and delivers registered events; prototype experiments supply
+explicit command overrides instead of rewriting fixture source.
+
+All managed Vite launchers require a per-process identity response and stop only
+the process group they started. An occupied port is an admission failure. Native
+process/scale/restart runners share bounded transport and listener inspection;
+their fault timing and durability assertions remain scenario-specific.
 
 ## Scenario ownership
 

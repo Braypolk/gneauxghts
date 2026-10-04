@@ -47,12 +47,11 @@ export function markdownDecorationsNeedRebuild(
   return (
     update.docChanged ||
     update.selectionSet ||
-    update.viewportChanged ||
     syntaxTree(update.startState) !== syntaxTree(update.state)
   );
 }
 
-function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
+export function buildMarkdownDecorations(view: EditorView): BuiltMarkdownDecorations {
   const decorations: Range<Decoration>[] = [];
   const ctx: MarkdownDecorationContext = {
     view,
@@ -63,14 +62,10 @@ function buildDecorations(view: EditorView): BuiltMarkdownDecorations {
   const tree = syntaxTree(view.state);
   tree.iterate({
     enter: (node) => {
-      for (const decorate of DECORATORS) {
-        try {
-          decorate(ctx, node);
-        } catch {
-          // Partial/incremental tree states can momentarily yield invalid node
-          // offsets; these resolve on the next update cycle, so skip quietly.
-        }
-      }
+      // Ignore only structurally invalid offsets from an incomplete publication.
+      // Unexpected decorator failures must remain observable.
+      if (node.from < 0 || node.to > view.state.doc.length) return false;
+      for (const decorate of DECORATORS) decorate(ctx, node);
     }
   });
 
@@ -98,14 +93,14 @@ const markdownDecorationPlugin = ViewPlugin.fromClass(
     atomicRanges: DecorationSet;
 
     constructor(view: EditorView) {
-      const built = buildDecorations(view);
+      const built = buildMarkdownDecorations(view);
       this.decorations = built.decorations;
       this.atomicRanges = built.atomicRanges;
     }
 
     update(update: ViewUpdate) {
       if (markdownDecorationsNeedRebuild(update)) {
-        const built = buildDecorations(update.view);
+        const built = buildMarkdownDecorations(update.view);
         this.decorations = built.decorations;
         this.atomicRanges = built.atomicRanges;
       }

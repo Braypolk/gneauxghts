@@ -3,26 +3,10 @@ import { describe, expect, it } from 'vitest';
 import type { ChatMessage as ChatMessageModel } from '../types';
 import ChatMessage from './ChatMessage.svelte';
 
+import { message as chatMessage } from '../chatTestSupport';
+
 function message(role: 'assistant' | 'user'): ChatMessageModel {
-  return {
-    id: `${role}-message`,
-    conversationId: 'conversation-1',
-    role,
-    content: '**Visible text**',
-    status: 'completed',
-    createdAtMillis: 1,
-    updatedAtMillis: 1,
-    requestId: null,
-    errorMessage: null,
-    citations: [],
-    attachments: [],
-    linkTarget: null,
-    parts: [{ id: 'text', type: 'text', text: '**Visible text**' }],
-    agentRunId: null,
-    agentSequence: 0,
-    agentEventCreatedAtMillis: 0,
-    agentRetiredRunIds: []
-  };
+  return chatMessage({ id: `${role}-message`, role, content: '**Visible text**', status: 'completed', requestId: null, linkTarget: null, parts: [{ id: 'text', type: 'text', text: '**Visible text**' }] });
 }
 
 function renderMessage(
@@ -69,14 +53,12 @@ describe('ChatMessage text rendering', () => {
   });
 
   it('renders observable runtime states with accessible labels and no private reasoning', () => {
+    const runtimeTool = { id: 'tool:read', type: 'tool' as const, callId: 'read', name: 'read_note', title: 'Read note', status: 'running' as const, privateReasoning: 'PRIVATE_REASONING_SENTINEL' };
     const body = renderMessage('assistant', {
       status: 'streaming',
       parts: [
         { id: 'text', type: 'text', text: '**Visible text**' },
-        {
-          id: 'tool:read', type: 'tool', callId: 'read', name: 'read_note',
-          title: 'Read note', status: 'running'
-        },
+        runtimeTool,
         {
           id: 'plan', type: 'plan',
           entries: [{ id: 'step-1', text: 'Inspect notes', status: 'inProgress' }]
@@ -95,7 +77,7 @@ describe('ChatMessage text rendering', () => {
     expect(body).toContain('Model turn 2 retried');
     expect(body).toContain('Inspect notes');
     expect(body).not.toContain('Step 1');
-    expect(body).not.toContain('private reasoning payload');
+    expect(body).not.toContain('PRIVATE_REASONING_SENTINEL');
   });
 
   it('derives durable sources and the branch checkpoint from message evidence and status', () => {

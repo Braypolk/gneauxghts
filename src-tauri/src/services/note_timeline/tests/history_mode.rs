@@ -259,17 +259,8 @@ fn historical_line_diffs_cover_empty_content_without_inventing_lines() {
 
 #[test]
 fn history_mode_pages_records_with_a_stable_cursor_and_reconstructs_the_selected_revision() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-history-mode-page-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-history-mode-page-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-history-mode-page");
+    let state = &fixture.state;
     let created = save_retained_state(&state, "Paged".to_string(), "first".to_string(), None)
         .unwrap()
         .unwrap();
@@ -324,22 +315,12 @@ fn history_mode_pages_records_with_a_stable_cursor_and_reconstructs_the_selected
         .records()
         .iter()
         .all(|record| record.revision_id() != Some(selected_id.as_str())));
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn revision_context_corruption_after_attestation_latches_publication_gate() {
-    let _guard = crate::test_support::lock_test_env();
-    let data = crate::test_support::TestDir::new("citation-corrupt-data");
-    let notes = crate::test_support::TestDir::new("citation-corrupt-vault");
-    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("citation-corrupt");
+    let state = &fixture.state;
     let created = save_retained_state(&state, "Context".into(), "first".into(), None)
         .unwrap()
         .unwrap();
@@ -362,40 +343,16 @@ fn revision_context_corruption_after_attestation_latches_publication_gate() {
     )
     .is_err());
     assert_eq!(fs::read(&path).unwrap(), before);
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn revision_context_seeks_and_pages_explicit_lineage_with_scoped_stale_cursors() {
-    let _guard = crate::test_support::lock_test_env();
-    let data = crate::test_support::TestDir::new("citation-context-data");
-    let notes = crate::test_support::TestDir::new("citation-context-vault");
-    crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
-    let first = save_retained_state(&state, "Context 0".into(), "first".into(), None)
-        .unwrap()
-        .unwrap();
-    let note_id = NoteIdentity::new(first.note_id.unwrap());
-    let mut path = first.path.unwrap();
-    for index in 1..80 {
-        // Rename boundaries interleave Lifecycle Events with Note Revisions.
-        path = save_retained_state(
-            &state,
-            format!("Context {}", index / 10),
-            format!("body {index}"),
-            Some(path),
-        )
-        .unwrap()
-        .unwrap()
-        .path
-        .unwrap();
-    }
+    use crate::services::note_timeline::test_fixtures::{load, HistoryFixture};
+
+    let (fixture, ids) = load(HistoryFixture::RevisionContext);
+    assert_eq!(ids.len(), 1);
+    let state = &fixture.state;
+    let note_id = NoteIdentity::new(ids.into_iter().next().unwrap());
     let access = state.note_timeline().open_history_mode(note_id.clone());
     let full = access.page(None, 100).unwrap();
     assert!(full.records.len() > 80);
@@ -484,7 +441,6 @@ fn revision_context_seeks_and_pages_explicit_lineage_with_scoped_stale_cursors()
         access.revision_context(anchor, context.next_cursor.as_deref()),
         Err(HistoryError::Missing(_))
     ));
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
@@ -641,17 +597,8 @@ fn version_restore_is_complete_hash_bound_append_only_and_reversible_after_resta
 
 #[test]
 fn version_restore_can_replace_current_authored_content_with_empty_content() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-empty-version-restore-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-empty-version-restore-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-empty-version-restore");
+    let state = &fixture.state;
     let created = save_retained_state(&state, "Empty history".to_string(), String::new(), None)
         .unwrap()
         .unwrap();
@@ -680,22 +627,12 @@ fn version_restore_can_replace_current_authored_content_with_empty_content() {
     assert_eq!(parsed.body, "");
     assert_eq!(parsed.frontmatter.raw_other, None);
     assert_eq!(parsed.frontmatter.managed.unwrap().id, note_id.as_str());
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn version_restore_preserves_exact_historical_frontmatter_and_line_endings() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-exact-version-restore-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-exact-version-restore-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-exact-version-restore");
+    let state = &fixture.state;
     let created = save_retained_state(
         &state,
         "Exact history".to_string(),
@@ -756,7 +693,6 @@ fn version_restore_preserves_exact_historical_frontmatter_and_line_endings() {
         Some(exact_unmanaged)
     );
     assert_eq!(restored_revision.body(), exact_body);
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]

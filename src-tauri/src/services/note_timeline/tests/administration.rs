@@ -463,6 +463,8 @@ fn interrupted_clear_rolls_back_completely_and_retry_after_restart_succeeds() {
 
 #[test]
 fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamation() {
+    use sha2::{Digest, Sha256};
+
     let _guard = crate::test_support::lock_test_env();
     let app_data = crate::test_support::TestDir::new("timeline-storage-usage-app-data");
     crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
@@ -479,11 +481,12 @@ fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamati
         .unwrap();
     let note_id = NoteIdentity::new(created.note_id.unwrap());
     let path = created.path.unwrap();
-    for revision in 0..24 {
+    // Distinct low-compressibility bytes allocate real history pages without
+    // making hundreds of changed lines or many publications part of this test.
+    for revision in 0..4 {
         let body = (0..512)
-            .map(|line| format!("revision-{revision:02}-line-{line:04}-{}", "x".repeat(48)))
-            .collect::<Vec<_>>()
-            .join("\n");
+            .map(|block| format!("{:x}", Sha256::digest(format!("{revision}:{block}"))))
+            .collect::<String>();
         save_retained_state(&state, "Storage".to_string(), body, Some(path.clone())).unwrap();
     }
     let timeline = state.note_timeline();
@@ -498,10 +501,16 @@ fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamati
 
     assert!(logically_deleted.allocated_bytes() >= retained.allocated_bytes());
     assert!(logically_deleted.reclaimable_bytes() > retained.reclaimable_bytes());
+    // Reclaimable usage also includes WAL; require enough actual free pages
+    // to exercise more than one physical page-reclamation pass.
+    let (page_size, free_pages) =
+        history_store::free_page_geometry_for_test(&history_store::Store::for_test());
+    assert!(page_size * free_pages > 32 * 1024);
     let first_compaction = timeline.compact_history_storage(32 * 1024).unwrap();
     assert_eq!(first_compaction.before(), &logically_deleted);
     assert!(first_compaction.reclaimed_bytes() <= 32 * 1024);
     assert!(first_compaction.after().allocated_bytes() <= logically_deleted.allocated_bytes());
+    assert!(first_compaction.after().reclaimable_bytes() > 0);
     let mut usage = first_compaction.after().clone();
     for _ in 0..128 {
         if usage.reclaimable_bytes() == 0 {
@@ -514,7 +523,12 @@ fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamati
     assert_eq!(usage.reclaimable_bytes(), 0);
     assert!(usage.allocated_bytes() < logically_deleted.allocated_bytes());
     let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
-    assert_eq!(history.revisions().unwrap().len(), 1);
+    let revisions = history.revisions().unwrap();
+    assert_eq!(revisions.len(), 1);
+    assert_eq!(
+        revisions[0].source(),
+        MutationSource::BaselineInitialization
+    );
     assert_eq!(timeline.deletion_markers().unwrap().len(), 1);
     crate::state::set_notes_root_override(None).unwrap();
 }
@@ -1065,6 +1079,7 @@ fn clean_close_reports_portability_and_stops_new_timeline_mutations() {
     .unwrap();
     let timeline = state.note_timeline();
     timeline.initialize_existing_notes(notes.path()).unwrap();
+    let publication_operation = timeline.runtime.begin_operation().unwrap();
     let prepared = timeline
         .prepare_revision_publication(
             MutationSource::Editor,
@@ -1096,6 +1111,7 @@ fn clean_close_reports_portability_and_stops_new_timeline_mutations() {
             .wait_for_clean_close_joiner_for_test();
         let (_, history_intent) = prepared.into_parts();
         history_intent.abandon().unwrap();
+        drop(publication_operation);
         closed_rx.recv_timeout(Duration::from_secs(1)).unwrap();
         close.join().unwrap().unwrap();
         joining_close.join().unwrap().unwrap();

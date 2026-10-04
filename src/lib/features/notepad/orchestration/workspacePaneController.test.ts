@@ -1,459 +1,155 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-  findOpenDocument,
-  removeNoteIfUnreferenced,
-  createNoteDraftState,
-  createNotepadState,
-  upsertNote,
-  type PaneDocumentReferences
-} from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
-import {
-  documentCanLeaveWithoutCanonicalWrite,
-  documentHasUnresolvedConflict,
-  updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
-import { createDocumentDepartureController } from './documentDepartureController';
-import { createPaneNavigationTransitionPipeline } from './paneNavigationTransitionPipeline';
-import { createWorkspacePaneController } from './workspacePaneController';
-import {
-  createPaneMembershipState,
-  transitionPaneMembership,
-  type PaneMembershipEvent
-} from '$lib/features/notepad/pane/paneLifecycleMachine';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createNoteDraftState, findOpenDocument, upsertNote } from '../state/noteStore';
+import { createSessionSnapshot } from '../session/session';
+import { updateDocumentMarkdown } from '../document/documentState';
+import { documentRegistry } from '../document/documentRegistry';
+import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import { notepadLocationMru } from '../navigation/locationMru';
+import { createNotepadComposition, deferred, persistedSession } from './notepadCompositionTestSupport';
 
-type PaneId = 'left' | 'right' | 'extra';
-
-function document(name = 'note') {
-  return createNoteDraftState({
-    ...createEmptySessionSnapshot(),
-    title: 'Note',
-    currentNoteId: name,
-    currentNotePath: `/vault/${name}.md`,
-    lastSavedTitle: 'Note',
-    lastSavedNoteId: name,
-    lastSavedPath: `/vault/${name}.md`
-  });
+vi.mock('$lib/features/history/historyApi', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
+const fixtures: ReturnType<typeof createNotepadComposition>[] = [];
+function setup(initial?: Parameters<typeof createNotepadComposition>[0]) {
+  const fixture = createNotepadComposition(initial);
+  fixtures.push(fixture);
+  return fixture;
 }
+beforeEach(() => {
+  vi.clearAllMocks();
+  notepadLocationMru.clearAll();
+  vi.stubGlobal('document', { activeElement: null });
+  vi.stubGlobal('window', { setTimeout, clearTimeout });
+});
+afterEach(async () => {
+  for (const fixture of fixtures.splice(0)) await fixture.dispose();
+  vi.restoreAllMocks();
+  vi.unstubAllGlobals();
+});
 
-function harness(
-  overrides: {
-    prepareDeparture?: (
-      paneId: PaneId,
-      note: ReturnType<typeof document>
-    ) => Promise<ReturnType<typeof document>>;
-    disposePaneRuntime?: () => Promise<void>;
-    retireWorkspacePane?: () => unknown;
-    completeWorkspacePaneDisposal?: () => boolean;
-    canRemoveWorkspacePane?: () => boolean;
-    getPaneOrder?: () => PaneId[];
-    getActivePaneId?: () => PaneId;
-    createPane?: () => PaneId;
-    getPaneDocument?: (paneId: PaneId) => ReturnType<typeof document>;
-    canLeaveDocument?: (note: ReturnType<typeof document>) => boolean;
-    removeUnreferencedNote?: (documentHandle: ReturnType<typeof document>['handle']) => boolean;
-    loadRecentNotes?: () => Promise<unknown>;
-    onDocumentLeaving?: (
-      paneId: PaneId,
-      note: ReturnType<typeof document>
-    ) => void;
-  } = {}
-) {
-  const note = document();
-  const state = createNotepadState(note);
-  const ensurePaneEditors = vi.fn(async () => undefined);
-  const created = vi.fn();
-  const focusPane = vi.fn();
-  const touchLocation = vi.fn();
-  const beginPaneCommand = vi.fn();
-  const retireWorkspacePane =
-    overrides.retireWorkspacePane ??
-    vi.fn(() => ({
-      paneId: 'left',
-      kind: 'editor',
-      documentHandle: note.handle,
-      chatConversationId: null
-    }));
-  const disposePaneRuntime =
-    overrides.disposePaneRuntime ??
-    vi.fn(async () => undefined);
-  const pipeline =
-    createPaneNavigationTransitionPipeline<PaneId>({
-      assertWorkspaceInvariants: vi.fn(),
-      ensurePaneEditors
-    });
-  const memberships: Record<PaneId, ReturnType<typeof createPaneMembershipState>> = {
-    left: createPaneMembershipState(true),
-    right: createPaneMembershipState(),
-    extra: createPaneMembershipState()
-  };
-  const dispatchPaneMembership = vi.fn(
-    (paneId: PaneId, event: PaneMembershipEvent) => {
-      const previous = memberships[paneId];
-      memberships[paneId] = transitionPaneMembership(
-        previous,
-        event
-      );
-      return memberships[paneId] !== previous;
-    }
-  );
-  const controller =
-    createWorkspacePaneController<PaneId>({
-      state,
-      maxVisiblePanes: 3,
-      getPaneOrder:
-        overrides.getPaneOrder ?? (() => ['left', 'right']),
-      getPaneMembership: (paneId: PaneId) =>
-        memberships[paneId],
-      dispatchPaneMembership,
-      createPane: overrides.createPane ?? (() => 'right'),
-      completeWorkspacePaneCreation: (
-        paneId: PaneId,
-        operationId: number,
-        documentHandle: string,
-        kind: string
-      ) => {
-        created(paneId, documentHandle, kind);
-        dispatchPaneMembership(paneId, {
-          type: 'creationCompleted',
-          operationId
-        });
-        return {} as never;
-      },
-      canRemoveWorkspacePane:
-        overrides.canRemoveWorkspacePane ?? (() => true),
-      paneCloseAnimation: {
-        collapse: vi.fn(async () => undefined),
-        release: vi.fn()
-      },
-      getPaneDocument: overrides.getPaneDocument ?? (() => note),
-      setPaneDocument: vi.fn(),
-      getPaneKind: () => 'editor',
-      getPaneConversationId: () => null,
-      setStoredPaneKind: vi.fn(() => true),
-      capturePaneLocation: () => null,
-      getPaneCommandPaneId: () => null,
-      removeUnreferencedNote:
-        overrides.removeUnreferencedNote ?? (() => false),
-      canLeaveDocument: overrides.canLeaveDocument,
-      documentDeparture: {
-        prepare:
-          overrides.prepareDeparture ??
-          vi.fn(async () => note)
-      },
-      disposePaneRuntime,
-      retireWorkspacePane: (
-        paneId: PaneId,
-        operationId: number
-      ) => {
-        const result = retireWorkspacePane();
-        if (result) {
-          dispatchPaneMembership(paneId, {
-            type: 'retirementStarted',
-            operationId
-          });
-        }
-        return result as never;
-      },
-      completeWorkspacePaneDisposal: (
-        paneId: PaneId,
-        operationId: number
-      ) => {
-        const complete =
-          overrides.completeWorkspacePaneDisposal ??
-          vi.fn(() => true);
-        const result = complete();
-        if (result) {
-          dispatchPaneMembership(paneId, {
-            type: 'disposalCompleted',
-            operationId
-          });
-        }
-        return result;
-      },
-      getActivePaneId: overrides.getActivePaneId ?? (() => 'right'),
-      beginPaneCommand,
-      adoptClosedLocation: vi.fn(),
-      activatePaneSession: vi.fn(),
-      updateSelectedRelatedText: vi.fn(),
-      touchCurrentLocation: vi.fn(),
-      touchLocation,
-      bumpLocationHistoryEpoch: vi.fn(),
-      onDocumentLeaving: overrides.onDocumentLeaving,
-      focusPane,
-      activatePane: vi.fn(),
-      resetPaneCommand: vi.fn(),
-      loadRecentNotes:
-        overrides.loadRecentNotes ??
-        vi.fn(async () => undefined),
-      ensureLocationMruSeeded: vi.fn(async () => undefined),
-      transitions: pipeline
-    } as never);
-
-  return {
-    note, state, created, ensurePaneEditors, focusPane, touchLocation,
-    controller,
-    retireWorkspacePane,
-    disposePaneRuntime,
-    beginPaneCommand,
-    getMembership: (paneId: PaneId = 'left') =>
-      memberships[paneId]
-  };
-}
-
-describe('workspace pane close lifecycle', () => {
-  it('returns a policy-blocked close to ready', async () => {
-    const { controller, getMembership, retireWorkspacePane } =
-      harness({ canRemoveWorkspacePane: () => false });
-
-    await controller.closePane('left');
-
-    expect(getMembership().kind).toBe('ready');
-    expect(retireWorkspacePane).not.toHaveBeenCalled();
+describe('workspace pane lifecycle through real command owners', () => {
+  it('returns a policy-blocked last-pane close to ready', async () => {
+    const f = setup();
+    await f.commands.closePane(f.first);
+    expect(f.workspace.getPaneMembership(f.first).kind).toBe('ready');
+    expect(f.workspace.paneOrder).toEqual([f.first]);
+    expect(f.paneLifecycle.disposePane).not.toHaveBeenCalled();
   });
 
   it('does not remove the pane when close preparation fails', async () => {
-    const failure = new Error('save failed');
-    const prepareDeparture = vi.fn(async () => {
-      throw failure;
-    });
-    const {
-      controller,
-      retireWorkspacePane,
-      disposePaneRuntime,
-      getMembership
-    } =
-      harness({ prepareDeparture });
-
-    await expect(controller.closePane('left')).rejects.toBe(
-      failure
-    );
-    expect(retireWorkspacePane).not.toHaveBeenCalled();
-    expect(disposePaneRuntime).not.toHaveBeenCalled();
-    expect(getMembership().kind).toBe('ready');
+    const f = setup();
+    await f.commands.splitWorkspace('chat');
+    updateDocumentMarkdown(f.initialDocument, 'unsaved');
+    f.save.mockRejectedValue(new Error('save failed'));
+    await expect(f.commands.closePane(f.first)).rejects.toThrow('save failed');
+    expect(f.workspace.paneOrder).toContain(f.first);
+    expect(f.workspace.getPaneMembership(f.first).kind).toBe('ready');
+    expect(f.paneLifecycle.disposePane).not.toHaveBeenCalled();
   });
 
   it('prepares, removes, tears down, then releases retired pane state', async () => {
+    const f = setup();
+    await f.commands.splitWorkspace('chat');
     const events: string[] = [];
-    const { controller, getMembership } = harness({
-      prepareDeparture: vi.fn(async () => {
-        events.push('prepare');
-        return document();
-      }),
-      retireWorkspacePane: vi.fn(() => {
-        events.push('remove');
-        return {
-          paneId: 'left',
-          kind: 'editor',
-          documentHandle: 'document:note',
-          chatConversationId: null
-        };
-      }),
-      disposePaneRuntime: vi.fn(async () => {
-        events.push('dispose');
-      }),
-      completeWorkspacePaneDisposal: vi.fn(() => {
-        events.push('finalize');
-        return true;
-      })
+    vi.mocked(finalizeNoteEditingWindow).mockImplementation(async () => { events.push('prepare'); });
+    const retire = f.workspace.retirePane.bind(f.workspace);
+    vi.spyOn(f.workspace, 'retirePane').mockImplementation((...args) => {
+      events.push('remove');
+      return retire(...args);
     });
-
-    await controller.closePane('left');
-
-    expect(events).toEqual([
-      'prepare',
-      'remove',
-      'dispose',
-      'finalize'
-    ]);
-    expect(getMembership().kind).toBe('disposed');
+    vi.mocked(f.paneLifecycle.disposePane).mockImplementation(async id => {
+      events.push('dispose');
+      expect(f.workspace.paneOrder).not.toContain(id);
+      expect(f.workspace.getPaneMembership(id).kind).toBe('retiring');
+    });
+    const complete = f.workspace.completePaneDisposal.bind(f.workspace);
+    vi.spyOn(f.workspace, 'completePaneDisposal').mockImplementation((...args) => {
+      events.push('finalize');
+      return complete(...args);
+    });
+    await f.commands.closePane(f.first);
+    expect(events).toEqual(['prepare', 'remove', 'dispose', 'finalize']);
+    expect(f.workspace.getPaneMembership(f.first).kind).toBe('disposed');
   });
 
-  it('blocks two dirty collision drafts, then closes a deliberately cleaned side without rewriting it', async () => {
-    const left = createNoteDraftState({
-      ...createEmptySessionSnapshot(),
-      title: 'Left',
-      bodyMarkdown: 'left baseline',
-      currentNoteId: 'left-id',
-      currentNotePath: '/vault/Shared.md',
-      lastSavedTitle: 'Left',
-      lastSavedMarkdown: 'left baseline',
-      lastSavedNoteId: 'left-id',
-      lastSavedPath: '/vault/Shared.md'
-    });
-    const right = createNoteDraftState({
-      ...createEmptySessionSnapshot(),
-      title: 'Right',
-      bodyMarkdown: 'right dirty draft',
-      currentNoteId: 'right-id',
-      currentNotePath: '/vault/Shared.md',
-      lastSavedTitle: 'Right',
-      lastSavedMarkdown: 'right baseline',
-      lastSavedNoteId: 'right-id',
-      lastSavedPath: '/vault/Shared.md'
-    });
-    const state = createNotepadState(left, '/vault');
-    upsertNote(state, right);
-    updateDocumentMarkdown(left, 'left dirty draft');
-    let paneOrder: PaneId[] = ['left', 'right'];
-    const paneDocuments = { left, right, extra: right };
-    const paneReferences: PaneDocumentReferences<PaneId> = {
-      getPaneState: (paneId) => ({
-        documentHandle: paneDocuments[paneId].handle
-      }),
-      setPaneDocumentHandle: () => undefined,
-      replaceDocumentHandleReferences: () => undefined,
-      isDocumentReferenced: (handle) =>
-        paneOrder.some(
-          (paneId) => paneDocuments[paneId].handle === handle
-        ),
-      listReferencedDocumentHandles: () =>
-        paneOrder.map((paneId) => paneDocuments[paneId].handle)
-    };
-    let releaseQueue!: () => void;
-    const pendingQueue = new Promise<void>((resolve) => {
-      releaseQueue = resolve;
-    });
-    const getNoteSaveQueue = vi.fn(() => pendingQueue);
-    const enqueueSave = vi.fn().mockResolvedValue(undefined);
-    const departure = createDocumentDepartureController<PaneId>({
-      getPaneDocument: (paneId) => paneDocuments[paneId],
-      hasOtherEditingPane: () => false,
-      finalizeWindow: vi.fn().mockResolvedValue(undefined),
-      flushAllPendingCursorSaves: vi.fn(),
-      cancelPendingAutosave: vi.fn(),
-      enqueueSave,
-      getNoteSaveQueue,
-      saveCursorPositionForPane: vi.fn(),
-      clearLastOpenedNote: vi.fn().mockResolvedValue(undefined)
-    });
-    const retireWorkspacePane = vi.fn(() => {
-      paneOrder = ['right'];
-      return {
-        paneId: 'left' as const,
-        kind: 'editor' as const,
-        documentHandle: left.handle,
-        chatConversationId: null
-      };
-    });
-    const removeUnreferencedNote = vi.fn((handle: typeof left.handle) =>
-      removeNoteIfUnreferenced(state, paneReferences, handle)
-    );
-    const { controller, getMembership } = harness({
-      getPaneOrder: () => paneOrder,
-      getPaneDocument: (paneId) => paneDocuments[paneId],
-      canLeaveDocument: (note) =>
-        !documentHasUnresolvedConflict(note) ||
-        documentCanLeaveWithoutCanonicalWrite(note),
-      prepareDeparture: departure.prepare,
-      retireWorkspacePane,
-      removeUnreferencedNote
-    });
+  it('blocks two dirty collision drafts, then drains a cleaned side without rewriting it', async () => {
+    const f = setup(createSessionSnapshot({ ...persistedSession('left', 'left baseline'), path: '/vault/Shared.md' }));
+    await f.commands.splitWorkspace();
+    const rightPane = f.workspace.activePaneId;
+    await f.commands.resolvePaneCommandChoice(rightPane, 'current');
+    const right = createNoteDraftState(createSessionSnapshot({ ...persistedSession('right', 'right baseline'), path: '/vault/Shared.md' }));
+    upsertNote(f.state, right);
+    f.workspace.setPaneDocumentHandle(rightPane, right.handle);
+    updateDocumentMarkdown(right, 'right dirty');
+    updateDocumentMarkdown(f.initialDocument, 'left dirty');
+    await f.commands.closePane(f.first);
+    expect(f.workspace.getPaneMembership(f.first).kind).toBe('ready');
+    expect(f.save).not.toHaveBeenCalled();
 
-    await controller.closePane('left');
-
-    expect(getMembership().kind).toBe('ready');
-    expect(retireWorkspacePane).not.toHaveBeenCalled();
-    expect(enqueueSave).not.toHaveBeenCalled();
-
-    updateDocumentMarkdown(left, 'left baseline');
-    const close = controller.closePane('left');
-
-    await vi.waitFor(() => {
-      expect(getNoteSaveQueue).toHaveBeenCalledExactlyOnceWith(left.handle);
-    });
-    expect(retireWorkspacePane).not.toHaveBeenCalled();
-    expect(removeUnreferencedNote).not.toHaveBeenCalled();
-
-    releaseQueue();
+    updateDocumentMarkdown(f.initialDocument, 'left baseline');
+    const runtime = documentRegistry.ensure(f.initialDocument.handle);
+    const queued = deferred<void>();
+    runtime.requestSave(() => queued.promise);
+    const waiting = deferred<void>();
+    const getQueue = runtime.getSaveQueue.bind(runtime);
+    vi.spyOn(runtime, 'getSaveQueue').mockImplementation(() => { waiting.resolve(); return getQueue(); });
+    const cancel = vi.spyOn(runtime, 'clearSaveTimer');
+    const close = f.commands.closePane(f.first);
+    await waiting.promise;
+    expect(f.workspace.paneOrder).toContain(f.first);
+    expect(f.paneLifecycle.saveCursorPosition).not.toHaveBeenCalled();
+    expect(cancel).toHaveBeenCalledOnce();
+    queued.resolve();
     await close;
-
-    expect(retireWorkspacePane).toHaveBeenCalledOnce();
-    expect(enqueueSave).not.toHaveBeenCalled();
-    expect(removeUnreferencedNote).toHaveBeenCalledWith(left.handle);
-    expect(state.documentsByHandle[left.handle]).toBeUndefined();
+    expect(f.paneLifecycle.saveCursorPosition).toHaveBeenCalledWith(f.first, f.initialDocument, undefined);
+    expect(f.save).not.toHaveBeenCalled();
+    expect(f.state.documentsByHandle[f.initialDocument.handle]).toBeUndefined();
     expect(right.canonicalCollision).toBeNull();
-    expect(findOpenDocument(state, {
-      noteId: 'right-id',
-      path: '/vault/Shared.md'
-    })).toBe(right);
+    expect(findOpenDocument(f.state, { noteId: 'right', path: '/vault/Shared.md' })).toBe(right);
   });
-});
 
-describe('workspace pane creation lifecycle', () => {
   it('creates chat with retained context and no throwaway editor or draft', async () => {
-    const h = harness({ getPaneOrder: () => ['left'] });
-    await h.controller.splitWorkspace('chat');
-    expect(h.created).toHaveBeenCalledWith('right', h.note.handle, 'chat');
-    expect(Object.keys(h.state.documentsByHandle)).toEqual([h.note.handle]);
-    expect(h.beginPaneCommand).not.toHaveBeenCalled();
-    expect(h.ensurePaneEditors).not.toHaveBeenCalled();
-    expect(h.touchLocation).toHaveBeenCalledWith('right', {
-      kind: 'editor', noteId: 'note', notePath: '/vault/note.md'
-    });
-    expect(h.focusPane).toHaveBeenCalledWith('right');
-    expect(h.getMembership('right').kind).toBe('ready');
+    const f = setup();
+    vi.mocked(f.deps.presentation.focusPaneEditor).mockReturnValue(false);
+    await f.commands.splitWorkspace('chat');
+    const second = f.workspace.activePaneId;
+    expect(f.getPaneDocument(second)).toBe(f.initialDocument);
+    expect(Object.keys(f.state.documentsByHandle)).toEqual([f.initialDocument.handle]);
+    expect(f.workspace.paneCommand.paneId).toBeNull();
+    expect(f.paneLifecycle.ensurePaneEditors).not.toHaveBeenCalled();
+    expect(notepadLocationMru.list(second)).toContainEqual({ kind: 'editor', noteId: 'a', notePath: '/vault/a.md' });
+    expect(f.deps.presentation.focusPaneChat).toHaveBeenCalledWith(second);
+    expect(f.workspace.getPaneMembership(second).kind).toBe('ready');
   });
 
   it('disposes a creating runtime when split preparation fails', async () => {
-    const failure = new Error('recent notes unavailable');
-    const disposePaneRuntime = vi.fn(async () => undefined);
-    const { controller, getMembership } = harness({
-      getPaneOrder: () => ['left'],
-      loadRecentNotes: vi.fn(async () => {
-        throw failure;
-      }),
-      disposePaneRuntime
-    });
-
-    await expect(controller.splitWorkspace()).rejects.toBe(
-      failure
-    );
-
-    expect(getMembership('right').kind).toBe('disposed');
-    expect(disposePaneRuntime).toHaveBeenCalledWith(
-      'right',
-      null
-    );
+    const f = setup();
+    vi.mocked(f.deps.derivedViews.loadRecentNotes).mockRejectedValue(new Error('recent notes unavailable'));
+    await expect(f.commands.splitWorkspace()).rejects.toThrow('recent notes unavailable');
+    expect(f.workspace.getPaneMembership('notepad-pane-2').kind).toBe('disposed');
+    expect(f.workspace.paneOrder).toEqual([f.first]);
+    expect(f.paneLifecycle.disposePane).toHaveBeenCalledWith('notepad-pane-2');
   });
-});
 
-describe('workspace pane split source', () => {
   it('inherits the split from the active pane, not the first pane in order', async () => {
-    const notes: Record<PaneId, ReturnType<typeof document>> = {
-      left: document('left-note'),
-      right: document('right-note'),
-      extra: document('extra-note')
-    };
-    const { controller, beginPaneCommand } = harness({
-      getPaneOrder: () => ['left', 'right'],
-      getActivePaneId: () => 'right',
-      createPane: () => 'extra',
-      getPaneDocument: (paneId) => notes[paneId]
+    const f = setup();
+    await f.commands.splitWorkspace('chat');
+    const second = f.workspace.activePaneId;
+    const other = createNoteDraftState(createSessionSnapshot(persistedSession('other')));
+    upsertNote(f.state, other);
+    f.workspace.setPaneDocumentHandle(second, other.handle);
+    await f.commands.splitWorkspace();
+    expect(f.workspace.paneCommand).toMatchObject({
+      paneId: f.workspace.activePaneId, sourcePaneId: second, sourceDocumentHandle: other.handle, mode: 'split'
     });
-
-    await controller.splitWorkspace();
-
-    expect(beginPaneCommand).toHaveBeenCalledWith(
-      'extra',
-      notes.right.handle,
-      'split',
-      'right'
-    );
   });
-});
 
-describe('workspace pane document ownership', () => {
-  it('identifies the exact pane whose editor is leaving for chat', async () => {
-    const onDocumentLeaving = vi.fn();
-    const { controller, note } = harness({ onDocumentLeaving });
-
-    await controller.setPaneKind('right', 'chat');
-
-    expect(onDocumentLeaving).toHaveBeenCalledOnce();
-    expect(onDocumentLeaving).toHaveBeenCalledWith(
-      'right',
-      note
-    );
+  it('changes only the selected shared editor into retained chat', async () => {
+    const f = setup();
+    await f.commands.splitWorkspace();
+    const second = f.workspace.activePaneId;
+    await f.commands.resolvePaneCommandChoice(second, 'current');
+    await f.commands.setPaneKind(second, 'chat');
+    expect(f.workspace.getPaneState(second)).toMatchObject({ kind: 'chat', documentHandle: f.initialDocument.handle });
+    expect(f.workspace.getPaneState(f.first)).toMatchObject({ kind: 'editor', documentHandle: f.initialDocument.handle });
   });
 });

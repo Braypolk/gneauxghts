@@ -1,0 +1,151 @@
+import type { SettingsViewPayload } from '$lib/app/appStore.svelte';
+import type { BootstrapAppResult } from '$lib/features/notepad/session/bootstrap';
+import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import type { SemanticStatus } from '$lib/types/semantic';
+import type { VaultInfo } from '$lib/types/vault';
+
+export const semanticStatusFixture: SemanticStatus = {
+  "settings": {
+    "semanticSearchEnabled": true,
+    "lexicalWeight": 0.5,
+    "semanticWeight": 0.4000000059604645
+  },
+  "model": {
+    "id": "jina-v5-nano",
+    "label": "Jina embeddings v5 nano",
+    "dimensions": 768,
+    "runtimeBinaryPath": "/app/llama-server",
+    "modelPath": "/app/models/jina.gguf",
+    "modelRepoId": "jinaai/jina-embeddings-v5-text-nano-retrieval",
+    "available": true,
+    "loading": false,
+    "ready": true,
+    "status": "ready",
+    "error": null
+  },
+  "platformSupported": true,
+  "disabledReason": null,
+  "modelAvailable": true,
+  "indexingPaused": false,
+  "indexingInProgress": false,
+  "indexedNotes": 12,
+  "indexedChunks": 48,
+  "annIndexLoaded": true,
+  "annIndexDirty": false,
+  "annRebuildPending": false,
+  "annLastDumpedAtMillis": 1700000000000,
+  "annIndexedChunks": 48,
+  "noteAnnIndexLoaded": true,
+  "noteAnnIndexDirty": false,
+  "noteAnnRebuildPending": false,
+  "noteAnnIndexedNotes": 12,
+  "noteAnnGenerationId": "note-ann-generation-1",
+  "lastIndexedAtMillis": 1700000000000,
+  "lastError": null,
+  "currentJobLabel": null,
+  "latestJob": {
+    "id": 7,
+    "status": "completed",
+    "scannedCount": 12,
+    "embeddedCount": 12,
+    "errorText": null,
+    "startedAtMillis": 1699999999000,
+    "updatedAtMillis": 1700000000000
+  },
+  "health": "fresh",
+  "recoveryState": "ready",
+  "indexUsable": true,
+  "retryAttempt": 0,
+  "retryMaxAttempts": 3,
+  "retryExhausted": false,
+  "progressCurrent": 12,
+  "progressTotal": 12,
+  "rebuildReason": null
+};
+
+export const vaultFixture: VaultInfo = {
+  "runningPath": "/vault",
+  "selectedPath": "/next-vault",
+  "defaultPath": "/documents/Gneauxghts",
+  "forgottenPath": "/vault/.forgotten",
+  "isDefault": false,
+  "noteCount": 12,
+  "requiresRestart": true,
+  "canConfigurePath": true,
+  "canPickArbitraryPath": true,
+  "vaultContainerPath": null,
+  "pathConfigurationNote": "Restart to finish switching vaults."
+};
+
+export function bootstrapFixture(): BootstrapAppResult {
+  return { vault: { ...vaultFixture }, semanticStatus: structuredClone(semanticStatusFixture), indexRevision: 1, session: createEmptySessionSnapshot() };
+}
+
+export function settingsViewFixture(): SettingsViewPayload {
+  return {
+    vault: { ...vaultFixture },
+    semanticStatus: structuredClone(semanticStatusFixture),
+    semanticSettings: { ...semanticStatusFixture.settings },
+    historyHealth: { state: "healthy", integrity: "verified", initialization: { phase: "complete", discoveredNotes: 0, baselineRevisions: 0, readyNotes: 0, failedNotes: 0 }, pendingRepairs: 0, canRetry: false, canReset: false },
+    semanticDebug: { capturedAtMillis: 1, recentEvents: [], metrics: {
+      runtimeSpawnCount: 0,
+      runtimeRestartCount: 0,
+      runtimeShutdownCount: 0,
+      runtimeReadyCount: 0,
+      runtimeTimeoutCount: 0,
+      modelPrepareCount: 0,
+      modelPrepareSuccessCount: 0,
+      modelPrepareFailureCount: 0,
+      modelPrepareLastMillis: 0,
+      modelWarmupCount: 0,
+      modelWarmupSuccessCount: 0,
+      modelWarmupFailureCount: 0,
+      modelWarmupLastMillis: 0,
+      embeddingRequestCount: 0,
+      embeddingRequestSuccessCount: 0,
+      embeddingRequestFailureCount: 0,
+      embeddingTextCountTotal: 0,
+      embeddingCharCountTotal: 0,
+      embeddingDurationTotalMillis: 0,
+      embeddingDurationMaxMillis: 0,
+      searchRequestCount: 0,
+      searchSemanticUsedCount: 0,
+      searchSemanticSkippedCount: 0,
+      searchDurationTotalMillis: 0,
+      searchDurationMaxMillis: 0,
+      annQueryCount: 0,
+      annQueryCandidateTotal: 0,
+      annQueryRerankTotal: 0,
+      annQueryDurationTotalMillis: 0,
+      annQueryDurationMaxMillis: 0,
+      annLoadSuccessCount: 0,
+      annLoadFailureCount: 0,
+      annRebuildCount: 0,
+      annRebuildPendingCount: 0,
+      annRebuildDurationTotalMillis: 0,
+      annRebuildDurationMaxMillis: 0,
+      annUpdateFailureCount: 0,
+      relatedRequestCount: 0,
+      relatedNoteRequestCount: 0,
+      relatedSelectionRequestCount: 0,
+      relatedCacheHitCount: 0,
+      relatedEdgeReuseCount: 0,
+      relatedNoteAnnCount: 0,
+      relatedSemanticQueryCount: 0,
+      relatedInsufficientContentCount: 0,
+      relatedUnavailableCount: 0,
+      relatedResultTotal: 0,
+      relatedDurationTotalMillis: 0,
+      relatedDurationMaxMillis: 0,
+      indexJobEnqueuedCount: 0,
+      indexJobStartedCount: 0,
+      indexJobCompletedCount: 0,
+      indexJobFailedCount: 0,
+      indexZeroWorkCount: 0,
+      indexScannedTotal: 0,
+      indexEmbeddedTotal: 0,
+      indexDurationTotalMillis: 0,
+      indexDurationMaxMillis: 0,
+    } }
+  };
+}

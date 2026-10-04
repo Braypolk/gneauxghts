@@ -40,11 +40,16 @@ impl BackgroundWorkGate {
 
     /// Expensive jobs still obey an explicit pause without waiting for idle.
     pub(crate) fn checkpoint_manual_pause(&self) {
+        self.checkpoint_observing_wait(|| {});
+    }
+
+    fn checkpoint_observing_wait(&self, mut on_wait: impl FnMut()) {
         let mut state = match self.state.lock() {
             Ok(state) => state,
             Err(_) => return,
         };
         while state.manually_paused {
+            on_wait();
             let Ok(next) = self.changed.wait(state) else {
                 return;
             };
@@ -74,30 +79,41 @@ mod tests {
         let (continue_tx, continue_rx) = mpsc::channel();
         let worker_gate = gate.clone();
         let worker_finished = finished.clone();
-        let worker = thread::spawn(move || {
-            worker_gate.checkpoint_manual_pause();
-            first_checkpoint_tx
-                .send(())
-                .expect("report first checkpoint");
-            continue_rx.recv().expect("continue long work");
-            worker_gate.checkpoint_manual_pause();
-            worker_finished.store(true, Ordering::Release);
+        let (waiting_tx, waiting_rx) = mpsc::channel();
+        struct ResumeOnDrop<'a>(&'a BackgroundWorkGate);
+        impl Drop for ResumeOnDrop<'_> {
+            fn drop(&mut self) {
+                let _ = self.0.set_manually_paused(false);
+            }
+        }
+        thread::scope(|scope| {
+            let worker = scope.spawn(move || {
+                worker_gate.checkpoint_manual_pause();
+                first_checkpoint_tx
+                    .send(())
+                    .expect("report first checkpoint");
+                continue_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("continue long work");
+                worker_gate.checkpoint_observing_wait(|| {
+                    let _ = waiting_tx.send(());
+                });
+                worker_finished.store(true, Ordering::Release);
+            });
+            let _resume = ResumeOnDrop(&gate);
+            first_checkpoint_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("first checkpoint");
+            gate.set_manually_paused(true).expect("pause gate");
+            continue_tx.send(()).expect("continue to paused checkpoint");
+            waiting_rx
+                .recv_timeout(Duration::from_secs(2))
+                .expect("worker observed paused checkpoint");
+            assert!(!finished.load(Ordering::Acquire));
+            gate.set_manually_paused(false).expect("resume gate");
+            worker.join().expect("pause worker");
         });
-
-        first_checkpoint_rx.recv().expect("first checkpoint");
-        gate.set_manually_paused(true).expect("pause gate");
-        continue_tx.send(()).expect("continue to paused checkpoint");
-        thread::sleep(Duration::from_millis(40));
-        assert!(!finished.load(Ordering::Acquire));
-        gate.set_manually_paused(false).expect("resume gate");
-        worker.join().expect("pause worker");
         assert!(finished.load(Ordering::Acquire));
-    }
-
-    #[test]
-    fn checkpoint_returns_immediately_when_not_paused() {
-        let gate = BackgroundWorkGate::new();
-        gate.checkpoint_manual_pause();
     }
 
     #[test]

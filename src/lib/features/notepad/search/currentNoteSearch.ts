@@ -39,13 +39,17 @@ function searchableBodyStart(markdown: string) {
 }
 
 function cropLineAroundMatch(lineText: string, matchStart: number, matchEnd: number) {
+  // Search/CodeMirror positions are UTF-16; rendered highlight ranges use code points.
+  const characters = Array.from(lineText);
+  matchStart = Array.from(lineText.slice(0, matchStart)).length;
+  matchEnd = Array.from(lineText.slice(0, matchEnd)).length;
   const contextStart = Math.max(0, matchStart - CURRENT_NOTE_EXCERPT_CONTEXT);
-  const maxStart = Math.max(0, lineText.length - CURRENT_NOTE_EXCERPT_LENGTH);
+  const maxStart = Math.max(0, characters.length - CURRENT_NOTE_EXCERPT_LENGTH);
   const start = Math.min(contextStart, maxStart);
-  const end = Math.min(lineText.length, Math.max(matchEnd + CURRENT_NOTE_EXCERPT_CONTEXT, start + CURRENT_NOTE_EXCERPT_LENGTH));
+  const end = Math.min(characters.length, Math.max(matchEnd + CURRENT_NOTE_EXCERPT_CONTEXT, start + CURRENT_NOTE_EXCERPT_LENGTH));
   const prefix = start > 0 ? '…' : '';
-  const suffix = end < lineText.length ? '…' : '';
-  const excerpt = `${prefix}${lineText.slice(start, end)}${suffix}`;
+  const suffix = end < characters.length ? '…' : '';
+  const excerpt = `${prefix}${characters.slice(start, end).join('')}${suffix}`;
   const offset = prefix.length - start;
 
   return {

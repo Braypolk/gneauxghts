@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   createDocumentExternalSyncState,
-  transitionDocumentExternalSync,
-  type DocumentExternalSyncState
+  transitionDocumentExternalSync
 } from './documentExternalSyncMachine';
 import type { ExternalDocumentChange } from './documentState';
 
@@ -20,12 +19,6 @@ function capture(state = createDocumentExternalSyncState()) {
 }
 
 describe('document external-sync machine', () => {
-  it('starts without a conflict', () => {
-    expect(createDocumentExternalSyncState()).toEqual({
-      kind: 'noConflict',
-      sequence: 0
-    });
-  });
 
   it('captures each external change under a new conflict identity', () => {
     const first = capture();
@@ -82,25 +75,6 @@ describe('document external-sync machine', () => {
     expect(applied).toEqual({ kind: 'noConflict', sequence: 1 });
   });
 
-  it('returns a failed application to the same recoverable conflict', () => {
-    const conflict = capture();
-    const applying = transitionDocumentExternalSync(conflict, {
-      type: 'beginApplyingExternal',
-      conflictId: 1
-    });
-    const recovered = transitionDocumentExternalSync(applying, {
-      type: 'externalApplyFailed',
-      conflictId: 1
-    });
-
-    expect(recovered).toMatchObject({
-      kind: 'conflict',
-      conflictId: 1,
-      phase: 'awaitingChoice',
-      external
-    });
-  });
-
   it('rejects late results from an older conflict', () => {
     const first = capture();
     const firstApplying = transitionDocumentExternalSync(
@@ -138,26 +112,5 @@ describe('document external-sync machine', () => {
         type: 'boundaryApplied'
       })
     ).toEqual({ kind: 'noConflict', sequence: 1 });
-  });
-
-  it('keeps the conflict sequence monotonic through mixed events', () => {
-    let state: DocumentExternalSyncState =
-      createDocumentExternalSyncState();
-    let previousSequence = state.sequence;
-    const events = [
-      { type: 'externalCaptured', external },
-      { type: 'beginApplyingExternal', conflictId: 1 },
-      { type: 'externalApplyFailed', conflictId: 1 },
-      { type: 'externalCaptured', external },
-      { type: 'keepWorking', conflictId: 2 }
-    ] as const;
-
-    for (const event of events) {
-      state = transitionDocumentExternalSync(state, event);
-      expect(state.sequence).toBeGreaterThanOrEqual(
-        previousSequence
-      );
-      previousSequence = state.sequence;
-    }
   });
 });

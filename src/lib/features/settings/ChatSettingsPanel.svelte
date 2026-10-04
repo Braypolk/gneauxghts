@@ -102,7 +102,7 @@
           settings.reasoningEffort
         );
       }
-      settings = await api.setSettings(settings);
+      settings = await api.setDefaults(settings);
       message = 'Chat defaults saved in this vault.';
     } catch (saveError) {
       error = String(saveError);

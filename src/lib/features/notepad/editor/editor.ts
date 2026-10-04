@@ -44,6 +44,5 @@ export {
   replaceEditorContent,
   replaceEditorDocument,
   restoreCursorPosition,
-  setProposalReviewExtensions,
   swapEditorRuntime
 } from './editorViewController';

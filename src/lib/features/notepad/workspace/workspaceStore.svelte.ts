@@ -1,3 +1,4 @@
+import { getNavigationPaneId as selectNavigationPaneId } from './paneRoles';
 import {
   INITIAL_PANE_ID,
   type NotepadPaneId
@@ -7,7 +8,8 @@ import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
 import {
   canRemovePane as policyCanRemovePane,
-  canSetPaneKind
+  canSetPaneKind,
+  paneHasCapability
 } from './paneCapabilities';
 import type {
   PaneKind,
@@ -84,6 +86,24 @@ export class WorkspaceStore {
       createPaneMembershipState(true)
     );
     this.assertInvariants();
+  }
+
+  getEditorPaneIds(): NotepadPaneId[] {
+    return this.paneOrder.filter(id => paneHasCapability(this.getPaneState(id).kind, 'edit-document'));
+  }
+
+  getNavigationPaneId(): NotepadPaneId {
+    return selectNavigationPaneId({ paneOrder: this.paneOrder, activePaneId: this.activePaneId, getPaneKind: id => this.getPaneState(id).kind });
+  }
+
+  getPaneIdsForDocument(handle: DocumentHandle): NotepadPaneId[] {
+    return this.getEditorPaneIds().filter(id => this.getPaneState(id).documentHandle === handle);
+  }
+
+  getNextPaneId(paneId = this.activePaneId, direction: 1 | -1 = 1): NotepadPaneId | null {
+    if (this.paneOrder.length < 2) return null;
+    const index = this.paneOrder.indexOf(paneId);
+    return index < 0 ? this.paneOrder[0] : this.paneOrder[(index + direction + this.paneOrder.length) % this.paneOrder.length];
   }
 
   getPaneMembership(

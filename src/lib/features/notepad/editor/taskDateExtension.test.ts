@@ -1,6 +1,5 @@
+import { createCommandView } from './commandTestSupport';
 import { history, redo, undo } from '@codemirror/commands';
-import { EditorState, type TransactionSpec } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { openDateTimePicker } from '$lib/features/tasks/dateTimePicker';
 import { createMarkdownLanguage } from '../markdown/markdownLanguage';
@@ -12,14 +11,9 @@ vi.mock('$lib/features/tasks/dateTimePicker', () => ({
 }));
 
 function editor(doc: string) {
-  let state = EditorState.create({ doc, extensions: [createMarkdownLanguage(), history()] });
-  const view = {
-    dom: { isConnected: true, closest: () => null },
-    get state() { return state; },
-    dispatch(spec: TransactionSpec) { state = state.update(spec).state; },
-    focus() {}
-  } as unknown as EditorView;
-  return { view, undo: () => undo({ state, dispatch: (tr) => { state = tr.state; } }), redo: () => redo({ state, dispatch: (tr) => { state = tr.state; } }) };
+  const { view } = createCommandView({ doc, extensions: [createMarkdownLanguage(), history()] });
+  Object.assign(view.dom, { closest: () => null });
+  return { view, undo: () => undo(view), redo: () => redo(view) };
 }
 
 function pickerOptions() {

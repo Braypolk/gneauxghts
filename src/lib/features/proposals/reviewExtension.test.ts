@@ -1,77 +1,39 @@
-import { EditorState, Transaction } from '@codemirror/state';
+import { EditorState } from '@codemirror/state';
 import { describe, expect, it } from 'vitest';
-import { createProposalReviewExtension } from './reviewExtension';
+import { EditorView, type WidgetType } from '@codemirror/view';
+import { createReviewProjection, documentReviewField, setDocumentReview } from './reviewExtension';
 
 describe('proposal review hunk mapping', () => {
   it('tracks the complete edited proposed span for Restore Original', () => {
-    const review = createProposalReviewExtension({
-      reviewId: 'review',
-      hunks: [{
-        id: 'hunk-1',
-        baseFrom: 0,
-        baseTo: 7,
-        proposedFrom: 0,
-        proposedTo: 'Fixture (revised)'.length,
-        oldText: 'Fixture',
-        newText: 'Fixture (revised)'
-      }],
-      onKeep: () => {},
-      onUndo: () => {}
-    });
-    const state = EditorState.create({ doc: 'Fixture (revised)', extensions: review.extension });
-    const next = state.update({ changes: { from: 0, to: 7, insert: 'Fixture test' } }).state;
-    const hunk = review.read(next).hunks[0];
-
+    const state = EditorState.create({ doc: 'Fixture (revised)', extensions: documentReviewField });
+    const reviewing = state.update({ effects: setDocumentReview.of({ reviewId: 'review', hunks: [{
+      id: 'hunk-1', baseFrom: 0, baseTo: 7, proposedFrom: 0, proposedTo: 17,
+      oldText: 'Fixture', newText: 'Fixture (revised)', from: 0, to: 17, status: 'pending'
+    }] }) }).state;
+    const next = reviewing.update({ changes: { from: 0, to: 7, insert: 'Fixture test' } }).state;
+    const hunk = next.field(documentReviewField)!.hunks[0];
     expect(next.doc.toString().slice(hunk.from, hunk.to)).toBe('Fixture test (revised)');
     expect(hunk.status).toBe('modified');
   });
-
-  it('does not turn every hunk into a modification during a pane document reset', () => {
-    const review = createProposalReviewExtension({
-      reviewId: 'review',
-      hunks: [{
-        id: 'hunk-1',
-        baseFrom: 0,
-        baseTo: 7,
-        proposedFrom: 0,
-        proposedTo: 'Fixture (revised)'.length,
-        oldText: 'Fixture',
-        newText: 'Fixture (revised)'
-      }],
-      onKeep: () => {},
-      onUndo: () => {}
-    });
-    const doc = 'Fixture (revised) draft note';
-    const state = EditorState.create({ doc, extensions: review.extension });
-    const next = state.update({
-      changes: { from: 0, to: doc.length, insert: doc },
-      annotations: Transaction.userEvent.of('input.external-reset')
-    }).state;
-    const hunk = review.read(next).hunks[0];
-
-    expect(hunk).toMatchObject({ from: 0, to: 'Fixture (revised)'.length, status: 'pending' });
+  it('replaces action widgets when another review reuses identical hunk bounds', () => {
+    function actionWidget(reviewId: string) {
+      const state = EditorState.create({ doc: 'new', extensions: createReviewProjection({ reviewId, hunks: [{
+        id: 'hunk', baseFrom: 0, baseTo: 3, proposedFrom: 0, proposedTo: 3,
+        oldText: 'old', newText: 'new', from: 0, to: 3, status: 'pending'
+      }] }, () => {}, () => {}) });
+      let widget: WidgetType | undefined;
+      for (const decoration of state.facet(EditorView.decorations)) {
+        if (typeof decoration === 'function') continue;
+        for (let cursor = decoration.iter(); cursor.value; cursor.next()) {
+          if (cursor.value.spec.widget && cursor.from === 3) widget = cursor.value.spec.widget;
+        }
+      }
+      if (!widget) throw new Error('No proposal action widget rendered');
+      return widget;
+    }
+    const original = actionWidget('original');
+    expect(original.eq(actionWidget('original'))).toBe(true);
+    expect(original.eq(actionWidget('replacement'))).toBe(false);
   });
 
-  it('reinstalls a suspended hunk snapshot unchanged in a newly mounted pane', () => {
-    const hunk = {
-      id: 'hunk-1',
-      baseFrom: 0,
-      baseTo: 7,
-      proposedFrom: 0,
-      proposedTo: 'Fixture (revised)'.length,
-      oldText: 'Fixture',
-      newText: 'Fixture (revised)'
-    };
-    const doc = 'Fixture (revised) draft note\n\nFixture insertion.';
-    const firstPane = createProposalReviewExtension({
-      reviewId: 'review', hunks: [hunk], onKeep: () => {}, onUndo: () => {}
-    });
-    const suspended = firstPane.read(EditorState.create({ doc, extensions: firstPane.extension })).hunks;
-    const secondPane = createProposalReviewExtension({
-      reviewId: 'review', hunks: [hunk], initialHunks: suspended, onKeep: () => {}, onUndo: () => {}
-    });
-    const restored = secondPane.read(EditorState.create({ doc, extensions: secondPane.extension })).hunks[0];
-
-    expect(restored).toMatchObject({ from: 0, to: 'Fixture (revised)'.length, status: 'pending' });
-  });
 });

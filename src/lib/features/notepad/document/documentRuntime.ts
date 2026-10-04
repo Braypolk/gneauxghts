@@ -1,7 +1,5 @@
-import {
-  createSharedEditorResources,
-  type SharedEditorResources
-} from '$lib/features/notepad/editor/editor';
+import { createSharedEditorResources } from '$lib/features/notepad/editor/editorDocumentResources';
+import type { SharedEditorResources } from '$lib/features/notepad/editor/types';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
 

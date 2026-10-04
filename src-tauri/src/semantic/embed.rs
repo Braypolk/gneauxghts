@@ -1116,8 +1116,11 @@ fn format_llama_server_exit(stderr_path: &Path, status: ExitStatus) -> String {
 /// for unset, empty, non-numeric, or too-small values so a typo can never shrink
 /// the window below something the model can use.
 fn resolve_llama_ctx_size() -> u32 {
-    env::var("GNEAUXGHTS_LLAMA_CTX_SIZE")
-        .ok()
+    parse_llama_ctx_size(env::var("GNEAUXGHTS_LLAMA_CTX_SIZE").ok().as_deref())
+}
+
+fn parse_llama_ctx_size(value: Option<&str>) -> u32 {
+    value
         .and_then(|value| value.trim().parse::<u32>().ok())
         .filter(|size| *size >= MIN_LLAMA_CTX_SIZE)
         .unwrap_or(DEFAULT_LLAMA_CTX_SIZE)
@@ -1126,23 +1129,33 @@ fn resolve_llama_ctx_size() -> u32 {
 /// CPU threads for llama-server (`--threads` / `--threads-batch`). Defaults to
 /// all logical cores; override with `GNEAUXGHTS_LLAMA_THREADS`.
 fn resolve_llama_thread_count() -> usize {
-    env::var("GNEAUXGHTS_LLAMA_THREADS")
-        .ok()
+    parse_llama_thread_count(
+        env::var("GNEAUXGHTS_LLAMA_THREADS").ok().as_deref(),
+        std::thread::available_parallelism()
+            .map(|value| value.get())
+            .unwrap_or(1),
+    )
+}
+
+fn parse_llama_thread_count(value: Option<&str>, available: usize) -> usize {
+    value
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|threads| *threads >= 1)
-        .unwrap_or_else(|| {
-            std::thread::available_parallelism()
-                .map(|value| value.get())
-                .unwrap_or(1)
-        })
+        .unwrap_or(available.max(1))
 }
 
 /// Concurrent request slots (`--parallel`). Defaults to `min(4, threads)` so
 /// embed HTTP batches can overlap without exploding memory; override with
 /// `GNEAUXGHTS_LLAMA_PARALLEL`.
 fn resolve_llama_parallel_slots(thread_count: usize) -> usize {
-    env::var("GNEAUXGHTS_LLAMA_PARALLEL")
-        .ok()
+    parse_llama_parallel_slots(
+        env::var("GNEAUXGHTS_LLAMA_PARALLEL").ok().as_deref(),
+        thread_count,
+    )
+}
+
+fn parse_llama_parallel_slots(value: Option<&str>, thread_count: usize) -> usize {
+    value
         .and_then(|value| value.trim().parse::<usize>().ok())
         .filter(|slots| *slots >= 1)
         .unwrap_or_else(|| thread_count.clamp(1, 4))
@@ -1279,85 +1292,25 @@ mod tests {
     }
 
     #[test]
-    fn resolve_llama_ctx_size_honors_valid_override_and_floors_typos() {
-        // Mutates a process-global env var; keep all cases in one serial test and
-        // restore the prior value so parallel tests are not affected.
-        let key = "GNEAUXGHTS_LLAMA_CTX_SIZE";
-        let previous = env::var_os(key);
-
-        env::remove_var(key);
-        assert_eq!(resolve_llama_ctx_size(), DEFAULT_LLAMA_CTX_SIZE);
-
-        env::set_var(key, "4096");
-        assert_eq!(resolve_llama_ctx_size(), 4096);
-
-        env::set_var(key, "  2048  ");
-        assert_eq!(
-            resolve_llama_ctx_size(),
-            2048,
-            "surrounding whitespace trimmed"
-        );
-
-        env::set_var(key, "not-a-number");
-        assert_eq!(
-            resolve_llama_ctx_size(),
-            DEFAULT_LLAMA_CTX_SIZE,
-            "non-numeric falls back to default"
-        );
-
-        env::set_var(key, "0");
-        assert_eq!(
-            resolve_llama_ctx_size(),
-            DEFAULT_LLAMA_CTX_SIZE,
-            "below MIN floor falls back to default"
-        );
-
-        env::set_var(key, (MIN_LLAMA_CTX_SIZE - 1).to_string());
-        assert_eq!(
-            resolve_llama_ctx_size(),
-            DEFAULT_LLAMA_CTX_SIZE,
-            "just under MIN floor falls back to default"
-        );
-
-        env::set_var(key, MIN_LLAMA_CTX_SIZE.to_string());
-        assert_eq!(
-            resolve_llama_ctx_size(),
-            MIN_LLAMA_CTX_SIZE,
-            "exactly MIN is accepted"
-        );
-
-        match previous {
-            Some(value) => env::set_var(key, value),
-            None => env::remove_var(key),
+    fn llama_configuration_parsing_preserves_defaults_and_valid_overrides() {
+        for value in [None, Some(""), Some("not-a-number"), Some("0")] {
+            assert_eq!(parse_llama_ctx_size(value), DEFAULT_LLAMA_CTX_SIZE);
+            assert_eq!(parse_llama_thread_count(value, 8), 8);
+            assert_eq!(parse_llama_parallel_slots(value, 8), 4);
         }
-    }
-
-    #[test]
-    fn resolve_llama_thread_and_parallel_defaults() {
-        let key_threads = "GNEAUXGHTS_LLAMA_THREADS";
-        let key_parallel = "GNEAUXGHTS_LLAMA_PARALLEL";
-        let previous_threads = env::var_os(key_threads);
-        let previous_parallel = env::var_os(key_parallel);
-        env::remove_var(key_threads);
-        env::remove_var(key_parallel);
-
-        let threads = resolve_llama_thread_count();
-        assert!(threads >= 1);
-        assert_eq!(resolve_llama_parallel_slots(8), 4);
-        assert_eq!(resolve_llama_parallel_slots(2), 2);
-
-        env::set_var(key_threads, "6");
-        env::set_var(key_parallel, "3");
-        assert_eq!(resolve_llama_thread_count(), 6);
-        assert_eq!(resolve_llama_parallel_slots(6), 3);
-
-        match previous_threads {
-            Some(value) => env::set_var(key_threads, value),
-            None => env::remove_var(key_threads),
-        }
-        match previous_parallel {
-            Some(value) => env::set_var(key_parallel, value),
-            None => env::remove_var(key_parallel),
-        }
+        assert_eq!(parse_llama_ctx_size(Some("4096")), 4096);
+        assert_eq!(parse_llama_ctx_size(Some(" 2048 ")), 2048);
+        assert_eq!(
+            parse_llama_ctx_size(Some(&(MIN_LLAMA_CTX_SIZE - 1).to_string())),
+            DEFAULT_LLAMA_CTX_SIZE
+        );
+        assert_eq!(
+            parse_llama_ctx_size(Some(&MIN_LLAMA_CTX_SIZE.to_string())),
+            MIN_LLAMA_CTX_SIZE
+        );
+        assert_eq!(parse_llama_thread_count(Some("6"), 1), 6);
+        assert_eq!(parse_llama_thread_count(None, 0), 1);
+        assert_eq!(parse_llama_parallel_slots(Some("3"), 6), 3);
+        assert_eq!(parse_llama_parallel_slots(None, 2), 2);
     }
 }

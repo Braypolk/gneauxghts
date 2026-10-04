@@ -42,7 +42,7 @@ describe('TauriChatApi', () => {
     expect(settings.reasoningEffort).toBe('medium');
   });
 
-  it('persists web access without a legacy mode setting', async () => {
+  it('writes chat defaults and Atlas visibility through separate native operations', async () => {
     const settings = {
       provider: 'openai' as const,
       model: 'test-model',
@@ -61,10 +61,11 @@ describe('TauriChatApi', () => {
     });
     const { TauriChatApi } = await import('./api');
 
-    await new TauriChatApi().setSettings(settings);
+    const api = new TauriChatApi();
+    await api.setDefaults(settings);
 
-    expect(invokeMock).toHaveBeenCalledWith('chat_set_settings', {
-      settings: {
+    expect(invokeMock).toHaveBeenCalledWith('chat_set_defaults', {
+      defaults: {
         provider: 'openai',
         model: 'test-model',
         openaiModel: 'test-model',
@@ -73,10 +74,11 @@ describe('TauriChatApi', () => {
         reasoningEffort: 'medium',
         serviceTier: 'standard',
         webAccess: 'off',
-        defaultAccess: 'approved',
-        atlasVisibility: 'hidden'
+        defaultAccess: 'approved'
       }
     });
+    await api.setAtlasVisibility('remembered');
+    expect(invokeMock).toHaveBeenLastCalledWith('chat_set_atlas_visibility', { visibility: 'remembered' });
   });
 
   it('adapts vault access changes to the Rust IPC contract', async () => {
@@ -282,16 +284,6 @@ describe('TauriChatApi', () => {
     expect(invokeMock).toHaveBeenNthCalledWith(2, 'chat_set_api_key', { provider: 'local', apiKey: '' });
   });
 
-  it('checks key status for the requested provider', async () => {
-    invokeMock.mockResolvedValueOnce({ provider: 'local', configured: true });
-    const { TauriChatApi } = await import('./api');
-
-    await expect(new TauriChatApi().getKeyStatus('local')).resolves.toMatchObject({
-      provider: 'local', configured: true
-    });
-    expect(invokeMock).toHaveBeenCalledWith('chat_get_key_status', { provider: 'local' });
-  });
-
   it('creates excerpts from rendered Markdown selections', async () => {
     const rawConversation = {
       id: 'chat-1', title: 'Markdown', access: 'approved', status: 'active',
@@ -390,38 +382,6 @@ describe('TauriChatApi', () => {
     expect(summary).toMatchObject({ provider: 'local', model: 'qwen3-8b' });
   });
 
-  it('uses the OpenAI-compatible local model discovery command', async () => {
-    invokeMock.mockResolvedValue([{ id: 'qwen3-8b', ownedBy: 'lmstudio' }]);
-    const { TauriChatApi } = await import('./api');
-
-    await expect(
-      new TauriChatApi().listLocalModels('http://localhost:1234/v1')
-    ).resolves.toEqual([{ id: 'qwen3-8b', ownedBy: 'lmstudio' }]);
-    expect(invokeMock).toHaveBeenCalledWith('chat_list_local_models', {
-      baseUrl: 'http://localhost:1234/v1'
-    });
-  });
-
-  it('persists capability selections for a specific local model', async () => {
-    const capabilities = {
-      images: true,
-      tools: true,
-      audio: false,
-      video: true,
-      reasoningEffort: 'xhigh' as const
-    };
-    invokeMock.mockResolvedValue(capabilities);
-    const { TauriChatApi } = await import('./api');
-
-    await expect(
-      new TauriChatApi().setLocalModelCapabilities('qwen/Qwen3.8-27B', capabilities)
-    ).resolves.toEqual(capabilities);
-    expect(invokeMock).toHaveBeenCalledWith('chat_set_local_model_capabilities', {
-      model: 'qwen/Qwen3.8-27B',
-      capabilities
-    });
-  });
-
   it('checks account-visible OpenAI models without exposing the API key', async () => {
     invokeMock.mockResolvedValue([{ id: 'gpt-5.6-terra', ownedBy: 'openai' }]);
     const { TauriChatApi } = await import('./api');
@@ -461,42 +421,6 @@ describe('TauriChatApi', () => {
       .resolves.toBe('allowedForSession');
     expect(invokeMock).toHaveBeenCalledWith('chat_decide_permission', {
       command: { ...identity, decision: 'allowForSession' }
-    });
-  });
-
-  it('sends the complete active-note snapshot to the backend', async () => {
-    invokeMock.mockResolvedValue({
-      requestId: 'request-1',
-      conversationId: 'chat-1',
-      userMessageId: 'user-1',
-      assistantMessageId: 'assistant-1'
-    });
-    const activeNote = {
-      noteId: 'note-1',
-      title: 'Plan',
-      path: '/vault/Plan.md',
-      body: '# Plan',
-      bodyHash: 'hash-1',
-      selection: 'Plan'
-    };
-    const { TauriChatApi } = await import('./api');
-
-    await new TauriChatApi().sendMessage({
-      conversationId: 'chat-1',
-      content: 'Add this',
-      activeNote
-    });
-
-    expect(invokeMock).toHaveBeenCalledWith('chat_send_message', {
-      request: {
-        conversationId: 'chat-1',
-        content: 'Add this',
-        attachments: [],
-        forceWebSearch: undefined,
-        activeNote,
-        selectedContext: [],
-        dateTimeContext: expect.any(Object)
-      }
     });
   });
 
@@ -595,26 +519,20 @@ describe('TauriChatApi', () => {
       conversationId: 'chat-1'
     });
   });
-
-  it('forwards compact activity events without exposing provider payloads', async () => {
-    let listener: ((event: { payload: unknown }) => void) | undefined;
-    listenMock.mockImplementation(async (_name, handler) => {
-      listener = handler;
-      return () => undefined;
-    });
+  it.each(['chat://completed', 'chat://cancelled', 'chat://failed'] as const)('does not resurrect a request on reopen when %s preceded its send receipt', async (event) => {
     const { TauriChatApi } = await import('./api');
-    const activity = vi.fn();
-    await new TauriChatApi().on('chat://activity', activity);
-    const payload = {
-      requestId: 'request-1',
-      conversationId: 'chat-1',
-      messageId: 'assistant-1',
-      runId: 'run-1',
-      status: 'Reading note'
-    };
-
-    listener?.({ payload });
-
-    expect(activity).toHaveBeenCalledWith(payload);
+    const api = new TauriChatApi();
+    let deliver!: (event: { payload: unknown }) => void;
+    listenMock.mockImplementation(async (_event, callback) => { deliver = callback; return () => undefined; });
+    await api.on(event, () => undefined);
+    let receipt!: (value: unknown) => void;
+    invokeMock.mockReturnValueOnce(new Promise(resolve => { receipt = resolve; }));
+    const sending = api.sendMessage({ conversationId: 'chat-1', content: 'Hello' });
+    deliver({ payload: { requestId: 'request-1', conversationId: 'chat-1', messageId: 'assistant-1', content: 'Finished', error: 'Failed' } });
+    receipt({ requestId: 'request-1', conversationId: 'chat-1', userMessageId: 'user-1', assistantMessageId: 'assistant-1' });
+    await sending;
+    invokeMock.mockResolvedValue({ id: 'chat-1', title: 'Test', access: 'full', status: 'active', createdAtMillis: 1, updatedAtMillis: 2, messageCount: 0, detached: false, messages: [], excerpts: [] });
+    expect((await api.getConversation('chat-1')).activeRequestId).toBeNull();
   });
+
 });

@@ -137,3 +137,19 @@ pub(super) fn inject_purge_staging_failure_once() {
 pub(super) fn inject_purge_projection_cleanup_failure_once() {
     FAIL_NEXT_PURGE_PROJECTION_CLEANUP.store(true, std::sync::atomic::Ordering::SeqCst);
 }
+
+#[cfg(test)]
+pub(crate) fn clear_history_fault_for_test() {
+    history_store::clear_fault_for_test();
+    FAIL_NEXT_PURGE_STAGE.store(false, std::sync::atomic::Ordering::SeqCst);
+    FAIL_NEXT_PURGE_PROJECTION_CLEANUP.store(false, std::sync::atomic::Ordering::SeqCst);
+    for hook in [
+        &domain::AFTER_SAVE_PREFLIGHT,
+        &domain::AFTER_SAVE_RENAME,
+        &forgotten::BEFORE_FORGOTTEN_PUBLICATION,
+        &forgotten::AFTER_FORGET_METADATA_STAGED,
+    ] {
+        *hook.lock().unwrap_or_else(|error| error.into_inner()) = None;
+        hook.clear_poison();
+    }
+}

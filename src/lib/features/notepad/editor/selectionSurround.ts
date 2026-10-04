@@ -1,3 +1,4 @@
+import { isMarkdownCode } from '../markdown/codeContext';
 import { EditorView } from '@codemirror/view';
 import { dispatchEditorChange } from '$lib/features/notepad/editor/editorDispatch';
 
@@ -20,36 +21,6 @@ const SURROUND_BY_CHAR: Record<string, SurroundSpec> = {
   '=': { before: '==', after: '==' },
   '%': { before: '%%', after: '%%' }
 };
-
-const FENCE_PATTERN = /^(\s*)(`{3,}|~{3,})/;
-
-function lineStarts(text: string): number[] {
-  const starts = [0];
-  for (let index = 0; index < text.length; index += 1) {
-    if (text[index] === '\n') {
-      starts.push(index + 1);
-    }
-  }
-  return starts;
-}
-
-function isOffsetInsideCodeFence(text: string, offset: number, starts = lineStarts(text)): boolean {
-  let insideFence = false;
-
-  for (const start of starts) {
-    if (start > offset) {
-      break;
-    }
-
-    const end = text.indexOf('\n', start);
-    const line = text.slice(start, end === -1 ? text.length : end);
-    if (FENCE_PATTERN.test(line)) {
-      insideFence = !insideFence;
-    }
-  }
-
-  return insideFence;
-}
 
 function selectionAfterWrap(
   from: number,
@@ -93,7 +64,7 @@ export function surroundRange(
     return false;
   }
 
-  if (isOffsetInsideCodeFence(view.state.doc.toString(), from)) {
+  if (isMarkdownCode(view.state, from, to)) {
     return false;
   }
 

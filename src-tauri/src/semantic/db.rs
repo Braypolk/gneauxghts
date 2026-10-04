@@ -2594,18 +2594,7 @@ mod tests {
     use crate::semantic::chunking::SemanticChunk;
     use blake3::hash;
     use rusqlite::Connection;
-    use std::{
-        fs,
-        path::PathBuf,
-        time::{SystemTime, UNIX_EPOCH},
-    };
-
-    #[test]
-    fn ann_labels_are_stable_for_same_chunk_identity() {
-        let first = ann_label_for(42, 3);
-        let second = ann_label_for(42, 3);
-        assert_eq!(first, second);
-    }
+    use std::path::PathBuf;
 
     #[test]
     fn ann_labels_change_when_note_identity_or_ordinal_changes() {
@@ -2969,33 +2958,20 @@ mod tests {
 
     struct TestDb {
         path: PathBuf,
+        _root: crate::test_support::TestDir,
     }
 
     impl TestDb {
         fn new(label: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos();
-            let dir = std::env::temp_dir().join(format!("gneauxghts-db-{label}-{unique}"));
-            fs::create_dir_all(&dir).expect("create temp dir");
+            let root = crate::test_support::TestDir::new(label);
             Self {
-                path: dir.join("semantic.sqlite3"),
+                path: root.path().join("semantic.sqlite3"),
+                _root: root,
             }
         }
 
         fn connection(&self) -> Connection {
-            let connection = open_database(&self.path).expect("open database");
-            ensure_schema(&connection).expect("ensure schema");
-            connection
-        }
-    }
-
-    impl Drop for TestDb {
-        fn drop(&mut self) {
-            if let Some(parent) = self.path.parent() {
-                let _ = fs::remove_dir_all(parent);
-            }
+            crate::semantic::test_support::database(&self.path)
         }
     }
 }

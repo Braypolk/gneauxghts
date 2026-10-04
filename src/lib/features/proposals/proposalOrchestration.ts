@@ -1,7 +1,6 @@
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { enterProposalReviewView, exitProposalReviewView, resolveProposalHunk } from './reviewDisplay';
-import { proposalTransaction, type ReviewHunkState } from './reviewExtension';
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
 import { proposalReviewSession, type ProposalReviewSession } from './reviewSession.svelte';
 import type {
   DurableProposalReviewRequest,
@@ -10,8 +9,7 @@ import type {
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ProposalReviewIdentity } from './proposalReviewMachine';
 import {
-  getDocumentPath,
-  updateDocumentMarkdown
+  getDocumentPath
 } from '$lib/features/notepad/document/documentState';
 
 function proposalErrorMessage(error: unknown, fallback: string): string {
@@ -32,22 +30,20 @@ function proposalErrorMessage(error: unknown, fallback: string): string {
 export interface ProposalOrchestrationDeps {
   getEditorPaneDocument: (path?: string | null) => NoteDraftState | null;
   getEditorForDocument: (document: NoteDraftState) => EditorCapabilityAdapter | null;
-  getEditorsForDocument?: (document: NoteDraftState) => EditorCapabilityAdapter[];
-  ensureEditorPaneForReview: (document?: NoteDraftState) => Promise<void>;
-  openNoteForReview?: (
-    noteId: string | null,
-    path: string
-  ) => Promise<NoteDraftState | null>;
-  activateEditorPane?: (document?: NoteDraftState) => void | Promise<void>;
-  scheduleAutosave?: (document: NoteDraftState) => void;
+  onReviewMarkdownChange: (document: NoteDraftState, markdown: string) => void;
+  finishReviewDocument: (document: NoteDraftState) => Promise<void>;
+  presentReviewDocument: (target: {
+    document: NoteDraftState | null;
+    noteId: string | null;
+    path: string;
+  }) => Promise<NoteDraftState | null>;
   acknowledgeDocumentCommit: (commit: {
     document: NoteDraftState;
     path: string;
     markdown: string;
     commitWarning: NonNullable<CommitNoteReviewResult['commitWarning']> | null;
   }) => void | Promise<void>;
-  reloadReviewFromDisk?: (path: string) => Promise<void>;
-  reopenReviewEditor?: (document: NoteDraftState) => Promise<EditorCapabilityAdapter | null>;
+  reloadReviewDocument: (document: NoteDraftState) => Promise<void>;
   session?: ProposalReviewSession;
 }
 
@@ -55,6 +51,7 @@ export type { DurableProposalReviewRequest } from './types';
 
 export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   const session = deps.session ?? proposalReviewSession;
+  let disposed = false;
   let durableLoadQueue: Promise<void> = Promise.resolve();
 
   function identityFor(
@@ -73,7 +70,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   }
 
   function reviewIsCurrent(review: ProposalReviewRuntime) {
-    return currentReview() === review;
+    return !disposed && currentReview() === review;
   }
 
   function reviewIsResolving(review: ProposalReviewRuntime) {
@@ -105,128 +102,46 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     });
   }
 
-  function closeReview(review: ProposalReviewRuntime) {
-    for (const editor of editors(review)) exitProposalReviewView(editor);
+  function root(review: ProposalReviewRuntime) {
+    const runtime = documentRegistry.get(review.document.handle)?.resources()?.runtime;
+    if (!runtime) throw new Error('The proposal document runtime is unavailable.');
+    return runtime;
+  }
+
+  async function closeReview(review: ProposalReviewRuntime) {
+    if (currentReview() !== review) return;
+    root(review).endReview(review.request.preview.reviewId);
     session.dispatchWorkflow({
       type: 'completionSucceeded',
       reviewId: review.request.preview.reviewId
     });
-  }
-
-  function releaseReplacedReview(review: ProposalReviewRuntime) {
-    for (const editor of editors(review)) {
-      exitProposalReviewView(editor);
-      if (editor.getDocumentText?.() !== review.request.preview.baseEditorMarkdown) {
-        editor.replaceDocument(review.request.preview.baseEditorMarkdown, { focus: false });
-      }
-    }
-    updateDocumentMarkdown(
-      review.document,
-      review.request.preview.baseEditorMarkdown
-    );
-  }
-
-  /**
-   * Resolves the editor presenting the review's own document. A pane adapter
-   * outlives the document it was bound to, so the cached `review.editor` is
-   * only trusted while a pane still displays that document. Everything that
-   * reads or writes review text must go through here.
-   */
-  function reviewEditor(
-    review: ProposalReviewRuntime
-  ): EditorCapabilityAdapter | null {
-    const editor = deps.getEditorForDocument(review.document);
-    if (editor?.isReady()) {
-      review.editor = editor;
-      return editor;
-    }
-    review.editor = null;
-    return null;
-  }
-
-  function editors(review: ProposalReviewRuntime) {
-    const forDocument = deps
-      .getEditorsForDocument?.(review.document)
-      .filter((editor) => editor.isReady());
-    if (forDocument) return forDocument;
-    const editor = reviewEditor(review);
-    return editor ? [editor] : [];
-  }
-
-  function cloneHunks(hunks: readonly ReviewHunkState[]) {
-    return hunks.map((hunk) => ({ ...hunk }));
-  }
-
-  function hunks(review: ProposalReviewRuntime): ReviewHunkState[] {
-    const state = editors(review)
-      .map((editor) => editor.readProposalReviewState?.())
-      .find((candidate) => candidate?.reviewId === review.request.preview.reviewId);
-    return state?.hunks ?? review.hunkSnapshot;
-  }
-
-  function captureReview(editor: EditorCapabilityAdapter | null, review: ProposalReviewRuntime) {
-    const state = editor?.readProposalReviewState?.();
-    if (state?.reviewId === review.request.preview.reviewId) {
-      review.hunkSnapshot = cloneHunks(state.hunks);
-    }
-    review.workingMarkdown = editor?.getDocumentText?.() ?? review.workingMarkdown;
-  }
-
-  function installReviewInEditor(review: ProposalReviewRuntime, editor: EditorCapabilityAdapter) {
-    // A pane can be recreated from the saved disk snapshot after the last
-    // review pane was closed. Restore the review's working copy *before*
-    // adding decorations; its mapped ranges only make sense in this document.
-    // Remove a previous review field first. A full-document runtime sync is a
-    // view reset, not a user edit; leaving the field installed would map that
-    // reset across every hunk and make the whole note look proposed.
-    exitProposalReviewView(editor);
-    if (editor.getDocumentText?.() !== review.workingMarkdown) {
-      if (!editor.replaceDocument(review.workingMarkdown, { focus: false })) {
-        throw new Error('Could not restore the proposed review text.');
-      }
-    }
-    const initialHunks = cloneHunks(review.hunkSnapshot);
-    enterProposalReviewView({
-      preview: review.request.preview,
-      editor,
-      initialHunks,
-      alreadyApplied: true,
-      onKeep: keepHunk,
-      onUndo: undoHunk,
-      onStateChange: (state) => {
-        // Compartment reconfiguration can deliver a final update from an old
-        // extension. Only the extension currently installed in this editor is
-        // allowed to refresh the suspended review snapshot.
-        if (!reviewIsCurrent(review) || state.reviewId !== review.request.preview.reviewId) return;
-        const live = editor.readProposalReviewState?.();
-        if (live?.reviewId !== review.request.preview.reviewId) return;
-        // The pane hosting this adapter may have rebound to another note since
-        // the extension was installed. Only the editor still presenting this
-        // review's document may refresh its working copy.
-        if (reviewEditor(review) !== editor) return;
-        review.hunkSnapshot = cloneHunks(state.hunks);
-        review.workingMarkdown = editor.getDocumentText?.() ?? review.workingMarkdown;
-        session.notifyReviewRuntimeChanged();
-        void finishIfResolved();
-      }
-    });
-  }
-
-  function editorHasReviewInstalled(
-    review: ProposalReviewRuntime,
-    editor: EditorCapabilityAdapter
-  ) {
     try {
-      return (
-        editor.readProposalReviewState?.()?.reviewId ===
-        review.request.preview.reviewId
-      );
-    } catch {
-      // A pane swap can leave a capability adapter holding a reader for a
-      // StateField that belonged to the previous EditorState. It is not an
-      // installed review in the new state and must be reattached below.
-      return false;
+      await deps.finishReviewDocument(review.document);
+    } catch (error) {
+      // The durable proposal is already resolved. Report the separate save
+      // failure without offering to replay that completed durable action.
+      session.dispatchWorkflow({
+        type: 'errorSet', reviewId: null,
+        error: `Review finished, but remaining edits in “${review.request.preview.title}” could not be saved. Your edits are still available in the note. ${proposalErrorMessage(error, 'Please try saving again.')}`
+      });
     }
+  }
+
+  async function releaseReplacedReview(review: ProposalReviewRuntime) {
+    const runtime = documentRegistry.get(review.document.handle)?.resources()?.runtime;
+    if (runtime?.review?.reviewId === review.request.preview.reviewId) {
+      runtime.replaceMarkdown(review.request.preview.baseEditorMarkdown);
+      runtime.endReview(review.request.preview.reviewId);
+    }
+    await deps.finishReviewDocument(review.document);
+  }
+
+  function hunks(review: ProposalReviewRuntime) {
+    const state = root(review).review;
+    if (state?.reviewId !== review.request.preview.reviewId) {
+      throw new Error('The proposal document review is unavailable.');
+    }
+    return state.hunks;
   }
 
   function unresolved() {
@@ -234,17 +149,20 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     return review ? hunks(review).filter((hunk) => hunk.status === 'pending' || hunk.status === 'modified').length : 0;
   }
 
-  function syncReviewRuntime() {
-    const review = currentReview();
-    if (!review) return;
-    review.hunkSnapshot = cloneHunks(hunks(review));
-    review.workingMarkdown =
-      reviewEditor(review)?.getDocumentText?.() ??
-      review.workingMarkdown;
-    session.notifyReviewRuntimeChanged();
+  let resolutionCompletion: Promise<void> | null = null;
+  let resolvingReview: ProposalReviewRuntime | null = null;
+  function finishIfResolved(): Promise<void> {
+    if (resolutionCompletion && currentReview() === resolvingReview) return resolutionCompletion;
+    if (!currentReview() || unresolved() > 0) return Promise.resolve();
+    resolvingReview = currentReview();
+    const completion = finishResolution().finally(() => {
+      if (resolutionCompletion === completion) resolutionCompletion = null;
+    });
+    resolutionCompletion = completion;
+    return completion;
   }
 
-  async function finishIfResolved() {
+  async function finishResolution() {
     const review = currentReview();
     if (!review || unresolved() > 0 || reviewIsResolving(review)) {
       return;
@@ -264,15 +182,12 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     try {
       if (resolution === 'dismiss') {
         await review.request.dismiss();
-        closeReview(review);
-        deps.scheduleAutosave?.(review.document);
+        await closeReview(review);
         return;
       }
-      // The captured working copy remains authoritative if the editor remounts
-      // while the final hunk resolves.
-      const markdown =
-        reviewEditor(review)?.getDocumentText?.() ?? review.workingMarkdown;
+      const markdown = root(review).markdown;
       const result = await review.request.commit(markdown);
+      if (currentReview() !== review) return;
       if (result.status === 'conflict') {
         session.dispatchWorkflow({
           type: 'completionConflicted',
@@ -287,7 +202,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         markdown,
         commitWarning: result.commitWarning ?? null
       });
-      closeReview(review);
+      await closeReview(review);
     } catch (error) {
       session.dispatchWorkflow({
         type: 'completionFailed',
@@ -302,50 +217,49 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
-  function keepHunk(hunk: ReviewHunkState) {
+  function keepHunk(reviewId: string, hunkId: string) {
     const review = currentReview();
-    if (!review || reviewIsResolving(review)) return;
+    if (disposed || !review || review.request.preview.reviewId !== reviewId || reviewIsResolving(review)) return;
     cancelDiscardConfirmation(review);
-    for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'kept');
-    syncReviewRuntime();
-    void finishIfResolved();
+    root(review).resolveReview(reviewId, [hunkId], 'kept');
+    return finishIfResolved();
   }
 
-  function undoHunk(hunk: ReviewHunkState) {
+  function undoHunk(reviewId: string, hunkId: string) {
     const review = currentReview();
-    if (!review || reviewIsResolving(review)) return;
-    const editor = reviewEditor(review);
-    if (!editor) {
-      setReviewError(review, 'Open the proposed note to restore this text.');
-      return;
-    }
+    if (disposed || !review || review.request.preview.reviewId !== reviewId || reviewIsResolving(review)) return;
+    const hunk = hunks(review).find((item) => item.id === hunkId);
+    if (!hunk) return;
     cancelDiscardConfirmation(review);
-    // A modified hunk reaches this path only through its explicit Restore Original control.
-    const current = (editor.getDocumentText?.() ?? '').slice(hunk.from, hunk.to);
-    if (hunk.status === 'pending' && current !== hunk.newText) {
-      setReviewError(
-        review,
-        'This proposed hunk changed; choose Keep Current or Restore Original.'
-      );
+    const runtime = root(review);
+    if (hunk.status === 'pending' && runtime.markdown.slice(hunk.from, hunk.to) !== hunk.newText) {
+      setReviewError(review, 'This proposed hunk changed; choose Keep Current or Restore Original.');
       return;
     }
-    if (!editor.applyChanges?.(
-      { from: hunk.from, to: hunk.to, insert: hunk.oldText },
-      proposalTransaction.of(true)
-    )) {
-      setReviewError(review, 'Could not restore the original text.');
-      return;
-    }
-    for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'undone');
-    syncReviewRuntime();
-    void finishIfResolved();
+    runtime.resolveReview(reviewId, [hunkId], 'undone', {
+      from: hunk.from, to: hunk.to, insert: hunk.oldText
+    });
+    return finishIfResolved();
+  }
+
+  function reviewCallbacks(review: ProposalReviewRuntime) {
+    return {
+      onKeep: keepHunk,
+      onUndo: undoHunk,
+      onMarkdownChange: (markdown: string) => deps.onReviewMarkdownChange(review.document, markdown),
+      onChange: () => {
+        if (!reviewIsCurrent(review)) return;
+        session.notifyReviewRuntimeChanged();
+        if (session.workflow.kind === 'reviewing') void finishIfResolved();
+      }
+    };
   }
 
   async function start(
     request: DurableProposalReviewRequest,
-    document: NoteDraftState,
-    editor: EditorCapabilityAdapter
+    document: NoteDraftState
   ) {
+    if (disposed) return false;
     const preview = request.preview;
     const identity = identityFor(request);
     if (
@@ -365,14 +279,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       });
       return false;
     }
-    const review: ProposalReviewRuntime = {
-      request,
-      document,
-      editor,
-      hunkSnapshot: [],
-      workingMarkdown: document.working.markdown,
-      suspendedMarkdown: null
-    };
+    const review: ProposalReviewRuntime = { request, document };
     if (
       !session.dispatchWorkflow({
         type: 'openPrepared',
@@ -383,35 +290,14 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       return false;
     }
     try {
-      enterProposalReviewView({
-        preview,
-        editor,
-        siblingEditors: editors(review).filter((candidate) => candidate !== editor),
-        onKeep: keepHunk,
-        onUndo: undoHunk,
-        onStateChange: (state) => {
-          if (reviewIsCurrent(review) && state.reviewId === review.request.preview.reviewId) {
-            review.hunkSnapshot = cloneHunks(state.hunks);
-            // Only the editor still bound to this review's document may refresh
-            // its working copy; a rebound pane now holds a different note.
-            if (reviewEditor(review) === editor) {
-              review.workingMarkdown =
-                editor.getDocumentText?.() ?? review.workingMarkdown;
-            }
-            session.notifyReviewRuntimeChanged();
-          }
-          void finishIfResolved();
-        }
-      });
-      review.hunkSnapshot = cloneHunks(hunks(review));
-      review.workingMarkdown = editor.getDocumentText?.() ?? review.workingMarkdown;
+      root(review).beginReview(preview, reviewCallbacks(review));
       session.dispatchWorkflow({
         type: 'openSucceeded',
         identity
       });
       return true;
     } catch (error) {
-      releaseReplacedReview(review);
+      await releaseReplacedReview(review);
       session.dispatchWorkflow({
         type: 'openFailed',
         identity,
@@ -424,8 +310,17 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
-  function beginOpening(request: DurableProposalReviewRequest) {
+  async function beginOpening(request: DurableProposalReviewRequest) {
+    if (disposed) return false;
     const current = currentReview();
+    if (current && (
+      root(current).markdown !== current.request.preview.proposedEditorMarkdown ||
+      hunks(current).some(hunk => hunk.status !== 'pending') ||
+      session.workflow.kind === 'conflicted' || session.workflow.kind === 'confirmingDiscard'
+    )) {
+      setReviewError(current, 'Finish the current review before opening another proposal; it contains edits or review decisions.');
+      return false;
+    }
     const identity = identityFor(request);
     if (
       !session.dispatchWorkflow({
@@ -435,7 +330,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     ) {
       return false;
     }
-    if (current) releaseReplacedReview(current);
+    if (current) await releaseReplacedReview(current);
     return true;
   }
 
@@ -453,24 +348,19 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   async function loadDurableProposalNow(
     request: DurableProposalReviewRequest
   ): Promise<boolean> {
+    if (disposed) return false;
     const current = currentReview();
     if (current?.request.proposalId === request.proposalId) {
-      await deps.activateEditorPane?.(current.document);
       await reviewNext();
       return true;
     }
-    if (!beginOpening(request)) return false;
-
     try {
-      let document = deps.getEditorPaneDocument(request.preview.notePath);
-      await deps.ensureEditorPaneForReview(document ?? undefined);
-      if (!document) {
-        document =
-          (await deps.openNoteForReview?.(
-            request.noteId,
-            request.preview.notePath
-          )) ?? deps.getEditorPaneDocument(request.preview.notePath);
-      }
+      if (!await beginOpening(request)) return false;
+      const document = await deps.presentReviewDocument({
+        document: deps.getEditorPaneDocument(request.preview.notePath),
+        noteId: request.noteId,
+        path: request.preview.notePath
+      });
       if (
         !document ||
         getDocumentPath(document) !== request.preview.notePath
@@ -481,17 +371,17 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         );
         return false;
       }
-      await deps.activateEditorPane?.(document);
       const editor = deps.getEditorForDocument(document);
-      if (!editor) {
+      if (!editor?.isReady()) {
         failOpening(
           request,
           'Editor is not ready for proposal review.'
         );
         return false;
       }
-      const started = await start(request, document, editor);
-      if (started) await reviewNext();
+      const started = await start(request, document);
+      const review = currentReview();
+      if (started && review) focusNext(review, editor);
       return started;
     } catch (error) {
       failOpening(
@@ -508,6 +398,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   async function loadDurableProposalIfOpenNow(
     request: DurableProposalReviewRequest
   ): Promise<boolean> {
+    if (disposed) return false;
     if (currentReview()?.request.proposalId === request.proposalId) {
       return true;
     }
@@ -525,11 +416,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
     const editor = deps.getEditorForDocument(document);
     if (!editor?.isReady()) return false;
-    if (!beginOpening(request)) return false;
+    if (!await beginOpening(request)) return false;
 
     // Passive display is intentionally limited to an editor that already
     // exists. It must not ensure, open, activate, or focus a pane.
-    return start(request, document, editor);
+    return start(request, document);
   }
 
   function enqueueDurableLoad(
@@ -561,76 +452,47 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
 
   function keepAll() {
     const review = currentReview();
-    if (!review) return;
-    for (const hunk of hunks(review)) {
-      if (hunk.status === 'pending' || hunk.status === 'modified') keepHunk(hunk);
-    }
+    if (disposed || !review || reviewIsResolving(review)) return;
+    cancelDiscardConfirmation(review);
+    const ids = hunks(review).filter((hunk) => hunk.status === 'pending' || hunk.status === 'modified').map((hunk) => hunk.id);
+    root(review).resolveReview(review.request.preview.reviewId, ids, 'kept');
+    return finishIfResolved();
   }
 
   function undoAll() {
     const review = currentReview();
-    if (!review || reviewIsResolving(review)) return;
-    const editor = reviewEditor(review);
-    if (!editor) {
-      setReviewError(review, 'Open the proposed note to restore this text.');
-      return;
-    }
+    if (disposed || !review || reviewIsResolving(review)) return;
     cancelDiscardConfirmation(review);
-    const pending = hunks(review).filter((hunk) => hunk.status === 'pending').sort((a, b) => b.from - a.from);
-    const changes = pending.map((hunk) => ({ from: hunk.from, to: hunk.to, insert: hunk.oldText }));
-    if (changes.length && !editor.applyChanges?.(changes, proposalTransaction.of(true))) {
-      setReviewError(review, 'Could not restore the remaining proposed text.');
-      return;
-    }
-    for (const hunk of pending) {
-      for (const editor of editors(review)) resolveProposalHunk(editor, hunk.id, 'undone');
-    }
-    syncReviewRuntime();
-    void finishIfResolved();
+    const pending = hunks(review).filter((hunk) => hunk.status === 'pending');
+    root(review).resolveReview(review.request.preview.reviewId, pending.map((hunk) => hunk.id), 'undone',
+      pending.map((hunk) => ({ from: hunk.from, to: hunk.to, insert: hunk.oldText })));
+    return finishIfResolved();
   }
 
-  async function liveReviewEditor(review: ProposalReviewRuntime) {
-    await deps.activateEditorPane?.(review.document);
-    if (!reviewIsCurrent(review)) return null;
-
-    let editor = deps.getEditorForDocument(review.document);
-    if (!editor?.isReady()) {
-      editor = await deps.reopenReviewEditor?.(review.document) ?? null;
+  function focusNext(review: ProposalReviewRuntime, editor: EditorCapabilityAdapter) {
+    const next = hunks(review).find(hunk => hunk.status === 'pending' || hunk.status === 'modified');
+    if (next && !editor.focusSelection({ anchor: next.from, head: next.to })) {
+      setReviewError(review, 'The next change could not be focused in the editor.');
     }
-    if (!editor?.isReady() || !reviewIsCurrent(review)) {
-      setReviewError(review, 'The editor could not be opened for review.');
-      return null;
-    }
-
-    if (editor !== review.editor) {
-      // A suspended review has no live editor to capture from; its snapshot is
-      // already authoritative and must win over any later working-copy write.
-      if (review.suspendedMarkdown !== null) {
-        review.workingMarkdown = review.suspendedMarkdown;
-      } else {
-        captureReview(review.editor, review);
-      }
-      review.editor = editor;
-    }
-    if (!editorHasReviewInstalled(review, editor)) {
-      installReviewInEditor(review, editor);
-    }
-    review.suspendedMarkdown = null;
-    return editor;
   }
 
   async function reviewNext() {
     const review = currentReview();
-    if (!review) return;
+    if (disposed || !review) return;
     cancelDiscardConfirmation(review);
     try {
-      const editor = await liveReviewEditor(review);
-      if (!editor || !reviewIsCurrent(review)) return;
-
-      const next = hunks(review).find((hunk) => hunk.status === 'pending' || hunk.status === 'modified');
-      if (next && !editor.focusProposalHunk?.(next.id)) {
-        setReviewError(review, 'The next change could not be focused in the editor.');
+      const document = await deps.presentReviewDocument({
+        document: review.document,
+        noteId: review.request.noteId,
+        path: review.request.preview.notePath
+      });
+      if (!reviewIsCurrent(review)) return;
+      const editor = document && deps.getEditorForDocument(document);
+      if (!document || !editor?.isReady() || document.handle !== review.document.handle) {
+        setReviewError(review, 'The editor could not be opened for review.');
+        return;
       }
+      focusNext(review, editor);
     } catch (error) {
       setReviewError(
         review,
@@ -642,8 +504,23 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     }
   }
 
+  // Route components may be recreated while the document review remains live.
+  // Rebind only its effects; root text, history, hunk state and workflow persist.
+  const retainedReview = currentReview();
+  if (retainedReview) root(retainedReview).bindReviewCallbacks(
+    retainedReview.request.preview.reviewId, reviewCallbacks(retainedReview)
+  );
+
   return {
     session,
+    dispose: () => {
+      if (disposed) return;
+      disposed = true;
+      const state = session.workflow;
+      if (state.kind === 'opening') session.dispatchWorkflow({
+        type: 'openFailed', identity: state.identity, error: 'Opening the review was interrupted.'
+      });
+    },
     loadDurableProposal,
     loadDurableProposalIfOpen,
     keepAll,
@@ -662,13 +539,13 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     retryCommit: () => {
       const review = currentReview();
-      if (!review || unresolved() > 0) return;
-      void finishIfResolved();
+      if (disposed || !review || unresolved() > 0) return;
+      return finishIfResolved();
     },
     copyCurrent: async () => {
       const review = currentReview();
       const markdown = review
-        ? reviewEditor(review)?.getDocumentText?.() ?? review.workingMarkdown
+        ? root(review).markdown
         : null;
       if (markdown == null) return;
       try {
@@ -680,23 +557,24 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     reloadDisk: async () => {
       const review = currentReview();
-      if (!review) return;
-      session.dispatchWorkflow({
+      if (disposed || !review) return;
+      const requested = session.dispatchWorkflow({
         type: 'discardRequested',
         reviewId: review.request.preview.reviewId,
         confirmationMessage:
           'Reloading discards the current proposed and edited text. Select Reload Disk again to confirm.'
       });
       if (
-        session.workflow.kind !== 'dismissing' ||
+        !requested || session.workflow.kind !== 'dismissing' ||
         session.workflow.reason !== 'reload'
       ) {
         return;
       }
       try {
         await review.request.dismiss();
-        await deps.reloadReviewFromDisk?.(review.request.preview.notePath);
-        closeReview(review);
+        if (currentReview() !== review) return;
+        await deps.reloadReviewDocument(review.document);
+        await closeReview(review);
       } catch (error) {
         session.dispatchWorkflow({
           type: 'completionFailed',
@@ -714,48 +592,6 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       currentReview()?.request.proposalId === proposalId,
     get activeProposalId() {
       return currentReview()?.request.proposalId ?? null;
-    },
-    attachEditor: (document: NoteDraftState, editor: EditorCapabilityAdapter) => {
-      const review = currentReview();
-      if (!review || review.document.handle !== document.handle || !editor.isReady()) return;
-      review.editor = editor;
-      if (!editorHasReviewInstalled(review, editor)) {
-        installReviewInEditor(review, editor);
-      }
-      // A live editor now owns the working copy again.
-      review.suspendedMarkdown = null;
-    },
-    suspendDocument: (document: NoteDraftState, editor: EditorCapabilityAdapter | null) => {
-      const review = currentReview();
-      if (!review || review.document.handle !== document.handle) return;
-      captureReview(editor, review);
-      // The document state is also retained so an ordinary open path mounts
-      // the same working copy even before its review extension is attached.
-      updateDocumentMarkdown(
-        document,
-        review.workingMarkdown
-      );
-      exitProposalReviewView(editor);
-      // Snapshot the text that belongs to *this* document before releasing the
-      // editor, so restore cannot resurrect a value written from another note.
-      review.suspendedMarkdown = review.workingMarkdown;
-      // The adapter is pane-scoped and that pane is about to present a
-      // different document. Holding it would let review reads and writes land
-      // on the wrong note.
-      review.editor = null;
-      session.notifyReviewRuntimeChanged();
-    },
-    restoreDocument: (document: NoteDraftState) => {
-      const review = currentReview();
-      if (
-        !review ||
-        review.request.preview.notePath !== getDocumentPath(document)
-      ) return false;
-      review.document = document;
-      const restored = review.suspendedMarkdown ?? review.workingMarkdown;
-      review.workingMarkdown = restored;
-      updateDocumentMarkdown(document, restored);
-      return true;
     },
     isReviewingDocument: session.isReviewingDocument
   };

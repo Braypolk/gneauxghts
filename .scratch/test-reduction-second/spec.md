@@ -1,0 +1,3 @@
+# Further test reduction decision
+
+User explicitly permits concluding that further reductions are not worthwhile. Reassess remaining overlap using independent cross-layer reviewers and existing deletion/retention evidence. Persist findings before any source edit. Do not manufacture lower counts by grouping assertions, reducing failure/race coverage, or deleting cheap tests solely for their count. Seek meaningful maintenance reduction; if only marginal cuts with weaker diagnosis remain, recommend stopping. Existing baseline is the completed first reduction: frontend1065, Rust725+21, support32, Python8. No new source changes yet.

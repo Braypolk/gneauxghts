@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createLocationMruStore,
   editorLocationFromRecent,
@@ -205,13 +205,6 @@ describe('locationMru', () => {
     expect(mru.list('p1')).toEqual([noteB]);
   });
 
-  it('remove is a no-op when the location is absent', () => {
-    const mru = createLocationMruStore<'p1'>();
-    mru.touch('p1', noteB);
-    mru.remove(noteA);
-    expect(mru.list('p1')).toEqual([noteB]);
-  });
-
   it('reinjects lastChat when the MRU list no longer contains chat', () => {
     const mru = createLocationMruStore<'p1'>();
     mru.rememberChat('p1', chatA);
@@ -286,4 +279,20 @@ describe('locationMru', () => {
     await persistChatLocation(chatFresh);
     expect(invokeMock).not.toHaveBeenCalled();
   });
+});
+
+afterEach(() => vi.unstubAllGlobals());
+it('caps live and seeded history when the limit is actually exceeded', () => {
+  const mru = createLocationMruStore<string>();
+  for (let i = 0; i < 25; i++) mru.touch('p', { kind: 'editor', noteId: `${i}`, notePath: `/${i}.md` });
+  expect(mru.list('p')).toHaveLength(20);
+  expect(mru.list('p')[0]).toMatchObject({ noteId: '24' });
+  mru.seedMissing('p', [noteA]); expect(mru.list('p')).toHaveLength(20);
+});
+it('retains the legacy chat pointer until durable migration succeeds', async () => {
+  const removeItem = vi.fn(); vi.stubGlobal('window', { localStorage: { getItem: () => JSON.stringify(chatA), removeItem } });
+  invokeMock.mockReset(); invokeMock.mockResolvedValueOnce(null).mockRejectedValueOnce(new Error('offline'));
+  expect(await loadPersistedChatLocation()).toEqual(chatA); expect(removeItem).not.toHaveBeenCalled();
+  invokeMock.mockResolvedValueOnce(null).mockResolvedValueOnce(undefined);
+  expect(await loadPersistedChatLocation()).toEqual(chatA); expect(removeItem).toHaveBeenCalledOnce();
 });

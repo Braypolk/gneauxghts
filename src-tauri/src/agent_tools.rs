@@ -115,9 +115,51 @@ impl ReadCoverage {
     }
 }
 
+// The concrete state and UI delivery adapter live outside tool policy. Tests
+// supply the same AppState owner and capture events without starting a window.
+#[derive(Clone)]
+enum ToolHost {
+    Managed(AppHandle),
+    #[cfg(test)]
+    Test(Arc<AppState>, Arc<dyn Fn(&str, Value) + Send + Sync>),
+}
+enum ToolState<'a> {
+    Managed(tauri::State<'a, AppState>),
+    #[cfg(test)]
+    Test(&'a AppState),
+}
+impl std::ops::Deref for ToolState<'_> {
+    type Target = AppState;
+    fn deref(&self) -> &AppState {
+        match self {
+            Self::Managed(state) => state,
+            #[cfg(test)]
+            Self::Test(state) => state,
+        }
+    }
+}
+impl ToolHost {
+    fn state(&self) -> Option<ToolState<'_>> {
+        match self {
+            Self::Managed(app) => app.try_state::<AppState>().map(ToolState::Managed),
+            #[cfg(test)]
+            Self::Test(state, _) => Some(ToolState::Test(state)),
+        }
+    }
+    fn emit<T: Serialize + Clone>(&self, name: &str, event: T) {
+        match self {
+            Self::Managed(app) => {
+                let _ = app.emit(name, event);
+            }
+            #[cfg(test)]
+            Self::Test(_, emit) => emit(name, serde_json::to_value(event).unwrap()),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub(crate) struct AgentToolContext {
-    app: AppHandle,
+    host: ToolHost,
     service: ChatService,
     request_id: String,
     run_id: String,
@@ -174,12 +216,41 @@ impl AgentToolContext {
         local_model: bool,
         date_time_context: Option<crate::chat::date_time::DateTimeContext>,
     ) -> Self {
+        Self::with_host(
+            ToolHost::Managed(app),
+            service,
+            request_id,
+            run_id,
+            conversation_id,
+            assistant_message_id,
+            access,
+            active_note,
+            run_grants,
+            local_model,
+            date_time_context,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn with_host(
+        host: ToolHost,
+        service: ChatService,
+        request_id: String,
+        run_id: String,
+        conversation_id: String,
+        assistant_message_id: String,
+        access: VaultAccess,
+        active_note: Option<ActiveNoteSnapshot>,
+        run_grants: HashSet<String>,
+        local_model: bool,
+        date_time_context: Option<crate::chat::date_time::DateTimeContext>,
+    ) -> Self {
         let mut evidence = crate::services::evidence::EvidenceSession::default();
         if let Some(context) = &date_time_context {
             evidence.anchor.timezone = context.time_zone.clone();
         }
         Self {
-            app,
+            host,
             service,
             request_id,
             run_id,
@@ -261,7 +332,7 @@ impl AgentToolContext {
             .iter()
             .any(|source| source.revision.is_some() || source.passage.is_some())
         {
-            let valid = self.app.try_state::<AppState>().is_some_and(|state| {
+            let valid = self.host.state().is_some_and(|state| {
                 filter_revision_sources(
                     &state,
                     &self.service,
@@ -340,8 +411,8 @@ impl AgentToolContext {
             return Ok(String::new());
         }
         let state = self
-            .app
-            .try_state::<AppState>()
+            .host
+            .state()
             .ok_or_else(|| "The notes index is unavailable".to_string())?;
         let index = state
             .notes_index
@@ -467,7 +538,7 @@ impl AgentToolContext {
     }
 
     fn activity(&self, status: &str) {
-        let _ = self.app.emit(
+        let _ = self.host.emit(
             "chat://activity",
             ActivityEvent {
                 request_id: self.request_id.clone(),
@@ -585,7 +656,7 @@ impl AgentToolContext {
     }
 
     fn resolve_note(&self, note_id: &str) -> Result<(PathBuf, String, u64), AgentToolError> {
-        let state = self.app.try_state::<AppState>().ok_or_else(|| {
+        let state = self.host.state().ok_or_else(|| {
             AgentToolError::internal("The notes index is unavailable".to_string())
         })?;
         let index = state
@@ -656,7 +727,7 @@ impl AgentToolContext {
             title: proposal.title.clone(),
             kind: proposal.kind.clone(),
         });
-        let _ = self.app.emit("chat://proposal", proposal);
+        let _ = self.host.emit("chat://proposal", proposal);
     }
 
     fn update_target_error(
@@ -717,6 +788,17 @@ impl Tool for GetActiveNoteTool {
         _context: &mut ToolContext,
         _args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let tool = self.clone();
+        run_blocking_tool(move || {
+            tool.0.check_cancelled()?;
+            tool.execute(_args)
+        })
+        .await
+    }
+}
+
+impl GetActiveNoteTool {
+    fn execute(&self, _args: EmptyArgs) -> Result<Value, AgentToolError> {
         self.0.activity("Reading active note");
         self.0.active_note_payload()
     }
@@ -777,6 +859,17 @@ impl Tool for ReadNoteTool {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let tool = self.clone();
+        run_blocking_tool(move || {
+            tool.0.check_cancelled()?;
+            tool.execute(args)
+        })
+        .await
+    }
+}
+
+impl ReadNoteTool {
+    fn execute(&self, args: ReadArgs) -> Result<Value, AgentToolError> {
         self.0.activity("Reading note");
         if !self.0.allowed(&args.note_id)? {
             return Ok(
@@ -911,6 +1004,17 @@ impl Tool for ProposeNoteEditsTool {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let tool = self.clone();
+        run_blocking_tool(move || {
+            tool.0.check_cancelled()?;
+            tool.execute(args)
+        })
+        .await
+    }
+}
+
+impl ProposeNoteEditsTool {
+    fn execute(&self, args: EditArgs) -> Result<Value, AgentToolError> {
         self.0.activity("Preparing changes");
         if !self.0.allowed(&args.note_id)? || !self.0.was_surfaced(&args.note_id) {
             return Ok(
@@ -1033,6 +1137,17 @@ impl Tool for ProposeNoteRewriteTool {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let tool = self.clone();
+        run_blocking_tool(move || {
+            tool.0.check_cancelled()?;
+            tool.execute(args)
+        })
+        .await
+    }
+}
+
+impl ProposeNoteRewriteTool {
+    fn execute(&self, args: RewriteArgs) -> Result<Value, AgentToolError> {
         self.0.activity("Preparing rewrite");
         if !self.0.allowed(&args.note_id)? || !self.0.was_surfaced(&args.note_id) {
             return Ok(
@@ -1144,6 +1259,17 @@ impl Tool for ProposeCreateNoteTool {
         _context: &mut ToolContext,
         args: Self::Args,
     ) -> Result<Self::Output, Self::Error> {
+        let tool = self.clone();
+        run_blocking_tool(move || {
+            tool.0.check_cancelled()?;
+            tool.execute(args)
+        })
+        .await
+    }
+}
+
+impl ProposeCreateNoteTool {
+    fn execute(&self, args: CreateArgs) -> Result<Value, AgentToolError> {
         self.0.activity("Preparing new note");
         if self.0.access == VaultAccess::None {
             return Ok(
@@ -1320,52 +1446,4 @@ fn wikilink_titles(message: &str) -> Vec<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn blocking_tool_work_does_not_run_on_async_worker() {
-        tauri::async_runtime::block_on(async {
-            run_blocking_tool(|| {
-                let client = reqwest::blocking::Client::builder()
-                    .build()
-                    .map_err(|error| error.to_string())?;
-                drop(client);
-                Ok(())
-            })
-            .await
-            .expect("blocking client lifecycle stays off Tokio worker");
-        });
-    }
-
-    #[test]
-    fn read_coverage_requires_contiguous_pages_from_the_current_content() {
-        let mut coverage = ReadCoverage::default();
-        coverage.record("hash-1", 1, 3, 8);
-        coverage.record("hash-1", 6, 8, 8);
-        assert!(!coverage.complete_for("hash-1"));
-
-        coverage.record("hash-1", 4, 5, 8);
-        assert!(coverage.complete_for("hash-1"));
-
-        coverage.record("hash-2", 7, 8, 8);
-        assert!(!coverage.complete_for("hash-1"));
-        assert!(!coverage.complete_for("hash-2"));
-    }
-
-    #[test]
-    fn active_note_context_is_bounded_without_appending_stale_selection() {
-        let note = ActiveNoteSnapshot {
-            note_id: Some("n".into()),
-            title: "Long".into(),
-            path: None,
-            body: "a".repeat(50_000),
-            body_hash: "hash".into(),
-            selection: Some("important".into()),
-        };
-        let (body, truncated) = truncate_active_body(&note);
-        assert!(truncated);
-        assert!(!body.contains("important"));
-        assert!(body.len() <= 2400);
-    }
-}
+mod tests;

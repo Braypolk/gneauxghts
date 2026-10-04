@@ -630,16 +630,29 @@ pub(super) fn strip_inline_code(line: &str) -> String {
 pub(super) fn binary_asset_name(target: &str) -> Option<String> {
     let target = target.trim().trim_matches(['<', '>']);
     let mut escaped = false;
-    let end = target.char_indices().find_map(|(index, character)| {
-        if escaped { escaped = false; return None; }
-        if character == '\\' { escaped = true; return None; }
-        matches!(character, '|' | '#' | '?').then_some(index)
-    }).unwrap_or(target.len());
+    let end = target
+        .char_indices()
+        .find_map(|(index, character)| {
+            if escaped {
+                escaped = false;
+                return None;
+            }
+            if character == '\\' {
+                escaped = true;
+                return None;
+            }
+            matches!(character, '|' | '#' | '?').then_some(index)
+        })
+        .unwrap_or(target.len());
     let target = target[..end].trim();
     let mut characters = target.chars().peekable();
     let mut unescaped = String::new();
     while let Some(character) = characters.next() {
-        if character == '\\' && characters.peek().is_some_and(|next| next.is_ascii_punctuation()) {
+        if character == '\\'
+            && characters
+                .peek()
+                .is_some_and(|next| next.is_ascii_punctuation())
+        {
             unescaped.push(characters.next()?);
         } else {
             unescaped.push(character);
@@ -648,9 +661,17 @@ pub(super) fn binary_asset_name(target: &str) -> Option<String> {
     let target = unescaped;
     let bytes = target.as_bytes();
     for (index, byte) in bytes.iter().enumerate() {
-        if *byte == b'%' && (index + 2 >= bytes.len() || !bytes[index + 1].is_ascii_hexdigit() || !bytes[index + 2].is_ascii_hexdigit()) { return None; }
+        if *byte == b'%'
+            && (index + 2 >= bytes.len()
+                || !bytes[index + 1].is_ascii_hexdigit()
+                || !bytes[index + 2].is_ascii_hexdigit())
+        {
+            return None;
+        }
     }
-    let target = percent_encoding::percent_decode_str(&target).decode_utf8().ok()?;
+    let target = percent_encoding::percent_decode_str(&target)
+        .decode_utf8()
+        .ok()?;
     if target.is_empty() || target.contains([':', '\\', '\0', '?', '#']) {
         return None;
     }
@@ -720,25 +741,49 @@ pub(super) fn referenced_binary_assets(markdown: &str) -> Vec<String> {
                 let target = target.trim();
                 let destination = if let Some(target) = target.strip_prefix('<') {
                     target.split('>').next().unwrap_or_default()
-                } else { target.split_ascii_whitespace().next().unwrap_or_default() };
+                } else {
+                    target.split_ascii_whitespace().next().unwrap_or_default()
+                };
                 if let Some(name) = binary_asset_name(destination) {
-                    definitions.entry(label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()).or_insert(name);
+                    definitions
+                        .entry(
+                            label
+                                .split_whitespace()
+                                .collect::<Vec<_>>()
+                                .join(" ")
+                                .to_lowercase(),
+                        )
+                        .or_insert(name);
                 }
             }
         }
         let mut image_remainder = visible.as_str();
         while let Some(start) = image_remainder.find("![") {
             let target = &image_remainder[start + 2..];
-            let Some(end) = target.find(']') else { break; };
+            let Some(end) = target.find(']') else {
+                break;
+            };
             let label = &target[..end];
             let after = &target[end + 1..];
             if let Some(reference) = after.strip_prefix('[') {
                 if let Some(end) = reference.find(']') {
                     let reference = if end == 0 { label } else { &reference[..end] };
-                    reference_labels.insert(reference.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase());
+                    reference_labels.insert(
+                        reference
+                            .split_whitespace()
+                            .collect::<Vec<_>>()
+                            .join(" ")
+                            .to_lowercase(),
+                    );
                 }
             } else if !after.starts_with('(') {
-                reference_labels.insert(label.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase());
+                reference_labels.insert(
+                    label
+                        .split_whitespace()
+                        .collect::<Vec<_>>()
+                        .join(" ")
+                        .to_lowercase(),
+                );
             }
             image_remainder = after;
         }
@@ -775,7 +820,9 @@ pub(super) fn referenced_binary_assets(markdown: &str) -> Vec<String> {
         }
     }
     for label in reference_labels {
-        if let Some(name) = definitions.get(&label) { assets.insert(name.clone()); }
+        if let Some(name) = definitions.get(&label) {
+            assets.insert(name.clone());
+        }
     }
     let mut assets = assets.into_iter().collect::<Vec<_>>();
     assets.sort();
@@ -1065,115 +1112,81 @@ impl HistoryModeAccess<'_> {
                     "Version Restore confirmation requires its preview hash",
                 ));
             }
-            crate::state::with_note_file_mutation(|| {
-                let _operation = self.prepare_access()?;
-                let timeline = self.state.note_timeline();
-                let (path, current, current_hash) = self.current_restore_state()?;
-                if current_hash != expected_current_authored_content_hash {
-                    return Err(HistoryError::Stale(
+            let timeline = self.state.note_timeline();
+            timeline.with_admitted_publication(
+                super::publication::PublicationPathScope::Destination,
+                None,
+                Some(&self.note_id),
+                |_| {
+                    self.current_restore_state()
+                        .map(|(path, current, _)| (path, current))
+                },
+                |_, _, _| {
+                    if let Some(cause) =
+                        recovered_note_ineligibility(&timeline.runtime.store, &self.note_id)?
+                    {
+                        return Err(HistoryError::Ineligible(cause));
+                    }
+                    let (path, current, current_hash) = self.current_restore_state()?;
+                    if current_hash != expected_current_authored_content_hash {
+                        return Err(HistoryError::Stale(
                         "Current authored content changed after this restore preview was created"
                             .to_string(),
                     ));
-                }
-                let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
-                self.require_revision(&selected_id)?;
-                let selected = history_store::reconstruct(
-                    &self.state.note_timeline().runtime.store,
-                    &self.note_id,
-                    &selected_id,
-                )?;
-                let selected_authored_hash = history_store::authored_parts_hash(
-                    selected.unmanaged_frontmatter(),
-                    selected.body(),
-                );
-                let replacement = crate::note::replace_authored_content(
-                    &current,
-                    selected.unmanaged_frontmatter(),
-                    selected.body(),
-                )?;
-                let replacement_hash = history_store::authored_content_hash(&replacement);
-                if replacement_hash != selected_authored_hash {
-                    return Err(history_failure(
+                    }
+                    let selected_id = RevisionIdentity::from_persisted(revision_id.trim());
+                    self.require_revision(&selected_id)?;
+                    let selected = history_store::reconstruct(
+                        &self.state.note_timeline().runtime.store,
+                        &self.note_id,
+                        &selected_id,
+                    )?;
+                    let selected_authored_hash = history_store::authored_parts_hash(
+                        selected.unmanaged_frontmatter(),
+                        selected.body(),
+                    );
+                    let replacement = crate::note::replace_authored_content(
+                        &current,
+                        selected.unmanaged_frontmatter(),
+                        selected.body(),
+                    )?;
+                    let replacement_hash = history_store::authored_content_hash(&replacement);
+                    if replacement_hash != selected_authored_hash {
+                        return Err(history_failure(
                         "Version Restore could not preserve the selected authored content exactly"
                             .to_string(),
                     ));
-                }
-                if replacement_hash == current_hash {
-                    return Err(HistoryError::AlreadyCurrent(
-                        "Selected revision already matches current authored content".to_string(),
-                    ));
-                }
-                let prepared = timeline.prepare_exact_revision_publication(
-                    MutationSource::VersionRestore,
-                    &path,
-                    Some(&path),
-                    Some(&self.note_id),
-                    &replacement,
-                )?;
-                if let Err(error) = history_store::prepare_restore_origin(
-                    &self.state.note_timeline().runtime.store,
-                    &prepared.history_intent,
-                    &selected_id,
-                ) {
-                    return Err(history_failure(
-                        prepared.into_parts().1.abandon_after_history_failure(error),
-                    ));
-                }
-                if history_store::authored_content_hash(prepared.canonical_markdown())
-                    != selected_authored_hash
-                {
-                    return Err(history_failure(
-                        prepared.into_parts().1.abandon_after_publication_failure(
-                            "Version Restore preparation changed the selected authored content"
+                    }
+                    if replacement_hash == current_hash {
+                        return Err(HistoryError::AlreadyCurrent(
+                            "Selected revision already matches current authored content"
                                 .to_string(),
-                        ),
-                    ));
-                }
-                let still_current = fs::read_to_string(&path).map_err(|error| {
-                    format!("Recheck current note before Version Restore: {error}")
-                })?;
-                if history_store::authored_content_hash(&still_current)
-                    != expected_current_authored_content_hash
-                {
-                    return Err(HistoryError::Stale(
-                    prepared.into_parts().1.abandon_after_publication_failure(
-                        "Current authored content changed while Version Restore was being prepared"
-                            .to_string(),
-                    ),
-                ));
-                }
-                let (canonical_markdown, history_intent) = prepared.into_parts();
-                let restored_revision_id = match history_store::publication_revision_identity(
-                    &self.state.note_timeline().runtime.store,
-                    &history_intent,
-                ) {
-                    Ok(revision_id) => revision_id,
-                    Err(error) => {
-                        return Err(history_failure(
-                            history_intent.abandon_after_history_failure(error),
                         ));
                     }
-                };
-                let expected_write =
-                    crate::vault_watcher::record_expected_write(&path, &canonical_markdown);
-                if let Err(error) =
-                    crate::state::atomic_write_note(&path, canonical_markdown.as_bytes())
-                {
-                    return Err(history_failure(
-                        history_intent.abandon_after_publication_failure(error),
-                    ));
-                }
-                expected_write.commit();
-                Ok(HistoryRestoreResult {
-                    revision_id: restored_revision_id,
-                    mutation: timeline.mutate(NoteMutation::version_restore(
-                        history_intent,
-                        path.clone(),
-                        Some(path),
-                        canonical_markdown,
-                    )),
-                })
-            })
+                    let canonical = timeline.prepare_publication(
+                        Some(&path),
+                        Some(&self.note_id),
+                        &replacement,
+                    )?;
+                    let published = timeline
+                        .publish_authored(
+                            MutationSource::VersionRestore,
+                            path.clone(),
+                            Some(path),
+                            canonical,
+                            super::publication::PublicationMode::Restore {
+                                selected: &selected_id,
+                                expected_hash: expected_current_authored_content_hash,
+                                selected_hash: &selected_authored_hash,
+                            },
+                        )?
+                        .expect("restore never returns occupied");
+                    Ok(HistoryRestoreResult {
+                        revision_id: published.revision_id.expect("restore reserves a revision"),
+                        mutation: published.mutation,
+                    })
+                },
+            )
         })
     }
 

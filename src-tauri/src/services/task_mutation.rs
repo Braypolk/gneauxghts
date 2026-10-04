@@ -4,25 +4,19 @@
 //! through the filesystem and post-commit note boundary; dirty documents can
 //! prepare the same transform without writing any canonical or derived state.
 
-use super::note_timeline::{
-    MutationSource, NoteMutation, NoteMutationWarning, PreparedRevisionPublication,
-};
+use super::note_timeline::{MutationSource, NoteIdentity, NoteMutationWarning};
 use crate::{
     index::{
         delete_task_in_markdown, find_unambiguous_task_line, toggle_task_in_markdown, AppState,
     },
     state::{
-        atomic_write_note,
         task_projection::{load_task_by_id, TaskRecord},
         validate_current_path,
     },
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::{
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase", rename_all_fields = "camelCase")]
@@ -94,83 +88,6 @@ pub(crate) fn task_document_hash(markdown: &str) -> String {
     format!("{:x}", Sha256::digest(markdown.as_bytes()))
 }
 
-trait TaskMutationSink {
-    fn read_canonical(&self, path: &Path) -> Result<String, String>;
-    fn write_canonical(
-        &self,
-        path: &Path,
-        markdown: &str,
-    ) -> Result<PreparedRevisionPublication, String>;
-    fn synchronize(
-        &self,
-        path: PathBuf,
-        publication: PreparedRevisionPublication,
-    ) -> TaskSynchronization;
-}
-
-struct TaskSynchronization {
-    note_id: String,
-    commit_warning: Option<NoteMutationWarning>,
-}
-
-struct AppStateTaskMutationSink<'a> {
-    state: &'a AppState,
-}
-
-impl TaskMutationSink for AppStateTaskMutationSink<'_> {
-    fn read_canonical(&self, path: &Path) -> Result<String, String> {
-        fs::read_to_string(path).map_err(|error| error.to_string())
-    }
-
-    fn write_canonical(
-        &self,
-        path: &Path,
-        markdown: &str,
-    ) -> Result<PreparedRevisionPublication, String> {
-        let timeline = self.state.note_timeline();
-        let prepared = timeline.prepare_revision_publication(
-            MutationSource::TaskAction,
-            path,
-            Some(path),
-            None,
-            markdown,
-        )?;
-        if let Err(publication_error) =
-            write_task_document_atomically(path, prepared.canonical_markdown())
-        {
-            let (_, history_intent) = prepared.into_parts();
-            return Err(history_intent.abandon_after_publication_failure(publication_error));
-        }
-        Ok(prepared)
-    }
-
-    fn synchronize(
-        &self,
-        path: PathBuf,
-        publication: PreparedRevisionPublication,
-    ) -> TaskSynchronization {
-        let (markdown, history_intent) = publication.into_parts();
-        let outcome = self.state.note_timeline().mutate(NoteMutation::task_action(
-            history_intent,
-            path.clone(),
-            Some(path),
-            markdown,
-        ));
-        outcome.report_degraded("task mutation");
-        TaskSynchronization {
-            note_id: outcome.note_id().as_str().to_string(),
-            commit_warning: outcome.warning().cloned(),
-        }
-    }
-}
-
-fn write_task_document_atomically(path: &Path, markdown: &str) -> Result<(), String> {
-    let expected_write = crate::vault_watcher::record_expected_write(path, markdown);
-    atomic_write_note(path, markdown.as_bytes())?;
-    expected_write.commit();
-    Ok(())
-}
-
 pub(crate) struct TaskMutationService<'a> {
     state: &'a AppState,
 }
@@ -196,12 +113,20 @@ impl<'a> TaskMutationService<'a> {
             note_path,
             ..target
         };
-        crate::state::with_note_file_mutation(|| {
-            commit_loaded_task(
-                &AppStateTaskMutationSink { state: self.state },
-                target,
-                mutation_kind,
-            )
+        let outcome = self.state.note_timeline().edit_note(
+            MutationSource::TaskAction,
+            &target.note_path,
+            Some(&NoteIdentity::new(&target.note_id)),
+            |markdown| {
+                transform_task_document(mutation_kind, markdown, target.line_number, &target.text)
+                    .map_err(Into::into)
+            },
+        )?;
+        outcome.report_degraded("task mutation");
+        Ok(CommittedTaskMutation {
+            note_id: outcome.note_id().as_str().to_string(),
+            note_path: target.note_path,
+            commit_warning: outcome.warning().cloned(),
         })
     }
 
@@ -254,74 +179,23 @@ fn prepare_loaded_task(
     })
 }
 
-fn commit_loaded_task(
-    sink: &impl TaskMutationSink,
-    target: TaskMutationTarget,
-    mutation_kind: TaskMutationKind,
-) -> Result<CommittedTaskMutation, String> {
-    let markdown = sink.read_canonical(&target.note_path)?;
-    let updated_markdown =
-        transform_task_document(mutation_kind, &markdown, target.line_number, &target.text)?;
-    let publication = sink.write_canonical(&target.note_path, &updated_markdown)?;
-
-    let outcome = sink.synchronize(target.note_path.clone(), publication);
-    Ok(CommittedTaskMutation {
-        note_id: outcome.note_id,
-        note_path: target.note_path,
-        commit_warning: outcome.commit_warning,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::services::note_timeline::MutationWarningStage;
-    use std::cell::{Cell, RefCell};
-
-    struct FakeSink {
-        canonical: RefCell<String>,
-        writes: Cell<usize>,
-        commit_warning: Option<NoteMutationWarning>,
-    }
-
-    impl FakeSink {
-        fn new(markdown: &str, commit_warning: Option<NoteMutationWarning>) -> Self {
-            Self {
-                canonical: RefCell::new(markdown.to_string()),
-                writes: Cell::new(0),
-                commit_warning,
-            }
-        }
-    }
-
-    impl TaskMutationSink for FakeSink {
-        fn read_canonical(&self, _path: &Path) -> Result<String, String> {
-            Ok(self.canonical.borrow().clone())
-        }
-
-        fn write_canonical(
-            &self,
-            _path: &Path,
-            markdown: &str,
-        ) -> Result<PreparedRevisionPublication, String> {
-            self.writes.set(self.writes.get() + 1);
-            *self.canonical.borrow_mut() = markdown.to_string();
-            Ok(PreparedRevisionPublication::for_test(
-                markdown,
-                "task-test-intent",
-            ))
-        }
-
-        fn synchronize(
-            &self,
-            _path: PathBuf,
-            _publication: PreparedRevisionPublication,
-        ) -> TaskSynchronization {
-            TaskSynchronization {
-                note_id: "note-1".to_string(),
-                commit_warning: self.commit_warning.clone(),
-            }
-        }
+    use std::fs;
+    fn seed_task(fixture: &crate::test_support::TestVault, markdown: &str) -> TaskRecord {
+        let saved = crate::test_support::save_and_finalize(
+            &fixture.state,
+            "Tasks".into(),
+            markdown.into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        crate::state::task_projection::load_tasks_for_note_id(saved.note_id.as_deref().unwrap())
+            .unwrap()
+            .remove(0)
     }
 
     fn target() -> TaskMutationTarget {
@@ -335,19 +209,22 @@ mod tests {
     }
 
     #[test]
-    fn pure_transform_matches_legacy_toggle_and_delete_behavior() {
+    fn pure_transform_dispatches_each_mutation_kind() {
         let markdown = "# Tasks\n\n- [ ] Ship it\n- [ ] Keep";
-        for kind in [TaskMutationKind::Toggle, TaskMutationKind::Delete] {
-            let actual = transform_task_document(kind.clone(), markdown, 3, "Ship it").unwrap();
-            let expected = match kind {
-                TaskMutationKind::Toggle => {
-                    toggle_task_in_markdown(markdown, 3, "Ship it").unwrap()
-                }
-                TaskMutationKind::Delete => {
-                    delete_task_in_markdown(markdown, 3, "Ship it").unwrap()
-                }
-                TaskMutationKind::SetDueDate { .. } => unreachable!(),
-            };
+        for (kind, expected) in [
+            (
+                TaskMutationKind::Toggle,
+                "# Tasks\n\n- [x] Ship it\n- [ ] Keep",
+            ),
+            (TaskMutationKind::Delete, "# Tasks\n\n- [ ] Keep"),
+            (
+                TaskMutationKind::SetDueDate {
+                    due_date: Some("2026-10-02".into()),
+                },
+                "# Tasks\n\n- [ ] Ship it @due(2026-10-02)\n- [ ] Keep",
+            ),
+        ] {
+            let actual = transform_task_document(kind, markdown, 3, "Ship it").unwrap();
             assert_eq!(actual, expected);
         }
     }
@@ -372,23 +249,6 @@ mod tests {
             prepare_loaded_task(target, TaskMutationKind::Toggle, markdown, "stale-hash",)
                 .unwrap_err(),
             "Working document hash does not match its Markdown"
-        );
-    }
-
-    #[test]
-    fn dirty_preparation_tracks_a_unique_task_after_unsaved_line_changes() {
-        let markdown = "new heading\n\n- [ ] Ship it";
-        let prepared = prepare_loaded_task(
-            target(),
-            TaskMutationKind::Toggle,
-            markdown,
-            &task_document_hash(markdown),
-        )
-        .unwrap();
-
-        assert_eq!(
-            prepared.updated_editor_markdown,
-            "new heading\n\n- [x] Ship it"
         );
     }
 
@@ -460,17 +320,22 @@ mod tests {
             prepared.updated_editor_markdown,
             "- [ ] Ship it @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
         );
-        let sink = FakeSink::new(working, None);
-        commit_loaded_task(
-            &sink,
-            target(),
-            TaskMutationKind::SetDueDate {
-                due_date: Some("2026-10-02".into()),
-            },
-        )
-        .unwrap();
-        assert_eq!(*sink.canonical.borrow(), prepared.updated_editor_markdown);
-        assert_eq!(sink.writes.get(), 1);
+        let fixture = crate::test_support::TestVault::new("task-due-commit");
+        let task = seed_task(&fixture, working);
+        let committed = TaskMutationService::new(&fixture.state)
+            .commit(
+                fixture.notes.path(),
+                &task.task_id,
+                TaskMutationKind::SetDueDate {
+                    due_date: Some("2026-10-02".into()),
+                },
+            )
+            .unwrap();
+        let canonical = fs::read_to_string(committed.note_path).unwrap();
+        assert_eq!(
+            crate::note::parse_note(&canonical).body,
+            prepared.updated_editor_markdown
+        );
         assert_eq!(
             serde_json::to_value(TaskMutationKind::SetDueDate {
                 due_date: Some("2026-10-02".into())
@@ -489,89 +354,75 @@ mod tests {
     }
 
     #[test]
-    fn clean_commit_writes_once_and_returns_authoritative_identity() {
-        let sink = FakeSink::new("# Tasks\n\n- [ ] Ship it", None);
-        let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Toggle).unwrap();
-
-        assert_eq!(sink.writes.get(), 1);
-        assert!(sink.canonical.borrow().contains("- [x] Ship it"));
-        assert_eq!(outcome.note_id, "note-1");
-        assert_eq!(outcome.note_path, PathBuf::from("/vault/Tasks.md"));
-    }
-
-    #[test]
-    fn canonical_task_writer_atomically_replaces_the_existing_note() {
-        let notes = crate::test_support::TestDir::new("task-canonical-write");
-        let path = notes.path().join("Tasks.md");
-        fs::write(&path, "- [ ] Ship it").unwrap();
-
-        write_task_document_atomically(&path, "- [x] Ship it").unwrap();
-
-        assert_eq!(fs::read_to_string(path).unwrap(), "- [x] Ship it");
+    fn clean_commit_returns_authoritative_identity_and_immediate_task_projection() {
+        let fixture = crate::test_support::TestVault::new("task-clean-commit");
+        let task = seed_task(&fixture, "- [ ] Ship it");
+        let outcome = TaskMutationService::new(&fixture.state)
+            .commit(
+                fixture.notes.path(),
+                &task.task_id,
+                TaskMutationKind::Toggle,
+            )
+            .unwrap();
+        assert_eq!(outcome.note_id, task.note_id);
+        assert_eq!(outcome.note_path, PathBuf::from(&task.note_path));
+        assert!(fs::read_to_string(&outcome.note_path)
+            .unwrap()
+            .contains("- [x] Ship it"));
+        assert!(load_task_by_id(&task.task_id).unwrap().unwrap().completed);
     }
 
     #[test]
     fn failed_task_publication_abandons_its_history_intent_immediately() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("task-publication-fault-app-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("task-publication-fault-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            crate::semantic::SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .unwrap();
-        let path = notes.path().join("Tasks.md");
-        let canonical = crate::note::prepare_note_markdown("- [ ] Ship it", None, Some(None))
-            .unwrap()
-            .0;
-        fs::write(&path, canonical).unwrap();
+        let fixture = crate::test_support::TestVault::new("task-publication-fault");
+        let task = seed_task(&fixture, "- [ ] Ship it");
+        let before = fs::read(&task.note_path).unwrap();
         crate::state::inject_note_publication_failure_once();
-        let sink = AppStateTaskMutationSink { state: &state };
-
-        let error = sink
-            .write_canonical(&path, "- [x] Ship it")
-            .expect_err("task publication must fail");
-
+        let error = TaskMutationService::new(&fixture.state)
+            .commit(
+                fixture.notes.path(),
+                &task.task_id,
+                TaskMutationKind::Toggle,
+            )
+            .unwrap_err();
         assert!(error.contains("injected note publication failure"));
+        assert_eq!(fs::read(&task.note_path).unwrap(), before);
+        assert!(!load_task_by_id(&task.task_id).unwrap().unwrap().completed);
         assert_eq!(
             crate::services::note_timeline::prepared_history_intent_count_for_test("prepared"),
             0
         );
-        crate::state::set_notes_root_override(None).unwrap();
     }
 
     #[test]
-    fn required_failure_returns_committed_warning_after_one_write() {
-        let sink = FakeSink::new(
-            "# Tasks\n\n- [ ] Ship it",
-            Some(NoteMutationWarning::single(
-                MutationWarningStage::TaskProjectionUpsert,
-                "Canonical note file was saved, but task synchronization was incomplete."
-                    .to_string(),
-                "task database unavailable".to_string(),
-            )),
-        );
-        let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Delete).unwrap();
-
-        assert_eq!(sink.writes.get(), 1);
-        assert!(!sink.canonical.borrow().contains("Ship it"));
-        let warning = outcome.commit_warning.expect("committed warning");
-        assert!(warning.message().contains("Canonical note file was saved"));
-        assert_eq!(
-            warning.issues()[0].stage(),
-            MutationWarningStage::TaskProjectionUpsert
-        );
-    }
-
-    #[test]
-    fn derived_failure_does_not_turn_a_committed_write_into_an_error() {
-        let sink = FakeSink::new("# Tasks\n\n- [ ] Ship it", None);
-        let outcome = commit_loaded_task(&sink, target(), TaskMutationKind::Toggle).unwrap();
-
-        assert_eq!(sink.writes.get(), 1);
-        assert_eq!(outcome.note_id, "note-1");
+    fn history_failure_returns_committed_warning_without_repeating_the_task_action() {
+        let fixture = crate::test_support::TestVault::new("task-committed-warning");
+        let task = seed_task(&fixture, "- [ ] Ship it");
+        crate::services::note_timeline::inject_history_finalization_failure_once();
+        let outcome = TaskMutationService::new(&fixture.state)
+            .commit(
+                fixture.notes.path(),
+                &task.task_id,
+                TaskMutationKind::Toggle,
+            )
+            .unwrap();
+        assert!(fs::read_to_string(&outcome.note_path)
+            .unwrap()
+            .contains("- [x] Ship it"));
+        assert!(load_task_by_id(&task.task_id).unwrap().unwrap().completed);
+        assert!(outcome
+            .commit_warning
+            .unwrap()
+            .issues()
+            .iter()
+            .any(|issue| issue.stage() == MutationWarningStage::HistoryFinalization));
+        fixture
+            .state
+            .note_timeline()
+            .await_history_readiness(&NoteIdentity::new(&task.note_id))
+            .unwrap();
+        assert!(fs::read_to_string(&outcome.note_path)
+            .unwrap()
+            .contains("- [x] Ship it"));
     }
 }

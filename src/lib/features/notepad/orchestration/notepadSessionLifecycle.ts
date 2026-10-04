@@ -70,10 +70,15 @@ export function createNotepadSessionLifecycle(
         ? null
         : new ResizeObserver(deps.updateRelatedLayout);
     const shell = deps.getWorkspaceShell();
-    if (shell) resizeObserver?.observe(shell);
+    if (shell) {
+      // Route entry must establish card geometry before async editor/session work
+      // or the first ResizeObserver delivery can expose the default side layout.
+      deps.updateRelatedLayout();
+      resizeObserver?.observe(shell);
+    }
     let unsubscribeVault: (() => void) | null = null;
 
-    void (async () => {
+    const ready = (async () => {
       await tick();
       if (!current()) return;
       try {
@@ -150,7 +155,8 @@ export function createNotepadSessionLifecycle(
       }
     })();
 
-    return () => {
+    // The callable remains the mount cleanup; callers may also join startup.
+    return Object.assign(() => {
       mounted = false;
       unregisterWindowClose();
       unregisterPendingSave();
@@ -158,7 +164,7 @@ export function createNotepadSessionLifecycle(
       unsubscribeVault?.();
       resizeObserver?.disconnect();
       if (revision === mountRevision) deps.dispose();
-    };
+    }, { ready });
   }
 
   return { mount };

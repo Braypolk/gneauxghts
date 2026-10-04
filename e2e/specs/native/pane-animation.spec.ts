@@ -33,16 +33,17 @@ describe('native pane motion', () => {
     await invoke('plugin:window|show', { label: 'main' });
     await invoke('plugin:window|set_focus', { label: 'main' });
     await browser.waitUntil(async () => browser.execute(() => document.visibilityState === 'visible' && document.hasFocus()));
-    await browser.pause(500);
     for (const side of ['right', 'left'] as const) {
       const opening = await samplePaneMotion('open');
       expect(opening.frames.at(-1)!.panes).toHaveLength(2);
       expectContinuousMotion(opening);
+      expect(opening.frames.every(frame => frame.focused && frame.visible)).toBe(true);
       await $('#pane-command-current').waitForExist();
       await browser.execute(() => document.querySelector<HTMLElement>('#pane-command-current')!.click());
       await $('[data-pane-command="split"]').waitForExist({ reverse: true });
       const closing = await samplePaneMotion(`close-${side}`);
       expectContinuousMotion(closing);
+      expect(closing.frames.every(frame => frame.focused && frame.visible)).toBe(true);
       expect(closing.frames.at(-1)!.panes).toHaveLength(1);
       console.log('PANE_NATIVE_MOTION', JSON.stringify({
         side, openingFocused: opening.frames.every(frame => frame.focused && frame.visible), closingFocused: closing.frames.every(frame => frame.focused && frame.visible), openingMaxGap: opening.maxGap, closingMaxGap: closing.maxGap,

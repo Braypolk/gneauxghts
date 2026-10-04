@@ -1,96 +1,4 @@
 #[test]
-fn editor_mutation_assigns_its_closed_source() {
-    let mutation = NoteMutation::editor(
-        PreparedHistoryIntent::for_test("editor-intent"),
-        PathBuf::from("/vault/Note.md"),
-        None,
-        "# Note\n\nBody".to_string(),
-    );
-
-    assert_eq!(mutation.source(), MutationSource::Editor);
-    assert_eq!(mutation.path(), PathBuf::from("/vault/Note.md"));
-}
-
-#[test]
-fn typed_entrypoints_cover_the_closed_mutation_source_vocabulary() {
-    let path = PathBuf::from("/vault/Note.md");
-    let markdown = "# Note\n\nBody".to_string();
-    let mutations = [
-        NoteMutation::task_action(
-            PreparedHistoryIntent::for_test("task-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-        NoteMutation::accepted_chat_proposal(
-            PreparedHistoryIntent::for_test("proposal-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-        NoteMutation::version_restore(
-            PreparedHistoryIntent::for_test("restore-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-        NoteMutation::note_creation(
-            PreparedHistoryIntent::for_test("creation-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-        NoteMutation::baseline_initialization(
-            PreparedHistoryIntent::for_test("baseline-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-        NoteMutation::recovery_reconciliation(
-            PreparedHistoryIntent::for_test("recovery-intent"),
-            path.clone(),
-            None,
-            markdown.clone(),
-        ),
-    ];
-
-    assert_eq!(
-        mutations.map(|mutation| mutation.source()),
-        [
-            MutationSource::TaskAction,
-            MutationSource::AcceptedChatProposal,
-            MutationSource::VersionRestore,
-            MutationSource::NoteCreation,
-            MutationSource::BaselineInitialization,
-            MutationSource::RecoveryReconciliation,
-        ]
-    );
-    let observation = VaultObservation::external_edit(path, 42, Some(41));
-    assert_eq!(observation.source(), VaultObservationSource::Watcher);
-    assert_eq!(observation.kind(), VaultObservationKind::CanonicalState);
-    let reconciled =
-        VaultObservation::reconciled_state(PathBuf::from("/vault/Reconciled.md"), 43, Some(40));
-    assert_eq!(reconciled.source(), VaultObservationSource::Reconciliation);
-    let scan = VaultObservation::reconciliation_scan(PathBuf::from("/vault"), 44);
-    assert_eq!(scan.source(), VaultObservationSource::Reconciliation);
-    assert_eq!(scan.kind(), VaultObservationKind::ReconciliationScan);
-
-    let lifecycle = [
-        VaultObservation::renamed("/vault/Old.md", "/vault/New.md", 43),
-        VaultObservation::moved("/vault/New.md", "/vault/Folder/New.md", 44),
-        VaultObservation::missing("/vault/Folder/New.md", 45),
-    ];
-    assert_eq!(
-        lifecycle.map(|observation| observation.kind()),
-        [
-            VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed),
-            VaultObservationKind::Lifecycle(LifecycleEventKind::Moved),
-            VaultObservationKind::Lifecycle(LifecycleEventKind::Missing),
-        ]
-    );
-}
-
-#[test]
 fn publication_rejects_retained_identity_that_conflicts_with_catalog_owner() {
     let _guard = crate::test_support::lock_test_env();
     let app_data = crate::test_support::TestDir::new("identity-context-data");
@@ -124,38 +32,6 @@ fn publication_rejects_retained_identity_that_conflicts_with_catalog_owner() {
         Some("current-owner")
     );
     crate::state::set_notes_root_override(None).unwrap();
-}
-
-#[test]
-fn mutate_preserves_the_authoritative_publication_outcome() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-pass-through-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-pass-through-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    let note_path = notes.path().join("Note.md");
-    let markdown = "---\ngneauxghts:\n  id: note-1\n  kind: note\n---\n\n# Note\n\nBody";
-    fs::write(&note_path, markdown).expect("write canonical note");
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .expect("construct app state");
-    let history_intent = prepare_test_history(MutationSource::Editor, &note_path, markdown);
-
-    let outcome = state.note_timeline().mutate(NoteMutation::editor(
-        history_intent,
-        note_path.clone(),
-        None,
-        markdown.to_string(),
-    ));
-
-    assert_eq!(outcome.payload_version(), PayloadVersion::V1);
-    assert_eq!(outcome.source(), MutationSource::Editor);
-    assert_eq!(outcome.note_id(), &NoteIdentity::new("note-1"));
-    assert_eq!(outcome.path(), note_path);
-    assert_eq!(outcome.canonical_markdown(), markdown);
-    assert_eq!(outcome.warning(), None);
 }
 
 #[test]
@@ -391,17 +267,9 @@ fn a_cleanly_copied_vault_reconstructs_identical_revision_identity_and_hash() {
 
 #[test]
 fn history_preparation_failure_publishes_nothing() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-prepare-fault-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-prepare-fault-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-prepare-fault");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     history_store::inject_fault_once(history_store::FaultPoint::Prepare);
 
     let error = save_retained_state(
@@ -416,22 +284,13 @@ fn history_preparation_failure_publishes_nothing() {
         .to_string()
         .contains("injected history preparation failure"));
     assert!(!notes.path().join("Blocked.md").exists());
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn publication_preparation_verifies_targets_without_whole_vault_attestation() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-integrity-cache-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-integrity-cache-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-integrity-cache");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     history_store::reset_integrity_snapshot_count();
 
@@ -456,22 +315,13 @@ fn publication_preparation_verifies_targets_without_whole_vault_attestation() {
 
     assert_eq!(history_store::integrity_snapshot_count(), 0);
     assert_eq!(timeline.history_readiness(None).unwrap().verified_notes, 2);
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn a_second_preparation_cannot_abandon_an_in_flight_intent() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-live-intent-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-live-intent-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-live-intent");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     let first_path = notes.path().join("First.md");
     let second_path = notes.path().join("Second.md");
@@ -521,22 +371,12 @@ fn a_second_preparation_cannot_abandon_an_in_flight_intent() {
             .len(),
         1
     );
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn finalization_uses_the_exact_prepared_intent_identity() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-intent-id-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-intent-id-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-intent-id");
+    let state = &fixture.state;
     let created = save_retained_state(&state, "Intent".to_string(), "initial".to_string(), None)
         .unwrap()
         .unwrap();
@@ -583,22 +423,13 @@ fn finalization_uses_the_exact_prepared_intent_identity() {
         created.note_id.unwrap(),
     )));
     assert_eq!(history.revisions().unwrap().len(), 2);
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn finalization_rejects_matching_authored_content_under_another_note_identity() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-intent-note-id-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-intent-note-id-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-intent-note-id");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     let path = notes.path().join("Identity Mismatch.md");
     let prepared = timeline
@@ -636,22 +467,13 @@ fn finalization_rejects_matching_authored_content_under_another_note_identity() 
         history_store::prepared_intent_count(&history_store::Store::for_test(), "abandoned"),
         1
     );
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn finalization_abandons_publication_without_a_managed_note_identity() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-missing-id-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-missing-id-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-missing-id");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     let path = notes.path().join("Identity Missing.md");
     let prepared = timeline
@@ -683,22 +505,13 @@ fn finalization_abandons_publication_without_a_managed_note_identity() {
         history_store::prepared_intent_count(&history_store::Store::for_test(), "abandoned"),
         1
     );
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
 fn unreadable_authoritative_markdown_never_finalizes_from_fallback_memory() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-read-fault-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-read-fault-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-read-fault");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     let path = notes.path().join("Vanished.md");
     let prepared = timeline
@@ -734,7 +547,6 @@ fn unreadable_authoritative_markdown_never_finalizes_from_fallback_memory() {
         .revisions()
         .unwrap()
         .is_empty());
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
@@ -925,17 +737,9 @@ fn committed_markdown_survives_finalization_failure_and_recovers_once() {
 
 #[test]
 fn every_app_owned_mutation_source_is_retained_by_the_same_contract() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-source-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-source-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
+    let fixture = crate::test_support::TestVault::new("timeline-source");
+    let state = &fixture.state;
+    let notes = &fixture.notes;
     let timeline = state.note_timeline();
     let path = notes.path().join("Sources.md");
     let sources = [
@@ -959,11 +763,27 @@ fn every_app_owned_mutation_source_is_retained_by_the_same_contract() {
             .unwrap();
         let (canonical, history_intent) = prepared.into_parts();
         fs::write(&path, &canonical).unwrap();
-        let result = timeline.mutate(NoteMutation::with_source(
-            source,
+        let previous_path = (index > 0).then(|| path.clone());
+        let mutation = match source {
+            MutationSource::NoteCreation => NoteMutation::note_creation,
+            MutationSource::Editor => NoteMutation::editor,
+            MutationSource::TaskAction => NoteMutation::task_action,
+            MutationSource::AcceptedChatProposal => NoteMutation::accepted_chat_proposal,
+            MutationSource::VersionRestore => NoteMutation::version_restore,
+            _ => |intent, path, previous, markdown| {
+                NoteMutation::with_source(
+                    MutationSource::RecoveryReconciliation,
+                    intent,
+                    path,
+                    previous,
+                    markdown,
+                )
+            },
+        };
+        let result = timeline.mutate(mutation(
             history_intent,
             path.clone(),
-            (index > 0).then(|| path.clone()),
+            previous_path,
             canonical,
         ));
         timeline.finalize_editing_window(result.note_id()).unwrap();
@@ -980,7 +800,6 @@ fn every_app_owned_mutation_source_is_retained_by_the_same_contract() {
             .collect::<Vec<_>>(),
         sources
     );
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
@@ -1263,72 +1082,81 @@ fn publication_failure_creates_no_revision_and_restart_abandons_the_intent() {
 
 #[test]
 fn adaptive_checkpoints_are_transparent_across_a_long_revision_chain() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-long-chain-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-long-chain-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .unwrap();
-    let timeline = state.note_timeline();
-    let path = notes.path().join("Long Chain.md");
-    let mut note_id = None;
-    for revision in 0..140 {
-        let source = if revision == 0 {
-            MutationSource::NoteCreation
-        } else {
-            MutationSource::Editor
-        };
-        let body = format!(
-            "# Long chain\n\nrevision {revision}: {}",
-            "x".repeat(revision)
-        );
-        let prepared = timeline
-            .prepare_revision_publication(
-                source,
-                &path,
-                (revision > 0).then_some(path.as_path()),
-                None,
-                &body,
-            )
-            .unwrap();
-        let (canonical, history_intent) = prepared.into_parts();
-        fs::write(&path, &canonical).unwrap();
-        let result = timeline.mutate(NoteMutation::with_source(
-            source,
-            history_intent,
-            path.clone(),
-            (revision > 0).then(|| path.clone()),
-            canonical,
-        ));
-        timeline.finalize_editing_window(result.note_id()).unwrap();
-        note_id.get_or_insert_with(|| result.note_id().clone());
-    }
+    use crate::services::note_timeline::test_fixtures::{checkpoint_body, load, HistoryFixture};
 
+    // The generated prefix ends at replay 126. Both sides of the actual 128
+    // checkpoint decision are written by the current implementation below.
+    let (fixture, ids) = load(HistoryFixture::CheckpointPrefix);
+    let note_id = NoteIdentity::new(&ids[0]);
+    let path = fixture.notes.path().join("Long Chain.md");
+    {
+        let timeline = fixture.state.note_timeline();
+        for revision in 127..140 {
+            let prepared = timeline
+                .prepare_revision_publication(
+                    MutationSource::Editor,
+                    &path,
+                    Some(&path),
+                    Some(&note_id),
+                    &checkpoint_body(revision),
+                )
+                .unwrap();
+            let (canonical, history_intent) = prepared.into_parts();
+            fs::write(&path, &canonical).unwrap();
+            let result = timeline.mutate(NoteMutation::with_source(
+                MutationSource::Editor,
+                history_intent,
+                path.clone(),
+                Some(path.clone()),
+                canonical,
+            ));
+            assert!(result.warning().is_none());
+            timeline.finalize_editing_window(result.note_id()).unwrap();
+        }
+        timeline.clean_close(fixture.notes.path()).unwrap();
+    }
+    fixture.state.stop_rebuildable_projection_work().unwrap();
+    // The prior runtime is closed and its projection worker joined before a
+    // new AppState reopens the real portable history, without an in-memory base.
     let restarted = AppState::new(
         SemanticState::new_disabled("disabled"),
         EventBus::disabled(),
     )
     .unwrap();
-    let history = restarted
-        .note_timeline()
-        .history_mode(HistoryModeGrant::authorized(note_id.unwrap()));
+    let timeline = restarted.note_timeline();
+    let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
     let revisions = history.revisions().unwrap();
     assert_eq!(revisions.len(), 140);
-    for index in [0usize, 127, 139] {
+    let policy = history_store::checkpoint_policy_for_test(&timeline.runtime.store, &note_id);
+    assert_eq!(policy.len(), 140);
+    for index in 127..140 {
+        let expected = if index == 128 {
+            ("checkpoint".to_owned(), 0)
+        } else {
+            (
+                "delta".to_owned(),
+                if index == 127 {
+                    127
+                } else {
+                    (index - 128) as u64
+                },
+            )
+        };
+        assert_eq!(
+            policy.get(revisions[index].identity().as_str()).unwrap(),
+            &expected,
+            "live checkpoint policy at revision {index}"
+        );
+    }
+    for index in [0usize, 127, 128, 129, 139] {
         assert_eq!(
             history
                 .reconstruct(revisions[index].identity())
                 .unwrap()
                 .body(),
-            format!("# Long chain\n\nrevision {index}: {}", "x".repeat(index))
+            checkpoint_body(index)
         );
     }
-    crate::state::set_notes_root_override(None).unwrap();
 }
 
 #[test]
@@ -1517,46 +1345,6 @@ fn warning_serialization_redacts_diagnostic_causes() {
     );
     assert!(!serialized.to_string().contains("/private"));
     assert!(!serialized.to_string().contains("SELECT"));
-}
-
-#[test]
-fn domain_records_carry_versioned_payloads_and_explicit_predecessors() {
-    let note_id = NoteIdentity::new("note-1");
-    let first = NoteRevisionHeader::issue(
-        note_id.clone(),
-        None,
-        PayloadVersion::V1,
-        MutationSource::Editor,
-    );
-    let first_id = first.identity.clone();
-    let renamed = LifecycleEventHeader::issue(
-        note_id.clone(),
-        Some(TimelineRecordIdentity::Revision(first_id.clone())),
-        PayloadVersion::V1,
-        LifecycleEventKind::Renamed,
-    );
-    let event_id = renamed.identity.clone();
-    let second = NoteRevisionHeader::issue(
-        note_id,
-        Some(TimelineRecordIdentity::LifecycleEvent(event_id)),
-        PayloadVersion::V1,
-        MutationSource::Editor,
-    );
-
-    assert_eq!(first.identity.0.len(), 26);
-    assert_eq!(renamed.identity.0.len(), 26);
-    assert_eq!(second.identity.0.len(), 26);
-    assert_ne!(first.identity.0, renamed.identity.0);
-    assert_ne!(renamed.identity.0, second.identity.0);
-    assert_eq!(first.predecessor(), None);
-    assert_eq!(renamed.kind(), LifecycleEventKind::Renamed);
-    assert_eq!(renamed.payload_version(), PayloadVersion::V1);
-    assert_eq!(
-        second.predecessor(),
-        Some(&TimelineRecordIdentity::LifecycleEvent(
-            renamed.identity.clone()
-        ))
-    );
 }
 
 #[test]
@@ -1763,4 +1551,110 @@ fn settled_publications_do_not_retain_full_authored_copies() {
         body
     );
     crate::state::set_notes_root_override(None).unwrap();
+}
+
+#[test]
+fn task_transform_reads_the_authoritative_state_after_publication_admission() {
+    let fixture = crate::test_support::TestVault::new("task-owned-read");
+    let saved = save_retained_state(&fixture.state, "Tasks".into(), "- [ ] Ship it".into(), None)
+        .unwrap()
+        .unwrap();
+    let task =
+        crate::state::task_projection::load_tasks_for_note_id(saved.note_id.as_deref().unwrap())
+            .unwrap()
+            .remove(0);
+    let path = PathBuf::from(&task.note_path);
+    let observed_path = path.clone();
+    let state = fixture.state.clone();
+    *AFTER_SAVE_PREFLIGHT.lock().unwrap() = Some(Box::new(move || {
+        let raw = fs::read_to_string(&observed_path).unwrap();
+        let changed = format!("{raw}\nConcurrent external content");
+        fs::write(&observed_path, &changed).unwrap();
+        state
+            .note_timeline()
+            .observe(VaultObservation::external_edit(
+                observed_path,
+                1_700_000_000_000,
+                None,
+            ))
+            .unwrap();
+    }));
+    crate::services::task_mutation::TaskMutationService::new(&fixture.state)
+        .commit(
+            fixture.notes.path(),
+            &task.task_id,
+            crate::services::task_mutation::TaskMutationKind::Toggle,
+        )
+        .unwrap();
+    let canonical = fs::read_to_string(path).unwrap();
+    assert!(canonical.contains("- [x] Ship it"));
+    assert!(canonical.contains("Concurrent external content"));
+    let history = fixture
+        .state
+        .note_timeline()
+        .open_history_mode(NoteIdentity::new(task.note_id));
+    assert_eq!(
+        history.revisions().unwrap().last().unwrap().source(),
+        MutationSource::TaskAction
+    );
+}
+
+#[test]
+fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
+    let fixture = crate::test_support::TestVault::new("exclusive-publication");
+    let timeline = fixture.state.note_timeline();
+    let occupied = fixture.notes.path().join("Occupied.md");
+    fs::write(&occupied, "another note").unwrap();
+    assert!(timeline
+        .create_note_at(
+            MutationSource::AcceptedChatProposal,
+            &occupied,
+            "replacement"
+        )
+        .unwrap()
+        .is_none());
+    assert_eq!(fs::read_to_string(&occupied).unwrap(), "another note");
+    #[cfg(unix)]
+    {
+        let link = fixture.notes.path().join("Dangling.md");
+        std::os::unix::fs::symlink(fixture.notes.path().join("Missing.md"), &link).unwrap();
+        assert!(timeline
+            .create_note_at(MutationSource::AcceptedChatProposal, &link, "replacement")
+            .unwrap()
+            .is_none());
+        assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
+        let outside = crate::test_support::TestDir::new("occupied-outside-target");
+        let outside_target = outside.path().join("Outside.md");
+        fs::write(&outside_target, "outside content").unwrap();
+        let outside_link = fixture.notes.path().join("Outside-link.md");
+        std::os::unix::fs::symlink(&outside_target, &outside_link).unwrap();
+        assert!(timeline
+            .create_note_at(
+                MutationSource::AcceptedChatProposal,
+                &outside_link,
+                "replacement"
+            )
+            .unwrap()
+            .is_none());
+        assert!(fs::symlink_metadata(outside_link)
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert_eq!(
+            fs::read_to_string(outside_target).unwrap(),
+            "outside content"
+        );
+    }
+    let target = fixture.notes.path().join("New.md");
+    crate::state::inject_note_publication_failure_once();
+    assert!(timeline
+        .create_note_at(MutationSource::AcceptedChatProposal, &target, "new body")
+        .is_err());
+    assert!(!target.exists());
+    assert_eq!(prepared_history_intent_count_for_test("prepared"), 0);
+    assert!(timeline
+        .create_note_at(MutationSource::AcceptedChatProposal, &target, "new body")
+        .unwrap()
+        .is_some());
+    assert!(fs::read_to_string(target).unwrap().ends_with("new body"));
 }

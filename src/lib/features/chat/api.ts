@@ -199,9 +199,12 @@ function normalizeExcerpt(raw: RawExcerpt, linkTarget = `#^${raw.anchor}`): Chat
   };
 }
 
+export type ChatDefaults = Omit<ChatSettings, 'atlasVisibility'>;
+
 export interface ChatApi {
   getSettings(): Promise<ChatSettings>;
-  setSettings(settings: ChatSettings): Promise<ChatSettings>;
+  setDefaults(defaults: ChatDefaults): Promise<ChatSettings>;
+  setAtlasVisibility(visibility: ChatSettings['atlasVisibility']): Promise<void>;
   /** Unsent composer text for a conversation or an unsent pane draft. */
   getComposerDraft(slot: string): Promise<string>;
   setComposerDraft(slot: string, body: string): Promise<void>;
@@ -280,7 +283,8 @@ export interface ChatApi {
 
 export const CHAT_COMMANDS = {
   getSettings: 'chat_get_settings',
-  setSettings: 'chat_set_settings',
+  setDefaults: 'chat_set_defaults',
+  setAtlasVisibility: 'chat_set_atlas_visibility',
   getComposerDraft: 'chat_get_composer_draft',
   setComposerDraft: 'chat_set_composer_draft',
   getKeyStatus: 'chat_get_key_status',
@@ -321,12 +325,13 @@ export const CHAT_COMMANDS = {
 export class TauriChatApi implements ChatApi {
   #messageConversations = new Map<string, string>();
   #activeRequests = new Map<string, string>();
+  #pendingReceiptTerminals = new Set<Set<string>>();
   #excerptLinks = new Map<string, string>();
 
   async getSettings() { return normalizeSettings(await invoke<RawChatSettings>(CHAT_COMMANDS.getSettings)); }
-  async setSettings(settings: ChatSettings) {
-    const raw = await invoke<RawChatSettings>(CHAT_COMMANDS.setSettings, {
-      settings: {
+  async setDefaults(settings: ChatDefaults) {
+    const raw = await invoke<RawChatSettings>(CHAT_COMMANDS.setDefaults, {
+      defaults: {
         provider: settings.provider,
         model: settings.model,
         openaiModel: settings.openaiModel,
@@ -335,11 +340,13 @@ export class TauriChatApi implements ChatApi {
         reasoningEffort: settings.reasoningEffort,
         serviceTier: settings.serviceTier,
         webAccess: settings.webAccess,
-        defaultAccess: settings.defaultVaultAccess,
-        atlasVisibility: settings.atlasVisibility
+        defaultAccess: settings.defaultVaultAccess
       }
     });
     return normalizeSettings(raw);
+  }
+  setAtlasVisibility(visibility: ChatSettings['atlasVisibility']) {
+    return invoke<void>(CHAT_COMMANDS.setAtlasVisibility, { visibility });
   }
   getComposerDraft(slot: string) {
     return invoke<string>(CHAT_COMMANDS.getComposerDraft, { slot });
@@ -459,7 +466,7 @@ export class TauriChatApi implements ChatApi {
     activeNote?: ChatActiveNoteSnapshot | null;
     selectedContext?: ChatContextSelectionInput[];
   }) {
-    const raw = await invoke<RawReceipt>(CHAT_COMMANDS.sendMessage, {
+    const raw = await this.#loadReceipt(() => invoke<RawReceipt>(CHAT_COMMANDS.sendMessage, {
       request: {
         conversationId: input.conversationId,
         content: input.content,
@@ -469,10 +476,8 @@ export class TauriChatApi implements ChatApi {
         selectedContext: input.selectedContext ?? [],
         dateTimeContext: currentDateTimeContext()
       }
-    });
-    this.#messageConversations.set(raw.userMessageId, raw.conversationId);
-    this.#messageConversations.set(raw.assistantMessageId, raw.conversationId);
-    this.#activeRequests.set(raw.requestId, raw.conversationId);
+    }));
+
     const now = Date.now();
     return {
       requestId: raw.requestId,
@@ -501,10 +506,9 @@ export class TauriChatApi implements ChatApi {
   async retryMessage(messageId: string) {
     const conversationId = this.#messageConversations.get(messageId);
     if (!conversationId) throw new Error('Reopen the conversation before retrying this message.');
-    const raw = await invoke<RawReceipt>(CHAT_COMMANDS.retryMessage, {
+    const raw = await this.#loadReceipt(() => invoke<RawReceipt>(CHAT_COMMANDS.retryMessage, {
       conversationId, messageId, dateTimeContext: currentDateTimeContext()
-    });
-    this.#activeRequests.set(raw.requestId, raw.conversationId);
+    }));
     const now = Date.now();
     const assistantMessage = this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now);
     this.#messageConversations.set(raw.assistantMessageId, raw.conversationId);
@@ -614,6 +618,7 @@ export class TauriChatApi implements ChatApi {
         if (stream.source) handler({ ...stream, citation: normalizeSource(stream.source) } as ChatEventMap[K]);
       } else {
         this.#activeRequests.delete(stream.requestId);
+        for (const terminalIds of this.#pendingReceiptTerminals) terminalIds.add(stream.requestId);
         const status = event === 'chat://completed' ? 'completed' : event === 'chat://cancelled' ? 'cancelled' : 'error';
         const message = this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', stream.content ?? '', status, Date.now());
         message.errorMessage = stream.error ?? null;
@@ -628,6 +633,22 @@ export class TauriChatApi implements ChatApi {
         }
       }
     });
+  }
+
+  async #loadReceipt(load: () => Promise<RawReceipt>) {
+    const terminalIds = new Set<string>();
+    this.#pendingReceiptTerminals.add(terminalIds);
+    try {
+      const receipt = await load();
+      this.#messageConversations.set(receipt.userMessageId, receipt.conversationId);
+      this.#messageConversations.set(receipt.assistantMessageId, receipt.conversationId);
+      if (!terminalIds.has(receipt.requestId)) {
+        this.#activeRequests.set(receipt.requestId, receipt.conversationId);
+      }
+      return receipt;
+    } finally {
+      this.#pendingReceiptTerminals.delete(terminalIds);
+    }
   }
 
   #normalizeConversation(raw: RawConversation): ChatConversation {

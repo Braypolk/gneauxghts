@@ -1,3 +1,4 @@
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
 import type {
   ProposalReviewRuntime,
   ProposalReviewSessionSnapshot
@@ -17,9 +18,8 @@ export function createProposalReviewSession() {
   let workflow = $state.raw<
     ProposalReviewWorkflowState<ProposalReviewRuntime>
   >(createProposalReviewWorkflowState());
-  // Proposal runtimes intentionally remain raw because they retain editor and
-  // document resources. This revision invalidates reactive projections after
-  // their mutable hunk snapshot changes.
+  // Root CodeMirror state is immutable and outside Svelte. Invalidate the UI
+  // projection when the document publishes a review transition.
   let runtimeRevision = $state(0);
 
   function snapshot(): ProposalReviewSessionSnapshot {
@@ -28,7 +28,7 @@ export function createProposalReviewSession() {
       ? null
       : workflow.review;
     const unresolvedHunks = review
-      ? review.hunkSnapshot.filter(
+      ? (documentRegistry.get(review.document.handle)?.resources()?.runtime.review?.hunks ?? []).filter(
           (hunk) =>
             hunk.status === 'pending' ||
             hunk.status === 'modified'

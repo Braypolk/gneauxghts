@@ -25,7 +25,6 @@ function createHarness(
   const scheduleAutosave = vi.fn();
   const scheduleSearch = vi.fn();
   const scheduleRelated = vi.fn();
-  const replaceNoteAcrossPanes = vi.fn(async () => undefined);
   const service = createDocumentEditingService({
     state,
     isApplyingProgrammaticUpdate: () => options.external ?? false,
@@ -44,8 +43,7 @@ function createHarness(
     service,
     scheduleAutosave,
     scheduleSearch,
-    scheduleRelated,
-    replaceNoteAcrossPanes
+    scheduleRelated
   };
 }
 
@@ -73,6 +71,17 @@ describe('documentEditingService', () => {
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
     expect(harness.scheduleSearch).toHaveBeenCalledOnce();
     expect(harness.scheduleRelated).toHaveBeenCalledOnce();
+  });
+
+  it('records a retained review edit without a pane or autosave', () => {
+    const harness = createHarness();
+    const revision = harness.note.operation.revision;
+    harness.service.recordReviewEdit(harness.note, 'reviewed text');
+    expect(harness.note.working.markdown).toBe('reviewed text');
+    expect(harness.note.operation.revision).toBe(revision + 1);
+    expect(harness.scheduleSearch).toHaveBeenCalledOnce();
+    expect(harness.scheduleRelated).toHaveBeenCalledOnce();
+    expect(harness.scheduleAutosave).not.toHaveBeenCalled();
   });
 
   it('does not treat a programmatic editor callback as another edit', () => {
@@ -200,8 +209,11 @@ describe('documentEditingService', () => {
     expect(harness.note.savedBaseline).toBeNull();
   });
 
-  it('treats Version Restore of an unopened citation target as successful without pane work', async () => {
+  it('treats Version Restore of an unopened citation target as successful without creating documents or runtimes', async () => {
     const harness = createHarness();
+    const existingRuntime = documentRegistry.ensure(harness.note.handle);
+    const stateBefore = structuredClone(harness.state);
+    const runtimesBefore = [...documentRegistry.values()];
 
     await expect(harness.service.adoptVersionRestore({
       noteId: 'citation-note',
@@ -209,7 +221,10 @@ describe('documentEditingService', () => {
       markdown: 'restored',
       path: '/vault/citation.md'
     })).resolves.toEqual({ kind: 'notOpen' });
-    expect(harness.replaceNoteAcrossPanes).not.toHaveBeenCalled();
+    expect(harness.state).toEqual(stateBefore);
+    expect(harness.state.documentsByHandle[harness.note.handle]).toBe(harness.note);
+    expect([...documentRegistry.values()]).toEqual(runtimesBefore);
+    expect(documentRegistry.get(harness.note.handle)).toBe(existingRuntime);
   });
 
   it('updates a chat-only retained document and its existing shared runtime', async () => {

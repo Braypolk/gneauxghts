@@ -756,16 +756,10 @@ mod tests {
     use super::NoteAnnIndexState;
     use crate::semantic::{
         chunking::SemanticChunk,
-        db::{
-            ensure_schema, move_note, open_database, update_moved_note_metadata,
-            upsert_note_chunks, SemanticNoteMetadata,
-        },
+        db::{move_note, update_moved_note_metadata, upsert_note_chunks, SemanticNoteMetadata},
     };
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use crate::test_support::TestDir;
+    use std::fs;
 
     #[test]
     fn persisted_generation_loads_and_queries_with_exact_scores() {
@@ -927,8 +921,8 @@ mod tests {
     }
 
     fn database(temp: &TestDir) -> rusqlite::Connection {
-        let connection = open_database(&temp.path().join("semantic.sqlite3")).expect("database");
-        ensure_schema(&connection).expect("schema");
+        let connection =
+            crate::semantic::test_support::database(&temp.path().join("semantic.sqlite3"));
         connection
     }
 
@@ -969,31 +963,5 @@ mod tests {
             &[embedding.to_vec()],
         )
         .expect("seed");
-    }
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(label: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("time")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
-            fs::create_dir_all(path.join("cache")).expect("temp");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
     }
 }

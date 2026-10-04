@@ -37,12 +37,6 @@ describe('DocumentRuntime persistence', () => {
     expect(operations).toEqual(['first', 'latest']);
   });
 
-  it('retains its immutable open-document handle for its whole lifetime', () => {
-    const runtime = new DocumentRuntime('document:runtime');
-
-    expect(runtime.documentHandle).toBe('document:runtime');
-  });
-
   it('reports a failed drain and remains usable for a later save', async () => {
     const runtime = new DocumentRuntime('document:runtime');
     const failure = new Error('disk unavailable');

@@ -200,7 +200,11 @@ impl SemanticDebugState {
     /// read never runs on the hot path unless explicitly requested. No-op on
     /// platforms where RSS cannot be read cheaply.
     pub(crate) fn sample_rss(&self, category: &str, action: &str) {
-        if !rss_profiling_enabled() {
+        self.sample_rss_if(rss_profiling_enabled(), category, action);
+    }
+
+    fn sample_rss_if(&self, enabled: bool, category: &str, action: &str) {
+        if !enabled {
             return;
         }
         let rss = current_rss_bytes();
@@ -214,7 +218,11 @@ impl SemanticDebugState {
 }
 
 fn rss_profiling_enabled() -> bool {
-    std::env::var_os("GNEAUXGHTS_PROFILE_RSS").is_some_and(|value| {
+    parse_rss_profiling(std::env::var_os("GNEAUXGHTS_PROFILE_RSS").as_deref())
+}
+
+fn parse_rss_profiling(value: Option<&std::ffi::OsStr>) -> bool {
+    value.is_some_and(|value| {
         let value = value.to_string_lossy();
         let value = value.trim();
         !value.is_empty() && value != "0" && !value.eq_ignore_ascii_case("false")
@@ -300,45 +308,23 @@ mod tests {
     }
 
     #[test]
-    fn rss_profiling_respects_environment_and_disabled_sampling_is_a_noop() {
-        // Keep all assertions that depend on this process-global key in one test.
-        // Restore the caller's environment even if an assertion panics.
-        struct RestoreRssEnvironment(Option<std::ffi::OsString>);
-
-        impl Drop for RestoreRssEnvironment {
-            fn drop(&mut self) {
-                match &self.0 {
-                    Some(value) => std::env::set_var("GNEAUXGHTS_PROFILE_RSS", value),
-                    None => std::env::remove_var("GNEAUXGHTS_PROFILE_RSS"),
-                }
-            }
+    fn rss_option_parsing_and_disabled_sampling_are_explicit() {
+        for (value, expected) in [
+            (None, false),
+            (Some(""), false),
+            (Some("0"), false),
+            (Some("false"), false),
+            (Some(" FaLsE "), false),
+            (Some("1"), true),
+            (Some("true"), true),
+        ] {
+            assert_eq!(
+                parse_rss_profiling(value.map(std::ffi::OsStr::new)),
+                expected
+            );
         }
-
-        let key = "GNEAUXGHTS_PROFILE_RSS";
-        let _restore = RestoreRssEnvironment(std::env::var_os(key));
-
-        std::env::remove_var(key);
-        assert!(!rss_profiling_enabled(), "unset must be disabled");
-
-        std::env::set_var(key, "");
-        assert!(!rss_profiling_enabled(), "empty must be disabled");
-
-        std::env::set_var(key, "0");
-        assert!(!rss_profiling_enabled(), "\"0\" must be disabled");
-
-        std::env::set_var(key, "false");
-        assert!(!rss_profiling_enabled(), "\"false\" must be disabled");
-
-        std::env::set_var(key, "1");
-        assert!(rss_profiling_enabled(), "\"1\" must be enabled");
-
-        std::env::set_var(key, "true");
-        assert!(rss_profiling_enabled(), "\"true\" must be enabled");
-
-        std::env::remove_var(key);
-
         let state = SemanticDebugState::new();
-        state.sample_rss("ann", "rebuild_completed");
+        state.sample_rss_if(false, "ann", "rebuild_completed");
 
         let snapshot = state.snapshot().expect("snapshot");
         assert_eq!(snapshot.metrics.process_rss_bytes, None);

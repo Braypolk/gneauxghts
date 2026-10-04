@@ -6,8 +6,8 @@ import type { ChatAgentProposal } from './types';
  * review controls for a proposal owned by its currently open conversation.
  */
 export function reviewBelongsToConversation(
-  review: ProposalReviewSessionSnapshot | null,
-  proposals: readonly ChatAgentProposal[],
+  review: Pick<ProposalReviewSessionSnapshot, 'proposalId'> | null,
+  proposals: readonly Pick<ChatAgentProposal, 'id' | 'conversationId'>[],
   conversationId: string | null | undefined
 ): boolean {
   if (!review || !conversationId) return false;

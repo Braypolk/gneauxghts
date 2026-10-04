@@ -13,7 +13,7 @@
 //! logical task survives across edits even if its position or text
 //! shifted slightly.
 
-use super::persistence::{ensure_state_schema_idempotent, with_state_database_internal};
+use super::persistence::with_state_database_internal;
 use crate::index::{task_key, IndexedNote, IndexedTask};
 use rusqlite::{params, Connection};
 use std::collections::{HashMap, HashSet};
@@ -193,10 +193,9 @@ pub(crate) fn reconcile_note_tasks(
 ) -> Result<ReconcileOutcome, String> {
     let note_path_string = note_path.to_string_lossy().into_owned();
     with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         let transaction = connection.transaction().map_err(|err| err.to_string())?;
         let previous_tasks = load_previous_tasks(&transaction, note_id)?;
+        let previous_lookup = PreviousTaskLookup::new(&previous_tasks);
         let mut used_previous_indexes: HashSet<usize> = HashSet::new();
 
         let next_tasks: Vec<NextTask<'_>> = match next_note {
@@ -222,7 +221,7 @@ pub(crate) fn reconcile_note_tasks(
 
             for next_task in &next_tasks {
                 let matched_index = find_matching_previous_task_index(
-                    &previous_tasks,
+                    &previous_lookup,
                     &used_previous_indexes,
                     next_task,
                 );
@@ -259,31 +258,7 @@ pub(crate) fn reconcile_note_tasks(
                     None => timestamp_millis,
                 };
 
-                upsert_task_row(
-                    &transaction,
-                    &TaskRecord {
-                        task_id: task_id.clone(),
-                        note_id: note.note_id.clone(),
-                        note_path: note_path_string.clone(),
-                        note_title: note_title.clone(),
-                        file_name: file_name.clone(),
-                        note_modified_millis,
-                        task_key: next_task.task_key.clone(),
-                        section_label: next_task.task.section_label.clone(),
-                        text: next_task.task.text.clone(),
-                        completed: next_task.task.completed,
-                        hidden,
-                        depth: next_task.task.depth,
-                        line_number: next_task.task.line_number,
-                        editor_line_number: next_task.task.editor_line_number,
-                        created_at_millis,
-                        updated_at_millis,
-                    },
-                    &next_task.text_lower,
-                    &note_title_lower,
-                )?;
-
-                surviving.push(TaskRecord {
+                let record = TaskRecord {
                     task_id,
                     note_id: note.note_id.clone(),
                     note_path: note_path_string.clone(),
@@ -300,7 +275,14 @@ pub(crate) fn reconcile_note_tasks(
                     editor_line_number: next_task.task.editor_line_number,
                     created_at_millis,
                     updated_at_millis,
-                });
+                };
+                upsert_task_row(
+                    &transaction,
+                    &record,
+                    &next_task.text_lower,
+                    &note_title_lower,
+                )?;
+                surviving.push(record);
             }
         }
 
@@ -355,6 +337,93 @@ fn load_previous_tasks(
     Ok(result)
 }
 
+/// Candidate lists preserve previous-row order so nearest-line ties retain the
+/// same identity as the linear policy. Keys borrow the loaded snapshot.
+struct PreviousTaskLookup<'a> {
+    previous: &'a [PreviousTask],
+    by_key: HashMap<&'a str, Vec<usize>>,
+    by_text: HashMap<&'a str, Vec<usize>>,
+    by_line: HashMap<usize, Vec<usize>>,
+}
+impl<'a> PreviousTaskLookup<'a> {
+    fn new(previous: &'a [PreviousTask]) -> Self {
+        let mut lookup = Self {
+            previous,
+            by_key: HashMap::new(),
+            by_text: HashMap::new(),
+            by_line: HashMap::new(),
+        };
+        for (index, task) in previous.iter().enumerate() {
+            lookup.by_key.entry(&task.task_key).or_default().push(index);
+            lookup
+                .by_text
+                .entry(&task.text_lower)
+                .or_default()
+                .push(index);
+            lookup
+                .by_line
+                .entry(task.line_number)
+                .or_default()
+                .push(index);
+        }
+        lookup
+    }
+    fn select(
+        &self,
+        candidates: Option<&Vec<usize>>,
+        used: &HashSet<usize>,
+        next: &NextTask<'_>,
+        matches: impl Fn(&PreviousTask) -> bool,
+    ) -> Option<usize> {
+        candidates?
+            .iter()
+            .copied()
+            .filter(|index| !used.contains(index) && matches(&self.previous[*index]))
+            .min_by_key(|index| {
+                self.previous[*index]
+                    .line_number
+                    .abs_diff(next.task.line_number)
+            })
+    }
+}
+
+fn find_matching_previous_task_index(
+    lookup: &PreviousTaskLookup<'_>,
+    used: &HashSet<usize>,
+    next: &NextTask<'_>,
+) -> Option<usize> {
+    let text = lookup.by_text.get(next.text_lower.as_str());
+    lookup
+        .select(
+            lookup.by_key.get(next.task_key.as_str()),
+            used,
+            next,
+            |_| true,
+        )
+        .or_else(|| {
+            lookup.select(text, used, next, |previous| {
+                previous.section_label == next.task.section_label
+                    && previous.depth == next.task.depth
+            })
+        })
+        .or_else(|| {
+            lookup.select(text, used, next, |previous| {
+                previous.section_label == next.task.section_label
+            })
+        })
+        .or_else(|| lookup.select(text, used, next, |_| true))
+        .or_else(|| {
+            lookup.select(
+                lookup.by_line.get(&next.task.line_number),
+                used,
+                next,
+                |_| true,
+            )
+        })
+}
+
+// Independent reference retained only for validating the indexed policy.
+#[cfg(test)]
 fn select_matching_previous_task_with<F>(
     previous_tasks: &[PreviousTask],
     used: &HashSet<usize>,
@@ -372,7 +441,8 @@ where
         .map(|(index, _)| index)
 }
 
-fn find_matching_previous_task_index(
+#[cfg(test)]
+fn find_matching_previous_task_index_linear(
     previous_tasks: &[PreviousTask],
     used: &HashSet<usize>,
     next_task: &NextTask<'_>,
@@ -485,8 +555,6 @@ fn soft_delete_task_row(
 
 pub(crate) fn set_hidden_for_task_id(task_id: &str, hidden: bool) -> Result<(), String> {
     with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         connection
             .execute(
                 "UPDATE app_state_note_tasks
@@ -507,8 +575,6 @@ pub(crate) fn delete_tasks_for_note_path(
 ) -> Result<Vec<String>, String> {
     let path_string = note_path.to_string_lossy().into_owned();
     with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         let mut note_ids = Vec::new();
         {
             let mut statement = connection
@@ -539,8 +605,6 @@ pub(crate) fn delete_tasks_for_note_path(
 /// Read all live (non-deleted) projection rows for a note id.
 pub(crate) fn load_tasks_for_note_id(note_id: &str) -> Result<Vec<TaskRecord>, String> {
     with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         load_tasks_where(
             connection,
             "note_id = ?1 AND deleted_at_millis IS NULL
@@ -552,8 +616,6 @@ pub(crate) fn load_tasks_for_note_id(note_id: &str) -> Result<Vec<TaskRecord>, S
 
 pub(crate) fn load_task_by_id(task_id: &str) -> Result<Option<TaskRecord>, String> {
     let tasks = with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         load_tasks_where(
             connection,
             "task_id = ?1 AND deleted_at_millis IS NULL
@@ -592,8 +654,6 @@ pub(crate) fn list_tasks_with_filter(
                  text_lower ASC";
 
     let mut tasks = with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         let query = format!(
             "SELECT task_id, note_id, note_path, note_title, file_name,
                     note_modified_millis, task_key, section_label, text, completed,
@@ -667,8 +727,6 @@ pub(crate) fn list_recent_open_tasks(
     }
     let fetch_limit = (limit + hidden_note_ids.len() + 16).max(limit * 2);
     let tasks = with_state_database_internal(|connection| {
-        ensure_state_schema_idempotent(connection)?;
-        ensure_task_projection_schema(connection)?;
         let mut statement = connection
             .prepare(
                 "SELECT task_id, note_id, note_path, note_title, file_name,
@@ -786,57 +844,181 @@ mod tests {
     use crate::test_support::{lock_test_env, TestDir};
     use std::path::PathBuf;
 
-    fn setup_app_data(label: &str) -> TestDir {
+    struct ProjectionFixture {
+        _storage: crate::state::AppStateStorage,
+        _root: TestDir,
+    }
+
+    fn setup_app_data(label: &str) -> ProjectionFixture {
         let app_data = TestDir::new(label);
         initialize_app_data_dir(app_data.path().to_path_buf()).expect("set app data dir");
         // app-state.sqlite3 (which backs the task projection) is now
         // vault-local; isolate it inside this test's temp dir.
         crate::state::set_notes_root_override(Some(app_data.path().to_path_buf()))
             .expect("override notes root");
-        app_data
+        let storage =
+            crate::state::AppStateStorage::bind(&crate::state::vault_data_dir().unwrap()).unwrap();
+        ProjectionFixture {
+            _storage: storage,
+            _root: app_data,
+        }
     }
 
     #[test]
-    fn reconcile_assigns_stable_task_ids_across_reorder() {
-        let _guard = lock_test_env();
-        let _app_data = setup_app_data("task-projection-reorder");
+    fn indexed_matching_preserves_linear_priority_used_rows_and_nearest_line_ties() {
+        let mut seed = 0x42_u64;
+        let mut draw = |bound: usize| {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            ((seed >> 32) as usize) % bound
+        };
+        for scenario in 0..100 {
+            let previous = (0..32)
+                .map(|index| PreviousTask {
+                    task_id: index.to_string(),
+                    task_key: format!("key-{}", draw(8)),
+                    text_lower: format!("text-{}", draw(6)),
+                    section_label: (draw(3) != 0).then(|| format!("section-{}", draw(3))),
+                    completed: draw(2) == 0,
+                    depth: draw(3),
+                    line_number: draw(24),
+                    created_at_millis: 1,
+                    updated_at_millis: 1,
+                    hidden: draw(2) == 0,
+                })
+                .collect::<Vec<_>>();
+            let lookup = PreviousTaskLookup::new(&previous);
+            let mut used = (0..32).filter(|_| draw(4) == 0).collect::<HashSet<_>>();
+            for step in 0..48 {
+                let task = IndexedTask {
+                    section_label: (draw(3) != 0).then(|| format!("section-{}", draw(4))),
+                    text: format!("text-{}", draw(8)),
+                    completed: false,
+                    depth: draw(4),
+                    line_number: draw(32),
+                    editor_line_number: None,
+                };
+                let next = NextTask {
+                    text_lower: task.text.clone(),
+                    task_key: format!("key-{}", draw(16)),
+                    task: &task,
+                };
+                let expected = find_matching_previous_task_index_linear(&previous, &used, &next);
+                assert_eq!(
+                    find_matching_previous_task_index(&lookup, &used, &next),
+                    expected,
+                    "scenario={scenario} step={step}"
+                );
+                if let Some(index) = expected {
+                    used.insert(index);
+                }
+            }
+        }
+        // Equal-distance duplicate keys preserve the earlier stored row, even
+        // when a lower-priority text candidate is closer to the requested line.
+        let make = |key: &str, text: &str, line: usize| PreviousTask {
+            task_id: line.to_string(),
+            task_key: key.into(),
+            text_lower: text.into(),
+            section_label: None,
+            completed: false,
+            depth: 0,
+            line_number: line,
+            created_at_millis: 1,
+            updated_at_millis: 1,
+            hidden: false,
+        };
+        let previous = vec![
+            make("key", "old", 4usize),
+            make("key", "old", 6),
+            make("other", "new", 5),
+        ];
+        let task = IndexedTask {
+            section_label: None,
+            text: "new".into(),
+            completed: false,
+            depth: 0,
+            line_number: 5,
+            editor_line_number: None,
+        };
+        let next = NextTask {
+            task: &task,
+            text_lower: "new".into(),
+            task_key: "key".into(),
+        };
+        let lookup = PreviousTaskLookup::new(&previous);
+        assert_eq!(
+            find_matching_previous_task_index(&lookup, &HashSet::new(), &next),
+            Some(0)
+        );
+        assert_eq!(
+            find_matching_previous_task_index(&lookup, &HashSet::from([0]), &next),
+            Some(1)
+        );
+        assert_eq!(
+            find_matching_previous_task_index(&lookup, &HashSet::from([0, 1]), &next),
+            Some(2)
+        );
+    }
 
-        let path = PathBuf::from("/notes/Project.md");
-        let first = build_indexed_note(&path, "# Project\n\n- [ ] Alpha\n- [ ] Beta\n", 100);
-        let second = build_indexed_note(&path, "# Project\n\n- [ ] Beta\n- [ ] Alpha\n", 200);
-
-        let outcome_first = reconcile_note_tasks(&path, Some(&first), &first.note_id, 100)
-            .expect("reconcile first");
-        let alpha_id = outcome_first
-            .tasks
-            .iter()
-            .find(|task| task.text == "Alpha")
-            .map(|task| task.task_id.clone())
-            .expect("alpha row");
-        let beta_id = outcome_first
-            .tasks
-            .iter()
-            .find(|task| task.text == "Beta")
-            .map(|task| task.task_id.clone())
-            .expect("beta row");
-
-        let outcome_second = reconcile_note_tasks(&path, Some(&second), &second.note_id, 200)
-            .expect("reconcile second");
-        let alpha_after = outcome_second
-            .tasks
-            .iter()
-            .find(|task| task.text == "Alpha")
-            .map(|task| task.task_id.clone())
-            .expect("alpha row after");
-        let beta_after = outcome_second
-            .tasks
-            .iter()
-            .find(|task| task.text == "Beta")
-            .map(|task| task.task_id.clone())
-            .expect("beta row after");
-
-        assert_eq!(alpha_id, alpha_after, "alpha id should survive reorder");
-        assert_eq!(beta_id, beta_after, "beta id should survive reorder");
+    #[test]
+    #[ignore = "diagnostic scale measurement; no machine-dependent acceptance threshold"]
+    fn measure_stable_task_matching_candidate_work() {
+        for count in [100, 1000] {
+            let markdown = (0..count)
+                .map(|n| format!("- [ ] Task {n}\n"))
+                .collect::<String>();
+            let note = build_indexed_note(Path::new("/notes/Scale.md"), &markdown, 1);
+            let previous = note
+                .tasks
+                .iter()
+                .map(|task| PreviousTask {
+                    task_id: task.line_number.to_string(),
+                    task_key: task_key(&note.note_id, task),
+                    text_lower: normalize_text(&task.text),
+                    section_label: task.section_label.clone(),
+                    completed: false,
+                    depth: task.depth,
+                    line_number: task.line_number,
+                    created_at_millis: 1,
+                    updated_at_millis: 1,
+                    hidden: false,
+                })
+                .collect::<Vec<_>>();
+            let lookup = PreviousTaskLookup::new(&previous);
+            let comparisons = std::cell::Cell::new(0usize);
+            let mut indexed_elapsed = std::time::Duration::ZERO;
+            let mut used = HashSet::new();
+            let start = std::time::Instant::now();
+            for (index, task) in note.tasks.iter().enumerate() {
+                let next = NextTask {
+                    task,
+                    text_lower: normalize_text(&task.text),
+                    task_key: task_key(&note.note_id, task),
+                };
+                let measured = select_matching_previous_task_with(
+                    &previous,
+                    &used,
+                    &next,
+                    |previous, next| {
+                        comparisons.set(comparisons.get() + 1);
+                        previous.task_key == next.task_key
+                    },
+                );
+                assert_eq!(measured, Some(index));
+                let indexed_start = std::time::Instant::now();
+                let indexed = find_matching_previous_task_index(&lookup, &used, &next);
+                indexed_elapsed += indexed_start.elapsed();
+                assert_eq!(indexed, measured);
+                assert_eq!(lookup.by_key[&*next.task_key].len(), 1);
+                used.insert(index);
+            }
+            assert_eq!(comparisons.get(), count * (count + 1) / 2);
+            eprintln!(
+                "TASK_MATCH_DIAGNOSTIC tasks={count} key_comparisons={} linear_plus_indexed_debug_micros={} indexed_debug_micros={}",
+                comparisons.get(),
+                start.elapsed().as_micros(), indexed_elapsed.as_micros()
+            );
+        }
     }
 
     #[test]
@@ -848,10 +1030,12 @@ mod tests {
         let initial = reconcile_note_tasks(&path, Some(&first), &first.note_id, 100).unwrap();
         let alpha_id = initial.tasks[0].task_id.clone();
         let child_id = initial.tasks[1].task_id.clone();
+        let beta_id = initial.tasks[2].task_id.clone();
         let moved = PathBuf::from("/notes/Moved.md");
         let mut next = build_indexed_note(&moved, "# Project\n\n- [ ] Beta\n- [ ] Alpha @due(2026-10-03)\n  - [ ] Child @due(2026-10-02)\n", 200);
         next.note_id = first.note_id.clone();
         let after = reconcile_note_tasks(&moved, Some(&next), &next.note_id, 200).unwrap();
+        assert_eq!(after.tasks[0].task_id, beta_id);
         assert_eq!(after.tasks[1].task_id, alpha_id);
         assert_eq!(after.tasks[2].task_id, child_id);
         assert_eq!(

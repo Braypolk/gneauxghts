@@ -114,3 +114,6 @@ impl<'a> NoteTimeline<'a> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+#[path = "note_timeline/tests/fixtures.rs"]
+mod test_fixtures;

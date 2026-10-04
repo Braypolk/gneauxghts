@@ -59,22 +59,8 @@ const server = await createServer({
   plugins: [{
     name:'throwaway-atlas-comparison',
     enforce:'pre',
-    // Only this launcher replaces the browser fixture's Atlas data. /map source is intact.
-    transform(code, id) {
-      if (!id.split('?')[0].endsWith('/src/lib/e2e/browserBackend.ts')) return;
-      code = code.replace('const callbacks = new Map<number, TauriCallback>();', "let atlasPrototypeSource = 'vault'; const callbacks = new Map<number, TauriCallback>();");
-      const marker = "if (command === 'get_vault_atlas') {";
-      if (!code.includes(marker)) throw new Error('Atlas lab browser adapter no longer matches the fixture command boundary.');
-      return code.replace(marker, `if (['get_vault_atlas', 'search_vault_atlas', 'read_note', 'open_note'].includes(command)) {
-        if (command === 'get_vault_atlas') atlasPrototypeSource = new URLSearchParams(window.location.search).get('atlasPrototypeSource') || 'vault';
-        const result = await fetch('/__atlas-prototype/command', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,args,source:atlasPrototypeSource})});
-        if (!result.ok) throw new Error('Atlas comparison source unavailable');
-        return result.json();
-      }
-      ${marker}`);
-    },
     transformIndexHtml() {
-      return [{tag:'script',attrs:{type:'module'},children:`const badge=document.createElement('a');badge.href='/map/prototype?variant=treemap';badge.textContent='Atlas lab · read-only comparison';badge.style.cssText='position:fixed;top:5px;left:12px;z-index:9999;font:11px system-ui;color:#74958c;text-decoration:none';document.body.append(badge);`}];
+      return [{tag:'script',injectTo:'head-prepend',children:`let atlasPrototypeSource='vault';window.__GNEAUXGHTS_E2E_COMMANDS__=Object.fromEntries(['get_vault_atlas','search_vault_atlas','read_note','open_note'].map(command=>[command,async args=>{if(command==='get_vault_atlas')atlasPrototypeSource=new URLSearchParams(window.location.search).get('atlasPrototypeSource')||'vault';const result=await fetch('/__atlas-prototype/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,args,source:atlasPrototypeSource})});if(!result.ok)throw new Error('Atlas comparison source unavailable');return result.json();}]));`},{tag:'script',attrs:{type:'module'},children:`const badge=document.createElement('a');badge.href='/map/prototype?variant=treemap';badge.textContent='Atlas lab · read-only comparison';badge.style.cssText='position:fixed;top:5px;left:12px;z-index:9999;font:11px system-ui;color:#74958c;text-decoration:none';document.body.append(badge);`}];
     },
     configureServer(vite) {
       vite.middlewares.use('/__atlas-prototype', async (req, res) => {

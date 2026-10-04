@@ -1,32 +1,8 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { browser, $ } from '@wdio/globals';
+import { createLiveNativeEvaluation, invokeNative as invoke } from '../../support/liveNative';
 
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((cmd, input, done: (r: {
-    ok: boolean;
-    value?: unknown;
-    error?: string;
-  }) => void) => {
-    const native = window as typeof window & {
-      __TAURI_INTERNALS__: {
-        invoke: (c: string, a: Record<string, unknown>) => Promise<unknown>;
-      };
-    };
-    void native.__TAURI_INTERNALS__.invoke(cmd, input).then(value => done({ ok: true, value }), error => done({ ok: false, error: String(error) }));
-  }, command, args);
-  if (!result.ok)
-    throw new Error(result.error);
-  return result.value as T;
-}
-
-type Note = {
-  noteId: string;
-  path: string;
-  title: string;
-};
 type Answer = {
+  role: string;
   status: string;
   error?: string;
   content: string;
@@ -51,30 +27,13 @@ const live = process.env.GNEAUX_RESEARCH_NATIVE === '1' ? describe : describe.sk
 
 live('Bounded research worker through the real chat runtime', function() {
   this.timeout(900_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
   it('delivers actually read current and retained historical passages', async () => {
     const endpoint = process.env.GNEAUX_LIVE_ENDPOINT, model = process.env.GNEAUX_LIVE_MODEL, output = process.env.GNEAUX_LIVE_OUTPUT;
     assert(endpoint && model && output, 'Explicit local model and output path required');
-    await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', {
-      settings: {
-        ...settings, provider: 'local', model, localModel: model, localBaseUrl: endpoint, defaultAccess: 'approved', webAccess: 'off', reasoningEffort: 'medium'
-      }
-    });
-    await invoke('chat_set_local_model_capabilities', {
-      model, capabilities: {
-        tools: true, images: false, audio: false, video: false, reasoningEffort: 'medium'
-      }
-    });
-    const save = async (title: string, markdown: string, currentPath: string | null = null) => {
-      const note = await invoke<Note>('save_note', {
-        title, markdown, currentPath
-      });
-      assert(note.path.includes('gneauxghts-native-e2e-'), 'Synthetic disposable vault only');
-      await invoke('finalize_note_editing_window', { noteId: note.noteId });
-      await invoke('e2e_flush_vault_watcher_path', { path: note.path });
-      return note;
-    };
+    await evaluation.configure();
+    const save = evaluation.saveNote;
     const note = await save('Meridian research fixture', '# Meridian\n\nUnchanged background.');
     await invoke('chat_grant_note', { noteId: note.noteId });
     const start = new Date().toISOString();
@@ -93,14 +52,13 @@ live('Bounded research worker through the real chat runtime', function() {
       answer?: Answer;
     }> = [];
     const record = () => {
-      mkdirSync(dirname(resolve(output)), { recursive: true });
-      writeFileSync(output, JSON.stringify({
+      evaluation.artifact.write({
         endpoint, model, start, end, results
-      }, null, 2));
+      });
     };
     for (const scenario of ['current', 'historical', 'discovery', 'fallback', 'composed']) {
       const historical = scenario !== 'current';
-      const conversation = await invoke<{
+      const conversation: { id: string } = await invoke<{
         id: string;
       }>('chat_create_conversation', {
         request: {
@@ -128,15 +86,9 @@ live('Bounded research worker through the real chat runtime', function() {
         }
       });
       try {
-        await browser.waitUntil(async () => {
-          const c = await invoke<{
-            messages: Array<Answer & {
-              role: string;
-            }>;
-          }>('chat_get_conversation', { conversationId: conversation.id });
-          result.answer = c.messages.find(m => m.role === 'assistant');
-          return Boolean(result.answer && ['complete', 'failed', 'cancelled'].includes(result.answer.status));
-        }, { timeout: 300_000, interval: 1000 });
+        result.answer = await evaluation.waitForAnswer<Answer>(conversation.id, {
+          onUpdate: answer => { result.answer = answer; }
+        });
       }
       finally {
         record();

@@ -1,14 +1,12 @@
 use crate::{
     note,
     semantic::db::content_hash,
-    services::note_timeline::{NoteMutationWarning, PreparedRevisionPublication},
-    state::{atomic_write_note, is_forgotten_note_path, is_valid_note_path},
-    vault_watcher,
+    services::note_timeline::NoteMutationWarning,
+    state::{is_forgotten_note_path, is_valid_note_path},
 };
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
-    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -382,81 +380,6 @@ fn common_suffix_bytes(left: &str, right: &str) -> usize {
         .unwrap_or(0)
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn commit_note_review(
-    notes_dir: &Path,
-    path: String,
-    expected_base_hash: String,
-    markdown: String,
-) -> Result<CommitNoteReviewResult, String> {
-    let note_path = validate_existing_note_path(notes_dir, &path)?;
-    let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
-    if content_hash(&raw) != expected_base_hash {
-        return Ok(CommitNoteReviewResult {
-            status: "conflict".to_string(),
-            applied: None,
-            note_id: None,
-            message: Some("Note changed on disk.".to_string()),
-            commit_warning: None,
-        });
-    }
-    // A reviewed body is deliberately written back to the existing file. The
-    // generic update path may derive a new filename from the title/body; that
-    // is correct for ordinary saves but violates the review contract.
-    let normalized = note::normalize_wikilink_markdown(&markdown);
-    note::reject_chat_projection_write(&normalized)?;
-    let prepared = note::prepare_note_markdown(&normalized, Some(&raw), Some(None))?.0;
-    commit_canonical_note_review(notes_dir, path, expected_base_hash, &prepared)
-}
-
-pub(crate) fn commit_prepared_note_review(
-    notes_dir: &Path,
-    path: String,
-    expected_base_hash: String,
-    publication: &PreparedRevisionPublication,
-) -> Result<CommitNoteReviewResult, String> {
-    commit_canonical_note_review(
-        notes_dir,
-        path,
-        expected_base_hash,
-        publication.canonical_markdown(),
-    )
-}
-
-fn commit_canonical_note_review(
-    notes_dir: &Path,
-    path: String,
-    expected_base_hash: String,
-    canonical_markdown: &str,
-) -> Result<CommitNoteReviewResult, String> {
-    let note_path = validate_existing_note_path(notes_dir, &path)?;
-    let raw = fs::read_to_string(&note_path).map_err(|err| err.to_string())?;
-    if content_hash(&raw) != expected_base_hash {
-        return Ok(CommitNoteReviewResult {
-            status: "conflict".to_string(),
-            applied: None,
-            note_id: None,
-            message: Some("Note changed on disk.".to_string()),
-            commit_warning: None,
-        });
-    }
-    note::reject_chat_projection_write(canonical_markdown)?;
-    let expected_write = vault_watcher::record_expected_write(&note_path, canonical_markdown);
-    atomic_write_note(&note_path, canonical_markdown.as_bytes())?;
-    expected_write.commit();
-    Ok(CommitNoteReviewResult {
-        status: "committed".to_string(),
-        applied: Some(AppliedNoteChange {
-            kind: "updateNote".to_string(),
-            path: Some(note_path.to_string_lossy().into_owned()),
-            previous_path: Some(note_path.to_string_lossy().into_owned()),
-        }),
-        note_id: None,
-        message: None,
-        commit_warning: None,
-    })
-}
-
 pub(crate) fn plan_agent_update_commit(
     notes_dir: &Path,
     path: &str,
@@ -506,118 +429,6 @@ pub(crate) fn plan_agent_creation_commit(
     })
 }
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn commit_note_creation(
-    notes_dir: &Path,
-    title: String,
-    markdown: String,
-) -> Result<CommitNoteReviewResult, String> {
-    let preview = preview_note_creation(notes_dir, &title, &markdown)?;
-    let stem = crate::state::derive_file_stem_from_title_and_markdown(
-        &title,
-        &preview.proposed_editor_markdown,
-    );
-    let prepared =
-        note::prepare_note_markdown(&preview.proposed_editor_markdown, None, Some(None))?.0;
-    let path = loop {
-        let candidate = unique_creation_path(notes_dir, &stem);
-        let expected_write = vault_watcher::record_expected_write(&candidate, &prepared);
-        match create_note_without_overwrite(&candidate, prepared.as_bytes()) {
-            Ok(()) => {
-                expected_write.commit();
-                break candidate;
-            }
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => return Err(error.to_string()),
-        }
-    };
-    Ok(CommitNoteReviewResult {
-        status: "committed".to_string(),
-        applied: Some(AppliedNoteChange {
-            kind: "createNote".to_string(),
-            path: Some(path.to_string_lossy().into_owned()),
-            previous_path: None,
-        }),
-        note_id: None,
-        message: None,
-        commit_warning: None,
-    })
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub(crate) fn commit_note_creation_at_path(
-    notes_dir: &Path,
-    target_path: &Path,
-    title: String,
-    markdown: String,
-) -> Result<CommitNoteReviewResult, String> {
-    if title.trim().is_empty() {
-        return Err("A title is required for a new note.".to_string());
-    }
-    let target_path = canonical_agent_commit_target(notes_dir, target_path)?;
-    let normalized = note::normalize_wikilink_markdown(&markdown);
-    note::reject_chat_projection_write(&normalized)?;
-    let prepared = note::prepare_note_markdown(&normalized, None, Some(None))?.0;
-    commit_canonical_note_creation_at_path(notes_dir, &target_path, title, &prepared)
-}
-
-pub(crate) fn commit_prepared_note_creation_at_path(
-    notes_dir: &Path,
-    target_path: &Path,
-    title: String,
-    publication: &PreparedRevisionPublication,
-) -> Result<CommitNoteReviewResult, String> {
-    commit_canonical_note_creation_at_path(
-        notes_dir,
-        target_path,
-        title,
-        publication.canonical_markdown(),
-    )
-}
-
-fn commit_canonical_note_creation_at_path(
-    notes_dir: &Path,
-    target_path: &Path,
-    title: String,
-    canonical_markdown: &str,
-) -> Result<CommitNoteReviewResult, String> {
-    if title.trim().is_empty() {
-        return Err("A title is required for a new note.".to_string());
-    }
-    let target_path = canonical_agent_commit_target(notes_dir, target_path)?;
-    note::reject_chat_projection_write(canonical_markdown)?;
-    let expected_write = vault_watcher::record_expected_write(&target_path, canonical_markdown);
-    match create_note_without_overwrite(&target_path, canonical_markdown.as_bytes()) {
-        Ok(()) => {
-            expected_write.commit();
-            Ok(CommitNoteReviewResult {
-                status: "committed".to_string(),
-                applied: Some(AppliedNoteChange {
-                    kind: "createNote".to_string(),
-                    path: Some(target_path.to_string_lossy().into_owned()),
-                    previous_path: None,
-                }),
-                note_id: None,
-                message: None,
-                commit_warning: None,
-            })
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-            Ok(CommitNoteReviewResult {
-                status: "conflict".to_string(),
-                applied: None,
-                note_id: None,
-                message: Some(
-                    "The proposed creation path is now occupied; review the proposal again."
-                        .to_string(),
-                ),
-                commit_warning: None,
-            })
-        }
-        Err(error) => Err(error.to_string()),
-    }
-}
-
 pub(crate) fn editor_visible_content_hash(path: &Path, canonical_markdown: &str) -> String {
     let fallback_title = path
         .file_stem()
@@ -631,19 +442,6 @@ pub(crate) fn editor_visible_content_hash(path: &Path, canonical_markdown: &str)
     let (_, editor_markdown) =
         note::extract_file_name_title_and_body(&prepared_body, &fallback_title);
     content_hash(&editor_markdown)
-}
-
-fn create_note_without_overwrite(path: &Path, contents: &[u8]) -> std::io::Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    if let Err(error) = file.write_all(contents).and_then(|_| file.sync_all()) {
-        drop(file);
-        let _ = fs::remove_file(path);
-        return Err(error);
-    }
-    Ok(())
 }
 
 pub(crate) fn canonical_agent_commit_target(
@@ -831,9 +629,12 @@ fn context_after_matches(base: &str, pos: usize, after: Option<&str>) -> bool {
 }
 
 fn find_all(haystack: &str, needle: &str) -> Vec<usize> {
+    // match_indices skips overlaps ("ana" in "banana"), which could turn an
+    // ambiguous edit into a unique target. Every UTF-8 boundary is eligible.
     haystack
-        .match_indices(needle)
+        .char_indices()
         .map(|(offset, _)| offset)
+        .filter(|offset| haystack[*offset..].starts_with(needle))
         .collect()
 }
 
@@ -870,16 +671,10 @@ fn reject_chat_projection_path(path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        commit_note_creation, commit_note_review, commit_prepared_note_review, preview_note_change,
-        preview_note_change_from_working, preview_note_creation, preview_note_rewrite,
-        preview_note_rewrite_from_working, ProposedTextEdit,
+        preview_note_change, preview_note_change_from_working, preview_note_creation,
+        preview_note_rewrite, preview_note_rewrite_from_working, ProposedTextEdit,
     };
-    use crate::{
-        semantic::db::content_hash,
-        services::note_timeline::PreparedRevisionPublication,
-        state::initialize_app_data_dir,
-        test_support::{lock_test_env, TestDir},
-    };
+    use crate::{semantic::db::content_hash, test_support::TestDir};
     use std::fs;
 
     fn setup(name: &str) -> TestDir {
@@ -894,9 +689,6 @@ mod tests {
 
     #[test]
     fn previews_editable_body_without_writing_and_uses_utf16_offsets() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-preview-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-preview");
         let (path, _) = write_note(&dir, "Emoji.md", "# Emoji\n\nA 😀 old\n");
 
@@ -920,9 +712,6 @@ mod tests {
 
     #[test]
     fn previews_anchor_based_insert_at_the_end_of_a_note() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-append-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-append");
         let (path, _) = write_note(
             &dir,
@@ -953,9 +742,6 @@ mod tests {
 
     #[test]
     fn previews_append_and_prepend_without_boundary_anchors() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-boundary-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-boundary");
         let (path, _) = write_note(&dir, "Fixture.md", "# Fixture\n\nBody\n");
 
@@ -998,9 +784,6 @@ mod tests {
 
     #[test]
     fn repeated_insert_proposals_do_not_duplicate_existing_text() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-repeat-insert-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-repeat-insert");
         let (path, _) = write_note(&dir, "Fixture.md", "# Fixture\n\n- salami\n- pizza\n");
 
@@ -1023,9 +806,6 @@ mod tests {
 
     #[test]
     fn later_edits_fold_into_one_preview_against_the_saved_note() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-fold-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-fold");
         let (path, _) = write_note(
             &dir,
@@ -1071,9 +851,6 @@ mod tests {
 
     #[test]
     fn complete_rewrite_builds_a_review_without_writing() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-rewrite-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-rewrite");
         let (path, hash) = write_note(
             &dir,
@@ -1098,9 +875,6 @@ mod tests {
 
     #[test]
     fn complete_rewrite_folds_over_pending_work_and_rejects_noops() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-rewrite-fold-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
         let dir = setup("proposal-rewrite-fold");
         let (path, _) = write_note(&dir, "Plan.md", "# Plan\n\nOriginal body\n");
         let working = "Pending summary\n\nOriginal body";
@@ -1125,90 +899,158 @@ mod tests {
     }
 
     #[test]
-    fn creation_commit_recalculates_a_unique_path_and_never_overwrites() {
+    fn creation_preview_suggests_an_unoccupied_path_without_writing() {
         let root = TestDir::new("proposal-create-unique");
         fs::write(root.path().join("Checklist.md"), "existing").unwrap();
         let preview = preview_note_creation(root.path(), "Checklist", "- [ ] First").unwrap();
         assert!(preview.suggested_path.ends_with("Checklist 2.md"));
-
-        // A file can appear after preview; commit must calculate uniqueness again.
-        fs::write(root.path().join("Checklist 2.md"), "appeared later").unwrap();
-        let committed = commit_note_creation(
-            root.path(),
-            "Checklist".to_string(),
-            "- [ ] First".to_string(),
-        )
-        .unwrap();
-        let path = committed.applied.unwrap().path.unwrap();
-        assert!(path.ends_with("Checklist 3.md"));
+        assert!(!std::path::Path::new(&preview.suggested_path).exists());
         assert_eq!(
             fs::read_to_string(root.path().join("Checklist.md")).unwrap(),
             "existing"
-        );
-        assert_eq!(
-            fs::read_to_string(root.path().join("Checklist 2.md")).unwrap(),
-            "appeared later"
         );
     }
 
     #[test]
     fn commit_review_returns_conflict_without_overwriting() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-review-commit-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
-        let dir = setup("proposal-review-commit");
-        let (path, hash) = write_note(&dir, "Review.md", "# Review\n\nOld");
-        fs::write(&path, "# Review\n\nExternal").expect("external change");
-
-        let result =
-            commit_note_review(dir.path(), path.clone(), hash, "New".to_string()).expect("result");
-        assert_eq!(result.status, "conflict");
-        assert!(fs::read_to_string(path).expect("read").contains("External"));
+        let fixture = crate::test_support::TestVault::new("proposal-review-conflict");
+        let (path, hash) = write_note(&fixture.notes, "Review.md", "# Review\n\nOld");
+        fs::write(&path, "# Review\n\nExternal").unwrap();
+        let result = fixture.state.note_timeline().edit_note(
+            crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+            std::path::Path::new(&path),
+            None,
+            |current| {
+                if content_hash(current) != hash {
+                    return Err(crate::services::note_timeline::HistoryError::Stale(
+                        "Note changed on disk.".into(),
+                    ));
+                }
+                Ok("New".into())
+            },
+        );
+        assert!(matches!(
+            result,
+            Err(crate::services::note_timeline::HistoryError::Stale(_))
+        ));
+        assert_eq!(fs::read_to_string(path).unwrap(), "# Review\n\nExternal");
     }
 
     #[test]
     fn commit_review_preserves_existing_path_and_frontmatter() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-review-fixed-path-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
-        let dir = setup("proposal-review-fixed-path");
+        let fixture = crate::test_support::TestVault::new("proposal-review-fixed-path");
         let raw = "---\ncustom: keep\n---\n# Display title\n\nOld";
-        let (path, hash) = write_note(&dir, "Stable Path.md", raw);
-
-        let result =
-            commit_note_review(dir.path(), path.clone(), hash, "New".to_string()).expect("commit");
-
-        assert_eq!(result.status, "committed");
-        assert_eq!(
-            result.applied.and_then(|applied| applied.path),
-            Some(
-                fs::canonicalize(&path)
-                    .expect("canonical path")
-                    .to_string_lossy()
-                    .into_owned()
+        let (path, hash) = write_note(&fixture.notes, "Stable Path.md", raw);
+        let result = fixture
+            .state
+            .note_timeline()
+            .edit_note(
+                crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+                std::path::Path::new(&path),
+                None,
+                |current| {
+                    assert_eq!(content_hash(current), hash);
+                    Ok("# Display title\n\nNew".into())
+                },
             )
-        );
-        assert!(std::path::Path::new(&path).exists());
-        assert!(!dir.path().join("Display title.md").exists());
-        let saved = fs::read_to_string(path).expect("saved");
+            .unwrap();
+        assert_eq!(result.path(), std::path::Path::new(&path));
+        assert!(!fixture.notes.path().join("Display title.md").exists());
+        let saved = fs::read_to_string(path).unwrap();
         assert!(saved.contains("custom: keep"));
         assert!(saved.ends_with("New"));
+        assert!(result.warning().is_none());
     }
 
     #[test]
-    fn prepared_review_publishes_exact_canonical_bytes() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("proposal-exact-review-app-data");
-        initialize_app_data_dir(app_data.path().to_path_buf()).expect("app data");
-        let dir = setup("proposal-exact-review");
-        let (path, hash) = write_note(&dir, "Exact.md", "old");
-        let canonical = "---\ngneauxghts:\n  id: fixed-id\n  kind: note\n  updated_at: fixed-time\n---\n\nExact body\n";
-        let publication = PreparedRevisionPublication::for_test(canonical, "test-intent");
+    fn invalid_edit_combinations_return_actionable_errors_without_io() {
+        let replace = |old: &str| ProposedTextEdit::Replace {
+            old_text: Some(old.into()),
+            new_text: "X".into(),
+            context_before: None,
+            context_after: None,
+        };
+        let insert = |before: Option<&str>| ProposedTextEdit::Insert {
+            new_text: "X".into(),
+            context_before: before.map(str::to_string),
+            context_after: None,
+        };
+        for (edits, expected) in [
+            (vec![], "no edits"),
+            (vec![replace("absent")], "not found"),
+            (vec![replace("")], "non-empty oldText"),
+            (vec![insert(None)], "require context"),
+            (vec![insert(Some("abc")), insert(Some("abc"))], "overlap"),
+            (
+                vec![ProposedTextEdit::Append {
+                    new_text: "abc".into(),
+                }],
+                "already present",
+            ),
+            (
+                vec![ProposedTextEdit::Prepend {
+                    new_text: "abc".into(),
+                }],
+                "already present",
+            ),
+            (
+                vec![ProposedTextEdit::Append {
+                    new_text: "".into(),
+                }],
+                "non-empty newText",
+            ),
+            (
+                vec![ProposedTextEdit::Prepend {
+                    new_text: "".into(),
+                }],
+                "non-empty newText",
+            ),
+        ] {
+            let error = super::resolve_text_edits("abc", &edits).unwrap_err();
+            assert!(error.contains(expected), "{error}; expected {expected}");
+        }
+    }
 
-        let result = commit_prepared_note_review(dir.path(), path.clone(), hash, &publication)
-            .expect("commit exact prepared bytes");
+    #[test]
+    fn overlapping_occurrences_require_unambiguous_context() {
+        let replace = |before: Option<&str>| ProposedTextEdit::Replace {
+            old_text: Some("ana".into()),
+            new_text: "X".into(),
+            context_before: before.map(str::to_string),
+            context_after: None,
+        };
+        assert!(super::resolve_text_edits("banana", &[replace(None)])
+            .unwrap_err()
+            .contains("ambiguous"));
+        let edits = super::resolve_text_edits("banana", &[replace(Some("ban"))]).unwrap();
+        assert_eq!((edits[0].from, edits[0].to), (3, 6));
+        assert_eq!(super::find_all("ééé", "éé"), vec![0, 2]);
+        assert!(
+            super::resolve_text_edits("banana", &[replace(Some("b")), replace(Some("ban"))])
+                .unwrap_err()
+                .contains("overlap")
+        );
+    }
 
-        assert_eq!(result.status, "committed");
-        assert_eq!(fs::read_to_string(path).unwrap(), canonical);
+    #[test]
+    fn diff_hunks_reconstruct_utf16_content_including_matrix_fallback() {
+        let large_base = "old\n".repeat(1415);
+        let large_next = "new\n".repeat(1415);
+        for (base, next) in [
+            ("", "😀"),
+            ("😀", ""),
+            ("😀 old\nkeep\nend", "😀 new\nkeep\nfin"),
+            (&large_base, &large_next),
+        ] {
+            let mut actual: Vec<u16> = base.encode_utf16().collect();
+            for h in super::diff_preview_hunks(base, next).into_iter().rev() {
+                assert_eq!(
+                    String::from_utf16(&actual[h.base_from..h.base_to]).unwrap(),
+                    h.old_text
+                );
+                actual.splice(h.base_from..h.base_to, h.new_text.encode_utf16());
+            }
+            assert_eq!(String::from_utf16(&actual).unwrap(), next);
+        }
     }
 }

@@ -382,17 +382,17 @@ export function isDocumentOperationCurrent(
   );
 }
 
-export function applySessionSnapshotToDocument(
+type SnapshotAdoptionOptions = { preserveWorking?: boolean; preserveTags?: boolean };
+
+function applyExternalSnapshot(
   document: NoteDraftState,
-  snapshot: SessionSnapshot,
+  external: ExternalDocumentSnapshot,
+  warning: CommittedMutationWarning | null,
   {
     preserveWorking = false,
     preserveTags = preserveWorking && !tagsEqual(document.working.tags, document.savedBaseline?.content.tags)
-  }: { preserveWorking?: boolean; preserveTags?: boolean } = {}
+  }: SnapshotAdoptionOptions
 ) {
-  const external = externalDocumentSnapshotFromSession(
-    snapshot
-  );
   const tagsChanged = !preserveTags && !tagsEqual(document.working.tags, external.content.tags);
   const titleChanged =
     !preserveWorking &&
@@ -403,7 +403,7 @@ export function applySessionSnapshotToDocument(
 
   document.identity = external.identity;
   document.savedBaseline = external.savedBaseline;
-  document.publication.warning = snapshot.commitWarning ?? null;
+  document.publication.warning = warning;
   if (!preserveWorking) {
     document.working = { ...external.content };
   } else if (!preserveTags) {
@@ -419,41 +419,20 @@ export function applySessionSnapshotToDocument(
   return { titleChanged, markdownChanged };
 }
 
+export function applySessionSnapshotToDocument(
+  document: NoteDraftState,
+  snapshot: SessionSnapshot,
+  options: SnapshotAdoptionOptions = {}
+) {
+  return applyExternalSnapshot(document, externalDocumentSnapshotFromSession(snapshot), snapshot.commitWarning ?? null, options);
+}
+
 export function applyCommittedNoteToDocument(
   document: NoteDraftState,
   committed: NoteSession,
-  {
-    preserveWorking = false,
-    preserveTags = preserveWorking && !tagsEqual(document.working.tags, document.savedBaseline?.content.tags)
-  }: { preserveWorking?: boolean; preserveTags?: boolean } = {}
+  options: SnapshotAdoptionOptions = {}
 ) {
-  const external = externalDocumentSnapshotFromCommittedNote(
-    committed
-  );
-  const tagsChanged = !preserveTags && !tagsEqual(document.working.tags, external.content.tags);
-  const titleChanged =
-    !preserveWorking &&
-    document.working.title !== external.content.title;
-  const markdownChanged =
-    !preserveWorking &&
-    document.working.markdown !== external.content.markdown;
-
-  document.identity = external.identity;
-  document.savedBaseline = external.savedBaseline;
-  document.publication.warning = committed.commitWarning ?? null;
-  if (!preserveWorking) {
-    document.working = { ...external.content };
-  } else if (!preserveTags) {
-    document.working.tags = external.content.tags ? [...external.content.tags] : undefined;
-    document.working.tagsError = external.content.tagsError;
-  }
-  if (titleChanged || markdownChanged || tagsChanged) {
-    advanceRevision(document);
-  }
-  dispatchDocumentExternalSync(document, {
-    type: 'boundaryApplied'
-  });
-  return { titleChanged, markdownChanged };
+  return applyExternalSnapshot(document, externalDocumentSnapshotFromCommittedNote(committed), committed.commitWarning ?? null, options);
 }
 
 export function restoreTransientDraftToDocument(

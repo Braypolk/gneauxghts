@@ -1,4 +1,5 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
 interface FrameSample {
   loadingIndicatorVisible: boolean;
@@ -9,10 +10,23 @@ interface FrameSample {
 }
 
 async function samplePresentation(actionSelector: string) {
-  return browser.executeAsync((selector: string, done: (samples: FrameSample[]) => void) => {
+  const result = await browser.executeAsync((selector: string, done: (result: { samples: FrameSample[]; error?: string }) => void) => {
     const samples: FrameSample[] = [];
     const started = performance.now();
+    let frame = 0;
+    let finished = false;
+    const finish = (error?: string) => {
+      if (finished) return;
+      finished = true;
+      cancelAnimationFrame(frame);
+      clearTimeout(deadline);
+      done({ samples, ...(error ? { error } : {}) });
+    };
+    // Observe first reveal and the deliberately delayed700ms parser pass. This
+    // is a bounded observation window, not an assertion of eventual convergence.
+    const deadline = window.setTimeout(() => finish('Formatting observation did not receive animation frames within5s'), 5000);
     function sample() {
+      try {
       const scroller = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-scroller');
       if (scroller) {
         const rect = scroller.getBoundingClientRect();
@@ -29,12 +43,16 @@ async function samplePresentation(actionSelector: string) {
           visible: getComputedStyle(scroller).visibility === 'visible'
         });
       }
-      if (performance.now() - started < 1200) requestAnimationFrame(sample);
-      else done(samples);
+      if (performance.now() - started < 1200) frame = requestAnimationFrame(sample);
+      else finish();
+      } catch (error) { finish(String(error)); }
     }
-    requestAnimationFrame(sample);
-    document.querySelector<HTMLButtonElement>(selector)!.click();
+    frame = requestAnimationFrame(sample);
+    try { document.querySelector<HTMLButtonElement>(selector)!.click(); }
+    catch (error) { finish(String(error)); }
   }, actionSelector);
+  expect(result.error).toBeUndefined();
+  return result.samples;
 }
 
 function expectFormattedAndStable(frames: FrameSample[]) {
@@ -53,11 +71,11 @@ function expectFormattedAndStable(frames: FrameSample[]) {
 }
 
 async function seedLongNoteAndOpenBeta(sections = 220) {
-  await browser.url('/');
+  await resetBrowserWorkspace();
   await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
   const body = Array.from({ length: sections }, (_, i) => [
     `## Diagnostic heading ${i}`, '',
-    `Paragraph ${i} with **bold text**, *italic text*, and a [link](https://example.com).`
+    `Paragraph ${i} with **bold text**, *italic text*, ~~struck text~~, and ***nested emphasis*** with a [link](https://example.com).`
   ].join('\n')).join('\n\n');
   await browser.executeAsync((markdown: string, done: () => void) => {
     const w = window as typeof window & {
@@ -91,6 +109,43 @@ async function prepareAlphaResult(position: { anchor: number; head: number; scro
 }
 
 describe('note formatting on load', () => {
+  afterEach(async () => {
+    await browser.execute(() => {
+      const restore = (window as typeof window & { __restoreFormattingIdle?: () => void }).__restoreFormattingIdle;
+      restore?.();
+    });
+  });
+
+  it('renders bold, italic and strike styles on actual text and nested syntax spans', async () => {
+    await seedLongNoteAndOpenBeta(1);
+    await prepareAlphaResult({ anchor: 0, head: 0, scrollTop: 0 });
+    await $('button[aria-label="Open search result: Alpha note.md"]').click();
+    await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
+    await $('.cm-gn-strikethrough').waitForDisplayed();
+    const styles = await browser.execute(() => {
+      const leaf = (selector: string) => {
+        const mark = document.querySelector<HTMLElement>(selector)!;
+        return [...mark.querySelectorAll<HTMLElement>('*')].find(element => element.childElementCount === 0) ?? mark;
+      };
+      const strong = leaf('.cm-gn-strong');
+      const italic = leaf('.cm-gn-emphasis');
+      const strike = leaf('.cm-gn-strikethrough');
+      const nested = [...document.querySelectorAll<HTMLElement>('.cm-gn-strong, .cm-gn-emphasis')]
+        .flatMap(mark => [mark, ...mark.querySelectorAll<HTMLElement>('*')])
+        .find(element => element.childElementCount === 0 && element.textContent === 'nested emphasis')!;
+      return {
+        strong: { text: strong.textContent, weight: getComputedStyle(strong).fontWeight },
+        italic: { text: italic.textContent, style: getComputedStyle(italic).fontStyle },
+        strike: { text: strike.textContent, decoration: getComputedStyle(strike).textDecorationLine },
+        nested: { text: nested.textContent, weight: getComputedStyle(nested).fontWeight, style: getComputedStyle(nested).fontStyle }
+      };
+    });
+    expect(styles.strong).toEqual({ text: 'bold text', weight: '700' });
+    expect(styles.italic).toEqual({ text: 'italic text', style: 'italic' });
+    expect(styles.strike.text).toBe('struck text');
+    expect(styles.strike.decoration).toContain('line-through');
+    expect(styles.nested).toEqual({ text: 'nested emphasis', weight: '700', style: 'italic' });
+  });
   it('shows a short note without flashing the loading indicator', async () => {
     await seedLongNoteAndOpenBeta(1);
     await prepareAlphaResult({ anchor: 0, head: 0, scrollTop: 0 });
@@ -114,6 +169,13 @@ describe('note formatting on load', () => {
     // Leave the real parser intact; delay only its idle scheduler, as on native
     // WebKit where background work can start substantially later.
     await browser.execute(() => {
+      const originalRequest = window.requestIdleCallback;
+      const originalCancel = window.cancelIdleCallback;
+      (window as typeof window & { __restoreFormattingIdle?: () => void }).__restoreFormattingIdle = () => {
+        window.requestIdleCallback = originalRequest;
+        window.cancelIdleCallback = originalCancel;
+        delete (window as typeof window & { __restoreFormattingIdle?: () => void }).__restoreFormattingIdle;
+      };
       window.requestIdleCallback = callback => window.setTimeout(() => callback({
         didTimeout: true, timeRemaining: () => 0
       }), 700);

@@ -109,6 +109,7 @@ describe('semantic search readiness', () => {
   });
 
   it('offers recovery or resume only when needed', () => {
+    expect(readiness({ retryExhausted: true })).toMatchObject({ action: 'retry_semantic_index' });
     expect(readiness({ health: 'degraded' })).toMatchObject({ action: 'retry_semantic_index', guidance: 'Action needed' });
     expect(readiness({ health: 'paused', indexingPaused: true, indexingInProgress: true }))
       .toMatchObject({ state: 'paused', action: 'resume_semantic_indexing' });

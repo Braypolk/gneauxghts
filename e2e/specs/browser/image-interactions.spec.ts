@@ -1,4 +1,6 @@
 import { browser, expect, $, $$ } from '@wdio/globals';
+import { waitForTwoAnimationFrames } from '../../support/animationFrames';
+import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 async function insertMarkdown(markdown: string) {
   const content = await $('[data-testid="note-editor"] .cm-content');
   await browser.execute((element: HTMLElement, value: string) => {
@@ -22,10 +24,14 @@ async function selectImage() {
 }
 describe('image interactions', () => {
   beforeEach(async () => {
-    await browser.url('/');
-    await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
-    await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
+    await resetBrowserWorkspace();
     await browser.execute(() => { window.__GNEAUXGHTS_E2E__!.seedImageAsset('a b.png'); window.__GNEAUXGHTS_E2E__!.seedImageAsset('second.png'); });
+  });
+  afterEach(async () => {
+    await browser.execute(() => {
+      (window as any).__restoreImageClipboard?.();
+      delete (window as any).__imageNodes;
+    });
   });
   it('selects on the first body click for deletion and opens only on a subsequent click', async () => {
     const markdown = 'Before\n\n![[second.png|200]]\n\n![Other|200](a%20b.png)\n\nAfter';
@@ -78,7 +84,6 @@ describe('image interactions', () => {
         preview: document.querySelector('.gn-image-embed')!.getBoundingClientRect().left };
     });
     expect(Math.abs(alignment.source - alignment.preview)).toBeLessThan(1);
-    await browser.saveScreenshot('/tmp/gneauxghts-image-source.png');
     await browser.execute(() => { const bridge = (window as any).__GNEAUXGHTS_NATIVE_E2E__; bridge.setEditorSelection(bridge.readEditorState().editor.markdown.length, bridge.readEditorState().editor.markdown.length); });
     await selectImage();
     await browser.keys('Backspace');
@@ -90,14 +95,13 @@ describe('image interactions', () => {
     const markdown = `Before\n\n![First|200](a%20b.png)\n\n${'paragraph\n\n'.repeat(80)}![[second.png]]`;
     await insertMarkdown(markdown);
     await browser.execute(() => { (window as any).__GNEAUXGHTS_NATIVE_E2E__.setEditorSelection(0, 0); document.querySelector<HTMLElement>('.cm-scroller')!.scrollTop = 0; });
-    await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+    await waitForTwoAnimationFrames();
     await $('.gn-image-embed img').waitForDisplayed();
     await $('.gn-image-embed button[aria-label="Zoom image"]').click();
     await $('dialog.gn-image-viewer img').waitForDisplayed();
     await browser.keys('ArrowRight');
     await browser.waitUntil(async () => (await $('dialog header').getText()).includes('second.png'));
     await $('dialog.gn-image-viewer img').waitForDisplayed();
-    await browser.saveScreenshot('/tmp/gneauxghts-image-viewer.png');
     await browser.keys(['=', '=']);
     const before = await $('dialog img').getAttribute('style');
     const point = await browser.execute(() => { const box = document.querySelector('.stage')!.getBoundingClientRect(); return { x: Math.round(box.left + box.width / 2), y: Math.round(box.top + box.height / 2) }; });
@@ -228,16 +232,28 @@ describe('image interactions', () => {
     await browser.execute(() => {
       (window as any).__imageCopies = [];
       const original = DataTransfer.prototype.setData;
+      const clipboardDescriptor = Object.getOwnPropertyDescriptor(navigator.clipboard, 'writeText');
+      (window as any).__restoreImageClipboard = () => {
+        DataTransfer.prototype.setData = original;
+        if (clipboardDescriptor) Object.defineProperty(navigator.clipboard, 'writeText', clipboardDescriptor);
+        else delete (navigator.clipboard as any).writeText;
+        delete (window as any).__imageCopies;
+        delete (window as any).__restoreImageClipboard;
+      };
       DataTransfer.prototype.setData = function(type, value) { if (type === 'text/plain') (window as any).__imageCopies.push(value); original.call(this, type, value); };
       Object.defineProperty(navigator.clipboard, 'writeText', { configurable: true, value: async (value: string) => { (window as any).__imageCopies.push(value); } });
     });
-    await browser.keys(['Meta', 'c', '\uE000']);
-    expect(await browser.execute(() => (window as any).__imageCopies[0])).toBe('![Missing|120](missing.png "Preserved title")');
-    await browser.keys(['Meta', 'x', '\uE000']);
-    await browser.waitUntil(async () => !(await body()).includes('![Missing'));
-    await browser.keys(['Meta', 'z', '\uE000']);
-    await browser.waitUntil(async () => (await body()) === markdown);
-    expect(await $('.gn-image-embed img').isDisplayed()).toBe(true);
+    try {
+      await browser.keys(['Meta', 'c', '\uE000']);
+      expect(await browser.execute(() => (window as any).__imageCopies[0])).toBe('![Missing|120](missing.png "Preserved title")');
+      await browser.keys(['Meta', 'x', '\uE000']);
+      await browser.waitUntil(async () => !(await body()).includes('![Missing'));
+      await browser.keys(['Meta', 'z', '\uE000']);
+      await browser.waitUntil(async () => (await body()) === markdown);
+      expect(await $('.gn-image-embed img').isDisplayed()).toBe(true);
+    } finally {
+      await browser.execute(() => (window as any).__restoreImageClipboard?.());
+    }
   });
 
 });

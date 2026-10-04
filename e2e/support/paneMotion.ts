@@ -16,13 +16,13 @@ interface MotionFrame {
     layout: Record<string, { left: number; top: number; width: number; height: number }>;
   }[];
 }
-interface MotionResult { before: MotionFrame; frames: MotionFrame[]; maxGap: number }
+interface MotionResult { before: MotionFrame; frames: MotionFrame[]; maxGap: number; error?: string }
 
 export type PaneMotionAction = 'open' | 'close-left' | 'close-right' | 'open-chat' | 'open-current';
 
 /** Real workspace operation, sampled in the renderer with no per-frame IPC. */
 export async function samplePaneMotion(action: PaneMotionAction): Promise<MotionResult> {
-  return browser.executeAsync((action: PaneMotionAction, done: (result: MotionResult) => void) => {
+  const result = await browser.executeAsync((action: PaneMotionAction, done: (result: MotionResult) => void) => {
     const paneSelector = '[data-testid="workspace-pane"]';
     const originalEditors = new Map([...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => [
       pane.dataset.paneId!, pane.querySelector('.cm-editor')
@@ -83,15 +83,34 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
     const frames: ReturnType<typeof read>[] = [];
     const gaps: number[] = [];
     let last = performance.now();
+    let settledSince: number | null = null;
+    let finished = false;
+    let frameId = 0;
+    const expectedPanes = before.panes.length + (action.startsWith('open') ? 1 : -1);
+    const finish = (error?: string) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      cancelAnimationFrame(frameId);
+      done({ before, frames, maxGap: gaps.length ? Math.max(...gaps) : 0, ...(error ? { error } : {}) });
+    };
+    const deadline = setTimeout(() => finish(`Pane motion did not settle: ${action}`), 5000);
     const sample = () => {
+      if (finished) return;
       const frame = read();
       gaps.push(frame.time - last);
       last = frame.time;
       frames.push(frame);
-      if (frame.time - before.time < 700) requestAnimationFrame(sample);
-      else done({ before, frames, maxGap: Math.max(...gaps) });
+      const finiteAnimationRunning = document.querySelector('.notepad-shell')!
+        .getAnimations({ subtree: true }).some(animation =>
+          (animation.playState === 'running' || animation.pending) &&
+          animation.effect?.getTiming().iterations !== Infinity);
+      const settled = frame.panes.length === expectedPanes && !frame.moving && !frame.chatBusy && !finiteAnimationRunning;
+      settledSince = settled ? settledSince ?? frame.time : null;
+      if (settledSince !== null && frame.time - settledSince >= 80 && frame.time - before.time >= 100) finish();
+      else frameId = requestAnimationFrame(sample);
     };
-    requestAnimationFrame(sample);
+    frameId = requestAnimationFrame(sample);
     if (action === 'open' || action === 'open-chat' || action === 'open-current') {
       // Use the real split command. Quick choices are enabled by pointer entry.
       const button = document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!;
@@ -106,6 +125,8 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
         .querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
     }
   }, action);
+  if (result.error) throw new Error(result.error);
+  return result;
 }
 
 export function expectStableEntrance(result: MotionResult) {

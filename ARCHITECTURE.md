@@ -42,11 +42,11 @@ state references, independently of Tauri dispatch.
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Editing Window capture, deadlines, recovery, and finalization | `NoteTimeline`; workspace departure and save flushing remain with existing frontend owners |
 | Canonical task toggle, delete, and due-date behavior | `TaskMutationService` |
-| Pane navigation and document-departure ordering | `paneNavigationTransitionPipeline` |
+| Complete pane navigation, departure ordering, and location history | `NotepadWorkspaceSession` using concrete workspace/document owners and private operation admission |
 | Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
-| Chat availability, selection, and request lifecycle | `ChatControllerStore.machine` |
+| Chat availability, selection, request lifecycle, and admitted conversation projection | One aggregate ChatController transition; effects submit correlated results |
 | Durable conversations, runs, events, context, and proposal status | `ChatService` |
-| One active proposal review | `ProposalReviewSession.workflow` through `proposalReviewMachine` |
+| One active proposal review | `ProposalReviewSession.workflow` owns admission/commit; the retained document runtime owns editable body and hunk state |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
 | Device-local search runtime and model setup | `JinaLlamaEmbeddingProvider`; private `RuntimeInstaller` verifies and publishes pinned runtime files, and setup uses semantic work admission |
@@ -64,11 +64,19 @@ collision admits aliases to the established document; a path-only collision
 retains the established path binding without stealing either distinct identity
 alias.
 
+`NotepadWorkspaceSession` exposes named user operations and consumes the real
+WorkspaceStore and document owners. It privately owns per-pane supersession,
+serialized departure, destination application, and location bookkeeping. A
+restored location or picker choice uses the same private destination operation;
+it does not recursively start another public navigation operation. The UI supplies
+rendered effects, not getter/setter mirrors or a configurable phase program.
+
 `AppStore` is the sole frontend admission point for bundled bootstrap and the
 shared running/next-launch vault and semantic snapshots. Listener attachment is
 part of bootstrap admission and a failed attempt cleans partial listeners before
 retry. Snapshot loads and commands claim per-slice revisions when they start, so
-older results cannot replace newer events or operations. Settings retains only
+older results cannot replace newer events or operations. AppStore also owns complete Settings-view loading and next-launch vault staging;
+its snapshot revision/admission protocol stays private. Settings retains only
 its editable inputs, action state, and Settings-only diagnostics; the mounted
 Notepad session separately records whether an admitted bootstrap session has
 been adopted by the current editor lifetime.
@@ -102,17 +110,18 @@ Version Restore always starts a fresh shared undo root, including when only
 unmanaged properties changed; an unopened restore target requires no pane or
 document mutation.
 
-Before an app-owned writer publishes canonical bytes, it asks `NoteTimeline`
-to prepare the publication from path or lifecycle continuity evidence. Identity
-repair policy and managed-metadata representation remain hidden inside that
-operation; editor, task, proposal, and lifecycle writers never resolve or
-rewrite Note Identity themselves. For authored-state mutations, preparation
-also commits a durable intent to the private vault-owned SQLite history store
-before the Markdown write is admitted. Preparation returns an opaque intent
-identity that the writer carries through publication to exact finalization;
-finalization never rediscovers an intent from path, source, or content. Editor,
-task, and proposal flows remain under the shared note-file mutation owner from
-preparation through publication and history finalization. Identical authored
+Ordinary-note callers use complete `NoteTimeline` save, edit, or exclusive-create
+operations. Task and proposal owners supply their domain transform or approved
+content; they do not receive prepared tokens or orchestrate canonical writes,
+watcher suppression, abandonment, finalization, or projection repair. Target
+readiness is admitted before acquiring canonical file ownership and checked again
+inside it. The authoritative read and transform remain under that same ownership
+through durable preparation, publication, and finalization. Identity repair and
+managed metadata stay private. Preparation records the exact durable intent before
+Markdown publication; its identity and runtime leases never cross the caller seam.
+Version Restore shares the private publication lifetime while retaining its exact
+authored bytes, selected lineage, and reserved revision identity. External
+observation replay and staged lifecycle deletion retain their distinct protocols. Identical authored
 content captures without another Note Revision. Under the accepted Editing
 Window contract, distinct ordinary editor publications replace a durable pending
 endpoint; boundary finalization retains its net delta against the preceding
@@ -167,8 +176,9 @@ domain evidence attached to the prepared publication before Markdown is
 written; its reference survives finalization recovery and is removed with the
 retained timeline. The projection itself has no durable cache.
 
-An ordinary editor/task save crosses `note_persistence` into the complete
-`NoteTimeline.save_note` operation. It verifies the target before acquiring the
+An ordinary editor save (including a dirty editor task edit) crosses `note_persistence`
+into the complete `NoteTimeline.save_note` operation. Clean task commands instead submit
+their transform to `NoteTimeline.edit_note`. Each verifies the target before acquiring the
 file owner, drops its preflight lease before waiting for that owner, and then
 rechecks canonical identity, runtime proof and pending recovery under the
 existing observation replay lock. Changed admission releases the owner and
@@ -434,6 +444,23 @@ Markdown text, with a local-calendar clock for midnight and resume refresh.
 
 ### Proposals
 
+Editable proposal body and hunk coordinates/status have one document-runtime
+owner, shared by all pane render projections. An active review retains that
+runtime when the last pane leaves or the workspace route unmounts. A returning
+workspace reconnects callbacks to that same root; route disposal retires local
+navigation and review admissions without making proposed bytes eligible for
+ordinary autosave. Durable settlement uses route-independent API calls and an
+already-admitted completion may settle its exact retained document once.
+The global review workflow owns admission and
+durable completion; it does not retain a pane editor or fallback text/hunk copies.
+Keep/undo operations address the retained review identity, including without a
+mounted pane. `NotepadWorkspaceSession.presentReviewDocument` owns explicit review
+presentation; passive arrivals only inspect existing rendered capabilities. Explicit
+reload addresses the retained document, reads and adopts canonical content, and
+rejects stale read completion. Terminal resolution releases review retention, saves
+any remaining ordinary edits, and then reclaims a clean unreferenced document.
+Follow-on save errors remain visible without retrying the durable proposal action.
+
 Agent tools create durable proposals rather than writing notes. Keeping a
 proposal commits through the proposal domain and `NoteTimeline`, then
 synchronizes durable proposal status.
@@ -484,16 +511,52 @@ session cannot mistake an older restore for the new result.
 - Recoverable errors stay on the state whose actions remain valid.
 - Durable terminal work is not reopened implicitly; retry starts a new
   operation or uses an explicit recovery transition.
-- Navigation that leaves a document crosses the shared document-departure
-  phase before history or workspace state changes.
+- Navigation that leaves a document crosses the workspace session's private
+  departure operation before history or workspace state changes. Callers cannot
+  bypass it by asserting that a document was already saved.
+
+The semantic worker claims one job category from its existing queue. Unselected
+work stays in place and newer producers coalesce there; successful jobs never
+reconstruct an old deferred batch over new work. Job outcomes return directly to
+the scheduler. Retry requeues only claimed work under the newer-wins policy,
+including Atlas request batches; runtime status is not a result mailbox.
+
+Atlas retains its last response for display across route changes but revalidates
+on every activation. Backend publication compatibility decides freshness; a cached
+ready flag cannot prove that no changes occurred while listeners were detached.
+Atlas owns complete cache clearing. Chat defaults and Atlas chat visibility use
+separate backend column updates, so stale settings forms cannot overwrite the
+other operation's fields.
+
+Atlas keeps one semantic worker queue and immutable published generations. Its
+private `semantic/atlas/publication.rs` owns generation/label publication, ready
+pointers, compatibility and garbage collection. `geometry.rs` contains the coupled
+graph, community and layout calculations; `query.rs` owns search scoring. The
+worker retains its existing supersession checkpoints between calculation stages
+and before pointer publication. These private modules introduce no second owner
+or public facade, and numerical policies remain explicit in `semantic/similarity.rs`.
+
+Chat's frontend transition admits selection/request events and their conversation
+projection together, then notifies the existing Readable boundary once. Effects
+cannot separately patch selected conversation data after rejected admission. The
+controller owns first-send draft creation and exposes its promotion identity;
+the composer retains text, attachments, draft persistence, and the editor save
+barrier without coordinating create-then-send timing.
 
 ## Agent runtime
 
 `agent_run_coordinator.rs` is the chat-to-runtime handoff.
 `agent_runtime.rs` adapts the selected provider to an app-owned request and
 event protocol. `ChatService` retains durable run lifecycle and context
-assembly. It serializes managed transcript publication (filesystem bytes and
-SQLite hash receipts) with conflict classification. The watcher rechecks current
+assembly. Private `chat/admission.rs` commits the user message, attachments,
+assistant placeholder, run, and context in one transaction. Private `chat/store.rs`
+owns connection policy and atomic terminal message/source/run persistence; all
+connections enforce foreign keys. `chat/runtime.rs` reports successful completion
+only after that transaction commits. Each streamed delta retains its independent
+commit through one connection per response. `chat/projection.rs` serializes managed
+transcript publication (filesystem bytes and SQLite hash receipts) with conflict
+classification; a projection failure after admission cannot reject an already
+accepted request. The watcher rechecks current
 projection bytes after publication; queued own-write events cannot detach chats. Provider and runtime-library types do not cross those seams.
 
 At startup, `ChatService` recovers missing conversation identities from surviving
@@ -745,8 +808,9 @@ measurements are not part of the architecture map.
 Architecture fitness tests protect ownership and routing; behavior tests
 protect outcomes.
 
-- `src/lib/architectureFitness.test.ts` checks frontend state ownership and
-  reducer seams.
+- `src/lib/architectureFitness.test.ts` checks frontend owner separation, external-sync write routing and
+  capability bypasses. Document shapes and reducer behavior are checked by types
+  and behavioral tests rather than duplicating their implementation in source scans.
 - `src-tauri/tests/architecture_fitness.rs` checks backend write routing, the
   storage-neutral role-limited `NoteTimeline` seam, chat run correlation,
   permissions, and semantic-work ownership.

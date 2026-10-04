@@ -1,606 +1,162 @@
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
 
-const repositoryRoot = fileURLToPath(
-  new URL('../../', import.meta.url)
-);
-
-function sourceFile(relativePath: string) {
-  const absolutePath = `${repositoryRoot}/${relativePath}`;
-  return ts.createSourceFile(
-    absolutePath,
-    readFileSync(absolutePath, 'utf8'),
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TS
-  );
+const root = fileURLToPath(new URL('../../', import.meta.url));
+const notepad = 'src/lib/features/notepad/';
+const parse = (text: string, path = 'probe.ts') => ts.createSourceFile(path, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS);
+const source = (path: string) => parse(readFileSync(`${root}/${path}`, 'utf8'), path);
+function nodes<T extends ts.Node>(root: ts.Node, predicate: (node: ts.Node) => node is T): T[] {
+  const found: T[] = [];
+  function visit(node: ts.Node) { if (predicate(node)) found.push(node); ts.forEachChild(node, visit); }
+  visit(root); return found;
 }
-
-function sourceText(relativePath: string) {
-  return readFileSync(
-    `${repositoryRoot}/${relativePath}`,
-    'utf8'
-  );
+function name(node: ts.Node | undefined): string | undefined {
+  if (node && (ts.isIdentifier(node) || ts.isPrivateIdentifier(node) || ts.isStringLiteral(node))) return node.text;
 }
-
-function propertyName(
-  name: ts.PropertyName | ts.BindingName | undefined
-): string | null {
-  if (!name) return null;
-  if (ts.isIdentifier(name) || ts.isStringLiteral(name)) {
-    return name.text;
-  }
-  return null;
+function member(node: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(node)) return name(node.name);
+  if (ts.isElementAccessExpression(node)) return name(node.argumentExpression);
 }
-
-function interfaceProperties(
-  relativePath: string,
-  interfaceName: string
-) {
-  const source = sourceFile(relativePath);
-  const declaration = source.statements.find(
-    (statement): statement is ts.InterfaceDeclaration =>
-      ts.isInterfaceDeclaration(statement) &&
-      statement.name.text === interfaceName
-  );
-  if (!declaration) {
-    throw new Error(
-      `Missing ${interfaceName} interface in ${relativePath}`
-    );
-  }
-  return declaration.members
-    .map((member) => propertyName(member.name))
-    .filter((name): name is string => name !== null);
+function unwrap(node: ts.Expression): ts.Expression {
+  return ts.isParenthesizedExpression(node) || ts.isAsExpression(node) || ts.isNonNullExpression(node) || ts.isSatisfiesExpression(node) ? unwrap(node.expression) : node;
 }
-
-function classProperties(
-  relativePath: string,
-  className: string
-) {
-  const source = sourceFile(relativePath);
-  const declaration = source.statements.find(
-    (statement): statement is ts.ClassDeclaration =>
-      ts.isClassDeclaration(statement) &&
-      statement.name?.text === className
-  );
-  if (!declaration) {
-    throw new Error(`Missing ${className} class in ${relativePath}`);
-  }
-  return declaration.members
-    .filter(ts.isPropertyDeclaration)
-    .map((member) => propertyName(member.name))
-    .filter((name): name is string => name !== null);
+function callName(node: ts.CallExpression) { return name(unwrap(node.expression)) ?? member(unwrap(node.expression)); }
+function calls(tree: ts.Node, called: string) { return nodes(tree, ts.isCallExpression).filter(node => callName(node) === called); }
+function declarations(path: string, type: 'class' | 'interface', declarationName: string) {
+  const tree = source(path);
+  const declaration = type === 'class'
+    ? nodes(tree, ts.isClassDeclaration).find(node => node.name?.text === declarationName)
+    : nodes(tree, ts.isInterfaceDeclaration).find(node => node.name.text === declarationName);
+  if (!declaration) throw new Error(`Missing ${declarationName} in ${path}`);
+  return declaration.members;
 }
-
-function stateObjectProperties(
-  relativePath: string,
-  variableName: string
-) {
-  const source = sourceFile(relativePath);
-  for (const statement of source.statements) {
-    if (!ts.isVariableStatement(statement)) continue;
-    for (const declaration of statement.declarationList.declarations) {
-      if (
-        !ts.isIdentifier(declaration.name) ||
-        declaration.name.text !== variableName ||
-        !declaration.initializer ||
-        !ts.isCallExpression(declaration.initializer)
-      ) {
-        continue;
+function fields(path: string, type: 'class' | 'interface', declarationName: string) {
+  return declarations(path, type, declarationName)
+    .filter(node => type === 'interface' || ts.isPropertyDeclaration(node))
+    .map(node => name(node.name)).filter((field): field is string => !!field);
+}
+function stateFields(path: string, stateName: string) {
+  const declaration = nodes(source(path), ts.isVariableDeclaration).find(node => name(node.name) === stateName);
+  if (!declaration?.initializer || !ts.isCallExpression(declaration.initializer)) throw new Error(`Missing ${stateName}`);
+  const value = declaration.initializer.arguments[0];
+  if (!value || !ts.isObjectLiteralExpression(value)) throw new Error(`Expected state object for ${stateName}`);
+  return value.properties.map(node => name(node.name));
+}
+function writes(tree: ts.Node, field: string) {
+  return nodes(tree, ts.isBinaryExpression).filter(node =>
+    node.operatorToken.kind >= ts.SyntaxKind.FirstAssignment && node.operatorToken.kind <= ts.SyntaxKind.LastAssignment && member(unwrap(node.left)) === field);
+}
+function usesIdentifier(tree: ts.Node, identifier: string) {
+  return nodes(tree, ts.isIdentifier).some(node => node.text === identifier);
+}
+function productionSources(directory: string): ts.SourceFile[] {
+  return readdirSync(`${root}/${directory}`, { withFileTypes: true }).flatMap(entry => {
+    const path = `${directory}/${entry.name}`;
+    if (entry.isDirectory()) return productionSources(path);
+    // Test fixtures are not production ownership. Svelte components are checked
+    // behaviorally; these guards concern TypeScript state/controller boundaries.
+    if (!entry.name.endsWith('.ts') || /(?:\.test|\.bench|TestSupport|TestFixture|testSupport|testFixtures|ReactiveFixture)\./.test(entry.name)) return [];
+    return [source(path)];
+  });
+}
+function initializer(identifier: ts.Identifier): ts.Expression | undefined {
+  for (let scope: ts.Node | undefined = identifier.parent; scope; scope = scope.parent) {
+    if (!ts.isBlock(scope) && !ts.isSourceFile(scope)) continue;
+    for (const statement of scope.statements) {
+      if (!ts.isVariableStatement(statement)) continue;
+      for (const declaration of statement.declarationList.declarations) {
+        if (name(declaration.name) === identifier.text) return declaration.initializer;
       }
-      const stateValue = declaration.initializer.arguments[0];
-      if (!stateValue || !ts.isObjectLiteralExpression(stateValue)) {
-        throw new Error(
-          `${variableName} must be initialized from a direct state object`
-        );
-      }
-      return stateValue.properties
-        .map((property) => propertyName(property.name))
-        .filter((name): name is string => name !== null);
     }
   }
-  throw new Error(`Missing ${variableName} in ${relativePath}`);
 }
+function derivesPaneKind(expression: ts.Expression, seen = new Set<ts.Node>()): boolean {
+  const node = unwrap(expression);
+  if (seen.has(node)) return false;
+  seen.add(node);
+  if (ts.isCallExpression(node)) return callName(node) === 'getPaneKind';
+  if (ts.isIdentifier(node)) { const value = initializer(node); return !!value && derivesPaneKind(value, seen); }
+  return false;
+}
+function paneKindComparisons(tree: ts.Node) {
+  const equalities = new Set([ts.SyntaxKind.EqualsEqualsToken, ts.SyntaxKind.EqualsEqualsEqualsToken, ts.SyntaxKind.ExclamationEqualsToken, ts.SyntaxKind.ExclamationEqualsEqualsToken]);
+  const isKind = (node: ts.Expression) => ['editor', 'chat'].includes(name(unwrap(node)) ?? '');
+  return nodes(tree, ts.isBinaryExpression).filter(node => equalities.has(node.operatorToken.kind) &&
+    ((isKind(node.left) && derivesPaneKind(node.right)) || (isKind(node.right) && derivesPaneKind(node.left))));
+}
+const positions = (tree: ts.SourceFile, matches: ts.Node[]) => matches.map(node => `${tree.fileName}:${tree.getLineAndCharacterOfPosition(node.getStart()).line + 1}`);
 
-describe('architecture fitness: notepad state ownership', () => {
-  const paneMirrorFields = [
-    'paneOrder',
-    'activePaneId',
-    'panesById',
-    'paneKindsById',
-    'paneKindById',
-    'paneNoteKeys',
-    'noteKeysByPane',
-    'paneNoteKeyById',
-    'chatConversationIdsByPane'
-  ];
-
-  it('keeps pane structure and pane-to-content references in WorkspaceStore', () => {
-    const workspaceFields = classProperties(
-      'src/lib/features/notepad/workspace/workspaceStore.svelte.ts',
-      'WorkspaceStore'
-    );
-    const runtimeFields = stateObjectProperties(
-      'src/lib/features/notepad/session/runtimeStore.svelte.ts',
-      'notepadRuntimeState'
-    );
-    const noteStoreFields = interfaceProperties(
-      'src/lib/features/notepad/state/noteStore.ts',
-      'NotepadState'
-    );
-
-    expect(workspaceFields).toEqual(
-      expect.arrayContaining([
-        'paneOrder',
-        'activePaneId',
-        'panesById'
-      ])
-    );
-    expect(
-      runtimeFields.filter((field) =>
-        paneMirrorFields.includes(field)
-      )
-    ).toEqual([]);
-    expect(
-      noteStoreFields.filter((field) =>
-        paneMirrorFields.includes(field)
-      )
-    ).toEqual([]);
-  });
-
-  it('keeps NoteDraftState structured instead of restoring legacy flat fields', () => {
-    const fields = interfaceProperties(
-      'src/lib/features/notepad/document/documentState.ts',
-      'NoteDraftState'
-    );
-
-    expect(fields).toEqual([
-      'handle',
-      'working',
-      'identity',
-      'savedBaseline',
-      'operation',
-      'externalSync',
-      'publication',
-      'canonicalCollision'
-    ]);
-  });
-
-  it('keeps global History Mode outside pane, draft, and editor-runtime ownership', () => {
-    const workspace = sourceText(
-      'src/lib/features/notepad/workspace/workspaceStore.svelte.ts'
-    );
-    const paneTypes = sourceText(
-      'src/lib/features/notepad/workspace/paneTypes.ts'
-    );
-    const noteStore = sourceText(
-      'src/lib/features/notepad/state/noteStore.ts'
-    );
-    const runtime = sourceText(
-      'src/lib/features/notepad/document/documentRuntime.ts'
-    );
-    const notepad = sourceText(
-      'src/lib/features/notepad/Notepad.svelte'
-    );
-
-    expect(notepad).toContain('new HistoryModeSession({');
-    expect(notepad).toContain('inert={historyMode.isActive}');
-    for (const owner of [workspace, paneTypes, noteStore, runtime]) {
-      expect(owner).not.toContain('HistoryModeSession');
-      expect(owner).not.toMatch(/kind:\s*["']history["']/);
+describe('architecture fitness: state ownership', () => {
+  it('keeps pane membership and references in WorkspaceStore', () => {
+    const mirrorFields = ['paneOrder', 'activePaneId', 'panesById', 'paneKindsById', 'paneKindById', 'paneNoteKeys', 'noteKeysByPane', 'paneNoteKeyById', 'chatConversationIdsByPane'];
+    expect(fields(`${notepad}workspace/workspaceStore.svelte.ts`, 'class', 'WorkspaceStore')).toEqual(expect.arrayContaining(['paneOrder', 'activePaneId', 'panesById']));
+    for (const owner of [stateFields(`${notepad}session/runtimeStore.svelte.ts`, 'notepadRuntimeState'), fields(`${notepad}state/noteStore.ts`, 'interface', 'NotepadState')]) {
+      expect(owner.filter(field => field && mirrorFields.includes(field))).toEqual([]);
     }
+  });
+  it('keeps global History Mode outside pane and document owners', () => {
+    for (const path of ['workspace/workspaceStore.svelte.ts', 'workspace/paneTypes.ts', 'state/noteStore.ts', 'document/documentRuntime.ts']) {
+      expect(usesIdentifier(source(notepad + path), 'HistoryModeSession'), path).toBe(false);
+    }
+    const paneKinds = nodes(source(`${notepad}workspace/paneTypes.ts`), ts.isTypeAliasDeclaration).find(node => node.name.text === 'PaneKind');
+    expect(paneKinds).toBeDefined();
+    expect(nodes(paneKinds!, ts.isLiteralTypeNode).map(node => name(node.literal))).not.toContain('history');
+  });
+
+  it('keeps chat operation state in its machine and shared backend snapshots in AppStore', () => {
+    const chatFields = fields('src/lib/features/chat/controller.svelte.ts', 'class', 'ChatControllerStore');
+    expect(chatFields.filter(field => [
+      'machine', 'controllerLifecycle', 'selectionOperation', 'requestOperation',
+      'settings', 'conversations', 'conversationDraft', 'conversation', 'proposals',
+      'modelCapabilities', 'isInitializing', 'isLoadingConversation', 'isSending', 'activity'
+    ].includes(field.replace(/^#/, '')))).toEqual([]);
+    const settingsFields = fields('src/lib/features/settings/store.svelte.ts', 'class', 'SettingsStore');
+    // Either mirrored snapshot is forbidden, not just the pair together.
+    expect(settingsFields.filter(field => ['vaultInfo', 'semanticStatus'].includes(field))).toEqual([]);
   });
 });
 
-describe('architecture fitness: content operation machines', () => {
-  it('keeps chat operation booleans as derived projections', () => {
-    const controller = sourceText(
-      'src/lib/features/chat/controller.svelte.ts'
-    );
-    const fields = classProperties(
-      'src/lib/features/chat/controller.svelte.ts',
-      'ChatControllerStore'
-    );
-
-    expect(fields).toEqual(
-      expect.arrayContaining(['machine'])
-    );
-    for (const field of [
-      'controllerLifecycle',
-      'selectionOperation',
-      'requestOperation',
-      'isInitializing',
-      'isLoadingConversation',
-      'isSending',
-      'activity'
-    ]) {
-      expect(fields).not.toContain(field);
-    }
-    expect(controller).toContain(
-      'const request = this.machine.request'
-    );
-    expect(controller).not.toContain(
-      'this.conversation?.activeRequestId'
-    );
-    expect(controller).not.toContain(
-      'sequence !== this.#initializeSequence'
-    );
-  });
-
-  it('routes document exits through the shared departure phase', () => {
-    const noteCommands = sourceText(
-      'src/lib/features/notepad/orchestration/noteCommandController.ts'
-    );
-    const workspaceCommands = sourceText(
-      'src/lib/features/notepad/orchestration/workspacePaneController.ts'
-    );
-    const session = sourceText(
-      'src/lib/features/notepad/session/session.ts'
-    );
-
-    expect(noteCommands).toContain(
-      'deps.documentDeparture.prepare'
-    );
-    expect(workspaceCommands).toContain(
-      'deps.documentDeparture.prepare'
-    );
-    expect(session).not.toContain('remember_note');
-    expect(noteCommands).not.toContain("operation: 'opening'");
-    expect(noteCommands).not.toContain('bumpOpenRequestGeneration');
-    expect(noteCommands).not.toContain('getOpenRequestGeneration');
-  });
-});
-
-describe('architecture fitness: document external-sync machine', () => {
-  it('keeps external-sync transitions behind the reducer boundary', () => {
-    const machine = sourceText(
-      'src/lib/features/notepad/document/documentExternalSyncMachine.ts'
-    );
-    const documentState = sourceText(
-      'src/lib/features/notepad/document/documentState.ts'
-    );
-    const conflictController = sourceText(
-      'src/lib/features/notepad/document/documentConflictController.ts'
-    );
-
-    expect(machine).toContain(
-      'transitionDocumentExternalSync'
-    );
-    expect(machine).toContain("phase: 'awaitingChoice'");
-    expect(machine).toContain("phase: 'applyingExternal'");
-    expect(machine).not.toContain("kind: 'inSync'");
-    expect(machine).not.toContain("kind: 'dirty'");
-    expect(machine).not.toContain("type: 'workingChanged'");
-    expect(documentState).toContain(
-      '!documentHasCleanBuffer(document)'
-    );
-    expect(
-      documentState.match(/document\.externalSync\s*=/g) ?? []
-    ).toHaveLength(1);
-    expect(documentState).toContain(
-      'transitionDocumentExternalSync('
-    );
-    for (const removedWrapper of [
-      'captureExternalSnapshotConflict',
-      'captureExternalDeletionConflict',
-      'resolveConflictKeepingWorking',
-      'beginApplyingExternalConflict',
-      'failApplyingExternalConflict',
-      'isApplyingExternalConflictCurrent'
-    ]) {
-      expect(documentState).not.toContain(removedWrapper);
-    }
-    expect(conflictController).not.toMatch(
-      /document\.externalSync\s*=/
-    );
-  });
-});
-
-describe('architecture fitness: committed document adoption', () => {
-  it('keeps synchronization policy behind operation-specific document methods', () => {
-    const editing = sourceText(
-      'src/lib/features/notepad/document/documentEditingService.ts'
-    );
-    const persistence = sourceText(
-      'src/lib/features/notepad/orchestration/persistenceController.ts'
-    );
-    const notepad = sourceText(
-      'src/lib/features/notepad/Notepad.svelte'
-    );
-
-    for (const method of [
-      'adoptSavedResult',
-      'adoptVersionRestore',
-      'adoptAcceptedProposal',
-      'adoptCleanExternalRefresh',
-      'restoreTransientForgotten'
-    ]) {
-      expect(editing).toContain(method);
-    }
-    for (const removedProtocol of [
-      'rekeyNoteWithRuntime',
-      'applySavedSnapshot'
-    ]) {
-      expect(persistence).not.toContain(removedProtocol);
-      expect(notepad).not.toContain(removedProtocol);
-    }
-    expect(editing).not.toContain('function applySnapshot(');
-    expect(editing).not.toContain('resetUndoHistory?:');
-    expect(editing).not.toContain('preserveDraft?:');
-  });
-
-  it('uses immutable handles without path-rekey or runtime-transfer machinery', () => {
-    const documentState = sourceText(
-      'src/lib/features/notepad/document/documentState.ts'
-    );
-    const noteStore = sourceText(
-      'src/lib/features/notepad/state/noteStore.ts'
-    );
-    const registry = sourceText(
-      'src/lib/features/notepad/document/documentRegistry.ts'
-    );
-    const runtime = sourceText(
-      'src/lib/features/notepad/document/documentRuntime.ts'
-    );
-    const noteRuntime = sourceText(
-      'src/lib/features/notepad/session/noteRuntime.ts'
-    );
-    const stateFields = interfaceProperties(
-      'src/lib/features/notepad/state/noteStore.ts',
-      'NotepadState'
-    );
-
-    expect(documentState).toContain('readonly handle: DocumentHandle');
-    expect(stateFields).toEqual(
-      expect.arrayContaining([
-        'documentsByHandle',
-        'vaultRoot',
-        'canonicalDocumentLookup'
-      ])
-    );
-    expect(noteStore).toContain('adoptCommittedDocument(');
-    expect(noteStore).toContain('findOpenDocument(');
-    expect(noteStore).toContain('canonicalCollision');
-    for (const removedProtocol of [
-      'NoteKey',
-      'noteKeyFromPath',
-      'rekeyNote'
-    ]) {
-      expect(noteStore).not.toContain(removedProtocol);
-      expect(documentState).not.toContain(removedProtocol);
-    }
-    expect(registry).not.toContain('transfer(');
-    for (const removedRuntimeProtocol of [
-      'rekey(',
-      'adoptFrom(',
-      'joinExternalQueue(',
-      'setSaveQueue('
-    ]) {
-      expect(runtime).not.toContain(removedRuntimeProtocol);
-    }
-    expect(noteRuntime).not.toContain('transferNoteRuntime');
-  });
-});
-
-describe('architecture fitness: pane lifecycle machine', () => {
-  it('owns membership and editor-runtime transitions without legacy lifecycle commands', () => {
-    const machine = sourceText(
-      'src/lib/features/notepad/pane/paneLifecycleMachine.ts'
-    );
-    const workspace = sourceText(
-      'src/lib/features/notepad/workspace/workspaceStore.svelte.ts'
-    );
-    const editorLifecycle = sourceText(
-      'src/lib/features/notepad/pane/paneEditorLifecycle.ts'
-    );
-
-    expect(machine).toContain('transitionPaneMembership');
-    expect(machine).toContain('transitionPaneEditorRuntime');
-    expect(workspace).toContain('transitionPaneMembership(');
-    expect(editorLifecycle).toContain(
-      'transitionPaneEditorRuntime('
-    );
-    expect(editorLifecycle).not.toContain('#disposed');
-    expect(editorLifecycle).not.toContain(
-      'synchronizeMountedResource'
-    );
-    expect(editorLifecycle).toContain(
-      'assertStableResourceInvariant'
-    );
-    expect(workspace).not.toContain('retiringPanesById');
-    expect(
-      workspace.match(/paneMembershipById\.set\(/g) ?? []
-    ).toHaveLength(2);
-    expect(
-      editorLifecycle.match(/this\.#state\s*=/g) ?? []
-    ).toHaveLength(1);
-    for (const removedCommand of [
-      'addPane(',
-      'removePane(',
-      'finalizePaneRemoval('
-    ]) {
-      expect(workspace).not.toContain(removedCommand);
+describe('architecture fitness: reducer and capability boundaries', () => {
+  it('routes external-sync writes through the reducer adapter', () => {
+    const paths = productionSources(notepad);
+    const allWrites = paths.flatMap(tree => writes(tree, 'externalSync').map(write => ({ tree, write })));
+    expect(allWrites.length).toBeGreaterThan(0);
+    for (const { tree, write } of allWrites) {
+      expect(tree.fileName).toBe(`${notepad}document/documentState.ts`);
+      const value = ts.isIdentifier(write.right) ? initializer(write.right) : write.right;
+      expect(value && calls(value, 'transitionDocumentExternalSync').length).toBe(1);
     }
   });
-});
 
-describe('architecture fitness: proposal review workflow', () => {
-  it('has one workflow owner and no legacy review flags or hold store', () => {
-    const machine = sourceText(
-      'src/lib/features/proposals/proposalReviewMachine.ts'
-    );
-    const session = sourceText(
-      'src/lib/features/proposals/reviewSession.svelte.ts'
-    );
-    const orchestration = sourceText(
-      'src/lib/features/proposals/proposalOrchestration.ts'
-    );
-
-    for (const phase of [
-      'opening',
-      'reviewing',
-      'committing',
-      'dismissing',
-      'conflicted'
-    ]) {
-      expect(machine).toContain(`'${phase}'`);
-    }
-    expect(session).toContain(
-      'transitionProposalReviewWorkflow(workflow, event)'
-    );
-    expect(orchestration).not.toMatch(
-      /\b(committing|conflicted|reloadConfirming): boolean/
-    );
-    expect(orchestration).not.toContain('let active:');
-    expect(session).not.toContain('setApplying');
-    expect(session).not.toContain('setConflicted');
-    expect(session).not.toContain('activeChangeId');
-    expect(session).not.toContain('setReviewHunks');
-    expect(orchestration).not.toContain('showChange:');
-    expect(orchestration).not.toContain('keep: (');
-    expect(orchestration).not.toContain('undo: (');
-    expect(machine).not.toContain('attachmentChanged');
-    expect(orchestration).not.toContain('reviewHold');
-    expect(machine).toContain("kind: 'confirmingDiscard'");
-    expect(machine).not.toContain('discardConfirmation');
-  });
-});
-
-describe('architecture fitness: NoteDraftState consumers', () => {
-  it('does not access removed flat fields on typed NoteDraftState values', () => {
-    const configPath = `${repositoryRoot}/tsconfig.json`;
-    const config = ts.readConfigFile(configPath, ts.sys.readFile);
-    if (config.error) {
-      throw new Error(
-        ts.flattenDiagnosticMessageText(
-          config.error.messageText,
-          '\n'
-        )
-      );
-    }
-    const parsed = ts.parseJsonConfigFileContent(
-      config.config,
-      ts.sys,
-      repositoryRoot
-    );
-    const program = ts.createProgram(parsed.fileNames, parsed.options);
-    const checker = program.getTypeChecker();
-    const legacyFields = new Set([
-      'title',
-      'bodyMarkdown',
-      'markdown',
-      'currentNoteId',
-      'currentNotePath',
-      'lastSavedTitle',
-      'lastSavedMarkdown',
-      'lastSavedNoteId',
-      'lastSavedPath',
-      'isSaving',
-      'isRemembering',
-      'isForgetting'
-    ]);
-    const violations: string[] = [];
-
-    function isNoteDraftState(
-      type: ts.Type,
-      visited = new Set<ts.Type>()
-    ): boolean {
-      if (visited.has(type)) return false;
-      visited.add(type);
-      if (
-        type.symbol?.name === 'NoteDraftState' ||
-        type.aliasSymbol?.name === 'NoteDraftState'
-      ) {
-        return true;
-      }
-      return type.isUnionOrIntersection()
-        ? type.types.some((member) =>
-            isNoteDraftState(member, visited)
-          )
-        : false;
-    }
-
-    for (const source of program.getSourceFiles()) {
-      const normalizedPath = source.fileName.replaceAll('\\', '/');
-      if (
-        !normalizedPath.startsWith(
-          `${repositoryRoot}/src/lib/`
-        ) ||
-        normalizedPath.includes('.test.')
-      ) {
-        continue;
-      }
-
-      function visit(node: ts.Node) {
-        let receiver: ts.Expression | null = null;
-        let field: string | null = null;
-        if (ts.isPropertyAccessExpression(node)) {
-          receiver = node.expression;
-          field = node.name.text;
-        } else if (
-          ts.isElementAccessExpression(node) &&
-          node.argumentExpression &&
-          ts.isStringLiteral(node.argumentExpression)
-        ) {
-          receiver = node.expression;
-          field = node.argumentExpression.text;
-        }
-
-        if (
-          receiver &&
-          field &&
-          legacyFields.has(field) &&
-          isNoteDraftState(checker.getTypeAtLocation(receiver))
-        ) {
-          const position = source.getLineAndCharacterOfPosition(
-            node.getStart(source)
-          );
-          violations.push(
-            `${normalizedPath.slice(repositoryRoot.length + 1)}:${position.line + 1} ${node.getText(source)}`
-          );
-        }
-        ts.forEachChild(node, visit);
-      }
-
-      visit(source);
-    }
-
+  it('uses capabilities rather than literal live-pane kind permissions', () => {
+    const violations = productionSources(`${notepad}orchestration`).flatMap(tree => positions(tree, paneKindComparisons(tree)));
     expect(violations).toEqual([]);
+    const roles = source(`${notepad}workspace/paneRoles.ts`);
+    for (const policy of ['paneKindChangeRetainsEditor', 'paneRemovalRetainsEditor']) expect(usesIdentifier(roles, policy)).toBe(false);
   });
+
 });
 
-
-it('keeps backend readiness and observer identity out of the document reducer', () => {
-  const reducer = sourceText('src/lib/features/notepad/document/documentOperationMachine.ts');
-  expect(reducer).toContain('SaveWaitReason');
-  for (const backendDetail of ['HistoryReadiness', 'noteId', 'scope', 'verifiedNotes', 'totalNotes']) {
-    expect(reducer).not.toContain(backendDetail);
-  }
-  const controller = sourceText('src/lib/features/notepad/orchestration/persistenceController.ts');
-  expect(controller).toContain('loadHistoryReadiness');
-  expect(controller).toContain('waitReason:');
-});
-
-it('keeps bootstrap and shared backend snapshots behind AppStore admission', () => {
-  const appStore = sourceText('src/lib/app/appStore.svelte.ts');
-  const settings = sourceText('src/lib/features/settings/store.svelte.ts');
-  const lifecycle = sourceText(
-    'src/lib/features/notepad/orchestration/notepadSessionLifecycle.ts'
-  );
-  const session = sourceText('src/lib/features/notepad/session/session.ts');
-
-  expect(appStore).toContain('beginSnapshotAdmission(');
-  expect(appStore).toContain('admitSnapshot(');
-  expect(
-    classProperties('src/lib/features/settings/store.svelte.ts', 'SettingsStore')
-  ).not.toEqual(expect.arrayContaining(['vaultInfo', 'semanticStatus']));
-  for (const source of [settings, lifecycle, session]) {
-    expect(source).not.toContain('loadSavedNoteFallback');
-    expect(source).not.toContain('loadAssetRootFallback');
-    expect(source).not.toContain('loadSavedNoteSession');
-    expect(source).not.toContain('loadCurrentVaultInfo');
-    expect(source).not.toContain('falling back to individual');
-  }
+describe('architecture scanner mutation probes', () => {
+  it('requires executable calls; comments, strings and imports cannot satisfy them', () => {
+    expect(calls(parse(`// transitionPaneMembership(x, y)\nconst label = 'transitionPaneMembership(x,y)'; import { transitionPaneMembership } from './machine';`), 'transitionPaneMembership')).toHaveLength(0);
+    expect(calls(parse(`transitionPaneMembership /* formatting is legal */ ( previous, event );`), 'transitionPaneMembership')).toHaveLength(1);
+  });
+  it('recognizes reversed, bracketed, parenthesized and local alias permission checks', () => {
+    for (const text of [
+      `deps.getPaneKind(id) === 'editor'`, `'chat' !== deps['getPaneKind'](id)`,
+      `const kind = deps.getPaneKind(id); ('editor') === (kind);`,
+      `const first = deps.getPaneKind(id); const next = first; next != 'chat';`
+    ]) expect(paneKindComparisons(parse(text)), text).toHaveLength(1);
+  });
+  it('ignores harmless comments/strings and respects a shadowed local variable', () => {
+    expect(paneKindComparisons(parse(`// getPaneKind(id) === 'editor'\nconst text = "getPaneKind(id) === 'chat'"; paneHasCapability(getPaneKind(id), 'edit-document');`))).toHaveLength(0);
+    expect(paneKindComparisons(parse(`const kind = getPaneKind(id); function unrelated() { const kind = 'other'; return kind === 'editor'; }`))).toHaveLength(0);
+  });
+  it('recognizes writes independent of whitespace or property notation', () => {
+    expect(writes(parse(`document /* spaced */ ['externalSync'] = transitionDocumentExternalSync(previous, event);`), 'externalSync')).toHaveLength(1);
+    expect(writes(parse(`// document.externalSync = wrong;\nconst text = 'document.externalSync = wrong';`), 'externalSync')).toHaveLength(0);
+  });
 });

@@ -303,6 +303,89 @@ mod tests {
         }
     }
 
+    #[test]
+    fn passage_metadata_serializes_completion_effective_deadline_and_utf8_crlf_ranges() {
+        let prefix = "Intro 💡\r\n";
+        let completed = "- [x] Café @due(2026-10-04) @due(2026-10-05)";
+        let open = "- [ ] Undated";
+        let markdown = format!("{prefix}{completed}\r\n{open}\r\n");
+        let start = prefix.len();
+        let next = start + completed.len() + 2;
+        assert_eq!(
+            start, 12,
+            "metadata offsets are UTF8 bytes, not scalars or UTF16"
+        );
+        assert_eq!(
+            super::passage_task_dates(&markdown, 0, markdown.len()),
+            serde_json::json!({
+                "basis": "current_checkbox_lines", "complete": true,
+                "items": [
+                    {"start":start,"end":start+completed.len(),"text":completed,"completed":true,"dueDate":"2026-10-04"},
+                    {"start":next,"end":next+open.len(),"text":open,"completed":false,"dueDate":null}
+                ]
+            })
+        );
+        // A passage ending at the content boundary need not include CRLF.
+        let only_completed = super::passage_task_dates(&markdown, start, start + completed.len());
+        assert_eq!(only_completed["complete"], true);
+        assert_eq!(only_completed["items"].as_array().unwrap().len(), 1);
+        assert_eq!(only_completed["items"][0]["text"], completed);
+    }
+
+    #[test]
+    fn clipped_checkbox_lines_are_not_advertised_as_complete_or_included_items() {
+        let markdown = "- [ ] First 💡 @due(2026-10-04)\r\n- [ ] Second\r\n";
+        let second = markdown.find("- [ ] Second").unwrap();
+        let first_end = second - 2;
+        for (start, end) in [(1, first_end), (0, first_end - 1)] {
+            assert_eq!(
+                super::passage_task_dates(markdown, start, end),
+                serde_json::json!({
+                    "basis":"current_checkbox_lines", "complete":false, "items":[]
+                })
+            );
+        }
+        let mixed = super::passage_task_dates(markdown, 1, markdown.len());
+        assert_eq!(mixed["complete"], false);
+        assert_eq!(
+            mixed["items"],
+            serde_json::json!([{
+                "start":second,"end":markdown.len()-2,"text":"- [ ] Second","completed":false,"dueDate":null
+            }])
+        );
+    }
+
+    #[test]
+    fn passage_metadata_caps_sixteen_items_and_uses_null_only_for_complete_empty_results() {
+        for count in [16, 17] {
+            let markdown = (0..count)
+                .map(|i| format!("- [ ] Task {i}\n"))
+                .collect::<String>();
+            let metadata = super::passage_task_dates(&markdown, 0, markdown.len());
+            let items = metadata["items"].as_array().unwrap();
+            assert_eq!(items.len(), 16);
+            assert_eq!(metadata["complete"], count == 16);
+            assert_eq!(items[0]["text"], "- [ ] Task 0");
+            assert_eq!(items[15]["text"], "- [ ] Task 15");
+        }
+        for markdown in [
+            "",
+            "ordinary @due(2026-10-04)",
+            "```md\n- [ ] Example @due(2026-10-04)\n```\n",
+            "`- [ ] inline example`",
+        ] {
+            assert_eq!(
+                super::passage_task_dates(markdown, 0, markdown.len()),
+                serde_json::Value::Null,
+                "{markdown}"
+            );
+        }
+        assert_eq!(
+            super::passage_task_dates("- [ ] Outside", 0, 0),
+            serde_json::Value::Null
+        );
+    }
+
     use super::*;
     #[test]
     fn portable_markdown_fixture_matches_frontend_contract() {

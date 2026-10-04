@@ -1,19 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { browser, $ } from '@wdio/globals';
+import { readFileSync } from 'node:fs';
+import { createLiveNativeEvaluation, invokeNative as invoke } from '../../support/liveNative';
 import { addCalendarDays } from '../../../src/lib/features/tasks/taskDates';
-
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((cmd, input, done: (r: { ok: boolean; value?: unknown; error?: string }) => void) => {
-    const native = window as typeof window & { __TAURI_INTERNALS__: { invoke: (c: string, a: Record<string, unknown>) => Promise<unknown> } };
-    void native.__TAURI_INTERNALS__.invoke(cmd, input).then(
-      value => done({ ok: true, value }), error => done({ ok: false, error: String(error) })
-    );
-  }, command, args);
-  if (!result.ok) throw new Error(result.error);
-  return result.value as T;
-}
 
 type Answer = {
   role: string; status: string; content: string; error?: string;
@@ -25,20 +13,14 @@ const live = process.env.GNEAUX_CHAT_DATES_NATIVE === '1' ? describe : describe.
 
 live('Chat dates and portable deadlines through the native runtime', function () {
   this.timeout(900_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
   it('reads deadlines, composes research and prepares a date-aware reviewed edit', async () => {
     const endpoint = process.env.GNEAUX_LIVE_ENDPOINT;
     const model = process.env.GNEAUX_LIVE_MODEL;
     const output = process.env.GNEAUX_LIVE_OUTPUT;
     assert(endpoint && model && output, 'Explicit local endpoint, model and output required');
-    await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', { settings: {
-      ...settings, provider: 'local', model, localModel: model, localBaseUrl: endpoint,
-      defaultAccess: 'approved', webAccess: 'off', reasoningEffort: 'medium'
-    } });
-    await invoke('chat_set_local_model_capabilities', { model, capabilities: {
-      tools: true, images: false, audio: false, video: false, reasoningEffort: 'medium'
-    } });
+    await evaluation.configure();
     const dateTimeContext = {
       locale: 'en-GB', timeZone: 'America/Denver',
       dateOrder: ['day', 'month', 'year'], hourCycle: 'h23'
@@ -62,22 +44,14 @@ live('Chat dates and portable deadlines through the native runtime', function ()
       '- [ ] Code example `@due(2027-03-01)`',
       '', '```markdown', '- [ ] Fenced example @due(2027-04-01)', '```'
     ].join('\n');
-    const note = await invoke<{ noteId: string; path: string; title: string; markdown: string }>('save_note', {
-      title: 'Meridian dates', markdown: body, currentPath: null
-    });
-    assert(note.path.includes('gneauxghts-native-e2e-'), 'Disposable synthetic vault only');
-    await invoke('finalize_note_editing_window', { noteId: note.noteId });
-    await invoke('e2e_flush_vault_watcher_path', { path: note.path });
+    const note = await evaluation.saveNote('Meridian dates', body);
     await invoke('chat_grant_note', { noteId: note.noteId });
-    const privateNote = await invoke<{ noteId: string; title: string }>('save_note', {
-      title: 'Private dates', markdown: '- [ ] DATE_CANARY_918 @due(2027-01-01)', currentPath: null
-    });
+    const privateNote = await evaluation.saveNote('Private dates', '- [ ] DATE_CANARY_918 @due(2027-01-01)');
     await invoke('chat_set_note_excluded', { noteId: privateNote.noteId, title: privateNote.title, excluded: true });
     const before = readFileSync(note.path, 'utf8');
     const results: Array<{ scenario: string; question: string; answer?: Answer; proposals?: Proposal[] }> = [];
     const record = () => {
-      mkdirSync(dirname(resolve(output)), { recursive: true });
-      writeFileSync(output, JSON.stringify({
+      evaluation.artifact.write({
         endpoint, model, today, tomorrow, yesterday, dateTimeContext,
         semanticRubric: {
           openTasks: 7, completedTasks: 1,
@@ -87,7 +61,7 @@ live('Chat dates and portable deadlines through the native runtime', function ()
           nonTasks: ['Fenced example'], reviewedDeadline: '2027-02-01'
         },
         results
-      }, null, 2));
+      });
     };
     for (const scenario of ['current', 'research', 'proposal']) {
       const conversation: { id: string } = await invoke('chat_create_conversation', { request: {
@@ -104,11 +78,9 @@ live('Chat dates and portable deadlines through the native runtime', function ()
         selectedContext: [], forceWebSearch: false, dateTimeContext
       } });
       try {
-        await browser.waitUntil(async () => {
-          const data = await invoke<{ messages: Answer[] }>('chat_get_conversation', { conversationId: conversation.id });
-          result.answer = data.messages.find(message => message.role === 'assistant');
-          return Boolean(result.answer && ['complete', 'failed', 'cancelled'].includes(result.answer.status));
-        }, { timeout: 300_000, interval: 1000 });
+        result.answer = await evaluation.waitForAnswer<Answer>(conversation.id, {
+          onUpdate: answer => { result.answer = answer; }
+        });
       } finally { record(); }
       assert(result.answer);
       assert.equal(result.answer.status, 'complete', result.answer.error);

@@ -96,7 +96,18 @@ pub(crate) struct NoteTimelineRuntime {
     operations: Arc<NoteTimelineOperationBarrier>,
     #[cfg(test)]
     window_admission_provider: Mutex<Option<WindowAdmissionProvider>>,
+    #[cfg(test)]
+    recovery_lock_observer: Mutex<Option<RecoveryLockObserver>>,
 }
+
+#[cfg(test)]
+pub(super) enum RecoveryLockEvent {
+    Acquired,
+    Contended,
+}
+
+#[cfg(test)]
+type RecoveryLockObserver = Arc<dyn Fn(RecoveryLockEvent) + Send + Sync>;
 
 #[cfg(test)]
 type WindowAdmissionProvider = Arc<
@@ -126,6 +137,8 @@ impl NoteTimelineRuntime {
             operations: Arc::new(NoteTimelineOperationBarrier::default()),
             #[cfg(test)]
             window_admission_provider: Mutex::new(None),
+            #[cfg(test)]
+            recovery_lock_observer: Mutex::new(None),
         })
     }
 
@@ -165,12 +178,19 @@ impl NoteTimelineRuntime {
             operations: Arc::clone(&self.operations),
             #[cfg(test)]
             window_admission_provider: Mutex::new(None),
+            #[cfg(test)]
+            recovery_lock_observer: Mutex::new(None),
         }
     }
 
     #[cfg(test)]
     pub(super) fn set_window_admission_provider(&self, provider: WindowAdmissionProvider) {
         *self.window_admission_provider.lock().unwrap() = Some(provider);
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_recovery_lock_observer(&self, observer: Option<RecoveryLockObserver>) {
+        *self.recovery_lock_observer.lock().unwrap() = observer;
     }
 
     pub(super) fn begin_current_content_mutation(
@@ -272,6 +292,8 @@ impl NoteTimelineRuntime {
             });
         }
         state.closing = true;
+        #[cfg(test)]
+        self.operations.settled.notify_all();
         state.close_result = None;
         self.stop_verification();
         while state.active != 0 {
@@ -325,6 +347,22 @@ impl NoteTimelineRuntime {
     }
 
     #[cfg(test)]
+    pub(super) fn wait_for_close_waiting_on_operations(&self) {
+        let state = self.operations.state.lock().unwrap();
+        let (state, _) = self
+            .operations
+            .settled
+            .wait_timeout_while(state, std::time::Duration::from_secs(5), |state| {
+                !state.closing || state.active == 0
+            })
+            .unwrap();
+        assert!(
+            state.closing && state.active > 0,
+            "close did not reach its active-operation barrier"
+        );
+    }
+
+    #[cfg(test)]
     pub(super) fn wait_for_close_joiner(&self) {
         let state = self.operations.state.lock().expect("timeline barrier");
         let (state, _) = self
@@ -357,6 +395,13 @@ impl NoteTimelineRuntime {
         }
         let result = self.with_history_result(|| {
             let mut recovered = self.lock_history_recovery()?;
+            #[cfg(test)]
+            {
+                let observer = self.recovery_lock_observer.lock().unwrap().clone();
+                if let Some(observer) = observer {
+                    observer(RecoveryLockEvent::Acquired);
+                }
+            }
             self.require_integrity_available()?;
             if !*recovered {
                 history_store::admit_current_store(&self.store)?;
@@ -411,6 +456,19 @@ impl NoteTimelineRuntime {
     }
 
     fn lock_history_recovery(&self) -> Result<MutexGuard<'_, bool>, HistoryError> {
+        #[cfg(test)]
+        {
+            let observer = self.recovery_lock_observer.lock().unwrap().clone();
+            if let Some(observer) = observer {
+                // Observe actual contention, then use the same blocking lock below.
+                if matches!(
+                    self.history_recovered.try_lock(),
+                    Err(std::sync::TryLockError::WouldBlock)
+                ) {
+                    observer(RecoveryLockEvent::Contended);
+                }
+            }
+        }
         Ok(self
             .history_recovered
             .lock()

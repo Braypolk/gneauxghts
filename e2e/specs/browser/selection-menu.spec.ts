@@ -1,4 +1,5 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { waitForTwoAnimationFrames } from '../../support/animationFrames';
 
 describe('Turn into menu scrolling', () => {
   for (const height of [650, 900]) {
@@ -32,7 +33,7 @@ describe('Turn into menu scrolling', () => {
       await toggle.click();
       const body = await $('.selection-menu-body');
       await body.waitForDisplayed();
-      await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+      await waitForTwoAnimationFrames();
       // Keep the pointer over the scroll area, as it is during a trackpad gesture.
       const point = await browser.execute((element: HTMLElement) => {
         const body = element.getBoundingClientRect();
@@ -40,7 +41,7 @@ describe('Turn into menu scrolling', () => {
         return { x: Math.round(body.left + body.width / 2), y: Math.round((body.top + Math.min(body.bottom, panel.bottom)) / 2) };
       }, body);
       await browser.action('pointer').move(point).perform();
-      await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+      await waitForTwoAnimationFrames();
       await browser.action('wheel').scroll({ ...point, deltaY: 2000, deltaX: 0 }).perform();
       await browser.waitUntil(() => browser.execute((element: HTMLElement) =>
         element.scrollTop >= element.scrollHeight - element.clientHeight - 1, body));

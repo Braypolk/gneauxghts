@@ -1,4 +1,4 @@
-use super::{prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
+use super::prepare_notes_dir;
 use crate::{
     index::{
         build_current_override, normalize_search_text, AppState, DraftRef, IndexedNote, NotesIndex,
@@ -274,8 +274,7 @@ pub(crate) fn list_recent_notes(
 
             state.ensure_interactive_index(
                 &notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "list_recent_notes",
+                        "list_recent_notes",
             )?;
             let index = state
                 .notes_index
@@ -422,8 +421,7 @@ pub(crate) fn list_recent_focus(
 
             state.ensure_interactive_index(
                 &notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "list_recent_focus",
+                        "list_recent_focus",
             )?;
             let index = state
                 .notes_index
@@ -544,23 +542,27 @@ pub(crate) async fn search_notes_hybrid(
     lexical_weight: Option<f32>,
     current_tags: Option<Vec<String>>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    state
-        .note_timeline()
-        .current_content(AllowedScope::vault())
-        .read_async(search_notes_hybrid_unchecked(
-            state.inner(),
-            query,
-            current_path,
-            current_title,
-            current_markdown,
-            current_body_hash,
-            limit,
-            semantic_weight,
-            lexical_weight,
-            current_tags,
-        ))
-        .await
+    search_notes_hybrid_for_state(state.inner(), query, current_path, current_title,
+        current_markdown, current_body_hash, limit, semantic_weight, lexical_weight, current_tags).await
 }
+
+#[allow(clippy::too_many_arguments)]
+async fn search_notes_hybrid_for_state(
+    state: &AppState, query: String, current_path: Option<String>, current_title: String,
+    current_markdown: Option<String>, current_body_hash: Option<String>, limit: usize,
+    semantic_weight: Option<f32>, lexical_weight: Option<f32>, current_tags: Option<Vec<String>>,
+) -> Result<Vec<NoteSearchResult>, String> {
+    state.note_timeline().current_content(AllowedScope::vault()).read_async(async {
+        let results = search_notes_hybrid_unchecked(state, query, current_path, current_title,
+            current_markdown, current_body_hash, limit, semantic_weight, lexical_weight, current_tags).await?;
+        #[cfg(test)]
+        if let Some(hook) = SEARCH_DELIVERY_HOOK.lock().unwrap().as_ref() { hook(); }
+        Ok(results)
+    }).await
+}
+
+#[cfg(test)]
+static SEARCH_DELIVERY_HOOK: Mutex<Option<Box<dyn Fn() + Send + Sync>>> = Mutex::new(None);
 
 #[allow(clippy::too_many_arguments)]
 async fn search_notes_hybrid_unchecked(
@@ -606,13 +608,16 @@ async fn search_notes_hybrid_unchecked(
         ),
     )?;
     let draft = resolved_current.draft;
+    let resolved_body = resolved_current.body.unwrap_or_default();
+    let cache_body_hash = draft.hash.clone().unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
     let cache_fingerprint = build_search_fingerprint(
         &format!(
             "{}|{:?}|{:?}",
             normalized_query, tag_query.tags, current_tags
         ),
         current_path.as_deref(),
-        draft.hash.as_deref(),
+        Some(&cache_body_hash),
+        &current_title,
         effective_limit,
         lexical_weight,
         semantic_weight,
@@ -620,7 +625,6 @@ async fn search_notes_hybrid_unchecked(
     if let Some(cached) = search_cache_get(&cache_fingerprint, cache_generation) {
         return Ok(cached);
     }
-    let resolved_body = resolved_current.body.unwrap_or_default();
     let lexical_candidates = collect_lexical_candidates(
         state,
         &tag_query.text,
@@ -662,8 +666,7 @@ async fn search_notes_hybrid_unchecked(
         let activity_by_note_id = db_load_note_activity().unwrap_or_default();
         let note_lookup = note_access_lookup_for_candidates(state, &lexical_candidates, &[]);
         let now = current_time_millis().unwrap_or(0);
-        let results = filter_note_results(
-            merge_hybrid_candidates(
+        let results = merge_note_candidates(
                 lexical_candidates,
                 Vec::new(),
                 &normalized_query,
@@ -674,8 +677,6 @@ async fn search_notes_hybrid_unchecked(
                 &activity_by_note_id,
                 &note_lookup,
                 now,
-            ),
-            effective_limit,
         );
         search_cache_put(cache_fingerprint, cache_generation, results.clone());
         return Ok(results);
@@ -710,6 +711,7 @@ async fn search_notes_hybrid_unchecked(
             current_path_raw.as_deref(),
             effective_limit.saturating_mul(3).max(effective_limit),
             allowed_paths.as_deref(),
+            Some(crate::note::DocumentKind::Note),
         )
     })
     .await
@@ -725,8 +727,7 @@ async fn search_notes_hybrid_unchecked(
     let note_lookup =
         note_access_lookup_for_candidates(state, &lexical_candidates, &semantic_matches);
     let now = current_time_millis().unwrap_or(0);
-    let ranked = filter_note_results(
-        merge_hybrid_candidates(
+    let ranked = merge_note_candidates(
             lexical_candidates,
             semantic_matches,
             &normalized_query,
@@ -737,8 +738,6 @@ async fn search_notes_hybrid_unchecked(
             &activity_by_note_id,
             &note_lookup,
             now,
-        ),
-        effective_limit,
     );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let semantic_failed = semantic_error.is_some();
@@ -829,16 +828,18 @@ async fn get_related_notes_unchecked(
         ),
     )?;
     let draft = resolved_current.draft;
+    let resolved_body = resolved_current.body.unwrap_or_default();
+    let cache_body_hash = draft.hash.clone().unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
     let fingerprint = build_related_fingerprint(
         current_path.as_deref(),
-        draft.hash.as_deref(),
+        Some(&cache_body_hash),
+        &current_title,
         selected_text.as_deref(),
         limit,
     );
     if let Some(cached) = related_cache_get(&fingerprint, cache_generation) {
         return Ok(cached);
     }
-    let resolved_body = resolved_current.body.unwrap_or_default();
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
@@ -961,21 +962,14 @@ async fn retrieve_note_context_unchecked(
                         section_label: item.section_label,
                         excerpt: item.excerpt.clone(),
                         match_text: item.excerpt,
-                        source: if item.lexical_score.is_some() && item.semantic_score.is_some() {
-                            "hybrid"
-                        } else if item.semantic_score.is_some() {
-                            "semantic"
-                        } else {
-                            "lexical"
-                        }
-                        .to_string(),
+                        source: "lexical".to_string(),
                         reason: "retrieval".to_string(),
                         score: item.score,
-                        lexical_score: item.lexical_score,
-                        semantic_score: item.semantic_score,
-                        start_line: item.start_line,
-                        end_line: item.end_line,
-                        block_anchor: item.block_anchor,
+                        lexical_score: None,
+                        semantic_score: None,
+                        start_line: None,
+                        end_line: None,
+                        block_anchor: None,
                     })
                     .collect(),
             })
@@ -1046,45 +1040,39 @@ fn build_search_fingerprint(
     normalized_query: &str,
     current_path: Option<&Path>,
     body_hash: Option<&str>,
+    title: &str,
     limit: usize,
     lexical_weight: Option<f32>,
     semantic_weight: Option<f32>,
 ) -> String {
-    format!(
-        "{}|{}|{}|{}|{:?}|{:?}",
-        normalized_query,
-        current_path
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        body_hash.unwrap_or(""),
-        limit,
-        lexical_weight,
-        semantic_weight,
-    )
-}
-
-fn filter_note_results(results: Vec<NoteSearchResult>, limit: usize) -> Vec<NoteSearchResult> {
-    results
-        .into_iter()
-        .filter(|result| result.document_kind == crate::note::DocumentKind::Note)
-        .take(limit)
-        .collect()
+    // Structured framing avoids collisions when user inputs contain separators.
+    serde_json::to_string(&(normalized_query, current_path.map(|path| path.to_string_lossy()), body_hash, title, limit,
+        lexical_weight.map(f32::to_bits), semantic_weight.map(f32::to_bits))).unwrap()
 }
 
 fn build_related_fingerprint(
     current_path: Option<&Path>,
     body_hash: Option<&str>,
+    title: &str,
     selected_text: Option<&str>,
     limit: usize,
 ) -> String {
-    format!(
-        "{}|{}|{}|{}",
-        current_path
-            .map(|path| path.to_string_lossy().into_owned())
-            .unwrap_or_default(),
-        body_hash.unwrap_or(""),
-        selected_text.unwrap_or(""),
-        limit,
+    serde_json::to_string(&(current_path.map(|path| path.to_string_lossy()), body_hash, title, selected_text, limit)).unwrap()
+}
+
+/// Ordinary search excludes chat projections before normalization and truncation.
+/// Evidence/chat callers retain the reusable merger's broader kind policy.
+#[allow(clippy::too_many_arguments)]
+fn merge_note_candidates(
+    lexical: Vec<ScoredSearchResult>, semantic: Vec<SemanticChunkMatch>,
+    query: &str, current_path: Option<&Path>, limit: usize,
+    lexical_weight: f32, semantic_weight: f32,
+    activity: &HashMap<String, NoteActivity>, lookup: &NoteAccessLookup, now: u64,
+) -> Vec<NoteSearchResult> {
+    merge_hybrid_candidates(
+        lexical.into_iter().filter(|item| item.result.document_kind == crate::note::DocumentKind::Note).collect(),
+        semantic.into_iter().filter(|item| item.document_kind == crate::note::DocumentKind::Note).collect(),
+        query, current_path, limit, lexical_weight, semantic_weight, activity, lookup, now,
     )
 }
 
@@ -1104,7 +1092,6 @@ fn collect_lexical_candidates(
 ) -> Result<Vec<ScoredSearchResult>, String> {
     state.ensure_interactive_index(
         notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
         "search_notes_all",
     )?;
     let index = state
@@ -1545,20 +1532,15 @@ mod pending_keyword_tests {
         .unwrap();
         state.background_index_queue.wait_until_idle_for_test();
         let pause = state.foreground_guard();
-        for i in 0..64 {
-            std::fs::write(
-                notes.path().join(format!("Imported {i}.md")),
-                format!("# Imported {i}\n\nquartzmarker{i} new content\n"),
-            )
-            .unwrap();
-        }
+        let indexed = notes.path().join("Indexed import.md");
+        let pending = notes.path().join("Pending import.md");
+        std::fs::write(&indexed, "# Indexed import\n\nindexedmarker new content\n").unwrap();
+        std::fs::write(&pending, "# Pending import\n\npendingmarker new content\n").unwrap();
         state.prewarm_notes_index(notes.path()).unwrap();
-        let target = notes.path().join("Imported 63.md");
-        let indexed = notes.path().join("Imported 0.md");
         let indexed_note = state.notes_index.lock().unwrap().entries[&indexed].clone();
         state.lexical.upsert_note(&indexed, &indexed_note).unwrap();
-        assert_eq!(state.notes_index.lock().unwrap().entries.len(), 64);
-        assert!(!state.lexical.contains_signature_for_test(&target));
+        assert_eq!(state.notes_index.lock().unwrap().entries.len(), 2);
+        assert!(!state.lexical.contains_signature_for_test(&pending));
 
         let search = |query: &str| {
             tauri::async_runtime::block_on(
@@ -1580,43 +1562,39 @@ mod pending_keyword_tests {
             )
             .unwrap()
         };
-        for query in ["quartzmarker63", "Imported 63"] {
+        for query in ["pendingmarker", "Pending import"] {
             let results = search(query);
             let result = results
                 .iter()
-                .find(|r| r.note_path.as_deref() == target.to_str())
+                .find(|r| r.note_path.as_deref() == pending.to_str())
                 .expect("pending note is searchable by body and title");
             assert!(result.reason_labels.iter().any(|label| label == "keyword"));
             assert!(result.note_id.is_some());
             assert!(!result.highlight_ranges.is_empty());
         }
         assert!(
-            !state.lexical.contains_signature_for_test(&target),
+            !state.lexical.contains_signature_for_test(&pending),
             "keyword search must not force background indexing to finish"
         );
         assert_eq!(
-            search("quartzmarker0").len(),
+            search("indexedmarker").len(),
             1,
             "indexed notes must not acquire duplicate fallback results"
         );
 
         drop(pause);
-        let deadline = Instant::now() + Duration::from_secs(30);
-        while (0..64).any(|i| {
-            !state
-                .lexical
-                .contains_signature_for_test(&notes.path().join(format!("Imported {i}.md")))
-        }) {
+        state.background_index_queue.wait_until_idle_for_test();
+        for path in [&indexed, &pending] {
             assert!(
-                Instant::now() < deadline,
-                "background queue failed to drain"
+                state.lexical.contains_signature_for_test(path),
+                "background indexing must succeed for {}",
+                path.display()
             );
-            std::thread::sleep(Duration::from_millis(25));
         }
         invalidate_result_caches();
-        let results = search("quartzmarker63");
+        let results = search("pendingmarker");
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].note_path.as_deref(), target.to_str());
+        assert_eq!(results[0].note_path.as_deref(), pending.to_str());
         assert!(results[0]
             .reason_labels
             .iter()
@@ -1657,21 +1635,10 @@ mod result_cache_generation_tests {
 #[cfg(test)]
 mod current_content_delivery_tests {
     use super::*;
-    use crate::{app::EventBus, semantic::SemanticState};
-
     #[test]
-    fn search_does_not_deliver_results_from_before_a_concurrent_note_mutation() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("search-current-content-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("search-current-content-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            EventBus::disabled(),
-        )
-        .unwrap();
+    fn current_content_gate_rejects_a_fabricated_projection_after_mutation() {
+        let fixture = crate::test_support::TestVault::new("search-current-content");
+        let state = &fixture.state;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Changing search note".to_string(),
@@ -1695,7 +1662,7 @@ mod current_content_delivery_tests {
                     .current_content(AllowedScope::vault())
                     .read(|| {
                         query_started.send(()).unwrap();
-                        query_released.recv().unwrap();
+                        query_released.recv_timeout(Duration::from_secs(5)).unwrap();
                         Ok(vec![NoteSearchResult {
                             note_id: Some(stale_note_id),
                             note_path: Some(stale_note_path),
@@ -1714,7 +1681,7 @@ mod current_content_delivery_tests {
                         }])
                     })
             });
-            query_is_started.recv().unwrap();
+            query_is_started.recv_timeout(Duration::from_secs(5)).unwrap();
             crate::commands::note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Changing search note".to_string(),
@@ -1820,8 +1787,7 @@ pub(crate) async fn list_note_tags<R: tauri::Runtime>(
         let notes_dir = prepare_notes_dir(state, false)?;
         state.ensure_interactive_index(
             &notes_dir,
-            INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-            "list_note_tags",
+                "list_note_tags",
         )?;
         let index = state
             .notes_index
@@ -1925,5 +1891,90 @@ mod tag_search_tests {
         assert!(search("renovation estimates")
             .iter()
             .any(|result| result.note_id == saved.note_id));
+    }
+}
+
+#[cfg(test)]
+mod command_composition_regressions {
+    use super::*;
+
+    #[test]
+    fn title_only_and_unhashed_body_changes_do_not_reuse_search_results() {
+        let fixture = crate::test_support::TestVault::new("search-draft-cache");
+        let search = |title: &str, body: &str| {
+            tauri::async_runtime::block_on(search_notes_hybrid_unchecked(
+                &fixture.state, "needle".into(), None, title.into(), Some(body.into()), None,
+                12, None, None, None,
+            )).unwrap()
+        };
+        invalidate_result_caches();
+        assert!(!search("needle", "ordinary prose").is_empty());
+        assert!(search("other", "ordinary prose").is_empty(), "title-only replacement must miss cache");
+        assert!(!search("other", "needle in the body").is_empty(), "legacy no-hash requests must distinguish bodies");
+        assert_ne!(build_related_fingerprint(None, Some("same-body"), "one", None, 5),
+            build_related_fingerprint(None, Some("same-body"), "two", None, 5));
+    }
+
+    #[test]
+    fn ordinary_search_filters_chat_candidates_before_ranking_and_limit() {
+        let candidate = |title: &str, score, kind| SemanticChunkMatch {
+            note_path: format!("/notes/{title}.md"), note_title: title.into(),
+            section_label: "Paragraph 1".into(), excerpt: "needle".into(),
+            match_text: "needle".into(), score, start_line: 1, end_line: 1,
+            document_kind: kind, block_anchor: None,
+        };
+        let results = merge_note_candidates(vec![], vec![
+            candidate("chat", 10.0, crate::note::DocumentKind::ChatIndex),
+            candidate("one", 2.0, crate::note::DocumentKind::Note),
+            candidate("two", 1.0, crate::note::DocumentKind::Note),
+        ], "needle", None, 2, 0.0, 1.0, &HashMap::new(), &NoteAccessLookup::empty(), 0);
+        assert_eq!(results.len(), 2);
+        assert_eq!(results.iter().map(|item| item.file_name.as_str()).collect::<Vec<_>>(), ["one", "two"]);
+    }
+}
+
+#[cfg(test)]
+mod helper_tests;
+
+#[cfg(test)]
+mod actual_search_delivery_tests {
+    use super::*;
+
+    #[test]
+    fn command_rejects_stale_real_results_including_cache_hits() {
+        for warm_cache in [false, true] {
+            let fixture = crate::test_support::TestVault::new("actual-search-delivery");
+            let state = &fixture.state;
+            let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+                state, "Changing note".into(), "Old searchable prose".into(), None,
+            ).unwrap().unwrap();
+            let query = || tauri::async_runtime::block_on(search_notes_hybrid_for_state(
+                state, "searchable".into(), None, String::new(), Some(String::new()), None, 12, None, None, None,
+            )).unwrap();
+            if warm_cache { assert!(!query().is_empty()); }
+            let (started, entered) = std::sync::mpsc::channel();
+            let (release, released) = std::sync::mpsc::channel();
+            let released = Mutex::new(released);
+            struct ResetHook;
+            impl Drop for ResetHook {
+                fn drop(&mut self) { *SEARCH_DELIVERY_HOOK.lock().unwrap() = None; }
+            }
+            let _reset = ResetHook;
+            *SEARCH_DELIVERY_HOOK.lock().unwrap() = Some(Box::new(move || {
+                started.send(()).unwrap();
+                released.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+            }));
+            let result = std::thread::scope(|scope| {
+                let read = scope.spawn(query);
+                let mut release = crate::test_support::ReleaseOnDrop::new(release);
+                entered.recv_timeout(Duration::from_secs(5)).unwrap();
+                crate::commands::note_persistence::persist_note_session_with_outcome(
+                    state, "Changing note".into(), "New searchable prose".into(), saved.path.clone(),
+                ).unwrap();
+                release.release();
+                read.join().unwrap()
+            });
+            assert!(result.is_empty(), "obsolete real query delivered; warm_cache={warm_cache}");
+        }
     }
 }

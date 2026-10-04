@@ -47,7 +47,6 @@ describe('optional inline note tags', () => {
     await browser.keys('Enter');
     await $('button[aria-label="Edit tag budget"]').waitForExist();
     await browser.waitUntil(async () => JSON.stringify((await saves()).at(-1)?.args.tagEdit).includes('budget'));
-    await browser.saveScreenshot('/tmp/gneauxghts-note-tags.png');
     await toggleTags();
     await row().waitForExist({ reverse: true });
     await toggleTags();
@@ -78,7 +77,6 @@ describe('optional inline note tags', () => {
       expect(geometry.row.left).toBeGreaterThanOrEqual(geometry.pane.left);
       expect(geometry.row.right).toBeLessThanOrEqual(geometry.pane.right + 1);
       expect(geometry.line.top).toBeGreaterThanOrEqual(geometry.row.bottom);
-      await browser.saveScreenshot('/tmp/gneauxghts-note-tags-mobile.png');
     } finally {
       await browser.setWindowSize(original.width, original.height);
     }

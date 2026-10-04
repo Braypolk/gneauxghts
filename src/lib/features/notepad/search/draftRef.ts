@@ -26,11 +26,11 @@ function fingerprintKey(path: string | null) {
   return path ?? '<unsaved>';
 }
 
-export function isDraftAcknowledged(path: string | null, hash: string): boolean {
+function isDraftAcknowledged(path: string | null, hash: string): boolean {
   return acknowledgedDrafts.get(fingerprintKey(path)) === hash;
 }
 
-export function rememberDraft(path: string | null, hash: string): void {
+function rememberDraft(path: string | null, hash: string): void {
   acknowledgedDrafts.set(fingerprintKey(path), hash);
 }
 
@@ -38,7 +38,7 @@ export function forgetDraft(path: string | null): void {
   acknowledgedDrafts.delete(fingerprintKey(path));
 }
 
-export function isDraftCacheMiss(error: unknown): boolean {
+function isDraftCacheMiss(error: unknown): boolean {
   if (typeof error === 'string') {
     return error.startsWith(DRAFT_CACHE_MISS_PREFIX);
   }

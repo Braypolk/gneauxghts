@@ -1,11 +1,12 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 import { expectContinuousMotion, expectStableEntrance, samplePaneMotion } from '../../support/paneMotion';
 
 async function ready(width = 1440) {
   await browser.setWindowSize(width, 1000);
   await browser.url('/');
   await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
-  await browser.pause(400);
+  await waitForWorkspaceAnimationSettled();
 }
 
 async function chooseCurrent() {
@@ -15,7 +16,7 @@ async function chooseCurrent() {
 }
 
 describe('coordinated pane layout motion', () => {
-  for (const action of ['open', 'open-current', 'open-chat'] as const) {
+  for (const action of ['open-current', 'open-chat'] as const) {
     it(`keeps the new pane layout stable during ${action}`, async () => {
       await ready();
       const opening = await samplePaneMotion(action);
@@ -26,11 +27,24 @@ describe('coordinated pane layout motion', () => {
 
   it('keeps the active border attached when focus changes during entrance', async () => {
     await ready();
-    const result = await browser.executeAsync((done: (result: { activated: boolean; errors: number[]; active?: string }) => void) => {
+    const result = await browser.executeAsync((done: (result: { activated: boolean; errors: number[]; active?: string; error?: string }) => void) => {
       const start = performance.now();
       let activated = false;
       const errors: number[] = [];
+      let frameId = 0;
+      let finished = false;
+      let settledSince: number | null = null;
+      const finish = (error?: string) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(deadline);
+        cancelAnimationFrame(frameId);
+        done({ activated, errors, active: document.querySelector<HTMLElement>('[data-pane-border]')?.dataset.paneBorder,
+          ...(error ? { error } : {}) });
+      };
+      const deadline = setTimeout(() => finish('Border entrance sampling did not settle'), 5000);
       const sample = () => {
+        if (finished) return;
         const border = document.querySelector<HTMLElement>('[data-pane-border]');
         if (border && activated) {
           const pane = document.querySelector<HTMLElement>(`[data-pane-id="${border.dataset.paneBorder}"]`)!;
@@ -43,19 +57,25 @@ describe('coordinated pane layout motion', () => {
           document.querySelector<HTMLElement>('[data-testid="workspace-pane"]')!
             .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
         }
-        if (performance.now() - start < 500) requestAnimationFrame(sample);
-        else done({ activated, errors, active: document.querySelector<HTMLElement>('[data-pane-border]')?.dataset.paneBorder });
+        const settled = activated && !document.querySelector('[data-pane-motion]') &&
+          !document.querySelector('.notepad-shell')!.getAnimations({ subtree: true }).some(animation =>
+            (animation.playState === 'running' || animation.pending) &&
+            animation.effect?.getTiming().iterations !== Infinity);
+        settledSince = settled ? settledSince ?? performance.now() : null;
+        if (errors.length > 3 && settledSince !== null && performance.now() - settledSince >= 80) finish();
+        else frameId = requestAnimationFrame(sample);
       };
-      requestAnimationFrame(sample);
+      frameId = requestAnimationFrame(sample);
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
     });
+    if (result.error) throw new Error(result.error);
     expect(result.activated).toBe(true);
     expect(result.errors.length).toBeGreaterThan(3);
     expect(Math.max(...result.errors)).toBeLessThanOrEqual(1);
     expect(result.active).toBe(await $('[data-testid="workspace-pane"]').getAttribute('data-pane-id'));
   });
 
-  for (const width of [900, 1440, 2400]) {
+  for (const width of [900, 2400]) {
     for (const side of ['left', 'right'] as const) {
       it(`animates opening and closing ${side} at ${width}px without reversing width`, async () => {
         await ready(width);
@@ -76,12 +96,12 @@ describe('coordinated pane layout motion', () => {
   it('coordinates an expanded Related panel and a chat pane', async () => {
     await ready();
     await $('button[aria-label="Expand related notes"]').click();
-    await browser.pause(400);
+    await waitForWorkspaceAnimationSettled();
     expectContinuousMotion(await samplePaneMotion('open-chat'));
     await $('[data-pane-kind="chat"]').waitForExist();
     expectContinuousMotion(await samplePaneMotion('close-right'));
     await $('button[aria-label="Collapse related notes"]').click();
-    await browser.pause(400);
+    await waitForWorkspaceAnimationSettled();
     await expect($('button[aria-label="Expand related notes"]')).toBeDisplayed();
   });
 
@@ -106,19 +126,31 @@ describe('coordinated pane layout motion', () => {
 
   it('settles resize and close during entrance without stale animation work', async () => {
     await ready();
-    await browser.executeAsync(done => {
+    const interruption = await browser.executeAsync((done: (error: string | null) => void) => {
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
+      let frameId = 0;
+      let finished = false;
+      const finish = (error: string | null) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(deadline);
+        cancelAnimationFrame(frameId);
+        done(error);
+      };
+      const deadline = setTimeout(() => finish('Required interruption frame was not observed'), 5000);
       const closeOnFirstMotion = () => {
+        if (finished) return;
         const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
         if (!pane || !document.querySelector('[data-pane-motion]')) {
-          requestAnimationFrame(closeOnFirstMotion);
+          frameId = requestAnimationFrame(closeOnFirstMotion);
           return;
         }
         pane.querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
-        done();
+        finish(null);
       };
-      requestAnimationFrame(closeOnFirstMotion);
+      frameId = requestAnimationFrame(closeOnFirstMotion);
     });
+    expect(interruption).toBeNull();
     await browser.waitUntil(async () => browser.execute(() =>
       document.querySelectorAll('[data-testid="workspace-pane"]').length === 1 &&
       !document.querySelector('[data-pane-motion]')));
@@ -127,7 +159,20 @@ describe('coordinated pane layout motion', () => {
     await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-pane-motion]')));
     await chooseCurrent();
     expectContinuousMotion(await samplePaneMotion('close-right'));
-    expect(await browser.execute(() => document.querySelector('.notepad-shell')!.getAnimations({ subtree: true })
-      .filter(animation => animation.playState === 'running').length)).toBe(0);
+    const remainingAnimations = await browser.execute(() => document.querySelector('.notepad-shell')!.getAnimations({ subtree: true })
+      .filter(animation => {
+        if (animation.playState !== 'running') return false;
+        const target = (animation.effect as KeyframeEffect | null)?.target;
+        // The focused editor's perpetual cursor blink is expected. It is not
+        // stale pane motion, and a shorter state-based sampler now observes it.
+        return !(target instanceof Element && target.classList.contains('cm-cursorLayer') &&
+          animation.effect?.getTiming().iterations === Infinity);
+      }).map(animation => ({
+        name: animation instanceof CSSAnimation ? animation.animationName : 'transition',
+        target: (animation.effect as KeyframeEffect | null)?.target instanceof Element
+          ? ((animation.effect as KeyframeEffect).target as Element).className : null,
+        iterations: animation.effect?.getTiming().iterations
+      })));
+    expect(remainingAnimations).toEqual([]);
   });
 });

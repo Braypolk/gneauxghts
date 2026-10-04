@@ -20,10 +20,12 @@ const path = '/vault/Note.md';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
-  const promise = new Promise<T>((next) => {
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((next, fail) => {
     resolve = next;
+    reject = fail;
   });
-  return { promise, resolve };
+  return { promise, resolve, reject };
 }
 
 function conflictedDocument() {
@@ -221,6 +223,96 @@ describe('document conflict controller', () => {
     expect(document.working.markdown).toBe('my edits');
     expect(document.externalSync.kind).toBe('conflict');
     expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
+  });
+
+  it('restores the conflict choices after replacement rejects and preserves its diagnostic', async () => {
+    const document = conflictedDocument();
+    const conflict = structuredClone(document.externalSync);
+    const baseline = document.savedBaseline;
+    const identity = document.identity;
+    const harness = setup();
+    const failure = new Error('editor replacement failed');
+    harness.replaceDocumentContentInPlace.mockRejectedValueOnce(failure);
+
+    await expect(harness.controller.loadDiskVersion(document)).rejects.toBe(failure);
+
+    expect(document.externalSync).toEqual(conflict);
+    expect(document.working.markdown).toBe('my edits');
+    expect(document.savedBaseline).toBe(baseline);
+    expect(document.identity).toBe(identity);
+    expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
+    expect(harness.enqueueSave).not.toHaveBeenCalled();
+    await expect(harness.controller.loadDiskVersion(document)).resolves.toBe(true);
+    expect(document.working.markdown).toBe('disk version');
+  });
+
+  it.each(['stale', 'concurrentEdit'] as const)(
+    'restores the conflict choices when the %s rollback rejects',
+    async (cause) => {
+      const document = conflictedDocument();
+      const conflict = structuredClone(document.externalSync);
+      const baseline = document.savedBaseline;
+      const harness = setup();
+      const failure = new Error('editor rollback failed');
+      const localMarkdown = cause === 'concurrentEdit' ? 'new local edits' : 'my edits';
+      harness.replaceDocumentContentInPlace
+        .mockImplementationOnce(async () => {
+          if (cause === 'concurrentEdit') {
+            updateDocumentMarkdown(document, localMarkdown);
+            return 'applied';
+          }
+          return 'stale';
+        })
+        .mockRejectedValueOnce(failure);
+
+      await expect(harness.controller.loadDiskVersion(document)).rejects.toBe(failure);
+
+      expect(harness.replaceDocumentContentInPlace.mock.calls.map(
+        ([, markdown]) => markdown
+      )).toEqual(['disk version', localMarkdown]);
+      expect(document.externalSync).toEqual(conflict);
+      expect(document.working.markdown).toBe(localMarkdown);
+      expect(document.savedBaseline).toBe(baseline);
+      expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
+      await expect(harness.controller.keepMyEdits(document)).resolves.toBe(true);
+      expect(harness.enqueueSave).toHaveBeenCalledWith(document);
+      expect(document.working.markdown).toBe(localMarkdown);
+    }
+  );
+
+  it('preserves a newer conflict when the previous replacement rejects', async () => {
+    const document = conflictedDocument();
+    const harness = setup();
+    const replacement = deferred<PaneEditorOperationResult>();
+    const failure = new Error('previous editor replacement failed');
+    harness.replaceDocumentContentInPlace.mockImplementationOnce(() => replacement.promise);
+
+    const loading = harness.controller.loadDiskVersion(document);
+    captureExternalSnapshotForTest(document, {
+      ...createEmptySessionSnapshot(),
+      title: 'Newer disk title',
+      bodyMarkdown: 'newer disk version',
+      currentNoteId: 'note-1',
+      currentNotePath: path,
+      lastSavedTitle: 'Newer disk title',
+      lastSavedMarkdown: 'newer disk version',
+      lastSavedNoteId: 'note-1',
+      lastSavedPath: path
+    }, 'watcher');
+    const newerConflict = document.externalSync;
+    replacement.reject(failure);
+
+    await expect(loading).rejects.toBe(failure);
+
+    expect(document.externalSync).toBe(newerConflict);
+    expect(document.externalSync).toMatchObject({
+      conflictId: 2,
+      phase: 'awaitingChoice'
+    });
+    expect(document.working.markdown).toBe('my edits');
+    expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
+    await expect(harness.controller.loadDiskVersion(document)).resolves.toBe(true);
+    expect(document.working.markdown).toBe('newer disk version');
   });
 
   it('rolls the editor back when a concurrent model edit prevents commit', async () => {

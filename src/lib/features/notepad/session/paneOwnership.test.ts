@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   adoptCommittedDocument,
-  adoptSnapshotForPane,
   bindNotepadStateToVault,
   createFreshDraftNote,
   createNoteDraftState,
@@ -87,20 +86,6 @@ describe('shared note identity', () => {
     expect(getPaneNote(state, workspace, secondary)).toBe(initialNote);
   });
 
-  it('closing one pane does not delete a still-referenced note', () => {
-    const { state, workspace, initialNote } =
-      setupWorkspace();
-    const fresh = createFreshDraftNote(state);
-    workspace.setPaneDocumentHandle(primary, fresh.handle);
-
-    expect(
-      getPaneNote(state, workspace, secondary)
-    ).toBe(initialNote);
-    expect(state.documentsByHandle[initialNote.handle]).toBe(
-      initialNote
-    );
-  });
-
   it('gives only the pane invoking Remember a fresh draft', () => {
     const { state, workspace, initialNote } =
       setupWorkspace();
@@ -125,28 +110,6 @@ describe('shared note identity', () => {
     expect(state.documentsByHandle[initialNote.handle]).toBe(
       initialNote
     );
-  });
-
-  it('removes the old document after a single-pane Remember rebind', () => {
-    const initialNote = createNoteDraftState();
-    const state = createNotepadState(initialNote);
-    const workspace = new WorkspaceStore(
-      primary,
-      initialNote.handle
-    );
-
-    replacePaneReferenceWithFreshDraft(
-      state,
-      workspace,
-      primary
-    );
-    removeNoteIfUnreferenced(
-      state,
-      workspace,
-      initialNote.handle
-    );
-
-    expect(state.documentsByHandle[initialNote.handle]).toBeUndefined();
   });
 
   it('only removes a note after workspace references are gone', () => {
@@ -184,34 +147,6 @@ describe('noteStore and WorkspaceStore ownership', () => {
     expect(notepadRuntimeState).not.toHaveProperty(
       'notepadState'
     );
-  });
-
-  it('adopts a snapshot into documents and updates the workspace reference', () => {
-    const { state, workspace } = setupWorkspace();
-    const snapshot = {
-      title: 'Updated Title',
-      bodyMarkdown: 'updated body',
-      currentNoteId: 'note-123',
-      currentNotePath: '/vault/Note.md',
-      lastSavedTitle: '',
-      lastSavedMarkdown: '',
-      lastSavedNoteId: null,
-      lastSavedPath: null
-    };
-
-    const adopted = adoptSnapshotForPane(
-      state,
-      workspace,
-      primary,
-      snapshot
-    );
-
-    expect(adopted.working.title).toBe('Updated Title');
-    expect(
-      getPaneNote(state, workspace, primary)
-    ).toBe(adopted);
-    expect(state).not.toHaveProperty('panesById');
-    expect(state).not.toHaveProperty('activePaneId');
   });
 
   it('removing pane state does not remove its document', () => {

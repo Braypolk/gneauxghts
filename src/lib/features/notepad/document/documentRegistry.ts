@@ -31,10 +31,14 @@ export class DocumentRegistry {
     return this._runtimes.values();
   }
 
-  /** Dispose and remove the runtime for a note. */
+  isReviewing(documentHandle: DocumentHandle): boolean {
+    return Boolean(this.get(documentHandle)?.resources()?.runtime.review);
+  }
+
+  /** Dispose and remove the runtime for a note, unless an active review retains it. */
   dispose(documentHandle: DocumentHandle): void {
     const runtime = this._runtimes.get(documentHandle);
-    if (!runtime) return;
+    if (!runtime || this.isReviewing(documentHandle)) return;
     runtime.dispose();
     this._runtimes.delete(documentHandle);
   }

@@ -7,6 +7,7 @@ use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use std::{
     ffi::OsStr,
     fs,
+    io::Write,
     path::{Path, PathBuf},
 };
 
@@ -48,9 +49,7 @@ pub(crate) fn store_pasted_image(
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     fs::create_dir_all(&assets_dir).map_err(|err| err.to_string())?;
 
-    let target_path =
-        resolve_pasted_image_path(&assets_dir, original_name.as_deref(), mime_type.as_deref());
-    fs::write(&target_path, bytes).map_err(|err| err.to_string())?;
+    let target_path = write_new_image_asset(&assets_dir, &bytes, original_name.as_deref(), mime_type.as_deref())?;
 
     Ok(StoredImageAsset {
         file_name: target_path
@@ -60,6 +59,26 @@ pub(crate) fn store_pasted_image(
             .to_string(),
         file_path: target_path.to_string_lossy().into_owned(),
     })
+}
+
+fn write_new_image_asset(
+    assets_dir: &Path, bytes: &[u8], original_name: Option<&str>, mime_type: Option<&str>,
+) -> Result<PathBuf, String> {
+    loop {
+        let path = resolve_pasted_image_path(assets_dir, original_name, mime_type);
+        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                if let Err(error) = file.write_all(bytes) {
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(error.to_string());
+                }
+                return Ok(path);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => return Err(error.to_string()),
+        }
+    }
 }
 
 pub(super) fn read_image_asset_data_url_from_assets_dir(
@@ -205,3 +224,6 @@ pub(super) fn asset_extension_from_mime_type(mime_type: &str) -> Option<&'static
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod helper_tests;

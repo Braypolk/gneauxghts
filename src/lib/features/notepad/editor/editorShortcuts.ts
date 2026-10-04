@@ -132,15 +132,13 @@ export function createEditorShortcuts(
           return false;
         }
 
+        const paneKey = current?.paneKey;
+        const owner = current?.sharedResources?.runtime;
         event.preventDefault();
-        void navigator.clipboard
-          .writeText(markdown)
-          .then(() => {
-            deleteCurrentBlock(view);
-          })
-          .catch((error) => {
-            console.error('Failed to copy block markdown to clipboard:', error);
-          });
+        void cutCurrentBlock(view, () => {
+          const latest = controller();
+          return latest === current && latest?.paneKey === paneKey && latest?.sharedResources?.runtime === owner;
+        }).catch((error) => console.error('Failed to copy block markdown to clipboard:', error));
         return true;
       }
 
@@ -215,4 +213,15 @@ export function createFilteredDefaultKeymap() {
       (binding) => !['Enter', 'Mod-Enter', 'Mod-i'].includes(binding.key ?? '')
     )
   );
+}
+
+/** Copy completes before deletion, but only the captured document/selection may be cut. */
+export async function cutCurrentBlock(view: EditorView, isCurrent: () => boolean, writeText = (text: string) => navigator.clipboard.writeText(text)) {
+  const state = view.state;
+  const markdown = getClipboardMarkdownForCurrentBlock(view);
+  if (!markdown || state.readOnly) return false;
+  await writeText(markdown);
+  if (!isCurrent() || !view.dom.isConnected || view.state.readOnly || view.composing ||
+      view.state.doc !== state.doc || !view.state.selection.eq(state.selection)) return false;
+  return deleteCurrentBlock(view);
 }

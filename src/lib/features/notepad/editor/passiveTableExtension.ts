@@ -1,4 +1,7 @@
-import { RangeSetBuilder } from '@codemirror/state';
+import { syntaxTree } from '@codemirror/language';
+import type { Tree } from '@lezer/common';
+import { markdownCodeRanges } from '../markdown/codeContext';
+import { RangeSetBuilder, type Text } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -31,14 +34,13 @@ export function isMarkdownTableDelimiterLine(text: string) {
   );
 }
 
-export function collectPassiveTableRanges(doc: {
-  lines: number;
-  line: (n: number) => { from: number; text: string };
-}): PassiveTableRange[] {
+export function collectPassiveTableRanges(doc: Text, tree?: Tree): PassiveTableRange[] {
   const ranges: PassiveTableRange[] = [];
+  const codeRanges = markdownCodeRanges(doc, tree);
 
   for (let lineNumber = 2; lineNumber <= doc.lines; lineNumber += 1) {
     const delimiterLine = doc.line(lineNumber);
+    if (codeRanges.some(range => delimiterLine.from >= range.from && delimiterLine.from < range.to)) continue;
     if (!isMarkdownTableDelimiterLine(delimiterLine.text)) {
       continue;
     }
@@ -87,7 +89,7 @@ export function collectPassiveTableRanges(doc: {
 
 export function buildPassiveTableDecorations(view: EditorView): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
-  for (const spec of collectPassiveTableLineSpecs(view.state.doc)) {
+  for (const spec of collectPassiveTableLineSpecs(view.state.doc, syntaxTree(view.state))) {
     builder.add(
       spec.from,
       spec.from,
@@ -101,11 +103,8 @@ export function buildPassiveTableDecorations(view: EditorView): DecorationSet {
   return builder.finish();
 }
 
-export function collectPassiveTableLineSpecs(doc: {
-  lines: number;
-  line: (n: number) => { from: number; text: string };
-}): PassiveTableLineSpec[] {
-  return collectPassiveTableRanges(doc).flatMap((range, groupIndex) => {
+export function collectPassiveTableLineSpecs(doc: Text, tree?: Tree): PassiveTableLineSpec[] {
+  return collectPassiveTableRanges(doc, tree).flatMap((range, groupIndex) => {
     const groupId = String(groupIndex);
     return [
       {
@@ -275,7 +274,7 @@ export function createPassiveTableExtension() {
       }
 
       update(update: ViewUpdate) {
-        if (update.docChanged || update.viewportChanged) {
+        if (update.docChanged) {
           this.decorations = buildPassiveTableDecorations(update.view);
         }
         if (

@@ -52,7 +52,7 @@ impl EvidenceSession {
         excluded: &HashSet<String>,
         args: ReadRequest,
     ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), ToolError> {
-        if self.read_continuations.len() >= 128 {
+        if args.cursor.is_none() && self.read_continuations.len() >= 128 {
             return Err(ToolError::work_budget("Read continuation budget exhausted"));
         }
         let selectors = usize::from(!args.evidence_ids.is_empty())
@@ -92,34 +92,21 @@ impl EvidenceSession {
                 if !ids.contains(&note_id) {
                     return Err(ToolError::unavailable("Note is unavailable or not allowed; use a discovered noteId, not a title or evidenceId"));
                 }
-                let (path, title) = {
-                    let index = state.notes_index.lock().map_err(|_| "Notes unavailable")?;
-                    let (path, note) = index
-                        .get_note_by_note_id(&note_id)
-                        .ok_or("Note unavailable")?;
-                    (path.clone(), note.title.clone())
-                };
-                let raw = fs::read_to_string(path).map_err(|_| "Note unavailable")?;
+                let snapshot = CanonicalSnapshot::load(state, &note_id)
+                    .ok_or_else(|| ToolError::unavailable("Note unavailable"))?;
                 let mut ids = Vec::new();
                 // Direct canonical reads preserve all body and unmanaged properties.
                 for location in ["title", "properties", "body"] {
-                    let body = body_at(&raw, &title, location);
+                    let body = &snapshot.locations[location];
                     let mut offset = 0;
                     for text in passage_slices(&body) {
-                        let candidate = make_candidate_at(
-                            state,
-                            &note_id,
-                            text,
-                            location,
-                            "Current note",
-                            1.0,
-                            Some(offset),
-                        )
-                        .ok_or_else(|| {
-                            ToolError::stale(
-                                "Canonical note changed while preparing the read; retry",
-                            )
-                        })?;
+                        let candidate = snapshot
+                            .candidate(&note_id, text, location, "Current note", 1.0, Some(offset))
+                            .ok_or_else(|| {
+                                ToolError::stale(
+                                    "Canonical note changed while preparing the read; retry",
+                                )
+                            })?;
                         ids.push(candidate.citation.id.clone());
                         self.candidates
                             .entry(candidate.citation.id.clone())

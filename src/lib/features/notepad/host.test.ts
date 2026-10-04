@@ -76,7 +76,6 @@ describe('createNotepadFeatureHost', () => {
         closeSlashMenu: () => {},
         closeSelectionMenu: () => {},
         addReadOnlyOverlay: () => ({ dispose: () => {} }),
-        setProposalReviewExtensions: () => false
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {
@@ -144,7 +143,6 @@ describe('createNotepadFeatureHost', () => {
         closeSlashMenu: () => {},
         closeSelectionMenu: () => {},
         addReadOnlyOverlay: () => ({ dispose: () => {} }),
-        setProposalReviewExtensions: () => false
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {},

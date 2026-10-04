@@ -44,12 +44,17 @@ fn save_retained_state(
     body: String,
     path: Option<String>,
 ) -> (String, NoteIdentity) {
-    let saved = save(state, title, body, path);
-    state
-        .note_timeline()
-        .finalize_editing_window(&saved.1)
+    let session = crate::test_support::save_and_finalize(state, title.into(), body, path)
+        .unwrap()
         .unwrap();
-    saved
+    assert!(
+        session.commit_warning.is_none(),
+        "unexpected publication warning"
+    );
+    (
+        session.path.unwrap(),
+        NoteIdentity::new(session.note_id.unwrap()),
+    )
 }
 
 fn measure<T>(samples: &mut Vec<f64>, operation: impl FnOnce() -> T) -> T {

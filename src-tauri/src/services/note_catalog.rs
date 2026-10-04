@@ -51,7 +51,8 @@ impl CatalogMutation {
 
 #[derive(Default)]
 pub(crate) struct CatalogProjectionRetries {
-    lexical: Mutex<HashMap<PathBuf, Arc<PathProjectionState>>>,
+    paths: Mutex<HashMap<PathBuf, Arc<PathProjectionState>>>,
+    pending: Mutex<HashMap<PathBuf, Arc<PathProjectionState>>>,
 }
 
 #[derive(Default)]
@@ -114,7 +115,7 @@ impl ProjectionWork {
 impl CatalogProjectionRetries {
     fn path_state(&self, path: &Path) -> Result<Arc<PathProjectionState>, String> {
         Ok(self
-            .lexical
+            .paths
             .lock()
             .map_err(|_| "Catalog projection retry lock poisoned".to_string())?
             .entry(path.to_path_buf())
@@ -125,7 +126,7 @@ impl CatalogProjectionRetries {
     fn apply_registered(
         &self,
         lexical: &LexicalIndex,
-        state: &PathProjectionState,
+        state: &Arc<PathProjectionState>,
         generation: u64,
         mutation: &CatalogMutation,
         work: ProjectionWork,
@@ -168,6 +169,17 @@ impl CatalogProjectionRetries {
             // Keep only the generation watermark once both projections land.
             latest.mutation = None;
         }
+        // Membership changes while this path's generation lock is held. A
+        // concurrent newer publication cannot lose its pending registration.
+        let mut pending = self
+            .pending
+            .lock()
+            .map_err(|_| "Catalog pending projection lock poisoned".to_string())?;
+        if latest.mutation.is_some() {
+            pending.insert(mutation.path().to_path_buf(), Arc::clone(state));
+        } else {
+            pending.remove(mutation.path());
+        }
         first_error.map_or(Ok(()), Err)
     }
 
@@ -184,7 +196,7 @@ impl CatalogProjectionRetries {
 
     pub(crate) fn retry_pending(&self, lexical: &LexicalIndex) -> Result<(), String> {
         let paths = self
-            .lexical
+            .pending
             .lock()
             .map_err(|_| "Catalog projection retry lock poisoned".to_string())?
             .values()
@@ -416,6 +428,8 @@ mod tests {
         let app_data = crate::test_support::TestDir::new("catalog-managed-chat-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         crate::state::set_notes_root_override(Some(app_data.path().to_path_buf())).unwrap();
+        let _storage =
+            crate::state::AppStateStorage::bind(&crate::state::vault_data_dir().unwrap()).unwrap();
         let notes = crate::test_support::TestDir::new("catalog-managed-chat-notes");
         let path = notes.path().join("Projection.md");
         let note = "---\ngneauxghts:\n  id: projection-id\n  kind: note\n---\n\nOld lexical body\n\n- [ ] retained ordinary task";
@@ -440,19 +454,18 @@ mod tests {
             )
             .unwrap();
 
-        assert_eq!(
-            lexical
-                .search(
-                    "managed chat",
-                    "managed chat",
-                    &["managed", "chat"],
-                    10,
-                    None,
-                )
-                .unwrap()
-                .len(),
-            1
-        );
+        // Ordinary note search excludes managed chat transcripts; evidence search
+        // deliberately retains them within the admitted cross-kind identity scope.
+        assert!(lexical
+            .search("managed", "managed", &["managed"], 10, None)
+            .unwrap()
+            .is_empty());
+        let allowed_ids = std::collections::HashSet::from(["projection-id".to_string()]);
+        let (matches, count) = lexical.evidence_matches("managed", &allowed_ids, 10).unwrap();
+        assert_eq!(count, 1);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].0, "projection-id");
+        assert_eq!(matches[0].1, "Managed chat lexical body");
         let tasks = crate::state::task_projection::load_tasks_for_note_id("projection-id").unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].text, "retained ordinary task");
@@ -460,16 +473,9 @@ mod tests {
         catalog
             .remove(&path, CatalogWriteMode::ManagedProjection)
             .unwrap();
-        assert!(lexical
-            .search(
-                "managed chat",
-                "managed chat",
-                &["managed", "chat"],
-                10,
-                None,
-            )
-            .unwrap()
-            .is_empty());
+        let (matches, count) = lexical.evidence_matches("managed", &allowed_ids, 10).unwrap();
+        assert!(matches.is_empty());
+        assert_eq!(count, 0);
         assert_eq!(
             crate::state::task_projection::load_tasks_for_note_id("projection-id")
                 .unwrap()
@@ -485,6 +491,8 @@ mod tests {
         let app_data = crate::test_support::TestDir::new("catalog-resolved-identity-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         crate::state::set_notes_root_override(Some(app_data.path().to_path_buf())).unwrap();
+        let _storage =
+            crate::state::AppStateStorage::bind(&crate::state::vault_data_dir().unwrap()).unwrap();
         let notes = crate::test_support::TestDir::new("catalog-resolved-identity-notes");
         let original_path = notes.path().join("Original.md");
         let copy_path = notes.path().join("Copy.md");
@@ -532,11 +540,6 @@ mod tests {
             lexical_results[0].result.note_id.as_deref(),
             Some(copy_id.as_str())
         );
-        apply_task_projection(&CatalogMutation::Upsert {
-            path: copy_path,
-            note: Box::new(resolved_copy),
-        })
-        .unwrap();
         let copy_tasks = crate::state::task_projection::load_tasks_for_note_id(&copy_id).unwrap();
         assert_eq!(copy_tasks.len(), 1);
         assert_eq!(copy_tasks[0].text, "distinctive copied catalog task");
@@ -553,6 +556,8 @@ mod tests {
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let notes = crate::test_support::TestDir::new("catalog-lexical-retry");
         crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let _storage =
+            crate::state::AppStateStorage::bind(&crate::state::vault_data_dir().unwrap()).unwrap();
         let path = notes.path().join("Retry.md");
         let older = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nObsolete payload\n\n- [ ] obsolete task";
         let newer = "---\ngneauxghts:\n  id: retry-note-id\n  kind: note\n---\n\nNewest coordinated payload\n\n- [ ] newest task";
@@ -648,8 +653,74 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
-        let state = retries.lexical.lock().unwrap().get(&path).unwrap().clone();
+        let state = retries.paths.lock().unwrap().get(&path).unwrap().clone();
         assert!(state.latest.lock().unwrap().mutation.is_none());
         crate::state::set_notes_root_override(None).unwrap();
+    }
+    #[test]
+    fn failed_projection_remains_pending_until_retry_repairs_it() {
+        let fixture = crate::test_support::TestVault::new("catalog-pending-retry");
+        let path = fixture.notes.path().join("Retry.md");
+        let db =
+            rusqlite::Connection::open(fixture.notes.path().join(".gneauxghts/app-state.sqlite3"))
+                .unwrap();
+        db.execute_batch(
+            "ALTER TABLE app_state_note_tasks RENAME TO temporarily_unavailable_tasks",
+        )
+        .unwrap();
+        let index = Mutex::new(NotesIndex::default());
+        let lexical = Arc::new(LexicalIndex::new().unwrap());
+        let retries = CatalogProjectionRetries::default();
+        let catalog = NoteCatalog::new(&index, &lexical, &retries);
+        let markdown = "---\ngneauxghts:\n  id: retry-identity\n  kind: note\n---\n\n- [ ] Retained retry task";
+        assert!(catalog
+            .upsert(
+                path.clone(),
+                build_indexed_note(&path, markdown, 1),
+                CatalogWriteMode::Synchronous
+            )
+            .is_err());
+        assert_eq!(retries.pending.lock().unwrap().len(), 1);
+        // Background retries deliberately suppress rebuildable task errors.
+        retries.retry_pending(&lexical).unwrap();
+        assert_eq!(retries.pending.lock().unwrap().len(), 1);
+        db.execute_batch(
+            "ALTER TABLE temporarily_unavailable_tasks RENAME TO app_state_note_tasks",
+        )
+        .unwrap();
+        retries.retry_pending(&lexical).unwrap();
+        assert!(retries.pending.lock().unwrap().is_empty());
+        let tasks =
+            crate::state::task_projection::load_tasks_for_note_id("retry-identity").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].text, "Retained retry task");
+    }
+
+    #[test]
+    fn settled_path_watermarks_are_not_pending_retry_work() {
+        let retries = CatalogProjectionRetries::default();
+        // Churn keeps compact stale-job watermarks, but none belongs to the
+        // retry worklist. This would be 10,000 locks on every old retry scan.
+        for index in 0..10_000 {
+            let path = PathBuf::from(format!("/vault/churn/{index}.md"));
+            let state = retries.path_state(&path).unwrap();
+            state.latest.lock().unwrap().generation = Some(index);
+        }
+        assert_eq!(retries.paths.lock().unwrap().len(), 10_000);
+        assert_eq!(retries.pending.lock().unwrap().len(), 0);
+        retries
+            .retry_pending(&LexicalIndex::new().unwrap())
+            .unwrap();
+        let paths = retries.paths.lock().unwrap();
+        let retained_floor = paths
+            .iter()
+            .map(|(path, _)| {
+                std::mem::size_of::<PathProjectionState>()
+                    + std::mem::size_of::<PathBuf>()
+                    + std::mem::size_of::<Arc<PathProjectionState>>()
+                    + path.as_os_str().len()
+            })
+            .sum::<usize>();
+        eprintln!("10k path watermarks retain at least {retained_floor} bytes (excluding allocator/hash-table overhead)");
     }
 }

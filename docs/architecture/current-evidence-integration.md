@@ -2,7 +2,10 @@
 
 Historical integration report. The later composable-capability refactor replaces
 terminal inventories and named period inputs; see [Architecture](../../ARCHITECTURE.md#agent-runtime)
-for current behavior. The measurements below describe the earlier implementation.
+for current behavior, including ordinary streaming for source and quotation
+requests. The release description, retained/open-work list and measurements below
+describe the September 21 implementation; source-first preview has since been
+removed.
 
 September 21, 2026. This release combines scoped current-content search/read,
 line-level provenance and task evidence, stable passage citations, deterministic

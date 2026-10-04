@@ -5,6 +5,13 @@ use tauri::Manager;
 
 #[cfg(test)]
 static BEFORE_TERMINAL_RESTART: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
+#[cfg(test)]
+pub(crate) fn clear_restart_hook_for_test() {
+    *BEFORE_TERMINAL_RESTART
+        .lock()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    BEFORE_TERMINAL_RESTART.clear_poison();
+}
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -57,6 +64,34 @@ pub(crate) struct AppLifecycle {
     restart: Mutex<RestartState>,
     settled: Condvar,
     watcher: Mutex<Option<VaultWatcherHandle>>,
+}
+
+/// A panicking preparation must wake callers already joined to the attempt.
+/// Its terminal state is conservatively closed because shutdown may have begun.
+struct RestartAttempt<'a> {
+    lifecycle: &'a AppLifecycle,
+    attempt: u64,
+    completed: bool,
+}
+impl Drop for RestartAttempt<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            let mut state = self
+                .lifecycle
+                .restart
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            state.preparing = false;
+            state.ready = false;
+            state.completed_attempt = self.attempt;
+            state.result = Some(PrepareRestartReceipt::failed(
+                "Restart preparation interrupted".into(),
+                false,
+                false,
+            ));
+            self.lifecycle.settled.notify_all();
+        }
+    }
 }
 
 impl AppLifecycle {
@@ -156,6 +191,11 @@ impl AppLifecycle {
             state.attempt
         };
 
+        let mut completion = RestartAttempt {
+            lifecycle: self,
+            attempt,
+            completed: false,
+        };
         let result = self.run_prepare(app);
         if let Ok(mut state) = self.restart.lock() {
             state.preparing = false;
@@ -164,6 +204,7 @@ impl AppLifecycle {
             state.result = Some(result.clone());
             self.settled.notify_all();
         }
+        completion.completed = true;
         result
     }
 
@@ -206,12 +247,14 @@ impl AppLifecycle {
         }
 
         #[cfg(test)]
-        if let Some(hook) = BEFORE_TERMINAL_RESTART
-            .lock()
-            .expect("restart test hook")
-            .take()
         {
-            hook();
+            let hook = BEFORE_TERMINAL_RESTART
+                .lock()
+                .unwrap_or_else(|error| error.into_inner())
+                .take();
+            if let Some(hook) = hook {
+                hook();
+            }
         }
 
         // From this point resources are released terminally. A later failure
@@ -251,13 +294,26 @@ mod tests {
     use crate::{app::EventBus, semantic::SemanticState, state::RunningVault};
     use std::sync::mpsc;
 
-    fn app_with_disposable_vault(
-        with_chat: bool,
-    ) -> (
-        tauri::App<tauri::test::MockRuntime>,
-        crate::test_support::TestDir,
-        crate::test_support::TestDir,
-    ) {
+    struct AppFixture {
+        app: tauri::App<tauri::test::MockRuntime>,
+        _app_data: crate::test_support::TestDir,
+        _notes: crate::test_support::TestDir,
+    }
+    impl std::ops::Deref for AppFixture {
+        type Target = tauri::App<tauri::test::MockRuntime>;
+        fn deref(&self) -> &Self::Target {
+            &self.app
+        }
+    }
+    impl Drop for AppFixture {
+        fn drop(&mut self) {
+            if let Some(state) = self.app.try_state::<AppState>() {
+                let _ = state.stop_rebuildable_projection_work();
+            }
+        }
+    }
+
+    fn app_with_disposable_vault(with_chat: bool) -> AppFixture {
         let app_data = crate::test_support::TestDir::new("restart-lifecycle-app-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let notes = crate::test_support::TestDir::new("restart-lifecycle-vault");
@@ -281,7 +337,11 @@ mod tests {
         if with_chat {
             app.manage(ChatService::new(running_root, running_data).unwrap());
         }
-        (app, app_data, notes)
+        AppFixture {
+            app,
+            _app_data: app_data,
+            _notes: notes,
+        }
     }
 
     #[test]
@@ -304,7 +364,7 @@ mod tests {
     #[test]
     fn missing_chat_service_cannot_claim_the_running_workspace_is_resumable() {
         let _guard = crate::test_support::lock_test_env();
-        let (app, _app_data, _notes) = app_with_disposable_vault(false);
+        let app = app_with_disposable_vault(false);
 
         let receipt = app.state::<AppLifecycle>().prepare_restart(app.handle());
 
@@ -318,17 +378,20 @@ mod tests {
     #[test]
     fn concurrent_restart_preparations_join_one_ready_transition() {
         let _guard = crate::test_support::lock_test_env();
-        let (app, _app_data, _notes) = app_with_disposable_vault(true);
+        let app = app_with_disposable_vault(true);
         let (entered_tx, entered_rx) = mpsc::channel();
         let (release_tx, release_rx) = mpsc::channel();
         *BEFORE_TERMINAL_RESTART.lock().unwrap() = Some(Box::new(move || {
             entered_tx.send(()).unwrap();
-            release_rx.recv().unwrap();
+            release_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
         }));
 
         let first_app = app.handle().clone();
         let second_app = app.handle().clone();
         std::thread::scope(|scope| {
+            let mut release = crate::test_support::ReleaseOnDrop::new(release_tx);
             let first = scope.spawn(move || {
                 first_app
                     .state::<AppLifecycle>()
@@ -347,7 +410,7 @@ mod tests {
             });
             app.state::<AppLifecycle>().wait_for_joiner();
             assert!(joined_rx.try_recv().is_err());
-            release_tx.send(()).unwrap();
+            release.release();
             let first = first.join().unwrap();
             let second = second.join().unwrap();
             assert!(first.ready, "{first:?}");
@@ -359,9 +422,27 @@ mod tests {
     }
 
     #[test]
+    fn interrupted_preparation_settles_waiters_with_a_closed_failure() {
+        let _guard = crate::test_support::lock_test_env();
+        let app = app_with_disposable_vault(true);
+        *BEFORE_TERMINAL_RESTART.lock().unwrap() =
+            Some(Box::new(|| panic!("injected preparation unwind")));
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            app.state::<AppLifecycle>().prepare_restart(app.handle())
+        }));
+        assert!(result.is_err());
+        let lifecycle = app.state::<AppLifecycle>();
+        let state = lifecycle.restart.lock().unwrap();
+        assert!(!state.preparing);
+        assert_eq!(state.completed_attempt, state.attempt);
+        let receipt = state.result.as_ref().unwrap();
+        assert!(!receipt.ready && !receipt.can_resume && !receipt.timeline_portable);
+    }
+
+    #[test]
     fn terminal_close_failure_stays_closed_and_retry_reaches_ready() {
         let _guard = crate::test_support::lock_test_env();
-        let (app, _app_data, _notes) = app_with_disposable_vault(true);
+        let app = app_with_disposable_vault(true);
         crate::services::note_timeline::inject_history_clean_close_failure_once();
 
         let first = app.state::<AppLifecycle>().prepare_restart(app.handle());

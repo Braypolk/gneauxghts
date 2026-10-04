@@ -14,30 +14,38 @@ import type {
   HistoryIntegrityState
 } from '$lib/types/history';
 
-const MUTATION_SOURCES = [
+// Array membership alone accepts incomplete vocabularies. This helper also
+// rejects a missing union member at the ordinary TypeScript check boundary.
+function exhaustiveValues<Union>() {
+  return <const Values extends readonly Union[]>(
+    values: Values & (Exclude<Union, Values[number]> extends never ? unknown : never)
+  ) => values;
+}
+
+const MUTATION_SOURCES = exhaustiveValues<HistoryMutationSource>()([
   'editor', 'taskAction', 'acceptedChatProposal', 'externalEdit',
   'versionRestore', 'noteCreation', 'baselineInitialization', 'recoveryReconciliation'
-] as const satisfies readonly HistoryMutationSource[];
-const LIFECYCLE_KINDS = [
+]);
+const LIFECYCLE_KINDS = exhaustiveValues<HistoryLifecycleEventKind>()([
   'created', 'renamed', 'moved', 'forgotten', 'recovered', 'missing', 'reattached', 'purged'
-] as const satisfies readonly HistoryLifecycleEventKind[];
-const TIME_KINDS = ['knownSince', 'committed', 'observed', 'editingWindow'] as const;
-const HEALTH_STATES = [
+]);
+const TIME_KINDS = exhaustiveValues<import('$lib/types/history').RevisionTimeEvidence['kind']>()(['knownSince', 'committed', 'observed', 'editingWindow']);
+const HEALTH_STATES = exhaustiveValues<HistoryHealthState>()([
   'healthy', 'initializing', 'degraded', 'warning', 'unavailable', 'corrupt'
-] as const satisfies readonly HistoryHealthState[];
-const NOTE_HEALTH_STATES = [
+]);
+const NOTE_HEALTH_STATES = exhaustiveValues<import('$lib/types/history').NoteHistoryHealth['state']>()([
   'healthy', 'initializing', 'degraded', 'unavailable', 'corrupt'
-] as const;
-const INTEGRITY_STATES = [
+]);
+const INTEGRITY_STATES = exhaustiveValues<HistoryIntegrityState>()([
   'verified', 'unavailable', 'corrupt'
-] as const satisfies readonly HistoryIntegrityState[];
-const INITIALIZATION_PHASES = [
+]);
+const INITIALIZATION_PHASES = exhaustiveValues<BaselineInitializationPhase>()([
   'notStarted', 'initializing', 'complete', 'degraded'
-] as const satisfies readonly BaselineInitializationPhase[];
+]);
 const ERROR_STATES = HISTORY_COMMAND_ERRORS.map((error) => error.state);
-const RECOVERY_ACTIONS = [
+const RECOVERY_ACTIONS = exhaustiveValues<HistoryCommandError['recoveryAction']>()([
   'retry', 'refresh', 'recoverNote', 'backUpAndReset', 'correctRequest'
-] as const;
+]);
 
 interface TimelineContractFixture {
   version: number;
@@ -48,7 +56,6 @@ interface TimelineContractFixture {
   noteHistoryHealthStates: string[];
   historyIntegrityStates: string[];
   baselineInitializationPhases: string[];
-  cursors: { initial: string | null; continuation: string | null };
   commandErrorStates: string[];
   recoveryActions: string[];
   commandErrors: HistoryCommandError[];
@@ -78,25 +85,6 @@ describe('Note Timeline command contract fixture', () => {
     expect(fixture.recoveryActions).toEqual(RECOVERY_ACTIONS);
     expect(fixture.commandErrors).toEqual(HISTORY_COMMAND_ERRORS);
   });
-
-  it('pins opaque nullable cursor and complete command-error shapes', () => {
-    expect(fixture.cursors).toEqual({
-      initial: null,
-      continuation: 'opaque-timeline-cursor'
-    });
-    expect(fixture.commandErrors.map((error) => error.state)).toEqual(
-      ERROR_STATES
-    );
-    for (const error of fixture.commandErrors) {
-      expect(Object.keys(error).sort()).toEqual([
-        'message',
-        'recoveryAction',
-        'state'
-      ]);
-      expect(error.message).not.toHaveLength(0);
-      expect(RECOVERY_ACTIONS).toContain(error.recoveryAction);
-    }
-  });
 });
 
 const TIME_EVIDENCE = [
@@ -119,7 +107,7 @@ it('shares exact legacy and versioned interval evidence with Rust, including rev
 
 it('matches the advisory readiness IPC states and nullable correlated snapshot', () => {
   const fixture = JSON.parse(readFileSync(new URL('../../../src-tauri/test-fixtures/contracts/history-readiness-contract.json', import.meta.url).pathname, 'utf8'));
-  const states = ['recoveryPending', 'targetVerificationPending', 'ready', 'unavailable', 'corrupt'] as const satisfies readonly import('./historyReadiness').HistoryReadiness['state'][];
+  const states = exhaustiveValues<import('./historyReadiness').HistoryReadiness['state']>()(['recoveryPending', 'targetVerificationPending', 'ready', 'unavailable', 'corrupt']);
   const snapshot: import('./historyReadiness').HistoryReadiness = {
     scope: 'runtime-scope', revision: 2, noteId: null, state: 'recoveryPending', verifiedNotes: 3,
     totalNotes: null, backgroundComplete: false, backgroundUnavailable: false

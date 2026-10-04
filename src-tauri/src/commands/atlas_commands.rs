@@ -1,4 +1,4 @@
-use super::{prepare_notes_dir, INTERACTIVE_INDEX_REFRESH_MAX_AGE};
+use super::prepare_notes_dir;
 use crate::{
     index::AppState,
     note::DocumentKind,
@@ -100,11 +100,7 @@ pub(crate) async fn get_vault_atlas(
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
     let notes_dir = prepare_notes_dir(&state, false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "get_vault_atlas",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "get_vault_atlas")?;
     let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();
 
@@ -135,11 +131,7 @@ pub(crate) async fn search_vault_atlas(
     let chat_visibility = chat_visibility.unwrap_or_default();
     let generation_key = AtlasGenerationKey { chat_visibility };
     let notes_dir = prepare_notes_dir(&state, false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "search_vault_atlas",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "search_vault_atlas")?;
 
     let activity_by_note_id = db_load_note_activity()?;
     let semantic = state.semantic.clone();

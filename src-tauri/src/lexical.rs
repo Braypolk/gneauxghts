@@ -345,12 +345,32 @@ impl LexicalIndex {
         query_parser.set_field_boost(self.fields.title, 2.8);
         query_parser.set_field_boost(self.fields.section_label, 1.4);
 
-        let (query, _) = query_parser.parse_query_lenient(query_text);
+        let (text_query, _) = query_parser.parse_query_lenient(query_text);
+        // This helper serves ordinary note search. Admission must precede the
+        // bounded collector so chat paragraphs cannot consume its candidate cap.
+        // Evidence queries retain their independent, cross-kind ID scope.
+        let ordinary_notes = TermSetQuery::new([Term::from_field_text(
+            self.fields.document_kind,
+            DocumentKind::Note.as_frontmatter_value(),
+        )]);
+        let mut clauses: Vec<(Occur, Box<dyn tantivy::query::Query>)> = vec![
+            (Occur::Must, text_query),
+            (Occur::Must, Box::new(ordinary_notes)),
+        ];
+        if let Some(path) = exclude_path {
+            clauses.push((
+                Occur::MustNot,
+                Box::new(TermSetQuery::new([Term::from_field_text(
+                    self.fields.note_path,
+                    &path.to_string_lossy(),
+                )])),
+            ));
+        }
+        let query = BooleanQuery::new(clauses);
         let searcher = inner.reader.searcher();
         let top_docs = searcher
             .search(&query, &TopDocs::with_limit(limit.max(1).saturating_mul(4)))
             .map_err(|err| err.to_string())?;
-        let excluded_path = exclude_path.map(|path| path.to_string_lossy().into_owned());
         let mut results = Vec::new();
 
         for (score, doc_address) in top_docs {
@@ -358,10 +378,6 @@ impl LexicalIndex {
                 .doc::<TantivyDocument>(doc_address)
                 .map_err(|err| err.to_string())?;
             let note_path = string_value(&document, self.fields.note_path)?;
-            if excluded_path.as_deref() == Some(note_path.as_str()) {
-                continue;
-            }
-
             let body = string_value(&document, self.fields.body)?;
             let (excerpt, highlight_ranges, match_text) =
                 lexical_preview(&body, normalized_query, query_terms);
@@ -532,6 +548,105 @@ mod tests {
             .search("wording", "wording", &["wording"], 10, None)
             .expect("search after remove")
             .is_empty());
+    }
+
+    #[test]
+    fn ordinary_search_admits_note_kind_before_top_docs_without_narrowing_evidence() {
+        use crate::note::DocumentKind;
+        use std::collections::HashSet;
+
+        let index = LexicalIndex::new().unwrap();
+        let chat_path = PathBuf::from("notes/needle-chat.md");
+        let note_path = PathBuf::from("notes/ordinary.md");
+        let chat_body = (0..200)
+            .map(|i| format!("needle passage {i}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let chat = build_indexed_note(
+            &chat_path,
+            &format!(
+                "---\ngneauxghts:\n  id: chat-id\n  kind: chatIndex\n---\n# needle\n\n{chat_body}"
+            ),
+            1,
+        );
+        let ordinary = build_indexed_note(&note_path, "---\ngneauxghts:\n  id: ordinary-id\n---\n# Ordinary\n\nA longer ordinary note body includes needle among many unrelated words about gardening and weather.", 1);
+        assert_eq!(chat.document_kind, DocumentKind::ChatIndex);
+        assert!(chat.paragraphs.len() > 160);
+        let entries = HashMap::from([(chat_path.clone(), chat), (note_path.clone(), ordinary)]);
+        let search = || {
+            index
+                .search_with_catalog(&entries, "needle", "needle", &["needle"], 40, None)
+                .unwrap()
+        };
+        let fallback = search();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].result.document_kind, DocumentKind::Note);
+
+        index.upsert_note(&chat_path, &entries[&chat_path]).unwrap();
+        index.upsert_note(&note_path, &entries[&note_path]).unwrap();
+        let indexed = search();
+        assert!(
+            indexed
+                .iter()
+                .all(|hit| hit.result.document_kind == DocumentKind::Note),
+            "indexed ordinary search must apply the same kind boundary as fallback"
+        );
+        assert!(
+            indexed
+                .iter()
+                .any(|hit| hit.result.note_path.as_deref() == note_path.to_str()),
+            "chat paragraphs must not crowd ordinary notes out of the bounded collector"
+        );
+
+        let chat_id = entries[&chat_path].note_id.clone();
+        let (evidence, available) = index
+            .evidence_matches("needle", &HashSet::from([chat_id.clone()]), 3)
+            .unwrap();
+        assert!(available > 160);
+        assert_eq!(evidence.len(), 3);
+        assert!(
+            evidence.iter().all(|(id, _, _, _)| id == &chat_id),
+            "evidence remains independently scoped across document kinds"
+        );
+    }
+
+    #[test]
+    fn current_note_exclusion_precedes_the_bounded_collector() {
+        let index = LexicalIndex::new().unwrap();
+        let current_path = PathBuf::from("notes/needle-current.md");
+        let other_path = PathBuf::from("notes/other.md");
+        let body = (0..200)
+            .map(|i| format!("needle passage {i}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let current = build_indexed_note(&current_path, &format!("# needle\n\n{body}"), 1);
+        let other = build_indexed_note(&other_path, "# Other\n\nA longer ordinary paragraph includes needle among many unrelated words about gardening and weather.", 1);
+        let entries = HashMap::from([(current_path.clone(), current), (other_path.clone(), other)]);
+        let search = || {
+            index
+                .search_with_catalog(
+                    &entries,
+                    "needle",
+                    "needle",
+                    &["needle"],
+                    40,
+                    Some(&current_path),
+                )
+                .unwrap()
+        };
+        let fallback = search();
+        assert_eq!(fallback.len(), 1);
+        assert_eq!(fallback[0].result.note_path.as_deref(), other_path.to_str());
+        for (path, note) in &entries {
+            index.upsert_note(path, note).unwrap();
+        }
+        let indexed = search();
+        assert_eq!(
+            indexed.len(),
+            1,
+            "current-note paragraphs must not fill the collector before exclusion"
+        );
+        assert_eq!(indexed[0].result.note_path.as_deref(), other_path.to_str());
     }
 
     #[test]

@@ -1,7 +1,8 @@
-import { describe, expect, it, vi } from 'vitest';
-import { EditorState, type TransactionSpec } from '@codemirror/state';
+import { createCommandView } from './commandTestSupport';
+afterEach(() => vi.useRealTimers());
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { EditorState } from '@codemirror/state';
 import { history, redo, undo } from '@codemirror/commands';
-import type { EditorView } from '@codemirror/view';
 import { createMarkdownLanguage } from '../markdown/markdownLanguage';
 import { formatDateInsertion, formatPickedDateTime, inlineDateTexts, slashTokenAtSelection } from './dateCommands';
 import { getSlashMenuState, runSlashMenuSelection } from './slashMenu';
@@ -37,17 +38,16 @@ describe('inline date commands', () => {
   });
   it('replaces only the invoked token as one undoable edit, preserving following text', () => {
     vi.useFakeTimers(); vi.setSystemTime(new Date(2026, 8, 29, 9, 32));
-    let current = state('Before /date after', 12);
-    const view = { get state() { return current; }, dispatch(spec: TransactionSpec) { current = current.update(spec).state; }, focus() {} } as unknown as EditorView;
+    const { view } = createCommandView(state('Before /date after', 12));
     runSlashMenuSelection(view, 'date');
-    expect(current.doc.toString()).toBe(`Before ${formatDateInsertion('date')} after`);
-    expect(undo({ state: current, dispatch: (tr) => { current = tr.state; } })).toBe(true);
-    expect(current.doc.toString()).toBe('Before /date after');
-    expect(current.selection.main.head).toBe(12);
-    redo({ state: current, dispatch: (tr) => { current = tr.state; } });
-    const inserted = current.doc.toString();
+    expect(view.state.doc.toString()).toBe(`Before ${formatDateInsertion('date')} after`);
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe('Before /date after');
+    expect(view.state.selection.main.head).toBe(12);
+    redo(view);
+    const inserted = view.state.doc.toString();
     vi.advanceTimersByTime(86_400_000);
-    expect(current.doc.toString()).toBe(inserted);
+    expect(view.state.doc.toString()).toBe(inserted);
     vi.useRealTimers();
   });
   it('recognizes editable plain date/time text using locale order without hidden metadata', () => {

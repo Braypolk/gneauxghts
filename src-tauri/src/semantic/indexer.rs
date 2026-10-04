@@ -77,6 +77,7 @@ pub(crate) struct PendingNoteMove {
     pub(crate) modified_millis: u64,
 }
 
+#[derive(Clone)]
 struct SemanticDocumentBatch {
     updates: HashMap<PathBuf, PendingNoteUpdate>,
     deletes: HashSet<PathBuf>,
@@ -121,6 +122,7 @@ pub(crate) struct PendingIndexState {
 }
 
 impl PendingIndexState {
+    #[cfg(test)]
     fn is_empty(&self) -> bool {
         !self.full_scan_requested
             && !self.rebuild_requested
@@ -147,6 +149,8 @@ pub(crate) struct SemanticWorkQueue {
     pending: Arc<Mutex<PendingIndexState>>,
     wake_pending: Arc<AtomicBool>,
     accepting: Arc<Mutex<bool>>,
+    changed: Arc<Condvar>,
+    change_version: Arc<AtomicU64>,
     active: Arc<(Mutex<usize>, Condvar)>,
 }
 
@@ -175,6 +179,8 @@ impl SemanticWorkQueue {
                 pending: Arc::new(Mutex::new(initial)),
                 wake_pending: Arc::new(AtomicBool::new(false)),
                 accepting: Arc::new(Mutex::new(true)),
+                changed: Arc::new(Condvar::new()),
+                change_version: Arc::new(AtomicU64::new(0)),
                 active: Arc::new((Mutex::new(0), Condvar::new())),
             },
             signal_rx,
@@ -201,10 +207,14 @@ impl SemanticWorkQueue {
         if !*accepting {
             return Err("Semantic maintenance is quiesced for restart".to_string());
         }
-        self.pending
+        let result = self
+            .pending
             .lock()
             .map(|mut pending| update(&mut pending))
-            .map_err(|_| "Semantic pending state lock poisoned".to_string())
+            .map_err(|_| "Semantic pending state lock poisoned".to_string());
+        self.change_version.fetch_add(1, Ordering::Release);
+        self.changed.notify_all();
+        result
     }
 
     pub(crate) fn release_initial_scan(
@@ -282,6 +292,7 @@ impl SemanticWorkQueue {
                 .lock()
                 .map_err(|_| "Semantic admission lock poisoned".to_string())?;
             *accepting = false;
+            self.changed.notify_all();
             *self
                 .pending
                 .lock()
@@ -318,7 +329,39 @@ impl SemanticWorkQueue {
         Ok(())
     }
 
+    /// Wait only until the next retry/publication deadline or new queue work.
+    /// Quiescence/shutdown wakes this same owner immediately, so barriers never
+    /// wait for a stale backoff timer. Spurious wakes retain the deadline.
+    fn wait_for_delay(&self, delay: Duration) -> bool {
+        self.wait_for_delay_observing(delay, || {})
+    }
+
+    fn wait_for_delay_observing(&self, delay: Duration, entered: impl FnOnce()) -> bool {
+        let Ok(accepting) = self.accepting.lock() else {
+            return false;
+        };
+        let version = self.change_version.load(Ordering::Acquire);
+        entered();
+        self.changed
+            .wait_timeout_while(accepting, delay, |accepting| {
+                *accepting && self.change_version.load(Ordering::Acquire) == version
+            })
+            .map(|(accepting, _)| *accepting)
+            .unwrap_or(false)
+    }
+
+    fn is_accepting(&self) -> bool {
+        self.accepting
+            .lock()
+            .map(|accepting| *accepting)
+            .unwrap_or(false)
+    }
+
     pub(crate) fn stop_worker(&self) -> Result<(), String> {
+        if let Ok(mut accepting) = self.accepting.lock() {
+            *accepting = false;
+            self.changed.notify_all();
+        }
         self.signal_tx
             .send(WorkerSignal::Shutdown)
             .map_err(|error| error.to_string())
@@ -377,13 +420,90 @@ fn handle_wake(context: &IndexingWorkerContext) {
 }
 
 fn process_pending_jobs(context: &IndexingWorkerContext) {
+    process_pending_jobs_with_wait(context, |delay| context.queue.wait_for_delay(delay));
+}
+
+// A claim removes only its own inputs. Unselected work and arrivals remain in the
+// producer-owned queue, so completing a bulk scan cannot replay stale mutations.
+enum SelectedJob {
+    Rebuild,
+    FullScan { force: bool },
+    Documents(SemanticDocumentBatch),
+    RebuildAnn,
+    Snapshot,
+    Edges,
+    Atlas(HashMap<AtlasGenerationKey, u64>),
+    AtlasLabels(HashMap<AtlasGenerationKey, AtlasLabelRequest>),
+}
+
+impl SelectedJob {
+    fn claim(pending: &mut PendingIndexState) -> Option<Self> {
+        Some(if std::mem::take(&mut pending.rebuild_requested) {
+            pending.full_scan_requested = false;
+            pending.force_full_scan = false;
+            Self::Rebuild
+        } else if std::mem::take(&mut pending.full_scan_requested) {
+            Self::FullScan {
+                force: std::mem::take(&mut pending.force_full_scan),
+            }
+        } else if !pending.note_updates.is_empty()
+            || !pending.deleted_notes.is_empty()
+            || !pending.moved_notes.is_empty()
+        {
+            Self::Documents(SemanticDocumentBatch::new(
+                std::mem::take(&mut pending.note_updates),
+                std::mem::take(&mut pending.deleted_notes),
+                std::mem::take(&mut pending.moved_notes),
+            ))
+        } else if std::mem::take(&mut pending.automatic_rebuild_requested) {
+            // Rebuilding publishes both snapshots, subsuming the existing request.
+            pending.snapshot_publish_requested = false;
+            Self::RebuildAnn
+        } else if std::mem::take(&mut pending.snapshot_publish_requested) {
+            Self::Snapshot
+        } else if std::mem::take(&mut pending.edge_refresh_requested) {
+            Self::Edges
+        } else if !pending.atlas_requests.is_empty() {
+            Self::Atlas(std::mem::take(&mut pending.atlas_requests))
+        } else if !pending.atlas_label_requests.is_empty() {
+            Self::AtlasLabels(std::mem::take(&mut pending.atlas_label_requests))
+        } else {
+            return None;
+        })
+    }
+
+    fn requeue(self, pending: &mut PendingIndexState) {
+        let mut retry = PendingIndexState::default();
+        match self {
+            Self::Rebuild => retry.rebuild_requested = true,
+            Self::FullScan { force } => {
+                retry.full_scan_requested = true;
+                retry.force_full_scan = force;
+            }
+            Self::Documents(batch) => {
+                retry.note_updates = batch.updates;
+                retry.deleted_notes = batch.deletes;
+                retry.moved_notes = batch.moves;
+            }
+            Self::RebuildAnn => retry.automatic_rebuild_requested = true,
+            Self::Snapshot => retry.snapshot_publish_requested = true,
+            Self::Edges => retry.edge_refresh_requested = true,
+            Self::Atlas(requests) => retry.atlas_requests = requests,
+            Self::AtlasLabels(requests) => retry.atlas_label_requests = requests,
+        }
+        merge_retry_batch(pending, retry);
+    }
+}
+
+fn process_pending_jobs_with_wait(
+    context: &IndexingWorkerContext,
+    mut wait: impl FnMut(Duration) -> bool,
+) {
     let db_path = &context.db_path;
-    let notes_dir = &context.notes_dir;
     let provider = &context.provider;
     let ann = &context.ann;
     let note_ann = &context.note_ann;
     let pending = &context.queue.pending;
-    let index_revision = &context.index_revision;
     let runtime = &context.runtime;
     let debug = &context.debug;
     let background_gate = &context.background_gate;
@@ -396,525 +516,379 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
     }
     let mut atlas_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     let mut label_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
+    let cache_dir = db_path
+        .parent()
+        .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
+        .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
     loop {
-        if background_gate.is_manually_paused().unwrap_or(true) {
+        if !context.queue.is_accepting() || background_gate.is_manually_paused().unwrap_or(true) {
             return;
         }
-        let batch = {
-            let mut pending = match pending.lock() {
-                Ok(pending) => pending,
-                Err(_) => return,
-            };
-            if pending.is_empty() {
-                return;
-            }
-            std::mem::take(&mut *pending)
+        let job = match pending
+            .lock()
+            .ok()
+            .and_then(|mut pending| SelectedJob::claim(&mut pending))
+        {
+            Some(job) => job,
+            None => return,
         };
-        let retry_batch = batch.clone();
-        let deferred_explicit_updates = if batch.rebuild_requested || batch.full_scan_requested {
-            Some((
-                batch.note_updates.clone(),
-                batch.deleted_notes.clone(),
-                batch.moved_notes.clone(),
-            ))
-        } else {
-            None
-        };
-        let deferred_atlas_requests = batch.atlas_requests.clone();
-        let deferred_atlas_label_requests = batch.atlas_label_requests.clone();
-        let has_document_mutations = !batch.note_updates.is_empty()
-            || !batch.deleted_notes.is_empty()
-            || !batch.moved_notes.is_empty();
-        // Capture mutation shape before `batch.*` fields move into the index job.
-        let document_batch_has_note_markdown = batch
-            .note_updates
-            .values()
-            .any(|update| matches!(update.document, PendingSemanticDocument::NoteMarkdown(_)));
-        let document_batch_has_chat_recall = batch
-            .note_updates
-            .values()
-            .any(|update| matches!(update.document, PendingSemanticDocument::ChatRecall { .. }));
-        let document_batch_has_deletes_or_moves =
-            !batch.deleted_notes.is_empty() || !batch.moved_notes.is_empty();
-        let mut handled_documents = false;
-        let mut handled_automatic_rebuild = false;
-        let mut handled_edges = false;
-        let mut handled_snapshot = false;
-        let mut handled_atlas = false;
-        let mut handled_structural_atlas = false;
-        let mut handled_label_atlas = false;
         let mut atlas_retry_delay = Duration::ZERO;
-
-        let did_succeed = if batch.rebuild_requested {
-            run_job(
+        let outcome = match &job {
+            SelectedJob::Rebuild => run_job(
                 db_path,
                 runtime,
                 debug,
                 "Rebuilding semantic index",
                 |connection| process_rebuild(connection, context),
-            )
-        } else if batch.full_scan_requested {
-            let job_notes_dir = notes_dir.to_path_buf();
-            let job_provider = provider.clone();
-            let job_debug = debug.clone();
-            let force = batch.force_full_scan;
-            run_job(
-                db_path,
-                runtime,
-                debug,
-                "Scanning notes",
-                move |connection| {
+            ),
+            SelectedJob::FullScan { force } => {
+                run_job(db_path, runtime, debug, "Scanning notes", |connection| {
                     process_full_scan(
                         connection,
-                        &job_notes_dir,
-                        &job_provider,
+                        &context.notes_dir,
+                        provider,
                         ann,
                         note_ann,
-                        force,
-                        &job_debug,
+                        *force,
+                        debug,
                     )
-                },
-            )
-        } else if has_document_mutations {
-            handled_documents = true;
-            let mutation_count =
-                batch.note_updates.len() + batch.deleted_notes.len() + batch.moved_notes.len();
-            let job_provider = provider.clone();
-            let job_debug = debug.clone();
-            run_job(
-                db_path,
-                runtime,
-                debug,
-                "Indexing notes",
-                move |connection| {
-                    update_runtime(runtime, |state| {
-                        state.progress_current = 0;
-                        state.progress_total = mutation_count;
-                    });
-                    process_note_batch(
-                        connection,
-                        &job_provider,
-                        ann,
-                        note_ann,
-                        SemanticDocumentBatch::new(
-                            batch.note_updates,
-                            batch.deleted_notes,
-                            batch.moved_notes,
-                        ),
-                        &job_debug,
-                    )
-                },
-            )
-        } else if batch.automatic_rebuild_requested {
-            handled_automatic_rebuild = true;
-            update_runtime(runtime, |state| {
-                state.health = SemanticHealth::Working;
-                state.rebuild_reason = Some("ANN snapshot requires fallback rebuild".to_string());
-                state.indexing_in_progress = true;
-                state.current_job_label = Some("Rebuilding ANN snapshot".to_string());
-            });
-            run_job(
-                db_path,
-                runtime,
-                debug,
-                "Rebuilding ANN snapshot",
-                |connection| {
-                    let progress = |current, total| {
-                        update_runtime(runtime, |state| {
-                            state.progress_current = current;
-                            state.progress_total = total;
-                        });
-                        background_gate.checkpoint_manual_pause();
-                    };
-                    ann.rebuild_from_connection_with_gate(
-                        connection,
-                        Some(background_gate.as_ref()),
-                        Some(&progress),
-                    )?;
-                    note_ann.rebuild_from_connection_with_gate(
-                        connection,
-                        Some(background_gate.as_ref()),
-                        Some(&progress),
-                    )?;
-                    Ok(JobOutcome::default())
-                },
-            )
-        } else if batch.edge_refresh_requested && !batch.snapshot_publish_requested {
-            handled_edges = true;
-            update_runtime(runtime, |state| {
-                state.health = SemanticHealth::Working;
-                state.rebuild_reason = Some("Related-note edges are stale".to_string());
-                state.indexing_in_progress = true;
-                state.current_job_label = Some("Refreshing related notes".to_string());
-            });
-            run_job(
-                db_path,
-                runtime,
-                debug,
-                "Refreshing related notes",
-                |connection| {
-                    let started_at = Instant::now();
-                    let note_ann_status = note_ann.status_snapshot();
-                    let note_ann_signature = load_note_ann_index_signature(connection)?;
-                    let dirty_count = edge_dirty_count(connection)?;
-                    let can_use_incremental = note_ann_status.loaded
-                        && !note_ann_status.dirty
-                        && !note_ann_status.rebuild_pending
-                        && note_ann_status.generation_id.is_some()
-                        && note_ann_signature.identities_valid
-                        && dirty_count_allows_incremental(dirty_count);
-                    if can_use_incremental {
-                        // Publish the current in-memory note ANN first. Edge
-                        // provenance therefore names a durable generation that
-                        // exactly contains the mutations being repaired.
-                        note_ann.persist_current(connection)?;
-                    }
-                    let note_ann_generation = note_ann.generation_id().unwrap_or_default();
-                    let requires_full = !can_use_incremental
-                        || edge_generation_requires_full_rebuild(
-                            connection,
-                            &note_ann_generation,
-                            note_ann.model_signature(),
-                        )?;
-                    if requires_full {
-                        let stats = rebuild_edges_with_provenance(
-                            connection,
-                            EDGE_NEIGHBORS_PER_NOTE,
-                            EDGE_MIN_SCORE,
-                            &note_ann_generation,
-                            note_ann.model_signature(),
-                            |current, total| {
-                                update_runtime(runtime, |state| {
-                                    state.progress_current = current;
-                                    state.progress_total = total;
-                                });
-                                background_gate.checkpoint_manual_pause();
-                            },
-                        )?;
-                        record_edge_rebuild(debug, &stats, started_at.elapsed().as_millis() as u64);
-                    } else {
-                        repair_dirty_edges(
-                            connection,
-                            EDGE_NEIGHBORS_PER_NOTE,
-                            EDGE_MIN_SCORE,
-                            EDGE_INCREMENTAL_CANDIDATE_K,
-                            &note_ann_generation,
-                            note_ann.model_signature(),
-                            |connection, note_path, candidate_k| {
-                                note_ann
-                                    .neighbors_for_note(
-                                        connection,
-                                        note_path,
-                                        candidate_k,
-                                        candidate_k,
-                                    )
-                                    .map(|matches| {
-                                        matches
-                                            .into_iter()
-                                            .map(|candidate| candidate.note_path)
-                                            .collect()
-                                    })
-                            },
-                        )?;
-                    }
-                    // Atlas publication intentionally remains out of scope.
-                    // This is the downstream scheduling hook for a future
-                    // Atlas worker generation.
-                    Ok(JobOutcome::default())
-                },
-            )
-        } else if batch.snapshot_publish_requested {
-            handled_snapshot = true;
-            // Coalesce edit bursts before serializing the graph generation.
-            thread::sleep(std::time::Duration::from_secs(2));
-            let newer_mutation_waiting = pending
-                .lock()
-                .map(|next| {
-                    next.full_scan_requested
-                        || next.rebuild_requested
-                        || !next.note_updates.is_empty()
-                        || !next.deleted_notes.is_empty()
-                        || !next.moved_notes.is_empty()
                 })
-                .unwrap_or(false);
-            if newer_mutation_waiting {
-                if let Ok(mut next) = pending.lock() {
-                    next.snapshot_publish_requested = true;
-                }
-                true
-            } else {
+            }
+            SelectedJob::Documents(batch) => {
+                run_job(db_path, runtime, debug, "Indexing notes", |connection| {
+                    update_runtime(runtime, |state| state.progress_total = batch.len());
+                    process_note_batch(connection, provider, ann, note_ann, batch.clone(), debug)
+                })
+            }
+            SelectedJob::RebuildAnn => {
+                update_runtime(runtime, |state| {
+                    state.health = SemanticHealth::Working;
+                    state.rebuild_reason =
+                        Some("ANN snapshot requires fallback rebuild".to_string());
+                    state.indexing_in_progress = true;
+                    state.current_job_label = Some("Rebuilding ANN snapshot".to_string());
+                });
                 run_job(
                     db_path,
                     runtime,
                     debug,
-                    "Saving semantic snapshot",
+                    "Rebuilding ANN snapshot",
                     |connection| {
-                        ann.persist_current(connection)?;
-                        note_ann.persist_current(connection)?;
+                        let progress = |current, total| {
+                            update_runtime(runtime, |state| {
+                                state.progress_current = current;
+                                state.progress_total = total;
+                            });
+                            background_gate.checkpoint_manual_pause();
+                        };
+                        ann.rebuild_from_connection_with_gate(
+                            connection,
+                            Some(background_gate.as_ref()),
+                            Some(&progress),
+                        )?;
+                        note_ann.rebuild_from_connection_with_gate(
+                            connection,
+                            Some(background_gate.as_ref()),
+                            Some(&progress),
+                        )?;
                         Ok(JobOutcome::default())
                     },
                 )
             }
-        } else if !batch.atlas_requests.is_empty() {
-            handled_atlas = true;
-            handled_structural_atlas = true;
-            let cache_dir = db_path
-                .parent()
-                .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
-                .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
-            let builder = AtlasWorkerContext {
-                db_path: db_path.to_path_buf(),
-                cache_dir,
-                dimensions: provider.model_info().dimensions,
-                provider: provider.clone(),
-                debug: debug.clone(),
-                note_ann: note_ann.clone(),
-                pending: pending.clone(),
-            };
-            for (key, target_epoch) in batch.atlas_requests {
-                let newer_waiting = pending
-                    .lock()
-                    .map(|state| {
-                        state
-                            .atlas_requests
-                            .get(&key)
-                            .is_some_and(|epoch| *epoch > target_epoch)
-                    })
-                    .unwrap_or(true);
-                if newer_waiting {
-                    continue;
-                }
-                let result = run_structural_atlas_build(pending, key, target_epoch, || {
-                    builder.build_and_publish(key, target_epoch)
+            SelectedJob::Edges => {
+                update_runtime(runtime, |state| {
+                    state.health = SemanticHealth::Working;
+                    state.rebuild_reason = Some("Related-note edges are stale".to_string());
+                    state.indexing_in_progress = true;
+                    state.current_job_label = Some("Refreshing related notes".to_string());
                 });
-                match result {
-                    Ok(_) => {
-                        atlas_retry_attempts.remove(&key);
-                    }
-                    Err(error) if error == "atlas generation superseded" => {
-                        atlas_retry_attempts.remove(&key);
-                    }
-                    Err(error) if error == ATLAS_DEPENDENCIES_NOT_READY => {
-                        let attempt = atlas_retry_attempts.entry(key).or_default();
-                        *attempt = attempt.saturating_add(1);
-                        atlas_retry_delay = atlas_retry_delay.max(atlas_failure_backoff(*attempt));
-                        if let Ok(mut state) = pending.lock() {
-                            state
-                                .atlas_requests
-                                .entry(key)
-                                .and_modify(|epoch| *epoch = (*epoch).max(target_epoch))
-                                .or_insert(target_epoch);
+                run_job(
+                    db_path,
+                    runtime,
+                    debug,
+                    "Refreshing related notes",
+                    |connection| {
+                        let started_at = Instant::now();
+                        let note_ann_status = note_ann.status_snapshot();
+                        let note_ann_signature = load_note_ann_index_signature(connection)?;
+                        let dirty_count = edge_dirty_count(connection)?;
+                        let can_use_incremental = note_ann_status.loaded
+                            && !note_ann_status.dirty
+                            && !note_ann_status.rebuild_pending
+                            && note_ann_status.generation_id.is_some()
+                            && note_ann_signature.identities_valid
+                            && dirty_count_allows_incremental(dirty_count);
+                        if can_use_incremental {
+                            // Publish the current in-memory note ANN first. Edge
+                            // provenance therefore names a durable generation that
+                            // exactly contains the mutations being repaired.
+                            note_ann.persist_current(connection)?;
                         }
-                        // The ANN snapshot and its dependent edge generation are
-                        // loaded/published asynchronously. A request arriving in
-                        // that window is pending work, not a failed Atlas build.
-                        if *attempt == 1 {
-                            debug.record_with_metrics(
-                                "atlas",
-                                "build_deferred",
-                                Some(error),
-                                None,
-                                |_| {},
+                        let note_ann_generation = note_ann.generation_id().unwrap_or_default();
+                        let requires_full = !can_use_incremental
+                            || edge_generation_requires_full_rebuild(
+                                connection,
+                                &note_ann_generation,
+                                note_ann.model_signature(),
+                            )?;
+                        if requires_full {
+                            let stats = rebuild_edges_with_provenance(
+                                connection,
+                                EDGE_NEIGHBORS_PER_NOTE,
+                                EDGE_MIN_SCORE,
+                                &note_ann_generation,
+                                note_ann.model_signature(),
+                                |current, total| {
+                                    update_runtime(runtime, |state| {
+                                        state.progress_current = current;
+                                        state.progress_total = total;
+                                    });
+                                    background_gate.checkpoint_manual_pause();
+                                },
+                            )?;
+                            record_edge_rebuild(
+                                debug,
+                                &stats,
+                                started_at.elapsed().as_millis() as u64,
                             );
+                        } else {
+                            repair_dirty_edges(
+                                connection,
+                                EDGE_NEIGHBORS_PER_NOTE,
+                                EDGE_MIN_SCORE,
+                                EDGE_INCREMENTAL_CANDIDATE_K,
+                                &note_ann_generation,
+                                note_ann.model_signature(),
+                                |connection, note_path, candidate_k| {
+                                    note_ann
+                                        .neighbors_for_note(
+                                            connection,
+                                            note_path,
+                                            candidate_k,
+                                            candidate_k,
+                                        )
+                                        .map(|matches| {
+                                            matches
+                                                .into_iter()
+                                                .map(|candidate| candidate.note_path)
+                                                .collect()
+                                        })
+                                },
+                            )?;
                         }
-                    }
-                    Err(error) => {
-                        let attempt = atlas_retry_attempts.entry(key).or_default();
-                        *attempt = attempt.saturating_add(1);
-                        atlas_retry_delay = atlas_retry_delay.max(atlas_failure_backoff(*attempt));
-                        if let Ok(mut state) = pending.lock() {
-                            state
-                                .atlas_requests
-                                .entry(key)
-                                .and_modify(|epoch| *epoch = (*epoch).max(target_epoch))
-                                .or_insert(target_epoch);
-                        }
-                        debug.record_with_metrics(
-                            "atlas",
-                            "build_failed",
-                            Some(error),
-                            None,
-                            |_| {},
-                        );
-                    }
-                }
+                        // Atlas publication intentionally remains out of scope.
+                        // This is the downstream scheduling hook for a future
+                        // Atlas worker generation.
+                        Ok(JobOutcome::default())
+                    },
+                )
             }
-            true
-        } else if !batch.atlas_label_requests.is_empty() {
-            handled_atlas = true;
-            handled_label_atlas = true;
-            let cache_dir = db_path
-                .parent()
-                .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
-                .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
-            let builder = AtlasWorkerContext {
-                db_path: db_path.to_path_buf(),
-                cache_dir,
-                dimensions: provider.model_info().dimensions,
-                provider: provider.clone(),
-                debug: debug.clone(),
-                note_ann: note_ann.clone(),
-                pending: pending.clone(),
-            };
-            for (key, request) in batch.atlas_label_requests {
-                let superseded = pending
+            SelectedJob::Snapshot => {
+                // Coalesce edit bursts before serializing the graph generation.
+                if !wait(Duration::from_secs(2)) {
+                    return;
+                }
+                let newer_mutation_waiting = pending
                     .lock()
-                    .map(|state| {
-                        state
-                            .atlas_label_requests
-                            .get(&key)
-                            .is_some_and(|newer| newer != &request)
+                    .map(|next| {
+                        next.full_scan_requested
+                            || next.rebuild_requested
+                            || !next.note_updates.is_empty()
+                            || !next.deleted_notes.is_empty()
+                            || !next.moved_notes.is_empty()
                     })
-                    .unwrap_or(true);
-                if superseded {
-                    continue;
-                }
-                let result = run_label_atlas_build(pending, key, || {
-                    builder.build_and_publish_labels(key, &request)
-                });
-                match result {
-                    Ok(()) => {
-                        label_retry_attempts.remove(&key);
+                    .unwrap_or(false);
+                if newer_mutation_waiting {
+                    if let Ok(mut next) = pending.lock() {
+                        next.snapshot_publish_requested = true;
                     }
-                    Err(error) if error == "atlas generation superseded" => {
-                        label_retry_attempts.remove(&key);
-                    }
-                    Err(error) => {
-                        let attempt = label_retry_attempts.entry(key).or_default();
-                        *attempt = attempt.saturating_add(1);
-                        atlas_retry_delay = atlas_retry_delay.max(atlas_failure_backoff(*attempt));
-                        if let Ok(mut state) = pending.lock() {
-                            state.atlas_label_requests.insert(key, request.clone());
-                        }
-                        debug.record_with_metrics(
-                            "atlas_labels",
-                            "build_failed",
-                            Some(error),
-                            None,
-                            |metrics| metrics.atlas_label_failure_count += 1,
-                        );
-                    }
+                    Some(JobOutcome::default())
+                } else {
+                    run_job(
+                        db_path,
+                        runtime,
+                        debug,
+                        "Saving semantic snapshot",
+                        |connection| {
+                            ann.persist_current(connection)?;
+                            note_ann.persist_current(connection)?;
+                            Ok(JobOutcome::default())
+                        },
+                    )
                 }
             }
-            true
-        } else {
-            true
+            SelectedJob::Atlas(_) | SelectedJob::AtlasLabels(_) => {
+                let builder = AtlasWorkerContext {
+                    db_path: db_path.to_path_buf(),
+                    cache_dir: cache_dir.clone(),
+                    dimensions: provider.model_info().dimensions,
+                    provider: provider.clone(),
+                    debug: debug.clone(),
+                    note_ann: note_ann.clone(),
+                    pending: pending.clone(),
+                };
+                let labels = matches!(job, SelectedJob::AtlasLabels(_));
+                let keys = match &job {
+                    SelectedJob::Atlas(requests) => requests.keys().collect::<Vec<_>>(),
+                    SelectedJob::AtlasLabels(requests) => requests.keys().collect::<Vec<_>>(),
+                    _ => unreachable!(),
+                };
+                for key in keys {
+                    let (result, retry) = match &job {
+                        SelectedJob::Atlas(requests) => {
+                            let epoch = requests[key];
+                            if pending
+                                .lock()
+                                .map(|next| {
+                                    next.atlas_requests
+                                        .get(key)
+                                        .is_some_and(|newer| *newer > epoch)
+                                })
+                                .unwrap_or(true)
+                            {
+                                continue;
+                            }
+                            (
+                                run_structural_atlas_build(pending, *key, epoch, || {
+                                    builder.build_and_publish(*key, epoch).map(|_| ())
+                                }),
+                                SelectedJob::Atlas(HashMap::from([(*key, epoch)])),
+                            )
+                        }
+                        SelectedJob::AtlasLabels(requests) => {
+                            let request = &requests[key];
+                            if pending
+                                .lock()
+                                .map(|next| {
+                                    next.atlas_label_requests
+                                        .get(key)
+                                        .is_some_and(|newer| newer != request)
+                                })
+                                .unwrap_or(true)
+                            {
+                                continue;
+                            }
+                            (
+                                run_label_atlas_build(pending, *key, || {
+                                    builder.build_and_publish_labels(*key, request)
+                                }),
+                                SelectedJob::AtlasLabels(HashMap::from([(*key, request.clone())])),
+                            )
+                        }
+                        _ => unreachable!(),
+                    };
+                    let attempts = if labels {
+                        &mut label_retry_attempts
+                    } else {
+                        &mut atlas_retry_attempts
+                    };
+                    match result {
+                        Ok(()) => {
+                            attempts.remove(key);
+                        }
+                        Err(error) if error == "atlas generation superseded" => {
+                            attempts.remove(key);
+                        }
+                        Err(error) => {
+                            let attempt = attempts.entry(*key).or_default();
+                            *attempt = attempt.saturating_add(1);
+                            atlas_retry_delay =
+                                atlas_retry_delay.max(atlas_failure_backoff(*attempt));
+                            if let Ok(mut next) = pending.lock() {
+                                retry.requeue(&mut next);
+                            }
+                            let deferred = !labels && error == ATLAS_DEPENDENCIES_NOT_READY;
+                            if !deferred || *attempt == 1 {
+                                debug.record_with_metrics(
+                                    if labels { "atlas_labels" } else { "atlas" },
+                                    if deferred {
+                                        "build_deferred"
+                                    } else {
+                                        "build_failed"
+                                    },
+                                    Some(error),
+                                    None,
+                                    |metrics| {
+                                        if labels {
+                                            metrics.atlas_label_failure_count += 1;
+                                        }
+                                    },
+                                );
+                            }
+                        }
+                    }
+                }
+                Some(JobOutcome::default())
+            }
         };
 
-        if did_succeed {
-            let next_revision = if handled_atlas {
-                index_revision.load(Ordering::Acquire)
+        if let Some(outcome) = outcome {
+            let atlas = matches!(job, SelectedJob::Atlas(..) | SelectedJob::AtlasLabels(..));
+            let next_revision = if atlas {
+                context.index_revision.load(Ordering::Acquire)
             } else {
-                index_revision
+                context
+                    .index_revision
                     .fetch_add(1, Ordering::AcqRel)
                     .saturating_add(1)
             };
-            let (last_job_scanned_count, last_job_edges_dirtied) = runtime
-                .lock()
-                .map(|state| (state.last_job_scanned_count, state.last_job_edges_dirtied))
-                .unwrap_or_default();
-            // A filesystem scan/rebuild cannot reconstruct ChatRecall
-            // documents. Replay any coalesced explicit mutations after the
-            // bulk operation instead of dropping them with the batch.
-            if let Some((updates, deletes, moves)) = deferred_explicit_updates {
-                if !updates.is_empty() || !deletes.is_empty() || !moves.is_empty() {
-                    if let Ok(mut next) = pending.lock() {
-                        next.note_updates.extend(updates);
-                        next.deleted_notes.extend(deletes);
-                        next.moved_notes.extend(moves);
-                    }
-                }
-            }
             if let Ok(mut next) = pending.lock() {
-                if !handled_structural_atlas {
-                    for (key, epoch) in deferred_atlas_requests {
-                        let epoch = epoch.max(next_revision);
-                        next.atlas_requests
-                            .entry(key)
-                            .and_modify(|target| *target = (*target).max(epoch))
-                            .or_insert(epoch);
+                if !atlas {
+                    for epoch in next.atlas_requests.values_mut() {
+                        *epoch = (*epoch).max(next_revision);
                     }
                 }
-                if !handled_label_atlas {
-                    for (key, request) in deferred_atlas_label_requests {
-                        next.atlas_label_requests.entry(key).or_insert(request);
+                match &job {
+                    SelectedJob::Documents(_) | SelectedJob::FullScan { .. } => {
+                        if matches!(job, SelectedJob::FullScan { .. }) || outcome.scanned_count > 0
+                        {
+                            if ann.needs_rebuild() || note_ann.needs_rebuild() {
+                                next.automatic_rebuild_requested = true;
+                            } else if outcome.scanned_count > 0 {
+                                next.snapshot_publish_requested = true;
+                            }
+                            if outcome.edges_dirtied {
+                                next.edge_refresh_requested = true;
+                                update_runtime(runtime, |state| state.edges_stale = true);
+                            }
+                        }
                     }
-                }
-                if handled_documents && last_job_scanned_count > 0 {
-                    if last_job_edges_dirtied {
+                    SelectedJob::Rebuild | SelectedJob::RebuildAnn | SelectedJob::Snapshot => {
+                        // Published note ANN generations require matching edge provenance.
                         next.edge_refresh_requested = true;
                         update_runtime(runtime, |state| state.edges_stale = true);
                     }
-                    if ann.needs_rebuild() || note_ann.needs_rebuild() {
-                        next.automatic_rebuild_requested = true;
-                    } else {
-                        next.snapshot_publish_requested = true;
-                    }
+                    _ => {}
                 }
-                if batch.full_scan_requested {
-                    if ann.needs_rebuild() || note_ann.needs_rebuild() {
-                        next.automatic_rebuild_requested = true;
-                    } else if last_job_scanned_count > 0 {
-                        next.snapshot_publish_requested = true;
-                    }
-                    if last_job_edges_dirtied {
-                        next.edge_refresh_requested = true;
-                        update_runtime(runtime, |state| state.edges_stale = true);
-                    }
-                }
-                if batch.rebuild_requested {
-                    next.edge_refresh_requested = true;
-                    update_runtime(runtime, |state| state.edges_stale = true);
-                }
-                if !handled_automatic_rebuild && batch.automatic_rebuild_requested {
-                    next.automatic_rebuild_requested = true;
-                }
-                if !handled_edges && batch.edge_refresh_requested {
-                    next.edge_refresh_requested = true;
-                }
-                if !handled_snapshot
-                    && batch.snapshot_publish_requested
-                    && !handled_automatic_rebuild
-                {
-                    next.snapshot_publish_requested = true;
-                }
-                if handled_automatic_rebuild || handled_snapshot {
-                    // Rebuilding or persisting the note ANN publishes a fresh
-                    // generation ID. Edges must be refreshed afterward so their
-                    // provenance and the generation Atlas consumes cannot diverge.
-                    next.edge_refresh_requested = true;
-                    update_runtime(runtime, |state| state.edges_stale = true);
-                }
-                if !handled_atlas {
-                    let cache_dir = db_path
-                        .parent()
-                        .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
-                        .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
-                    // After indexing, only enqueue visibility variants that the
-                    // batch can affect. ChatRecall-only skips Hidden (notes-only).
-                    // clear_atlas_cache still forces all three via mod.rs.
-                    let visibilities = if handled_documents {
-                        atlas_visibilities_for_mutation_batch(
-                            document_batch_has_note_markdown,
-                            document_batch_has_chat_recall,
-                            document_batch_has_deletes_or_moves,
+                if !atlas {
+                    let visibilities = match &job {
+                        SelectedJob::Documents(batch) => atlas_visibilities_for_mutation_batch(
+                            batch.updates.values().any(|update| {
+                                matches!(update.document, PendingSemanticDocument::NoteMarkdown(_))
+                            }),
+                            batch.updates.values().any(|update| {
+                                matches!(
+                                    update.document,
+                                    PendingSemanticDocument::ChatRecall { .. }
+                                )
+                            }),
+                            !batch.deletes.is_empty() || !batch.moves.is_empty(),
                             false,
-                        )
-                    } else {
-                        atlas_visibilities_for_mutation_batch(false, false, false, true)
+                        ),
+                        _ => atlas_visibilities_for_mutation_batch(false, false, false, true),
                     };
                     for visibility in visibilities {
                         let key = AtlasGenerationKey {
                             chat_visibility: *visibility,
                         };
-                        // Same epoch already building → skip redundant enqueue.
                         if atlas_structural_build_covers_epoch(&next, key, next_revision) {
                             continue;
                         }
-                        let pointer = cache_dir
+                        if cache_dir
                             .join("atlas")
-                            .join(format!("ready-{}.json", visibility.signature_value()));
-                        if pointer.exists() {
+                            .join(format!("ready-{}.json", visibility.signature_value()))
+                            .exists()
+                        {
                             next.atlas_requests
                                 .entry(key)
                                 .and_modify(|epoch| *epoch = (*epoch).max(next_revision))
@@ -924,7 +898,7 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
                 }
             }
             update_runtime(runtime, |state| {
-                if handled_edges {
+                if matches!(job, SelectedJob::Edges) {
                     state.edges_stale = false;
                 }
                 state.health = if ann.needs_rebuild() || note_ann.needs_rebuild() {
@@ -936,30 +910,26 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
                 state.retry_exhausted = false;
             });
         } else {
-            let (attempt, exhausted) = {
-                let mut attempt = 1;
-                update_runtime(runtime, |state| {
-                    state.retry_attempt = state.retry_attempt.saturating_add(1);
-                    attempt = state.retry_attempt;
-                    state.retry_exhausted = attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS;
-                    state.health = if state.retry_exhausted {
-                        SemanticHealth::Degraded
-                    } else {
-                        SemanticHealth::Working
-                    };
-                });
-                (attempt, attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS)
-            };
+            let mut attempt = 1;
+            update_runtime(runtime, |state| {
+                state.retry_attempt = state.retry_attempt.saturating_add(1);
+                attempt = state.retry_attempt;
+                state.retry_exhausted = attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS;
+                state.health = if state.retry_exhausted {
+                    SemanticHealth::Degraded
+                } else {
+                    SemanticHealth::Working
+                };
+            });
             if let Ok(mut next) = pending.lock() {
-                merge_retry_batch(&mut next, retry_batch);
+                job.requeue(&mut next);
             }
-            if exhausted {
+            if attempt >= SEMANTIC_RETRY_MAX_ATTEMPTS || !wait(semantic_failure_backoff(attempt)) {
                 return;
             }
-            thread::sleep(semantic_failure_backoff(attempt));
         }
-        if !atlas_retry_delay.is_zero() {
-            thread::sleep(atlas_retry_delay);
+        if !atlas_retry_delay.is_zero() && !wait(atlas_retry_delay) {
+            return;
         }
     }
 }
@@ -1111,7 +1081,7 @@ fn run_job<F>(
     debug: &Arc<SemanticDebugState>,
     label: &str,
     job: F,
-) -> bool
+) -> Option<JobOutcome>
 where
     F: FnOnce(&mut rusqlite::Connection) -> Result<JobOutcome, String>,
 {
@@ -1134,16 +1104,12 @@ where
         },
     );
 
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<JobOutcome, String> {
         let mut connection = open_database(db_path)?;
         ensure_schema(&connection)?;
         let job_id = insert_job(&connection, "running", 0, 0, None)?;
         match job(&mut connection) {
             Ok(outcome) => {
-                update_runtime(runtime, |state| {
-                    state.last_job_scanned_count = outcome.scanned_count;
-                    state.last_job_edges_dirtied = outcome.edges_dirtied;
-                });
                 update_job(
                     &connection,
                     job_id,
@@ -1173,6 +1139,7 @@ where
                         }
                     },
                 );
+                Ok(outcome)
             }
             Err(error) => {
                 update_job(&connection, job_id, "failed", 0, 0, Some(&error))?;
@@ -1189,21 +1156,20 @@ where
                             metrics.index_duration_max_millis.max(elapsed);
                     },
                 );
-                return Err(error);
+                Err(error)
             }
         }
-        Ok(())
     })();
 
     match result {
-        Ok(()) => {
+        Ok(outcome) => {
             let now = current_time_millis().ok();
             update_runtime(runtime, |state| {
                 state.indexing_in_progress = false;
                 state.current_job_label = None;
                 state.last_indexed_at_millis = now;
             });
-            true
+            Some(outcome)
         }
         Err(error) => {
             update_runtime(runtime, |state| {
@@ -1211,7 +1177,7 @@ where
                 state.current_job_label = None;
                 state.last_error = Some(error);
             });
-            false
+            None
         }
     }
 }
@@ -2014,12 +1980,13 @@ struct PreparedNoteContent {
 mod tests {
     use super::{
         atlas_failure_backoff, dirty_count_allows_incremental, extract_tags, handle_wake,
-        merge_retry_batch, process_full_scan, process_note_batch, process_pending_jobs,
+        merge_retry_batch, process_full_scan, process_note_batch, process_pending_jobs_with_wait,
         run_label_atlas_build, run_structural_atlas_build, semantic_failure_backoff,
         ChatRecallExcerpt, IndexingWorkerContext, PendingIndexState, PendingNoteMove,
         PendingNoteUpdate, PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue,
         WorkerSignal, EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
+    use crate::test_support::TestDir;
     use crate::{note, semantic::chunking::chunk_markdown};
 
     #[test]
@@ -2135,6 +2102,61 @@ mod tests {
         RuntimeState, SemanticHealth, SEMANTIC_RETRY_MAX_ATTEMPTS,
     };
 
+    #[test]
+    fn queue_shutdown_interrupts_a_pending_deadline() {
+        let (queue, _signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiting = queue.clone();
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                done_tx
+                    .send(
+                        waiting.wait_for_delay_observing(std::time::Duration::from_secs(5), || {
+                            ready_tx.send(()).unwrap()
+                        }),
+                    )
+                    .unwrap();
+            });
+            ready_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            queue.stop_worker().unwrap();
+            assert!(!done_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("deadline interrupted"));
+        });
+    }
+
+    #[test]
+    fn newer_queue_work_interrupts_a_pending_deadline_without_stopping_admission() {
+        let (queue, _signals) = SemanticWorkQueue::new(PendingIndexState::default());
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let waiting = queue.clone();
+        std::thread::scope(|scope| {
+            scope.spawn(move || {
+                done_tx
+                    .send(
+                        waiting.wait_for_delay_observing(std::time::Duration::from_secs(5), || {
+                            ready_tx.send(()).unwrap()
+                        }),
+                    )
+                    .unwrap();
+            });
+            ready_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            queue
+                .enqueue(|pending| pending.edge_refresh_requested = true)
+                .unwrap();
+            assert!(done_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .expect("new work interrupted deadline"));
+            assert!(queue.pending.lock().unwrap().edge_refresh_requested);
+        });
+    }
+
     fn worker_context(
         db_path: PathBuf,
         notes_dir: PathBuf,
@@ -2166,8 +2188,7 @@ mod tests {
         let notes_dir = temp.path().join("notes");
         fs::create_dir_all(&notes_dir).expect("create notes");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("schema");
+        let connection = crate::semantic::test_support::database(&db_path);
         drop(connection);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
@@ -2255,8 +2276,7 @@ mod tests {
         )
         .expect("write note");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
@@ -2293,7 +2313,12 @@ mod tests {
                 ..PendingIndexState::default()
             },
         );
-        process_pending_jobs(&context);
+        let mut waits = Vec::new();
+        process_pending_jobs_with_wait(&context, |delay| {
+            waits.push(delay);
+            true
+        });
+        assert_eq!(waits, vec![std::time::Duration::from_secs(2)]);
 
         let connection = open_database(&db_path).expect("reopen database");
         let edge_generation = load_edge_generation(&connection)
@@ -2321,6 +2346,98 @@ mod tests {
     }
 
     #[test]
+    fn scan_keeps_newer_recall_that_arrives_during_embedding() {
+        let temp = TestDir::new("scan-newer-recall");
+        let notes_dir = temp.path().join("notes");
+        fs::create_dir_all(&notes_dir).unwrap();
+        fs::write(
+            notes_dir.join("Note.md"),
+            "# Note\n\nTrigger scan embedding.",
+        )
+        .unwrap();
+        let db_path = temp.path().join("semantic.sqlite3");
+        let connection = crate::semantic::test_support::database(&db_path);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann =
+            Arc::new(AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).unwrap());
+        let recorder = Arc::new(RecordingEmbeddingProvider::default());
+        let recall_path = temp.path().join("Chats/Conversation.md");
+        let recall = |quote: &str, modified_millis| PendingNoteUpdate {
+            document: PendingSemanticDocument::ChatRecall {
+                title: "Conversation".into(),
+                excerpts: vec![ChatRecallExcerpt {
+                    anchor: "excerpt".into(),
+                    quote: quote.into(),
+                }],
+            },
+            modified_millis,
+        };
+        let context = worker_context(
+            db_path,
+            notes_dir,
+            recorder.clone(),
+            ann,
+            test_note_ann(&temp.path().join("cache")),
+            debug,
+            PendingIndexState {
+                full_scan_requested: true,
+                note_updates: HashMap::from([(recall_path.clone(), recall("old excerpt", 1))]),
+                ..PendingIndexState::default()
+            },
+        );
+        let pending = context.queue.pending.clone();
+        let update_path = recall_path.clone();
+        let newer = recall("new excerpt", 2);
+        *recorder.before_embed.lock().unwrap() = Some(Box::new(move || {
+            pending
+                .lock()
+                .unwrap()
+                .note_updates
+                .insert(update_path, newer);
+        }));
+        // Stop at the snapshot coalescing delay; both indexing jobs have committed.
+        process_pending_jobs_with_wait(&context, |_| false);
+        let quote: String = connection
+            .query_row(
+                "SELECT text FROM chunks WHERE note_path = ?1",
+                [recall_path.to_string_lossy().as_ref()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(quote, "new excerpt");
+    }
+
+    #[test]
+    fn failed_label_claim_keeps_newer_request_and_clears_building_marker() {
+        use super::{AtlasGenerationKey, AtlasLabelRequest, SelectedJob};
+        let key = AtlasGenerationKey::default();
+        let old = AtlasLabelRequest {
+            structural_generation: "old".into(),
+            membership_fingerprint: "old members".into(),
+        };
+        let newer = AtlasLabelRequest {
+            structural_generation: "new".into(),
+            membership_fingerprint: "new members".into(),
+        };
+        let pending = Arc::new(Mutex::new(PendingIndexState {
+            atlas_label_requests: HashMap::from([(key, old)]),
+            ..PendingIndexState::default()
+        }));
+        let job = SelectedJob::claim(&mut pending.lock().unwrap()).unwrap();
+        let result: Result<(), String> = run_label_atlas_build(&pending, key, || {
+            let mut next = pending.lock().unwrap();
+            assert!(next.atlas_label_building.contains(&key));
+            next.atlas_label_requests.insert(key, newer.clone());
+            Err("deterministic build failure".into())
+        });
+        assert!(result.is_err());
+        let mut next = pending.lock().unwrap();
+        job.requeue(&mut next);
+        assert_eq!(next.atlas_label_requests.get(&key), Some(&newer));
+        assert!(next.atlas_label_building.is_empty());
+    }
+
+    #[test]
     fn indexing_failures_stop_at_the_retry_bound_and_keep_repair_pending() {
         let temp = TestDir::new("indexer-retry-bound");
         let semantic_dir = temp.path().join("semantic");
@@ -2332,8 +2449,7 @@ mod tests {
         )
         .expect("write note");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("schema");
+        let connection = crate::semantic::test_support::database(&db_path);
         drop(connection);
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(FailingEmbeddingProvider);
         let debug = Arc::new(SemanticDebugState::new());
@@ -2353,7 +2469,12 @@ mod tests {
                 ..PendingIndexState::default()
             },
         );
-        process_pending_jobs(&context);
+        let mut waits = Vec::new();
+        process_pending_jobs_with_wait(&context, |delay| {
+            waits.push(delay.as_millis());
+            true
+        });
+        assert_eq!(waits, vec![100, 200]);
 
         let runtime = context.runtime.lock().expect("runtime");
         assert_eq!(runtime.retry_attempt, SEMANTIC_RETRY_MAX_ATTEMPTS);
@@ -2558,8 +2679,8 @@ mod tests {
         ann::AnnIndexState,
         chunking::SemanticChunk,
         db::{
-            ensure_schema, load_ann_index_signature, load_edge_generation, open_database,
-            upsert_note_chunks, SemanticNoteMetadata,
+            load_ann_index_signature, load_edge_generation, open_database, upsert_note_chunks,
+            SemanticNoteMetadata,
         },
         debug::SemanticDebugState,
         embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, EMBEDDING_BATCH_SIZE},
@@ -2570,7 +2691,6 @@ mod tests {
         fs,
         path::{Path, PathBuf},
         sync::{atomic::AtomicU64, Arc, Mutex},
-        time::{SystemTime, UNIX_EPOCH},
     };
 
     #[test]
@@ -2580,8 +2700,7 @@ mod tests {
         let notes_dir = temp.path().join("notes");
         fs::create_dir_all(&notes_dir).expect("create notes dir");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
@@ -2658,8 +2777,7 @@ mod tests {
         fs::write(hidden_dir.join("Ignore.md"), "# Ignore\n\nConfig").expect("write hidden note");
 
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
@@ -2736,8 +2854,7 @@ mod tests {
     fn chat_recall_indexes_only_immutable_excerpt_chunks() {
         let temp = TestDir::new("chat-recall");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
@@ -2852,14 +2969,12 @@ mod tests {
         assert_eq!(remaining, 0);
     }
 
-    #[test]
-    fn remembering_one_excerpt_does_not_rebuild_or_walk_a_twenty_thousand_chunk_corpus() {
+    fn remembering_one_excerpt_sql_work(documents: usize, chunks_per_document: usize) -> usize {
         let temp = TestDir::new("chat-recall-large-corpus");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
-        for document in 0..200 {
-            let chunks = (0..100)
+        let mut connection = crate::semantic::test_support::database(&db_path);
+        for document in 0..documents {
+            let chunks = (0..chunks_per_document)
                 .map(|ordinal| {
                     let text = format!("document {document} chunk {ordinal}");
                     SemanticChunk {
@@ -2873,7 +2988,7 @@ mod tests {
                     }
                 })
                 .collect::<Vec<_>>();
-            let embeddings = (0..100)
+            let embeddings = (0..chunks_per_document)
                 .map(|ordinal| {
                     let mut value = vec![0.0, 0.0, 0.0];
                     value[ordinal % 3] = 1.0;
@@ -2903,6 +3018,15 @@ mod tests {
         );
         let note_ann = test_note_ann(&temp.path().join("cache"));
         let recall_path = temp.path().join("Chats/example/Conversation.md");
+        let sql_steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed_steps = sql_steps.clone();
+        connection.progress_handler(
+            1,
+            Some(move || {
+                observed_steps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                false
+            }),
+        );
         let outcome = process_note_batch(
             &mut connection,
             &provider,
@@ -2929,23 +3053,46 @@ mod tests {
         )
         .expect("index one recall");
 
+        connection.progress_handler(0, None::<fn() -> bool>);
+        let sql_steps = sql_steps.load(std::sync::atomic::Ordering::Relaxed);
         assert_eq!(outcome.scanned_count, 1);
         assert_eq!(outcome.embedded_count, 1);
         let chunk_count: usize = connection
             .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
             .expect("count chunks");
-        assert_eq!(chunk_count, 20_001);
+        assert_eq!(chunk_count, documents * chunks_per_document + 1);
         let metrics = debug.snapshot().expect("debug snapshot").metrics;
         assert_eq!(metrics.ann_rebuild_count, 0);
         assert_eq!(metrics.edge_rebuild_count, 0);
+        sql_steps
+    }
+
+    #[test]
+    fn remembering_one_excerpt_has_corpus_independent_sql_work_and_no_rebuild() {
+        let small = remembering_one_excerpt_sql_work(4, 8);
+        let larger = remembering_one_excerpt_sql_work(40, 8);
+        assert!(
+            larger <= small + 100,
+            "single recall SQL work grew with corpus: {small} -> {larger}"
+        );
+    }
+
+    #[test]
+    #[ignore = "opt-in semantic 20k-row scale distribution"]
+    fn remembering_one_excerpt_twenty_thousand_chunk_scale() {
+        let small = remembering_one_excerpt_sql_work(4, 8);
+        let large = remembering_one_excerpt_sql_work(200, 100);
+        assert!(
+            large <= small + 100,
+            "single recall SQL work grew with corpus: {small} -> {large}"
+        );
     }
 
     #[test]
     fn note_batch_embeds_across_notes_in_large_provider_requests() {
         let temp = TestDir::new("indexer-cross-note-batch");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         let recorder = Arc::new(RecordingEmbeddingProvider::default());
         let provider: Arc<dyn EmbeddingProvider + Send + Sync> = recorder.clone();
         let debug = Arc::new(SemanticDebugState::new());
@@ -3003,6 +3150,7 @@ mod tests {
     #[derive(Default)]
     struct RecordingEmbeddingProvider {
         call_sizes: Mutex<Vec<usize>>,
+        before_embed: Mutex<Option<Box<dyn FnOnce() + Send>>>,
     }
 
     fn test_note_ann(cache_dir: &Path) -> Arc<NoteAnnIndexState> {
@@ -3079,6 +3227,9 @@ mod tests {
             texts: &[String],
             kind: EmbeddingInputKind,
         ) -> Result<Vec<Vec<f32>>, String> {
+            if let Some(before_embed) = self.before_embed.lock().unwrap().take() {
+                before_embed();
+            }
             self.call_sizes
                 .lock()
                 .map_err(|_| "call sizes lock poisoned".to_string())?
@@ -3095,31 +3246,5 @@ mod tests {
         }
 
         fn shutdown(&self) {}
-    }
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(label: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
-            fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
     }
 }

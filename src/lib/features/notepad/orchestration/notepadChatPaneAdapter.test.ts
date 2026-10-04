@@ -6,17 +6,15 @@ import type {
   ChatAgentProposal,
   ChatCitation
 } from '$lib/features/chat/types';
-import type { ProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
 import {
-  createNoteDraftState,
-  type NoteDraftState
+  createNoteDraftState, type NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
 import { dispatchDocumentOperation } from '$lib/features/notepad/document/documentState';
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
-import type { NotepadChatCoordinator } from './notepadChatCoordinator.svelte';
+import { createProposalReviewSession } from '$lib/features/proposals/reviewSession.svelte';
 import { createNotepadChatPaneAdapter } from './notepadChatPaneAdapter';
 
 type PaneId = 'chat' | 'editor';
@@ -41,30 +39,22 @@ function noteCitation(): Extract<ChatCitation, { kind: 'note' }> {
   };
 }
 
-function setup(options: {
-  paneOrder?: PaneId[];
-  paneKinds?: Record<PaneId, 'editor' | 'chat'>;
-  documents?: Record<PaneId, NoteDraftState>;
-  editorPaneIds?: PaneId[];
-} = {}) {
-  const paneOrder = options.paneOrder ?? ['chat', 'editor'];
-  const paneKinds =
-    options.paneKinds ?? { chat: 'chat', editor: 'editor' };
-  const documents =
-    options.documents ?? {
-      chat: note({
-        currentNoteId: 'context-note',
-        currentNotePath: 'Notes/Chat Context.md',
-        title: 'Chat Context',
-        bodyMarkdown: '# Chat Context\n\nRetained draft'
-      }),
-      editor: note({
-        currentNoteId: 'note-1',
-        currentNotePath: 'Notes/Project.md',
-        title: '',
-        bodyMarkdown: '# Project\n\nCurrent draft'
-      })
-    };
+function setup({ singlePane = false } = {}) {
+  const paneOrder: PaneId[] = singlePane ? ['chat'] : ['chat', 'editor'];
+  const documents = {
+    chat: note({
+      currentNoteId: 'context-note',
+      currentNotePath: 'Notes/Chat Context.md',
+      title: 'Chat Context',
+      bodyMarkdown: '# Chat Context\n\nRetained draft'
+    }),
+    editor: note({
+      currentNoteId: 'note-1',
+      currentNotePath: 'Notes/Project.md',
+      title: '',
+      bodyMarkdown: '# Project\n\nCurrent draft'
+    })
+  };
   const setPaneConversationId = vi.fn();
   const setPaneDocument = vi.fn((paneId: PaneId, document: NoteDraftState) => {
     documents[paneId] = document;
@@ -84,32 +74,29 @@ function setup(options: {
     selectionActions: {},
     setSurfaceHandle,
     reviewAgentProposal
-  } as unknown as NotepadChatCoordinator<PaneId>;
+  };
   const proposal = {
-    session: {
-      snapshot: null
-    },
+    session: createProposalReviewSession(),
     keepAll: vi.fn(),
     undoAll: vi.fn(),
     reviewNext: vi.fn(),
     retryCommit: vi.fn(),
     copyCurrent: vi.fn(),
     reloadDisk: vi.fn()
-  } as unknown as ProposalOrchestration;
+  };
   const focusPassage = vi.fn(() => true);
   const openRevisionCitation = vi.fn().mockResolvedValue(undefined);
   const adapter = createNotepadChatPaneAdapter({
     coordinator,
     proposal,
     getPaneOrder: () => paneOrder,
-    getPaneKind: (paneId) => paneKinds[paneId],
+    getPaneKind: (paneId) => paneId === 'chat' ? 'chat' : 'editor',
     getPaneDocument: (paneId) => documents[paneId],
     setPaneDocument,
     getPaneConversationId: () => 'conversation-1',
     setPaneConversationId,
     touchPaneLocation,
     getPaneSelectedText: (paneId) => `${paneId} selection`,
-    getEditorPaneIds: () => options.editorPaneIds ?? ['editor'],
     setActivePane,
     focusPassage,
     openRevisionCitation,
@@ -133,8 +120,7 @@ function setup(options: {
     getNoteSaveQueue,
     setSurfaceHandle,
     reviewAgentProposal,
-    paneOrder,
-    paneKinds
+    paneOrder
   };
 }
 
@@ -188,10 +174,7 @@ describe('createNotepadChatPaneAdapter', () => {
   });
 
   it('uses the chat pane retained note when no editor pane is visible', async () => {
-    const { adapter, documents, getNoteSaveQueue } = setup({
-      paneOrder: ['chat'],
-      paneKinds: { chat: 'chat', editor: 'chat' }
-    });
+    const { adapter, documents, getNoteSaveQueue } = setup({ singlePane: true });
 
     const bindings = adapter.getBindings('chat');
     expect(bindings.context.note).toEqual({
@@ -212,7 +195,7 @@ describe('createNotepadChatPaneAdapter', () => {
   });
 
   it('aligns the chat retained note with the sibling editor it follows', () => {
-    const { adapter, documents, setPaneDocument, paneOrder, paneKinds } =
+    const { adapter, documents, setPaneDocument, paneOrder } =
       setup();
 
     adapter.syncRetainedContexts();
@@ -223,8 +206,6 @@ describe('createNotepadChatPaneAdapter', () => {
     // After the editor closes, context falls back to the aligned retain.
     paneOrder.length = 0;
     paneOrder.push('chat');
-    paneKinds.chat = 'chat';
-    paneKinds.editor = 'chat';
 
     expect(adapter.getBindings('chat').context.note).toEqual({
       noteId: 'note-1',
@@ -265,11 +246,7 @@ describe('createNotepadChatPaneAdapter', () => {
   });
 
   it('reveals an editor from the chat pane when no editor pane exists', async () => {
-    const { adapter, setActivePane, openNote } = setup({
-      paneOrder: ['chat'],
-      paneKinds: { chat: 'chat', editor: 'editor' },
-      editorPaneIds: []
-    });
+    const { adapter, setActivePane, openNote } = setup({ singlePane: true });
 
     await adapter.getBindings('chat').context.onOpenCitation(noteCitation());
 
@@ -281,29 +258,13 @@ describe('createNotepadChatPaneAdapter', () => {
     });
   });
 
-  it('opens chat wikilinks through the nearest editor context', async () => {
-    const { adapter, openWikilink } = setup();
-
-    await adapter.getBindings('chat').context.onOpenWikilink(
-      'Notes/Referenced.md#Details'
-    );
-
-    expect(openWikilink).toHaveBeenCalledWith(
-      'editor',
-      'Notes/Referenced.md#Details'
-    );
-  });
-
-  it('uses the chat pane context for wikilinks when no editor exists', async () => {
-    const { adapter, openWikilink } = setup({
-      paneOrder: ['chat'],
-      paneKinds: { chat: 'chat', editor: 'editor' },
-      editorPaneIds: []
-    });
-
-    await adapter.getBindings('chat').context.onOpenWikilink('Referenced');
-
-    expect(openWikilink).toHaveBeenCalledWith('chat', 'Referenced');
+  it.each([
+    { singlePane: false, destination: 'editor' },
+    { singlePane: true, destination: 'chat' }
+  ])('routes chat wikilinks through $destination context', async ({ singlePane, destination }) => {
+    const { adapter, openWikilink } = setup({ singlePane });
+    await adapter.getBindings('chat').context.onOpenWikilink('Notes/Referenced.md#Details');
+    expect(openWikilink).toHaveBeenCalledWith(destination, 'Notes/Referenced.md#Details');
   });
 
   it('owns conversation and mounted-surface bookkeeping for the pane', () => {
@@ -339,14 +300,17 @@ it('opens revision evidence without navigating or repurposing any pane', async (
   expect(setPaneDocument).not.toHaveBeenCalled();
 });
 
-it('revalidates a passage, opens its current identity, and selects current editor text', async () => {
-  const {adapter,focusPassage,openNote}=setup();
-  const citation={...noteCitation(), noteId:'note-1', passage:{id:'e1',noteId:'note-1',contentHash:'h',location:'body',start:0,end:1,excerpt:'Current draft',revisions:[]}};
-  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'# Project\n\nCurrent draft',selection:{anchor:11,head:24}});
+it('revalidates a passage and focuses its exact Unicode occurrence in the current editor', async () => {
+  const { adapter, documents, focusPassage, openNote } = setup();
+  documents.editor.working.markdown = '☕ same\nsame';
+  const citation = { ...noteCitation(), noteId: 'note-1', passage: {
+    id: 'p2', noteId: 'note-1', contentHash: 'h', location: 'body', start: 9, end: 13, excerpt: 'same', revisions: []
+  } };
+  vi.mocked(resolveCurrentPassage).mockResolvedValue({ source: citation, markdown: '☕ same\nsame', selection: { anchor: 7, head: 11 } });
   await adapter.getBindings('chat').context.onOpenCitation(citation);
-  expect(resolveCurrentPassage).toHaveBeenCalledWith('conversation-1','e1');
-  expect(openNote).toHaveBeenCalledWith('Notes/Referenced.md',expect.objectContaining({noteId:'note-1'}));
-  expect(focusPassage).toHaveBeenCalledWith('editor',{anchor:11,head:24});
+  expect(resolveCurrentPassage).toHaveBeenCalledWith('conversation-1', 'p2');
+  expect(openNote).toHaveBeenCalledWith('Notes/Referenced.md', expect.objectContaining({ noteId: 'note-1' }));
+  expect(focusPassage).toHaveBeenCalledWith('editor', { anchor: 7, head: 11 });
 });
 it('does not navigate when backend passage validation fails', async () => {
   const {adapter,openNote}=setup();
@@ -356,14 +320,6 @@ it('does not navigate when backend passage validation fails', async () => {
   expect(openNote).not.toHaveBeenCalled();
 });
 
-it('highlights the backend-resolved occurrence of repeated text', async () => {
-  const {adapter,documents,focusPassage}=setup();
-  documents.editor.working.markdown='☕ same\nsame';
-  const citation={...noteCitation(),noteId:'note-1',passage:{id:'p2',noteId:'note-1',contentHash:'h',location:'body',start:9,end:13,excerpt:'same',revisions:[]}};
-  vi.mocked(resolveCurrentPassage).mockResolvedValue({source:citation,markdown:'☕ same\nsame',selection:{anchor:7,head:11}});
-  await adapter.getBindings('chat').context.onOpenCitation(citation);
-  expect(focusPassage).toHaveBeenCalledWith('editor',{anchor:7,head:11});
-});
 it('refuses a resolved location when the editor changes during navigation', async () => {
   const {adapter,focusPassage}=setup();
   const citation={...noteCitation(),noteId:'note-1',passage:{id:'p3',noteId:'note-1',contentHash:'h',location:'body',start:0,end:3,excerpt:'old',revisions:[]}};

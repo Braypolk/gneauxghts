@@ -1,34 +1,18 @@
+import { createCommandView } from './commandTestSupport';
 import {
   Compartment,
-  EditorState,
-  StateField,
-  Transaction,
-  type TransactionSpec
+  Transaction
 } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
-  createEditorCapabilityAdapter,
   insertEditorMarkdown
 } from './editorCapabilities';
 import type { EditorController } from './editor';
 
 function createController(markdown: string, anchor: number, head = anchor) {
-  let state = EditorState.create({ doc: markdown, selection: { anchor, head } });
-  const transactions: Transaction[] = [];
-  const focus = vi.fn();
-  const view = {
-    get state() {
-      return state;
-    },
-    dispatch: (spec: Transaction | TransactionSpec) => {
-      const transaction = spec instanceof Transaction ? spec : state.update(spec);
-      transactions.push(transaction);
-      state = transaction.state;
-    },
-    focus
-  } as unknown as EditorView;
+  const { view, transactions } = createCommandView({ doc: markdown, selection: { anchor, head } });
+  const focus = view.focus;
   const controller = {
     view,
     runtime: null as unknown as EditorController['runtime'],
@@ -37,11 +21,11 @@ function createController(markdown: string, anchor: number, head = anchor) {
     onMarkdownChange: () => {},
     proposalReviewCompartment: new Compartment()
   } satisfies EditorController;
-  return { controller, transactions, focus, readState: () => state };
+  return { controller, transactions, focus, readState: () => view.state };
 }
 
 describe('insertEditorMarkdown', () => {
-  it('replaces the selection in one undoable transaction and places the cursor after it', () => {
+  it('replaces the selection in one authored transaction and places the cursor after it', () => {
     const harness = createController('hello world', 0, 5);
 
     expect(insertEditorMarkdown(harness.controller, 'goodbye', { focus: true })).toEqual({
@@ -75,38 +59,5 @@ describe('insertEditorMarkdown', () => {
 
   it('does nothing when the editor is unavailable', () => {
     expect(insertEditorMarkdown(null, 'text')).toBeNull();
-  });
-});
-
-describe('proposal review editor capability', () => {
-  it('treats a review reader from a replaced editor state as detached', () => {
-    const reviewField = StateField.define({
-      create: () => ({ reviewId: 'review-1', hunks: [] }),
-      update: (value) => value
-    });
-    let state = EditorState.create({ extensions: [reviewField] });
-    const controller = {
-      ...createController('', 0).controller,
-      view: {
-        get state() {
-          return state;
-        },
-        dispatch: vi.fn(),
-        focus: vi.fn()
-      } as unknown as EditorView
-    } satisfies EditorController;
-    const adapter = createEditorCapabilityAdapter(() => controller);
-    adapter.setProposalReviewStateReader?.((editorState) =>
-      editorState.field(reviewField)
-    );
-
-    expect(adapter.readProposalReviewState?.()).toMatchObject({
-      reviewId: 'review-1'
-    });
-
-    state = EditorState.create();
-
-    expect(adapter.readProposalReviewState?.()).toBeNull();
-    expect(adapter.focusProposalHunk?.('missing')).toBe(false);
   });
 });

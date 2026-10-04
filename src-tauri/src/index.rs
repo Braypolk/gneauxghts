@@ -18,7 +18,7 @@ use std::{
         Arc, Mutex,
     },
     time::UNIX_EPOCH,
-    time::{Duration, Instant},
+    time::Instant,
 };
 
 /// Lightweight draft pointer used internally for search/related/wikilink
@@ -376,13 +376,9 @@ impl AppState {
     ///    reconciliation pass (see [`AppState::reconcile_full_vault_scan_observing`])
     ///    catches any events the watcher missed without ever blocking a
     ///    keystroke or focus.
-    ///
-    /// The `max_age` parameter is preserved for call-site compatibility
-    /// but is no longer used to gate foreground full scans.
     pub(crate) fn ensure_interactive_index(
         &self,
         notes_dir: &Path,
-        _max_age: Duration,
         source: &str,
     ) -> Result<(), String> {
         self.catalog_projection_retries
@@ -1778,7 +1774,7 @@ fn toggle_task_line(line: &mut String) -> Option<()> {
 mod tests {
     use super::{
         build_indexed_note, build_tasks, collect_dirty_updates, collect_refresh_updates,
-        read_file_signature, toggle_task_in_markdown, AppState, Duration, NotesIndex, RefreshScan,
+        read_file_signature, toggle_task_in_markdown, NotesIndex, RefreshScan,
     };
     use crate::test_support::{fixture_path, load_fixture, load_json_fixture, TestDir};
     use serde_json::json;
@@ -1797,46 +1793,7 @@ mod tests {
         }
     }
 
-    // AppState resolves process-wide startup preferences even when a test only
-    // exercises indexing. Keep every path disposable and hold the environment
-    // guard until background work, state handles, and temporary files are gone.
-    struct IndexTestFixture {
-        state: AppState,
-        notes: TestDir,
-        _data: TestDir,
-        _guard: std::sync::MutexGuard<'static, ()>,
-    }
-
-    impl IndexTestFixture {
-        fn new(label: &str) -> Self {
-            let guard = crate::test_support::lock_test_env();
-            let data = TestDir::new(&format!("{label}-data"));
-            let notes = TestDir::new(label);
-            crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-            crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-            let state = AppState::new(
-                crate::semantic::SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .expect("construct isolated app state");
-            assert_eq!(state.running_vault().root(), notes.path());
-            Self {
-                state,
-                notes,
-                _data: data,
-                _guard: guard,
-            }
-        }
-    }
-
-    impl Drop for IndexTestFixture {
-        fn drop(&mut self) {
-            // Also join the worker during panic unwinding, before removing its
-            // vault or letting another fixture change the startup preferences.
-            let _ = self.state.stop_rebuildable_projection_work();
-            let _ = crate::state::set_notes_root_override(None);
-        }
-    }
+    use crate::test_support::TestVault as IndexTestFixture;
 
     #[test]
     fn build_indexed_note_matches_project_atlas_fixture() {
@@ -2029,8 +1986,9 @@ gneauxghts:
         state
             .prewarm_notes_index(temp.path())
             .expect("prewarm completes");
-        // Give the worker a window to (incorrectly) process the job.
-        std::thread::sleep(Duration::from_millis(100));
+        state
+            .background_index_queue
+            .wait_until_foreground_pause_for_test();
         // The notes_index map is populated regardless (that work happens
         // on the prewarm thread, not the queue), so we use the lexical
         // signatures map as the "did the queue process the job yet"
@@ -2042,16 +2000,8 @@ gneauxghts:
 
         // Release the guard; the worker should now drain the job.
         drop(guard);
-        let drained_at = std::time::Instant::now();
-        loop {
-            if state.lexical.contains_signature_for_test(&note_path) {
-                break;
-            }
-            if drained_at.elapsed() > Duration::from_secs(5) {
-                panic!("queue did not drain after foreground released");
-            }
-            std::thread::sleep(Duration::from_millis(20));
-        }
+        state.background_index_queue.wait_until_idle_for_test();
+        assert!(state.lexical.contains_signature_for_test(&note_path));
     }
 
     #[test]
@@ -2081,7 +2031,7 @@ gneauxghts:
 
         // First call is the cold start: this is allowed to do a full scan.
         state
-            .ensure_interactive_index(temp.path(), Duration::from_millis(0), "test_cold")
+            .ensure_interactive_index(temp.path(), "test_cold")
             .expect("cold start");
         let cold_full_refresh_count = state
             .interactive_invalidation
@@ -2094,13 +2044,12 @@ gneauxghts:
         );
 
         // Now write a new file *without* invalidating dirty paths and
-        // pause past the legacy max-age. The foreground call must NOT do
+        // invalidate notification. The foreground call must NOT do
         // another full scan; it should leave the new file unseen until
         // the watcher (or background reconciliation) reports it.
         fs::write(temp.path().join("Second.md"), "# Second\n\nBody").expect("write second");
-        std::thread::sleep(Duration::from_millis(50));
         state
-            .ensure_interactive_index(temp.path(), Duration::from_millis(10), "test_warm")
+            .ensure_interactive_index(temp.path(), "test_warm")
             .expect("warm call");
         let warm_full_refresh_count = state
             .interactive_invalidation

@@ -32,7 +32,6 @@ export interface PaneControllerSetupDeps<TPaneId extends string> {
     notePath: string | null,
     options?: {
       noteId?: string | null;
-      currentNoteAlreadySaved?: boolean;
       focusEditorAfterOpen?: boolean;
     }
   ) => Promise<void>;

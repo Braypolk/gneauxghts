@@ -86,10 +86,7 @@ impl AgentToolContext {
     }
     pub(crate) fn validate_context(&self) -> Result<(), String> {
         let (allowed, excluded) = self.evidence_scope()?;
-        let state = self
-            .app
-            .try_state::<AppState>()
-            .ok_or("Notes index unavailable")?;
+        let state = self.host.state().ok_or("Notes index unavailable")?;
         if !self
             .evidence
             .lock()
@@ -295,10 +292,7 @@ async fn search(
     run_blocking_tool(move || {
         context.check_cancelled()?;
         let (allowed, excluded) = context.evidence_scope()?;
-        let state = context
-            .app
-            .try_state::<AppState>()
-            .ok_or("Notes index unavailable")?;
+        let state = context.host.state().ok_or("Notes index unavailable")?;
         let submitted_range = request.activity_range.clone();
         let mut resolved = context
             .evidence
@@ -435,10 +429,7 @@ impl Tool for ReadEvidenceTool {
         run_blocking_tool(move || {
             context.check_cancelled()?;
             let (allowed, excluded) = context.evidence_scope()?;
-            let state = context
-                .app
-                .try_state::<AppState>()
-                .ok_or("Notes index unavailable")?;
+            let state = context.host.state().ok_or("Notes index unavailable")?;
             let (mut payload, sources) = {
                 let mut evidence = context
                     .evidence

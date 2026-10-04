@@ -1,22 +1,13 @@
-import { Compartment, EditorSelection, EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
+import { createRuntimePane } from '../editor/testSupport';
+import { EditorSelection, EditorState, Transaction } from '@codemirror/state';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorDocumentRuntime } from '../editor/editorDocumentRuntime';
-import type { EditorController } from '../editor/types';
 import { imageState } from './imageState';
 import { resizeRenderedImage } from './imageEmbeds';
 function pane(runtime: EditorDocumentRuntime, markdown: string, anchor: number, readOnly = false) {
-  let state = EditorState.create({ doc: markdown, selection: { anchor }, extensions: [imageState, EditorState.readOnly.of(readOnly)] });
-  const view = {
-    get state() { return state; },
-    composing: false,
-    update(transactions: readonly Transaction[]) { for (const transaction of transactions) state = transaction.state; },
-    dispatch(spec: TransactionSpec) { runtime.dispatchFromPane(controller, [state.update(spec)]); },
-    scrollDOM: { scrollTop: 123, scrollLeft: 0 }
-  } as unknown as EditorView;
-  const onMarkdownChange = vi.fn();
-  const controller: EditorController = { view, runtime, sharedResources: null, paneKey: Symbol('pane'), onMarkdownChange, proposalReviewCompartment: new Compartment() };
-  runtime.attachController(controller); return { view, controller, onMarkdownChange };
+  const result = createRuntimePane(runtime, markdown, anchor, vi.fn(), [imageState, EditorState.readOnly.of(readOnly)]);
+  result.setViewport(123);
+  return result;
 }
 describe('authored image edits through shared undo', () => {
   it('broadcasts a source-preserving resize and one undo across sibling panes', () => {

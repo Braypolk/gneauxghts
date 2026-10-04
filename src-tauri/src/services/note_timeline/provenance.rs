@@ -740,7 +740,7 @@ mod tests {
         body: &str,
         previous: Option<&Path>,
     ) -> (NoteIdentity, PathBuf) {
-        let session = crate::commands::note_persistence::persist_note_session_with_outcome(
+        let session = crate::test_support::save_and_finalize(
             state,
             title.into(),
             body.into(),
@@ -748,10 +748,7 @@ mod tests {
         )
         .unwrap()
         .unwrap();
-        state
-            .note_timeline()
-            .finalize_editing_window(&NoteIdentity::new(session.note_id.as_ref().unwrap()))
-            .unwrap();
+        assert!(session.commit_warning.is_none());
         (
             NoteIdentity::new(session.note_id.unwrap()),
             PathBuf::from(session.path.unwrap()),
@@ -1391,13 +1388,14 @@ mod tests {
             "deleted secret\n",
         ];
         let mut previous = AuthoredProjection::default();
-        for step in 1..=200 {
+        // Enumerate every ordered pair; the previous modular sequence repeated only nine pairs.
+        for step in 0..fragments.len() * fragments.len() {
             let text = format!(
                 "{}{}",
-                fragments[step % fragments.len()],
-                fragments[(step * 7 + 3) % fragments.len()]
+                fragments[step / fragments.len()],
+                fragments[step % fragments.len()]
             );
-            let current = edit(&previous, &text, step as u64);
+            let current = edit(&previous, &text, step as u64 + 1);
             assert_eq!(lines_text(&current.body), text);
             for (index, line) in current.body.iter().enumerate() {
                 assert_eq!(line.line_number, index + 1);
@@ -1413,7 +1411,7 @@ mod tests {
                     .into_iter()
                     .flatten()
                     {
-                        assert!(evidence.at_millis <= step as u64);
+                        assert!(evidence.at_millis <= step as u64 + 1);
                     }
                     offset = range.end;
                 }

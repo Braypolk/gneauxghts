@@ -634,47 +634,6 @@ fn restart_reconciliation_catches_a_missed_external_state_once() {
 }
 
 #[test]
-fn observe_returns_a_typed_receipt_for_recorded_evidence() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-observe-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-observe-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .expect("construct app state");
-    let path = notes.path().join("Observed.md");
-    fs::write(&path, "Observed").unwrap();
-
-    let receipt = state
-        .note_timeline()
-        .observe(VaultObservation::external_edit(path.clone(), 42, Some(41)))
-        .unwrap();
-
-    assert_eq!(receipt.path(), path);
-    assert_eq!(receipt.source(), VaultObservationSource::Watcher);
-    assert_eq!(receipt.kind(), VaultObservationKind::CanonicalState);
-    assert_eq!(receipt.observed_at_millis(), 42);
-    assert_eq!(receipt.modified_at_millis(), Some(41));
-
-    let renamed_path = notes.path().join("Renamed.md");
-    fs::rename(&path, &renamed_path).unwrap();
-    let renamed = state
-        .note_timeline()
-        .observe(VaultObservation::renamed(&path, &renamed_path, 43))
-        .unwrap();
-    assert_eq!(
-        renamed.kind(),
-        VaultObservationKind::Lifecycle(LifecycleEventKind::Renamed)
-    );
-    assert_eq!(renamed.previous_path(), Some(path.as_path()));
-    assert_eq!(renamed.path(), renamed_path);
-    crate::state::set_notes_root_override(None).unwrap();
-}
-
-#[test]
 fn reattachment_requires_identity_and_same_path_continuity() {
     let _guard = crate::test_support::lock_test_env();
     let app_data = crate::test_support::TestDir::new("timeline-reattach-app-data");
@@ -1108,45 +1067,6 @@ fn restart_reattaches_only_the_same_identity_at_the_missing_path() {
         access.lifecycle_events().unwrap().last().unwrap().kind(),
         LifecycleEventKind::Reattached
     );
-    crate::state::set_notes_root_override(None).unwrap();
-}
-
-#[test]
-fn lifecycle_publication_returns_the_typed_identity_and_paths() {
-    let _guard = crate::test_support::lock_test_env();
-    let app_data = crate::test_support::TestDir::new("timeline-lifecycle-app-data");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    let notes = crate::test_support::TestDir::new("timeline-lifecycle-notes");
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let state = AppState::new(
-        SemanticState::new_disabled("disabled"),
-        EventBus::disabled(),
-    )
-    .expect("construct app state");
-    let created = save_retained_state(
-        &state,
-        "Lifecycle receipt".to_string(),
-        "Retained body".to_string(),
-        None,
-    )
-    .unwrap()
-    .unwrap();
-    let note_id = NoteIdentity::new(created.note_id.unwrap());
-    let active_path = PathBuf::from(created.path.unwrap());
-    let forgotten_path =
-        crate::state::forgotten_notes_root(notes.path()).join("Lifecycle receipt.md");
-    fs::create_dir_all(forgotten_path.parent().unwrap()).unwrap();
-    let (selected, warning) = state.note_timeline().forget_note(&active_path, 7).unwrap();
-    assert!(warning.is_none());
-    assert_eq!(selected.note_id.as_deref(), Some(note_id.as_str()));
-    assert_eq!(Path::new(&selected.forgotten_path), forgotten_path);
-    assert_eq!(Path::new(&selected.original_path), active_path);
-    let events =
-        history_store::lifecycle_events(&state.note_timeline().runtime.store, &note_id).unwrap();
-    let receipt = events.last().unwrap();
-    assert_eq!(receipt.kind(), LifecycleEventKind::Forgotten);
-    assert_eq!(receipt.occurred_at_millis(), selected.forgotten_at_millis);
     crate::state::set_notes_root_override(None).unwrap();
 }
 

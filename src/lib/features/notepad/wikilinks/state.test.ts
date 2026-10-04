@@ -48,25 +48,6 @@ describe('wikilink IPC payloads', () => {
     });
   });
 
-  it('omits markdown for section autocomplete after the backend has cached the hash', async () => {
-    invokeMock.mockResolvedValue([]);
-    const { autocompleteNoteLinks } = await import('./state');
-    const { computeDraftHash } = await import('$lib/features/notepad/search/draftRef');
-    const body = 'large unsaved body';
-
-    await autocompleteNoteLinks('#Heading', '/vault/current.md', 'Current', body);
-    invokeMock.mockClear();
-    await autocompleteNoteLinks('#Other', '/vault/current.md', 'Current', body);
-
-    expect(invokeMock).toHaveBeenCalledWith('autocomplete_note_links', {
-      rawTarget: '#Other',
-      currentPath: '/vault/current.md',
-      currentTitle: 'Current',
-      currentMarkdown: null,
-      currentBodyHash: computeDraftHash(body),
-      limit: 8
-    });
-  });
 
   it('does not send current markdown for note-only resolution', async () => {
     invokeMock.mockResolvedValueOnce(null);
@@ -82,4 +63,20 @@ describe('wikilink IPC payloads', () => {
       currentBodyHash: null
     });
   });
+});
+
+it('retires visible suggestions while a new target is loading and ignores closed requests', async () => {
+  const { createWikilinkAutocompleteState, beginWikilinkSuggestionRequest, completeWikilinkSuggestionRequest, dismissWikilinkAutocomplete, moveWikilinkSelection } = await import('./state');
+  const active = { rawTarget: 'one', targetFrom: 2, targetTo: 5, left: 0, top: 0, bottom: 0 };
+  const old = beginWikilinkSuggestionRequest(createWikilinkAutocompleteState(), active);
+  const suggestions = [{ value: 'one', label: 'one', detail: '', kind: 'note' as const }];
+  const visible = completeWikilinkSuggestionRequest(old.state, old.requestId, suggestions);
+  expect(visible.active).toBe(true);
+  const next = beginWikilinkSuggestionRequest(visible, { ...active, rawTarget: 'two' });
+  expect(next.state).toMatchObject({ active: false, suggestions: [], selectedIndex: 0 });
+  expect(completeWikilinkSuggestionRequest(next.state, old.requestId, suggestions)).toBe(next.state);
+  const closed = dismissWikilinkAutocomplete(next.state);
+  expect(completeWikilinkSuggestionRequest(closed, next.requestId, suggestions)).toBe(closed);
+  const multiple = { ...visible, suggestions: [...suggestions, { ...suggestions[0], value: 'two' }] };
+  expect(moveWikilinkSelection(multiple, -1).selectedIndex).toBe(1);
 });

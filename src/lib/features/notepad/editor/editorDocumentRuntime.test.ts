@@ -1,17 +1,15 @@
+import { createRuntimePane as pane } from './testSupport';
 import {
-  Compartment,
-  EditorState,
   Transaction,
   type TransactionSpec
 } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
+import { isolateHistory } from '@codemirror/commands';
 import { describe, expect, it, vi } from 'vitest';
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
 import {
   replaceEditorDocument,
   restoreCursorPosition
 } from './editorViewController';
-import type { EditorController } from './types';
 import { documentRegistry } from '../document/documentRegistry';
 import {
   adoptCommittedDocument,
@@ -20,96 +18,96 @@ import {
 } from '../state/noteStore';
 import { updateDocumentMarkdown } from '../document/documentState';
 
-function pane(
-  runtime: EditorDocumentRuntime,
-  markdown: string,
-  anchor: number,
-  onMarkdownChange: (markdown: string) => void = vi.fn()
-) {
-  let state = EditorState.create({
-    doc: markdown,
-    selection: { anchor }
-  });
-  const scrollDOM = {
-    scrollTop: 0,
-    scrollLeft: 0
-  };
-  const view = {
-    get state() {
-      return state;
-    },
-    update(transactions: readonly Transaction[]) {
-      for (const transaction of transactions) state = transaction.state;
-    },
-    dispatch(spec: Transaction | TransactionSpec) {
-      const transaction =
-        spec instanceof Transaction ? spec : state.update(spec);
-      state = transaction.state;
-    },
-    scrollDOM
-  } as unknown as EditorView;
-  const controller: EditorController = {
-    view,
-    runtime,
-    sharedResources: null,
-    paneKey: Symbol('pane'),
-    onMarkdownChange,
-    proposalReviewCompartment: new Compartment()
-  };
-  runtime.attachController(controller);
-  return {
-    controller,
-    onMarkdownChange,
-    readState: () => state,
-    setViewport: (scrollTop: number, scrollLeft = 0) => {
-      scrollDOM.scrollTop = scrollTop;
-      scrollDOM.scrollLeft = scrollLeft;
-    },
-    readViewport: () => ({ ...scrollDOM })
-  };
-}
-
 describe('EditorDocumentRuntime', () => {
-  it('broadcasts one pane edit while preserving independent pane selections', () => {
+  it.each([
+    {
+      name: 'successive insertions',
+      specs: [
+        { changes: { from: 1, insert: 'X' }, selection: { anchor: 2 } },
+        { changes: { from: 5, insert: 'Y' }, selection: { anchor: 6 } }
+      ],
+      intermediate: 'aXbcd',
+      expected: 'aXbcdY',
+      sourceHead: 6,
+      siblingHead: 5,
+      undoHeads: [2, 1]
+    },
+    {
+      name: 'same-length replacements',
+      specs: [
+        { changes: { from: 1, to: 2, insert: 'X' }, selection: { anchor: 2 } },
+        { changes: { from: 2, to: 3, insert: 'Y' }, selection: { anchor: 3 } }
+      ],
+      intermediate: 'aXcd',
+      expected: 'aXYd',
+      sourceHead: 3,
+      siblingHead: 4,
+      undoHeads: [2, 1]
+    },
+    {
+      name: 'edits interleaved with selection-only transactions',
+      specs: [
+        { selection: { anchor: 2 } },
+        { changes: { from: 2, insert: 'X' }, selection: { anchor: 3 } },
+        { selection: { anchor: 5 } },
+        { changes: { from: 5, insert: 'Y' }, selection: { anchor: 6 } },
+        { selection: { anchor: 1 } }
+      ],
+      intermediate: 'abXcd',
+      expected: 'abXcdY',
+      sourceHead: 1,
+      siblingHead: 5,
+      undoHeads: [5, 2]
+    }
+  ])('broadcasts a batch of $name with shared undo and local view state', ({
+    specs, intermediate, expected, sourceHead, siblingHead, undoHeads
+  }) => {
     const runtime = new EditorDocumentRuntime('abcd');
     const first = pane(runtime, 'abcd', 1);
     const second = pane(runtime, 'abcd', 4);
     second.setViewport(240, 12);
-    const transaction = first.readState().update({
-      changes: { from: 1, insert: 'X' },
-      selection: { anchor: 2 }
+    let sourceState = first.readState();
+    const transactions = specs.map((spec: TransactionSpec) => {
+      const transaction = sourceState.update({
+        ...spec,
+        ...(spec.changes ? { annotations: isolateHistory.of('full') } : {})
+      });
+      sourceState = transaction.state;
+      return transaction;
     });
 
-    runtime.dispatchFromPane(first.controller, [transaction]);
+    runtime.dispatchFromPane(first.controller, transactions);
 
-    expect(runtime.markdown).toBe('aXbcd');
-    expect(first.readState().selection.main.head).toBe(2);
-    expect(second.readState().selection.main.head).toBe(5);
-    expect(second.readViewport()).toEqual({
-      scrollTop: 240,
-      scrollLeft: 12
-    });
-    expect(first.onMarkdownChange).toHaveBeenCalledTimes(1);
+    expect(runtime.markdown).toBe(expected);
+    expect(first.readState().doc.toString()).toBe(expected);
+    expect(second.readState().doc.toString()).toBe(expected);
+    expect(first.readState().selection.main.head).toBe(sourceHead);
+    expect(second.readState().selection.main.head).toBe(siblingHead);
+    expect(second.readViewport()).toEqual({ scrollTop: 240, scrollLeft: 12 });
+    expect(runtime.revision).toBe(1);
+    expect(first.onMarkdownChange).toHaveBeenCalledExactlyOnceWith(expected);
     expect(second.onMarkdownChange).not.toHaveBeenCalled();
+
+    for (const [index, markdown] of [intermediate, 'abcd'].entries()) {
+      expect(runtime.undo(second.controller.paneKey)).toBe(true);
+      expect(runtime.markdown).toBe(markdown);
+      expect(first.readState().doc.toString()).toBe(markdown);
+      expect(second.readState().doc.toString()).toBe(markdown);
+      expect(second.readState().selection.main.head).toBe(undoHeads[index]);
+      expect(second.readViewport()).toEqual({ scrollTop: 240, scrollLeft: 12 });
+    }
+    expect(runtime.undo(second.controller.paneKey)).toBe(false);
+    expect(second.onMarkdownChange).toHaveBeenCalledTimes(2);
+    expect(first.onMarkdownChange).toHaveBeenCalledOnce();
+    expect(runtime.redo(first.controller.paneKey)).toBe(true);
+    expect(runtime.redo(first.controller.paneKey)).toBe(true);
+    expect(runtime.markdown).toBe(expected);
+    expect(first.readState().doc.toString()).toBe(expected);
+    expect(second.readState().doc.toString()).toBe(expected);
+    expect(first.onMarkdownChange).toHaveBeenCalledTimes(3);
   });
 
-  it('shares undo history and restores selection in the requesting pane', () => {
-    const runtime = new EditorDocumentRuntime('abcd');
-    const first = pane(runtime, 'abcd', 1);
-    const second = pane(runtime, 'abcd', 4);
-    runtime.dispatchFromPane(first.controller, [
-      first.readState().update({
-        changes: { from: 1, insert: 'X' },
-        selection: { anchor: 2 }
-      })
-    ]);
 
-    expect(runtime.undo(second.controller.paneKey)).toBe(true);
-    expect(first.readState().doc.toString()).toBe('abcd');
-    expect(second.readState().doc.toString()).toBe('abcd');
-    expect(second.readState().selection.main.anchor).toBe(1);
-    expect(second.onMarkdownChange).toHaveBeenCalledOnce();
-  });
 
   it('retains two-pane selection, scroll, undo, and redo when a save assigns identity', () => {
     const document = createNoteDraftState();

@@ -38,60 +38,6 @@ describe('WorkspaceStore pane commands', () => {
 });
 
 describe('WorkspaceStore invariants', () => {
-  it('adds pane structure and content reference atomically', () => {
-    const workspace = store();
-
-    createReadyPaneForTest(
-      workspace,
-      second,
-      'document:/vault/Second.md',
-      'chat'
-    );
-
-    expect(workspace.paneOrder).toEqual([first, second]);
-    expect(workspace.getPaneState(second)).toEqual({
-      paneId: second,
-      kind: 'chat',
-      documentHandle: 'document:/vault/Second.md',
-      chatConversationId: null
-    });
-  });
-
-  it('allows chat-only workspaces while always retaining a pane', () => {
-    const workspace = store();
-    createReadyPaneForTest(
-      workspace,
-      second,
-      'document:workspace-2',
-      'chat'
-    );
-
-    expect(workspace.setPaneKind(first, 'chat')).toBe(true);
-    expect(workspace.getPaneState(first).kind).toBe('chat');
-    expect(
-      retirePaneForTest(workspace, first)?.pane.paneId
-    ).toBe(first);
-    expect(workspace.activePaneId).toBe(second);
-    expect(retirePaneForTest(workspace, second)).toBeNull();
-  });
-
-  it('leases removed pane state until rendered teardown is finalized', () => {
-    const workspace = store();
-    createReadyPaneForTest(workspace, second, 'document:workspace-2');
-
-    const retirement = retirePaneForTest(workspace, second)!;
-
-    expect(workspace.getPaneState(second).documentHandle).toBe(
-      'document:workspace-2'
-    );
-    workspace.completePaneDisposal(
-      second,
-      retirement.operationId
-    );
-    expect(() => workspace.getPaneState(second)).toThrow(
-      'Unknown workspace pane'
-    );
-  });
 
   it('selects the adjacent pane to the right, otherwise the left', () => {
     const workspace = store();

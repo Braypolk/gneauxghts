@@ -18,17 +18,6 @@ export {
   type ProposalReviewWorkflowEvent
 } from './proposalReviewMachine';
 export {
-  createProposalReviewExtension,
-  proposalTransaction,
-  resolveReviewHunk,
-  type ProposalReviewState,
-  type ReviewHunkState
-} from './reviewExtension';
-export {
-  enterProposalReviewView,
-  exitProposalReviewView
-} from './reviewDisplay';
-export {
   createProposalOrchestration,
   type ProposalOrchestration,
   type ProposalOrchestrationDeps

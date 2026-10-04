@@ -1,5 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadSearchStore } from './store.svelte';
+import type { SearchItem } from '$lib/types/semantic';
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
+function result(fileName: string): SearchItem {
+  return {
+    noteId: fileName, notePath: `/vault/${fileName}.md`, fileName,
+    sectionLabel: '', excerpt: '', highlightRanges: [], matchText: '',
+    reasonLabels: ['keyword'], lexicalScore: null, semanticScore: null,
+    startLine: null, endLine: null
+  };
+}
 
 const { searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, setNotePinnedMock } =
   vi.hoisted(() => ({
@@ -33,6 +50,7 @@ describe('NotepadSearchStore', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
@@ -48,16 +66,62 @@ describe('NotepadSearchStore', () => {
     });
   }
 
-  it('exposes reactive search fields directly without requiring a $-store bridge', () => {
-    const store = createStore();
-    expect(store.searchMode).toBe('all');
-    expect(store.searchQuery).toBe('');
-    expect(store.searchResults).toEqual([]);
-    expect(store.pinnedNotes).toEqual([]);
-    expect(store.recentNotes).toEqual([]);
-    expect(store.recentTasks).toEqual([]);
-    expect(store.isSearching).toBe(false);
-  });
+  it.each(['success', 'error'] as const)(
+    'ignores an old %s during replacement debounce without emitting early highlights',
+    async (outcome) => {
+      const pending = deferred<SearchItem[]>();
+      const onSearchHighlightsChange = vi.fn();
+      const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const store = createNotepadSearchStore({
+        getCurrentTitle: () => 'Current', getCurrentMarkdown: () => 'body',
+        getCurrentPath: () => '/vault/current.md', openSearchResult: vi.fn(async () => {}),
+        openRecentTask: vi.fn(async () => {}), openNote: vi.fn(async () => {}),
+        onSearchHighlightsChange
+      });
+      const retained = [result('Retained')];
+      const latest = [result('Latest')];
+      store.searchResults = retained;
+      store.searchQuery = 'old';
+      searchNotesMock.mockReturnValueOnce(pending.promise).mockResolvedValueOnce(latest);
+      const oldSearch = store.runSearch('old');
+      onSearchHighlightsChange.mockClear();
+
+      store.handleSearchInput('new');
+      if (outcome === 'success') pending.resolve([result('Obsolete')]);
+      else pending.reject(new Error('obsolete search failed'));
+      await oldSearch;
+      await vi.advanceTimersByTimeAsync(119);
+
+      expect(store.searchQuery).toBe('new');
+      expect(store.searchResults).toEqual(retained);
+      expect(searchNotesMock).toHaveBeenCalledTimes(1);
+      expect(onSearchHighlightsChange).not.toHaveBeenCalled();
+      expect(log).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(searchNotesMock).toHaveBeenLastCalledWith('new', expect.anything());
+      expect(store.searchResults).toEqual(latest);
+      expect(store.isSearching).toBe(false);
+      expect(onSearchHighlightsChange).toHaveBeenCalledExactlyOnceWith({
+        searchQuery: 'new', searchMode: 'all', matchCase: false, matchWholeWord: false
+      });
+    }
+  );
+
+  it.each(['empty query', 'dispose'] as const)(
+    'retires an in-flight request on %s', async (action) => {
+      const pending = deferred<SearchItem[]>();
+      searchNotesMock.mockReturnValueOnce(pending.promise);
+      const store = createStore();
+      const oldSearch = store.runSearch('old');
+      if (action === 'empty query') await store.runSearch('');
+      else store.dispose();
+      pending.resolve([result('Obsolete')]);
+      await oldSearch;
+      expect(store.searchResults).toEqual([]);
+    }
+  );
+
 
   it('distinguishes a failed recent-note load from a successful empty list', async () => {
     const store = createStore();
@@ -101,7 +165,7 @@ describe('NotepadSearchStore', () => {
       onSearchHighlightsChange
     });
     searchNotesMock.mockResolvedValue([
-      { notePath: '/vault/match.md', noteTitle: 'Match', sectionLabel: '', snippets: [] }
+      { ...result('Match'), notePath: '/vault/match.md' }
     ]);
 
     store.handleSearchInput('f');
@@ -203,20 +267,12 @@ describe('NotepadSearchStore', () => {
         }
       ],
       recentNotes: [
-        {
-          notePath: '/vault/recent.md',
-          noteTitle: 'Recent',
-          sectionLabel: '',
-          snippets: []
-        }
+        { ...result('Recent'), notePath: '/vault/recent.md' }
       ],
       lastChat: null
     });
 
-    store.handleSearchOpen();
-    await Promise.resolve();
-    await Promise.resolve();
-    await Promise.resolve();
+    await store.handleSearchOpen();
 
     expect(store.pinnedNotes).toHaveLength(1);
     expect(store.pinnedNotes[0].noteId).toBe('pinned-1');
@@ -236,7 +292,7 @@ describe('NotepadSearchStore', () => {
       onSearchHighlightsChange
     });
     searchNotesMock.mockResolvedValue([
-      { notePath: '/vault/match.md', noteTitle: 'Match', sectionLabel: '', snippets: [] }
+      { ...result('Match'), notePath: '/vault/match.md' }
     ]);
     store.handleSearchInput('previous');
     await vi.advanceTimersByTimeAsync(120);

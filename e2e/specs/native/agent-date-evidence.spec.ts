@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { browser, $ } from '@wdio/globals';
+import { createLiveNativeEvaluation, invokeNative as invoke, passageIds } from '../../support/liveNative';
 
 // Live inference is explicitly opt-in; ordinary native suites never call a model.
 const live = process.env.GNEAUX_LIVE_NATIVE === '1' ? describe : describe.skip;
@@ -15,24 +15,10 @@ type Conversation = { id: string; messages: Message[] };
 type Receipt = { requestId: string; assistantMessageId: string };
 type Resolution = { source: Source; markdown: string; selection: { anchor: number; head: number } | null };
 
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync(
-    (command: string, args: Record<string, unknown>, done: (value: { ok: boolean; value?: unknown; error?: string }) => void) => {
-      const native = window as typeof window & {
-        __TAURI_INTERNALS__?: { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
-      };
-      if (!native.__TAURI_INTERNALS__) return done({ ok: false, error: 'Real native IPC is required' });
-      void native.__TAURI_INTERNALS__.invoke(command, args).then(
-        value => done({ ok: true, value }), error => done({ ok: false, error: String(error) })
-      );
-    }, command, args
-  );
-  if (!result.ok) throw new Error(result.error);
-  return result.value as T;
-}
-
 live('Live local agent date evidence in a disposable native vault', function () {
   this.timeout(300_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
   const endpoint = process.env.GNEAUX_LIVE_ENDPOINT;
   const model = process.env.GNEAUX_LIVE_MODEL;
   const output = process.env.GNEAUX_LIVE_OUTPUT;
@@ -45,39 +31,29 @@ live('Live local agent date evidence in a disposable native vault', function () 
   let success: Note | undefined;
   let scratch: Note;
   let uiConversation: Conversation;
+  let fixtureClock: { instant: string; timeZone: string; today: string };
 
   function persist() {
     assert(output, 'An explicit output path is required');
-    mkdirSync(dirname(resolve(output)), { recursive: true });
-    writeFileSync(output, JSON.stringify({ endpoint, model,
+    evaluation.artifact.write({ endpoint, model,
       method: 'Native Tauri app, real ChatService/AgentRuntime/tools, synthetic vault, lexical retrieval. First question submitted through the Svelte composer; later questions use production IPC. Quality graded separately.',
+      fixtureClock,
       notes: [tasks, meetings, deadlines, conditions, success].filter((n): n is Note => Boolean(n)).map(n => ({ title: n.title, markdown: n.markdown })),
-      results }, null, 2));
+      results });
   }
 
-  async function save(title: string, markdown: string, currentPath: string | null = null): Promise<Note> {
-    const note = await invoke<Note>('save_note', { title, markdown, currentPath });
-    assert(note.path.includes('gneauxghts-native-e2e-'), 'Writes must land in the owned native E2E fixture');
-    await invoke('finalize_note_editing_window', { noteId: note.noteId });
-    await invoke('e2e_flush_vault_watcher_path', { path: note.path });
-    return { ...note, markdown };
-  }
+  const save = evaluation.saveNote;
 
-  before(async () => {
+  evaluation.setup(async () => {
     assert(endpoint && model && output, 'Explicit local endpoint, model, and artifact required');
     assert(!process.env.GNEAUXGHTS_RELEASE_SCALE_RUN, 'Use a fresh disposable native fixture');
-    await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', { settings: { ...settings, provider: 'local', model,
-      localModel: model, localBaseUrl: endpoint, defaultAccess: 'full', webAccess: 'off', reasoningEffort: 'medium' } });
-    await invoke('chat_set_local_model_capabilities', { model,
-      capabilities: { tools: true, images: false, audio: false, video: false, reasoningEffort: 'medium' } });
-    const semantic = await invoke<Record<string, unknown>>('get_semantic_settings');
-    await invoke('set_semantic_settings', { settings: { ...semantic, semanticSearchEnabled: false } });
+    await evaluation.configure({ access: 'full', lexicalOnly: true });
     tasks = await save('Cobalt task log', '- [ ] Send Cobalt proposal\n- [ ] Investigate Cobalt migration\n\nPlan to deploy Cobalt Friday.');
     tasks = await save(tasks.title, '- [x] Send Cobalt proposal\n- [ ] Investigate Cobalt migration\n\nPlan to deploy Cobalt Friday.', tasks.path);
     {
-      const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      const instant = new Date();
+      const today = instant.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      fixtureClock = { instant: instant.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, today };
       tasks = await save(tasks.title, tasks.markdown + `\n\nOn ${today}, I completed the Cobalt access review.\nInvoice 42 paid; Cobalt payment receipt filed by me.`, tasks.path);
       success = await save('Cedar recovery result', 'Cedar may resume only after route B passes a witnessed recovery drill. Route B passed the witnessed Cedar recovery drill on September 11, 2026 at 14:00. The office printer needs toner.');
       conditions = await save('Cobalt recovery condition', 'Cobalt may resume only after route B passes a witnessed recovery drill. The route B drill is scheduled for September 18, 2026. No route B drill result is recorded. The office printer needs toner.');
@@ -94,19 +70,12 @@ live('Live local agent date evidence in a disposable native vault', function () 
   });
 
   async function completed(conversationId: string, messageId?: string): Promise<Message> {
-    let answer: Message | undefined;
-    await browser.waitUntil(async () => {
-      const conversation = await invoke<Conversation>('chat_get_conversation', { conversationId });
-      answer = conversation.messages.find(m => m.role === 'assistant' && (!messageId || m.id === messageId));
-      return Boolean(answer && ['complete', 'failed', 'cancelled'].includes(answer.status));
-    }, { timeout: 240_000, interval: 1000, timeoutMsg: 'Native agent did not reach a terminal message state' });
-    assert(answer);
-    return answer;
+    return evaluation.waitForAnswer<Message>(conversationId, { messageId, timeoutMs: 240_000 });
   }
 
   async function record(id: string, question: string, conversationId: string, answer: Message, started: number, expected: string) {
     const events = answer.agentEvents.filter(e => ['toolCallUpdated', 'runGuardTriggered', 'usageUpdated', 'modelTurnRetried'].includes(e.event.type));
-    const links = [...answer.content.matchAll(/passage:([^\s)\]]+)/g)].map(m => m[1]);
+    const links = passageIds(answer.content);
     const resolutions: Record<string, unknown>[] = [];
     for (const evidenceId of new Set(links)) {
       try {

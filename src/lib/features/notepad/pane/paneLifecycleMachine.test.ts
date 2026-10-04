@@ -24,40 +24,6 @@ describe('pane membership machine', () => {
     ).toEqual({ kind: 'ready' });
   });
 
-  it('returns a blocked close to ready', () => {
-    const closing = transitionPaneMembership(
-      createPaneMembershipState(true),
-      { type: 'closeRequested', operationId: 23 }
-    );
-    expect(
-      transitionPaneMembership(closing, {
-        type: 'closeBlocked',
-        operationId: 23
-      })
-    ).toEqual({ kind: 'ready' });
-  });
-
-  it('moves an allowed close through retirement and disposal', () => {
-    const closing = transitionPaneMembership(
-      createPaneMembershipState(true),
-      { type: 'closeRequested', operationId: 31 }
-    );
-    const retiring = transitionPaneMembership(closing, {
-      type: 'retirementStarted',
-      operationId: 31
-    });
-    const disposed = transitionPaneMembership(retiring, {
-      type: 'disposalCompleted',
-      operationId: 31
-    });
-
-    expect(retiring).toEqual({
-      kind: 'retiring',
-      operationId: 31
-    });
-    expect(disposed).toEqual({ kind: 'disposed' });
-  });
-
   it('rejects completions from another navigation operation', () => {
     const closing = transitionPaneMembership(
       createPaneMembershipState(true),

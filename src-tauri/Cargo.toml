@@ -79,6 +79,8 @@ security-framework-sys = "2.17"
 tauri-plugin-window-state = "2"
 
 [dev-dependencies]
+syn = { version = "2", features = ["full", "visit"] }
+proc-macro2 = { version = "1", features = ["span-locations"] }
 rig-core = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
 rig-agent = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
 tauri = { version = "2.11", features = ["test"] }

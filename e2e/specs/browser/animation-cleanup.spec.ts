@@ -1,10 +1,11 @@
 import { browser, expect, $, $$ } from '@wdio/globals';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 async function ready(width = 1440) {
   await browser.setWindowSize(width, 1000);
   await browser.url('/');
   await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
-  await browser.pause(400);
+  await waitForWorkspaceAnimationSettled();
 }
 
 describe('animation interruptions and controls', () => {
@@ -33,16 +34,28 @@ describe('animation interruptions and controls', () => {
     await $('#pane-command-current').waitForExist();
     await browser.execute(() => document.querySelector<HTMLElement>('#pane-command-current')!.click());
     await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-pane-motion]')));
-    const result = await browser.executeAsync((done: (result: { toggled: boolean; widths: number[]; settled: boolean }) => void) => {
+    const result = await browser.executeAsync((done: (result: { toggled: boolean; widths: number[]; settled: boolean; error?: string }) => void) => {
       const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]')!;
       const startWidth = pane.getBoundingClientRect().width;
-      const start = performance.now();
       let toggled = false;
       const widths: number[] = [];
+      let frameId = 0;
+      let finished = false;
+      const finish = (error?: string) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(deadline);
+        cancelAnimationFrame(frameId);
+        done({ toggled, widths, settled: !pane.isConnected && !document.querySelector('[data-pane-motion]'),
+          ...(error ? { error } : {}) });
+      };
+      const deadline = setTimeout(() => finish('Retargeted pane collapse did not settle'), 3000);
       pane.querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
       const sample = () => {
-        if (!pane.isConnected || performance.now() - start > 3000) {
-          done({ toggled, widths, settled: !pane.isConnected && !document.querySelector('[data-pane-motion]') });
+        if (finished) return;
+        if (!pane.isConnected) {
+          if (!document.querySelector('[data-pane-motion]')) finish();
+          else frameId = requestAnimationFrame(sample);
           return;
         }
         const width = pane.getBoundingClientRect().width;
@@ -51,10 +64,11 @@ describe('animation interruptions and controls', () => {
           toggled = true;
           document.querySelector<HTMLElement>('button[aria-label="Expand related notes"]')!.click();
         }
-        requestAnimationFrame(sample);
+        frameId = requestAnimationFrame(sample);
       };
-      requestAnimationFrame(sample);
+      frameId = requestAnimationFrame(sample);
     });
+    if (result.error) throw new Error(result.error);
     expect(result.toggled).toBe(true);
     expect(result.settled).toBe(true);
     expect(result.widths.length).toBeGreaterThan(3);
@@ -64,32 +78,73 @@ describe('animation interruptions and controls', () => {
 
   it('retargets pane entrance when Related changes without snapping to the endpoint', async () => {
     await ready();
-    const result = await browser.executeAsync((done: (result: { before: number; after: number; moving: boolean }) => void) => {
-      const start = performance.now();
+    const result = await browser.executeAsync((done: (result: {
+      before: number; after: number; from: number; to: number; moving: boolean; replaced: boolean; error?: string
+    }) => void) => {
+      let frameId = 0;
+      let finished = false;
+      const finish = (result: {
+        before: number; after: number; from: number; to: number; moving: boolean; replaced: boolean; error?: string
+      }) => {
+        if (finished) return;
+        finished = true;
+        clearTimeout(deadline);
+        cancelAnimationFrame(frameId);
+        done(result);
+      };
+      const deadline = setTimeout(() => finish({ before: 0, after: 0, from: 0, to: 0, moving: false, replaced: false,
+        error: 'Required entrance interruption frame was not observed' }), 3000);
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
       const interrupt = () => {
-        if (performance.now() - start > 3000) { done({ before: 0, after: 0, moving: false }); return; }
+        if (finished) return;
         const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
-        const animation = pane?.getAnimations().find(animation =>
-          animation.playState === 'running' && Number(animation.currentTime) >= 55);
-        if (!pane || !animation) { requestAnimationFrame(interrupt); return; }
+        const animation = pane?.getAnimations().find(item => item.playState === 'running' &&
+          (item.effect as KeyframeEffect).getKeyframes().some(frame => frame.flexBasis !== undefined));
+        if (!pane || !animation) { frameId = requestAnimationFrame(interrupt); return; }
+        // Control the interrupted width, not the duration of a browser frame.
+        // The replacement still runs and paints normally after the real click.
+        animation.pause();
+        animation.currentTime = Number(animation.effect!.getTiming().duration) / 2;
         const before = pane.getBoundingClientRect().width;
         document.querySelector<HTMLElement>('button[aria-label="Expand related notes"]')!.click();
-        requestAnimationFrame(() => done({ before, after: pane.getBoundingClientRect().width,
-          moving: !!document.querySelector('[data-pane-motion]') }));
+        const observeReplacement = () => {
+          if (finished) return;
+          const replacement = pane.getAnimations().find(item =>
+            (item.effect as KeyframeEffect).getKeyframes().some(frame => frame.flexBasis !== undefined));
+          // The first frame can install the replacement at time zero. Observe
+          // its actual progression, rather than treating that start as a snap.
+          if (!replacement || replacement === animation || Number(replacement.currentTime) === 0) {
+            frameId = requestAnimationFrame(observeReplacement);
+            return;
+          }
+          const keyframes = (replacement.effect as KeyframeEffect).getKeyframes();
+          finish({ before, after: pane.getBoundingClientRect().width,
+            from: Number.parseFloat(String(keyframes[0].flexBasis)),
+            to: Number.parseFloat(String(keyframes.at(-1)?.flexBasis)),
+            replaced: true,
+            moving: !!document.querySelector('[data-pane-motion]') });
+        };
+        frameId = requestAnimationFrame(observeReplacement);
       };
-      requestAnimationFrame(interrupt);
+      frameId = requestAnimationFrame(interrupt);
     });
+    if (result.error) throw new Error(result.error);
+    expect(result.replaced).toBe(true);
     expect(result.moving).toBe(true);
-    expect(Math.abs(result.after - result.before)).toBeLessThan(35);
-    await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-pane-motion]')));
+    expect(Math.abs(result.from - result.before)).toBeLessThanOrEqual(1);
+    // Ensure this fixture would catch an endpoint snap, then observe real paint
+    // progressing between the retained starting width and the new destination.
+    expect(Math.abs(result.to - result.before)).toBeGreaterThan(35);
+    expect(result.after).toBeGreaterThan(Math.min(result.before, result.to));
+    expect(result.after).toBeLessThan(Math.max(result.before, result.to));
+    await waitForWorkspaceAnimationSettled();
   });
 
   for (const width of [1280, 2400]) {
     it(`renders the same Related width it reserves at ${width}px`, async () => {
       await ready(width);
       await $('button[aria-label="Expand related notes"]').click();
-      await browser.pause(400);
+      await waitForWorkspaceAnimationSettled();
       const result = await browser.execute(() => {
         const drawer = document.querySelector<HTMLElement>('.related-drawer')!;
         const card = document.querySelector<HTMLElement>('.notepad-workspace-card')!;
@@ -157,7 +212,7 @@ describe('animation interruptions and controls', () => {
       shell.style.maxWidth = '400px';
     });
     await $('[data-testid="note-search-input"]').setValue('Alpha');
-    await browser.pause(400);
+    await waitForWorkspaceAnimationSettled();
     const result = await browser.execute(() => {
       const shell = document.querySelector<HTMLElement>('.shared-search-bar-shell')!;
       return { expanded: shell.dataset.searchExpanded, width: shell.getBoundingClientRect().width,

@@ -2,7 +2,7 @@
 // This runner owns every native PID it interrupts. WebDriver is only transport.
 import assert from 'node:assert/strict';
 import { currentScaleFixture } from './currentScaleFixture.mjs';
-import { nativeE2EBinary } from './nativeE2EBinary.mjs';
+import { nativeE2EBinary, nativeE2EPorts } from './nativeE2EBinary.mjs';
 import { exerciseCitations } from './citationScaleInteraction.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -11,6 +11,12 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
+import { listenerPids, waitUntil as until, createWebDriverRequest } from './nativeTransport.mjs';
+import { createOwnedServerOwner } from './ownedServer.mjs';
+
+const ports = nativeE2EPorts();
+const request = createWebDriverRequest(ports.driver, 180000);
+const viteServer = createOwnedServerOwner();
 
 let binary;
 const output = mkdtempSync(join(tmpdir(), 'gneauxghts-current-scale-native-'));
@@ -25,24 +31,6 @@ function record(kind, detail = {}) {
   events.push(event);
   writeFileSync(join(output, 'events.json'), JSON.stringify(events, null, 2));
   console.log(JSON.stringify(event));
-}
-async function until(check, description, timeout = 30000) {
-  const deadline = Date.now() + timeout;
-  let last;
-  while (Date.now() < deadline) {
-    try { const value = await check(); if (value) return value; } catch (error) { last = error; }
-    await delay(100);
-  }
-  throw new Error(`Timed out: ${description}; ${last ?? ''}`);
-}
-async function request(path, body, method = 'POST') {
-  const response = await fetch(`http://127.0.0.1:4445${path}`, {
-    method, ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
-    signal: AbortSignal.timeout(180000)
-  });
-  const result = await response.json();
-  if (!response.ok || result.value?.error) throw new Error(JSON.stringify(result));
-  return result.value;
 }
 function createOwned(executable, args, env, label) {
   assert(!cancelling, "Runner is stopping; no new children may be created");
@@ -75,24 +63,23 @@ async function stopOwned(child, signal) {
   assert(owned.has(child), 'Only an owned, still-running child may be interrupted');
   record('interrupt', { pid: child.pid, signal });
   assert(child.kill(signal));
-  const exit = await Promise.race([child.completion, delay(10000).then(() => { throw new Error('Owned process failed to exit'); })]);
-  if (signal === 'SIGKILL') assert.equal(exit.signal, 'SIGKILL');
-  return exit;
-}
-function listenerPids(port) {
-  try { return [...new Set(execFileSync('/usr/sbin/lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' }).trim().split(/\s+/).filter(Boolean).map(Number))]; }
-  catch (error) { if (error.status === 1 && !error.stdout?.length) return []; throw error; }
+  const timer = new AbortController();
+  try {
+    const exit = await Promise.race([child.completion, delay(10_000, undefined, { signal: timer.signal }).then(() => { throw new Error('Owned process failed to exit'); })]);
+    if (signal === 'SIGKILL') assert.equal(exit.signal, 'SIGKILL');
+    return exit;
+  } finally { timer.abort(); }
 }
 async function connect(child) {
   await until(async () => {
     assert(owned.has(child));
-    const listeners = listenerPids(4445);
+    const listeners = listenerPids(ports.driver);
     if (!listeners.length) return false;
     assert.deepEqual(listeners, [child.pid], 'Embedded listener must belong to the exact owned native child');
     return (await request('/status', undefined, 'GET')).ready;
   }, 'owned embedded WebDriver');
-  assert.deepEqual(listenerPids(4445), [child.pid]);
-  record('listener-owned', { pid: child.pid, port: 4445 });
+  assert.deepEqual(listenerPids(ports.driver), [child.pid]);
+  record('listener-owned', { pid: child.pid, port: ports.driver });
   const session = await request('/session', { capabilities: { alwaysMatch: { browserName: 'tauri' } } });
   const sessionId = session.sessionId;
   record('session', { pid: child.pid, sessionId });
@@ -119,7 +106,7 @@ async function connect(child) {
 function launch(root) {
   const launchedAt = performance.now();
   const child = createOwned(binary, ['--e2e-app-data-root', join(root,'data'),'--e2e-documents-root',join(root,'documents'),'--e2e-vault-root',join(root,'vault')],
-    {...process.env,WDIO_EMBEDDED_SERVER:'true',TAURI_WEBDRIVER_PORT:'4445'},'native-scale');
+    {...process.env,WDIO_EMBEDDED_SERVER:'true',TAURI_WEBDRIVER_PORT:String(ports.driver)},'native-scale');
   child.fixtureRoot = root;
   child.launchedAt = launchedAt;
   return child;
@@ -188,7 +175,11 @@ async function startup(client,note) {
   results.push({name:'startup_actual_input_save_background',passed:true,frontend});
 }
 async function cleanup() {
-  cancelling=true;
+  cancelling = true;
+  try { await viteServer.stop(); } catch (error) {
+      failure ??= String(error);
+      record('server-cleanup-failure', { error: String(error) });
+    }
   cleanupPromise??=(async()=>{for(const child of [...owned]){try{await stop(child);}catch(error){failure??=String(error);record('cleanup-failure',{error:String(error)});}}})();
   return cleanupPromise;
 }
@@ -206,9 +197,8 @@ try {
   const lock=execFileSync('ioreg',['-n','Root','-d','1'],{encoding:'utf8'});writeFileSync(join(output,'display-state.log'),lock);
   assert(/IOConsoleLocked"\s*=\s*No/.test(lock)&&!/CGSSessionScreenIsLocked"\s*=\s*Yes/.test(lock),'Unlock display before native paint');
   if(process.env.GNEAUXGHTS_CITATION_SELECTIONS)createOwned('/usr/bin/caffeinate',['-di'],process.env,'citation-display-assertion');
-  for(const port of [1430,4445])assert.deepEqual(listenerPids(port),[],`Port ${port} occupied`);
-  createOwned(process.execPath,[resolve('node_modules/vite/bin/vite.js'),'preview','--strictPort','--host','127.0.0.1','--port','1430'],process.env,'vite-preview');
-  await until(async()=>(await fetch('http://127.0.0.1:1430')).ok,'owned Vite preview');
+  for(const port of [ports.dev,ports.driver])assert.deepEqual(listenerPids(port),[],`Port ${port} occupied`);
+  await viteServer.start({ command: process.execPath, args: [resolve('node_modules/vite/bin/vite.js'), 'preview', '--strictPort', '--host', '127.0.0.1', '--port', String(ports.dev)], port: ports.dev, env: {}, onOutput: data => process.stdout.write(data) });
   mkdirSync(join(root,'documents'),{recursive:true});
   const child=launch(root), client=await connect(child);
   const note=fixture.notes[0];

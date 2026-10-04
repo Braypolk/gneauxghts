@@ -1,3 +1,4 @@
+import { buildHighlightedSegments } from '../ui/notepadCommandBarState.svelte';
 import { describe, expect, it } from 'vitest';
 import { buildCurrentNoteSearchResults } from '$lib/features/notepad/search/currentNoteSearch';
 
@@ -57,3 +58,12 @@ describe('buildCurrentNoteSearchResults', () => {
     expect(results[0].currentMatchRange).toEqual({ from: 41, to: 60 });
   });
 });
+
+for (const [query, markdown] of [['needle', '💡 needle'], ['💡', 'x 💡 y'], ['needle', '💡'.repeat(150) + ' needle end']]) {
+  it(`keeps code-point highlights and UTF-16 editor coordinates for ${query}`, () => {
+    const [result] = searchCurrent(query, markdown);
+    expect(buildHighlightedSegments(result.excerpt, result.highlightRanges).filter(segment => segment.highlighted).map(segment => segment.text).join('')).toBe(query);
+    expect(markdown.slice(result.currentMatchRange!.from, result.currentMatchRange!.to)).toBe(query);
+    expect(result.excerpt).not.toMatch(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/u);
+  });
+}

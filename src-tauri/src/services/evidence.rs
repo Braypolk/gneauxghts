@@ -107,6 +107,7 @@ pub(crate) struct EvidenceSession {
     blocked_reads: HashSet<String>,
     read_continuations: HashMap<String, reads::ReadContinuation>,
     search_continuations: HashMap<String, (SearchRequest, bool)>,
+    inventories: HashMap<String, inventory::InventorySearch>,
 }
 
 pub(crate) fn bounded(text: &str, bytes: usize) -> String {
@@ -232,6 +233,11 @@ fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, ToolEr
 }
 
 impl EvidenceSession {
+    #[cfg(test)]
+    pub(crate) fn retained_search_count(&self) -> usize {
+        self.searches.len()
+    }
+
     pub(crate) fn normalize_request(
         &self,
         request: &mut SearchRequest,
@@ -295,7 +301,7 @@ impl EvidenceSession {
             }
         }
     }
-    fn used(&self) -> usize {
+    pub(super) fn used(&self) -> usize {
         self.used_bytes.load(Ordering::SeqCst)
     }
     fn reserve(&self, bytes: usize) -> bool {
@@ -344,7 +350,7 @@ impl EvidenceSession {
             .note_ids
             .as_ref()
             .is_some_and(|ids| ids.len() > WORK_LIMIT)
-            || self.searches.len() >= 32
+            || (request.cursor.is_none() && self.searches.len() >= 32)
         {
             return Err(ToolError::work_budget(
                 "Search scope or session work budget exceeded",
@@ -388,12 +394,16 @@ impl EvidenceSession {
                     "Search cursor evidence is stale; search again",
                 ));
             }
+            if collect_only {
+                return Ok(json!({"searchKey":key,"coverage":coverage,"resolvedQuery":resolved}));
+            }
             return self.page(key, &result_ids, offset, limit, coverage);
         }
         let period = resolve_period_at(&mut request, &self.anchor)?;
         if request.query.trim().is_empty() && period.is_none() {
             return Err(ToolError::invalid("Provide a query or an activity period"));
         }
+        let mut snapshots = HashMap::new();
         let mut candidates = Vec::new();
         let mut gaps = Vec::<String>::new();
         let mut semantic = "not_requested".to_string();
@@ -605,8 +615,9 @@ impl EvidenceSession {
                                 gaps.push("Activity passage budget exhausted".into());
                                 break;
                             }
-                            if let Some(mut candidate) = make_candidate_at(
+                            if let Some(mut candidate) = cached_candidate(
                                 state,
+                                &mut snapshots,
                                 &item.note_id,
                                 text,
                                 &range.location,
@@ -683,18 +694,14 @@ impl EvidenceSession {
                 drop(index);
                 entries.sort_by(|a, b| a.1.cmp(&b.1));
                 let mut work = 0;
-                'notes: for (path, id) in entries {
+                'notes: for (_, id) in entries {
                     check_cancelled(&request)?;
                     inspected += 1;
-                    let raw = match fs::read_to_string(path) {
-                        Ok(raw) => raw,
-                        Err(_) => {
-                            gaps.push("A scoped note could not be read".into());
-                            continue;
-                        }
+                    let Some(snapshot) = snapshot_for(state, &mut snapshots, &id) else {
+                        gaps.push("A scoped note could not be read".into());
+                        continue;
                     };
-                    let parsed = note::parse_note(&raw);
-                    let body = parsed.body;
+                    let body = &snapshot.locations["body"];
                     work += body.len();
                     if work > 8_000_000 {
                         gaps.push("Literal search work budget exhausted".into());
@@ -725,8 +732,7 @@ impl EvidenceSession {
                         if right < end {
                             gaps.push("A match exceeds one passage; narrow the pattern".into());
                         }
-                        if let Some(c) = make_candidate_at(
-                            state,
+                        if let Some(c) = snapshot.candidate(
                             &id,
                             &body[left..right],
                             "body",
@@ -763,16 +769,11 @@ impl EvidenceSession {
                     .then_with(|| a.1.cmp(&b.1))
             });
             for (rank, (id, text, section, _)) in ranked.into_iter().enumerate() {
-                let raw = state.notes_index.lock().ok().and_then(|index| {
-                    index
-                        .get_note_by_note_id(&id)
-                        .and_then(|(p, _)| fs::read_to_string(p).ok())
-                });
-                let Some(raw) = raw else {
+                let Some(snapshot) = snapshot_for(state, &mut snapshots, &id) else {
                     gaps.push("An indexed note is unavailable".into());
                     continue;
                 };
-                let body = note::parse_note(&raw).body;
+                let body = &snapshot.locations["body"];
                 let Some((start, end)) = current_text_range(&body, &text) else {
                     gaps.push("An indexed passage changed or was ambiguous".into());
                     continue;
@@ -785,7 +786,7 @@ impl EvidenceSession {
                         .any(|term| text.to_lowercase().contains(&term.to_lowercase()));
                     let score = reciprocal_rank(rank) * if relevant { 1.1 } else { 1.0 };
                     if let Some(c) =
-                        make_candidate_at(state, &id, text, "body", &section, score, Some(offset))
+                        snapshot.candidate(&id, text, "body", &section, score, Some(offset))
                     {
                         candidates.push(c);
                     } else {
@@ -816,70 +817,20 @@ impl EvidenceSession {
                         "Semantic retrieval is approximate; exhaustive coverage is not guaranteed"
                             .into(),
                     );
-                    let mut semantic_seen = HashSet::new();
-                    let mut width = 64;
-                    loop {
-                        check_cancelled(&request)?;
-                        match state
-                            .semantic
-                            .semantic_matches_for_text(&request.query, None, width)
-                        {
-                            Ok(items) => {
-                                let count = items.len();
-                                let mut rank = 0;
-                                for item in items {
-                                    let id = state.notes_index.lock().ok().and_then(|index| {
-                                        index
-                                            .entries
-                                            .get(&PathBuf::from(&item.note_path))
-                                            .map(|n| n.note_id.clone())
-                                    });
-                                    let Some(id) = id.filter(|id| ids.contains(id)) else {
-                                        continue;
-                                    };
-                                    if item.document_kind != DocumentKind::Note {
-                                        continue;
-                                    }
-                                    if let Some(c) = make_candidate(
-                                        state,
-                                        &id,
-                                        &item.match_text,
-                                        "body",
-                                        &item.section_label,
-                                        reciprocal_rank(rank),
-                                    ) {
-                                        // Keep one score per retrieval source while widening.
-                                        if semantic_seen.insert(c.citation.id.clone()) {
-                                            if let Some(old) =
-                                                candidates.iter_mut().find(|old| overlaps(old, &c))
-                                            {
-                                                old.score += c.score;
-                                            } else {
-                                                candidates.push(c);
-                                            }
-                                        }
-                                        rank += 1;
-                                    }
-                                }
-                                if count < width {
-                                    break;
-                                }
-                                if width >= WORK_LIMIT {
-                                    gaps.push("Semantic candidate coverage is incomplete".into());
-                                    break;
-                                }
-                                width = (width * 4).min(WORK_LIMIT);
-                            }
-                            Err(_) => {
-                                semantic = "error".into();
-                                gaps.push(
-                                    "Semantic retrieval failed; lexical results remain available"
-                                        .into(),
-                                );
-                                break;
-                            }
-                        }
-                    }
+                    collect_semantic_candidates(
+                        state,
+                        &request,
+                        &ids,
+                        &mut snapshots,
+                        &mut candidates,
+                        &mut semantic,
+                        &mut gaps,
+                        |width| {
+                            state
+                                .semantic
+                                .semantic_matches_for_text(&request.query, None, width)
+                        },
+                    )?;
                 }
             }
         }
@@ -1265,71 +1216,186 @@ fn current_text_range(body: &str, excerpt: &str) -> Option<(usize, usize)> {
     ))
 }
 
-fn make_candidate(
+fn snapshot_for<'a>(
     state: &AppState,
+    snapshots: &'a mut HashMap<String, Option<CanonicalSnapshot>>,
     id: &str,
-    excerpt: &str,
-    location: &str,
-    section: &str,
-    score: f32,
-) -> Option<Candidate> {
-    make_candidate_at(state, id, excerpt, location, section, score, None)
+) -> Option<&'a CanonicalSnapshot> {
+    snapshots
+        .entry(id.to_string())
+        .or_insert_with(|| CanonicalSnapshot::load(state, id))
+        .as_ref()
 }
-fn make_candidate_at(
+#[allow(clippy::too_many_arguments)]
+fn cached_candidate(
     state: &AppState,
+    snapshots: &mut HashMap<String, Option<CanonicalSnapshot>>,
     id: &str,
     excerpt: &str,
     location: &str,
     section: &str,
     score: f32,
-    exact_start: Option<usize>,
+    start: Option<usize>,
 ) -> Option<Candidate> {
-    if excerpt.trim().is_empty() {
-        return None;
+    snapshot_for(state, snapshots, id)?.candidate(id, excerpt, location, section, score, start)
+}
+#[allow(clippy::too_many_arguments)]
+fn collect_semantic_candidates(
+    state: &AppState,
+    request: &SearchRequest,
+    ids: &HashSet<String>,
+    snapshots: &mut HashMap<String, Option<CanonicalSnapshot>>,
+    candidates: &mut Vec<Candidate>,
+    semantic: &mut String,
+    gaps: &mut Vec<String>,
+    mut retrieve: impl FnMut(usize) -> Result<Vec<crate::semantic::SemanticChunkMatch>, String>,
+) -> Result<(), ToolError> {
+    let mut semantic_seen = HashSet::new();
+    let mut width = 64;
+    loop {
+        check_cancelled(&request)?;
+        match retrieve(width) {
+            Ok(items) => {
+                let count = items.len();
+                let mut rank = 0;
+                for item in items {
+                    let id = state.notes_index.lock().ok().and_then(|index| {
+                        index
+                            .entries
+                            .get(&PathBuf::from(&item.note_path))
+                            .map(|n| n.note_id.clone())
+                    });
+                    let Some(id) = id.filter(|id| ids.contains(id)) else {
+                        continue;
+                    };
+                    if item.document_kind != DocumentKind::Note {
+                        continue;
+                    }
+                    if let Some(c) = cached_candidate(
+                        state,
+                        snapshots,
+                        &id,
+                        &item.match_text,
+                        "body",
+                        &item.section_label,
+                        reciprocal_rank(rank),
+                        None,
+                    ) {
+                        // Keep one score per retrieval source while widening.
+                        if semantic_seen.insert(c.citation.id.clone()) {
+                            if let Some(old) = candidates.iter_mut().find(|old| overlaps(old, &c)) {
+                                old.score += c.score;
+                            } else {
+                                candidates.push(c);
+                            }
+                        }
+                        rank += 1;
+                    }
+                }
+                if count < width {
+                    break;
+                }
+                if width >= WORK_LIMIT {
+                    gaps.push("Semantic candidate coverage is incomplete".into());
+                    break;
+                }
+                width = (width * 4).min(WORK_LIMIT);
+            }
+            Err(_) => {
+                *semantic = "error".into();
+                gaps.push("Semantic retrieval failed; lexical results remain available".into());
+                break;
+            }
+        }
     }
-    let (path, title) = {
-        let index = state.notes_index.lock().ok()?;
-        let (p, n) = index.get_note_by_note_id(id)?;
-        (p.clone(), n.title.clone())
-    };
-    let raw = fs::read_to_string(&path).ok()?;
-    let body = body_at(&raw, &title, location);
-    // Paragraphs can be arbitrarily long. Split into bounded exact passages;
-    // initial candidate takes a bounded prefix without splitting UTF-8.
-    let excerpt = bounded(excerpt, 2400);
-    let (start, end) = if let Some(start) = exact_start {
-        let end = start.checked_add(excerpt.len())?;
-        if body.get(start..end)? != excerpt {
+    Ok(())
+}
+
+#[cfg(test)]
+thread_local! { static SNAPSHOT_READS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+struct CanonicalSnapshot {
+    path: PathBuf,
+    title: String,
+    locations: HashMap<&'static str, String>,
+    content_hash: String,
+}
+impl CanonicalSnapshot {
+    fn load(state: &AppState, id: &str) -> Option<Self> {
+        let (path, title) = {
+            let index = state.notes_index.lock().ok()?;
+            let (path, note) = index.get_note_by_note_id(id)?;
+            (path.clone(), note.title.clone())
+        };
+        #[cfg(test)]
+        SNAPSHOT_READS.with(|count| count.set(count.get() + 1));
+        let raw = fs::read_to_string(&path).ok()?;
+        let parsed = note::parse_note(&raw);
+        let body = parsed.body.to_string();
+        let properties = parsed.frontmatter.raw_other.clone().unwrap_or_default();
+        let content_hash =
+            hash(&serde_json::to_string(&(parsed.body, parsed.frontmatter.raw_other)).ok()?);
+        Some(Self {
+            path,
+            title: title.clone(),
+            content_hash,
+            locations: HashMap::from([
+                ("title", title),
+                ("body", body),
+                ("properties", properties),
+            ]),
+        })
+    }
+    fn candidate(
+        &self,
+        id: &str,
+        excerpt: &str,
+        location: &str,
+        section: &str,
+        score: f32,
+        exact_start: Option<usize>,
+    ) -> Option<Candidate> {
+        if excerpt.trim().is_empty() {
             return None;
         }
-        (start, end)
-    } else {
-        current_text_range(&body, &excerpt)?
-    };
-    let excerpt = bounded(&body[start..end], 2400);
-    let end = start + excerpt.len();
-    let content_hash = canonical_content_hash(&raw);
-    let reference = hash(&format!("{id}:{content_hash}:{location}:{start}:{end}"));
-    Some(Candidate {
-        citation: PassageCitation {
-            historical: None,
-            id: reference,
-            note_id: id.into(),
-            content_hash,
-            location: location.into(),
-            start,
-            end,
-            excerpt,
-            revisions: vec![],
-        },
-        path,
-        title,
-        section: section.into(),
-        score,
-        provenance: None,
-        context: String::new(),
-        task: None,
-    })
+        let body = self.locations.get(location)?;
+        // Paragraphs can be arbitrarily long. Split into bounded exact passages;
+        // initial candidate takes a bounded prefix without splitting UTF-8.
+        let excerpt = bounded(excerpt, 2400);
+        let (start, end) = if let Some(start) = exact_start {
+            let end = start.checked_add(excerpt.len())?;
+            if body.get(start..end)? != excerpt {
+                return None;
+            }
+            (start, end)
+        } else {
+            current_text_range(&body, &excerpt)?
+        };
+        let excerpt = bounded(&body[start..end], 2400);
+        let end = start + excerpt.len();
+        let content_hash = self.content_hash.clone();
+        let reference = hash(&format!("{id}:{content_hash}:{location}:{start}:{end}"));
+        Some(Candidate {
+            citation: PassageCitation {
+                historical: None,
+                id: reference,
+                note_id: id.into(),
+                content_hash,
+                location: location.into(),
+                start,
+                end,
+                excerpt,
+                revisions: vec![],
+            },
+            path: self.path.clone(),
+            title: self.title.clone(),
+            section: section.into(),
+            score,
+            provenance: None,
+            context: String::new(),
+            task: None,
+        })
+    }
 }
 
 pub(crate) fn editor_passage_navigation(
@@ -1435,6 +1501,3 @@ pub(crate) fn validate_citation(
 
 #[cfg(test)]
 mod tests;
-
-#[cfg(test)]
-mod live_evaluation;

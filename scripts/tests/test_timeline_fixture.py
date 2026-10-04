@@ -1,4 +1,5 @@
 import importlib.util
+from contextlib import closing
 import json
 from pathlib import Path
 import sqlite3
@@ -26,7 +27,7 @@ class FixtureTests(unittest.TestCase):
             "INSERT INTO pending_window_preparations VALUES ('unresolved')",
         ]
         for corruption in corruptions:
-            with sqlite3.connect(':memory:') as db:
+            with self.subTest(corruption=corruption), closing(sqlite3.connect(':memory:')) as db, db:
                 db.executescript('CREATE TABLE prepared_intents(note_id TEXT,authored_payload BLOB); CREATE TABLE pending_window_preparations(intent_id TEXT); CREATE TABLE publication_receipts(intent_id TEXT,note_id TEXT,status TEXT,live INTEGER,outcome TEXT);')
                 db.executemany("INSERT INTO publication_receipts VALUES (?,?,'finalized',0,'{}')", [(f'{note}-{i}',note) for note in ['a','b'] for i in range(66)])
                 fixture.validate_prepared_intents(db,window)
@@ -84,7 +85,7 @@ class FixtureTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             vault = Path(root)
             (vault / fixture.DB.parent).mkdir()
-            with sqlite3.connect(vault / fixture.DB) as db:
+            with closing(sqlite3.connect(vault / fixture.DB)) as db, db:
                 db.execute('CREATE TABLE revisions(note_id TEXT)')
                 db.execute("INSERT INTO revisions VALUES ('release-seed-0')")
             with self.assertRaisesRegex(ValueError, 'revision counts'):
@@ -99,7 +100,7 @@ class FixtureTests(unittest.TestCase):
             (cache / 'vault' / fixture.DB.parent).mkdir(parents=True)
             (cache / 'data').mkdir()
             original = '/old/test-vault'
-            with sqlite3.connect(cache / 'vault' / fixture.DB) as db:
+            with closing(sqlite3.connect(cache / 'vault' / fixture.DB)) as db, db:
                 db.executescript('CREATE TABLE timeline_heads(current_path TEXT); CREATE TABLE prepared_intents(target_path TEXT); CREATE TABLE lifecycle_events(path TEXT, previous_path TEXT); CREATE TABLE revisions(payload BLOB, result_hash TEXT);')
                 db.execute('INSERT INTO timeline_heads VALUES (?)', (original + '/Seed 0.md',))
                 db.execute('INSERT INTO revisions VALUES (?, ?)', (b'authored prose /old/test-vault', 'retained-hash'))
@@ -107,7 +108,7 @@ class FixtureTests(unittest.TestCase):
             with patch.object(fixture, 'check', return_value={'original_vault': original}), patch.object(fixture, 'validate'):
                 run = fixture.clone(cache)
             try:
-                with sqlite3.connect(run / 'vault' / fixture.DB) as db:
+                with closing(sqlite3.connect(run / 'vault' / fixture.DB)) as db, db:
                     self.assertEqual(db.execute('SELECT current_path FROM timeline_heads').fetchone()[0], str(run / 'vault' / 'Seed 0.md'))
                     self.assertEqual(db.execute('SELECT * FROM revisions').fetchone(), (b'authored prose /old/test-vault', 'retained-hash'))
                     db.execute('DELETE FROM revisions')

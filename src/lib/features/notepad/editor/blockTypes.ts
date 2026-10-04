@@ -549,7 +549,7 @@ function reorderText(text: string, source: BlockDescriptor, target: BlockDescrip
 // document replacement (`from: 0, to: len`) collapses every position to 0 — the
 // caret (and viewport) jump to the top. A minimal change maps positions outside
 // the edited region to themselves, so undo/redo keep the caret near the edit.
-export function minimalDocChange(oldText: string, newText: string) {
+function minimalDocChange(oldText: string, newText: string) {
   const maxPrefix = Math.min(oldText.length, newText.length);
   let from = 0;
   while (from < maxPrefix && oldText.charCodeAt(from) === newText.charCodeAt(from)) {

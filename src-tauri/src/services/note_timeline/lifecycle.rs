@@ -380,7 +380,7 @@ impl<'a> NoteTimeline<'a> {
                             &canonical,
                         );
                         crate::state::atomic_create_note(&target_path, canonical.as_bytes())
-                            .map_err(LifecyclePublicationFailure::not_published)?;
+                            .map_err(|error| LifecyclePublicationFailure::not_published(error.to_string()))?;
                         expected.commit();
                         Ok(())
                     },

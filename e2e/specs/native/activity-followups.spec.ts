@@ -1,31 +1,9 @@
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { browser, $ } from '@wdio/globals';
+import { createLiveNativeEvaluation, invokeNative as invoke, passageIds } from '../../support/liveNative';
 
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((cmd, input, done: (r: {
-    ok: boolean;
-    value?: unknown;
-    error?: string;
-  }) => void) => {
-    const native = window as typeof window & {
-      __TAURI_INTERNALS__: {
-        invoke: (c: string, a: Record<string, unknown>) => Promise<unknown>;
-      };
-    };
-    void native.__TAURI_INTERNALS__.invoke(cmd, input).then(value => done({ ok: true, value }), error => done({ ok: false, error: String(error) }));
-  }, command, args);
-  if (!result.ok)
-    throw new Error(result.error);
-  return result.value as T;
-}
-
-type Note = {
-  noteId: string;
-  path: string;
-  title: string;
-};
 type Source = {
   kind: string;
   title: string;
@@ -59,32 +37,15 @@ const live = process.env.GNEAUX_ACTIVITY_NATIVE === '1' ? describe : describe.sk
 
 live('Activity follow-ups through the real chat runtime', function() {
   this.timeout(900_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
   it('connects retained changes to current status without promoting old backlog or assistant text', async () => {
     const endpoint = process.env.GNEAUX_LIVE_ENDPOINT;
     const model = process.env.GNEAUX_LIVE_MODEL;
     const output = process.env.GNEAUX_LIVE_OUTPUT;
     assert(endpoint && model && output, 'Explicit local model and output path required');
-    await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', {
-      settings: {
-        ...settings, provider: 'local', model, localModel: model, localBaseUrl: endpoint, defaultAccess: 'approved', webAccess: 'off', reasoningEffort: 'medium'
-      }
-    });
-    await invoke('chat_set_local_model_capabilities', {
-      model, capabilities: {
-        tools: true, images: false, audio: false, video: false, reasoningEffort: 'medium'
-      }
-    });
-    const save = async (title: string, markdown: string, currentPath: string | null = null) => {
-      const note = await invoke<Note>('save_note', {
-        title, markdown, currentPath
-      });
-      assert(note.path.includes('gneauxghts-native-e2e-'), 'Synthetic disposable vault only');
-      await invoke('finalize_note_editing_window', { noteId: note.noteId });
-      await invoke('e2e_flush_vault_watcher_path', { path: note.path });
-      return note;
-    };
+    await evaluation.configure();
+    const save = evaluation.saveNote;
     const baseline = '# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.';
     const note = await save('Meridian activity regression', baseline);
     await invoke('chat_grant_note', { noteId: note.noteId });
@@ -100,10 +61,9 @@ live('Activity follow-ups through the real chat runtime', function() {
     const results: unknown[] = [];
     const currentStatusIds: string[] = [];
     const record = () => {
-      mkdirSync(dirname(resolve(output)), { recursive: true });
-      writeFileSync(output, JSON.stringify({
+      evaluation.artifact.write({
         endpoint, model, start, end, method: "Real native app; first request via composer with rendered citation navigation; remaining requests via production IPC; synthetic disposable vault; semantic rubric reviewed separately", results
-      }, null, 2));
+      });
     };
     const ask = async (conversationId: string, question: string, alreadySent = false) => {
       const before = await invoke<{
@@ -118,13 +78,10 @@ live('Activity follow-ups through the real chat runtime', function() {
         });
       let answer: Answer | undefined;
       try {
-        await browser.waitUntil(async () => {
-          const c = await invoke<{
-            messages: Answer[];
-          }>('chat_get_conversation', { conversationId });
-          answer = c.messages.find(m => m.role === 'assistant' && (alreadySent || !previous.has(m.id)));
-          return Boolean(answer && ['complete', 'failed', 'cancelled'].includes(answer.status));
-        }, { timeout: 300_000, interval: 1000 });
+        answer = await evaluation.waitForAnswer<Answer>(conversationId, {
+          excludeIds: alreadySent ? [] : [...previous],
+          onUpdate: value => { answer = value; }
+        });
       }
       catch (error) {
         results.push({
@@ -139,7 +96,7 @@ live('Activity follow-ups through the real chat runtime', function() {
     const validate = async (conversationId: string, answer: Answer) => {
       assert.equal(answer.status, 'complete', answer.error);
       assert(!JSON.stringify(answer).includes('CANARY_FOLLOWUP_817'));
-      const links = [...answer.content.matchAll(/passage:([^\s)\]]+)/g)].map(m => m[1]);
+      const links = passageIds(answer.content);
       assert(links.length > 0);
       for (const evidenceId of links)
         await invoke('chat_resolve_passage', { conversationId, evidenceId });

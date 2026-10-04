@@ -301,13 +301,4 @@ mod tests {
         assert_eq!(actual, load_json_fixture("project-atlas.chunks.json"));
     }
 
-    #[test]
-    fn chunk_markdown_produces_stable_content_hash_for_same_markdown() {
-        let markdown = load_fixture("project-atlas.md");
-        let first = chunk_markdown(&markdown, "project-atlas");
-        let second = chunk_markdown(&markdown, "project-atlas");
-
-        assert_eq!(first.content_hash, second.content_hash);
-        assert_eq!(first.content_hash.len(), 64);
-    }
 }

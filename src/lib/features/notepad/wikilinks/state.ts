@@ -65,6 +65,9 @@ export function beginWikilinkSuggestionRequest(
     state: {
       ...state,
       activeWikilink,
+      active: false,
+      suggestions: [],
+      selectedIndex: 0,
       activeRequest: requestId
     }
   };

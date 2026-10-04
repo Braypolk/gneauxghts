@@ -61,7 +61,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     vi.clearAllMocks();
   });
 
-  it('routes body edits to the live pane note after a save rekeys the draft', async () => {
+  it('routes body edits to the live pane document after navigation', async () => {
     // The pane starts on a brand-new draft note (no path yet).
     let liveDocument: NoteDraftState = createNoteDraftState({
       title: 'Foo',
@@ -98,8 +98,8 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     await controller.createEditor('');
     expect(capturedOnMarkdownChange).toBeTypeOf('function');
 
-    // A save rekeys the draft to its persisted path, replacing the pane's note
-    // object, including when durable identity or path changes.
+    // Navigation selects another live document. Save identity adoption retains
+    // the original handle and is covered by EditorDocumentRuntime tests.
     liveDocument = createNoteDraftState({
       title: 'Foo',
       bodyMarkdown: '',
@@ -111,11 +111,10 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       lastSavedPath: '/vault/Foo.md'
     });
 
-    // The user keeps typing the body after the rekey.
+    // The user types after navigation.
     capturedOnMarkdownChange!('body text');
 
-    // The edit must land on the persisted note, not the orphaned draft —
-    // otherwise the body is saved as a separate file.
+    // The callback resolves the current pane document at invocation.
     expect(received).toEqual([{ key: liveDocument.handle, markdown: 'body text' }]);
     expect(liveDocument.handle).not.toBe(draftDocument.handle);
   });
@@ -389,6 +388,18 @@ describe('editorLifecycleController reading-position persistence', () => {
 
     expect(settled).toBe(true);
     expect(h.scrollDOM.scrollTop).toBe(1850);
+  });
+
+  it('finishes same-runtime scroll restoration before a subsequent navigation owns the viewport', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    saveEditorViewState(notePath, { anchor: 0, head: 0, scrollTop: 0 }, 'primary', 'long-id');
+    const h = harness(0);
+    const opened = h.controller.replaceEditorContentInPlaceForDocument('body', h.document)
+      .then(() => { h.scrollDOM.scrollTop = 2000; });
+    await vi.runAllTimersAsync();
+    await opened;
+    expect(h.scrollDOM.scrollTop).toBe(2000);
   });
 
   it('still reveals the cursor for notes saved before scroll was tracked', () => {

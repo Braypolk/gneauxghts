@@ -96,7 +96,6 @@
   let attachmentInput = $state<HTMLInputElement | null>(null);
   let contextAccessBusy = $state(false);
   let composerContextKey: string | null = null;
-  let creatingConversationFromDraft = false;
   let localModels = $state<LocalModel[]>([]);
   let openAiModels = $state<LocalModel[] | undefined>(undefined);
   let isDiscoveringLocalModels = $state(false);
@@ -203,9 +202,14 @@
       snapshot.conversationDraft.revision
     );
     if (nextContextKey === composerContextKey) return;
-    const hadContext = composerContextKey !== null;
+    const previousContextKey = composerContextKey;
+    const hadContext = previousContextKey !== null;
     composerContextKey = nextContextKey;
-    if (creatingConversationFromDraft) return;
+    const promotion = snapshot.draftPromotion;
+    if (promotion?.conversationId === conversationId && previousContextKey === `draft:${promotion.revision}`) {
+      draftPersistence.promoteSlot(`conversation:${conversationId}`, draft);
+      return;
+    }
 
     // Attachments are per-message and deliberately not carried across contexts.
     attachments = [];
@@ -231,6 +235,8 @@
   async function submit() {
     const content = draft.trim();
     if ((!content && attachments.length === 0) || snapshot.isSending) return;
+    const origin = controller.getSnapshot().selectionRevision;
+    const input = { content, title: titleDraft.trim() || undefined, attachments: [...attachments], forceWebSearch };
     let activeNote: ChatActiveNoteSnapshot | null = null;
     try {
       activeNote = (await getActiveNoteSnapshot?.()) ?? null;
@@ -242,30 +248,9 @@
       );
       return;
     }
-    if (!controller.getSnapshot().conversation) {
-      creatingConversationFromDraft = true;
-      const created = await controller.createConversation({
-        title: titleDraft.trim() || undefined
-      });
-      if (created) {
-        // Controller subscriptions update the parent snapshot synchronously,
-        // while this component's context effect flushes later. Adopt the new
-        // context now so that delayed effect cannot clear the first message.
-        composerContextKey = chatConversationContextKey(
-          created.id,
-          snapshot.conversationDraft.revision
-        );
-      }
-      creatingConversationFromDraft = false;
-      if (!created) return;
-    }
-    const sent = await controller.send(
-      content,
-      attachments,
-      forceWebSearch,
-      activeNote
-    );
-    if (sent) {
+    if (controller.getSnapshot().selectionRevision !== origin) return;
+    const sent = await controller.send({ ...input, activeNote });
+    if (sent.status === 'sent' && sent.selectionRevision === controller.getSnapshot().selectionRevision) {
       draft = '';
       attachments = [];
       forceWebSearch = false;

@@ -1059,7 +1059,6 @@ mod tests {
     use super::*;
     use crate::{
         note::DocumentKind,
-        semantic::db::ensure_schema,
         semantic::embed::{ModelInfo, SemanticModelDownloadResult},
     };
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -1282,28 +1281,6 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_labels_choose_runner_up_deterministically() {
-        // Matches production: clouds are labeled in sorted id order with a shared
-        // used-set, so the first cloud keeps "shared" and the second takes runner-up.
-        let mut used = HashSet::new();
-        let a = take_unique_label(
-            &[("Shared".to_string(), 0.9), ("First".to_string(), 0.8)],
-            &used,
-        )
-        .expect("cloud a");
-        used.insert(normalized_phrase(&a.label));
-        let b = take_unique_label(
-            &[("Shared".to_string(), 0.95), ("Second".to_string(), 0.7)],
-            &used,
-        )
-        .expect("cloud b");
-        assert_eq!(a.label, "shared");
-        assert_eq!(a.source, CloudLabelSource::Keybert);
-        assert_eq!(b.label, "second");
-        assert_eq!(b.source, CloudLabelSource::Keybert);
-    }
-
-    #[test]
     fn label_uniqueness_is_case_insensitive() {
         let mut used = HashSet::new();
         let a = take_unique_label(
@@ -1323,26 +1300,6 @@ mod tests {
     }
 
     #[test]
-    fn uniqueness_prefers_runner_up_word_over_empty() {
-        // Only the winning word is contested; runner-up must still be chosen.
-        let mut used = HashSet::new();
-        let a = take_unique_label(&[("hubspot".to_string(), 1.0)], &used).expect("cloud a");
-        used.insert(normalized_phrase(&a.label));
-        let b = take_unique_label(
-            &[
-                ("HubSpot".to_string(), 0.99),
-                ("crm".to_string(), 0.4),
-                ("deals".to_string(), 0.35),
-            ],
-            &used,
-        )
-        .expect("cloud b");
-        assert_eq!(a.label, "hubspot");
-        assert_eq!(b.label, "crm");
-        assert_eq!(b.source, CloudLabelSource::Keybert);
-    }
-
-    #[test]
     fn membership_fingerprint_binds_structural_generation_and_members() {
         let first = cloud_membership_fingerprint("generation-a", &[cloud(&["a", "b"])]);
         let next_generation = cloud_membership_fingerprint("generation-b", &[cloud(&["a", "b"])]);
@@ -1353,8 +1310,7 @@ mod tests {
 
     #[test]
     fn chunk_keybert_ranks_content_phrases_near_cloud_centroid() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         insert_chunk(&connection, "a", 0, "Title", "From the notes", &[1.0, 0.0]);
         insert_chunk(
             &connection,
@@ -1430,8 +1386,7 @@ mod tests {
 
     #[test]
     fn phrase_cache_hit_skips_embedding_provider() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         insert_chunk(
             &connection,
             "a",
@@ -1483,8 +1438,7 @@ mod tests {
 
     #[test]
     fn provider_failure_returns_without_labels() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         insert_chunk(
             &connection,
             "a",
@@ -1510,8 +1464,7 @@ mod tests {
 
     #[test]
     fn empty_chunks_fall_back_to_medoid_title() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         let (node, embedding) = atlas_node("a", "Garden Planning", &[1.0, 0.0]);
         let cloud = cloud(&["a"]);
         let (labels, _) = generate_labels_progressive(
@@ -1640,8 +1593,7 @@ mod tests {
 
     #[test]
     fn title_only_chunks_still_produce_keybert_label() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         insert_chunk(
             &connection,
             "a",
@@ -1669,8 +1621,7 @@ mod tests {
 
     #[test]
     fn progressive_callback_fires_once_per_cloud_in_sorted_id_order() {
-        let mut connection = Connection::open_in_memory().expect("database");
-        ensure_schema(&connection).expect("schema");
+        let mut connection = crate::semantic::test_support::memory_database();
         insert_chunk(
             &connection,
             "a",

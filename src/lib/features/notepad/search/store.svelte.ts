@@ -118,14 +118,15 @@ export class NotepadSearchStore {
   };
 
   runSearch = async (query: string) => {
+    const requestId = ++this.#activeSearchRequest;
     const trimmedQuery = query.trim();
     if (trimmedQuery === '') {
+      this.#clearPendingSearchTimer();
       this.searchResults = [];
       this.isSearching = false;
       return;
     }
 
-    const requestId = ++this.#activeSearchRequest;
     this.isSearching = true;
     // The resolved query is now stable; sync editor highlights once per
     // post-debounce search rather than on every keystroke.
@@ -176,6 +177,9 @@ export class NotepadSearchStore {
   };
 
   scheduleSearch = () => {
+    // Retire the previous target as soon as its replacement is queued. Waiting
+    // for the debounce would admit old results under the new visible query.
+    this.#activeSearchRequest += 1;
     this.#clearPendingSearchTimer();
 
     if (this.searchQuery.trim() === '') {
@@ -190,9 +194,9 @@ export class NotepadSearchStore {
     }, 120);
   };
 
-  loadRecentNotes = async () => {
+  #acquireRecentNotes = async () => {
     const requestId = ++this.#activeRecentNotesRequest;
-    const result = await loadLatestCollection(
+    return loadLatestCollection(
       () => requestId === this.#activeRecentNotesRequest,
       () =>
         listRecentNotes({
@@ -206,34 +210,22 @@ export class NotepadSearchStore {
       },
       'Failed to load recent notes:'
     );
-    // A failed or superseded request must not become an authoritative empty
-    // seed for the session's location history.
+  };
+
+  loadRecentNotes = async () => {
+    const result = await this.#acquireRecentNotes();
+    // Failure/supersession must not seed authoritative empty location history.
     return result.applyIfLatest() ? result.items : null;
   };
 
   #refreshRecentNotesNow = async () => {
-    const requestId = ++this.#activeRecentNotesRequest;
-    const result = await loadLatestCollection(
-      () => requestId === this.#activeRecentNotesRequest,
-      () =>
-        listRecentNotes({
-          currentPath: this.#deps.getCurrentPath()
-        }),
-      (notes) => {
-        this.recentNotes = notes;
-      },
-      () => {
-        this.recentNotes = [];
-      },
-      'Failed to load recent notes:'
-    );
-    result.applyIfLatest();
-    return result.items;
+    const result = await this.#acquireRecentNotes();
+    return result.applyIfLatest() ? result.items : [];
   };
 
-  loadRecentTasks = async () => {
+  #acquireRecentTasks = async () => {
     const requestId = ++this.#activeRecentTasksRequest;
-    const result = await loadLatestCollection(
+    return loadLatestCollection(
       () => requestId === this.#activeRecentTasksRequest,
       () => listRecentTasks(),
       (tasks) => {
@@ -244,24 +236,16 @@ export class NotepadSearchStore {
       },
       'Failed to load recent tasks:'
     );
+  };
+
+  loadRecentTasks = async () => {
+    const result = await this.#acquireRecentTasks();
     result.applyIfLatest();
   };
 
   #refreshRecentTasksNow = async () => {
-    const requestId = ++this.#activeRecentTasksRequest;
-    const result = await loadLatestCollection(
-      () => requestId === this.#activeRecentTasksRequest,
-      () => listRecentTasks(),
-      (tasks) => {
-        this.recentTasks = tasks;
-      },
-      () => {
-        this.recentTasks = [];
-      },
-      'Failed to load recent tasks:'
-    );
-    result.applyIfLatest();
-    return result.items;
+    const result = await this.#acquireRecentTasks();
+    return result.applyIfLatest() ? result.items : [];
   };
 
   openRecentNoteByIndex = async (
@@ -369,7 +353,7 @@ export class NotepadSearchStore {
   };
 
   handleSearchOpen = () => {
-    void this.#loadRecentFocus();
+    return this.#loadRecentFocus();
   };
 
   setPinned = async (noteId: string, pinned: boolean) => {

@@ -222,7 +222,7 @@ mod tests {
         .unwrap()
         .unwrap();
         let note = NoteIdentity::new(saved.note_id.unwrap());
-        for n in 0..12 {
+        for n in 0..2 {
             note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Cancel".into(),
@@ -236,10 +236,36 @@ mod tests {
                 .unwrap();
         }
         let c = open_store(&state.note_timeline().runtime.store).unwrap();
+        let revision_count: usize = c
+            .query_row(
+                "SELECT COUNT(*) FROM revisions WHERE note_id=?1",
+                [note.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(revision_count, 3);
+        verify_note_snapshot(&c, &note, &|| Ok(())).unwrap();
+        let corrupted = c
+            .execute(
+                "UPDATE revisions SET payload=X'00' WHERE note_id=?1 AND base_revision_id IN \
+                 (SELECT revision_id FROM revisions WHERE note_id=?1 AND base_revision_id IS NULL)",
+                [note.as_str()],
+            )
+            .unwrap();
+        assert_eq!(corrupted, 1, "corrupt exactly the second payload");
+        assert!(matches!(
+            verify_note_snapshot(&c, &note, &|| Ok(())).unwrap_err(),
+            HistoryError::Corrupt(_)
+        ));
+
+        // Three header checks precede replay. Allow the first payload, then
+        // cancel before the corrupt second payload. Without replay checkpoints,
+        // verification reaches corruption instead of returning cancellation.
+        let cancel_at = revision_count + 2;
         let checks = std::cell::Cell::new(0);
         let error = verify_note_snapshot(&c, &note, &|| {
             checks.set(checks.get() + 1);
-            if checks.get() == 5 {
+            if checks.get() == cancel_at {
                 Err(HistoryError::Unavailable("cancelled within a note".into()))
             } else {
                 Ok(())
@@ -247,7 +273,7 @@ mod tests {
         })
         .unwrap_err();
         assert!(matches!(error, HistoryError::Unavailable(_)));
-        assert_eq!(checks.get(), 5);
+        assert_eq!(checks.get(), cancel_at);
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

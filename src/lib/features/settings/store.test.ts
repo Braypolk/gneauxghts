@@ -1,10 +1,13 @@
+import type { SettingsViewPayload } from '$lib/app/appStore.svelte';
+import type { MissingNoteSummary } from '$lib/types/missingNotes';
+import type { HistoryModePage } from '$lib/features/history/historyModeMachine';
+import type { VaultInfo } from '$lib/types/vault';
+import { AppStore } from '$lib/app/appStore.svelte';
+import { bootstrapFixture, settingsViewFixture, semanticStatusFixture, vaultFixture } from '$lib/app/testFixtures';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const invokeMock = vi.fn();
-const loadForgottenNotesSliceMock = vi.fn();
-const loadMissingNotesSliceMock = vi.fn();
-const loadMissingNoteTimelinePageMock = vi.fn();
-const loadSettingsViewSliceMock = vi.fn();
+const invokeMock = vi.hoisted(() => vi.fn());
+let responses: Record<string, unknown>;
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (reason: unknown) => void;
@@ -14,119 +17,45 @@ function deferred<T>() {
   });
   return { promise, resolve, reject };
 }
-const appStoreMock = vi.hoisted(() => {
-  const store: any = {
-    vaultInfo: null,
-    semanticStatus: null,
-    vaultRevision: 0,
-    semanticRevision: 0,
-    bootstrap: vi.fn().mockResolvedValue(undefined),
-    subscribeVaultNoteChanged: vi.fn(() => () => undefined),
-    subscribeSemanticStatusChanged: vi.fn(() => () => undefined),
-    subscribeVaultChanged: vi.fn(() => () => undefined),
-    refreshVaultInfo: vi.fn().mockResolvedValue(undefined),
-    refreshSemanticStatus: vi.fn().mockResolvedValue(undefined)
-  };
-  store.beginSnapshotAdmission = vi.fn((...slices: string[]) => ({
-    generation: 0,
-    vault: slices.includes('vault') ? ++store.vaultRevision : null,
-    semanticStatus: slices.includes('semanticStatus') ? ++store.semanticRevision : null,
-    indexRevision: null
-  }));
-  store.admitSnapshot = vi.fn((snapshot: any, admission: any) => {
-    const admitted = { vault: false, semanticStatus: false, indexRevision: false };
-    if ('vault' in snapshot && admission.vault === store.vaultRevision) {
-      store.vaultInfo = snapshot.vault;
-      admitted.vault = true;
-    }
-    if (
-      'semanticStatus' in snapshot &&
-      admission.semanticStatus === store.semanticRevision
-    ) {
-      store.semanticStatus = snapshot.semanticStatus;
-      admitted.semanticStatus = true;
-    }
-    return admitted;
-  });
-  return store;
-});
+let appStoreMock: AppStore;
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
-vi.mock('$lib/app/appStore.svelte', () => ({
-  appStore: appStoreMock
-}));
 vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
-  atlasStore: { invalidateCachedResponse: vi.fn() }
+  atlasStore: { clearCache: vi.fn() }
 }));
-vi.mock('./loaders/forgottenLoader', () => ({
-  loadForgottenNotesSlice: loadForgottenNotesSliceMock,
-  loadMissingNotesSlice: loadMissingNotesSliceMock,
-  loadMissingNoteTimelinePage: loadMissingNoteTimelinePageMock
-}));
-vi.mock('./loaders/settingsViewLoader', () => ({
-  loadSettingsViewSlice: loadSettingsViewSliceMock
-}));
+beforeEach(() => {
+  appStoreMock = new AppStore();
+  vi.spyOn(appStoreMock, 'bootstrap').mockResolvedValue(bootstrapFixture());
+  vi.spyOn(appStoreMock, 'refreshVaultInfo').mockResolvedValue(undefined);
+  vi.spyOn(appStoreMock, 'refreshSemanticStatus').mockResolvedValue(undefined);
+  responses = {
+    get_settings_view: settingsViewFixture(),
+    list_forgotten_notes: [],
+    list_missing_notes: [],
+    get_missing_note_history_page: { records: [], nextCursor: null }
+  };
+  invokeMock.mockReset().mockImplementation(async (command: string) => responses[command]);
+});
+
+function missingNote(timeline: HistoryModePage = { records: [], nextCursor: 'page-2' }): MissingNoteSummary {
+  return {
+    noteId: 'missing-note-1',
+    path: '/vault/Ideas.md',
+    title: 'Ideas',
+    fileName: 'Ideas.md',
+    missingAtMillis: 10,
+    retentionDays: 7,
+    purgeAtMillis: 20,
+    timeline
+  };
+}
 
 describe('SettingsStore actions', () => {
-  beforeEach(() => {
-    invokeMock.mockReset();
-    loadForgottenNotesSliceMock.mockReset();
-    loadMissingNotesSliceMock.mockReset();
-    loadMissingNoteTimelinePageMock.mockReset();
-    appStoreMock.vaultInfo = null;
-    appStoreMock.semanticStatus = null;
-    appStoreMock.vaultRevision = 0;
-    appStoreMock.semanticRevision = 0;
-    appStoreMock.bootstrap.mockReset().mockResolvedValue(undefined);
-    appStoreMock.subscribeVaultNoteChanged.mockReset().mockReturnValue(() => undefined);
-    appStoreMock.subscribeSemanticStatusChanged.mockReset().mockReturnValue(() => undefined);
-    appStoreMock.subscribeVaultChanged.mockReset().mockReturnValue(() => undefined);
-    appStoreMock.refreshVaultInfo.mockReset().mockResolvedValue(undefined);
-    appStoreMock.refreshSemanticStatus.mockReset().mockResolvedValue(undefined);
-    invokeMock.mockResolvedValue(undefined);
-    loadForgottenNotesSliceMock.mockResolvedValue([]);
-    loadMissingNotesSliceMock.mockResolvedValue([]);
-    loadMissingNoteTimelinePageMock.mockResolvedValue({ records: [], nextCursor: null });
-    loadSettingsViewSliceMock.mockResolvedValue({
-      historyHealth: {
-        state: 'healthy',
-        integrity: 'verified',
-        initialization: {
-          phase: 'complete',
-          discoveredNotes: 0,
-          baselineRevisions: 0,
-          readyNotes: 0,
-          failedNotes: 0
-        },
-        storage: { allocatedBytes: 4096, reclaimableBytes: 0 },
-        pendingRepairs: 0,
-        canRetry: false,
-        canReset: false
-      },
-      semanticStatus: null,
-      semanticSettings: null,
-      semanticDebug: null,
-      vault: {
-        runningPath: '/vault',
-        selectedPath: '/vault',
-        defaultPath: '/vault',
-        forgottenPath: '/vault/.forgotten',
-        isDefault: true,
-        noteCount: 0,
-        requiresRestart: false,
-        canConfigurePath: true,
-        canPickArbitraryPath: true,
-        vaultContainerPath: null,
-        pathConfigurationNote: null
-      }
-    });
-  });
-
   it('keeps component-passed actions bound to the settings store', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     const forgottenPath = '/vault/.forgotten/2026-07-28-chat';
     store.selectedForgottenPaths = [forgottenPath];
 
@@ -138,17 +67,16 @@ describe('SettingsStore actions', () => {
     expect(invokeMock).toHaveBeenCalledWith('restore_forgotten_notes', {
       forgottenPaths: [forgottenPath]
     });
-    expect(loadForgottenNotesSliceMock).toHaveBeenCalledOnce();
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'list_forgotten_notes')).toHaveLength(1);
     expect(store.selectedForgottenPaths).toEqual([forgottenPath]);
     expect(store.isUpdatingForgottenNotes).toBe(false);
   });
 
   it('finishes local search setup by starting the model and retrying indexing', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     const download = deferred<{ alreadyPresent: boolean; path: string }>();
-    invokeMock.mockImplementation((command: string) => command === 'download_semantic_embedding_model'
-      ? download.promise : Promise.resolve(undefined));
+    responses.download_semantic_embedding_model = download.promise;
 
     const setup = store.downloadEmbeddingModel();
     expect(store.isRunningAction).toBe(true);
@@ -159,17 +87,17 @@ describe('SettingsStore actions', () => {
     await setup;
 
     expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
-      'download_semantic_embedding_model', 'prepare_semantic_model', 'retry_semantic_index'
+      'download_semantic_embedding_model', 'prepare_semantic_model', 'retry_semantic_index', 'get_settings_view'
     ]);
     expect(store.semanticLayerMessage).toBe('Local search is set up. Your notes will now be indexed.');
     expect(store.semanticLayerError).toBeNull();
     expect(store.isRunningAction).toBe(false);
-    expect(loadSettingsViewSliceMock).toHaveBeenCalledOnce();
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'get_settings_view')).toHaveLength(1);
   });
 
   it('keeps failed setup retryable without starting a missing model', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     invokeMock.mockRejectedValueOnce('Download interrupted. Try setup again.');
     await store.downloadEmbeddingModel();
     expect(invokeMock).toHaveBeenCalledOnce();
@@ -180,8 +108,8 @@ describe('SettingsStore actions', () => {
 
   it('surfaces committed recovery warnings in settings', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    invokeMock.mockResolvedValue([
+    const store = createSettingsStore(appStoreMock);
+    responses.restore_forgotten_notes = [
       {
         forgottenPath: '/vault/.forgotten/Note.md',
         restoredPath: '/vault/Note.md',
@@ -192,7 +120,7 @@ describe('SettingsStore actions', () => {
           issues: [{ stage: 'historyFinalization', message: 'store unavailable' }]
         }
       }
-    ]);
+    ];
 
     await store.runForgottenAction('restore_forgotten_notes', [
       '/vault/.forgotten/Note.md'
@@ -204,12 +132,12 @@ describe('SettingsStore actions', () => {
 
   it('routes Missing Note recovery and purge through identity-scoped commands', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    invokeMock.mockResolvedValue({
+    const store = createSettingsStore(appStoreMock);
+    responses.recover_missing_note = {
       noteId: 'missing-note-1',
       restoredPath: '/vault/Missing note.md',
       title: 'Missing note'
-    });
+    };
 
     await store.recoverMissingNote('missing-note-1');
     await store.deleteMissingNote('missing-note-2');
@@ -220,40 +148,29 @@ describe('SettingsStore actions', () => {
     expect(invokeMock).toHaveBeenCalledWith('delete_missing_notes', {
       noteIds: ['missing-note-2']
     });
-    expect(loadMissingNotesSliceMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'list_missing_notes')).toHaveLength(2);
     expect(store.isUpdatingMissingNotes).toBe(false);
   });
 
   it('loads older Missing Note history without replacing its recovery metadata', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    store.missingNotes = [
-      {
-        noteId: 'missing-note-1',
-        path: '/vault/Ideas.md',
-        title: 'Ideas',
-        fileName: 'Ideas.md',
-        missingAtMillis: 10,
-        retentionDays: 7,
-        purgeAtMillis: 20,
-        timeline: {
-          nextCursor: 'page-2',
-          records: [
-            {
-              kind: 'lifecycleEvent',
-              recordId: 'missing-event',
-              eventId: 'missing-event',
-              eventKind: 'missing',
-              occurredAtMillis: 10,
-              timelineOrdinal: 2,
-              previousPath: null,
-              path: '/vault/Ideas.md'
-            }
-          ]
+    const store = createSettingsStore(appStoreMock);
+    store.missingNotes = [missingNote({
+      nextCursor: 'page-2',
+      records: [
+        {
+          kind: 'lifecycleEvent',
+          recordId: 'missing-event',
+          eventId: 'missing-event',
+          eventKind: 'missing',
+          occurredAtMillis: 10,
+          timelineOrdinal: 2,
+          previousPath: null,
+          path: '/vault/Ideas.md'
         }
-      }
-    ];
-    loadMissingNoteTimelinePageMock.mockResolvedValue({
+      ]
+    })];
+    responses.get_missing_note_history_page = {
       nextCursor: null,
       records: [
         {
@@ -270,14 +187,13 @@ describe('SettingsStore actions', () => {
           characterCount: 4
         }
       ]
-    });
+    };
 
     await store.loadMoreMissingNoteHistory('missing-note-1');
 
-    expect(loadMissingNoteTimelinePageMock).toHaveBeenCalledWith(
-      'missing-note-1',
-      'page-2'
-    );
+    expect(invokeMock).toHaveBeenCalledWith('get_missing_note_history_page', {
+      noteId: 'missing-note-1', cursor: 'page-2', limit: 30
+    });
     expect(store.missingNotes[0]).toMatchObject({
       path: '/vault/Ideas.md',
       missingAtMillis: 10,
@@ -294,24 +210,11 @@ describe('SettingsStore actions', () => {
 
   it('ignores an older Missing Note page when a later refresh replaces the timeline', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    store.missingNotes = [
-      {
-        noteId: 'missing-note-1',
-        path: '/vault/Ideas.md',
-        title: 'Ideas',
-        fileName: 'Ideas.md',
-        missingAtMillis: 10,
-        retentionDays: 7,
-        purgeAtMillis: 20,
-        timeline: { records: [], nextCursor: 'page-2' }
-      }
-    ];
-    let resolvePage!: (value: unknown) => void;
-    loadMissingNoteTimelinePageMock.mockImplementation(
-      () => new Promise((resolve) => (resolvePage = resolve))
-    );
-    loadMissingNotesSliceMock.mockResolvedValue([
+    const store = createSettingsStore(appStoreMock);
+    store.missingNotes = [missingNote()];
+    const page = deferred<HistoryModePage>();
+    responses.get_missing_note_history_page = page.promise;
+    responses.list_missing_notes = [
       {
         ...store.missingNotes[0],
         timeline: {
@@ -330,16 +233,18 @@ describe('SettingsStore actions', () => {
           nextCursor: 'refreshed-page-2'
         }
       }
-    ]);
+    ];
 
     const paging = store.loadMoreMissingNoteHistory('missing-note-1');
     await store.loadForgottenNotes();
-    resolvePage({
+    page.resolve({
       records: [
         {
           kind: 'revision',
           recordId: 'stale-revision',
-          revisionId: 'stale-revision'
+          revisionId: 'stale-revision', source: 'editor', occurredAtMillis: 5,
+          timelineOrdinal: 1, timeKind: 'committed', modifiedAtMillis: null,
+          revisionLabel: 'Stale', lineCount: 1, characterCount: 4
         }
       ],
       nextCursor: null
@@ -355,54 +260,31 @@ describe('SettingsStore actions', () => {
 
   it('ignores an older Missing Note page error after a later refresh succeeds', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    store.missingNotes = [
-      {
-        noteId: 'missing-note-1',
-        path: '/vault/Ideas.md',
-        title: 'Ideas',
-        fileName: 'Ideas.md',
-        missingAtMillis: 10,
-        retentionDays: 7,
-        purgeAtMillis: 20,
-        timeline: { records: [], nextCursor: 'page-2' }
-      }
-    ];
-    let rejectPage!: (reason: unknown) => void;
-    loadMissingNoteTimelinePageMock.mockImplementation(
-      () => new Promise((_, reject) => (rejectPage = reject))
-    );
-    loadMissingNotesSliceMock.mockResolvedValue(store.missingNotes);
+    const store = createSettingsStore(appStoreMock);
+    store.missingNotes = [missingNote()];
+    const page = deferred<HistoryModePage>();
+    responses.get_missing_note_history_page = page.promise;
+    responses.list_missing_notes = store.missingNotes;
 
     const paging = store.loadMoreMissingNoteHistory('missing-note-1');
     await store.loadForgottenNotes();
-    rejectPage(new Error('stale paging failure'));
+    page.reject(new Error('stale paging failure'));
     await paging;
 
     expect(store.missingActionError).toBeNull();
     expect(store.loadingMissingTimelineNoteId).toBeNull();
   });
 
-  it('routes Retry now through the focused semantic command adapter', async () => {
-    const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-
-    await store.runAction('retry_semantic_index');
-
-    expect(invokeMock).toHaveBeenCalledWith('retry_semantic_index');
-    expect(store.isRunningAction).toBe(false);
-  });
-
   it('keeps component-passed semantic setting updates bound to the store', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     store.semanticSettings = {
       semanticSearchEnabled: true,
       lexicalWeight: 0.4,
       semanticWeight: 0.6
     };
     invokeMock.mockImplementation(async (command, args) =>
-      command === 'set_semantic_settings' ? args.settings : undefined
+      command === 'set_semantic_settings' ? args.settings : responses[command]
     );
 
     const updateSetting = store.updateSetting;
@@ -421,7 +303,7 @@ describe('SettingsStore actions', () => {
 
   it('retries and explicitly confirms destructive history recovery', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     const repaired = {
       state: 'healthy',
       integrity: 'verified',
@@ -459,7 +341,7 @@ describe('SettingsStore actions', () => {
 
   it('explicitly confirms vault-wide history clear and refreshes storage reporting', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     const afterClear = {
       state: 'healthy',
       integrity: 'verified',
@@ -493,7 +375,7 @@ describe('SettingsStore actions', () => {
 
   it('reports a committed vault clear honestly when storage reporting cannot refresh', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     invokeMock.mockImplementation(async (command) => {
       if (command === 'clear_vault_history') return undefined;
       if (command === 'get_history_health') throw new Error('history health unavailable');
@@ -511,9 +393,9 @@ describe('SettingsStore actions', () => {
 
   it('stages the selected path without replacing the backend running vault', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
+    const store = createSettingsStore(appStoreMock);
     store.setVaultPathInput('/next-vault');
-    invokeMock.mockResolvedValue({
+    responses.set_vault_directory = {
       runningPath: '/running-vault',
       selectedPath: '/next-vault',
       defaultPath: '/default-vault',
@@ -525,7 +407,7 @@ describe('SettingsStore actions', () => {
       canPickArbitraryPath: true,
       vaultContainerPath: null,
       pathConfigurationNote: null
-    });
+    };
 
     await store.saveVaultDirectory();
 
@@ -542,9 +424,9 @@ describe('SettingsStore actions', () => {
 
   it('keeps a newer staged vault when an older Apply result arrives later', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    const resultB = deferred<any>();
-    const resultC = deferred<any>();
+    const store = createSettingsStore(appStoreMock);
+    const resultB = deferred<VaultInfo>();
+    const resultC = deferred<VaultInfo>();
     invokeMock.mockImplementation((_command, args) =>
       args.path === '/vault-b' ? resultB.promise : resultC.promise
     );
@@ -553,12 +435,12 @@ describe('SettingsStore actions', () => {
     store.setVaultPathInput('/vault-c');
     const applyC = store.saveVaultDirectory();
     resultC.resolve({
-      ...loadSettingsViewSliceMock.mock.results[0]?.value?.vault,
+      ...vaultFixture,
       runningPath: '/vault-a', selectedPath: '/vault-c', canPickArbitraryPath: true
     });
     await applyC;
     resultB.resolve({
-      runningPath: '/vault-a', selectedPath: '/vault-b', canPickArbitraryPath: true
+      ...vaultFixture, runningPath: '/vault-a', selectedPath: '/vault-b', canPickArbitraryPath: true
     });
     await applyB;
     expect(store.vaultInfo?.selectedPath).toBe('/vault-c');
@@ -567,39 +449,150 @@ describe('SettingsStore actions', () => {
 
   it('does not let a delayed Settings view replace newer vault and semantic snapshots', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    const delayed = deferred<any>();
-    loadSettingsViewSliceMock.mockReturnValue(delayed.promise);
+    const store = createSettingsStore(appStoreMock);
+    const delayed = deferred<SettingsViewPayload>();
+    responses.get_settings_view = delayed.promise;
     const loading = store.loadSemanticState();
-    const newer = appStoreMock.beginSnapshotAdmission('vault', 'semanticStatus');
-    appStoreMock.admitSnapshot(
-      {
-        vault: { runningPath: '/vault-a', selectedPath: '/vault-c' },
-        semanticStatus: { phase: 'newer-event' }
-      },
-      newer
-    );
+    const staged = { ...vaultFixture, runningPath: '/vault-a', selectedPath: '/vault-c' };
+    responses.set_vault_directory = staged;
+    responses.get_semantic_status = { ...semanticStatusFixture, indexedNotes: 999 };
+    await appStoreMock.stageVaultSelection('/vault-c');
+    vi.mocked(appStoreMock.refreshSemanticStatus).mockRestore();
+    await appStoreMock.refreshSemanticStatus();
     delayed.resolve({
-      vault: { runningPath: '/vault-a', selectedPath: '/vault-b' },
-      semanticStatus: { phase: 'older-load' },
-      semanticSettings: { semanticSearchEnabled: true },
-      semanticDebug: { queuedNotes: 0 },
-      historyHealth: { state: 'healthy' }
+      ...settingsViewFixture(),
+      vault: { ...vaultFixture, runningPath: '/vault-a', selectedPath: '/vault-b' },
+      semanticStatus: { ...semanticStatusFixture, indexedNotes: 1 }
     });
     await loading;
     expect(store.vaultInfo?.selectedPath).toBe('/vault-c');
-    expect((store.semanticStatus as any)?.phase).toBe('newer-event');
-    expect(store.semanticSettings).toEqual({ semanticSearchEnabled: true });
+    expect(store.semanticStatus?.indexedNotes).toBe(999);
+    expect(store.semanticSettings).toEqual(settingsViewFixture().semanticSettings);
   });
 
   it('surfaces bundled Settings failure without invoking equivalent fallback RPCs', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const store = createSettingsStore();
-    loadSettingsViewSliceMock.mockRejectedValue(new Error('settings bundle unavailable'));
+    const store = createSettingsStore(appStoreMock);
+    responses.get_settings_view = Promise.reject(new Error('settings bundle unavailable'));
     await store.loadSemanticState();
     expect(store.settingsLoadError).toContain('settings bundle unavailable');
     expect(invokeMock).not.toHaveBeenCalledWith('get_semantic_status');
     expect(invokeMock).not.toHaveBeenCalledWith('get_vault_info');
     expect(invokeMock).not.toHaveBeenCalledWith('get_history_health');
+  });
+});
+
+describe('SettingsStore asynchronous admission', () => {
+  it('joins initialization and never subscribes after disposal during bootstrap', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const boot = deferred<ReturnType<typeof bootstrapFixture>>();
+    vi.mocked(appStoreMock.bootstrap).mockReturnValue(boot.promise);
+    const subscribe = vi.spyOn(appStoreMock, 'subscribeVaultChanged');
+    const store = createSettingsStore(appStoreMock);
+    const first = store.initialize(); expect(store.initialize()).toBe(first);
+    store.dispose(); boot.resolve(bootstrapFixture()); await first;
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(invokeMock).not.toHaveBeenCalledWith('get_settings_view');
+    await store.initialize(); expect(subscribe).toHaveBeenCalledOnce();
+    store.dispose();
+  });
+
+  it('ignores a delayed view after disposal and admits a fresh view after reopening', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const old = deferred<ReturnType<typeof settingsViewFixture>>();
+    responses.get_settings_view = old.promise;
+    const store = createSettingsStore(appStoreMock);
+    const loading = store.loadSemanticState(); store.dispose();
+    responses.get_settings_view = settingsViewFixture();
+    await store.initialize();
+    const stale = settingsViewFixture(); stale.semanticSettings.lexicalWeight = 0.99;
+    old.resolve(stale); await loading;
+    expect(store.semanticSettings).toEqual(settingsViewFixture().semanticSettings);
+    store.dispose();
+  });
+
+  it('keeps newer history health when an older settings bundle finishes', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const old = deferred<ReturnType<typeof settingsViewFixture>>();
+    responses.get_settings_view = old.promise;
+    const store = createSettingsStore(appStoreMock); const loading = store.loadSemanticState();
+    const health = { ...settingsViewFixture().historyHealth, pendingRepairs: 4 };
+    responses.get_history_health = health; await store.loadHistoryHealth();
+    old.resolve(settingsViewFixture()); await loading;
+    expect(store.historyHealth).toEqual(health);
+    store.dispose();
+  });
+
+  it('serializes semantic writes and protects newer edits from old acknowledgements and refreshes', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const first = deferred<ReturnType<typeof settingsViewFixture>['semanticSettings']>();
+    const second = deferred<ReturnType<typeof settingsViewFixture>['semanticSettings']>();
+    const writes = [first.promise, second.promise];
+    invokeMock.mockImplementation(async command =>
+      command === 'set_semantic_settings' ? writes.shift() : responses[command]
+    );
+    const store = createSettingsStore(appStoreMock);
+    store.semanticSettings = settingsViewFixture().semanticSettings;
+    const oldView = deferred<ReturnType<typeof settingsViewFixture>>();
+    responses.get_settings_view = oldView.promise;
+    const refreshing = store.loadSemanticState();
+    store.updateSetting('lexicalWeight', 0.2);
+    store.updateSetting('semanticWeight', 0.8);
+    await vi.waitFor(() => expect(invokeMock.mock.calls.filter(([command]) => command === 'set_semantic_settings')).toHaveLength(1));
+    oldView.resolve(settingsViewFixture()); await refreshing;
+    expect(store.semanticSettings?.semanticWeight).toBe(0.8);
+    first.resolve({ ...settingsViewFixture().semanticSettings, lexicalWeight: 0.2 });
+    await vi.waitFor(() => expect(invokeMock.mock.calls.filter(([command]) => command === 'set_semantic_settings')).toHaveLength(2));
+    expect(invokeMock).toHaveBeenLastCalledWith('set_semantic_settings', {
+      settings: expect.objectContaining({ lexicalWeight: 0.2, semanticWeight: 0.8 })
+    });
+    const saved = { semanticSearchEnabled: true, lexicalWeight: 0.2, semanticWeight: 0.8 };
+    responses.get_settings_view = { ...settingsViewFixture(), semanticSettings: saved };
+    second.resolve(saved);
+    await vi.waitFor(() => expect(store.isSaving).toBe(false));
+    expect(store.semanticSettings).toEqual(saved);
+    store.dispose();
+  });
+
+  it.each([
+    ['search', 'loadSemanticState'], ['vault', 'loadVaultInfo'], ['forgetting', 'loadForgottenNotes'], ['history', 'loadHistoryHealth'], ['appearance', 'loadSemanticStatus']
+  ] as const)('refreshes the visible %s section through the owner', async (section, method) => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const methods = ['loadSemanticState', 'loadVaultInfo', 'loadForgottenNotes', 'loadHistoryHealth', 'loadSemanticStatus'] as const;
+    const spies = methods.map(name => vi.spyOn(store, name).mockResolvedValue(undefined));
+    store.activeGeneralSection = section;
+    vi.stubGlobal('document', { visibilityState: 'visible' });
+    try {
+      await store.handleVisibilityChange();
+      methods.forEach((name, index) => expect(spies[index]).toHaveBeenCalledTimes(name === method ? 1 : 0));
+    } finally { store.dispose(); vi.unstubAllGlobals(); }
+  });
+});
+
+describe('SettingsStore mutation/read conflicts', () => {
+  it('does not admit a settings bundle begun during a history mutation', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const action = deferred<ReturnType<typeof settingsViewFixture>['historyHealth']>();
+    responses.retry_history_recovery = action.promise;
+    const store = createSettingsStore(appStoreMock); const retry = store.retryHistory();
+    const bundle = deferred<ReturnType<typeof settingsViewFixture>>();
+    responses.get_settings_view = bundle.promise; const loading = store.loadSemanticState();
+    const health = { ...settingsViewFixture().historyHealth, pendingRepairs: 7 };
+    action.resolve(health); await retry;
+    bundle.resolve(settingsViewFixture()); await loading;
+    expect(store.historyHealth).toEqual(health); store.dispose();
+  });
+
+  it('refetches after a forgotten mutation instead of joining a pre-mutation read', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const prior = deferred<import('$lib/types/forgottenNotes').ForgottenNoteSummary[]>();
+    responses.list_forgotten_notes = prior.promise;
+    const store = createSettingsStore(appStoreMock); const reading = store.loadForgottenNotes();
+    responses.list_forgotten_notes = [];
+    await store.runForgottenAction('delete_forgotten_notes', ['/old']);
+    expect(invokeMock.mock.calls.filter(([command]) => command === 'list_forgotten_notes')).toHaveLength(2);
+    prior.resolve([{ kind: 'note', forgottenPath: '/old', originalPath: '/vault/old.md', title: 'Old', fileName: 'old.md', forgottenAtMillis: 1, purgeAfterDays: 7, purgeAtMillis: 2 }]);
+    await reading; expect(store.forgottenNotes).toEqual([]); store.dispose();
   });
 });

@@ -69,15 +69,6 @@ where
     .map_err(|error| error.to_string())?
 }
 
-/// Legacy "max age" parameter still passed to
-/// [`AppState::ensure_interactive_index`] for call-site compatibility.
-/// The foreground hot path no longer triggers full vault scans on
-/// staleness — that work has moved to the background reconciliation
-/// loop in `vault_watcher::spawn_background_reconcile_loop`. This
-/// constant is kept (rather than removing every call site argument) so
-/// that `ensure_interactive_index` retains a stable signature; its
-/// runtime value is intentionally ignored.
-const INTERACTIVE_INDEX_REFRESH_MAX_AGE: Duration = Duration::from_millis(750);
 const ASSETS_DIRECTORY_NAME: &str = "assets";
 const DEFAULT_PASTED_IMAGE_NAME: &str = "Pasted image";
 
@@ -871,26 +862,15 @@ pub(crate) async fn get_settings_view<R: tauri::Runtime>(
 
 #[cfg(test)]
 mod tests {
-    use super::asset_commands::{
-        asset_extension_from_mime_type, mime_type_from_asset_name,
-        read_image_asset_data_url_from_assets_dir, resolve_asset_image_path,
-        resolve_pasted_image_path, sanitize_asset_file_stem,
-    };
-    use super::search_commands::{collect_recent_note_results, merge_hybrid_candidates};
-    use super::wikilink_commands::{
-        note_matches_reference, parse_wikilink_target, resolve_note_link_target,
-        ParsedWikilinkTarget,
-    };
     use super::{
         load_note_session_from_notes_dir, open_note_from_notes_dir, read_note_session_from_path,
         set_vault_directory_for_state, NoteSession, RecentTaskItem, ResolvedNoteLink, TaskListItem,
     };
     use crate::{
-        index::{build_indexed_note, NotesIndex},
+        index::build_indexed_note,
         note,
-        search::{NoteSearchResult, ScoredSearchResult},
         state::initialize_app_data_dir,
-        state::{persist_note, read_state, resolve_note_id_from_path, write_state, PersistedState},
+        state::{read_state, resolve_note_id_from_path, write_state, PersistedState},
         test_support::{lock_test_env, TestDir},
     };
     use serde_json::json;
@@ -955,19 +935,12 @@ mod tests {
             fs::canonicalize(selected.path()).unwrap().to_string_lossy()
         );
         assert!(info.requires_restart);
-        let prepared = state
-            .note_timeline()
-            .prepare_revision_publication(
-                crate::services::note_timeline::MutationSource::Editor,
-                &note_path,
-                Some(&note_path),
-                Some(&crate::services::note_timeline::NoteIdentity::new(
-                    "switch-active-note",
-                )),
-                "Changed after switch",
-            )
-            .expect("staging a selection must not stop running-vault mutations");
-        prepared.into_parts().1.abandon().unwrap();
+        state.note_timeline().edit_note(
+            crate::services::note_timeline::MutationSource::Editor,
+            &note_path,
+            Some(&crate::services::note_timeline::NoteIdentity::new("switch-active-note")),
+            |_| Ok("Changed after switch".into()),
+        ).expect("staging a selection must not stop running-vault mutations");
         assert!(!state.note_timeline().is_cleanly_closed().unwrap());
         let externally_changed = "---\ngneauxghts:\n  id: switch-active-note\n  kind: note\n---\n\nChanged by the old watcher";
         fs::write(&note_path, externally_changed).unwrap();
@@ -1136,34 +1109,6 @@ mod tests {
     }
 
     #[test]
-    fn open_note_from_notes_dir_updates_last_opened_and_recents() {
-        let _guard = lock_test_env();
-        let app_data_dir = TestDir::new("commands-app-data-open");
-        initialize_app_data_dir(app_data_dir.path().to_path_buf()).expect("set app data dir");
-        let temp = TestDir::new("commands-open-note");
-        let notes_dir = temp.path();
-        crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
-            .expect("override notes root");
-        let note_path = notes_dir.join("Open Me.md");
-        fs::write(&note_path, "# Open Me\n\nBody").expect("write note");
-
-        let indexed_note = build_indexed_note(&note_path, "# Open Me\n\nBody", 10);
-        let session = open_note_from_notes_dir(notes_dir, Some(indexed_note.note_id.clone()), None)
-            .expect("open note");
-        let state = read_state(notes_dir).expect("read state");
-
-        assert_eq!(session.note_id, Some(indexed_note.note_id.clone()));
-        assert_eq!(session.path, Some(note_path.to_string_lossy().into_owned()));
-        assert_eq!(session.title, "Open Me");
-        assert_eq!(session.markdown, "Body");
-        assert_eq!(
-            state.last_opened_note_id,
-            Some(indexed_note.note_id.clone())
-        );
-        assert_eq!(state.recent_note_ids, vec![indexed_note.note_id]);
-    }
-
-    #[test]
     fn open_note_from_notes_dir_resolves_safe_vault_relative_paths() {
         let _guard = lock_test_env();
         let app_data_dir = TestDir::new("commands-app-data-open-relative");
@@ -1199,10 +1144,22 @@ mod tests {
         crate::state::set_notes_root_override(Some(notes_dir.to_path_buf()))
             .expect("override notes root");
 
+        let state = crate::index::AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
         let original_path = PathBuf::from(
-            persist_note(notes_dir, "Original", "Body", None)
-                .expect("persist note")
-                .expect("saved path"),
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Original".into(),
+                "Body".into(),
+                None,
+            )
+            .expect("persist note")
+            .expect("saved note")
+            .path
+            .expect("saved path"),
         );
         let note_id = resolve_note_id_from_path(&original_path).expect("managed note id");
         let renamed_path = notes_dir.join("Renamed.md");
@@ -1325,488 +1282,6 @@ mod tests {
             Some(existing_note.note_id.clone())
         );
         assert_eq!(state.recent_note_ids, vec![existing_note.note_id]);
-    }
-
-    #[test]
-    fn collect_recent_note_results_skips_current_note() {
-        let current_path = PathBuf::from("/tmp/current.md");
-        let other_path = PathBuf::from("/tmp/other.md");
-        let mut index = NotesIndex::default();
-        index.upsert_note(
-            current_path.clone(),
-            build_indexed_note(&current_path, "# Current\n\nBody", 10),
-        );
-        index.upsert_note(
-            other_path.clone(),
-            build_indexed_note(&other_path, "# Other\n\nElsewhere", 20),
-        );
-
-        let results = collect_recent_note_results(
-            &[
-                index.entries[&current_path].note_id.clone(),
-                index.entries[&other_path].note_id.clone(),
-            ],
-            Some(index.entries[&current_path].note_id.as_str()),
-            &index,
-            12,
-        );
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].note_path.as_deref(),
-            Some(other_path.to_string_lossy().as_ref())
-        );
-        assert_eq!(results[0].file_name, "other");
-    }
-
-    #[test]
-    fn merge_hybrid_candidates_applies_labels_scores_and_limit() {
-        let lexical = vec![
-            ScoredSearchResult {
-                score: 100,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("note-a".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/a.md".to_string()),
-                    file_name: "a".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "hybrid search ranking".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "hybrid search".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-            ScoredSearchResult {
-                score: 40,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("note-b".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/b.md".to_string()),
-                    file_name: "b".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "keyword only".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "keyword".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-        ];
-        let semantic = vec![crate::semantic::SemanticChunkMatch {
-            note_path: "/notes/c.md".to_string(),
-            note_title: "c".to_string(),
-            section_label: "Research".to_string(),
-            excerpt: "conceptual match".to_string(),
-            match_text: "conceptual match".to_string(),
-            score: 0.9,
-            start_line: 7,
-            end_line: 8,
-            document_kind: crate::note::DocumentKind::Note,
-            block_anchor: None,
-        }];
-
-        let results = merge_hybrid_candidates(
-            lexical,
-            semantic,
-            "hybrid search",
-            Some(PathBuf::from("/notes/current.md").as_path()),
-            2,
-            0.5,
-            0.4,
-            &std::collections::HashMap::new(),
-            &super::search_commands::NoteAccessLookup::empty(),
-            0,
-        );
-
-        assert_eq!(results.len(), 2);
-        assert_eq!(results[0].file_name, "a");
-        assert_eq!(results[0].reason_labels, vec!["keyword".to_string()]);
-        assert_eq!(results[0].lexical_score, Some(1.0));
-        assert_eq!(results[0].semantic_score, Some(0.0));
-
-        assert_eq!(results[1].file_name, "c");
-        assert_eq!(results[1].reason_labels, vec!["semantic".to_string()]);
-        assert_eq!(results[1].lexical_score, Some(0.0));
-        assert_eq!(results[1].semantic_score, Some(1.0));
-    }
-
-    #[test]
-    fn semantic_only_chat_match_keeps_kind_and_anchor() {
-        let semantic = vec![crate::semantic::SemanticChunkMatch {
-            note_path: "/notes/Chats/example/Conversation.md".to_string(),
-            note_title: "A useful discussion".to_string(),
-            section_label: "Remembered passage".to_string(),
-            excerpt: "the exact remembered passage".to_string(),
-            match_text: "the exact remembered passage".to_string(),
-            score: 0.9,
-            start_line: 1,
-            end_line: 1,
-            document_kind: crate::note::DocumentKind::ChatIndex,
-            block_anchor: Some("excerpt_stable".to_string()),
-        }];
-
-        let results = merge_hybrid_candidates(
-            Vec::new(),
-            semantic,
-            "remembered passage",
-            None,
-            5,
-            0.5,
-            0.5,
-            &std::collections::HashMap::new(),
-            &super::search_commands::NoteAccessLookup::empty(),
-            0,
-        );
-
-        assert_eq!(results.len(), 1);
-        assert_eq!(
-            results[0].document_kind,
-            crate::note::DocumentKind::ChatIndex
-        );
-        assert_eq!(results[0].block_anchor.as_deref(), Some("excerpt_stable"));
-        assert_eq!(results[0].reason_labels, vec!["semantic".to_string()]);
-    }
-
-    #[test]
-    fn merge_hybrid_candidates_boosts_frequently_opened_notes() {
-        let lexical = vec![
-            ScoredSearchResult {
-                score: 50,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("rarely-opened".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/rare.md".to_string()),
-                    file_name: "rare".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "shared topic".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "shared topic".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-            ScoredSearchResult {
-                score: 48,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("often-opened".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/often.md".to_string()),
-                    file_name: "often".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "shared topic".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "shared topic".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-        ];
-        let now = 1_700_000_000_000u64;
-        let mut activity = std::collections::HashMap::new();
-        activity.insert(
-            "often-opened".to_string(),
-            crate::state::NoteActivity {
-                last_viewed_at_millis: now,
-                open_count: 40,
-                last_counted_open_at_millis: now,
-            },
-        );
-        let mut note_lookup = super::search_commands::NoteAccessLookup::empty();
-        note_lookup
-            .modified_by_note_id
-            .insert("often-opened".to_string(), now);
-        note_lookup
-            .modified_by_note_id
-            .insert("rarely-opened".to_string(), now);
-
-        let results = merge_hybrid_candidates(
-            lexical,
-            Vec::new(),
-            "shared topic",
-            None,
-            2,
-            0.5,
-            0.4,
-            &activity,
-            &note_lookup,
-            now,
-        );
-
-        assert_eq!(results[0].file_name, "often");
-        assert!(results[0]
-            .reason_labels
-            .iter()
-            .any(|label| label == "frequently opened"));
-    }
-
-    #[test]
-    fn merge_hybrid_candidates_idle_decay_removes_access_boost() {
-        let lexical = vec![
-            ScoredSearchResult {
-                score: 50,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("stale-popular".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/stale.md".to_string()),
-                    file_name: "stale".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "shared topic".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "shared topic".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-            ScoredSearchResult {
-                score: 48,
-                result: NoteSearchResult {
-                    document_kind: crate::note::DocumentKind::Note,
-                    note_id: Some("fresh".to_string()),
-                    block_anchor: None,
-                    note_path: Some("/notes/fresh.md".to_string()),
-                    file_name: "fresh".to_string(),
-                    section_label: "Paragraph 1".to_string(),
-                    excerpt: "shared topic".to_string(),
-                    highlight_ranges: Vec::new(),
-                    match_text: "shared topic".to_string(),
-                    reason_labels: Vec::new(),
-                    lexical_score: None,
-                    semantic_score: None,
-                    start_line: None,
-                    end_line: None,
-                },
-            },
-        ];
-        let now = 1_700_000_000_000u64;
-        let idle_viewed = now - (crate::state::OPEN_COUNT_DECAY_INTERVAL_MS * 40);
-        let mut activity = std::collections::HashMap::new();
-        activity.insert(
-            "stale-popular".to_string(),
-            crate::state::NoteActivity {
-                last_viewed_at_millis: idle_viewed,
-                open_count: 40,
-                last_counted_open_at_millis: idle_viewed,
-            },
-        );
-        let mut note_lookup = super::search_commands::NoteAccessLookup::empty();
-        note_lookup
-            .modified_by_note_id
-            .insert("stale-popular".to_string(), idle_viewed);
-        note_lookup
-            .modified_by_note_id
-            .insert("fresh".to_string(), now);
-
-        let results = merge_hybrid_candidates(
-            lexical,
-            Vec::new(),
-            "shared topic",
-            None,
-            2,
-            0.5,
-            0.4,
-            &activity,
-            &note_lookup,
-            now,
-        );
-
-        assert_eq!(results[0].file_name, "stale");
-        assert!(!results[0]
-            .reason_labels
-            .iter()
-            .any(|label| label == "frequently opened"));
-    }
-
-    #[test]
-    fn parse_wikilink_target_supports_aliases_and_same_note_sections() {
-        assert_eq!(
-            parse_wikilink_target("Project Atlas#Paragraph 2|Atlas"),
-            ParsedWikilinkTarget {
-                note: Some("Project Atlas".to_string()),
-                section: Some("Paragraph 2".to_string()),
-            }
-        );
-        assert_eq!(
-            parse_wikilink_target("#Ideas"),
-            ParsedWikilinkTarget {
-                note: None,
-                section: Some("Ideas".to_string()),
-            }
-        );
-    }
-
-    #[test]
-    fn resolve_note_link_target_prefers_paragraph_numbers_and_falls_back_to_title() {
-        let note_path = PathBuf::from("/tmp/project-atlas.md");
-        let note = build_indexed_note(
-            &note_path,
-            "# Project Atlas\n\nFirst paragraph.\n\n## Ideas\n\nSecond paragraph with link target.\n",
-            10,
-        );
-
-        let paragraph_target = resolve_note_link_target(&note_path, &note, Some("Paragraph 2"));
-        let heading_target = resolve_note_link_target(&note_path, &note, Some("Ideas"));
-        let fallback_target = resolve_note_link_target(&note_path, &note, Some("Missing"));
-
-        assert_eq!(paragraph_target.note_path, "/tmp/project-atlas.md");
-        assert_eq!(paragraph_target.section_label, "Paragraph 2");
-        assert_eq!(paragraph_target.match_text, "## Ideas");
-
-        assert_eq!(heading_target.section_label, "Paragraph 2");
-        assert_eq!(heading_target.match_text, "## Ideas");
-
-        assert_eq!(fallback_target.section_label, "Title");
-        assert_eq!(fallback_target.match_text, "project-atlas");
-    }
-
-    #[test]
-    fn resolve_note_link_target_supports_stable_block_ids() {
-        let note_path = PathBuf::from("/tmp/Chats/2026-07-12-planning/Part 001.md");
-        let note = build_indexed_note(
-            &note_path,
-            "# Planning\n\nA durable response. ^msg_01ABC\n\nAnother response.",
-            10,
-        );
-
-        let target = resolve_note_link_target(&note_path, &note, Some("^msg_01ABC"));
-
-        assert_eq!(target.block_id.as_deref(), Some("msg_01ABC"));
-        assert_eq!(target.line_number, Some(3));
-        assert_eq!(target.match_text, "A durable response. ^msg_01ABC");
-    }
-
-    #[test]
-    fn path_qualified_note_references_match_relative_vault_paths() {
-        let notes_dir = PathBuf::from("/vault");
-        let note_path = notes_dir.join("Chats/2026-07-12-planning/Part 001.md");
-        let note = build_indexed_note(&note_path, "Transcript", 10);
-
-        assert!(note_matches_reference(
-            "Chats/2026-07-12-planning/Part 001",
-            &note_path,
-            &note,
-            &notes_dir,
-        ));
-        assert!(note_matches_reference(
-            "Chats\\2026-07-12-planning\\Part 001.md",
-            &note_path,
-            &note,
-            &notes_dir,
-        ));
-        assert!(!note_matches_reference(
-            "Other/Part 001",
-            &note_path,
-            &note,
-            &notes_dir,
-        ));
-    }
-
-    #[test]
-    fn sanitize_asset_file_stem_normalizes_invalid_characters() {
-        assert_eq!(
-            sanitize_asset_file_stem(r#" ../Pasted:image*2024?.png "#),
-            "Pasted image 2024"
-        );
-    }
-
-    #[test]
-    fn asset_extension_from_mime_type_covers_common_images() {
-        assert_eq!(asset_extension_from_mime_type("image/png"), Some("png"));
-        assert_eq!(asset_extension_from_mime_type("image/jpeg"), Some("jpg"));
-        assert_eq!(asset_extension_from_mime_type("application/json"), None);
-    }
-
-    #[test]
-    fn resolve_pasted_image_path_avoids_collisions() {
-        let temp = TestDir::new("commands-image-assets");
-        let assets_dir = temp.path().join("assets");
-        fs::create_dir_all(&assets_dir).expect("create assets dir");
-        fs::write(assets_dir.join("Pasted image 20240605160000.png"), b"one")
-            .expect("write existing image");
-
-        let resolved_path = resolve_pasted_image_path(
-            &assets_dir,
-            Some("Pasted image 20240605160000.png"),
-            Some("image/png"),
-        );
-
-        assert_eq!(
-            resolved_path.file_name().and_then(|value| value.to_str()),
-            Some("Pasted image 20240605160000 1.png")
-        );
-    }
-
-    #[test]
-    fn resolve_asset_image_path_rejects_nested_paths() {
-        let temp = TestDir::new("commands-image-assets-paths");
-        let assets_dir = temp.path().join("assets");
-        fs::create_dir_all(&assets_dir).expect("create assets dir");
-
-        let result = resolve_asset_image_path(&assets_dir, "../secret.png");
-
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn resolve_asset_image_path_accepts_contained_subfolders() {
-        let temp = TestDir::new("commands-image-assets-subfolder");
-        let assets_dir = temp.path().join("assets");
-        fs::create_dir_all(assets_dir.join("photos")).expect("create subfolder");
-        fs::write(assets_dir.join("photos/a b.png"), b"image").expect("write image");
-        assert!(resolve_asset_image_path(&assets_dir, "photos/a b.png").is_ok());
-        assert!(resolve_asset_image_path(&assets_dir, "/photos/a b.png").is_err());
-        assert!(resolve_asset_image_path(&assets_dir, "photos/../../a.png").is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn resolve_asset_image_path_rejects_symlink_escape() {
-        let temp = TestDir::new("commands-image-assets-symlink");
-        let assets_dir = temp.path().join("assets");
-        fs::create_dir_all(&assets_dir).expect("create assets");
-        fs::write(temp.path().join("outside.png"), b"private").expect("outside file");
-        std::os::unix::fs::symlink(temp.path().join("outside.png"), assets_dir.join("escape.png")).expect("symlink");
-        assert!(resolve_asset_image_path(&assets_dir, "escape.png").is_err());
-    }
-
-    #[test]
-    fn read_image_asset_data_url_from_assets_dir_encodes_image_bytes() {
-        let temp = TestDir::new("commands-image-assets-data-url");
-        let assets_dir = temp.path().join("assets");
-        fs::create_dir_all(&assets_dir).expect("create assets dir");
-        fs::write(assets_dir.join("diagram.png"), [0_u8, 1, 2, 3]).expect("write asset");
-
-        let data_url = read_image_asset_data_url_from_assets_dir(&assets_dir, "diagram.png")
-            .expect("data url");
-
-        assert!(data_url.starts_with("data:image/png;base64,"));
-    }
-
-    #[test]
-    fn mime_type_from_asset_name_defaults_for_known_extensions() {
-        assert_eq!(mime_type_from_asset_name("diagram.png"), "image/png");
-        assert_eq!(mime_type_from_asset_name("photo.jpg"), "image/jpeg");
-        assert_eq!(mime_type_from_asset_name("vector.svg"), "image/svg+xml");
     }
 
     #[test]

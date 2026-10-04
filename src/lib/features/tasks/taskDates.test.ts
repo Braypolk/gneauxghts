@@ -1,5 +1,6 @@
+afterEach(() => vi.useRealTimers());
 import { readFileSync } from 'node:fs';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { addCalendarDays, dueAnnotations, formatDueDate, localCalendarDate, matchesTaskDateFilter, millisecondsUntilLocalMidnight, resolveDateShortcut, setTaskLineDueDate, subscribeCalendarDay, taskDueDate, validCalendarDate } from './taskDates';
 
 describe('authored calendar deadlines', () => {

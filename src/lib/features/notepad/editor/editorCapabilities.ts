@@ -4,22 +4,13 @@ import {
   replaceEditorDocument,
   focusEditorSelection,
   setEditorCurrentSearchHighlightQuery,
-  setProposalReviewExtensions,
   type EditorController,
   type EditorSnapshot,
   type SearchHighlightOptions
 } from '$lib/features/notepad/editor/editor';
 import { slashMenuHideFromUi } from './slashMenu';
 import { selectionMenuHideFromUi } from './selectionMenu';
-import {
-  Transaction,
-  type Annotation,
-  type ChangeSpec,
-  type Extension,
-  type StateEffect
-} from '@codemirror/state';
-import { isolateHistory } from '@codemirror/commands';
-import type { ProposalReviewState } from '$lib/features/proposals/reviewExtension';
+import { Transaction } from '@codemirror/state';
 
 export interface EditorSelectionCapabilitySnapshot {
   anchor: number;
@@ -85,20 +76,7 @@ export interface EditorCapabilityAdapter {
   closeSlashMenu: () => void;
   closeSelectionMenu: () => void;
   addReadOnlyOverlay: (className: string) => ReadOnlyOverlayHandle;
-  setProposalReviewExtensions: (
-    extension: Extension | readonly Extension[] | null
-  ) => boolean;
-  setProposalReviewStateReader?: (
-    reader: ((state: import('@codemirror/state').EditorState) => ProposalReviewState) | null
-  ) => void;
-  readProposalReviewState?: () => ProposalReviewState | null;
-  focusProposalHunk?: (id: string) => boolean;
-  applyChanges?: (
-    changes: ChangeSpec | readonly ChangeSpec[],
-    annotation?: Annotation<unknown>
-  ) => boolean;
-  dispatchEffects?: (effects: StateEffect<unknown> | readonly StateEffect<unknown>[]) => boolean;
-  getDocumentText?: () => string | null;
+
 }
 
 export function insertEditorMarkdown(
@@ -141,22 +119,6 @@ export function insertEditorMarkdown(
 export function createEditorCapabilityAdapter(
   getController: () => EditorController | null
 ): EditorCapabilityAdapter {
-  let reviewStateReader: ((state: import('@codemirror/state').EditorState) => ProposalReviewState) | null = null;
-
-  function readProposalReviewState(): ProposalReviewState | null {
-    const controller = getController();
-    if (!controller || !reviewStateReader) return null;
-    try {
-      return reviewStateReader(controller.view.state);
-    } catch {
-      // Rebinding a pane replaces its EditorState and therefore removes the
-      // old proposal StateField before orchestration has a chance to attach
-      // the review to the new document. Treat that stale reader as an absent
-      // review so the extension can be installed again.
-      return null;
-    }
-  }
-
   return {
     isReady: () => {
       const controller = getController();
@@ -244,45 +206,6 @@ export function createEditorCapabilityAdapter(
           overlay.remove();
         }
       };
-    },
-    setProposalReviewExtensions: (extension: Extension | readonly Extension[] | null) =>
-      setProposalReviewExtensions(getController(), extension),
-    setProposalReviewStateReader: (reader) => {
-      reviewStateReader = reader;
-    },
-    readProposalReviewState,
-    focusProposalHunk: (id) => {
-      const controller = getController();
-      const hunk = readProposalReviewState()?.hunks.find((item) => item.id === id);
-      if (!controller || !hunk) return false;
-      controller.view.dispatch(controller.view.state.update({
-        selection: { anchor: hunk.from, head: hunk.to },
-        scrollIntoView: true
-      }));
-      controller.view.focus();
-      return true;
-    },
-    applyChanges: (changes, annotation) => {
-      const controller = getController();
-      if (!controller) return false;
-      controller.view.dispatch(
-        controller.view.state.update({
-          changes,
-          annotations: [
-            Transaction.addToHistory.of(false),
-            isolateHistory.of('full'),
-            ...(annotation ? [annotation] : [])
-          ]
-        })
-      );
-      return true;
-    },
-    dispatchEffects: (effects) => {
-      const controller = getController();
-      if (!controller) return false;
-      controller.view.dispatch(controller.view.state.update({ effects }));
-      return true;
-    },
-    getDocumentText: () => getController()?.view.state.doc.toString() ?? null
+    }
   };
 }

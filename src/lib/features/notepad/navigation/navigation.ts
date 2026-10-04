@@ -1,25 +1,7 @@
 import { tick } from 'svelte';
 import { EditorView } from '@codemirror/view';
+import type { Text } from '@codemirror/state';
 import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
-import { navigationScrollBehavior } from '$lib/ui/motion';
-
-function findLastSelectionPoint(node: Node): { node: Node; offset: number } | null {
-  if (node.nodeType === Node.TEXT_NODE) {
-    return { node, offset: node.textContent?.length ?? 0 };
-  }
-
-  for (let index = node.childNodes.length - 1; index >= 0; index -= 1) {
-    const child = node.childNodes[index];
-    const point = findLastSelectionPoint(child);
-    if (point) return point;
-  }
-
-  if (node instanceof HTMLElement) {
-    return { node, offset: node.childNodes.length };
-  }
-
-  return null;
-}
 
 export function focusInputAtEnd(input: HTMLInputElement | null) {
   if (!input) return;
@@ -38,43 +20,9 @@ export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNu
   const info = view.state.doc.line(line);
   const anchor = Math.min(info.from, view.state.doc.length);
 
+  view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
   view.focus();
-  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: false }));
-
-  const coords = view.coordsAtPos(anchor);
-  if (coords) {
-    const scrollElement = view.scrollDOM;
-    const scrollRect = scrollElement.getBoundingClientRect();
-    const targetTop =
-      scrollElement.scrollTop + (coords.top - scrollRect.top) - scrollRect.height * 0.25;
-    const maxScrollTop = Math.max(0, scrollElement.scrollHeight - scrollElement.clientHeight);
-    scrollElement.scrollTo({
-      top: Math.max(0, Math.min(targetTop, maxScrollTop)),
-      behavior: navigationScrollBehavior()
-    });
-  }
   return true;
-}
-
-export function focusEditorTarget(editorRoot: HTMLElement | null, target: HTMLElement) {
-  const surface = findCmContentElement(editorRoot);
-  if (!(surface instanceof HTMLElement)) return;
-  const view = EditorView.findFromDOM(surface) ?? EditorView.findFromDOM(target);
-  if (!view) return;
-
-  const point = findLastSelectionPoint(target);
-  view.focus();
-
-  if (!point) {
-    target.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
-    return;
-  }
-  const anchor = Math.max(0, Math.min(view.state.doc.length, view.posAtDOM(point.node, point.offset)));
-  // The explicit target scroll below owns positioning; CodeMirror must not
-  // start a second scroll during its next layout pass.
-  view.dispatch(view.state.update({ selection: { anchor }, scrollIntoView: false }));
-
-  target.scrollIntoView({ behavior: navigationScrollBehavior(), block: 'center' });
 }
 
 export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
@@ -108,84 +56,60 @@ function normalizePlainText(value: string) {
     .toLowerCase();
 }
 
-interface NormalizedEditorTarget {
-  node: HTMLElement;
-  text: string;
-}
-
-function normalizeTargets(nodes: readonly HTMLElement[]): NormalizedEditorTarget[] {
-  return nodes.map((node) => ({
-    node,
-    text: normalizePlainText(node.textContent ?? '')
-  }));
-}
-
-function getEditorBlocks(editorRoot: HTMLElement | null) {
-  const surface = findCmContentElement(editorRoot);
-  if (!surface) return [];
-
-  return Array.from(surface.querySelectorAll('.cm-line')).filter(
-    (child): child is HTMLElement => child instanceof HTMLElement
-  );
-}
-
-function getEditorTargets(editorRoot: HTMLElement | null) {
-  const surface = findCmContentElement(editorRoot);
-  if (!surface) return [];
-
-  const matches = normalizeTargets(
-    Array.from(
-      surface.querySelectorAll(
-        '.cm-line.cm-gn-line-h1, .cm-line.cm-gn-line-h2, .cm-line.cm-gn-line-h3, .cm-line.cm-gn-line-h4, .cm-line.cm-gn-line-h5, .cm-line.cm-gn-line-h6, .cm-line.cm-gn-quote-line, .cm-line.cm-gn-code-block-line, .cm-line.cm-gn-list-line-ul, .cm-line.cm-gn-list-line-ol, .cm-line.cm-gn-task-line, .cm-line'
-      )
-    ).filter((node): node is HTMLElement => node instanceof HTMLElement)
-  );
-
-  const nonEmptyMatches = matches.filter(({ text }) => text !== '');
-  if (nonEmptyMatches.length > 0) {
-    return nonEmptyMatches;
-  }
-
-  return normalizeTargets(getEditorBlocks(editorRoot));
-}
-
-export function findBestEditorTarget(
-  editorRoot: HTMLElement | null,
-  matchText: string,
-  preferredBlockIndex?: number
-) {
-  const normalizedNeedle = normalizePlainText(matchText);
-  if (!normalizedNeedle) return null;
-
-  if (preferredBlockIndex !== undefined) {
-    const blocks = normalizeTargets(getEditorBlocks(editorRoot));
-    const directMatch = blocks[preferredBlockIndex];
-    if (directMatch?.text.includes(normalizedNeedle)) {
-      return directMatch.node;
-    }
-  }
-
-  const targets = getEditorTargets(editorRoot);
-  const exactMatch = targets.find((target) => target.text === normalizedNeedle)?.node ?? null;
-
-  if (exactMatch) {
-    return exactMatch;
-  }
-
-  const partialMatches = targets.filter((target) => target.text.includes(normalizedNeedle));
-
-  if (partialMatches.length === 0) {
-    return null;
-  }
-
-  partialMatches.sort((left, right) => {
-    return left.text.length - right.text.length;
-  });
-
-  return partialMatches[0]?.node ?? null;
-}
-
 export async function waitForEditorPaint() {
   await tick();
   await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+/** Resolves against the entire document, including lines outside the rendered viewport.
+ * A preferred line is only a hint: its text must still match. Ambiguous stale hints
+ * never choose an arbitrary occurrence. Offsets returned here are UTF-16.
+ */
+export function resolveEditorTextTarget(doc: Text, matchText: string, preferredLine?: number): number | null {
+  const needle = normalizePlainText(matchText);
+  if (!needle) return null;
+  const candidates: { from: number; line: number; exact: boolean }[] = [];
+  for (let number = 1; number <= doc.lines; number += 1) {
+    const line = doc.line(number);
+    const text = normalizePlainText(line.text);
+    if (text.includes(needle)) candidates.push({ from: line.from, line: number, exact: text === needle });
+  }
+  if (!candidates.length) {
+    // Excerpts can span wrapped Markdown paragraphs. Resolve their source block
+    // as well, without requiring any of its lines to have DOM representation.
+    let firstLine = 1;
+    for (let number = 1; number <= doc.lines + 1; number += 1) {
+      if (number <= doc.lines && doc.line(number).text.trim()) continue;
+      if (number > firstLine) {
+        const first = doc.line(firstLine);
+        const text = normalizePlainText(doc.sliceString(first.from, doc.line(number - 1).to));
+        if (text.includes(needle)) candidates.push({ from: first.from, line: firstLine, exact: text === needle });
+      }
+      firstLine = number + 1;
+    }
+  }
+  const preferred = candidates.find((candidate) => candidate.line === preferredLine);
+  if (preferred) return preferred.from;
+  const exact = candidates.filter((candidate) => candidate.exact);
+  const matches = exact.length ? exact : candidates;
+  return matches.length === 1 ? matches[0].from : null;
+}
+
+export function revealEditorTextTarget(
+  editorRoot: HTMLElement | null,
+  matchText: string,
+  { preferredLine, focus = true }: { preferredLine?: number; focus?: boolean } = {}
+): boolean {
+  const surface = findCmContentElement(editorRoot);
+  if (!(surface instanceof HTMLElement)) return false;
+  const view = EditorView.findFromDOM(surface);
+  if (!view) return false;
+  const anchor = resolveEditorTextTarget(view.state.doc, matchText, preferredLine);
+  if (anchor === null) return false;
+  view.dispatch({
+    ...(focus ? { selection: { anchor } } : {}),
+    effects: EditorView.scrollIntoView(anchor, { y: 'center' })
+  });
+  if (focus) view.focus();
+  return true;
 }

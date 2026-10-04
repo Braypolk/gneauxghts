@@ -161,7 +161,7 @@ describe('navigation selection controller', () => {
 
     expect(harness.openSearchResult).toHaveBeenCalledWith(
       harness.openContext,
-      harness.navigationContext,
+      expect.any(Function),
       expect.objectContaining({
         noteId: 'note-2',
         notePath: '/vault/Related.md',

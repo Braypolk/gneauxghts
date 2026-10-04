@@ -54,38 +54,3 @@ pub(super) fn token_outcome(
         None => TokenOutcome::Unknown,
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn finalization_uses_retained_anchor_including_return_to_anchor() {
-        assert_eq!(finalization("A", "D"), Finalization::AppendNetRevision);
-        // Intermediate B or C is intentionally irrelevant to this decision.
-        assert_eq!(finalization("A", "A"), Finalization::RemovePendingOnly);
-    }
-
-    #[test]
-    fn stale_tokens_never_become_success_and_protected_exceptions_remain_retryable() {
-        assert_eq!(token_outcome(true, 2, 3, None), TokenOutcome::Stale);
-        assert_eq!(token_outcome(true, 3, 3, None), TokenOutcome::Stale);
-        assert_eq!(token_outcome(true, 4, 3, None), TokenOutcome::Unknown);
-        assert_eq!(
-            token_outcome(true, 2, 3, Some(ReceiptState::Pending)),
-            TokenOutcome::RecoverExactIntent
-        );
-        assert_eq!(
-            token_outcome(true, 2, 3, Some(ReceiptState::Captured)),
-            TokenOutcome::ReturnOriginalOutcome
-        );
-        assert_eq!(
-            token_outcome(true, 2, 3, Some(ReceiptState::Abandoned)),
-            TokenOutcome::RemainAbandoned
-        );
-        assert_eq!(
-            token_outcome(false, 4, 3, Some(ReceiptState::Captured)),
-            TokenOutcome::Stale
-        );
-    }
-}

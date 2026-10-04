@@ -5,6 +5,13 @@ use query::ResolvedPeriod;
 const INVENTORY_BYTES: usize = 256_000;
 const INVENTORY_ROWS: usize = 50;
 
+#[derive(Clone)]
+pub(super) struct InventorySearch {
+    // Only immutable witnesses are reused. Search continuation still validates
+    // scope, canonical versions and every retained proof before each delivery.
+    notes: Arc<Vec<(String, Vec<(Candidate, Vec<InventoryActivity>)>)>>,
+}
+
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct InventoryActivity {
     pub(crate) evidence_id: String,
@@ -17,6 +24,7 @@ pub(crate) struct InventoryActivity {
 }
 #[derive(Clone, Debug, Serialize)]
 pub(crate) struct InventoryRow {
+    pub(crate) note_id: String,
     pub(crate) evidence_id: String,
     pub(crate) title: String,
     pub(crate) excerpt: String,
@@ -73,7 +81,7 @@ impl EvidenceSession {
         }
         request.limit = Some(request.limit.unwrap_or(8).clamp(1, 20));
         let include_history = request.include_history;
-        let (inventory, _, _) = self.inventory(state, allowed, excluded, request, resolved)?;
+        let inventory = self.inventory(state, allowed, excluded, request, resolved)?;
         let items: Vec<_> = inventory
             .rows
             .iter()
@@ -107,86 +115,66 @@ impl EvidenceSession {
         excluded: &HashSet<String>,
         mut request: SearchRequest,
         resolved: ResolvedPeriod,
-    ) -> Result<
-        (
-            InventoryResult,
-            Value,
-            Vec<(PassageCitation, PathBuf, String)>,
-        ),
-        ToolError,
-    > {
+    ) -> Result<InventoryResult, ToolError> {
         let limit = request
             .limit
             .unwrap_or(INVENTORY_ROWS)
             .clamp(1, INVENTORY_ROWS);
         let cursor = request.cursor.take();
+        let offset = if let Some(cursor) = &cursor {
+            let parts: Vec<_> = cursor.split(':').collect();
+            if parts.len() != 3 || parts[0] != "inventory" {
+                return Err(ToolError::invalid("Invalid inventory continuation"));
+            }
+            if !self.inventories.contains_key(parts[1]) {
+                return Err(ToolError::stale(
+                    "Inventory continuation expired; start a fresh search",
+                ));
+            }
+            request.cursor = Some(format!("{}:0", parts[1]));
+            parts[2]
+                .parse::<usize>()
+                .map_err(|_| ToolError::invalid("Invalid inventory continuation"))?
+        } else {
+            0
+        };
         let gathered = self.search_inner(state, allowed, excluded, request.clone(), true)?;
         let key = gathered["searchKey"]
             .as_str()
             .ok_or("Inventory search unavailable")?;
-        let ids = self
-            .searches
-            .get(key)
-            .ok_or("Inventory search unavailable")?
-            .2
-            .clone();
-        let mut normalized = request.clone();
-        self.normalize_request(&mut normalized)?;
-        normalized.limit = None;
-        let period = &resolved;
-        let mut notes: HashMap<String, Vec<(Candidate, Vec<InventoryActivity>)>> = HashMap::new();
-        for id in ids {
-            let c = self.candidates[&id].clone();
-            let times = activity(&c, period.after, period.before);
-            if !times.is_empty() {
-                notes
-                    .entry(c.citation.note_id.clone())
-                    .or_default()
-                    .push((c, times));
-            }
-        }
-        let mut notes: Vec<_> = notes.into_iter().collect();
-        notes.sort_by(|a, b| {
-            let latest = |n: &Vec<(Candidate, Vec<InventoryActivity>)>| {
-                n.iter()
-                    .flat_map(|(_, ts)| ts.iter().map(|t| t.end))
-                    .max()
-                    .unwrap_or(0)
-            };
-            latest(&b.1).cmp(&latest(&a.1)).then_with(|| a.0.cmp(&b.0))
-        });
-        let signature = hash(
-            &serde_json::to_string(&(
-                self.searches[key].0.clone(),
-                &normalized,
-                notes
-                    .iter()
-                    .map(|(id, candidates)| {
-                        (
-                            id,
-                            candidates
-                                .iter()
-                                .map(|(c, _)| &c.citation)
-                                .collect::<Vec<_>>(),
-                        )
-                    })
-                    .collect::<Vec<_>>(),
-                &resolved,
-            ))
-            .map_err(|e| e.to_string())?,
-        );
-        let offset = match cursor {
-            None => 0,
-            Some(cursor) => {
-                let parts: Vec<_> = cursor.split(':').collect();
-                if parts.len() != 3 || parts[0] != "inventory" || parts[1] != signature {
-                    return Err(ToolError::stale("Inventory continuation is stale or belongs to another query; start a fresh search"));
+        if !self.inventories.contains_key(key) {
+            let ids = self.searches[key].2.clone();
+            let period = &resolved;
+            let mut notes: HashMap<String, Vec<(Candidate, Vec<InventoryActivity>)>> =
+                HashMap::new();
+            for id in ids {
+                let c = self.candidates[&id].clone();
+                let times = activity(&c, period.after, period.before);
+                if !times.is_empty() {
+                    notes
+                        .entry(c.citation.note_id.clone())
+                        .or_default()
+                        .push((c, times));
                 }
-                parts[2]
-                    .parse::<usize>()
-                    .map_err(|_| "Invalid inventory continuation")?
             }
-        };
+            let mut notes: Vec<_> = notes.into_iter().collect();
+            notes.sort_by(|a, b| {
+                let latest = |n: &Vec<(Candidate, Vec<InventoryActivity>)>| {
+                    n.iter()
+                        .flat_map(|(_, ts)| ts.iter().map(|t| t.end))
+                        .max()
+                        .unwrap_or(0)
+                };
+                latest(&b.1).cmp(&latest(&a.1)).then_with(|| a.0.cmp(&b.0))
+            });
+            self.inventories.insert(
+                key.to_string(),
+                InventorySearch {
+                    notes: Arc::new(notes),
+                },
+            );
+        }
+        let notes = self.inventories[key].notes.clone();
         let mut gaps: Vec<String> = gathered["coverage"]["gaps"]
             .as_array()
             .into_iter()
@@ -195,8 +183,6 @@ impl EvidenceSession {
             .collect();
         let mut complete = gathered["coverage"]["complete"] == true;
         let mut rows = Vec::new();
-        let mut payload_items = Vec::new();
-        let mut sources = Vec::new();
         let total = notes.len();
         if offset > total {
             return Err(ToolError::invalid("Invalid inventory continuation offset"));
@@ -204,7 +190,8 @@ impl EvidenceSession {
         let mut next_offset = offset;
         let mut inventory_bytes = 0;
         let mut stop_reasons = Vec::new();
-        for (_, mut candidates) in notes.into_iter().skip(offset) {
+        for (_, candidates) in notes.iter().skip(offset) {
+            let mut candidates = candidates.clone();
             check_cancelled(&request)?;
             if rows.len() >= limit {
                 complete = false;
@@ -238,6 +225,7 @@ impl EvidenceSession {
                 .min_by_key(|t| (t.uncertain, std::cmp::Reverse(t.end)))
                 .ok_or("Inventory time evidence unavailable")?;
             let row = InventoryRow {
+                note_id: c.citation.note_id.clone(),
                 evidence_id: c.citation.id.clone(),
                 title: c.title.clone(),
                 excerpt: bounded(&c.citation.excerpt, 480),
@@ -267,8 +255,7 @@ impl EvidenceSession {
                 gaps.push("Inventory result allowance reached; continue for more notes".into());
                 break;
             }
-            let Some((path, title)) = validate_citation(state, &c.citation, allowed, excluded)
-            else {
+            let Some(_) = validate_citation(state, &c.citation, allowed, excluded) else {
                 return Err(ToolError::stale(
                     "Evidence changed or is no longer allowed; search again",
                 ));
@@ -276,13 +263,10 @@ impl EvidenceSession {
             check_cancelled(&request)?;
             inventory_bytes += size;
             self.admit(c.citation.clone());
-            payload_items.push(json!({"evidenceId":c.citation.id,"excerpt":c.citation.excerpt}));
-            sources.push((c.citation, path, title));
             rows.push(row);
             next_offset += 1;
         }
-        let continuation =
-            (next_offset < total).then(|| format!("inventory:{signature}:{next_offset}"));
+        let continuation = (next_offset < total).then(|| format!("inventory:{key}:{next_offset}"));
         if continuation.is_some() {
             complete = false;
         }
@@ -300,19 +284,15 @@ impl EvidenceSession {
         });
         gaps.sort();
         gaps.dedup();
-        Ok((
-            InventoryResult {
-                query: resolved,
-                rows,
-                page_offset: offset,
-                complete,
-                gaps,
-                continuation,
-                budgets,
-            },
-            json!({"items":payload_items}),
-            sources,
-        ))
+        Ok(InventoryResult {
+            query: resolved,
+            rows,
+            page_offset: offset,
+            complete,
+            gaps,
+            continuation,
+            budgets,
+        })
     }
 }
 

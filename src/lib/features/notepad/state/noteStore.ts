@@ -1,3 +1,4 @@
+import { documentRegistry } from '../document/documentRegistry';
 import {
   createEmptySessionSnapshot,
   type ForgottenNote,
@@ -270,7 +271,9 @@ export function replaceReferencedNoteWithFreshDraft<TPaneId extends string>(
     documentHandle,
     freshDraft.handle
   );
-  delete state.documentsByHandle[documentHandle];
+  if (!documentRegistry.isReviewing(documentHandle)) {
+    delete state.documentsByHandle[documentHandle];
+  }
   rebuildCanonicalDocumentLookup(state);
   return freshDraft;
 }
@@ -280,7 +283,7 @@ export function removeNoteIfUnreferenced<TPaneId extends string>(
   references: PaneDocumentReferences<TPaneId>,
   documentHandle: DocumentHandle
 ) {
-  if (references.isDocumentReferenced(documentHandle)) return false;
+  if (references.isDocumentReferenced(documentHandle) || documentRegistry.isReviewing(documentHandle)) return false;
   delete state.documentsByHandle[documentHandle];
   rebuildCanonicalDocumentLookup(state);
   return true;

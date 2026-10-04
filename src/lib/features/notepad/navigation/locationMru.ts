@@ -132,17 +132,16 @@ export async function loadPersistedChatLocation(): Promise<ChatNavLocation | nul
 
   const legacy = loadLegacyLocalStorageChat();
   if (legacy) {
-    await persistChatLocation(legacy);
-    clearLegacyLocalStorageChat();
+    if (await persistChatLocation(legacy)) clearLegacyLocalStorageChat();
     return legacy;
   }
   return null;
 }
 
 /** Persist the thought-partner pointer into app SQLite state. */
-export async function persistChatLocation(location: ChatNavLocation): Promise<void> {
+export async function persistChatLocation(location: ChatNavLocation): Promise<boolean> {
   if (!location.conversationId) {
-    return;
+    return false;
   }
   try {
     await invoke('set_last_chat_location', {
@@ -150,8 +149,10 @@ export async function persistChatLocation(location: ChatNavLocation): Promise<vo
       contextNoteId: location.contextNoteId,
       contextNotePath: location.contextNotePath
     });
+    return true;
   } catch {
-    // In-memory MRU still works if persistence fails.
+    // Keep legacy data available for a later successful migration.
+    return false;
   }
 }
 
@@ -298,6 +299,7 @@ export function createLocationMruStore<TPaneId extends string>() {
     const list = listFor(paneId);
     const seeded = [...list];
     for (const location of locations) {
+      if (seeded.length >= MAX_LOCATION_MRU) break;
       if (!isRestorableLocation(location)) {
         continue;
       }

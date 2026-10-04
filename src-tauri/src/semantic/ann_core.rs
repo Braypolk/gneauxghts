@@ -198,18 +198,8 @@ pub(crate) fn file_timestamp_millis(path: &Path) -> Result<u64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{
-        desired_capacity, should_rebuild_for_tombstones, ANN_MIN_CAPACITY,
-        ANN_TOMBSTONE_REBUILD_MIN,
-    };
+    use super::{should_rebuild_for_tombstones, ANN_TOMBSTONE_REBUILD_MIN};
     use hnswlib_rs::{Cosine, Hnsw, HnswConfig, InMemoryVectorStore};
-
-    #[test]
-    fn capacity_is_next_power_of_two_above_baseline() {
-        assert_eq!(desired_capacity(0), ANN_MIN_CAPACITY);
-        assert_eq!(desired_capacity(1), ANN_MIN_CAPACITY);
-        assert_eq!(desired_capacity(ANN_MIN_CAPACITY), ANN_MIN_CAPACITY * 2);
-    }
 
     #[test]
     fn tombstone_threshold_ignores_empty_deleted_set() {

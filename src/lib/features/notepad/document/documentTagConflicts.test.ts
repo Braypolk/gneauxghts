@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
 import { createDocumentConflictController } from './documentConflictController';
 import { createNotepadPersistenceController } from '../orchestration/persistenceController';
-import { createNoteCommandController } from '../orchestration/noteCommandController';
+import { createNotepadComposition } from '../orchestration/notepadCompositionTestSupport';
 import { createNoteDraftState, createNotepadState, bindNotepadStateToVault } from '../state/noteStore';
 import { createSessionSnapshot, readNoteSession } from '../session/session';
 import { documentRegistry } from './documentRegistry';
@@ -124,14 +124,22 @@ describe('external YAML diagnostics refresh', () => {
     'adopts a tags error change from %s to %s with unchanged authored content', async (before, after) => {
       // Start with a session-loaded note, whose saved authored baseline does
       // not contain parsing diagnostics. Both snapshots have empty tag values.
-      const h = setup(before, []);
-      vi.mocked(readNoteSession).mockResolvedValue({ ...h.getDisk(), tags: [], tagsError: after });
-      const commands = createNoteCommandController({ base: { persistence: h.persistence, documentEditing: h.editing }, transitions: {} } as never);
-      await expect(commands.refreshDocumentFromDisk(h.note, { source: 'watcher' })).resolves.toBe('refreshed');
-      expect(h.note.working.tagsError).toBe(after);
-      expect(h.persistence.hasCleanBuffer(h.note)).toBe(true);
-      expect(h.save).not.toHaveBeenCalled();
-      await expect(commands.refreshDocumentFromDisk(h.note)).resolves.toBe('unchanged');
+      const initial = createSessionSnapshot({
+        noteId: 'note', path: '/vault/Note.md', title: 'Note', markdown: 'body', tags: [], tagsError: before
+      });
+      const f = createNotepadComposition(initial);
+      vi.mocked(readNoteSession).mockResolvedValue({
+        noteId: 'note', path: '/vault/Note.md', title: 'Note', markdown: 'body', tags: [], tagsError: after
+      });
+      try {
+        await expect(f.commands.refreshDocumentFromDisk(f.initialDocument, { source: 'watcher' })).resolves.toBe('refreshed');
+        expect(f.initialDocument.working.tagsError).toBe(after);
+        expect(f.persistence.hasCleanBuffer(f.initialDocument)).toBe(true);
+        expect(f.save).not.toHaveBeenCalled();
+        await expect(f.commands.refreshDocumentFromDisk(f.initialDocument)).resolves.toBe('unchanged');
+      } finally {
+        await f.dispose();
+      }
     }
   );
 });

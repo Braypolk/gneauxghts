@@ -12,6 +12,8 @@ pub(crate) mod note_ann;
 pub(crate) mod related;
 mod runtime_install;
 pub(crate) mod similarity;
+#[cfg(test)]
+mod test_support;
 
 use self::{
     activity::BackgroundWorkGate,
@@ -189,8 +191,6 @@ pub(super) struct RuntimeState {
     progress_current: usize,
     progress_total: usize,
     rebuild_reason: Option<String>,
-    last_job_scanned_count: usize,
-    last_job_edges_dirtied: bool,
     edges_stale: bool,
 }
 
@@ -208,8 +208,6 @@ impl Default for RuntimeState {
             progress_current: 0,
             progress_total: 0,
             rebuild_reason: None,
-            last_job_scanned_count: 0,
-            last_job_edges_dirtied: false,
             edges_stale: false,
         }
     }
@@ -996,6 +994,7 @@ impl SemanticState {
         exclude_note_path: Option<&str>,
         limit: usize,
         allowed_paths: Option<&[String]>,
+        document_kind: Option<crate::note::DocumentKind>,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => state.semantic_matches_for_text_scoped(
@@ -1003,6 +1002,7 @@ impl SemanticState {
                 exclude_note_path,
                 limit,
                 allowed_paths,
+                document_kind,
             ),
             SemanticStateInner::Disabled(_) => Ok(Vec::new()),
         }
@@ -1240,7 +1240,7 @@ impl ActiveSemanticState {
         exclude_note_path: Option<&str>,
         limit: usize,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
-        self.semantic_matches_for_text_scoped(text, exclude_note_path, limit, None)
+        self.semantic_matches_for_text_scoped(text, exclude_note_path, limit, None, None)
     }
 
     fn semantic_matches_for_text_scoped(
@@ -1249,6 +1249,7 @@ impl ActiveSemanticState {
         exclude_note_path: Option<&str>,
         limit: usize,
         allowed_paths: Option<&[String]>,
+        document_kind: Option<crate::note::DocumentKind>,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
         if allowed_paths.is_some_and(|paths| paths.is_empty()) {
             return Ok(Vec::new());
@@ -1259,7 +1260,10 @@ impl ActiveSemanticState {
             return Ok(Vec::new());
         }
         let ann_status = self.ann.status_snapshot();
-        if allowed_paths.is_none() && (!ann_status.loaded || ann_status.indexed_chunks == 0) {
+        if allowed_paths.is_none()
+            && document_kind.is_none()
+            && (!ann_status.loaded || ann_status.indexed_chunks == 0)
+        {
             self.debug
                 .record_timing("ann", "query_skipped_unavailable", None, 0, |metrics| {
                     metrics.ann_query_skipped_count += 1;
@@ -1275,20 +1279,44 @@ impl ActiveSemanticState {
             .ok_or_else(|| "Unable to embed semantic query".to_string())?;
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
+        // Admit the requested document kind before any candidate limit. Filtering
+        // an overfetched ANN result afterward can still starve ordinary notes when
+        // chat excerpts dominate the nearest neighbors.
         let candidate_labels = if let Some(paths) = allowed_paths {
             let mut statement = connection
-                .prepare("SELECT ann_label FROM chunks WHERE note_path = ?1")
+                .prepare(
+                    "SELECT c.ann_label FROM chunks c JOIN notes n ON n.path = c.note_path
+                    WHERE c.note_path = ?1 AND (?2 IS NULL OR n.document_kind = ?2)",
+                )
                 .map_err(|err| err.to_string())?;
             let mut labels = Vec::new();
             for path in paths {
                 let rows = statement
-                    .query_map([path], |row| row.get::<_, u64>(0))
+                    .query_map(
+                        rusqlite::params![
+                            path,
+                            document_kind.map(|kind| kind.as_frontmatter_value())
+                        ],
+                        |row| row.get::<_, u64>(0),
+                    )
                     .map_err(|err| err.to_string())?;
                 for label in rows {
                     labels.push(label.map_err(|err| err.to_string())?);
                 }
             }
             labels
+        } else if let Some(kind) = document_kind {
+            let mut statement = connection
+                .prepare(
+                    "SELECT c.ann_label FROM chunks c JOIN notes n ON n.path = c.note_path
+                 WHERE n.document_kind = ?1",
+                )
+                .map_err(|err| err.to_string())?;
+            let rows = statement
+                .query_map([kind.as_frontmatter_value()], |row| row.get::<_, u64>(0))
+                .map_err(|err| err.to_string())?;
+            rows.collect::<Result<Vec<_>, _>>()
+                .map_err(|err| err.to_string())?
         } else {
             self.ann
                 .search(&query_embedding, limit.saturating_mul(8).max(64))?
@@ -1482,7 +1510,7 @@ fn spawn_ann_initialize_and_scan_in_background(context: AnnStartupContext) {
 #[cfg(test)]
 mod health_tests {
     use super::*;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use crate::test_support::TestDir;
 
     struct StatusEmbeddingProvider;
 
@@ -1492,7 +1520,7 @@ mod health_tests {
             texts: &[String],
             _kind: EmbeddingInputKind,
         ) -> Result<Vec<Vec<f32>>, String> {
-            Ok(vec![vec![0.0; 3]; texts.len()])
+            Ok(vec![vec![1.0, 0.0, 0.0]; texts.len()])
         }
 
         fn prepare(&self) -> Result<(), String> {
@@ -1518,51 +1546,32 @@ mod health_tests {
         fn shutdown(&self) {}
     }
 
-    struct StatusTestDir(PathBuf);
-
-    impl StatusTestDir {
-        fn new() -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!("gneauxghts-semantic-status-{unique}"));
-            fs::create_dir_all(&path).expect("create status test directory");
-            Self(path)
-        }
-    }
-
-    impl Drop for StatusTestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.0);
-        }
-    }
-
     fn active_status_state(
         runtime: RuntimeState,
     ) -> (
         SemanticState,
         std::sync::mpsc::Receiver<indexer::WorkerSignal>,
-        StatusTestDir,
+        TestDir,
     ) {
-        let temp = StatusTestDir::new();
-        let db_path = temp.0.join("semantic.sqlite3");
+        let temp = TestDir::new("semantic-status");
+        let db_path = temp.path().join("semantic.sqlite3");
         let connection = open_database(&db_path).expect("open status database");
         ensure_schema(&connection).expect("create status schema");
         drop(connection);
         let debug = Arc::new(SemanticDebugState::new());
         let ann = Arc::new(
-            AnnIndexState::new(temp.0.join("ann"), 3, debug.clone()).expect("create status ann"),
+            AnnIndexState::new(temp.path().join("ann"), 3, debug.clone())
+                .expect("create status ann"),
         );
         let note_ann = Arc::new(
-            NoteAnnIndexState::new(temp.0.join("note-ann"), 3, "status-test".to_string())
+            NoteAnnIndexState::new(temp.path().join("note-ann"), 3, "status-test".to_string())
                 .expect("create status note ann"),
         );
         let (work_queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
         let state = SemanticState {
             inner: SemanticStateInner::Active(ActiveSemanticState {
                 db_path,
-                atlas_cache_dir: temp.0.join("atlas"),
+                atlas_cache_dir: temp.path().join("atlas"),
                 settings: Arc::new(Mutex::new(SemanticSettings::default())),
                 provider: Arc::new(StatusEmbeddingProvider),
                 runtime: Arc::new(Mutex::new(runtime)),
@@ -1577,6 +1586,106 @@ mod health_tests {
             }),
         };
         (state, signals, temp)
+    }
+
+    #[test]
+    fn scoped_query_admits_document_kind_before_candidate_limits() {
+        use crate::note::DocumentKind;
+        use crate::semantic::chunking::SemanticChunk;
+        use crate::semantic::db::{upsert_note_chunks, SemanticNoteMetadata};
+
+        let (state, _signals, temp) = active_status_state(RuntimeState::default());
+        let SemanticStateInner::Active(active) = &state.inner else {
+            unreachable!()
+        };
+        let mut connection = crate::semantic::test_support::database(&active.db_path);
+        let mut paths = Vec::new();
+        // More perfect chat matches than either the requested top-k or the ANN
+        // overfetch floor. The ordinary note is relevant but ranks after them.
+        for (name, kind, count, embedding) in [
+            ("chat", DocumentKind::ChatIndex, 80, vec![1.0, 0.0, 0.0]),
+            ("ordinary", DocumentKind::Note, 1, vec![0.8, 0.6, 0.0]),
+        ] {
+            let path = temp.path().join(format!("{name}.md"));
+            fs::write(&path, name).unwrap();
+            let path = path.to_string_lossy().into_owned();
+            let chunks = (0..count)
+                .map(|ordinal| SemanticChunk {
+                    ordinal,
+                    section_label: name.into(),
+                    text: format!("{name} passage {ordinal}"),
+                    text_hash: format!("{name}-{ordinal}"),
+                    start_line: ordinal + 1,
+                    end_line: ordinal + 1,
+                    block_anchor: None,
+                })
+                .collect::<Vec<_>>();
+            upsert_note_chunks(
+                &mut connection,
+                &path,
+                name,
+                1,
+                name,
+                "",
+                "",
+                kind,
+                &SemanticNoteMetadata::default(),
+                &chunks,
+                &vec![embedding; count],
+            )
+            .unwrap();
+            paths.push(path);
+        }
+        active.ann.rebuild_from_connection(&connection).unwrap();
+        let ordinary = state
+            .semantic_matches_for_text_scoped("query", None, 1, None, Some(DocumentKind::Note))
+            .unwrap();
+        assert_eq!(ordinary.len(), 1);
+        assert_eq!(ordinary[0].note_path, paths[1]);
+        assert_eq!(ordinary[0].document_kind, DocumentKind::Note);
+        let all = state
+            .semantic_matches_for_text_scoped("query", None, 1, None, None)
+            .unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].document_kind, DocumentKind::ChatIndex);
+        assert_eq!(
+            state.semantic_matches_for_text("query", None, 1).unwrap()[0].document_kind,
+            DocumentKind::ChatIndex
+        );
+        let chat_path_only = &paths[..1];
+        assert!(state
+            .semantic_matches_for_text_scoped(
+                "query",
+                None,
+                1,
+                Some(chat_path_only),
+                Some(DocumentKind::Note)
+            )
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            state
+                .semantic_matches_for_text_scoped(
+                    "query",
+                    None,
+                    1,
+                    Some(&paths),
+                    Some(DocumentKind::Note)
+                )
+                .unwrap()[0]
+                .note_path,
+            paths[1]
+        );
+        assert!(state
+            .semantic_matches_for_text_scoped(
+                "query",
+                Some(&paths[1]),
+                1,
+                None,
+                Some(DocumentKind::Note)
+            )
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

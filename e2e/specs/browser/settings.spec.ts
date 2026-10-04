@@ -117,26 +117,26 @@ describe('searchable settings workspace', () => {
     status.modelAvailable = false;
     status.model.runtimeBinaryPath = null;
     status.model.error = null;
-    await browser.execute((initial) => {
-      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-      const original = native.invoke;
-      native.invoke = async (cmd, args) => {
-        const result = await original(cmd, args);
-        if (cmd === 'get_settings_view') return { ...(result as object), semanticStatus: initial, semanticSettings: initial.settings };
-        if (cmd === 'get_semantic_status') return initial;
-        if (cmd === 'download_semantic_embedding_model') {
+    await browser.execute(async (initial) => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<Record<string, unknown>> };
+      const view = await native.invoke('get_settings_view');
+      Object.assign(window.__GNEAUXGHTS_E2E_COMMANDS__!, {
+        get_settings_view: () => ({ ...view, semanticStatus: initial, semanticSettings: initial.settings }),
+        get_semantic_status: () => initial,
+        download_semantic_embedding_model: async () => {
           await new Promise(resolve => setTimeout(resolve, 1500));
           initial.model.runtimeBinaryPath = '/app/semantic/runtime/llama-server';
           return { alreadyPresent: false, path: '/app/model.gguf' };
-        }
-        if (cmd === 'prepare_semantic_model') {
+        },
+        prepare_semantic_model: () => {
           initial.modelAvailable = true;
           initial.model.available = true;
           initial.model.ready = true;
           initial.model.loading = false;
-        }
-        return result;
-      };
+          return null;
+        },
+        retry_semantic_index: () => null
+      });
     }, status);
     await category('search').click();
     await $('button[aria-label="Refresh semantic search"]').click();
@@ -159,37 +159,34 @@ describe('searchable settings workspace', () => {
     const contract = JSON.parse(readFileSync('src-tauri/test-fixtures/contracts/app-events.json', 'utf8'));
     const status = contract.events.find((event: { channel: string }) => event.channel === 'semantic-status-changed').payload as SemanticStatus;
     status.lastIndexedAtMillis = Date.now() - 60_000;
-    await browser.execute((initial) => {
-      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-      const original = native.invoke;
-      const status = initial;
-      native.invoke = async (cmd, args) => {
-        const result = await original(cmd, args);
-        if (cmd === 'get_settings_view') return { ...(result as object), semanticStatus: status, semanticSettings: status.settings };
-        if (cmd === 'get_semantic_status') return status;
-        if (cmd === 'set_semantic_settings') {
-          status.settings = (args as { settings: typeof status.settings }).settings;
+    await browser.execute(async (status) => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<Record<string, unknown>> };
+      const view = await native.invoke('get_settings_view');
+      Object.assign(window.__GNEAUXGHTS_E2E_COMMANDS__!, {
+        get_settings_view: () => ({ ...view, semanticStatus: status, semanticSettings: status.settings }),
+        get_semantic_status: () => status,
+        set_semantic_settings: (args: Record<string, unknown>) => {
+          status.settings = args.settings as typeof status.settings;
           return status.settings;
-        }
-        if (cmd === 'pause_semantic_indexing' || cmd === 'resume_semantic_indexing') {
-          status.indexingPaused = cmd === 'pause_semantic_indexing';
-          status.health = status.indexingPaused ? 'paused' : 'fresh';
-        }
-        if (cmd === 'download_semantic_embedding_model') return { alreadyPresent: true, path: '/app/models/jina.gguf' };
-        return result;
-      };
+        },
+        pause_semantic_indexing: () => { status.indexingPaused = true; status.health = 'paused'; return null; },
+        resume_semantic_indexing: () => { status.indexingPaused = false; status.health = 'fresh'; return null; },
+        download_semantic_embedding_model: () => ({ alreadyPresent: true, path: '/app/models/jina.gguf' }),
+        prepare_semantic_model: () => null,
+        retry_semantic_index: () => null,
+        clear_atlas_cache: () => null,
+        rebuild_semantic_index: () => null
+      });
     }, status);
     await category('search').click();
     await $('button[aria-label="Refresh semantic search"]').click();
     await $('h3=Ready to use').waitForDisplayed();
     expect(await $('button=Rebuild semantic index').isDisplayed()).toBe(false);
     expect(await $('dt=Runtime').isDisplayed()).toBe(false);
-    await browser.saveScreenshot('/tmp/gneauxghts-semantic-redesign.png');
     await category('appearance').click();
     await $('label:has(input[name="theme-preference"][value="dark"])').click();
     await category('search').click();
     await browser.waitUntil(async () => browser.execute(() => getComputedStyle(document.querySelector('.settings-nav-item.active')!).color === 'oklch(1 0 0)'));
-    await browser.saveScreenshot('/tmp/gneauxghts-semantic-dark.png');
     await category('appearance').click();
     await $('label:has(input[name="theme-preference"][value="light"])').click();
     await category('search').click();
@@ -248,7 +245,6 @@ describe('searchable settings workspace', () => {
     await $('[data-settings-result="diagnostics"]').click();
     await expectDestination('semantic-diagnostics');
     await $('dd=/app/llama-server').waitForDisplayed();
-    await browser.saveScreenshot('/tmp/gneauxghts-semantic-diagnostics.png');
     try {
       await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
       await category('search').scrollIntoView();
@@ -257,7 +253,6 @@ describe('searchable settings workspace', () => {
         document.querySelectorAll<HTMLDetailsElement>('.semantic-disclosure').forEach(details => { details.open = false; });
         document.querySelector<HTMLElement>('.settings-content')!.scrollTop = 0;
       });
-      await browser.saveScreenshot('/tmp/gneauxghts-semantic-mobile.png');
       const fits = await browser.execute(() => {
         const panel = document.querySelector<HTMLElement>('.semantic-panel')!;
         return { width: panel.clientWidth, scroll: panel.scrollWidth };
@@ -275,10 +270,8 @@ describe('searchable settings workspace', () => {
   it('retains theme choices and fits every category on a narrow screen', async () => {
     await $('label:has(input[name="theme-preference"][value="light"])').click();
     await browser.waitUntil(async () => browser.execute(() => getComputedStyle(document.querySelector('.settings-nav-item.active')!).color === 'oklch(0 0 0)'));
-    await browser.saveScreenshot('/tmp/gneauxghts-settings-light.png');
     await $('label:has(input[name="theme-preference"][value="dark"])').click();
     await browser.waitUntil(async () => browser.execute(() => getComputedStyle(document.querySelector('.settings-nav-item.active')!).color === 'oklch(1 0 0)'));
-    await browser.saveScreenshot('/tmp/gneauxghts-settings-dark.png');
     await browser.refresh();
     await search().waitForDisplayed();
     expect(await $('input[name="theme-preference"][value="dark"]').isSelected()).toBe(true);
@@ -287,11 +280,9 @@ describe('searchable settings workspace', () => {
     for (const id of ['ai', 'search', 'vault', 'history', 'forgotten', 'shortcuts']) {
       await category(id).click();
       if (id === 'ai') await $('#provider-api-key').waitForDisplayed();
-      await browser.saveScreenshot(`/tmp/gneauxghts-settings-${id}.png`);
     }
     await search().setValue('privacy');
     await $('[data-settings-result="excluded"]').waitForDisplayed();
-    await browser.saveScreenshot('/tmp/gneauxghts-settings-results.png');
     await category('appearance').click();
     const original = await browser.getWindowSize();
     try {
@@ -299,7 +290,6 @@ describe('searchable settings workspace', () => {
       // this exercises a real phone width rather than a clamped 500px window.
       await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
       expect(await browser.execute(() => innerWidth)).toBe(390);
-      await browser.saveScreenshot('/tmp/gneauxghts-settings-mobile.png');
       await installChatFixture();
       for (const id of ['appearance', 'shortcuts', 'forgetting', 'ai', 'search', 'vault', 'history', 'forgotten']) {
         const button = await category(id);

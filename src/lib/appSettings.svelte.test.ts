@@ -63,4 +63,31 @@ describe('forgotten-note retention preference', () => {
     expect(appSettings.forgottenNoteRetentionPreference).toBe(30);
     expect(storage.get('gneauxghts.forgotten-note-retention-days')).toBe('1');
   });
+  it('serializes set/set/load and lets the queue recover after a rejected write', async () => {
+    let rejectFirst!: (error: Error) => void;
+    let resolveSecond!: () => void;
+    invokeMock.mockReturnValueOnce(new Promise<void>((_yes, no) => { rejectFirst = no; }))
+      .mockReturnValueOnce(new Promise<void>(yes => { resolveSecond = yes; }))
+      .mockResolvedValueOnce(1);
+    const { appSettings, setForgottenNoteRetentionPreference: set, loadForgottenNoteRetentionPreference: load } = await import('./appSettings.svelte');
+    const first = set(30); const firstError = expect(first).rejects.toThrow('offline');
+    const second = set(1); const loading = load();
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(1));
+    expect(appSettings.forgottenNoteRetentionPreference).toBe(7);
+    rejectFirst(new Error('offline')); await firstError;
+    await vi.waitFor(() => expect(invokeMock).toHaveBeenCalledTimes(2));
+    expect(invokeMock.mock.calls[1]).toEqual(['set_forgotten_note_retention_days', { retentionDays: 1 }]);
+    expect(appSettings.forgottenNoteRetentionPreference).toBe(7);
+    resolveSecond(); await second; await loading;
+    expect(invokeMock.mock.calls.map(call => call[0])).toEqual(['set_forgotten_note_retention_days', 'set_forgotten_note_retention_days', 'get_forgotten_note_retention_days']);
+    expect(appSettings.forgottenNoteRetentionPreference).toBe(1);
+  });
+
+  it.each([0, 2, 365, null, '30'])('rejects an invalid backend preference %s without changing the visible value', async (value) => {
+    const { appSettings, loadForgottenNoteRetentionPreference } = await import('./appSettings.svelte');
+    invokeMock.mockResolvedValueOnce(value);
+    await expect(loadForgottenNoteRetentionPreference()).rejects.toThrow('Unsupported forgotten-note retention preference');
+    expect(appSettings.forgottenNoteRetentionPreference).toBe(7);
+  });
+
 });

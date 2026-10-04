@@ -1,34 +1,21 @@
+import { createCommandView } from './commandTestSupport';
 import { describe, expect, it } from 'vitest';
-import { EditorState, Transaction, type TransactionSpec } from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
 
 import { surroundRange } from './selectionSurround';
 import { createMarkdownLanguage } from '$lib/features/notepad/markdown/markdownLanguage';
 
 function runSurround(doc: string, from: number, to: number, trigger: string) {
-  let state = EditorState.create({
+  const { view, transactions: dispatched } = createCommandView({
     doc,
     selection: { anchor: from, head: to },
     extensions: [createMarkdownLanguage()]
   });
-  const dispatched: Transaction[] = [];
-  const view = {
-    get state() {
-      return state;
-    },
-    dispatch: (spec: Transaction | TransactionSpec) => {
-      const transaction = spec instanceof Transaction ? spec : state.update(spec);
-      state = transaction.state;
-      dispatched.push(transaction);
-    },
-    focus: () => {}
-  } as unknown as EditorView;
 
   const handled = surroundRange(view, from, to, trigger);
   const result =
     handled && dispatched.length === 1 ? dispatched[0].state.doc.toString() : doc;
   const selection =
-    handled && dispatched.length === 1 ? dispatched[0].state.selection.main : state.selection.main;
+    handled && dispatched.length === 1 ? dispatched[0].state.selection.main : view.state.selection.main;
 
   return { handled, doc: result, from: selection.from, to: selection.to };
 }

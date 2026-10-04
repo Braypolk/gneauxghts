@@ -34,7 +34,17 @@ async function edit(markdown: string) {
   await browser.execute((element: HTMLElement, text: string) => {
     element.focus();
     document.execCommand('selectAll');
-    if (!document.execCommand('insertText', false, text)) throw new Error('Native editor input failed');
+    if (!document.execCommand('insertText', false, text)) {
+      throw new Error(`Native editor input failed: ${JSON.stringify({
+        connected: element.isConnected,
+        editable: element.isContentEditable,
+        busy: element.closest('[data-testid=note-editor]')?.getAttribute('aria-busy'),
+        active: document.activeElement?.outerHTML.slice(0, 500),
+        rect: element.getBoundingClientRect().toJSON(),
+        inert: Boolean(element.closest('[inert]')),
+        selection: String(window.getSelection())
+      })}`);
+    }
   }, editor, markdown);
 }
 
@@ -91,9 +101,17 @@ describe('native finalized Editing Windows', () => {
     expect(await $('[data-testid="historical-revision-diff"]').getText()).toContain('Retained endpoint');
     expect(await $('[data-testid="historical-revision-diff"]').getText()).not.toContain('Discarded intermediate');
     expect(await $('[data-testid="history-net-summary"]').getText()).toContain('1 line added');
-    await $(`[data-revision-id="${window.revisionId}"]`).doubleClick();
-    await $('[aria-label="Revision name"]').setValue('Window milestone');
-    await $('button=Add name').click();
+    const rename = await $('[aria-label="Selected version"]').$('button=Rename');
+    await rename.scrollIntoView();
+    await rename.waitForClickable();
+    await rename.click();
+    const name = await $('[aria-label="Revision name"]');
+    await name.waitForDisplayed();
+    await name.waitForEnabled();
+    await name.setValue('Window milestone');
+    const addName = await $('button=Add name');
+    await addName.waitForEnabled();
+    await addName.click();
     await browser.waitUntil(async () => (await $('[aria-label="Note timeline"]').getText()).includes('Window milestone'));
     await closeHistory();
     await browser.waitUntil(async () => (await state()).editor?.ownsWebviewFocus === true);
@@ -105,8 +123,16 @@ describe('native finalized Editing Windows', () => {
 
     await edit('Later window endpoint');
     await openHistory();
-    await $(`[data-revision-id="${window.revisionId}"]`).click();
-    await $('button=Restore this version…').click();
+    const revision = await $(`[data-revision-id="${window.revisionId}"]`);
+    await browser.waitUntil(async () => (await revision.getAttribute('aria-disabled')) === 'false');
+    await revision.click();
+    await browser.waitUntil(async () =>
+      (await revision.getAttribute('aria-pressed')) === 'true' &&
+      (await revision.getAttribute('aria-disabled')) === 'false');
+    const restore = await $('button=Restore this version…');
+    await restore.scrollIntoView();
+    await restore.waitForClickable();
+    await restore.click();
     await $('[aria-label="Restore version preview"]').waitForExist();
     expect(await $('[aria-label="Restore version preview"]').getText()).toContain('Retained endpoint');
     await $('button=Restore version').click();
@@ -114,14 +140,14 @@ describe('native finalized Editing Windows', () => {
     await closeHistory();
     expect((await state()).editor?.markdown).toBe('Retained endpoint');
     // Restore starts a fresh undo history in both shared editors.
-    await browser.keys(['Meta', 'z']);
+    await browser.keys(['Meta', 'z', '\uE000']);
     expect((await state()).editor?.markdown).toBe('Retained endpoint');
   });
 });
 
-describe('native editing responsiveness during autosave and deadline sealing', () => {
+(process.env.GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT === '1' ? describe : describe.skip)('native editing responsiveness observations during autosave and deadline sealing', () => {
   before(async () => { await browser.switchToWindow('main'); });
-  it('keeps a 1 MiB editor responsive across real saves and a worker deadline', async () => {
+  it('records a 1 MiB editor across real saves and a worker deadline', async () => {
     await browser.setTimeout({ script: 120_000 });
     while ((await state()).paneIds.length > 1) {
       const current = await state();
@@ -140,75 +166,103 @@ describe('native editing responsiveness during autosave and deadline sealing', (
     await invoke('plugin:window|set_focus', { label: 'main' });
     await browser.waitUntil(() => browser.execute(() => document.visibilityState === 'visible'), { timeout: 10_000, timeoutMsg: 'Native paint measurement requires a visible webview' });
     await browser.execute(() => {
-      const sample = { running: true, started: performance.now(), last: performance.now(), gaps: [] as number[], events: [] as { kind: string; at: number }[] };
+      const sample = { running: true, frameId: 0, started: performance.now(), last: performance.now(), gaps: [] as number[], events: [] as { kind: string; at: number }[] };
       (window as unknown as { __windowFrames: typeof sample }).__windowFrames = sample;
       const frame = (now: number) => {
+        if (!sample.running) return;
         sample.gaps.push(now - sample.last); sample.last = now;
-        if (sample.running) requestAnimationFrame(frame);
+        if (sample.running) sample.frameId = requestAnimationFrame(frame);
       };
-      requestAnimationFrame(frame);
+      sample.frameId = requestAnimationFrame(frame);
     });
-    const paints: number[] = []; const saves: number[] = [];
-    for (let index = 1; index <= 12; index++) {
-      const start = Date.now();
-      console.log('WINDOW_NATIVE_PROGRESS', index, 'input');
-      // Native editor event, one changed first line; actual one-second autosave.
-      const inputResult = await browser.executeAsync((index, done: (value: { elapsed?: number; error?: string }) => void) => {
-        const timeout = setTimeout(() => done({ error: `input frame timeout; visibility=${document.visibilityState}; focus=${document.hasFocus()}; frames=${(window as unknown as { __windowFrames: { gaps: number[] } }).__windowFrames.gaps.length}` }), 5000);
-        try {
-        const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
-        editor.focus();
-        const selection = window.getSelection()!;
-        const range = document.createRange();
-        range.selectNodeContents(editor.firstElementChild!);
-        selection.removeAllRanges(); selection.addRange(range);
-        const started = performance.now();
-        const samples = (window as unknown as { __windowFrames: { events: { kind: string; at: number }[] } }).__windowFrames;
-        samples.events.push({ kind: `input_${index}`, at: started });
-        // Advance while native input and the continuous frame sampler run.
-        const deadline = index === 7
-          ? (window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke('e2e_advance_window_clock', { millis: 300000 }).then(() => { samples.events.push({ kind: 'deadline_advanced', at: performance.now() }); })
-          : Promise.resolve();
-        document.execCommand('insertText', false, String(index).padStart(8, '0'));
-        requestAnimationFrame(() => requestAnimationFrame(() => {
-          const elapsed = performance.now() - started;
-          void deadline.then(() => { clearTimeout(timeout); done({ elapsed }); }, error => { clearTimeout(timeout); done({ error: String(error) }); });
-        }));
-        } catch (error) { clearTimeout(timeout); done({ error: String(error) }); }
-      }, index);
-      if (inputResult.error) throw new Error(inputResult.error);
-      const elapsed = inputResult.elapsed!;
-      paints.push(elapsed);
-      console.log('WINDOW_NATIVE_PROGRESS', index, 'paint', elapsed);
-      await browser.waitUntil(async () => (await invoke<NoteSession>('open_note', { noteId: note.noteId, path: null })).markdown.startsWith(String(index).padStart(8, '0')), { timeout: 20_000 });
-      saves.push(Date.now() - start);
-      console.log('WINDOW_NATIVE_PROGRESS', index, 'saved', saves.at(-1));
-      await browser.execute((index) => {
-        (window as unknown as { __windowFrames: { events: { kind: string; at: number }[] } }).__windowFrames.events.push({ kind: `canonical_save_${index}`, at: performance.now() });
-      }, index);
+    try {
+      const paints: number[] = []; const saves: number[] = [];
+      for (let index = 1; index <= 12; index++) {
+        const start = Date.now();
+        console.log('WINDOW_NATIVE_PROGRESS', index, 'input');
+        // Native editor event, one changed first line; actual one-second autosave.
+        const inputResult = await browser.executeAsync((index, done: (value: { elapsed?: number; error?: string }) => void) => {
+          let finished = false;
+          let frameId = 0;
+          const finish = (result: { elapsed?: number; error?: string }) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timeout);
+            cancelAnimationFrame(frameId);
+            done(result);
+          };
+          const timeout = setTimeout(() => finish({ error: `input frame timeout; visibility=${document.visibilityState}; focus=${document.hasFocus()}; frames=${(window as unknown as { __windowFrames: { gaps: number[] } }).__windowFrames.gaps.length}` }), 5000);
+          try {
+          const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
+          editor.focus();
+          const selection = window.getSelection()!;
+          const range = document.createRange();
+          range.selectNodeContents(editor.firstElementChild!);
+          selection.removeAllRanges(); selection.addRange(range);
+          const started = performance.now();
+          const samples = (window as unknown as { __windowFrames: { events: { kind: string; at: number }[] } }).__windowFrames;
+          samples.events.push({ kind: `input_${index}`, at: started });
+          // Advance while native input and the continuous frame sampler run.
+          const deadline = index === 7
+            ? (window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke('e2e_advance_window_clock', { millis: 300000 }).then(() => { if (!finished) samples.events.push({ kind: 'deadline_advanced', at: performance.now() }); })
+            : Promise.resolve();
+          document.execCommand('insertText', false, String(index).padStart(8, '0'));
+          // Attach rejection handling immediately, even when paint is throttled.
+          void deadline.catch(error => finish({ error: String(error) }));
+          frameId = requestAnimationFrame(() => {
+            if (finished) return;
+            frameId = requestAnimationFrame(() => {
+              if (finished) return;
+              const elapsed = performance.now() - started;
+              void deadline.then(() => finish({ elapsed }), error => finish({ error: String(error) }));
+            });
+          });
+          } catch (error) { finish({ error: String(error) }); }
+        }, index);
+        if (inputResult.error) throw new Error(inputResult.error);
+        const elapsed = inputResult.elapsed!;
+        paints.push(elapsed);
+        console.log('WINDOW_NATIVE_PROGRESS', index, 'paint', elapsed);
+        await browser.waitUntil(async () => (await invoke<NoteSession>('open_note', { noteId: note.noteId, path: null })).markdown.startsWith(String(index).padStart(8, '0')), { timeout: 20_000 });
+        saves.push(Date.now() - start);
+        console.log('WINDOW_NATIVE_PROGRESS', index, 'saved', saves.at(-1));
+        await browser.execute((index) => {
+          (window as unknown as { __windowFrames: { events: { kind: string; at: number }[] } }).__windowFrames.events.push({ kind: `canonical_save_${index}`, at: performance.now() });
+        }, index);
+      }
+      const before = await invoke<HistoryModePage>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
+      expect(before.records.filter(row => row.kind === 'revision' && row.timeKind === 'editingWindow')).toHaveLength(1);
+      const frames = await browser.execute(() => {
+        const sample = (window as unknown as { __windowFrames: { running: boolean; frameId: number; started: number; gaps: number[]; events: { kind: string; at: number }[] } }).__windowFrames;
+        sample.events.push({ kind: 'deadline_revision_verified', at: performance.now() });
+        sample.running = false;
+        cancelAnimationFrame(sample.frameId);
+        return { ...sample, ended: performance.now() };
+      });
+      expect(frames.events.filter(e => e.kind.startsWith('canonical_save_'))).toHaveLength(12);
+      expect(frames.events.some(e => e.kind === 'deadline_advanced')).toBe(true);
+      expect(frames.gaps.length).toBeGreaterThan(100);
+      console.log('RELEASE_NATIVE_FRAME_INTERVAL', JSON.stringify(frames));
+      await openHistory();
+      const after = await invoke<HistoryModePage>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
+      expect(after.records.filter(row => row.kind === 'revision' && row.timeKind === 'editingWindow')).toHaveLength(2);
+      for (const [name, samples] of [['continuous_frame_gaps_across_autosave_and_deadline_1mb', frames.gaps], ['input_to_two_frames_1mb', paints], ['input_to_canonical_autosave_1mb', saves]] as const) {
+        const sorted = [...samples].sort((a, b) => a - b);
+        console.log('RELEASE_NATIVE_METRIC', JSON.stringify({ name, samples: samples.length, raw_ms: samples,
+          p50_ms: sorted[Math.floor(sorted.length / 2)], p95_ms: sorted[Math.ceil(sorted.length * .95) - 1], max_ms: sorted.at(-1),
+          budget_ms: null, assessment: 'observation-only', scope: 'native editor, real debounce/save, deadline advanced via E2E-only continuous clock offset' }));
+      }
+      expect((await invoke<NoteSession>('open_note', { noteId: note.noteId, path: null })).markdown).toHaveLength(1048576);
+      await closeHistory();
+    } finally {
+      await browser.execute(() => {
+        const owner = window as unknown as { __windowFrames?: { running: boolean; frameId: number } };
+        if (owner.__windowFrames) {
+          owner.__windowFrames.running = false;
+          cancelAnimationFrame(owner.__windowFrames.frameId);
+          delete owner.__windowFrames;
+        }
+      });
     }
-    const before = await invoke<HistoryModePage>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
-    expect(before.records.filter(row => row.kind === 'revision' && row.timeKind === 'editingWindow')).toHaveLength(1);
-    const frames = await browser.execute(() => {
-      const sample = (window as unknown as { __windowFrames: { running: boolean; started: number; gaps: number[]; events: { kind: string; at: number }[] } }).__windowFrames;
-      sample.events.push({ kind: 'deadline_revision_verified', at: performance.now() });
-      sample.running = false;
-      return { ...sample, ended: performance.now() };
-    });
-    expect(frames.events.filter(e => e.kind.startsWith('canonical_save_'))).toHaveLength(12);
-    expect(frames.events.some(e => e.kind === 'deadline_advanced')).toBe(true);
-    expect(frames.gaps.length).toBeGreaterThan(100);
-    console.log('RELEASE_NATIVE_FRAME_INTERVAL', JSON.stringify(frames));
-    await openHistory();
-    const after = await invoke<HistoryModePage>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
-    expect(after.records.filter(row => row.kind === 'revision' && row.timeKind === 'editingWindow')).toHaveLength(2);
-    for (const [name, samples] of [['continuous_frame_gaps_across_autosave_and_deadline_1mb', frames.gaps], ['input_to_two_frames_1mb', paints], ['input_to_canonical_autosave_1mb', saves]] as const) {
-      const sorted = [...samples].sort((a, b) => a - b);
-      console.log('RELEASE_NATIVE_METRIC', JSON.stringify({ name, samples: samples.length, raw_ms: samples,
-        p50_ms: sorted[Math.floor(sorted.length / 2)], p95_ms: sorted[Math.ceil(sorted.length * .95) - 1], max_ms: sorted.at(-1),
-        budget_ms: null, passed: true, scope: 'native editor, real debounce/save, deadline advanced via E2E-only continuous clock offset' }));
-    }
-    expect((await invoke<NoteSession>('open_note', { noteId: note.noteId, path: null })).markdown).toHaveLength(1048576);
-    await closeHistory();
   });
 });

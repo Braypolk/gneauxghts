@@ -24,7 +24,18 @@ export async function interaction(action: 'entry' | 'page' | 'diff', revisionId 
   await browser.waitUntil(() => browser.execute(() => document.visibilityState === 'visible'), { timeout: 10_000, timeoutMsg: 'Native paint measurement requires an unlocked, visible webview' });
   const result = await browser.executeAsync((action, revisionId, done: (value: { elapsed?: number; error?: string }) => void) => {
     let stage = 'mutation';
-    const timeout = setTimeout(() => done({ error: `${action} stalled at ${stage}; visibility=${document.visibilityState}; history=${!!document.querySelector('[data-testid=history-mode]')}; rows=${document.querySelectorAll('[data-diff-kind]').length}: ${document.body.innerText.slice(-600)}` }), 15_000);
+    let finished = false;
+    let frameId = 0;
+    let observer: MutationObserver | undefined;
+    const finish = (value: { elapsed?: number; error?: string }) => {
+      if (finished) return;
+      finished = true;
+      observer?.disconnect();
+      clearTimeout(timeout);
+      cancelAnimationFrame(frameId);
+      done(value);
+    };
+    const timeout = setTimeout(() => finish({ error: `${action} stalled at ${stage}; visibility=${document.visibilityState}; history=${!!document.querySelector('[data-testid=history-mode]')}; rows=${document.querySelectorAll('[data-diff-kind]').length}: ${document.body.innerText.slice(-600)}` }), 15_000);
     const beforeCount = Number(document.querySelector<HTMLElement>('aside[aria-label="Note timeline"]')?.dataset.historyRecordCount ?? 0);
     const button = action === 'entry'
       ? document.querySelector<HTMLButtonElement>('button[aria-label="Open note history"]')
@@ -33,23 +44,28 @@ export async function interaction(action: 'entry' | 'page' | 'diff', revisionId 
         : document.querySelector<HTMLButtonElement>(`[data-revision-id="${revisionId}"]`);
     if (!button || button.disabled) {
       clearTimeout(timeout);
-      done({ error: `Missing enabled ${action} action` });
+      finish({ error: `Missing enabled ${action} action` });
       return;
     }
     const started = performance.now();
-    const observer = new MutationObserver(() => {
+    observer = new MutationObserver(() => {
+      if (finished) return;
       const timeline = document.querySelector<HTMLElement>('aside[aria-label="Note timeline"]');
       const ready = action === 'page'
         ? Number(timeline?.dataset.historyRecordCount ?? 0) > beforeCount && timeline?.getAttribute('aria-busy') === 'false'
         : !!document.querySelector('[data-testid="history-mode"] [data-testid="historical-revision-diff"] [data-diff-kind]') &&
           (action === 'entry' || (button.getAttribute('aria-pressed') === 'true' && !button.disabled));
       if (!ready) return;
-      observer.disconnect();
+      observer?.disconnect();
       stage = 'paint';
-      requestAnimationFrame(() => requestAnimationFrame(() => {
-        clearTimeout(timeout);
-        done({ elapsed: performance.now() - started });
-      }));
+      frameId = requestAnimationFrame(() => {
+        if (finished) return;
+        frameId = requestAnimationFrame(() => {
+          if (finished) return;
+          if (document.visibilityState !== 'visible' || !document.hasFocus()) finish({ error: 'Native paint measurement lost visibility/focus' });
+          else finish({ elapsed: performance.now() - started });
+        });
+      });
     });
     observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     button.click();

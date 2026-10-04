@@ -83,60 +83,70 @@ export function createDocumentConflictController(
     ) {
       return false;
     }
-    const result = await deps.replaceDocumentContentInPlace(
-      document,
-      targetMarkdown
-    );
+    try {
+      const result = await deps.replaceDocumentContentInPlace(
+        document,
+        targetMarkdown
+      );
 
-    if (result !== 'applied') {
-      // An in-place editor replacement can have synchronously fanned out
-      // before its pane session later discovers that the pane became stale.
-      // Reapply the live model value so a partial fanout cannot survive.
+      if (result !== 'applied') {
+        // An in-place editor replacement can have synchronously fanned out
+        // before its pane session later discovers that the pane became stale.
+        // Reapply the live model value so a partial fanout cannot survive.
+        if (
+          result === 'stale' &&
+          getDocumentMarkdown(document) !== targetMarkdown
+        ) {
+          await deps.replaceDocumentContentInPlace(
+            document,
+            getDocumentMarkdown(document)
+          );
+        }
+        dispatchDocumentExternalSync(document, {
+          type: 'externalApplyFailed',
+          conflictId
+        });
+        return false;
+      }
+
+      // A concurrent edit or conflict choice wins. In that case the editor
+      // already reported the newer model value through its normal callback.
       if (
-        result === 'stale' &&
-        getDocumentMarkdown(document) !== targetMarkdown
+        !isDocumentExternalConflictCurrent(
+          document.externalSync,
+          conflictId,
+          'applyingExternal'
+        ) ||
+        document.operation.revision !== originalRevision
       ) {
-        await deps.replaceDocumentContentInPlace(
-          document,
-          getDocumentMarkdown(document)
-        );
+        if (getDocumentMarkdown(document) !== targetMarkdown) {
+          await deps.replaceDocumentContentInPlace(
+            document,
+            getDocumentMarkdown(document)
+          );
+        }
+        dispatchDocumentExternalSync(document, {
+          type: 'externalApplyFailed',
+          conflictId
+        });
+        return false;
       }
+      if (
+        !deps.resolveUsingExternal(document, conflictId)
+      ) {
+        return false;
+      }
+      deps.refreshDerivedViews?.();
+      return true;
+    } catch (error) {
+      // Replacement or rollback failure must leave this conflict retryable.
+      // The correlated transition leaves any newer conflict untouched.
       dispatchDocumentExternalSync(document, {
         type: 'externalApplyFailed',
         conflictId
       });
-      return false;
+      throw error;
     }
-
-    // A concurrent edit or conflict choice wins. In that case the editor
-    // already reported the newer model value through its normal callback.
-    if (
-      !isDocumentExternalConflictCurrent(
-        document.externalSync,
-        conflictId,
-        'applyingExternal'
-      ) ||
-      document.operation.revision !== originalRevision
-    ) {
-      if (getDocumentMarkdown(document) !== targetMarkdown) {
-        await deps.replaceDocumentContentInPlace(
-          document,
-          getDocumentMarkdown(document)
-        );
-      }
-      dispatchDocumentExternalSync(document, {
-        type: 'externalApplyFailed',
-        conflictId
-      });
-      return false;
-    }
-    if (
-      !deps.resolveUsingExternal(document, conflictId)
-    ) {
-      return false;
-    }
-    deps.refreshDerivedViews?.();
-    return true;
   }
 
   async function copyMyEdits(document: NoteDraftState) {

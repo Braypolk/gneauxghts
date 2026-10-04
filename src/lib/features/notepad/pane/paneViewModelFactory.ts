@@ -13,6 +13,7 @@ import {
 } from '$lib/features/notepad/workspace/paneCapabilities';
 import {
   getDocumentNoteId,
+  getDocumentPath,
   getDocumentStatusViewModel
 } from '$lib/features/notepad/document/documentState';
 import type {
@@ -125,4 +126,22 @@ export function createPaneViewModelFactory(
       chat: deps.getChatBindings(paneId)
     };
   };
+}
+
+export function paneCommandNoteLabel(note: NoteDraftState | null | undefined) {
+  if (!note) {
+    return 'Untitled note';
+  }
+
+  const trimmed = note.working.title.trim();
+  if (trimmed) {
+    return trimmed;
+  }
+
+  const path = getDocumentPath(note);
+  if (path) {
+    return path.split('/').pop()?.replace(/\.md$/i, '') ?? 'Untitled note';
+  }
+
+  return 'Untitled note';
 }

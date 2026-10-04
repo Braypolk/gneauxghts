@@ -24,11 +24,11 @@ describe('image asset bytes cache', () => {
   });
   it('evicts old entries by count and byte budget', async () => {
     const read = vi.fn(async (name: string) => name);
-    const loader = createImageAssetLoader(read, () => 'vault');
-    for (let index = 0; index < 129; index++) await loader.load(`${index}.png`);
-    await loader.load('0.png'); expect(read).toHaveBeenCalledTimes(130);
-    const largeRead = vi.fn(async () => 'x'.repeat(25 * 1024 * 1024));
-    const large = createImageAssetLoader(largeRead, () => 'vault');
+    const loader = createImageAssetLoader(read, () => 'vault', undefined, { entries: 2, bytes: 100 });
+    for (let index = 0; index < 3; index++) await loader.load(`${index}.png`);
+    await loader.load('0.png'); expect(read).toHaveBeenCalledTimes(4);
+    const largeRead = vi.fn(async () => 'x'.repeat(11));
+    const large = createImageAssetLoader(largeRead, () => 'vault', undefined, { entries: 2, bytes: 10 });
     await large.load('large.png'); await large.load('large.png'); expect(largeRead).toHaveBeenCalledTimes(2);
   });
 });

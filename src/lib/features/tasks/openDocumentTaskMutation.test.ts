@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDocumentState,
+  getDocumentMarkdown,
   updateDocumentMarkdown
 } from '$lib/features/notepad/document/documentState';
 import {
@@ -203,4 +204,52 @@ describe('due dates through the open-document boundary', () => {
       expect(saveDocument).toHaveBeenCalledWith(document);
     }
   });
+});
+
+describe('task prepare and commit rejection boundaries', () => {
+  const request = { kind: 'toggle', taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md' } as const;
+  const prepared = { taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md', baseHash: 'hash', updatedEditorMarkdown: '- [x] Ship it\nlocal' };
+  for (const field of ['baseHash', 'taskId', 'noteId', 'notePath'] as const) {
+    it(`rejects a mismatched ${field} before mutation or attribution`, async () => {
+      const document = persistedDocument(); updateDocumentMarkdown(document, '- [ ] Ship it\nlocal');
+      const replaceMarkdown = vi.fn(), saveDocument = vi.fn(), attributeTaskActionSave = vi.fn();
+      const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown, saveDocument, attributeTaskActionSave,
+        prepare: async () => ({ ...prepared, [field]: 'wrong' }), hashMarkdown: async () => 'hash' });
+      await expect(handler(request)).rejects.toThrow('target changed');
+      expect(replaceMarkdown).not.toHaveBeenCalled(); expect(saveDocument).not.toHaveBeenCalled(); expect(attributeTaskActionSave).not.toHaveBeenCalled();
+    });
+  }
+  it('bounds retries when the working document changes during every prepare', async () => {
+    const document = persistedDocument(); updateDocumentMarkdown(document, '- [ ] Ship it\nlocal');
+    const prepare = vi.fn(async () => { updateDocumentMarkdown(document, getDocumentMarkdown(document) + 'x'); return prepared; });
+    const replaceMarkdown = vi.fn();
+    const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown, saveDocument: vi.fn(), prepare, hashMarkdown: async () => 'hash', maxPrepareAttempts: 2 });
+    await expect(handler(request)).rejects.toThrow('kept changing'); expect(prepare).toHaveBeenCalledTimes(2); expect(replaceMarkdown).not.toHaveBeenCalled();
+  });
+  it('cancels attribution on replacement rejection and does not start a save', async () => {
+    const document = persistedDocument(); updateDocumentMarkdown(document, '- [ ] Ship it\nlocal');
+    const cancel = vi.fn(), saveDocument = vi.fn();
+    const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown: async () => { throw new Error('replace failed'); },
+      attributeTaskActionSave: () => cancel, saveDocument, prepare: async () => prepared, hashMarkdown: async () => 'hash' });
+    await expect(handler(request)).rejects.toThrow('replace failed'); expect(cancel).toHaveBeenCalledOnce(); expect(saveDocument).not.toHaveBeenCalled();
+  });
+  it('reports save rejection while retaining the authored dirty task edit for ordinary retry', async () => {
+    const document = persistedDocument(); updateDocumentMarkdown(document, '- [ ] Ship it\nlocal');
+    const cancel = vi.fn(), saveDocument = vi.fn(async () => { throw new Error('save failed'); });
+    const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown: async (_, markdown) => { updateDocumentMarkdown(document, markdown); },
+      attributeTaskActionSave: () => cancel, saveDocument, prepare: async () => prepared, hashMarkdown: async () => 'hash' });
+    await expect(handler(request)).rejects.toThrow('save failed'); expect(cancel).not.toHaveBeenCalled(); expect(getDocumentMarkdown(document)).toBe(prepared.updatedEditorMarkdown);
+  });
+});
+
+it('rejects a conflict arriving during preparation before replacing the working document', async () => {
+  const document = persistedDocument(); updateDocumentMarkdown(document, '- [ ] Ship it\nlocal');
+  const replaceMarkdown = vi.fn();
+  const prepare = vi.fn(async () => {
+    captureExternalSnapshotForTest(document, { ...createEmptySessionSnapshot(), title: 'Tasks', bodyMarkdown: '- [x] remote', currentNoteId: 'note-1', currentNotePath: '/vault/Tasks.md' }, 'watcher');
+    return { taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md', baseHash: 'hash', updatedEditorMarkdown: 'wrong' };
+  });
+  const handler = createOpenDocumentTaskMutationHandler({ findReferencedDocument: () => document, replaceMarkdown, saveDocument: vi.fn(), prepare, hashMarkdown: async () => 'hash' });
+  await expect(handler({ kind: 'toggle', taskId: 'task-1', noteId: 'note-1', notePath: '/vault/Tasks.md' })).rejects.toThrow('external-change conflict');
+  expect(replaceMarkdown).not.toHaveBeenCalled(); expect(prepare).toHaveBeenCalledOnce();
 });

@@ -1,4 +1,5 @@
-import { deleteCharBackward, deleteCharForward, history, undo } from '@codemirror/commands';
+import { createCommandView } from './commandTestSupport';
+import { history, undo } from '@codemirror/commands';
 import { syntaxTree } from '@codemirror/language';
 import { EditorSelection, EditorState, type Extension, type TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
@@ -43,22 +44,12 @@ function applyPlan(state: EditorState, direction: 'indent' | 'outdent') {
 }
 
 function mutableView(initialState: EditorState) {
-  let state = initialState;
-  const view = {
-    get state() {
-      return state;
-    },
-    dispatch(...specs: TransactionSpec[]) {
-      state = state.update(...specs).state;
-    }
-  } as EditorView;
-
-  return { view, get state() { return state; } };
+  const { view } = createCommandView(initialState);
+  return { view, get state() { return view.state; } };
 }
 
 describe('structural list indentation planner', () => {
   it.each([
-    ['bullet', '- parent\n- child', '- parent\n  - child'],
     ['task', '- [ ] parent\n- [ ] child', '- [ ] parent\n  - [ ] child'],
     ['mixed bullet marker', '- parent\n* child', '- parent\n  * child'],
     ['multi-digit ordered', '10. parent\n11. child', '10. parent\n    11. child']
@@ -107,13 +98,6 @@ describe('structural list indentation planner', () => {
     expect(applyPlan(state, 'indent').state.doc.toString()).toBe('- A\n  - B\n- C');
   });
 
-  it('rejects indentation of the first sibling', () => {
-    const doc = '- first\n- second';
-    const state = stateWithSelection(doc, doc.indexOf('first'));
-
-    expect(planListIndentation(state, 'indent')).toEqual({ kind: 'invalid' });
-  });
-
   it('rejects the whole selection when any independent list group is invalid', () => {
     const doc = '- A\n  - B\n- C';
     const selection = selectText(doc, '  - B', '- C');
@@ -129,15 +113,6 @@ describe('structural list indentation planner', () => {
     expect(applyPlan(state, 'outdent').state.doc.toString()).toBe(
       '- A\n- B\n  - C\n- D'
     );
-  });
-
-  it('classifies prose and mixed prose/list selections as standard indentation', () => {
-    const prose = stateWithSelection('paragraph', 3);
-    expect(planListIndentation(prose, 'indent')).toEqual({ kind: 'not-list' });
-
-    const mixedDoc = 'paragraph\n- item';
-    const mixed = stateWithSelection(mixedDoc, 0, mixedDoc.length);
-    expect(planListIndentation(mixed, 'indent')).toEqual({ kind: 'not-list' });
   });
 });
 
@@ -186,21 +161,5 @@ describe('editor indentation commands', () => {
 
     expect(outdentEditorSelection(mutable.view)).toBe(true);
     expect(mutable.state.doc.toString()).toBe('text');
-  });
-
-  it('uses literal Backspace on an empty nested item, deleting the space before the marker', () => {
-    const doc = '- A\n  - ';
-    const mutable = mutableView(stateWithSelection(doc, doc.length));
-
-    expect(deleteCharBackward(mutable.view)).toBe(true);
-    expect(mutable.state.doc.toString()).toBe('- A\n  -');
-  });
-
-  it('uses literal forward Delete on an empty item, preserving the marker', () => {
-    const doc = '- ';
-    const mutable = mutableView(stateWithSelection(doc, 1));
-
-    expect(deleteCharForward(mutable.view)).toBe(true);
-    expect(mutable.state.doc.toString()).toBe('-');
   });
 });

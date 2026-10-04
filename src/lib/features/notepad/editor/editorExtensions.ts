@@ -1,10 +1,7 @@
-import { imageResizeHistory } from '../images/imageResizeHistory';
-import { history, historyKeymap } from '@codemirror/commands';
 import { EditorState, type Extension } from '@codemirror/state';
 import {
   EditorView,
   dropCursor,
-  keymap,
   placeholder
 } from '@codemirror/view';
 import { search } from '@codemirror/search';
@@ -25,7 +22,6 @@ import type {
 import {
   createEditorShortcuts,
   createFilteredDefaultKeymap,
-  createMarkdownBaseExtensions,
   createPlatformNavigationKeymap
 } from './editorShortcuts';
 import {
@@ -46,18 +42,6 @@ const unavailableImagesConfig: ImagesConfig = {
     throw new Error('Image pasting unavailable for this editor instance.');
   }
 };
-
-export function createRootState(markdown: string) {
-  return EditorState.create({
-    doc: markdown,
-    extensions: [
-      history(),
-      imageResizeHistory,
-      keymap.of(historyKeymap),
-      createMarkdownBaseExtensions()
-    ]
-  });
-}
 
 export function createPaneState(
   markdown: string,

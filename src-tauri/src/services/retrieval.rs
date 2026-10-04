@@ -13,11 +13,6 @@ pub(crate) struct VaultRetrievalItem {
     pub(crate) excerpt: String,
     pub(crate) section_label: String,
     pub(crate) score: f32,
-    pub(crate) lexical_score: Option<f32>,
-    pub(crate) semantic_score: Option<f32>,
-    pub(crate) start_line: Option<usize>,
-    pub(crate) end_line: Option<usize>,
-    pub(crate) block_anchor: Option<String>,
 }
 
 impl CurrentContentItem for VaultRetrievalItem {
@@ -112,52 +107,66 @@ fn retrieve_vault_notes_unchecked(
         .map(|n| n.note_id.clone())
         .collect();
     let mut evidence = EvidenceSession::default();
-    let page = evidence
-        .search(
-            state,
-            Some(&eligible),
-            excluded_note_ids,
-            SearchRequest {
-                query: if query.trim().is_empty() {
-                    ".*".into()
-                } else {
-                    query.into()
-                },
-                mode: if query.trim().is_empty() {
-                    SearchMode::Regex
-                } else {
-                    SearchMode::Hybrid
-                },
-                limit: Some(limit.clamp(1, 20)),
-                ..Default::default()
-            },
-        )
-        .map_err(|error| error.to_string())?;
-    let index = state
-        .notes_index
-        .lock()
-        .map_err(|_| "Notes index unavailable")?;
+    let mut request = SearchRequest {
+        query: if query.trim().is_empty() {
+            ".*".into()
+        } else {
+            query.into()
+        },
+        mode: if query.trim().is_empty() {
+            SearchMode::Regex
+        } else {
+            SearchMode::Hybrid
+        },
+        limit: Some(20),
+        ..Default::default()
+    };
     let mut results = Vec::new();
-    for item in page["items"].as_array().into_iter().flatten() {
-        let Some((path, n)) = item["noteId"]
-            .as_str()
-            .and_then(|id| index.get_note_by_note_id(id))
-        else {
-            continue;
+    let mut seen = HashSet::new();
+    let limit = limit.clamp(1, 20);
+    loop {
+        let page = evidence
+            .search(state, Some(&eligible), excluded_note_ids, request.clone())
+            .map_err(|error| error.to_string())?;
+        let index = state
+            .notes_index
+            .lock()
+            .map_err(|_| "Notes index unavailable")?;
+        for item in page["items"].as_array().into_iter().flatten() {
+            let Some((path, n)) = item["noteId"]
+                .as_str()
+                .and_then(|id| index.get_note_by_note_id(id))
+            else {
+                continue;
+            };
+            if !seen.insert(n.note_id.clone()) {
+                continue;
+            }
+            results.push(VaultRetrievalItem {
+                note_id: n.note_id.clone(),
+                note_path: path.clone(),
+                title: n.title.clone(),
+                excerpt: item["preview"].as_str().unwrap_or_default().into(),
+                section_label: item["section"].as_str().unwrap_or_default().into(),
+                score: item["score"].as_f64().unwrap_or_default() as f32,
+            });
+            if results.len() == limit {
+                return Ok(results);
+            }
+        }
+        drop(index);
+        if page["budgetExhausted"] == true {
+            break;
+        }
+        let Some(cursor) = page["nextCursor"].as_str() else {
+            break;
         };
-        results.push(VaultRetrievalItem {
-            note_id: n.note_id.clone(),
-            note_path: path.clone(),
-            title: n.title.clone(),
-            excerpt: item["preview"].as_str().unwrap_or_default().into(),
-            section_label: item["section"].as_str().unwrap_or_default().into(),
-            score: item["score"].as_f64().unwrap_or_default() as f32,
-            lexical_score: None,
-            semantic_score: None,
-            start_line: None,
-            end_line: None,
-            block_anchor: None,
-        });
+        // The compatibility picker returns bounded best-effort note matches.
+        // Discovery previews consume the same allowance as ordinary evidence.
+        if evidence.used() >= super::evidence::EVIDENCE_BYTES {
+            break;
+        }
+        request.cursor = Some(cursor.to_string());
     }
     Ok(results)
 }
@@ -166,9 +175,7 @@ fn retrieve_vault_notes_unchecked(
 mod tests {
     use super::{matches_date_filters, VaultDateFilters, VaultRetrievalItem};
     use crate::{
-        app::EventBus,
-        index::{build_indexed_note, AppState},
-        semantic::SemanticState,
+        index::build_indexed_note,
         services::note_timeline::{AllowedScope, NoteIdentity},
     };
     use std::{collections::HashSet, path::Path};
@@ -198,17 +205,8 @@ mod tests {
 
     #[test]
     fn retrieval_scope_and_clear_invalidation_are_applied_at_delivery() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("retrieval-current-content-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("retrieval-current-content-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            SemanticState::new_disabled("disabled"),
-            EventBus::disabled(),
-        )
-        .unwrap();
+        let vault = crate::test_support::TestVault::new("retrieval-current-content");
+        let state = &vault.state;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Scoped retrieval".to_string(),
@@ -226,11 +224,6 @@ mod tests {
             excerpt: "Current private prose".to_string(),
             section_label: String::new(),
             score: 1.0,
-            lexical_score: Some(1.0),
-            semantic_score: None,
-            start_line: Some(1),
-            end_line: Some(1),
-            block_anchor: None,
         };
 
         let delivered = std::thread::scope(|scope| {
@@ -267,6 +260,85 @@ mod tests {
             .read(|| Ok(vec![item()]))
             .unwrap();
         assert!(excluded.is_empty());
-        crate::state::set_notes_root_override(None).unwrap();
+    }
+}
+
+#[cfg(test)]
+mod adapter_tests {
+    use super::*;
+    #[test]
+    fn actual_picker_pages_passages_into_unique_allowed_notes_and_applies_metadata_dates() {
+        let vault = crate::test_support::TestVault::new("retrieval-adapter");
+        let first = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &vault.state,
+            "First".into(),
+            (0..30)
+                .map(|i| format!("needle paragraph number {i} with distinct words"))
+                .collect::<Vec<_>>()
+                .join("\n\n"),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let second = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &vault.state,
+            "Second".into(),
+            "needle separate note".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        vault
+            .state
+            .lexical
+            .sync_with_notes_index(&vault.state.notes_index.lock().unwrap().entries)
+            .unwrap();
+        let all = retrieve_vault_notes(
+            &vault.state,
+            "needle",
+            20,
+            None,
+            &HashSet::new(),
+            Default::default(),
+        )
+        .unwrap();
+        assert_eq!(all.len(), 2);
+        assert_eq!(
+            all.iter()
+                .map(|n| n.note_id.clone())
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                first.note_id.clone().unwrap(),
+                second.note_id.clone().unwrap()
+            ])
+        );
+        let excluded = HashSet::from([first.note_id.unwrap()]);
+        let filtered = retrieve_vault_notes(
+            &vault.state,
+            "needle",
+            20,
+            None,
+            &excluded,
+            VaultDateFilters {
+                updated_after: Some(1),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].note_id, second.note_id.unwrap());
+        assert!(retrieve_vault_notes(
+            &vault.state,
+            "needle",
+            20,
+            None,
+            &HashSet::new(),
+            VaultDateFilters {
+                created_before: Some(1),
+                ..Default::default()
+            }
+        )
+        .unwrap()
+        .is_empty());
     }
 }

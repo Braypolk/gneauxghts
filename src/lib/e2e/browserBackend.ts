@@ -1,17 +1,11 @@
 import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
+import { createChatControlsFixture } from './chatControlsFixture';
 import type { VaultAtlasResponse } from '$lib/types/atlas';
+import type { ChatModelCapabilities } from '$lib/features/chat/types';
 
-type NoteFixture = {
-  tags?: string[];
-  noteId: string;
-  title: string;
-  markdown: string;
-  path: string;
-};
+import type { NoteFixture, InvokeRecord, TauriCallback, BrowserCommandOverrides } from './browserBackendContract';
 
-type InvokeRecord = { command: string; args: Record<string, unknown> };
-type TauriCallback = (payload: unknown) => void;
-
+export function createBrowserE2eBackend(overrides: BrowserCommandOverrides = {}) {
 const alphaMarkdown = Array.from(
   { length: 80 },
   (_, index) => `Alpha line ${index + 1}: browser regression fixture`
@@ -119,7 +113,6 @@ let missingNotes = [
   }
 ];
 let revisionChatEnabled = false;
-let largeHistoryEnabled = false;
 let historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 512 };
 let forgottenNoteRetentionDays = 7;
 
@@ -242,11 +235,9 @@ function searchItem(note: NoteFixture) {
 function findNote(args: Record<string, unknown>) {
   const noteId = typeof args.noteId === 'string' ? args.noteId : null;
   const path = typeof args.path === 'string' ? args.path : null;
-  return (
-    (noteId ? notes.get(noteId) : undefined) ??
-    [...notes.values()].find((note) => note.path === path) ??
-    notes.get('note-alpha')!
-  );
+  const note = (noteId ? notes.get(noteId) : undefined) ?? [...notes.values()].find((note) => note.path === path);
+  if (!note) throw new Error('Unknown note identity or path');
+  return note;
 }
 
 function historyRecords(note: NoteFixture) {
@@ -373,22 +364,6 @@ function historicalDiff(
   revisionId: string,
   comparison: 'parent' | 'current'
 ) {
-  if (largeHistoryEnabled) {
-    return {
-      revisionId,
-      comparison,
-      fromRevisionId: `${note.noteId}-revision-34`,
-      toRevisionId: revisionId,
-      bodyLines: Array.from({ length: 16_384 }, (_, index) => ({
-        kind: index === 0 ? 'added' : 'context',
-        text: `${'x'.repeat(63)}\n`,
-        oldLineNumber: index === 0 ? null : index,
-        newLineNumber: index + 1
-      })),
-      propertiesLines: [],
-      missingAssets: []
-    };
-  }
   const restore = historyRestores.get(note.noteId);
   if (restore?.revisionId === revisionId) {
     if (comparison === 'current') {
@@ -521,13 +496,13 @@ function historicalDiff(
   };
 }
 
-export function installBrowserE2eBackend() {
-  if (!import.meta.env.DEV || import.meta.env.VITE_E2E_BROWSER !== 'true') return;
-  if (window.__GNEAUXGHTS_E2E__) return;
 
   const callbacks = new Map<number, TauriCallback>();
   const invocations: InvokeRecord[] = [];
   let callbackId = 0;
+  let createdNoteCount = 0;
+  const listeners = new Map<number, { event: string; handler: number }>();
+  let pendingRestore: { promise: Promise<void>; release: () => void } | null = null;
   let activeNote = notes.get('note-alpha')!;
   const pinnedNoteIds = new Set<string>();
   let nextHistoryPageDelayMillis = 0;
@@ -539,6 +514,7 @@ export function installBrowserE2eBackend() {
   const invoke = async (command: string, rawArgs: unknown = {}) => {
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
+    if (Object.hasOwn(overrides, command)) return overrides[command](args);
 
     if (command === 'read_image_asset_fingerprint') {
       const asset = imageAssets.get(String(args.fileName));
@@ -619,32 +595,44 @@ export function installBrowserE2eBackend() {
         state: pendingSave ? 'targetVerificationPending' : 'ready', verifiedNotes: pendingSave ? 0 : notes.size, totalNotes: notes.size,
         backgroundComplete: !pendingSave, backgroundUnavailable: false };
     }
+    if (command === 'finalize_note_editing_window') { findNote(args); return null; }
+    if (command === 'get_last_chat_location') return null;
+    if (command === 'plugin:window|theme') return 'light';
     if (command === 'load_note_session') return session(activeNote);
     if (command === 'open_note' || command === 'read_note') {
-      activeNote = findNote(args);
-      return session(activeNote);
+      const note = findNote(args);
+      if (command === 'open_note') activeNote = note;
+      return session(note);
     }
     if (command === 'list_note_tags') return [...new Set([...notes.values()].flatMap((note) => note.tags ?? []))].sort();
     if (command === 'save_note' || command === 'save_task_note') {
+      const target = args.currentPath == null
+        ? { noteId: `note-created-${++createdNoteCount}`, path: `/e2e/created-${createdNoteCount}.md`, title: '', markdown: '' }
+        : findNote({ path: args.currentPath });
       const held = pendingSave;
       if (held) {
         await held.promise;
-        if (held.fail) throw { code: 'historyUnavailable', message: 'History is unavailable. Retry history from Settings.', action: 'retryHistory' };
+        // save_note/save_task_note reject with String, unlike History commands.
+        if (held.fail) throw 'History is unavailable. Retry history from Settings.';
       }
       const saved: NoteFixture = {
-        ...activeNote,
+        ...target,
         ...(args.tagEdit ? { tags: [...(args.tagEdit as { tags: string[] }).tags] } : {}),
-        title: String(args.title ?? activeNote.title),
-        markdown: String(args.markdown ?? activeNote.markdown)
+        title: String(args.title ?? target.title),
+        markdown: String(args.markdown ?? target.markdown)
       };
       notes.set(saved.noteId, saved);
-      activeNote = saved;
+      if (activeNote.noteId === saved.noteId || args.currentPath == null) activeNote = saved;
       return session(saved);
     }
     if (revisionChatEnabled && command === 'chat_get_composer_draft') return '';
     if (revisionChatEnabled && command === 'chat_get_settings') return {
       provider: 'openai', model: 'fixture-model', defaultAccess: 'full'
     };
+    if (revisionChatEnabled && command === 'chat_get_model_capabilities') return {
+      images: false, audio: false, video: false, files: false,
+      acceptedMimeTypes: [], tools: true
+    } satisfies ChatModelCapabilities;
     if (revisionChatEnabled && (command === 'chat_list_conversations' || command === 'chat_get_conversation')) {
       const summary = { id: 'revision-chat', title: 'Current note activity', access: 'full', status: 'active',
         createdAtMillis: 1_800_000_000_000, updatedAtMillis: 1_800_000_000_000, messageCount: 2, detached: false,
@@ -689,7 +677,7 @@ export function installBrowserE2eBackend() {
       if (nextHistoryPageDelayMillis > 0) {
         const delayMillis = nextHistoryPageDelayMillis;
         nextHistoryPageDelayMillis = 0;
-        await new Promise((resolve) => window.setTimeout(resolve, delayMillis));
+        await new Promise((resolve) => setTimeout(resolve, delayMillis));
       }
       const note = notes.get(String(args.noteId ?? ''));
       if (!note) throw new Error('Unknown Note Identity');
@@ -731,6 +719,7 @@ export function installBrowserE2eBackend() {
       };
     }
     if (command === 'restore_note_revision') {
+      if (pendingRestore) await pendingRestore.promise;
       if (args.confirmed !== true) throw new Error('Explicit confirmation required');
       const note = notes.get(String(args.noteId ?? ''));
       if (!note) throw new Error('Unknown Note Identity');
@@ -894,14 +883,28 @@ export function installBrowserE2eBackend() {
     if (command === 'retrieve_note_context') {
       return { status: 'ready', scope: args.scope ?? 'note', reason: null, items: [] };
     }
-    if (command === 'plugin:event|listen') return callbackId++;
-    if (command === 'plugin:event|unlisten') return null;
-    if (command.includes('list_') || command.includes('_list_')) return [];
-    if (command.includes('get_settings')) return null;
-    return null;
+    if (command === 'plugin:event|listen') {
+      const id = callbackId++;
+      listeners.set(id, { event: String(args.event), handler: Number(args.handler) });
+      return id;
+    }
+    if (command === 'plugin:event|unlisten') {
+      const id = Number(args.eventId);
+      const listener = listeners.get(id);
+      if (listener) callbacks.delete(listener.handler);
+      listeners.delete(id);
+      return null;
+    }
+    // Explicit empty/no-op capabilities used by the default fixture. Unsupported
+    // commands fail so a new production dependency cannot silently pass a journey.
+    if (['chat_list_conversations', 'chat_list_archived_conversations', 'list_pending_note_proposals', 'chat_list_pending_proposals', 'chat_list_grants', 'chat_list_note_policies', 'chat_list_openai_models', 'chat_list_local_models'].includes(command)) return [];
+    if (command === 'chat_get_settings') return null;
+    if (command === 'chat_get_composer_draft') return '';
+    if (['remember_note', 'set_last_chat_location', 'chat_set_composer_draft'].includes(command)) return null;
+    throw new Error(`Browser fixture does not implement command: ${command}`);
   };
 
-  window.__TAURI_INTERNALS__ = {
+  const internals = {
     invoke,
     transformCallback(callback: TauriCallback, once = false) {
       const id = callbackId++;
@@ -923,8 +926,20 @@ export function installBrowserE2eBackend() {
     }
   };
 
-  window.__GNEAUXGHTS_E2E__ = {
+  const bridge = {
     invocations,
+    seedChatControls() { Object.assign(overrides, createChatControlsFixture((event, payload) => bridge.emit(event, payload))); },
+    emit(event: string, payload: unknown) {
+      for (const [id, listener] of [...listeners]) {
+        if (listener.event === event) callbacks.get(listener.handler)?.({ event, id, payload });
+      }
+    },
+    holdHistoryRestore() {
+      let release!: () => void;
+      const promise = new Promise<void>(resolve => { release = resolve; });
+      pendingRestore = { promise, release };
+    },
+    releaseHistoryRestore() { const held = pendingRestore; pendingRestore = null; held?.release(); },
     holdSave(fail = false) {
       let release!: () => void;
       const promise = new Promise<void>(resolve => { release = resolve; });
@@ -936,7 +951,6 @@ export function installBrowserE2eBackend() {
     },
     configureImageSave(failures = 0, delayMillis = 0) { imageSaveFailures = failures; imageSaveDelay = delayMillis; },
     seedRevisionChat() { revisionChatEnabled = true; },
-    seedLargeHistory() { largeHistoryEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
       nextHistoryPageDelayMillis = delayMillis;
     },
@@ -948,25 +962,17 @@ export function installBrowserE2eBackend() {
       };
     }
   };
+  return { invoke, internals, bridge };
 }
 
+export function installBrowserE2eBackend() {
+  if (!import.meta.env.DEV || import.meta.env.VITE_E2E_BROWSER !== 'true' || window.__GNEAUXGHTS_E2E__) return;
+  const backend = createBrowserE2eBackend(window.__GNEAUXGHTS_E2E_COMMANDS__ ??= {});
+  window.__TAURI_INTERNALS__ = backend.internals;
+  window.__GNEAUXGHTS_E2E__ = backend.bridge;
+}
+
+
 declare global {
-  interface Window {
-    __TAURI_INTERNALS__: Record<string, unknown>;
-    __GNEAUXGHTS_E2E__?: {
-      invocations: InvokeRecord[];
-      holdSave(fail?: boolean): void;
-      releaseSave(): void;
-      seedImageAsset(name: string): void;
-      configureImageSave(failures?: number, delayMillis?: number): void;
-      seedRevisionChat(): void;
-      seedLargeHistory(): void;
-      delayNextHistoryPage(delayMillis?: number): void;
-      snapshot(): {
-        activeNoteId: string;
-        notes: NoteFixture[];
-        invocations: InvokeRecord[];
-      };
-    };
-  }
+  interface Window { __TAURI_INTERNALS__: Record<string, unknown>; }
 }

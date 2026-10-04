@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { Compartment, Transaction, type Extension } from '@codemirror/state';
+import { Compartment, Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { CursorPosition } from './editorViewState';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
@@ -389,16 +389,5 @@ export function insertWikilinkSuggestion(
     }
   });
   controller.view.focus();
-  return true;
-}
-
-export function setProposalReviewExtensions(
-  controller: EditorController | null,
-  extension: Extension | readonly Extension[] | null
-) {
-  if (!controller) return false;
-  controller.view.dispatch({
-    effects: controller.proposalReviewCompartment.reconfigure(extension ?? [])
-  });
   return true;
 }

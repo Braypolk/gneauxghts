@@ -173,6 +173,76 @@ const commands: WorkspaceCommand[] = [
   removeCommand(third)
 ];
 
+// The oracle models public outcomes independently of WorkspaceStore/reducers.
+// Retired panes retain their records until disposal, but cannot be activated.
+function createModel() {
+  return {
+    order: [first], active: first,
+    panes: new Map<NotepadPaneId, { kind: 'editor' | 'chat'; documentHandle: DocumentHandle }>([
+      [first, { kind: 'editor', documentHandle: 'document:sequence-root' }]
+    ])
+  };
+}
+function applyModel(model: ReturnType<typeof createModel>, label: string): boolean {
+  const [operation, target, value] = label.split(':');
+  const paneId = (new Map<string, NotepadPaneId>(Object.entries({ first, second, third })).get(target) ?? target) as NotepadPaneId;
+  const pane = model.panes.get(paneId);
+  const visible = model.order.includes(paneId);
+  const handles = { A: noteA, B: noteB, C: noteC };
+  switch (operation) {
+    case 'add':
+      if (pane) return false;
+      model.panes.set(paneId, { kind: value as 'editor' | 'chat', documentHandle: paneId === second ? noteA : noteB });
+      model.order.push(paneId);
+      break;
+    case 'activate':
+      if (!visible) return false;
+      model.active = paneId;
+      break;
+    case 'kind':
+      if (!pane) return false;
+      if (visible) pane.kind = value as 'editor' | 'chat';
+      break;
+    case 'reference':
+      if (target === 'replace') {
+        for (const id of model.order) {
+          const item = model.panes.get(id)!;
+          if (item.documentHandle === noteA) item.documentHandle = noteC;
+        }
+      } else {
+        if (!pane) return false;
+        pane.documentHandle = handles[value as keyof typeof handles];
+      }
+      break;
+    case 'remove':
+      if (!visible || model.order.length === 1) break;
+      const index = model.order.indexOf(paneId);
+      if (model.active === paneId) model.active = model.order[index + 1] ?? model.order[index - 1];
+      model.order.splice(index, 1);
+      break;
+    default: throw new Error(`Unknown model command: ${label}`);
+  }
+  return true;
+}
+function applyAndCheck(workspace: WorkspaceStore, model: ReturnType<typeof createModel>, command: WorkspaceCommand) {
+  const before = snapshotWorkspace(workspace);
+  const accepted = applyModel(model, command.label);
+  if (accepted) {
+    // Do not catch: a valid command throwing is a regression, even if atomic.
+    command.apply(workspace);
+  } else {
+    expect(() => command.apply(workspace), command.label).toThrow();
+    expect(snapshotWorkspace(workspace), command.label).toEqual(before);
+  }
+  expect([...workspace.paneOrder], command.label).toEqual(model.order);
+  expect(workspace.activePaneId, command.label).toBe(model.active);
+  for (const [id, expected] of model.panes) {
+    expect(workspace.getPaneState(id), command.label).toMatchObject(expected);
+  }
+  assertWorkspaceInvariants(workspace);
+  return accepted;
+}
+
 describe('WorkspaceStore generated command sequences', () => {
   it('preserves atomic invariants across every command triple', () => {
     let attemptedCommands = 0;
@@ -191,30 +261,10 @@ describe('WorkspaceStore generated command sequences', () => {
             'document:sequence-root'
           );
 
+          const model = createModel();
           for (const command of sequence) {
             attemptedCommands += 1;
-            const before = snapshotWorkspace(workspace);
-            try {
-              command.apply(workspace);
-            } catch {
-              rejectedCommands += 1;
-              expect(
-                snapshotWorkspace(workspace),
-                `${sequence
-                  .map((item) => item.label)
-                  .join(' -> ')} must reject atomically`
-              ).toEqual(before);
-            }
-            try {
-              assertWorkspaceInvariants(workspace);
-            } catch (error) {
-              throw new Error(
-                `${sequence
-                  .map((item) => item.label)
-                  .join(' -> ')} violated invariants after ${command.label}`,
-                { cause: error }
-              );
-            }
+            if (!applyAndCheck(workspace, model, command)) rejectedCommands += 1;
           }
         }
       }
@@ -226,37 +276,22 @@ describe('WorkspaceStore generated command sequences', () => {
     expect(rejectedCommands).toBeGreaterThan(0);
   });
 
-  it.each([
-    {
-      active: first,
-      close: first,
-      expected: second
-    },
-    {
-      active: second,
-      close: second,
-      expected: third
-    },
-    {
-      active: third,
-      close: third,
-      expected: second
-    }
-  ])(
-    'selects the adjacent pane for active close $close',
-    ({ active, close, expected }) => {
-      const workspace = new WorkspaceStore(
-        first,
-        'document:sequence-root'
-      );
-      createReadyPaneForTest(workspace, second, noteA, 'editor');
-      createReadyPaneForTest(workspace, third, noteB, 'editor');
-      workspace.setActivePaneId(active);
-
-      retirePaneForTest(workspace, close);
-
-      expect(workspace.activePaneId).toBe(expected);
-      assertWorkspaceInvariants(workspace);
-    }
-  );
+  it('preserves membership through close, disposal, replacement and a second close', () => {
+    const workspace = new WorkspaceStore(first, 'document:sequence-root');
+    createReadyPaneForTest(workspace, second, noteA);
+    workspace.setActivePaneId(second);
+    const retired = retirePaneForTest(workspace, second)!;
+    expect(workspace.getPaneState(second).documentHandle).toBe(noteA);
+    expect(workspace.activePaneId).toBe(first);
+    expect(workspace.completePaneDisposal(second, retired.operationId + 1)).toBe(false);
+    expect(workspace.completePaneDisposal(second, retired.operationId)).toBe(true);
+    expect(() => createReadyPaneForTest(workspace, second, noteB, 'chat')).toThrow();
+    createReadyPaneForTest(workspace, third, noteB, 'chat');
+    workspace.setActivePaneId(third);
+    expect(retirePaneForTest(workspace, first)).not.toBeNull();
+    expect(workspace.paneOrder).toEqual([third]);
+    expect(workspace.getPaneState(third).documentHandle).toBe(noteB);
+    expect(retirePaneForTest(workspace, third)).toBeNull();
+    assertWorkspaceInvariants(workspace);
+  });
 });

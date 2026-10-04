@@ -11,7 +11,23 @@ pub(crate) struct ResearchRuntime {
     request: AgentRuntimeRequest,
     observer: AgentRuntimeObserver,
     guard: AgentRunGuard,
+    runner: ResearchRunner,
+    timeout: Duration,
 }
+type ResearchRunner = Arc<
+    dyn Fn(
+            AgentRuntimeRequest,
+            Option<AgentToolContext>,
+            AgentRuntimeObserver,
+            AgentRunGuard,
+        ) -> Pin<
+            Box<
+                dyn Future<Output = Result<crate::agent_runtime::AgentRuntimeResponse, String>>
+                    + Send,
+            >,
+        > + Send
+        + Sync,
+>;
 #[derive(Clone)]
 pub(super) struct ResearchNotesTool(pub(super) AgentToolContext);
 #[derive(Deserialize)]
@@ -28,6 +44,50 @@ pub(super) struct ResearchArgs {
     include_history: bool,
 }
 impl AgentToolContext {
+    fn research_worker(
+        &self,
+        ids: HashSet<String>,
+        scope: SearchRequest,
+        temporal: bool,
+    ) -> Result<Self, AgentToolError> {
+        Ok(Self {
+            host: self.host.clone(),
+            service: self.service.clone(),
+            request_id: self.request_id.clone(),
+            run_id: self.run_id.clone(),
+            conversation_id: self.conversation_id.clone(),
+            assistant_message_id: self.assistant_message_id.clone(),
+            access: self.access.clone(),
+            run_grants: self.run_grants.clone(),
+            proposal_lock: self.proposal_lock.clone(),
+            research_active: self.research_active.clone(),
+            primary_query_recorded: self.primary_query_recorded.clone(),
+            date_time_context: self.date_time_context.clone(),
+            local_model: self.local_model,
+            active_note: None,
+            surfaced: Arc::new(Mutex::new(HashSet::new())),
+            read_coverage: Arc::new(Mutex::new(HashMap::new())),
+            sources: Arc::new(Mutex::new(Vec::new())),
+            evidence: Arc::new(Mutex::new(
+                self.evidence
+                    .lock()
+                    .map_err(|_| "Evidence unavailable")?
+                    .fork_for_period(temporal),
+            )),
+            passage_references: Arc::new(Mutex::new(Default::default())),
+            context_versions: Arc::new(Mutex::new(HashMap::new())),
+            research_runtime: Arc::new(Mutex::new(None)),
+            cancellation: Arc::new(Mutex::new(None)),
+            research_usage: Arc::new(Mutex::new(Default::default())),
+            research_only: true,
+            capabilities: self.capabilities.restricted_to(&[Capability::Evidence]),
+            worker_calls: Arc::new(AtomicUsize::new(0)),
+            worker_scope: Some(Arc::new(ids)),
+            worker_period: Some(scope),
+            proposal_failures: Arc::new(AtomicUsize::new(0)),
+            event_sink: Arc::new(Mutex::new(None)),
+        })
+    }
     pub(crate) fn is_research_worker(&self) -> bool {
         self.research_only
     }
@@ -68,6 +128,10 @@ impl AgentToolContext {
                 request,
                 observer,
                 guard,
+                runner: Arc::new(|request, tools, observer, guard| {
+                    Box::pin(AgentRuntime::run(request, tools, observer, guard))
+                }),
+                timeout: Duration::from_secs(90),
             });
         }
     }
@@ -291,14 +355,20 @@ fn run_research(
             .lock()
             .map_err(|_| "Evidence unavailable")?
             .normalize_request(&mut scope)?;
-        let (allowed, excluded) = parent.evidence_scope()?;
-        let ids = {
-            let state = parent
-                .app
-                .try_state::<AppState>()
-                .ok_or("Notes index unavailable")?;
-            crate::services::evidence::scope_ids(&state, allowed.as_ref(), &excluded, &scope)?
-        };
+        let scope_parent = parent.clone();
+        let discovery_scope = scope.clone();
+        let ids = run_blocking_tool(move || {
+            scope_parent.check_cancelled()?;
+            let (allowed, excluded) = scope_parent.evidence_scope()?;
+            let state = scope_parent.host.state().ok_or("Notes index unavailable")?;
+            crate::services::evidence::scope_ids(
+                &state,
+                allowed.as_ref(),
+                &excluded,
+                &discovery_scope,
+            )
+        })
+        .await?;
         trace.scope_notes = ids.len();
         if ids.is_empty() {
             trace.outcome = "partial";
@@ -321,29 +391,9 @@ fn run_research(
             })
             .take(8)
             .collect();
-        let mut worker = parent.clone();
-        worker.research_only = true;
-        worker.capabilities = parent.capabilities.restricted_to(&[Capability::Evidence]);
-        worker.worker_calls = Arc::new(AtomicUsize::new(0));
-        worker.worker_scope = Some(Arc::new(ids));
-        worker.worker_period = Some(scope.clone());
-        if let Some(worker_scope) = worker.worker_period.as_mut() {
-            worker_scope.activity_range = args.activity_range.clone();
-        }
-        worker.evidence = Arc::new(Mutex::new(
-            parent
-                .evidence
-                .lock()
-                .map_err(|_| "Evidence unavailable")?
-                .fork_for_period(period.is_some()),
-        ));
-        worker.active_note = None;
-        worker.sources = Arc::new(Mutex::new(Vec::new()));
-        worker.passage_references = Arc::new(Mutex::new(Default::default()));
-        worker.context_versions = Arc::new(Mutex::new(HashMap::new()));
-        worker.event_sink = Arc::new(Mutex::new(None));
-        worker.cancellation = Arc::new(Mutex::new(None));
-        worker.research_usage = Arc::new(Mutex::new(Default::default()));
+        let mut worker_scope = scope.clone();
+        worker_scope.activity_range = args.activity_range.clone();
+        let worker = parent.research_worker(ids, worker_scope, period.is_some())?;
         configure_worker_request(
             &mut config.request,
             &args.question,
@@ -381,8 +431,8 @@ fn run_research(
         parent.activity("Researching across notes");
         trace.stage = "worker_runtime";
         let response = tokio::time::timeout(
-            Duration::from_secs(90),
-            AgentRuntime::run(config.request, Some(worker.clone()), observer, config.guard),
+            config.timeout,
+            (config.runner)(config.request, Some(worker.clone()), observer, config.guard),
         )
         .await;
         cancelled.cancel();
@@ -413,9 +463,15 @@ fn run_research(
             }
         };
         trace.stage = "freshness";
-        parent.check_cancelled()?;
-        worker.validate_context()?;
-        parent.validate_context()?;
+        let fresh_parent = parent.clone();
+        let fresh_worker = worker.clone();
+        run_blocking_tool(move || {
+            fresh_parent.check_cancelled()?;
+            fresh_worker.validate_context()?;
+            fresh_parent.validate_context()?;
+            Ok(())
+        })
+        .await?;
         let read_ids: HashSet<_> = worker
             .sources
             .lock()
@@ -472,23 +528,31 @@ fn run_research(
             ));
         }
         trace.stage = "selected_evidence_read";
-        let (allowed, excluded) = worker.evidence_scope()?;
-        let state = parent
-            .app
-            .try_state::<AppState>()
-            .ok_or("Notes index unavailable")?;
-        let (mut payload, sources) = worker
-            .evidence
-            .lock()
-            .map_err(|_| "Evidence unavailable")?
-            .read_research(
-                &state,
-                allowed.as_ref(),
-                &excluded,
-                &selection.evidence_ids,
-                period,
-                selection.gaps,
-            )?;
+        let selected_ids = selection.evidence_ids.clone();
+        let selected_worker = worker.clone();
+        let selected_parent = parent.clone();
+        let (mut payload, sources) = run_blocking_tool(move || {
+            selected_parent.check_cancelled()?;
+            let (allowed, excluded) = selected_worker.evidence_scope()?;
+            let state = selected_parent
+                .host
+                .state()
+                .ok_or("Notes index unavailable")?;
+            let result = selected_worker
+                .evidence
+                .lock()
+                .map_err(|_| "Evidence unavailable")?
+                .read_research(
+                    &state,
+                    allowed.as_ref(),
+                    &excluded,
+                    &selected_ids,
+                    period,
+                    selection.gaps,
+                )?;
+            Ok(result)
+        })
+        .await?;
         let delivered_passages = sources
             .iter()
             .map(|(c, _, _)| &c.id)
@@ -895,5 +959,161 @@ mod tests {
             .unwrap()
             .contains("private parent"));
         assert!(!request.enable_web && !request.require_web);
+    }
+    #[test]
+    fn real_research_orchestration_handles_empty_scope_failure_timeout_and_unread_selection() {
+        let (_vault, parent, id) = super::super::tests::fixture();
+        parent.configure_research(
+            super::super::tests::request(),
+            AgentRuntimeObserver {
+                cancelled: tokio_util::sync::CancellationToken::new(),
+                on_event: Arc::new(|_| {}),
+                permissions: None,
+            },
+            AgentRunGuard::new(Default::default()),
+        );
+        let calls = Arc::new(AtomicUsize::new(0));
+        let observed = calls.clone();
+        parent
+            .research_runtime
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .runner = Arc::new(move |_, _, _, _| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            Box::pin(async { Err("deterministic provider failure".into()) })
+        });
+        let args = |note: &str| ResearchArgs {
+            question: "Find evidence".into(),
+            note_ids: Some(vec![note.into()]),
+            folder: None,
+            activity_range: None,
+            include_history: false,
+        };
+        tauri::async_runtime::block_on(async {
+            assert_eq!(
+                run_research(parent.clone(), args("missing")).await.unwrap()["reason"],
+                "empty_scope"
+            );
+            assert_eq!(calls.load(Ordering::SeqCst), 0);
+            for _ in 0..2 {
+                assert_eq!(
+                    run_research(parent.clone(), args(&id)).await.unwrap()["reason"],
+                    "runtime_failed"
+                );
+                assert!(!parent.research_active.load(Ordering::SeqCst));
+            }
+            assert_eq!(calls.load(Ordering::SeqCst), 2);
+            {
+                let mut config = parent.research_runtime.lock().unwrap();
+                let config = config.as_mut().unwrap();
+                config.timeout = Duration::ZERO;
+                config.runner = Arc::new(|_, _, _, _| Box::pin(std::future::pending()));
+            }
+            assert_eq!(
+                run_research(parent.clone(), args(&id)).await.unwrap()["reason"],
+                "timeout"
+            );
+            assert!(!parent.research_active.load(Ordering::SeqCst));
+            parent
+                .research_runtime
+                .lock()
+                .unwrap()
+                .as_mut()
+                .unwrap()
+                .runner = Arc::new(|_, _, _, _| {
+                Box::pin(async {
+                    Ok(crate::agent_runtime::AgentRuntimeResponse {
+                        output: r#"{"evidence_ids":["unread"],"gaps":[]}"#.into(),
+                        usage: rig_core::completion::Usage::new(),
+                        stats: Default::default(),
+                    })
+                })
+            });
+            let unread = run_research(parent.clone(), args(&id)).await.unwrap();
+            assert_eq!(unread["status"], "partial");
+            assert!(!parent.research_active.load(Ordering::SeqCst));
+            parent
+                .cancellation
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .cancel();
+            assert!(run_research(parent.clone(), args(&id)).await.is_err());
+            assert!(!parent.research_active.load(Ordering::SeqCst));
+        });
+    }
+    #[test]
+    fn real_worker_reads_are_revalidated_before_parent_delivery_and_lease_reuse() {
+        let (_vault, parent, id) = super::super::tests::fixture();
+        parent.configure_research(
+            super::super::tests::request(),
+            AgentRuntimeObserver {
+                cancelled: tokio_util::sync::CancellationToken::new(),
+                on_event: Arc::new(|_| {}),
+                permissions: None,
+            },
+            AgentRunGuard::new(Default::default()),
+        );
+        let revoke = Arc::new(AtomicBool::new(true));
+        let revoke_in_worker = revoke.clone();
+        let worker_id = id.clone();
+        let service = parent.service.clone();
+        parent
+            .research_runtime
+            .lock()
+            .unwrap()
+            .as_mut()
+            .unwrap()
+            .runner = Arc::new(move |_, tools, _, _| {
+            let id = worker_id.clone();
+            let service = service.clone();
+            let revoke = revoke_in_worker.clone();
+            Box::pin(async move {
+                let worker = tools.unwrap();
+                let result = ReadEvidenceTool(worker)
+                    .call(
+                        &mut ToolContext::new(),
+                        crate::services::evidence::ReadRequest {
+                            note_id: Some(id.clone()),
+                            ..Default::default()
+                        },
+                    )
+                    .await
+                    .map_err(|e| e.to_string())?;
+                let selected = result["items"][0]["evidenceId"].as_str().unwrap();
+                if revoke.load(Ordering::SeqCst) {
+                    service.set_note_excluded(&id, "Tool note", true)?;
+                }
+                Ok(crate::agent_runtime::AgentRuntimeResponse {
+                    output: json!({"evidence_ids":[selected],"gaps":[]}).to_string(),
+                    usage: rig_core::completion::Usage::new(),
+                    stats: Default::default(),
+                })
+            })
+        });
+        let args = || ResearchArgs {
+            question: "Read evidence".into(),
+            note_ids: Some(vec![id.clone()]),
+            folder: None,
+            activity_range: None,
+            include_history: false,
+        };
+        tauri::async_runtime::block_on(async {
+            assert!(run_research(parent.clone(), args()).await.is_err());
+            assert!(parent.sources.lock().unwrap().is_empty());
+            assert!(!parent.research_active.load(Ordering::SeqCst));
+            revoke.store(false, Ordering::SeqCst);
+            parent
+                .service
+                .set_note_excluded(&id, "Tool note", false)
+                .unwrap();
+            let delivered = run_research(parent.clone(), args()).await.unwrap();
+            assert_eq!(delivered["status"], "ready");
+            assert!(!parent.sources.lock().unwrap().is_empty());
+            assert!(!parent.research_active.load(Ordering::SeqCst));
+        });
     }
 }

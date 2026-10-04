@@ -124,3 +124,46 @@ fn failed_migration_rolls_back_bootstrap_and_preserves_legacy_data() {
         .unwrap();
     assert_eq!(existing, "existing-note");
 }
+
+#[test]
+fn task_schema_failure_rolls_back_complete_bootstrap() {
+    let mut connection = Connection::open_in_memory().unwrap();
+    connection
+        .execute_batch("CREATE VIEW app_state_note_tasks AS SELECT 'existing' AS task_id")
+        .unwrap();
+    assert!(ensure_state_schema(&mut connection).is_err());
+    let tables: u32 = connection
+        .query_row(
+            "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='app_state'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(tables, 0);
+    let existing: String = connection
+        .query_row("SELECT task_id FROM app_state_note_tasks", [], |r| r.get(0))
+        .unwrap();
+    assert_eq!(existing, "existing");
+}
+
+#[test]
+fn initialized_task_reads_do_not_request_a_schema_write_reservation() {
+    let _guard = crate::test_support::lock_test_env();
+    let temp = crate::test_support::TestDir::new("task-read-reservation");
+    let storage = AppStateStorage::bind(temp.path()).unwrap();
+    let writer = Connection::open(temp.path().join(APP_STATE_DB_FILE_NAME)).unwrap();
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+    // A schema check here would try BEGIN IMMEDIATE and fail SQLITE_BUSY.
+    storage
+        .with(|c| c.busy_timeout(Duration::ZERO).map_err(|e| e.to_string()))
+        .unwrap();
+    assert!(
+        crate::state::task_projection::load_tasks_for_note_id("missing")
+            .unwrap()
+            .is_empty()
+    );
+    assert!(crate::state::task_projection::load_task_by_id("missing")
+        .unwrap()
+        .is_none());
+    writer.execute_batch("ROLLBACK").unwrap();
+}

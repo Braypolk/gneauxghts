@@ -1,123 +1,45 @@
+import { ListenerScope } from '$lib/app/listenerScope';
 import type { Readable, Subscriber, Unsubscriber } from 'svelte/store';
 import { chatApi, type ChatApi } from './api';
-import type {
-  ChatConversation,
-  ChatConversationSummary,
-  ChatEventMap,
-  ChatExcerpt,
-  ChatMessage,
-  ChatNoteGrant,
-  ChatNotePolicy,
-  ChatAgentProposal,
-  ChatActiveNoteSnapshot,
-  ChatAttachmentInput,
-  ChatContextSelectionInput,
-  ChatContextSuggestionResponse,
-  ChatModelCapabilities,
-  ChatProvider,
-  ChatReasoningEffort,
-  VaultAccess,
-  ChatSettings,
-  AgentPermissionDecision,
-  AgentPermissionIdentity,
-  LocalModel
-} from './types';
+import type { ChatConversation, ChatConversationSummary, ChatEventMap, ChatExcerpt, ChatMessage, ChatNoteGrant, ChatNotePolicy, ChatAgentProposal, ChatActiveNoteSnapshot, ChatAttachmentInput, ChatContextSelectionInput, ChatContextSuggestionResponse, ChatModelCapabilities, ChatProvider, ChatReasoningEffort, VaultAccess, ChatSettings, ChatSendReceipt, AgentPermissionDecision, AgentPermissionIdentity, LocalModel } from './types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
 import { configuredChatModel, normalizeChatReasoningEffort } from './chatConfiguration';
-import {
-  materializeDurableChatParts,
-  reduceAgentEvent,
-  replaceTextPart,
-  settlePendingPermissions
-} from './agentEvents';
-import {
-  createChatControllerMachineState,
-  isChatRequestBusy,
-  isChatSelectionBusy,
-  transitionChatControllerMachine,
-  type ChatControllerMachineEvent,
-  type ChatControllerMachineState
-} from './machines/controllerMachine';
-
-export interface ChatControllerState {
-  settings: ChatSettings | null;
-  conversations: ChatConversationSummary[];
-  conversationDraft: {
-    revision: number;
-    title: string;
-    provider: ChatProvider;
-    model: string;
-    reasoningEffort: ChatReasoningEffort;
-    vaultAccess: VaultAccess;
-  };
-  grants: ChatNoteGrant[];
-  policies: ChatNotePolicy[];
-  conversation: ChatConversation | null;
-  isInitialized: boolean;
-  isInitializing: boolean;
-  isLoadingConversation: boolean;
-  isSending: boolean;
-  error: string | null;
-  activity: string | null;
-  proposals: ChatAgentProposal[];
-  modelCapabilities: ChatModelCapabilities | null;
+import { createChatControllerMachineState, transitionChatControllerMachine, projectChatController, draftConfiguration, isChatRequestBusy, isChatSelectionBusy, type ChatControllerMachineEvent, type ChatControllerState, type BackendChatEvent } from './machines/controllerMachine';
+export type { ChatControllerState } from './machines/controllerMachine';
+export interface ChatSendInput {
+  content: string;
+  title?: string;
+  attachments?: ChatAttachmentInput[];
+  forceWebSearch?: boolean;
+  activeNote?: ChatActiveNoteSnapshot | null;
+  selectedContext?: ChatContextSelectionInput[];
 }
-
-const initialState: Omit<
-  ChatControllerState,
-  | 'isInitialized'
-  | 'isInitializing'
-  | 'isLoadingConversation'
-  | 'isSending'
-  | 'activity'
-> = {
-  settings: null,
-  conversations: [],
-  conversationDraft: {
-    revision: 0,
-    title: '',
-    provider: 'openai',
-    model: '',
-    reasoningEffort: 'medium',
-    vaultAccess: 'approved'
-  },
-  grants: [],
-  policies: [],
-  conversation: null,
-  error: null,
-  proposals: [],
-  modelCapabilities: null
+export type ChatSendOutcome = {
+  status: 'sent';
+  conversationId: string;
+  selectionRevision: number;
+  draftRevision: number | null;
+} | {
+  status: 'failed' | 'obsolete';
 };
-
 export interface ChatController extends Readable<ChatControllerState> {
   getSnapshot(): ChatControllerState;
   initialize(conversationId?: string | null): Promise<void>;
   dispose(): void;
   refreshList(): Promise<void>;
-  createConversation(input?: {
+  startNewConversation(input?: {
     title?: string;
-    vaultAccess?: VaultAccess;
-  }): Promise<ChatConversation | null>;
-  startNewConversation(input?: { title?: string }): void;
+  }): void;
   setConversationDraftTitle(title: string): void;
   getComposerDraft(slot: string): Promise<string>;
   setComposerDraft(slot: string, body: string): Promise<void>;
   renameConversation(title: string): Promise<boolean>;
-  archiveConversation(
-    conversationId?: string,
-    retentionDays?: ForgottenNoteRetentionPreference
-  ): Promise<ForgottenNoteSummary | null>;
+  archiveConversation(conversationId?: string, retentionDays?: ForgottenNoteRetentionPreference): Promise<ForgottenNoteSummary | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
   branchFromMessage(messageId: string): Promise<ChatConversation | null>;
-  send(
-    content: string,
-    attachments?: ChatAttachmentInput[],
-    forceWebSearch?: boolean,
-    activeNote?: ChatActiveNoteSnapshot | null,
-    selectedContext?: ChatContextSelectionInput[]
-  ): Promise<boolean>;
+  send(input: ChatSendInput): Promise<ChatSendOutcome>;
   suggestContext(input: {
     query: string;
     vaultAccess: VaultAccess;
@@ -125,20 +47,14 @@ export interface ChatController extends Readable<ChatControllerState> {
     limit?: number;
   }): Promise<ChatContextSuggestionResponse>;
   cancel(): Promise<void>;
-  decidePermission(
-    identity: AgentPermissionIdentity,
-    decision: AgentPermissionDecision
-  ): Promise<boolean>;
+  decidePermission(identity: AgentPermissionIdentity, decision: AgentPermissionDecision): Promise<boolean>;
   retry(messageId: string): Promise<void>;
   setVaultAccess(vaultAccess: VaultAccess): Promise<void>;
   setProvider(provider: ChatProvider, model: string): Promise<void>;
   setReasoningEffort(reasoningEffort: ChatReasoningEffort): Promise<void>;
   listOpenAiModels(): Promise<LocalModel[]>;
   listLocalModels(): Promise<LocalModel[]>;
-  keepProposal(
-    proposalId: string,
-    markdown?: string
-  ): Promise<CommitNoteReviewResult>;
+  keepProposal(proposalId: string, markdown?: string): Promise<CommitNoteReviewResult>;
   dismissProposal(proposalId: string): Promise<void>;
   removeResolvedProposal(proposalId: string): void;
   setNoteExcluded(noteId: string, title: string, excluded: boolean): Promise<void>;
@@ -150,1005 +66,471 @@ export interface ChatController extends Readable<ChatControllerState> {
   unremember(excerptId: string): Promise<ChatExcerpt>;
   clearError(): void;
 }
-
 function errorText(error: unknown, fallback: string): string {
-  if (typeof error === 'string' && error.trim()) return error;
-  if (error instanceof Error && error.message.trim()) return error.message;
+  if (typeof error === 'string' && error.trim())
+    return error;
+  if (error instanceof Error && error.message.trim())
+    return error.message;
   return fallback;
 }
-
-function upsertMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  const index = messages.findIndex((candidate) => candidate.id === message.id);
-  if (index < 0) return [...messages, message].sort((a, b) => a.createdAtMillis - b.createdAtMillis);
-  const next = messages.slice();
-  next[index] = message;
-  return next;
-}
-
-function upsertTerminalMessage(messages: ChatMessage[], message: ChatMessage): ChatMessage[] {
-  const previous = messages.find((candidate) => candidate.id === message.id);
-  if (!previous) {
-    return upsertMessage(messages, {
-      ...message,
-      parts: materializeDurableChatParts(message.parts, {
-        text: message.content,
-        citations: message.citations,
-        checkpoint: message.role === 'assistant' && message.status === 'completed'
-      })
-    });
-  }
-  const citations = message.citations.length > 0 ? message.citations : previous.citations;
-  return upsertMessage(messages, {
-    ...message,
-    citations,
-    linkTarget: message.linkTarget ?? previous.linkTarget,
-    parts: settlePendingPermissions(
-      materializeDurableChatParts(previous.parts, {
-        text: message.content,
-        citations,
-        checkpoint: message.role === 'assistant' && message.status === 'completed'
-      })
-    ),
-    requestId: previous.requestId,
-    agentRunId: previous.agentRunId,
-    agentSequence: previous.agentSequence,
-    agentEventCreatedAtMillis: previous.agentEventCreatedAtMillis,
-    agentRetiredRunIds: previous.agentRetiredRunIds
-  });
-}
-
-function mergeSummary(list: ChatConversationSummary[], summary: ChatConversationSummary) {
-  const compact: ChatConversationSummary = {
-    id: summary.id,
-    title: summary.title,
-    status: summary.status,
-    vaultAccess: summary.vaultAccess,
-    createdAtMillis: summary.createdAtMillis,
-    updatedAtMillis: summary.updatedAtMillis,
-    messageCount: summary.messageCount,
-    lastMessagePreview: summary.lastMessagePreview,
-    provider: summary.provider,
-    model: summary.model,
-    reasoningEffort: summary.reasoningEffort
-  };
-  return [compact, ...list.filter((item) => item.id !== compact.id)].sort(
-    (a, b) => b.updatedAtMillis - a.updatedAtMillis
-  );
-}
-
-function draftConfiguration(
-  settings: ChatSettings | null
-): Pick<
-  ChatControllerState['conversationDraft'],
-  'provider' | 'model' | 'reasoningEffort' | 'vaultAccess'
-> {
-  const provider = settings?.provider ?? 'openai';
-  return {
-    provider,
-    model: configuredChatModel(settings, provider),
-    reasoningEffort: settings?.reasoningEffort ?? 'medium',
-    vaultAccess: settings?.defaultVaultAccess ?? 'approved'
-  };
-}
-
 export interface ChatControllerOptions {
   /**
-   * Fired after a successful assistant completion for the open conversation.
-   * Used to lift structured note proposals into the review session.
-   */
+  * Fired after a successful assistant completion for the open conversation.
+  * Used to lift structured note proposals into the review session.
+  */
   onAssistantCompleted?: (info: {
     conversation: ChatConversation;
     message: ChatMessage;
   }) => void | Promise<void>;
   /** Announces a durable proposal available for passive editor display. */
-  onProposalAvailable?: (
-    proposal: ChatAgentProposal
-  ) => void | Promise<void>;
+  onProposalAvailable?: (proposal: ChatAgentProposal) => void | Promise<void>;
   onProposalResolved?: (proposalId: string) => void;
 }
-
-/**
- * Rune-backed chat controller. Public surface keeps `subscribe` / `getSnapshot`
- * so ChatPanel and Notepad stay compatible while state lives in `$state`.
- */
+const chatChannels = {
+  'chat://started': true,
+  'chat://text-delta': true,
+  'chat://source': true,
+  'chat://completed': true,
+  'chat://title-updated': true,
+  'chat://cancelled': true,
+  'chat://failed': true,
+  'chat://activity': true,
+  'chat://agent-event': true,
+  'chat://proposal': true,
+  'chat://projection-conflict': true
+} satisfies Record<keyof ChatEventMap, true>;
+/** The state transition admits and projects data atomically; this owner performs effects. */
 export class ChatControllerStore implements ChatController {
-  settings = $state<ChatSettings | null>(initialState.settings);
-  conversations = $state<ChatConversationSummary[]>(initialState.conversations);
-  conversationDraft = $state(initialState.conversationDraft);
-  grants = $state<ChatNoteGrant[]>(initialState.grants);
-  policies = $state<ChatNotePolicy[]>(initialState.policies);
-  conversation = $state<ChatConversation | null>(initialState.conversation);
-  error = $state<string | null>(initialState.error);
-  proposals = $state<ChatAgentProposal[]>(initialState.proposals);
-  modelCapabilities = $state<ChatModelCapabilities | null>(initialState.modelCapabilities);
-  machine = $state<ChatControllerMachineState>(
-    createChatControllerMachineState()
-  );
+  #state = createChatControllerMachineState();
 
   #api: ChatApi;
+
   #options: ChatControllerOptions;
+
   #subscribers = new Set<Subscriber<ChatControllerState>>();
-  #unlisteners: Array<() => void> = [];
-  #initializeSequence = 0;
-  #selectionOperationSequence = 0;
-  #requestOperationSequence = 0;
-  #modelConfigurationSequence = 0;
-  #listenersReady = false;
-  #modelCapabilities = new Map<string, ChatModelCapabilities>();
+
+  #listenerScope: ListenerScope | null = null;
+
+  #listenerPromise: Promise<void> | null = null;
+
+  #operationSequence = 0;
+
+  #capabilitiesByModel = new Map<string, ChatModelCapabilities>();
 
   constructor(api: ChatApi = chatApi, options: ChatControllerOptions = {}) {
     this.#api = api;
     this.#options = options;
   }
 
-  get isInitializing() {
-    return this.machine.lifecycle.kind === 'initializing';
-  }
+  private get settings() { return this.#state.settings; }
 
-  get isInitialized() {
-    return this.machine.lifecycle.kind === 'ready';
-  }
+  private get conversation() { return this.#state.conversation; }
 
-  get isLoadingConversation() {
-    return isChatSelectionBusy(this.machine);
-  }
+  private get conversations() { return this.#state.conversations; }
 
-  get isSending() {
-    return isChatRequestBusy(this.machine);
-  }
+  private get conversationDraft() { return this.#state.conversationDraft; }
 
-  get activity() {
-    return 'activity' in this.machine.request
-      ? this.machine.request.activity
-      : null;
-  }
+  private get grants() { return this.#state.grants; }
 
-  #isDisposed() {
-    return this.machine.lifecycle.kind === 'disposed';
-  }
+  private get policies() { return this.#state.policies; }
+
+  private get proposals() { return this.#state.proposals; }
+
+  private get isSending() { return isChatRequestBusy(this.#state); }
+
+  private get isLoadingConversation() { return isChatSelectionBusy(this.#state); }
+
+  #isDisposed() { return this.#state.lifecycle.kind === 'disposed'; }
 
   #isInitializationCurrent(sequence: number) {
-    return (
-      this.machine.lifecycle.kind === 'initializing' &&
-      this.machine.lifecycle.sequence === sequence
-    );
+    return this.#state.lifecycle.kind === 'initializing' && this.#state.lifecycle.sequence === sequence;
   }
 
-  #dispatch(event: ChatControllerMachineEvent) {
-    const previous = this.machine;
-    this.machine = transitionChatControllerMachine(previous, event);
-    return this.machine !== previous;
-  }
-
-  getSnapshot(): ChatControllerState {
-    return {
-      settings: this.settings,
-      conversations: this.conversations,
-      conversationDraft: this.conversationDraft,
-      grants: this.grants,
-      policies: this.policies,
-      conversation: this.conversation,
-      isInitialized: this.isInitialized,
-      isInitializing: this.isInitializing,
-      isLoadingConversation: this.isLoadingConversation,
-      isSending: this.isSending,
-      error: this.error,
-      activity: this.activity,
-      proposals: this.proposals,
-      modelCapabilities: this.modelCapabilities
-    };
-  }
+  getSnapshot(): ChatControllerState { return projectChatController(this.#state); }
 
   subscribe(run: Subscriber<ChatControllerState>): Unsubscriber {
     run(this.getSnapshot());
     this.#subscribers.add(run);
-    return () => {
-      this.#subscribers.delete(run);
-    };
+    return () => { this.#subscribers.delete(run); };
   }
 
-  #notify() {
-    if (this.#isDisposed() || this.#subscribers.size === 0) return;
-    const snapshot = this.getSnapshot();
-    for (const run of this.#subscribers) {
-      run(snapshot);
+  #dispatch(event: ChatControllerMachineEvent) {
+    const previous = this.#state;
+    const admitted = transitionChatControllerMachine(previous, event);
+    if (admitted === previous)
+      return null;
+    this.#state = admitted;
+    if (!this.#isDisposed()) {
+      const snapshot = this.getSnapshot();
+      for (const run of this.#subscribers) {
+        if (this.#state !== admitted)
+          break;
+        run(snapshot);
+      }
     }
+    return admitted;
   }
 
-  #patch(partial: Partial<ChatControllerState>) {
-    if (this.#isDisposed()) return;
-    if (partial.settings !== undefined) this.settings = partial.settings;
-    if (partial.conversations !== undefined) this.conversations = partial.conversations;
-    if (partial.conversationDraft !== undefined) {
-      this.conversationDraft = partial.conversationDraft;
+  #metadata(data: Partial<Pick<ChatControllerState, 'settings' | 'conversations' | 'grants' | 'policies' | 'error'>>) {
+    return this.#dispatch({ type: 'metadata', data });
+  }
+
+  #receive<K extends keyof ChatEventMap>(channel: K, payload: ChatEventMap[K]) {
+    if (channel === 'chat://projection-conflict') {
+      if (this.conversation?.id === payload.conversationId)
+        void this.openConversation(payload.conversationId);
+      return;
     }
-    if (partial.grants !== undefined) this.grants = partial.grants;
-    if (partial.policies !== undefined) this.policies = partial.policies;
-    if (partial.conversation !== undefined) this.conversation = partial.conversation;
-    if (partial.error !== undefined) this.error = partial.error;
-    if (partial.proposals !== undefined) this.proposals = partial.proposals;
-    if (partial.modelCapabilities !== undefined) {
-      this.modelCapabilities = partial.modelCapabilities;
+    const admitted = this.#dispatch({
+      type: 'backend',
+      channel,
+      payload,
+      now: Date.now()
+    } as BackendChatEvent);
+    if (!admitted)
+      return;
+    if (channel === 'chat://completed') {
+      const event = payload as ChatEventMap['chat://completed'];
+      if (admitted.conversation && event.message.role === 'assistant' && event.message.status === 'completed') {
+        void this.#options.onAssistantCompleted?.({ conversation: admitted.conversation, message: event.message });
+      }
     }
-    this.#notify();
-  }
-
-  #updateConversation(updater: (conversation: ChatConversation) => ChatConversation) {
-    if (this.#isDisposed() || !this.conversation) return;
-    const conversation = updater(this.conversation);
-    this.conversation = conversation;
-    this.conversations = mergeSummary(this.conversations, conversation);
-    this.#notify();
-  }
-
-  #ifCurrent<T extends { conversationId: string }>(event: T, apply: () => void) {
-    if (this.conversation?.id === event.conversationId) apply();
+    else if (channel === 'chat://proposal') {
+      void this.#options.onProposalAvailable?.(payload as ChatAgentProposal);
+    }
   }
 
   #modelKey(provider: ChatProvider, model: string) {
     return `${provider}:${model}`;
   }
 
-  async #getModelCapabilities(
-    provider: ChatProvider,
-    model: string
-  ) {
+  async #getModelCapabilities(provider: ChatProvider, model: string) {
     const key = this.#modelKey(provider, model);
-    const cached = this.#modelCapabilities.get(key);
+    const cached = this.#capabilitiesByModel.get(key);
     // Local profiles are editable in Settings, so refresh them instead of
     // allowing a controller-lived cache to hide a newly saved configuration.
-    if (cached && provider !== 'local') return cached;
-    const capabilities =
-      await this.#api.getModelCapabilities(provider, model);
-    this.#modelCapabilities.set(key, capabilities);
+    if (cached && provider !== 'local')
+      return cached;
+    const capabilities = await this.#api.getModelCapabilities(provider, model);
+    this.#capabilitiesByModel.set(key, capabilities);
     return capabilities;
   }
 
-  #reasoningEffortForModel(
-    provider: ChatProvider,
-    model: string,
-    fallback: ChatReasoningEffort,
-    capabilities: ChatModelCapabilities | null
-  ) {
-    const configured =
-      provider === 'local'
-        ? capabilities?.defaultReasoningEffort ?? fallback
-        : fallback;
+  #reasoningEffortForModel(provider: ChatProvider, model: string, fallback: ChatReasoningEffort, capabilities: ChatModelCapabilities | null) {
+    const configured = provider === 'local'
+      ? capabilities?.defaultReasoningEffort ?? fallback
+      : fallback;
     return normalizeChatReasoningEffort(provider, model, configured);
   }
 
-  async #loadDraftModelCapabilities(
-    revision: number,
-    provider: ChatProvider,
-    model: string
-  ) {
-    if (!model) {
-      if (
-        !this.conversation &&
-        this.conversationDraft.revision === revision
-      ) {
-        this.#patch({ modelCapabilities: null });
-      }
-      return;
-    }
+  async #loadDraftModelCapabilities(revision: number, provider: ChatProvider, model: string) {
     try {
-      const modelCapabilities =
-        await this.#getModelCapabilities(provider, model);
-      if (
-        !this.conversation &&
-        this.conversationDraft.revision === revision &&
-        this.conversationDraft.provider === provider &&
-        this.conversationDraft.model === model
-      ) {
-        const reasoningEffort = this.#reasoningEffortForModel(
-          provider,
-          model,
-          this.conversationDraft.reasoningEffort,
-          modelCapabilities
-        );
-        this.#patch({
-          modelCapabilities,
-          conversationDraft: {
-            ...this.conversationDraft,
-            reasoningEffort
-          }
-        });
-      }
-    } catch (error) {
-      if (
-        !this.conversation &&
-        this.conversationDraft.revision === revision
-      ) {
-        this.#patch({
-          modelCapabilities: null,
-          error: errorText(
-            error,
-            'Unable to load attachment capabilities for this model.'
-          )
-        });
-      }
+      const capabilities = model ? await this.#getModelCapabilities(provider, model) : null;
+      this.#dispatch({
+        type: 'draftCapabilities',
+        revision,
+        provider,
+        model,
+        capabilities,
+        effort: this.#reasoningEffortForModel(provider, model, this.conversationDraft.reasoningEffort, capabilities)
+      });
     }
-  }
-
-  #eventHandlers: { [K in keyof ChatEventMap]: (event: ChatEventMap[K]) => void } = {
-    'chat://started': (event) =>
-      this.#ifCurrent(event, () => {
-        if (
-          !this.#dispatch({
-            type: 'started',
-            conversationId: event.conversationId,
-            requestId: event.requestId,
-            messageId: event.messageId
-          })
-        ) {
-          return;
-        }
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          ...(event.conversation ?? {}),
-          activeRequestId: event.requestId,
-          messages: upsertTerminalMessage(conversation.messages, event.message)
-        }));
-        this.#patch({ error: null });
-      }),
-    'chat://text-delta': (event) =>
-      this.#ifCurrent(event, () => {
-        if (
-          !this.#dispatch({
-            type: 'started',
-            conversationId: event.conversationId,
-            requestId: event.requestId,
-            messageId: event.messageId
-          })
-        ) {
-          return;
-        }
-        this.#updateConversation((conversation) => {
-          const messages = conversation.messages.map((message) => {
-            if (message.id !== event.messageId) return message;
-            const content = message.content + event.delta;
-            return {
-              ...message,
-              content,
-              parts: replaceTextPart(message.parts, content),
-              status: 'streaming' as const,
-              updatedAtMillis: Date.now()
-            };
-          });
-          return { ...conversation, activeRequestId: event.requestId, messages };
-        });
-      }),
-    'chat://source': (event) =>
-      this.#ifCurrent(event, () => {
-        if (
-          !this.#dispatch({
-            type: 'started',
-            conversationId: event.conversationId,
-            requestId: event.requestId,
-            messageId: event.messageId
-          })
-        ) {
-          return;
-        }
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          messages: conversation.messages.map((message) => {
-            if (message.id !== event.messageId) return message;
-            const citations = [
-              ...message.citations.filter((citation) => citation.id !== event.citation.id),
-              event.citation
-            ];
-            return {
-              ...message,
-              citations,
-              parts: materializeDurableChatParts(message.parts, {
-                text: message.content,
-                citations,
-                checkpoint: message.role === 'assistant' && message.status === 'completed'
-              })
-            };
-          })
-        }));
-      }),
-    'chat://completed': (event) =>
-      this.#ifCurrent(event, () => {
-        const wasIdle = this.machine.request.kind === 'idle';
-        const accepted = this.#dispatch({
-          type: 'terminal',
-          conversationId: event.conversationId,
-          requestId: event.requestId
-        });
-        if (!wasIdle && !accepted) return;
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          ...(event.conversation ?? {}),
-          activeRequestId: null,
-          messages: upsertTerminalMessage(conversation.messages, event.message)
-        }));
-        const conversation = this.conversation;
-        if (
-          conversation &&
-          event.message.role === 'assistant' &&
-          event.message.status === 'completed'
-        ) {
-          void this.#options.onAssistantCompleted?.({
-            conversation,
-            message: event.message
-          });
-        }
-      }),
-    'chat://title-updated': (event) => {
-      if (this.#isDisposed()) return;
-      this.conversations = mergeSummary(this.conversations, event.conversation);
-      if (this.conversation?.id === event.conversationId) {
-        this.conversation = { ...this.conversation, ...event.conversation };
-      }
-      this.#notify();
-    },
-    'chat://cancelled': (event) =>
-      this.#ifCurrent(event, () => {
-        const wasIdle = this.machine.request.kind === 'idle';
-        const accepted = this.#dispatch({
-          type: 'terminal',
-          conversationId: event.conversationId,
-          requestId: event.requestId
-        });
-        if (!wasIdle && !accepted) return;
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          activeRequestId: null,
-          messages: upsertTerminalMessage(conversation.messages, event.message)
-        }));
-      }),
-    'chat://failed': (event) =>
-      this.#ifCurrent(event, () => {
-        const wasIdle = this.machine.request.kind === 'idle';
-        const accepted = this.#dispatch({
-          type: 'terminal',
-          conversationId: event.conversationId,
-          requestId: event.requestId
-        });
-        if (!wasIdle && !accepted) return;
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          activeRequestId: null,
-          messages: upsertTerminalMessage(conversation.messages, event.message)
-        }));
-        this.#patch({ error: event.error });
-      }),
-    'chat://activity': (event) =>
-      this.#ifCurrent(event, () => {
-        if (
-          this.#dispatch({
-            type: 'activity',
-            conversationId: event.conversationId,
-            requestId: event.requestId,
-            messageId: event.messageId,
-            activity: event.status
-          })
-        ) {
-          this.#notify();
-        }
-      }),
-    'chat://agent-event': (event) =>
-      this.#ifCurrent(event, () => {
-        if (
-          !this.#dispatch({
-            type: 'started',
-            conversationId: event.conversationId,
-            requestId: event.requestId,
-            messageId: event.messageId
-          })
-        ) {
-          return;
-        }
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          activeRequestId: event.requestId,
-          messages: conversation.messages.map((message) => {
-            if (message.id !== event.messageId) return message;
-            const next = reduceAgentEvent(
-              {
-                parts: message.parts,
-                requestId: message.requestId,
-                conversationId: message.conversationId,
-                messageId: message.id,
-                runId: message.agentRunId,
-                sequence: message.agentSequence,
-                createdAtMillis: message.agentEventCreatedAtMillis,
-                retiredRunIds: message.agentRetiredRunIds
-              },
-              event,
-              {
-                applyText: false,
-                // The controller machine has already correlated this event to
-                // the active request, so a newer run may safely resume a
-                // message even if earlier envelopes were missed.
-                allowObservedRunHandoff: message.agentRunId !== null
-                  && message.agentRunId !== event.runId
-              }
-            );
-            return {
-              ...message,
-              parts: next.parts,
-              requestId: next.requestId,
-              agentRunId: next.runId,
-              agentSequence: next.sequence,
-              agentEventCreatedAtMillis: next.createdAtMillis,
-              agentRetiredRunIds: next.retiredRunIds
-            };
-          })
-        }));
-      }),
-    'chat://proposal': (event) =>
-      this.#ifCurrent(event, () => {
-        this.#patch({
-          proposals: [
-            ...this.proposals.filter(
-              (item) =>
-                item.id !== event.id &&
-                !(
-                  item.kind === event.kind &&
-                  (item.noteId ?? item.suggestedPath) ===
-                    (event.noteId ?? event.suggestedPath)
-                )
-            ),
-            event
-          ]
-        });
-        void this.#options.onProposalAvailable?.(event);
-      }),
-    'chat://projection-conflict': (event) =>
-      this.#ifCurrent(event, () => {
-        void this.openConversation(event.conversationId);
-      })
-  };
-
-  async #ensureListeners() {
-    if (this.#listenersReady) return;
-    this.#listenersReady = true;
-    try {
-      for (const event of Object.keys(this.#eventHandlers) as Array<keyof ChatEventMap>) {
-        const off = await this.#api.on(event, this.#eventHandlers[event] as never);
-        if (this.#isDisposed()) off();
-        else this.#unlisteners.push(off);
-      }
-    } catch (error) {
-      this.#listenersReady = false;
-      throw error;
+    catch (error) {
+      this.#dispatch({
+        type: 'draftCapabilities',
+        revision,
+        provider,
+        model,
+        capabilities: null,
+        error: errorText(error, 'Unable to load attachment capabilities for this model.')
+      });
     }
   }
 
   async refreshList() {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     try {
-      const conversations = await this.#api.listConversations(false);
-      this.#patch({ conversations, error: null });
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to load conversations.') });
+      this.#metadata({ conversations: await this.#api.listConversations(false), error: null });
+    }
+    catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to load conversations.') });
     }
   }
 
   async openConversation(conversationId: string) {
-    const operationId = ++this.#selectionOperationSequence;
+    const operationId = ++this.#operationSequence;
     if (!this.#dispatch({
       type: 'startLoading',
       conversationId,
       operationId
-    })) return null;
-    this.#patch({ error: null });
+    }))
+      return null;
     try {
       const conversation = await this.#api.getConversation(conversationId);
-      const [proposals, modelCapabilities] = await Promise.all([
+      const [proposals, capabilities] = await Promise.all([
         this.#api.listPendingProposals(conversationId),
         this.#getModelCapabilities(conversation.provider, conversation.model)
       ]);
-      if (
-        !this.#dispatch({
-          type: 'opened',
-          conversationId,
-          operationId
-        })
-      ) {
-        return null;
-      }
-      this.#dispatch({
-        type: 'restore',
-        conversationId,
-        requestId: conversation.activeRequestId
-      });
-      this.#patch({
+      if (!this.#dispatch({
+        type: 'selectionLoaded',
+        operationId,
         conversation,
         proposals,
-        modelCapabilities,
-        error: null
-      });
-      for (const proposal of proposals) {
+        capabilities
+      }))
+        return null;
+      for (const proposal of proposals)
         void this.#options.onProposalAvailable?.(proposal);
-      }
       return conversation;
-    } catch (error) {
-      if (
-        this.#dispatch({
-          type: 'failed',
-          operationId
-        })
-      ) {
-        this.#patch({
-          error: errorText(
-            error,
-            'Unable to open this conversation.'
-          )
-        });
-      }
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'selectionFailed',
+        operationId,
+        error: errorText(error, 'Unable to open this conversation.')
+      });
       return null;
     }
   }
 
   async branchFromMessage(messageId: string) {
-    if (this.#isDisposed() || this.isSending) return null;
-    this.#patch({ error: null });
+    if (this.#isDisposed() || this.isSending)
+      return null;
+    const operationId = ++this.#operationSequence;
+    this.#dispatch({ type: 'startBranching', operationId });
     try {
       const conversation = await this.#api.branchFromMessage(messageId);
-      const modelCapabilities = await this.#getModelCapabilities(
-        conversation.provider,
-        conversation.model
-      );
-      this.#dispatch({ type: 'reset' });
-      this.#patch({
+      const capabilities = await this.#getModelCapabilities(conversation.provider, conversation.model);
+      return this.#dispatch({
+        type: 'selectionLoaded',
+        operationId,
         conversation,
-        conversations: mergeSummary(this.conversations, conversation),
-        proposals: [],
-        modelCapabilities,
-        error: null
+        capabilities,
+        proposals: []
+      }) ? conversation : null;
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'selectionFailed',
+        operationId,
+        error: errorText(error, 'Unable to create checkpoint branch.')
       });
-      return conversation;
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to create checkpoint branch.') });
       return null;
     }
   }
 
-  async createConversation(
-    input: { title?: string; vaultAccess?: VaultAccess } = {}
-  ) {
-    if (this.#isDisposed()) return null;
-    if (!this.settings) {
-      this.#patch({
-        error: 'Chat settings are still loading. Try again in a moment.'
-      });
-      return null;
-    }
-    const operationId = ++this.#selectionOperationSequence;
-    this.#dispatch({
-      type: 'startCreating',
-      operationId
-    });
-    this.#patch({ error: null });
+  async #createForSend(title?: string) {
+    const operationId = ++this.#operationSequence;
+    const draft = this.conversationDraft;
+    this.#dispatch({ type: 'startCreating', operationId });
     try {
-      const title = input.title?.trim() || this.conversationDraft.title.trim() || undefined;
       const conversation = await this.#api.createConversation({
-        ...input,
-        title,
-        vaultAccess:
-          input.vaultAccess ?? this.conversationDraft.vaultAccess,
-        provider: this.conversationDraft.provider,
-        model: this.conversationDraft.model,
-        reasoningEffort: this.conversationDraft.reasoningEffort
+        title: title?.trim() || draft.title.trim() || undefined,
+        vaultAccess: draft.vaultAccess,
+        provider: draft.provider,
+        model: draft.model,
+        reasoningEffort: draft.reasoningEffort
       });
-      const modelCapabilities = await this.#getModelCapabilities(
-        conversation.provider,
-        conversation.model
-      );
-      if (
-        !this.#dispatch({
-          type: 'created',
-          operationId
-        })
-      ) {
-        return null;
-      }
-      this.#dispatch({ type: 'reset' });
-      this.#patch({
+      const capabilities = await this.#getModelCapabilities(conversation.provider, conversation.model);
+      const admitted = this.#dispatch({
+        type: 'selectionLoaded',
+        operationId,
         conversation,
-        conversations: mergeSummary(this.conversations, conversation),
-        modelCapabilities,
-        error: null
+        capabilities,
+        proposals: [],
+        draftRevision: draft.revision
       });
-      return conversation;
-    } catch (error) {
-      if (
-        this.#dispatch({
-          type: 'failed',
-          operationId
-        })
-      ) {
-        this.#patch({
-          error: errorText(
-            error,
-            'Unable to start a conversation.'
-          )
-        });
-      }
+      return admitted ? { conversationId: conversation.id, selectionRevision: admitted.selectionRevision } : null;
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'selectionFailed',
+        operationId,
+        error: errorText(error, 'Unable to start a conversation.')
+      });
       return null;
     }
   }
 
-  startNewConversation(input: { title?: string } = {}) {
-    const revision = this.conversationDraft.revision + 1;
+  startNewConversation(input: {
+    title?: string;
+  } = {}) {
     const configuration = draftConfiguration(this.settings);
-    const cachedCapabilities = configuration.provider === 'local'
-      ? null
-      : this.#modelCapabilities.get(
-          this.#modelKey(configuration.provider, configuration.model)
-        ) ?? null;
-    this.#dispatch({ type: 'reset' });
-    this.#patch({
-      conversation: null,
-      conversationDraft: {
-        revision,
-        title: input.title?.trim() ?? '',
-        ...configuration
-      },
-      proposals: [],
-      modelCapabilities: cachedCapabilities,
-      error: null
-    });
-    void this.#loadDraftModelCapabilities(
-      revision,
-      configuration.provider,
-      configuration.model
-    );
+    const capabilities = configuration.provider === 'local' ? null
+      : this.#capabilitiesByModel.get(this.#modelKey(configuration.provider, configuration.model)) ?? null;
+    if (!this.#dispatch({
+      type: 'draftStarted',
+      title: input.title?.trim() ?? '',
+      capabilities
+    }))
+      return;
+    void this.#loadDraftModelCapabilities(this.conversationDraft.revision, configuration.provider, configuration.model);
   }
 
   setConversationDraftTitle(title: string) {
-    if (this.conversation) return;
-    const nextTitle = title.trim();
-    if (this.conversationDraft.title === nextTitle) return;
-    this.#patch({
-      conversationDraft: {
-        ...this.conversationDraft,
-        title: nextTitle
-      }
-    });
+    this.#dispatch({ type: 'draftChanged', changes: { title: title.trim() } });
   }
 
-  /** Unsent composer text for a slot; empty when nothing was left behind. */
-  getComposerDraft(slot: string) {
-    return this.#api.getComposerDraft(slot);
-  }
+  getComposerDraft(slot: string) { return this.#api.getComposerDraft(slot); }
 
-  setComposerDraft(slot: string, body: string) {
-    return this.#api.setComposerDraft(slot, body);
-  }
+  setComposerDraft(slot: string, body: string) { return this.#api.setComposerDraft(slot, body); }
 
   async renameConversation(title: string) {
-    if (this.#isDisposed()) return false;
+    if (this.#isDisposed())
+      return false;
     const conversationId = this.conversation?.id;
     const nextTitle = title.trim();
-    if (!conversationId || !nextTitle) return false;
-    if (this.conversation?.title === nextTitle) return true;
-
-    try {
-      const summary = await this.#api.renameConversation(conversationId, nextTitle);
-      this.conversations = mergeSummary(this.conversations, summary);
-      if (this.conversation?.id === conversationId) {
-        this.conversation = { ...this.conversation, ...summary };
-      }
-      this.error = null;
-      this.#notify();
+    if (!conversationId || !nextTitle)
+      return false;
+    if (this.conversation?.title === nextTitle)
       return true;
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to rename this conversation.') });
+    try {
+      this.#dispatch({
+        type: 'summaryReceived',
+        summary: await this.#api.renameConversation(conversationId, nextTitle)
+      });
+      return true;
+    }
+    catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to rename this conversation.') });
       return false;
     }
   }
 
-  async archiveConversation(
-    conversationId = this.conversation?.id,
-    retentionDays: ForgottenNoteRetentionPreference = 7
-  ) {
-    if (this.#isDisposed()) return null;
-    if (!conversationId || this.isSending) return null;
-
-    const operationId = ++this.#selectionOperationSequence;
+  async archiveConversation(conversationId = this.conversation?.id, retentionDays: ForgottenNoteRetentionPreference = 7) {
+    if (this.#isDisposed() || !conversationId || this.isSending)
+      return null;
+    const operationId = ++this.#operationSequence;
     this.#dispatch({
       type: 'startArchiving',
       conversationId,
       operationId
     });
-    this.#patch({ error: null });
     try {
-      const forgottenItem = await this.#api.archiveConversation(
-        conversationId,
-        true,
-        retentionDays
-      );
-      const conversations = this.conversations.filter(
-        (conversation) => conversation.id !== conversationId
-      );
-      const archivedCurrentConversation = this.conversation?.id === conversationId;
-      const conversationDraft = archivedCurrentConversation
-        ? {
-            revision: this.conversationDraft.revision + 1,
-            title: '',
-            ...draftConfiguration(this.settings)
-          }
-        : this.conversationDraft;
-
-      if (
-        !this.#dispatch({
-          type: 'archived',
-          operationId
-        })
-      ) {
+      const forgottenItem = await this.#api.archiveConversation(conversationId, true, retentionDays);
+      const current = this.conversation?.id === conversationId;
+      if (!this.#dispatch({
+        type: 'archived',
+        operationId,
+        conversationId
+      }))
         return forgottenItem;
-      }
-
-      this.#patch({
-        conversations,
-        conversationDraft,
-        ...(archivedCurrentConversation
-          ? {
-              conversation: null,
-              proposals: [],
-              modelCapabilities: null
-            }
-          : {})
-      });
-      if (archivedCurrentConversation) {
-        this.#dispatch({ type: 'reset' });
-      }
-
-      if (archivedCurrentConversation && conversations[0]) {
-        await this.openConversation(conversations[0].id);
-      } else if (archivedCurrentConversation) {
-        await this.#loadDraftModelCapabilities(
-          conversationDraft.revision,
-          conversationDraft.provider,
-          conversationDraft.model
-        );
+      if (current && this.conversations[0])
+        await this.openConversation(this.conversations[0].id);
+      else if (current) {
+        const draft = this.conversationDraft;
+        await this.#loadDraftModelCapabilities(draft.revision, draft.provider, draft.model);
       }
       return forgottenItem;
-    } catch (error) {
-      if (
-        this.#dispatch({
-          type: 'failed',
-          operationId
-        })
-      ) {
-        this.#patch({
-          error: errorText(
-            error,
-            'Unable to forget this conversation.'
-          )
-        });
-      }
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'selectionFailed',
+        operationId,
+        error: errorText(error, 'Unable to forget this conversation.')
+      });
       return null;
     }
   }
 
   async initialize(conversationId?: string | null) {
-    const sequence = ++this.#initializeSequence;
-    if (!this.#dispatch({ type: 'initialize', sequence })) return;
-    this.#patch({ error: null });
+    const sequence = ++this.#operationSequence;
+    if (!this.#dispatch({ type: 'initialize', sequence }))
+      return;
+    const selectionRevision = this.#state.selectionRevision;
+    this.#metadata({ error: null });
     try {
       await this.#ensureListeners();
+      if (!this.#isInitializationCurrent(sequence))
+        return;
       const [settings, conversations, grants, policies] = await Promise.all([
-        this.#api.getSettings(),
-        this.#api.listConversations(false),
-        this.#api.listGrants(),
-        this.#api.listNotePolicies()
+        this.#api.getSettings(), this.#api.listConversations(false), this.#api.listGrants(), this.#api.listNotePolicies()
       ]);
-      if (!this.#isInitializationCurrent(sequence)) return;
-      this.#patch({ settings, conversations, grants, policies });
-      const targetId = conversationId ?? conversations[0]?.id ?? null;
-      if (targetId) {
-        await this.openConversation(targetId);
-      } else {
-        const configuration = draftConfiguration(settings);
-        const revision = this.conversationDraft.revision;
-        this.#patch({
-          conversationDraft: {
-            ...this.conversationDraft,
-            ...configuration
-          }
-        });
-        await this.#loadDraftModelCapabilities(
-          revision,
-          configuration.provider,
-          configuration.model
-        );
-      }
-      if (this.#dispatch({ type: 'initialized', sequence })) {
-        this.#notify();
-      }
-    } catch (error) {
-      const message = errorText(
-        error,
-        'Chat is unavailable right now.'
-      );
-      const accepted = this.#dispatch({
-        type: 'initializationFailed',
-        sequence
+      if (!this.#isInitializationCurrent(sequence))
+        return;
+      this.#metadata({
+        settings,
+        conversations,
+        grants,
+        policies
       });
-      if (accepted) {
-        this.#patch({ error: message });
+      if (selectionRevision === this.#state.selectionRevision) {
+        const targetId = conversationId ?? conversations[0]?.id ?? null;
+        if (targetId)
+          await this.openConversation(targetId);
+        else {
+          const configuration = draftConfiguration(settings);
+          this.#dispatch({ type: 'draftChanged', changes: configuration });
+          await this.#loadDraftModelCapabilities(this.conversationDraft.revision, configuration.provider, configuration.model);
+        }
       }
+      this.#dispatch({ type: 'initialized', sequence });
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'initializationFailed',
+        sequence,
+        error: errorText(error, 'Chat is unavailable right now.')
+      });
     }
   }
 
-  async send(
-    content: string,
-    attachments: ChatAttachmentInput[] = [],
-    forceWebSearch = false,
-    activeNote?: ChatActiveNoteSnapshot | null,
-    selectedContext: ChatContextSelectionInput[] = []
-  ) {
-    const trimmed = content.trim();
-    if ((!trimmed && attachments.length === 0) || this.isSending || !this.conversation) {
-      return false;
+  async send(input: ChatSendInput): Promise<ChatSendOutcome> {
+    if (this.#isDisposed() || this.isSending || this.isLoadingConversation || (!input.content.trim() && !input.attachments?.length))
+      return { status: 'failed' };
+    if (!this.settings) {
+      this.#metadata({ error: 'Chat settings are still loading. Try again in a moment.' });
+      return { status: 'failed' };
     }
-    const conversationId = this.conversation.id;
-    const operationId = ++this.#requestOperationSequence;
+    const draftRevision = this.conversation ? null : this.conversationDraft.revision;
+    const target = this.conversation
+      ? { conversationId: this.conversation.id, selectionRevision: this.#state.selectionRevision }
+      : await this.#createForSend(input.title);
+    if (!target)
+      return { status: 'failed' };
+    const { conversationId, selectionRevision } = target;
+    if (this.#isDisposed() || selectionRevision !== this.#state.selectionRevision || this.conversation?.id !== conversationId)
+      return { status: 'obsolete' };
+    const operationId = ++this.#operationSequence;
     if (!this.#dispatch({
       type: 'submit',
       conversationId,
       operationId,
       activity: 'Starting'
-    })) return false;
-    this.#patch({ error: null });
+    }) || this.#isDisposed() || selectionRevision !== this.#state.selectionRevision)
+      return { status: 'obsolete' };
     try {
       const receipt = await this.#api.sendMessage({
         conversationId,
-        content: trimmed,
-        attachments,
-        forceWebSearch,
-        activeNote,
-        selectedContext
+        content: input.content.trim(),
+        attachments: input.attachments ?? [],
+        forceWebSearch: input.forceWebSearch ?? false,
+        activeNote: input.activeNote,
+        selectedContext: input.selectedContext ?? []
       });
       this.#dispatch({
-        type: 'accepted',
-        conversationId,
-        requestId: receipt.requestId,
-        messageId: receipt.assistantMessage?.id ?? null,
-        operationId
+        type: 'receipt',
+        receipt,
+        operationId,
+        includeUser: true
       });
-      if (this.conversation?.id === conversationId) {
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          activeRequestId: receipt.requestId,
-          messages: receipt.assistantMessage
-            ? upsertMessage(
-                upsertMessage(
-                  conversation.messages,
-                  receipt.userMessage
-                ),
-                receipt.assistantMessage
-              )
-            : upsertMessage(
-                conversation.messages,
-                receipt.userMessage
-              )
-        }));
-      }
-      return true;
-    } catch (error) {
-      if (
-        this.#dispatch({
-          type: 'submissionFailed',
+      return this.#state.selectionRevision === selectionRevision && !this.#isDisposed()
+        ? {
+          status: 'sent',
           conversationId,
-          operationId
-        })
-      ) {
-        this.#patch({
-          error: errorText(
-            error,
-            'Unable to send this message.'
-          )
-        });
-      }
-      return false;
+          selectionRevision,
+          draftRevision
+        } : { status: 'obsolete' };
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'submissionFailed',
+        conversationId,
+        operationId,
+        error: errorText(error, 'Unable to send this message.')
+      });
+      return { status: 'failed' };
     }
   }
 
@@ -1158,53 +540,61 @@ export class ChatControllerStore implements ChatController {
     excludeNoteId?: string | null;
     limit?: number;
   }) {
-    if (this.#isDisposed()) {
+    if (this.#isDisposed())
       return Promise.reject(new Error('Chat controller is disposed.'));
-    }
-    return this.#api.suggestContext({
-      ...input,
-      conversationId: this.conversation?.id ?? null
-    });
+    return this.#api.suggestContext({ ...input, conversationId: this.conversation?.id ?? null });
   }
 
   async cancel() {
-    const request = this.machine.request;
-    if (request.kind !== 'streaming') return;
-    if (!this.#dispatch({
+    const request = this.#state.request;
+    if (request.kind !== 'streaming' || !this.#dispatch({
       type: 'cancel',
       conversationId: request.conversationId,
       requestId: request.requestId
-    })) return;
-    this.#notify();
+    }))
+      return;
     try {
       await this.#api.cancelRequest(request.requestId);
-    } catch (error) {
+    }
+    catch (error) {
       this.#dispatch({
         type: 'cancelFailed',
         conversationId: request.conversationId,
-        requestId: request.requestId
+        requestId: request.requestId,
+        error: errorText(error, 'Unable to stop the response.')
       });
-      this.#patch({ error: errorText(error, 'Unable to stop the response.') });
     }
   }
 
-  async decidePermission(
-    identity: AgentPermissionIdentity,
-    decision: AgentPermissionDecision
-  ) {
-    if (this.#isDisposed()) return false;
-    const request = this.machine.request;
+  #ensureListeners(): Promise<void> {
+    if (this.#listenerPromise)
+      return this.#listenerPromise;
+    const scope = new ListenerScope();
+    this.#listenerScope = scope;
+    const attempt = Promise.all((Object.keys(chatChannels) as Array<keyof ChatEventMap>).map((event) => scope.acquire(() => this.#api.on(event, ((payload: never) => {
+      if (!scope.closed)
+        this.#receive(event, payload);
+    }) as never)))).then(() => undefined).catch((error) => {
+      scope.close();
+      if (this.#listenerScope === scope)
+        this.#listenerScope = null;
+      if (this.#listenerPromise === attempt)
+        this.#listenerPromise = null;
+      throw error;
+    });
+    this.#listenerPromise = attempt;
+    return attempt;
+  }
+
+  async decidePermission(identity: AgentPermissionIdentity, decision: AgentPermissionDecision) {
+    if (this.#isDisposed())
+      return false;
+    const request = this.#state.request;
     const conversation = this.conversation;
-    const message = conversation?.messages.find(
-      (candidate) => candidate.id === identity.messageId
-    );
-    const permission = message?.parts.find(
-      (part) =>
-        part.type === 'permission' &&
-        part.request.permissionId === identity.permissionId
-    );
-    if (
-      request.kind !== 'streaming' ||
+    const message = conversation?.messages.find((candidate) => candidate.id === identity.messageId);
+    const permission = message?.parts.find((part) => part.type === 'permission' &&
+      part.request.permissionId === identity.permissionId);
+    if (request.kind !== 'streaming' ||
       request.requestId !== identity.requestId ||
       request.conversationId !== identity.conversationId ||
       conversation?.id !== identity.conversationId ||
@@ -1214,16 +604,16 @@ export class ChatControllerStore implements ChatController {
       !permission ||
       permission.type !== 'permission' ||
       permission.status !== 'pending' ||
-      permission.request.toolCallId !== identity.toolCallId
-    ) {
-      this.#patch({ error: 'That permission request is no longer active.' });
+      permission.request.toolCallId !== identity.toolCallId) {
+      this.#metadata({ error: 'That permission request is no longer active.' });
       return false;
     }
     try {
       await this.#api.decidePermission(identity, decision);
       return true;
-    } catch (error) {
-      this.#patch({
+    }
+    catch (error) {
+      this.#metadata({
         error: errorText(error, 'Unable to decide this permission request.')
       });
       return false;
@@ -1231,242 +621,181 @@ export class ChatControllerStore implements ChatController {
   }
 
   async retry(messageId: string) {
-    if (this.#isDisposed()) return;
     const conversationId = this.conversation?.id;
-    if (this.isSending || !conversationId) return;
-    const operationId = ++this.#requestOperationSequence;
+    if (this.#isDisposed() || this.isSending || !conversationId)
+      return;
+    const operationId = ++this.#operationSequence;
     if (!this.#dispatch({
       type: 'submit',
       conversationId,
       operationId
-    })) return;
-    this.#patch({ error: null });
+    }))
+      return;
     try {
-      const receipt = await this.#api.retryMessage(messageId);
       this.#dispatch({
-        type: 'accepted',
-        conversationId,
-        requestId: receipt.requestId,
-        messageId: receipt.assistantMessage?.id ?? null,
-        operationId
+        type: 'receipt',
+        receipt: await this.#api.retryMessage(messageId),
+        operationId,
+        includeUser: false
       });
-      if (this.conversation?.id === conversationId) {
-        this.#updateConversation((conversation) => ({
-          ...conversation,
-          activeRequestId: receipt.requestId,
-          messages: receipt.assistantMessage
-            ? upsertMessage(
-                conversation.messages,
-                receipt.assistantMessage
-              )
-            : conversation.messages
-        }));
-      }
-    } catch (error) {
-      if (
-        this.#dispatch({
-          type: 'submissionFailed',
-          conversationId,
-          operationId
-        })
-      ) {
-        this.#patch({
-          error: errorText(
-            error,
-            'Unable to retry this response.'
-          )
-        });
-      }
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'submissionFailed',
+        conversationId,
+        operationId,
+        error: errorText(error, 'Unable to retry this response.')
+      });
     }
   }
 
   async setVaultAccess(vaultAccess: VaultAccess) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     const conversation = this.conversation;
     if (!conversation) {
-      if (this.conversationDraft.vaultAccess !== vaultAccess) {
-        this.#patch({
-          conversationDraft: {
-            ...this.conversationDraft,
-            vaultAccess
-          }
-        });
-      }
+      this.#dispatch({ type: 'draftChanged', changes: { vaultAccess } });
       return;
     }
-    if (conversation.vaultAccess === vaultAccess) {
+    if (conversation.vaultAccess === vaultAccess)
       return;
-    }
+    const selection = this.#state.selectionRevision;
     try {
       const summary = await this.#api.setConversationVaultAccess(conversation.id, vaultAccess);
-      if (this.conversation?.id === conversation.id) {
-        this.#updateConversation((current) => ({ ...current, ...summary }));
-      }
-    } catch (error) {
-      if (this.conversation?.id === conversation.id) {
-        this.#patch({ error: errorText(error, 'Unable to change vault access.') });
-      }
+      if (selection === this.#state.selectionRevision)
+        this.#dispatch({ type: 'summaryReceived', summary });
+    }
+    catch (error) {
+      if (selection === this.#state.selectionRevision)
+        this.#metadata({ error: errorText(error, 'Unable to change vault access.') });
     }
   }
 
   async setProvider(provider: ChatProvider, model: string) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     if (this.isSending) {
-      this.#patch({ error: 'Wait for the current response to finish before changing models.' });
+      this.#metadata({ error: 'Wait for the current response to finish before changing models.' });
       return;
     }
-    const operationId = ++this.#modelConfigurationSequence;
     const conversation = this.conversation;
+    const admitted = this.#dispatch({ type: 'configurationStarted' });
+    if (!admitted || this.#state !== admitted) return;
+    const revision = admitted.configurationRevision;
     const currentEffort = conversation?.reasoningEffort ?? this.conversationDraft.reasoningEffort;
-    let modelCapabilities = provider === 'local'
-      ? null
-      : this.#modelCapabilities.get(this.#modelKey(provider, model)) ?? null;
+    let capabilities = provider === 'local' ? null : this.#capabilitiesByModel.get(this.#modelKey(provider, model)) ?? null;
     if (provider === 'local') {
       try {
-        modelCapabilities = await this.#getModelCapabilities(provider, model);
-      } catch {
-        // Preserve model switching; capability loading below reports failures.
+        capabilities = await this.#getModelCapabilities(provider, model);
       }
+      catch { /* The selected model can still be persisted; report capability failure below. */ }
     }
-    if (
-      operationId !== this.#modelConfigurationSequence ||
-      (conversation ? this.conversation?.id !== conversation.id : this.conversation !== null)
-    ) return;
-    const reasoningEffort = this.#reasoningEffortForModel(
+    if (revision !== this.#state.configurationRevision || this.isSending || this.#isDisposed())
+      return;
+    const reasoningEffort = this.#reasoningEffortForModel(provider, model, currentEffort, capabilities);
+    const changes = {
       provider,
       model,
-      currentEffort,
-      modelCapabilities
-    );
+      reasoningEffort
+    };
     if (!conversation) {
-      if (
-        this.conversationDraft.provider === provider &&
-        this.conversationDraft.model === model &&
-        this.conversationDraft.reasoningEffort === reasoningEffort
-      ) {
-        return;
-      }
-      this.#patch({
-        conversationDraft: {
-          ...this.conversationDraft,
-          provider,
-          model,
-          reasoningEffort
-        },
-        modelCapabilities
+      this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        changes,
+        capabilities
       });
-      if (!modelCapabilities) {
-        await this.#loadDraftModelCapabilities(
-          this.conversationDraft.revision,
-          provider,
-          model
-        );
-      }
+      if (!capabilities)
+        await this.#loadDraftModelCapabilities(this.conversationDraft.revision, provider, model);
       return;
     }
-    if (
-      conversation.provider === provider &&
-      conversation.model === model &&
-      conversation.reasoningEffort === reasoningEffort
-    ) return;
+    if (conversation.provider === provider && conversation.model === model && conversation.reasoningEffort === reasoningEffort)
+      return;
     try {
-      const summary = await this.#api.setConversationProvider(
-        conversation.id,
-        provider,
-        model,
-        reasoningEffort
-      );
-      if (
-        operationId !== this.#modelConfigurationSequence ||
-        this.conversation?.id !== conversation.id
-      ) return;
-      this.#updateConversation((current) => ({ ...current, ...summary }));
+      const summary = await this.#api.setConversationProvider(conversation.id, provider, model, reasoningEffort);
+      if (!this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        changes: summary,
+        capabilities
+      }))
+        return;
       try {
-        modelCapabilities ??= await this.#getModelCapabilities(provider, model);
-        if (
-          operationId === this.#modelConfigurationSequence &&
-          this.conversation?.id === conversation.id &&
-          this.conversation.provider === provider &&
-          this.conversation.model === model
-        ) {
-          this.#patch({ modelCapabilities });
-        }
-      } catch (error) {
-        if (
-          operationId === this.#modelConfigurationSequence &&
-          this.conversation?.id === conversation.id
-        ) {
-          this.#patch({
-            modelCapabilities: null,
-            error: errorText(
-              error,
-              'The model changed, but its attachment capabilities could not be loaded.'
-            )
-          });
-        }
+        capabilities ??= await this.#getModelCapabilities(provider, model);
+        this.#dispatch({
+          type: 'configurationReceived',
+          revision,
+          capabilities
+        });
       }
-    } catch (error) {
-      if (
-        operationId === this.#modelConfigurationSequence &&
-        this.conversation?.id === conversation.id
-      ) {
-        this.#patch({ error: errorText(error, 'Unable to change the chat model.') });
+      catch (error) {
+        this.#dispatch({
+          type: 'configurationReceived',
+          revision,
+          capabilities: null,
+          error: errorText(error, 'The model changed, but its attachment capabilities could not be loaded.')
+        });
       }
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        error: errorText(error, 'Unable to change the chat model.')
+      });
     }
   }
 
   async setReasoningEffort(reasoningEffort: ChatReasoningEffort) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     if (this.isSending) {
-      this.#patch({ error: 'Wait for the current response to finish before changing reasoning.' });
+      this.#metadata({ error: 'Wait for the current response to finish before changing reasoning.' });
       return;
     }
-    const operationId = ++this.#modelConfigurationSequence;
     const conversation = this.conversation;
+    const admitted = this.#dispatch({ type: 'configurationStarted' });
+    if (!admitted || this.#state !== admitted) return;
+    const revision = admitted.configurationRevision;
     const provider = conversation?.provider ?? this.conversationDraft.provider;
     const model = conversation?.model ?? this.conversationDraft.model;
     const normalized = normalizeChatReasoningEffort(provider, model, reasoningEffort);
     if (!conversation) {
-      if (this.conversationDraft.reasoningEffort === normalized) return;
-      this.#patch({
-        conversationDraft: {
-          ...this.conversationDraft,
-          reasoningEffort: normalized
-        }
+      this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        changes: { reasoningEffort: normalized }
       });
       return;
     }
-    if (conversation.reasoningEffort === normalized) return;
+    if (conversation.reasoningEffort === normalized)
+      return;
     try {
-      const summary = await this.#api.setConversationProvider(
-        conversation.id,
-        provider,
-        model,
-        normalized
-      );
-      if (
-        operationId === this.#modelConfigurationSequence &&
-        this.conversation?.id === conversation.id
-      ) {
-        this.#updateConversation((current) => ({ ...current, ...summary }));
-      }
-    } catch (error) {
-      if (
-        operationId === this.#modelConfigurationSequence &&
-        this.conversation?.id === conversation.id
-      ) {
-        this.#patch({ error: errorText(error, 'Unable to change reasoning effort.') });
-      }
+      const summary = await this.#api.setConversationProvider(conversation.id, provider, model, normalized);
+      this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        changes: summary
+      });
+    }
+    catch (error) {
+      this.#dispatch({
+        type: 'configurationReceived',
+        revision,
+        error: errorText(error, 'Unable to change reasoning effort.')
+      });
     }
   }
 
   async listOpenAiModels(): Promise<LocalModel[]> {
-    if (this.#isDisposed()) return [];
+    if (this.#isDisposed())
+      return [];
     return this.#api.listOpenAiModels();
   }
 
   async listLocalModels(): Promise<LocalModel[]> {
-    if (this.#isDisposed()) return [];
+    if (this.#isDisposed())
+      return [];
     const baseUrl = this.settings?.localBaseUrl.trim();
     if (!baseUrl) {
       throw new Error('Configure a local model endpoint in Settings first.');
@@ -1481,16 +810,17 @@ export class ChatControllerStore implements ChatController {
     try {
       const result = await this.#api.commitAgentProposal(proposalId, markdown);
       if (result.status === 'conflict') {
-        this.#patch({
-          error: result.message ?? 'The note changed before this proposal was kept.',
-          proposals: this.proposals.map((item) =>
-            item.id === proposalId ? { ...item, status: 'conflict' } : item
-          )
+        this.#dispatch({
+          type: 'proposalSettled',
+          proposalId,
+          conflict: true,
+          error: result.message ?? 'The note changed before this proposal was kept.'
         });
         return result;
       }
-      this.#patch({
-        proposals: this.proposals.filter((item) => item.id !== proposalId),
+      this.#dispatch({
+        type: 'proposalSettled',
+        proposalId,
         error: result.commitWarning?.message ?? null
       });
       if (result.commitWarning) {
@@ -1498,8 +828,9 @@ export class ChatControllerStore implements ChatController {
       }
       this.#options.onProposalResolved?.(proposalId);
       return result;
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to keep this proposal.') });
+    }
+    catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to keep this proposal.') });
       throw error;
     }
   }
@@ -1510,30 +841,27 @@ export class ChatControllerStore implements ChatController {
     }
     try {
       await this.#api.dismissAgentProposal(proposalId);
-      this.#patch({
-        proposals: this.proposals.filter((item) => item.id !== proposalId),
-        error: null
-      });
+      this.#dispatch({ type: 'proposalSettled', proposalId });
       this.#options.onProposalResolved?.(proposalId);
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to dismiss this proposal.') });
+    }
+    catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to dismiss this proposal.') });
       throw error;
     }
   }
 
   removeResolvedProposal(proposalId: string) {
-    if (!this.proposals.some((proposal) => proposal.id === proposalId)) return;
-    this.#patch({
-      proposals: this.proposals.filter((proposal) => proposal.id !== proposalId),
-      error: null
-    });
+    if (!this.proposals.some((proposal) => proposal.id === proposalId))
+      return;
+    this.#dispatch({ type: 'proposalSettled', proposalId });
   }
 
   async grantNote(noteId: string) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     try {
       const grant = await this.#api.grantNote(noteId);
-      this.#patch({
+      this.#metadata({
         grants: [...this.grants.filter((item) => item.noteId !== noteId), grant],
         policies: [
           ...this.policies.filter((item) => item.noteId !== noteId),
@@ -1547,74 +875,73 @@ export class ChatControllerStore implements ChatController {
         ],
         error: null
       });
-    } catch (error) {
+    }
+    catch (error) {
       const message = errorText(error, 'Unable to allow access to this note.');
-      this.#patch({ error: message });
+      this.#metadata({ error: message });
       throw new Error(message);
     }
   }
 
   async revokeNote(noteId: string) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     try {
       await this.#api.revokeNote(noteId);
-      this.#patch({
+      this.#metadata({
         grants: this.grants.filter((item) => item.noteId !== noteId),
-        policies: this.policies.filter(
-          (item) => item.noteId !== noteId || item.disposition !== 'approved'
-        ),
+        policies: this.policies.filter((item) => item.noteId !== noteId || item.disposition !== 'approved'),
         error: null
       });
-    } catch (error) {
+    }
+    catch (error) {
       const message = errorText(error, 'Unable to remove access to this note.');
-      this.#patch({ error: message });
+      this.#metadata({ error: message });
       throw new Error(message);
     }
   }
 
   async setNoteExcluded(noteId: string, title: string, excluded: boolean) {
-    if (this.#isDisposed()) return;
+    if (this.#isDisposed())
+      return;
     try {
       await this.#api.setNoteExcluded(noteId, title, excluded);
-      this.#patch({
+      this.#metadata({
         grants: excluded
           ? this.grants.filter((item) => item.noteId !== noteId)
           : this.grants,
         policies: excluded
           ? [
-              ...this.policies.filter((item) => item.noteId !== noteId),
-              {
-                noteId,
-                notePath: null,
-                title,
-                disposition: 'excluded',
-                updatedAtMillis: Date.now()
-              }
-            ]
-          : this.policies.filter(
-              (item) => item.noteId !== noteId || item.disposition !== 'excluded'
-            ),
+            ...this.policies.filter((item) => item.noteId !== noteId),
+            {
+              noteId,
+              notePath: null,
+              title,
+              disposition: 'excluded',
+              updatedAtMillis: Date.now()
+            }
+          ]
+          : this.policies.filter((item) => item.noteId !== noteId || item.disposition !== 'excluded'),
         error: null
       });
-    } catch (error) {
-      this.#patch({ error: errorText(error, 'Unable to change the note exclusion.') });
+    }
+    catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to change the note exclusion.') });
       throw error;
     }
   }
 
   dispose() {
-    const request = this.machine.request;
-    const hasPendingPermission = this.conversation?.messages.some((message) =>
-      message.parts.some((part) => part.type === 'permission' && part.status === 'pending')
-    ) ?? false;
-    if (
-      hasPendingPermission &&
-      (request.kind === 'streaming' || request.kind === 'cancelling')
-    ) {
+    const request = this.#state.request;
+    const hasPendingPermission = this.conversation?.messages.some((message) => message.parts.some((part) => part.type === 'permission' && part.status === 'pending')) ?? false;
+    if (hasPendingPermission &&
+      (request.kind === 'streaming' || request.kind === 'cancelling')) {
       void this.#api.cancelRequest(request.requestId).catch(() => undefined);
     }
     this.#dispatch({ type: 'dispose' });
-    this.#unlisteners.splice(0).forEach((off) => off());
+    this.#listenerScope?.close();
+    this.#listenerScope = null;
+    this.#listenerPromise = null;
     this.#subscribers.clear();
   }
 
@@ -1648,13 +975,9 @@ export class ChatControllerStore implements ChatController {
   }
 
   clearError() {
-    this.#patch({ error: null });
+    this.#metadata({ error: null });
   }
 }
-
-export function createChatController(
-  api: ChatApi = chatApi,
-  options: ChatControllerOptions = {}
-): ChatController {
+export function createChatController(api: ChatApi = chatApi, options: ChatControllerOptions = {}): ChatController {
   return new ChatControllerStore(api, options);
 }

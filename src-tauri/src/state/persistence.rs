@@ -101,6 +101,11 @@ pub(crate) fn inject_note_publication_failure_once() {
 }
 
 #[cfg(test)]
+pub(crate) fn clear_note_publication_failure_for_test() {
+    FAIL_NEXT_NOTE_PUBLICATION.store(false, std::sync::atomic::Ordering::Release);
+}
+
+#[cfg(test)]
 fn take_note_publication_failure() -> bool {
     FAIL_NEXT_NOTE_PUBLICATION.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
@@ -411,23 +416,6 @@ pub(crate) fn is_forgotten_note_path(path: &Path, notes_dir: &Path) -> bool {
     path.starts_with(forgotten_notes_root(notes_dir))
 }
 
-#[cfg(test)]
-pub(crate) fn persist_note(
-    notes_dir: &Path,
-    title: &str,
-    markdown: &str,
-    current_path: Option<&Path>,
-) -> Result<Option<String>, String> {
-    with_note_file_mutation(|| {
-        if current_path.is_none() && title.trim().is_empty() && markdown.trim().is_empty() {
-            return Ok(None);
-        }
-        let (path, canonical) = prepare_note_save(notes_dir, title, markdown, current_path, None)?;
-        publish_note_save(&path, &canonical, current_path)?;
-        Ok(Some(path.to_string_lossy().into_owned()))
-    })
-}
-
 pub(crate) fn with_note_file_mutation<T, E>(
     operation: impl FnOnce() -> Result<T, E>,
 ) -> Result<T, E>
@@ -484,70 +472,48 @@ pub(crate) fn prepare_note_save(
     Ok((target_path, prepared_markdown))
 }
 
-#[cfg(test)]
-fn publish_note_save(
-    target_path: &Path,
-    prepared_markdown: &str,
-    current_path: Option<&Path>,
-) -> Result<(), String> {
-    if let Some(existing_path) = current_path {
-        if existing_path != target_path && existing_path.exists() {
-            let expected_removal = crate::vault_watcher::record_expected_removal(existing_path);
-            fs::rename(existing_path, &target_path).map_err(|err| err.to_string())?;
-            expected_removal.commit();
-        }
-    }
-
-    let expected_write =
-        crate::vault_watcher::record_expected_write(&target_path, &prepared_markdown);
-    atomic_write_note(&target_path, prepared_markdown.as_bytes())?;
-    expected_write.commit();
-    Ok(())
-}
-
 /// Publish a fully-written note in one rename. Keeping the temporary file next
 /// to its destination makes the rename atomic on the vault filesystem.
 pub(crate) fn atomic_write_note(path: &Path, contents: &[u8]) -> Result<(), String> {
-    atomic_publish_note(path, contents, false)
+    atomic_publish_note(path, contents, false).map_err(|error| error.to_string())
 }
 
 /// Publish a fully-written note only if the destination is still unoccupied.
 /// Linking the adjacent temporary file is atomic and never replaces a file
 /// that appeared after the caller selected the recovery path.
-pub(crate) fn atomic_create_note(path: &Path, contents: &[u8]) -> Result<(), String> {
+pub(crate) fn atomic_create_note(path: &Path, contents: &[u8]) -> std::io::Result<()> {
     atomic_publish_note(path, contents, true)
 }
 
-fn atomic_publish_note(path: &Path, contents: &[u8], create_only: bool) -> Result<(), String> {
+fn atomic_publish_note(path: &Path, contents: &[u8], create_only: bool) -> std::io::Result<()> {
     #[cfg(test)]
     if take_note_publication_failure() {
-        return Err("injected note publication failure".to_string());
+        return Err(std::io::Error::other("injected note publication failure"));
     }
     let parent = path
         .parent()
-        .ok_or_else(|| "Note path has no parent directory.".to_string())?;
+        .ok_or_else(|| std::io::Error::other("Note path has no parent directory."))?;
     let name = path
         .file_name()
         .and_then(|name| name.to_str())
-        .ok_or_else(|| "Note path has no file name.".to_string())?;
+        .ok_or_else(|| std::io::Error::other("Note path has no file name."))?;
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
-        .map_err(|err| err.to_string())?
+        .map_err(std::io::Error::other)?
         .as_nanos();
     let temporary = parent.join(format!(".{name}.gneauxghts-{nonce}.tmp"));
-    let write_result = (|| -> Result<(), String> {
+    let write_result = (|| -> std::io::Result<()> {
         let mut file = fs::OpenOptions::new()
             .write(true)
             .create_new(true)
-            .open(&temporary)
-            .map_err(|err| err.to_string())?;
-        file.write_all(contents).map_err(|err| err.to_string())?;
-        file.sync_all().map_err(|err| err.to_string())?;
+            .open(&temporary)?;
+        file.write_all(contents)?;
+        file.sync_all()?;
         if create_only {
-            fs::hard_link(&temporary, path).map_err(|err| err.to_string())?;
+            fs::hard_link(&temporary, path)?;
             let _ = fs::remove_file(&temporary);
         } else {
-            fs::rename(&temporary, path).map_err(|err| err.to_string())?;
+            fs::rename(&temporary, path)?;
         }
         Ok(())
     })();
@@ -808,6 +774,7 @@ mod restart_tests {
         let (settled_tx, settled_rx) = mpsc::channel();
 
         std::thread::scope(|scope| {
+            let mut release = crate::test_support::ReleaseOnDrop::new(release_tx);
             let writer_storage = Arc::clone(&storage);
             scope.spawn(move || {
                 writer_storage
@@ -819,22 +786,28 @@ mod restart_tests {
                             )
                             .map_err(|error| error.to_string())?;
                         entered_tx.send(()).unwrap();
-                        release_rx.recv().unwrap();
+                        release_rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
                         Ok(())
                     })
                     .unwrap();
             });
-            entered_rx.recv().unwrap();
+            entered_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
             let settling_storage = Arc::clone(&storage);
             scope.spawn(move || {
                 settle_started_tx.send(()).unwrap();
                 settling_storage.settle_admitted_writes().unwrap();
                 settled_tx.send(()).unwrap();
             });
-            settle_started_rx.recv().unwrap();
+            settle_started_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
             assert!(settled_rx.try_recv().is_err());
-            release_tx.send(()).unwrap();
-            settled_rx.recv().unwrap();
+            release.release();
+            settled_rx
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
         });
     }
 }
@@ -905,14 +878,6 @@ where
     }
 }
 
-/// Idempotent re-entry to the schema bootstrap. Sibling modules (the
-/// task projection) call this so they can layer their own DDL on top
-/// of the bootstrapped tables without depending on this module's
-/// open-once behaviour.
-pub(super) fn ensure_state_schema_idempotent(connection: &mut Connection) -> Result<(), String> {
-    ensure_state_schema(connection)
-}
-
 fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
     // Serialize schema inspection and migration across independent connections,
     // before the running-vault handle is published. A deferred transaction would
@@ -970,6 +935,7 @@ fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
     migrate_last_chat_columns(connection)?;
     migrate_forgotten_item_columns(connection)?;
     migrate_forgotten_retention_column(connection)?;
+    super::task_projection::ensure_task_projection_schema(connection)?;
     transaction.commit().map_err(|err| err.to_string())
 }
 

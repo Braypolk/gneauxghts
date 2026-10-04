@@ -32,6 +32,35 @@ static DOCUMENTS_DIR: Mutex<Option<PathBuf>> = Mutex::new(None);
 /// constructed. It never changes an already-composed running vault.
 static NOTES_ROOT_OVERRIDE: Mutex<Option<PathBuf>> = Mutex::new(None);
 #[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct TestPathSnapshot {
+    app_data: Option<PathBuf>,
+    documents: Option<PathBuf>,
+    notes: Option<PathBuf>,
+}
+#[cfg(test)]
+impl TestPathSnapshot {
+    pub(crate) fn capture() -> Self {
+        Self {
+            app_data: APP_DATA_DIR.lock().unwrap().clone(),
+            documents: DOCUMENTS_DIR.lock().unwrap().clone(),
+            notes: NOTES_ROOT_OVERRIDE.lock().unwrap().clone(),
+        }
+    }
+}
+#[cfg(test)]
+impl TestPathSnapshot {
+    pub(crate) fn restore(&mut self) {
+        *APP_DATA_DIR.lock().unwrap_or_else(|e| e.into_inner()) = self.app_data.take();
+        *DOCUMENTS_DIR.lock().unwrap_or_else(|e| e.into_inner()) = self.documents.take();
+        *NOTES_ROOT_OVERRIDE
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = self.notes.take();
+        FAIL_NEXT_CONFIG_PUBLICATION.store(false, std::sync::atomic::Ordering::Release);
+    }
+}
+
+#[cfg(test)]
 static FAIL_NEXT_CONFIG_PUBLICATION: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 

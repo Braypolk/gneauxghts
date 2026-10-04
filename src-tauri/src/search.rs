@@ -158,6 +158,7 @@ fn score_search_candidate(
         normalized_query,
         query_terms,
     )?;
+    let original_match_offset = original_span(&candidate.paragraph.text, search_match.match_offset, search_match.match_offset).0;
     let mut score = 0;
 
     if paragraph_phrase_match {
@@ -184,7 +185,6 @@ fn score_search_candidate(
 
     let (excerpt, highlight_ranges) = build_excerpt_and_highlights(
         &candidate.paragraph.text,
-        &candidate.paragraph.text_lower,
         search_match.match_offset,
         query_terms,
     );
@@ -205,8 +205,8 @@ fn score_search_candidate(
             reason_labels: Vec::new(),
             lexical_score: Some(score as f32),
             semantic_score: None,
-            start_line: line_number_for_offset(candidate.paragraph, search_match.match_offset),
-            end_line: line_number_for_offset(candidate.paragraph, search_match.match_offset),
+            start_line: line_number_for_offset(candidate.paragraph, original_match_offset),
+            end_line: line_number_for_offset(candidate.paragraph, original_match_offset),
             block_anchor: None,
         },
     })
@@ -255,41 +255,50 @@ pub(crate) fn build_search_preview(
     let text_lower = text.to_lowercase();
     let search_match = find_best_match_in_lower(&text_lower, normalized_query, query_terms)?;
     let (excerpt, highlight_ranges) =
-        build_excerpt_and_highlights(text, &text_lower, search_match.match_offset, query_terms);
+        build_excerpt_and_highlights(text, search_match.match_offset, query_terms);
     Some((excerpt, highlight_ranges, search_match.match_text))
+}
+
+/// Map a range in Unicode-lowercased text back to original UTF-8 boundaries.
+/// A lowercase expansion still highlights the single original scalar that owns it.
+fn original_span(text: &str, start: usize, end: usize) -> (usize, usize) {
+    let mut folded_offset = 0;
+    let mut original_start = text.len();
+    let mut original_end = text.len();
+    for (byte, ch) in text.char_indices() {
+        let folded_end = folded_offset + ch.to_lowercase().map(char::len_utf8).sum::<usize>();
+        if start >= folded_offset && start < folded_end {
+            original_start = byte;
+        }
+        if end > folded_offset && end <= folded_end {
+            original_end = byte + ch.len_utf8();
+        }
+        folded_offset = folded_end;
+    }
+    (original_start, original_end)
 }
 
 fn build_excerpt_and_highlights(
     text: &str,
-    text_lower: &str,
     match_offset: usize,
     query_terms: &[&str],
 ) -> (String, Vec<TextRange>) {
-    let (excerpt, excerpt_start_offset) = excerpt_around(text, match_offset, MAX_EXCERPT_LENGTH);
+    let original_offset = original_span(text, match_offset, match_offset).0;
+    let (excerpt, _) = excerpt_around(text, original_offset, MAX_EXCERPT_LENGTH);
     let excerpt_lower = excerpt.to_lowercase();
     let mut highlight_ranges = Vec::new();
 
-    for term in query_terms {
+    for term in query_terms.iter().filter(|term| !term.is_empty()) {
         for (match_start, _) in excerpt_lower.match_indices(term) {
+            let (start, end) = original_span(&excerpt, match_start, match_start + term.len());
             highlight_ranges.push(TextRange {
-                start: count_chars(&excerpt_lower[..match_start]),
-                end: count_chars(&excerpt_lower[..match_start]) + term.chars().count(),
+                start: count_chars(&excerpt[..start]),
+                end: count_chars(&excerpt[..end]),
             });
         }
     }
 
-    if highlight_ranges.is_empty() && text_lower.contains(&excerpt_lower) {
-        let local_offset = match_offset.saturating_sub(excerpt_start_offset);
-        highlight_ranges.push(TextRange {
-            start: count_chars(&text[..local_offset.min(text.len())]),
-            end: count_chars(&text[..local_offset.min(text.len())]),
-        });
-    }
-
-    match merge_ranges(highlight_ranges) {
-        Some(ranges) => (excerpt, ranges),
-        None => (excerpt, Vec::new()),
-    }
+    (excerpt, merge_ranges(highlight_ranges).unwrap_or_default())
 }
 
 fn merge_ranges(mut ranges: Vec<TextRange>) -> Option<Vec<TextRange>> {
@@ -363,12 +372,29 @@ fn char_index_to_byte_index(text: &str, char_index: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_recent_result, search_note};
+    use super::{build_recent_result, build_search_preview, search_note};
     use crate::{
         index::{build_indexed_note, normalize_search_text},
         test_support::{fixture_path, load_fixture, load_json_fixture},
     };
     use serde_json::json;
+
+    #[test]
+    fn preview_highlights_original_unicode_scalars_after_case_expansion() {
+        for (text, query, expected) in [
+            (format!("İé{}", "x".repeat(200)), "é", "é"),
+            ("💡 İ Needle".to_string(), "needle", "Needle"),
+            ("İstanbul".to_string(), "i", "İ"),
+            ("a e\u{301} z".to_string(), "e\u{301}", "e\u{301}"),
+            (format!("{} needle {}", " ".repeat(200), "x".repeat(200)), "needle", "needle"),
+        ] {
+            let (excerpt, ranges, _) = build_search_preview(&text, query, &[query]).unwrap();
+            let highlighted: Vec<String> = ranges.iter().map(|range| {
+                excerpt.chars().skip(range.start).take(range.end - range.start).collect()
+            }).collect();
+            assert_eq!(highlighted, vec![expected], "{text:?} / {excerpt:?}");
+        }
+    }
 
     #[test]
     fn search_note_matches_project_atlas_fixture() {

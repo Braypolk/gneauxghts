@@ -120,6 +120,17 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
       write(nextSlot, '');
     },
 
+    /** Transfer an unsent draft when its controller creates a durable conversation. */
+    promoteSlot(nextSlot: string, body: string) {
+      cancelPendingSave();
+      pendingBody = null;
+      loadToken += 1;
+      loadInFlight = false;
+      if (slot !== null && slot !== nextSlot) write(slot, '');
+      slot = nextSlot;
+      write(nextSlot, body);
+    },
+
     /** Records live composer text, debounced. */
     record(body: string) {
       if (slot === null) return;

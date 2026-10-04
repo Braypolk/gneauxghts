@@ -46,4 +46,31 @@ describe('history command failures', () => {
     expect(failure.message).not.toContain('/vault');
   });
 
+  it.each(['constructor', 'toString', '__proto__', 'unknown', 42, null])(
+    'maps an unrecognized object state %j to the stable unavailable failure',
+    (state) => {
+      const failure = toHistoryCommandFailure({
+        state,
+        message: 'private backend diagnostic',
+        recoveryAction: 'backUpAndReset'
+      });
+
+      expect({
+        state: failure.state,
+        message: failure.message,
+        recoveryAction: failure.recoveryAction
+      }).toEqual({
+        state: 'unavailable',
+        message: 'History is unavailable right now.',
+        recoveryAction: 'retry'
+      });
+    }
+  );
+
+  it('preserves an already normalized failure', () => {
+    const failure = toHistoryCommandFailure({ state: 'stale' });
+
+    expect(toHistoryCommandFailure(failure)).toBe(failure);
+  });
+
 });

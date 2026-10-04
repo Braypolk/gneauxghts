@@ -1,12 +1,18 @@
 // Run after `node e2e/support/buildNative.mjs`. This focused check owns every
 // process it stops and binds the app only to one newly-created disposable root.
 import assert from 'node:assert/strict';
-import { spawn, execFileSync } from 'node:child_process';
+import { nativeE2EBinary, nativeE2EPorts } from './nativeE2EBinary.mjs';
+import { spawn } from 'node:child_process';
 import { closeSync, mkdirSync, mkdtempSync, openSync, realpathSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { nativeE2EBinary } from './nativeE2EBinary.mjs';
+import { listenerPids, waitUntil as until, createWebDriverRequest } from './nativeTransport.mjs';
+import { createOwnedServerOwner } from './ownedServer.mjs';
+
+const ports = nativeE2EPorts();
+const request = createWebDriverRequest(ports.driver, 25000);
+const viteServer = createOwnedServerOwner();
 
 const { binary, sha256 } = nativeE2EBinary('debug');
 const output = mkdtempSync(join(tmpdir(), 'gneauxghts-restart-lifecycle-'));
@@ -16,6 +22,8 @@ writeFileSync(join(fixture, 'owner.txt'), 'ticket-05-disposable-native-check\n')
 const events = [];
 const owned = new Set();
 let failure;
+let cancelling = false;
+let cleanupPromise;
 
 function record(kind, detail = {}) {
   const event = { at: new Date().toISOString(), kind, ...detail };
@@ -24,43 +32,8 @@ function record(kind, detail = {}) {
   console.log(JSON.stringify(event));
 }
 
-function listenerPids(port) {
-  try {
-    return [...new Set(execFileSync('/usr/sbin/lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], { encoding: 'utf8' })
-      .trim().split(/\s+/).filter(Boolean).map(Number))];
-  } catch (error) {
-    if (error.status === 1 && !error.stdout?.length) return [];
-    throw error;
-  }
-}
-
-async function until(check, description, timeout = 30000) {
-  const deadline = Date.now() + timeout;
-  let last;
-  while (Date.now() < deadline) {
-    try {
-      const result = await check();
-      if (result) return result;
-    } catch (error) {
-      last = error;
-    }
-    await delay(100);
-  }
-  throw new Error(`Timed out waiting for ${description}: ${last ?? ''}`);
-}
-
-async function request(path, body, method = 'POST') {
-  const response = await fetch(`http://127.0.0.1:4445${path}`, {
-    method,
-    ...(body === undefined ? {} : { body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' } }),
-    signal: AbortSignal.timeout(25000)
-  });
-  const result = await response.json();
-  if (!response.ok || result.value?.error) throw new Error(JSON.stringify(result));
-  return result.value;
-}
-
 function start(executable, args, env, label) {
+  assert(!cancelling, 'Runner is stopping; no new children may be created');
   const log = join(output, `${label}.log`);
   const fd = openSync(log, 'w');
   const child = spawn(executable, args, { env, stdio: ['ignore', fd, fd] });
@@ -82,13 +55,24 @@ function start(executable, args, env, label) {
 }
 
 async function stop(child) {
-  if (!owned.has(child)) return child.completion;
-  record('stop-owned', { pid: child.pid, signal: 'SIGTERM' });
-  assert(child.kill('SIGTERM'));
-  return Promise.race([
-    child.completion,
-    delay(10000).then(() => { throw new Error(`Owned process ${child.pid} did not exit`); })
-  ]);
+  if (child.stopping) return child.stopping;
+  child.stopping = (async () => {
+    if (!owned.has(child)) return child.completion;
+    record('stop-owned', { pid: child.pid, signal: 'SIGTERM' });
+    child.kill('SIGTERM');
+    const timer = new AbortController();
+    try {
+      const exit = await Promise.race([
+        child.completion,
+        delay(10_000, null, { signal: timer.signal })
+      ]);
+      if (exit !== null) return exit;
+      record('stop-owned', { pid: child.pid, signal: 'SIGKILL' });
+      child.kill('SIGKILL');
+      return await until(() => !owned.has(child), 'owned process exit', 5_000);
+    } finally { timer.abort(); }
+  })();
+  return child.stopping;
 }
 
 function launch(label) {
@@ -96,13 +80,13 @@ function launch(label) {
     '--e2e-app-data-root', join(fixture, 'app-data'),
     '--e2e-documents-root', join(fixture, 'documents'),
     '--e2e-vault-root', join(fixture, 'vault')
-  ], { ...process.env, WDIO_EMBEDDED_SERVER: 'true', TAURI_WEBDRIVER_PORT: '4445' }, label);
+  ], { ...process.env, WDIO_EMBEDDED_SERVER: 'true', TAURI_WEBDRIVER_PORT: String(ports.driver) }, label);
 }
 
 async function connect(child) {
   await until(async () => {
     assert(owned.has(child));
-    const listeners = listenerPids(4445);
+    const listeners = listenerPids(ports.driver);
     if (!listeners.length) return false;
     assert.deepEqual(listeners, [child.pid]);
     return (await request('/status', undefined, 'GET')).ready;
@@ -137,21 +121,32 @@ async function historyBodies(client, noteId) {
 }
 
 async function cleanup() {
-  for (const child of [...owned]) {
-    try {
-      await stop(child);
-    } catch (error) {
+  cancelling = true;
+  cleanupPromise ??= (async () => {
+    try { await viteServer.stop(); } catch (error) {
       failure ??= String(error);
+      record('server-cleanup-failure', { error: String(error) });
     }
-  }
+    for (const child of [...owned]) {
+      try { await stop(child); }
+      catch (error) { failure ??= String(error); }
+    }
+  })();
+  return cleanupPromise;
 }
 
+for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, async () => {
+  failure = `Runner cancelled by ${signal}`;
+  record('runner-cancelled', { signal });
+  await cleanup();
+  writeFileSync(join(output, 'result.json'), JSON.stringify({ passed: false, failure, output, events }, null, 2));
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+});
+
 try {
-  for (const port of [1430, 4445]) assert.deepEqual(listenerPids(port), [], `Port ${port} is occupied; refusing to touch its owner`);
+  for (const port of [ports.dev, ports.driver]) assert.deepEqual(listenerPids(port), [], `Port ${port} is occupied; refusing to touch its owner`);
   record('run-start', { output, fixture, binary, sha256 });
-  start(process.execPath, [resolve('node_modules/vite/bin/vite.js'), '--strictPort', '--host', '127.0.0.1', '--port', '1430'],
-    { ...process.env, VITE_E2E_NATIVE: 'true' }, 'vite');
-  await until(async () => (await fetch('http://127.0.0.1:1430')).ok, 'owned Vite server');
+  await viteServer.start({ command: process.execPath, args: [resolve('node_modules/vite/bin/vite.js'), '--strictPort', '--host', '127.0.0.1', '--port', String(ports.dev)], port: ports.dev, env: { VITE_E2E_NATIVE: 'true' }, onOutput: data => process.stdout.write(data) });
 
   let app = launch('first-app');
   let client = await connect(app);

@@ -1,97 +1,35 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { syntaxTree } from '@codemirror/language';
+import { createCommandView } from '../editor/commandTestSupport';
+import { applyInlineFormat } from '../editor/inlineFormatting';
+import { createMarkdownLanguage } from './markdownLanguage';
+import { buildMarkdownDecorations } from './markdownExtensions';
+import { INLINE_WRAP_FORMATS, getWrapFormatIds } from './inlineFormatSpec';
 
-import {
-  contentClassBySyntaxNode,
-  defaultWrapById,
-  getWrapFormatIds,
-  getWrapFormatSpec,
-  INLINE_WRAP_FORMATS,
-  markerNodeBySyntaxNode,
-  syntaxNodesById,
-  wrapSpecsById
-} from './inlineFormatSpec';
-
-const here = dirname(fileURLToPath(import.meta.url));
-const inlineFormattingCss = readFileSync(join(here, 'inlineFormatting.css'), 'utf8');
-const editorCss = readFileSync(join(here, '../editor/editor.css'), 'utf8');
-
-describe('inlineFormatSpec', () => {
-  it('keeps the canonical format catalog explicit', () => {
-    expect(
-      INLINE_WRAP_FORMATS.map((spec) => ({
-        id: spec.id,
-        defaultDelimiter: spec.defaultDelimiter,
-        syntaxNode: spec.syntaxNode,
-        concealStrategy: spec.concealStrategy,
-        requiresCustomParser:
-          'requiresCustomParser' in spec ? spec.requiresCustomParser : false
-      }))
-    ).toEqual([
-      {
-        id: 'bold',
-        defaultDelimiter: { before: '**', after: '**' },
-        syntaxNode: 'StrongEmphasis',
-        concealStrategy: 'syntaxTreeChildren',
-        requiresCustomParser: false
-      },
-      {
-        id: 'italic',
-        defaultDelimiter: { before: '*', after: '*' },
-        syntaxNode: 'Emphasis',
-        concealStrategy: 'syntaxTreeChildren',
-        requiresCustomParser: false
-      },
-      {
-        id: 'strikethrough',
-        defaultDelimiter: { before: '~~', after: '~~' },
-        syntaxNode: 'Strikethrough',
-        concealStrategy: 'syntaxTreeChildren',
-        requiresCustomParser: false
-      },
-      {
-        id: 'highlight',
-        defaultDelimiter: { before: '==', after: '==' },
-        syntaxNode: 'Highlight',
-        concealStrategy: 'syntaxTreeChildren',
-        requiresCustomParser: true
-      },
-      {
-        id: 'comment',
-        defaultDelimiter: { before: '%%', after: '%%' },
-        syntaxNode: 'InlineComment',
-        concealStrategy: 'syntaxTreeChildren',
-        requiresCustomParser: true
-      },
-      {
-        id: 'code',
-        defaultDelimiter: { before: '`', after: '`' },
-        syntaxNode: 'InlineCode',
-        concealStrategy: 'codeBlockDecorator',
-        requiresCustomParser: false
-      }
-    ]);
-    expect(getWrapFormatIds()).toEqual(INLINE_WRAP_FORMATS.map((spec) => spec.id));
-    expect(getWrapFormatSpec('bold')).toBe(INLINE_WRAP_FORMATS[0]);
+describe('supported inline format contracts', () => {
+  it('exposes the intended unique command set', () => {
+    expect(getWrapFormatIds().slice().sort()).toEqual(['bold', 'code', 'comment', 'highlight', 'italic', 'strikethrough']);
+    expect(new Set(INLINE_WRAP_FORMATS.map(spec => spec.syntaxNode)).size).toBe(INLINE_WRAP_FORMATS.length);
   });
-
-  it('builds derived maps that round-trip from the catalog', () => {
-    for (const spec of INLINE_WRAP_FORMATS) {
-      expect(wrapSpecsById[spec.id]).toEqual(spec.delimiters);
-      expect(defaultWrapById[spec.id]).toEqual(spec.defaultDelimiter);
-      expect(syntaxNodesById[spec.id]).toEqual([spec.syntaxNode]);
-      expect(contentClassBySyntaxNode[spec.syntaxNode]).toBe(spec.contentClass);
-      expect(markerNodeBySyntaxNode[spec.syntaxNode]).toBe(spec.markerNode);
-    }
-  });
-
-  it('wires every format content class to the appropriate stylesheet', () => {
-    for (const spec of INLINE_WRAP_FORMATS) {
-      const stylesheet =
-        spec.concealStrategy === 'codeBlockDecorator' ? editorCss : inlineFormattingCss;
-      expect(stylesheet).toContain(spec.contentClass);
-    }
-  });
+  for (const spec of INLINE_WRAP_FORMATS) {
+    it(`${spec.id} travels from command through parser and composed decorations`, () => {
+      const { view } = createCommandView({ doc: 'before text after', selection: { anchor: 7, head: 11 }, extensions: [createMarkdownLanguage()] });
+      expect(applyInlineFormat(view, spec.id)).toBe(true);
+      const nodes: string[] = []; syntaxTree(view.state).iterate({ enter(node) { nodes.push(node.name); } });
+      expect(nodes).toContain(spec.syntaxNode);
+      view.dispatch({ selection: { anchor: 0 } });
+      const classes: string[] = [];
+      const concealed: [number, number][] = [];
+      const built = buildMarkdownDecorations(view);
+      built.decorations.between(0, view.state.doc.length, (from, to, decoration) => {
+        if (decoration.spec.class) classes.push(decoration.spec.class);
+        else concealed.push([from, to]);
+      });
+      expect(classes).toContain(spec.contentClass);
+      const delimiterLength = spec.defaultDelimiter.before.length;
+      expect(concealed).toEqual([[7, 7 + delimiterLength], [11 + delimiterLength, 11 + delimiterLength * 2]]);
+      view.dispatch({ selection: { anchor: 7 + spec.defaultDelimiter.before.length, head: 11 + spec.defaultDelimiter.before.length } });
+      expect(applyInlineFormat(view, spec.id)).toBe(true); expect(view.state.doc.toString()).toBe('before text after');
+    });
+  }
 });

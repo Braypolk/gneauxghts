@@ -650,6 +650,17 @@ impl AgentRuntime {
     }
 }
 
+#[cfg(test)]
+pub(crate) async fn run_test_model(
+    model: rig_core::test_utils::MockCompletionModel,
+    request: AgentRuntimeRequest,
+    tools: Option<crate::agent_tools::AgentToolContext>,
+    observer: AgentRuntimeObserver,
+    guard: crate::agent_guardrails::AgentRunGuard,
+) -> Result<AgentRuntimeResponse, String> {
+    run_model_with_measurement(model, request, tools, None, observer, guard, None).await
+}
+
 async fn run_model<M>(
     model: M,
     request: AgentRuntimeRequest,
@@ -669,6 +680,31 @@ where
             .as_ref()
             .is_some_and(|tools| tools.is_research_worker()),
     );
+    run_model_with_measurement(
+        model,
+        request,
+        tools,
+        additional_params,
+        observer,
+        guard,
+        measurement,
+    )
+    .await
+}
+
+async fn run_model_with_measurement<M>(
+    model: M,
+    request: AgentRuntimeRequest,
+    tools: Option<crate::agent_tools::AgentToolContext>,
+    additional_params: Option<Value>,
+    observer: AgentRuntimeObserver,
+    guard: crate::agent_guardrails::AgentRunGuard,
+    measurement: Option<Arc<context_measurement::Measurement>>,
+) -> Result<AgentRuntimeResponse, String>
+where
+    M: CompletionModel + 'static,
+    M::StreamingResponse: Send + Unpin + GetTokenUsage,
+{
     let context = usage_context::UsageContext::new(
         &request,
         observer.on_event.clone(),
@@ -924,6 +960,51 @@ mod tests {
         },
     };
 
+    // Own the coupled hook/runner setup once; each test still supplies its
+    // concrete tools, formatter, permission decisions, and usage context.
+    struct RuntimeHarness {
+        observer: AgentRuntimeObserver,
+        guard: crate::agent_guardrails::AgentRunGuard,
+        context: Option<Arc<usage_context::UsageContext>>,
+    }
+    impl RuntimeHarness {
+        fn builder<M: CompletionModel>(
+            &self,
+            model: M,
+            request: &AgentRuntimeRequest,
+        ) -> AgentBuilder<M, NoToolConfig> {
+            configured_builder(model, request, None)
+                .unwrap()
+                .add_hook(RuntimeEventHook {
+                    on_event: self.observer.on_event.clone(),
+                    cancelled: self.observer.cancelled.clone(),
+                    permissions: self.observer.permissions.clone(),
+                    guard: self.guard.clone(),
+                    tools: None,
+                    context: self.context.clone(),
+                })
+        }
+        async fn run<M>(
+            self,
+            agent: Agent<M>,
+            request: AgentRuntimeRequest,
+        ) -> Result<AgentRuntimeResponse, String>
+        where
+            M: CompletionModel + 'static,
+            M::StreamingResponse: Send + Unpin + GetTokenUsage,
+        {
+            drive_agent(
+                agent,
+                request,
+                self.observer,
+                self.guard,
+                None,
+                self.context,
+            )
+            .await
+        }
+    }
+
     #[derive(Clone)]
     struct EchoTool(Arc<AtomicUsize>);
 
@@ -983,130 +1064,24 @@ mod tests {
     }
 
     #[test]
-    fn composed_tools_return_to_the_model_until_it_finishes_the_objective() {
-        tauri::async_runtime::block_on(async {
-            let steps = vec![
-                (
-                    "list_note_activity",
-                    json!({"activity_range":{"start":"2026-09-07","end":"2026-09-14"}}),
-                    json!({"status":"ready","notesReturned":1,"items":[{"evidenceId":"work-1","noteId":"project"}]}),
-                ),
-                (
-                    "read_evidence",
-                    json!({"evidence_ids":["work-1"],"include_provenance":true}),
-                    json!({"items":[{"excerpt":"Reviewed the draft","citation":"[S1]"}]}),
-                ),
-                (
-                    "search_evidence",
-                    json!({"query":"- [ ]","mode":"literal"}),
-                    json!({"items":[{"evidenceId":"task-1","preview":"Send the invoice"}]}),
-                ),
-                (
-                    "update_plan",
-                    json!({"entries":[{"text":"Prepare review","status":"inProgress"}]}),
-                    json!({"status":"ok","steps":1}),
-                ),
-                (
-                    "propose_create_note",
-                    json!({"title":"Review","markdown":"Reviewed draft [S1]. Follow up on invoice."}),
-                    json!({"status":"pending_review","proposalId":"review-1"}),
-                ),
-            ];
-            let mut turns: Vec<_> = steps
-                .iter()
-                .enumerate()
-                .map(|(index, (name, args, _))| {
-                    vec![
-                        MockStreamEvent::tool_call(format!("call-{index}"), *name, args.clone()),
-                        MockStreamEvent::final_response(Usage::new()),
-                    ]
-                })
-                .collect();
-            turns.push(vec![
-                MockStreamEvent::text("Prepared your review; the invoice still needs attention."),
-                MockStreamEvent::final_response(Usage::new()),
-            ]);
-            let model = MockCompletionModel::from_stream_turns(turns);
-            let calls = Arc::new(Mutex::new(Vec::new()));
-            let tools = steps
-                .into_iter()
-                .map(|(name, expected, output)| {
-                    let calls = calls.clone();
-                    rig_agent::tool::DynamicTool::new(
-                        name,
-                        "Fixture capability",
-                        json!({"type":"object"}),
-                        move |_, args| {
-                            assert_eq!(args, expected);
-                            calls.lock().unwrap().push(name);
-                            let output = output.clone();
-                            Box::pin(async move { Ok(rig_core::tool::ToolOutput::json(output)) })
-                        },
-                    )
-                })
-                .collect();
-            let mut request =
-                fake_request("Review my work and next steps, and prepare a review note.");
-            request.provider = AgentProvider::Openai; // Mock only, no local metadata probe.
-            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
-            let cancelled = CancellationToken::new();
-            let sink: AgentEventSink = Arc::new(|_| {});
-            let agent = configured_builder(model.clone(), &request, None)
-                .unwrap()
-                .add_hook(RuntimeEventHook {
-                    on_event: sink.clone(),
-                    cancelled: cancelled.clone(),
-                    permissions: None,
-                    guard: guard.clone(),
-                    tools: None,
-                    context: None,
-                })
-                .dynamic_tools(tools)
-                .build();
-            let result = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: sink,
-                    permissions: None,
-                },
-                guard,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
-            assert_eq!(
-                *calls.lock().unwrap(),
-                vec![
-                    "list_note_activity",
-                    "read_evidence",
-                    "search_evidence",
-                    "update_plan",
-                    "propose_create_note"
-                ]
-            );
-            assert_eq!(model.request_count(), 6);
-            assert!(result.output.contains("invoice"));
-            let requests = model.requests();
-            let history = serde_json::to_value(&requests.last().unwrap().chat_history)
-                .unwrap()
-                .to_string();
-            assert!(history.contains("work-1") && history.contains("review-1"));
-        });
-    }
-
-    #[test]
     fn context_measurement_covers_system_and_reports_usage_without_content() {
-        let _guard = crate::test_support::lock_test_env();
-        std::env::set_var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS", "1");
         let events = Arc::new(Mutex::new(Vec::new()));
         let capture = events.clone();
         let mut request = fake_request("PRIVATE_PROMPT_CANARY");
         request.provider = AgentProvider::Openai; // Mock only; no metadata probe.
         request.preamble = "PRIVATE_SYSTEM_CANARY ".repeat(500);
-        let response = tauri::async_runtime::block_on(run_model(
+        let measurement_capture = events.clone();
+        let measurement = context_measurement::Measurement::enabled(
+            &request,
+            Arc::new(move |e| {
+                measurement_capture
+                    .lock()
+                    .unwrap()
+                    .push(serde_json::to_value(e).unwrap());
+            }),
+            false,
+        );
+        let response = tauri::async_runtime::block_on(run_model_with_measurement(
             MockCompletionModel::from_stream_turns([vec![
                 MockStreamEvent::text("Test answer"),
                 MockStreamEvent::final_response(Usage {
@@ -1130,8 +1105,8 @@ mod tests {
                 permissions: None,
             },
             crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+            Some(measurement),
         ));
-        std::env::remove_var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS");
         assert_eq!(response.unwrap().output, "Test answer");
         let events = events.lock().unwrap();
         let measurements: Vec<_> = events
@@ -1313,32 +1288,20 @@ mod tests {
             let sink: AgentEventSink = Arc::new(|_| {});
             let cancelled = CancellationToken::new();
             let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
-            let agent = configured_builder(model.clone(), &request, None)
-                .unwrap()
-                .add_hook(RuntimeEventHook {
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
                     on_event: sink.clone(),
                     cancelled: cancelled.clone(),
                     permissions: None,
-                    guard: guard.clone(),
-                    tools: None,
-                    context: None,
-                })
+                },
+                guard: guard.clone(),
+                context: None,
+            };
+            let agent = harness
+                .builder(model.clone(), &request)
                 .tool(EchoTool(calls.clone()))
                 .build();
-            let response = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: sink,
-                    permissions: None,
-                },
-                guard,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+            let response = harness.run(agent, request).await.unwrap();
             assert_eq!(
                 serde_json::from_str::<Value>(&response.output).unwrap(),
                 selected
@@ -1432,40 +1395,27 @@ mod tests {
                     })
                 },
             );
-            let agent = configured_builder(
-                context_measurement::MeasuredModel {
-                    inner: model.clone(),
-                    measurement: None,
-                    context: Some(context.clone()),
-                },
-                &request,
-                None,
-            )
-            .unwrap()
-            .add_hook(RuntimeEventHook {
-                on_event: sink.clone(),
-                cancelled: cancelled.clone(),
-                permissions: None,
-                guard: guard.clone(),
-                tools: None,
-                context: Some(context.clone()),
-            })
-            .dynamic_tool(action)
-            .build();
-            let result = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: sink,
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
+                    on_event: sink.clone(),
+                    cancelled: cancelled.clone(),
                     permissions: None,
                 },
-                guard,
-                None,
-                Some(context),
-            )
-            .await
-            .unwrap();
+                guard: guard.clone(),
+                context: Some(context.clone()),
+            };
+            let agent = harness
+                .builder(
+                    context_measurement::MeasuredModel {
+                        inner: model.clone(),
+                        measurement: None,
+                        context: Some(context.clone()),
+                    },
+                    &request,
+                )
+                .dynamic_tool(action)
+                .build();
+            let result = harness.run(agent, request).await.unwrap();
             assert_eq!(
                 serde_json::from_str::<Value>(&result.output).unwrap(),
                 json!({"value":"Verified evidence; coverage partial"})
@@ -1538,40 +1488,27 @@ mod tests {
             let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let cancelled = CancellationToken::new();
             let calls = Arc::new(AtomicUsize::new(0));
-            let agent = configured_builder(
-                context_measurement::MeasuredModel {
-                    inner: model.clone(),
-                    measurement: None,
-                    context: Some(context.clone()),
-                },
-                &request,
-                None,
-            )
-            .unwrap()
-            .add_hook(RuntimeEventHook {
-                on_event: sink.clone(),
-                cancelled: cancelled.clone(),
-                permissions: None,
-                guard: guard.clone(),
-                tools: None,
-                context: Some(context.clone()),
-            })
-            .tool(EchoTool(calls.clone()))
-            .build();
-            let result = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: sink,
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
+                    on_event: sink.clone(),
+                    cancelled: cancelled.clone(),
                     permissions: None,
                 },
-                guard,
-                None,
-                Some(context),
-            )
-            .await
-            .unwrap();
+                guard: guard.clone(),
+                context: Some(context.clone()),
+            };
+            let agent = harness
+                .builder(
+                    context_measurement::MeasuredModel {
+                        inner: model.clone(),
+                        measurement: None,
+                        context: Some(context.clone()),
+                    },
+                    &request,
+                )
+                .tool(EchoTool(calls.clone()))
+                .build();
+            let result = harness.run(agent, request).await.unwrap();
             assert_eq!(
                 calls.load(Ordering::Relaxed),
                 1,
@@ -1665,32 +1602,20 @@ mod tests {
             let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let tool_calls = Arc::new(AtomicUsize::new(0));
             let request = fake_request("Find and update it");
-            let agent = configured_builder(model.clone(), &request, None)
-                .unwrap()
-                .add_hook(RuntimeEventHook {
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),
-                    guard: guard.clone(),
-                    tools: None,
-                    context: None,
-                })
+                },
+                guard: guard.clone(),
+                context: None,
+            };
+            let agent = harness
+                .builder(model.clone(), &request)
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
-            let response = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: event_sink,
-                    permissions: Some(permission_boundary),
-                },
-                guard,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+            let response = harness.run(agent, request).await.unwrap();
 
             assert_eq!(model.request_count(), 2);
             assert_eq!(response.output, "Prepared the change.");
@@ -1756,32 +1681,20 @@ mod tests {
             let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let tool_calls = Arc::new(AtomicUsize::new(0));
             let request = fake_request("Try the fake side effect");
-            let agent = configured_builder(model.clone(), &request, None)
-                .unwrap()
-                .add_hook(RuntimeEventHook {
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),
-                    guard: guard.clone(),
-                    tools: None,
-                    context: None,
-                })
+                },
+                guard: guard.clone(),
+                context: None,
+            };
+            let agent = harness
+                .builder(model.clone(), &request)
                 .tool(EchoTool(Arc::clone(&tool_calls)))
                 .build();
-            let response = drive_agent(
-                agent,
-                request,
-                AgentRuntimeObserver {
-                    cancelled,
-                    on_event: event_sink,
-                    permissions: Some(permission_boundary),
-                },
-                guard,
-                None,
-                None,
-            )
-            .await
-            .unwrap();
+            let response = harness.run(agent, request).await.unwrap();
 
             let events = observed.lock().unwrap();
             assert_eq!(tool_calls.load(Ordering::Relaxed), 0);

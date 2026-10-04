@@ -29,27 +29,7 @@ fn copy_file(source: &Path, destination: &Path) {
     fs::copy(source, destination).unwrap();
 }
 
-// Each fixture step deliberately ends an Editing Window. Autosave/window
-// coalescing tests use the production command directly in editing_window_capture.
-fn save_retained_state(
-    state: &AppState,
-    title: String,
-    markdown: String,
-    path: Option<String>,
-) -> Result<Option<crate::commands::NoteSession>, HistoryError> {
-    let outcome = crate::commands::note_persistence::persist_note_session_with_outcome(
-        state, title, markdown, path,
-    )?;
-    if let Some(session) = outcome.as_ref().filter(|s| s.commit_warning.is_none()) {
-        if let Some(id) = &session.note_id {
-            state
-                .note_timeline()
-                .finalize_editing_window(&NoteIdentity::new(id))
-                .map_err(|e| e.to_string())?;
-        }
-    }
-    Ok(outcome)
-}
+use crate::test_support::save_and_finalize as save_retained_state;
 
 fn prepare_test_history(
     source: MutationSource,

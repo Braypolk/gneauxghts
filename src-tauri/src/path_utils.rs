@@ -52,7 +52,7 @@ pub(crate) fn unique_path_in_dir(
     default_stem: &str,
 ) -> PathBuf {
     let preferred_path = directory.join(preferred_file_name);
-    if !preferred_path.exists() {
+    if fs::symlink_metadata(&preferred_path).is_err() {
         return preferred_path;
     }
 
@@ -72,7 +72,7 @@ pub(crate) fn unique_path_in_dir(
             _ => format!("{stem} {suffix}"),
         };
         let candidate = directory.join(candidate_name);
-        if !candidate.exists() {
+        if fs::symlink_metadata(&candidate).is_err() {
             return candidate;
         }
     }

@@ -1,33 +1,3 @@
-type BrowserE2EInvocation = {
-  command: string;
-  args: Record<string, unknown>;
-};
-
-type BrowserE2ENote = {
-  noteId: string;
-  title: string;
-  markdown: string;
-  path: string;
-};
-
-declare global {
-  interface Window {
-    __GNEAUXGHTS_E2E__?: {
-      invocations: BrowserE2EInvocation[];
-      holdSave(fail?: boolean): void;
-      releaseSave(): void;
-      seedImageAsset(name: string): void;
-      configureImageSave(failures?: number, delayMillis?: number): void;
-      seedRevisionChat(): void;
-      seedLargeHistory(): void;
-      delayNextHistoryPage(delayMillis?: number): void;
-      snapshot(): {
-        activeNoteId: string;
-        notes: BrowserE2ENote[];
-        invocations: BrowserE2EInvocation[];
-      };
-    };
-  }
-}
-
+// One shared fixture bridge contract for application and browser tests.
+import '../../src/lib/e2e/browserBackendContract';
 export {};

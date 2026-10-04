@@ -62,10 +62,10 @@ export class RelatedNotesStore {
     status: RelatedNotesResponse['status'] = 'insufficientContent',
     reason: string | null = EMPTY_RELATED_REASON
   ) => {
+    this.cancelRelatedAssessment();
     this.items = [];
     this.status = status;
     this.reason = reason;
-    this.isLoading = false;
     this.#lastRelatedRequestKey = '';
   };
 
@@ -125,18 +125,16 @@ export class RelatedNotesStore {
   };
 
   clearSelectedRelatedText = () => {
+    this.cancelRelatedAssessment();
     this.selectedText = null;
     this.scope = 'note';
   };
 
   scheduleRelated = ({ immediate = false }: { immediate?: boolean } = {}) => {
-    if (this.#relatedTimer) {
-      window.clearTimeout(this.#relatedTimer);
-      this.#relatedTimer = null;
-    }
+    // Scheduling changes the admitted target before deferred Markdown reads.
+    this.cancelRelatedAssessment();
 
     if (this.isPanelCollapsed) {
-      this.isLoading = false;
       return;
     }
 
@@ -158,7 +156,7 @@ export class RelatedNotesStore {
 
   runRelatedNotes = async () => {
     if (this.isPanelCollapsed) {
-      this.isLoading = false;
+      this.cancelRelatedAssessment();
       return;
     }
 

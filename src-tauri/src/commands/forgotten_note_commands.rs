@@ -497,11 +497,6 @@ mod tests {
         state::set_notes_root_override,
         test_support::{lock_test_env, TestDir},
     };
-    use tauri::Manager;
-
-    fn test_context() -> tauri::Context<tauri::test::MockRuntime> {
-        tauri::test::mock_context(tauri::test::noop_assets())
-    }
 
     #[test]
     fn a_save_committed_after_forget_read_is_not_replaced_by_stale_lifecycle_bytes() {
@@ -511,17 +506,12 @@ mod tests {
         let notes = TestDir::new("concurrent-save-forget-notes");
         set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
         crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let app = tauri::test::mock_builder()
-            .manage(
-                AppState::new(
-                    crate::semantic::SemanticState::new_disabled("disabled"),
-                    crate::app::EventBus::disabled(),
-                )
-                .unwrap(),
-            )
-            .build(test_context())
-            .unwrap();
-        let state = app.state::<AppState>();
+        let app = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let state = &app;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Save then forget".into(),
@@ -584,19 +574,13 @@ mod tests {
             let service =
                 ChatService::new(notes.path().to_path_buf(), notes.path().join(".gneauxghts"))
                     .unwrap();
-            let app = tauri::test::mock_builder()
-                .manage(service)
-                .manage(
-                    AppState::new(
-                        crate::semantic::SemanticState::new_disabled("disabled"),
-                        crate::app::EventBus::disabled(),
-                    )
-                    .unwrap(),
-                )
-                .build(test_context())
-                .unwrap();
-            let state = app.state::<AppState>();
-            let chat = app.state::<ChatService>();
+            let chat = service;
+            let app = AppState::new(
+                crate::semantic::SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .unwrap();
+            let state = &app;
             let created = crate::commands::note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Retain restored history".into(),
@@ -711,19 +695,13 @@ mod tests {
             let conversation = service
                 .create_conversation(Some("Keep restored conversation".into()), None)
                 .unwrap();
-            let app = tauri::test::mock_builder()
-                .manage(service)
-                .manage(
-                    AppState::new(
-                        crate::semantic::SemanticState::new_disabled("disabled"),
-                        crate::app::EventBus::disabled(),
-                    )
-                    .unwrap(),
-                )
-                .build(test_context())
-                .unwrap();
-            let state = app.state::<AppState>();
-            let chat = app.state::<ChatService>();
+            let chat = service;
+            let app = AppState::new(
+                crate::semantic::SemanticState::new_disabled("disabled"),
+                crate::app::EventBus::disabled(),
+            )
+            .unwrap();
+            let state = &app;
             let forgotten = super::super::chat_commands::archive_conversation_with_state(
                 &chat.clone(),
                 &state,
@@ -818,18 +796,13 @@ mod tests {
         let conversation = service
             .create_conversation(Some("Concurrent archive".into()), None)
             .unwrap();
-        let app = tauri::test::mock_builder()
-            .manage(service)
-            .manage(
-                AppState::new(
-                    crate::semantic::SemanticState::new_disabled("disabled"),
-                    crate::app::EventBus::disabled(),
-                )
-                .unwrap(),
-            )
-            .build(test_context())
-            .unwrap();
-        let state = app.state::<AppState>();
+        let chat = service;
+        let app = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let state = &app;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
             &state,
             "Failed forget".into(),
@@ -855,7 +828,7 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap();
             let (cleanup_tx, cleanup_rx) = std::sync::mpsc::channel();
-            let cleanup_state = state.clone();
+            let cleanup_state = state;
             let cleanup_root = notes.path();
             let cleanup = scope.spawn(move || {
                 let result = cleanup_expired_forgotten_notes(cleanup_root, &cleanup_state);
@@ -866,8 +839,8 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_millis(50))
                 .is_err());
             let (archive_tx, archive_rx) = std::sync::mpsc::channel();
-            let archive_state = state.clone();
-            let archive_chat = app.state::<ChatService>();
+            let archive_state = state;
+            let archive_chat = &chat;
             let archive_id = conversation.summary.id.clone();
             let archive = scope.spawn(move || {
                 let result = super::super::chat_commands::archive_conversation_with_state(
@@ -998,11 +971,8 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("construct app state");
-        let app = tauri::test::mock_builder()
-            .manage(state)
-            .build(test_context())
-            .expect("build test app");
-        let state = app.state::<AppState>();
+        let app = state;
+        let state = &app;
         let mut retained = Vec::new();
 
         for retention_days in [1, 7, 30] {
@@ -1040,7 +1010,7 @@ mod tests {
             let first_revision = revisions[0].identity().as_str().to_string();
 
             let summary = forget_note_with_state(
-                &app.state(),
+                &app,
                 Some(active_path.to_string_lossy().into_owned()),
                 retention_days,
             )
@@ -1080,13 +1050,10 @@ mod tests {
             crate::state::vault_data_dir().expect("resolve vault data"),
         )
         .expect("construct chat service");
-        let restarted_app = tauri::test::mock_builder()
-            .manage(restarted)
-            .manage(chat_service)
-            .build(test_context())
-            .expect("build restarted test app");
-        let restarted = restarted_app.state::<AppState>();
-        cleanup_expired_forgotten_notes(notes.path(), restarted.inner())
+        let chat = chat_service;
+        let restarted_app = restarted;
+        let restarted = &restarted_app;
+        cleanup_expired_forgotten_notes(notes.path(), &restarted)
             .expect("retain unexpired forgotten notes");
         let after_restart = read_unpruned_state(notes.path()).expect("read retained state");
         assert_eq!(
@@ -1115,8 +1082,8 @@ mod tests {
         let (recovered_id, original_path, recovered_from, first_revision) = retained.remove(1);
         fs::write(&original_path, "Unrelated current note").expect("reuse original path");
         let restored = restore_forgotten_notes_with_state(
-            &restarted_app.state(),
-            &restarted_app.state(),
+            &restarted_app,
+            &chat,
             vec![recovered_from.to_string_lossy().into_owned()],
         )
         .expect("recover forgotten note");
@@ -1149,7 +1116,7 @@ mod tests {
             forgotten_note.purge_at_millis = 0;
         }
         write_unpruned_state(&expired).expect("expire forgotten notes");
-        cleanup_expired_forgotten_notes(notes.path(), restarted.inner())
+        cleanup_expired_forgotten_notes(notes.path(), &restarted)
             .expect("purge expired forgotten notes");
 
         assert!(read_unpruned_state(notes.path())
@@ -1184,12 +1151,9 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("construct app state");
-        let app = tauri::test::mock_builder()
-            .manage(state)
-            .build(test_context())
-            .expect("build test app");
+        let app = state;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            app.state::<AppState>().inner(),
+            &app,
             "Reset forgotten history".to_string(),
             "Earlier body".to_string(),
             None,
@@ -1199,26 +1163,23 @@ mod tests {
         let note_id = NoteIdentity::new(created.note_id.expect("note identity"));
         let active_path = PathBuf::from(created.path.expect("active path"));
         crate::commands::note_persistence::persist_note_session_with_outcome(
-            app.state::<AppState>().inner(),
+            &app,
             "Reset forgotten history".to_string(),
             "Current retained body".to_string(),
             Some(active_path.to_string_lossy().into_owned()),
         )
         .expect("append current revision");
-        let forgotten = forget_note_with_state(
-            &app.state(),
-            Some(active_path.to_string_lossy().into_owned()),
-            30,
-        )
-        .expect("forget note")
-        .expect("forgotten note summary");
+        let forgotten =
+            forget_note_with_state(&app, Some(active_path.to_string_lossy().into_owned()), 30)
+                .expect("forget note")
+                .expect("forgotten note summary");
         let forgotten_path = PathBuf::from(&forgotten.forgotten_path);
         let retained_deadline = forgotten.purge_at_millis;
         fs::write(&forgotten_path, "Current retained body")
             .expect("damage only the forgotten note's managed metadata");
         let damaged_forgotten_bytes = fs::read(&forgotten_path).expect("read damaged note");
         corrupt_note_revision_payload_for_test(&note_id);
-        let app_state = app.state::<AppState>();
+        let app_state = &app;
         let timeline = app_state.note_timeline();
         assert_eq!(
             timeline
@@ -1238,8 +1199,7 @@ mod tests {
             fs::read(&forgotten_path).expect("read untouched forgotten note"),
             damaged_forgotten_bytes
         );
-        assert!(app
-            .state::<AppState>()
+        assert!((&app)
             .note_timeline()
             .open_history_mode(note_id.clone())
             .page(None, 50)
@@ -1258,11 +1218,8 @@ mod tests {
             crate::state::vault_data_dir().expect("resolve vault data"),
         )
         .expect("construct chat service");
-        let restarted_app = tauri::test::mock_builder()
-            .manage(restarted_state)
-            .manage(chat_service)
-            .build(test_context())
-            .expect("build restarted test app");
+        let chat = chat_service;
+        let restarted_app = restarted_state;
         let retained = read_unpruned_state(notes.path()).expect("read forgotten state");
         assert_eq!(retained.forgotten_notes.len(), 1);
         assert_eq!(
@@ -1279,14 +1236,14 @@ mod tests {
         );
 
         let restored = restore_forgotten_notes_with_state(
-            &restarted_app.state(),
-            &restarted_app.state(),
+            &restarted_app,
+            &chat,
             vec![forgotten_path.to_string_lossy().into_owned()],
         )
         .expect("recover forgotten note");
         assert_eq!(restored.len(), 1);
         let restored_path = PathBuf::from(&restored[0].restored_path);
-        let restarted_state = restarted_app.state::<AppState>();
+        let restarted_state = &restarted_app;
         let access = restarted_state.note_timeline().open_history_mode(note_id);
         let revisions = access.revisions().expect("read rebuilt revisions");
         assert_eq!(revisions.len(), 1);
@@ -1359,12 +1316,9 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("construct app state");
-        let app = tauri::test::mock_builder()
-            .manage(state)
-            .build(test_context())
-            .expect("build test app");
+        let app = state;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            app.state::<AppState>().inner(),
+            &app,
             "Rollback forgotten publication".to_string(),
             "Still active".to_string(),
             None,
@@ -1376,12 +1330,9 @@ mod tests {
         let original_markdown = fs::read_to_string(&active_path).expect("read active note");
         crate::state::inject_note_publication_failure_once();
 
-        let error = forget_note_with_state(
-            &app.state(),
-            Some(active_path.to_string_lossy().into_owned()),
-            7,
-        )
-        .expect_err("forget publication should fail");
+        let error =
+            forget_note_with_state(&app, Some(active_path.to_string_lossy().into_owned()), 7)
+                .expect_err("forget publication should fail");
 
         assert!(error.contains("injected note publication failure"));
         assert_eq!(
@@ -1396,8 +1347,7 @@ mod tests {
             crate::services::note_timeline::retained_observation_count_for_test(),
             0
         );
-        let events = app
-            .state::<AppState>()
+        let events = (&app)
             .note_timeline()
             .open_history_mode(note_id)
             .lifecycle_events()
@@ -1420,12 +1370,9 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("construct app state");
-        let app = tauri::test::mock_builder()
-            .manage(state)
-            .build(test_context())
-            .expect("build test app");
+        let app = state;
         let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            app.state::<AppState>().inner(),
+            &app,
             "Deferred forgotten lifecycle".to_string(),
             "Retained body".to_string(),
             None,
@@ -1436,13 +1383,10 @@ mod tests {
         let active_path = PathBuf::from(created.path.expect("active path"));
         crate::services::note_timeline::inject_lifecycle_finalization_failure_once();
 
-        let summary = forget_note_with_state(
-            &app.state(),
-            Some(active_path.to_string_lossy().into_owned()),
-            7,
-        )
-        .expect("forget remains committed")
-        .expect("forgotten summary");
+        let summary =
+            forget_note_with_state(&app, Some(active_path.to_string_lossy().into_owned()), 7)
+                .expect("forget remains committed")
+                .expect("forgotten summary");
 
         assert!(summary
             .commit_warning
@@ -1455,7 +1399,7 @@ mod tests {
             crate::services::note_timeline::retained_observation_count_for_test(),
             1
         );
-        let app_state = app.state::<AppState>();
+        let app_state = &app;
         let timeline = app_state.note_timeline();
         timeline
             .recover_lifecycle_publications()
@@ -1478,6 +1422,8 @@ mod tests {
     #[test]
     fn chat_folder_uses_the_forgotten_item_recovery_lifecycle() {
         let _guard = lock_test_env();
+        let app_data = TestDir::new("forgotten-chat-folder-data");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
         let root = TestDir::new("forgotten-chat-folder");
         set_notes_root_override(Some(root.path().to_path_buf())).expect("override notes root");
         let original_path = root.path().join("Chats").join("2026-07-28-chat");
@@ -1621,51 +1567,65 @@ mod tests {
     }
 
     #[test]
-    fn forget_and_recovery_preserve_the_same_managed_note_identity() {
-        let original =
-            "---\ngneauxghts:\n  id: lifecycle-note-1\n  kind: note\n---\n\nLifecycle body";
-        let (forgotten_markdown, forgotten_id) =
-            prepare_forgotten_note_markdown(original, "2026-09-01T12:00:00.000Z".to_string())
-                .expect("prepare forgotten note");
-        let restored_markdown =
-            note::prepare_note_markdown(&forgotten_markdown, Some(&forgotten_markdown), Some(None))
-                .expect("prepare recovered note")
-                .0;
-
-        assert_eq!(forgotten_id, "lifecycle-note-1");
-        assert_eq!(
-            note::note_id_from_path_or_markdown(None, &restored_markdown).as_deref(),
-            Some("lifecycle-note-1")
-        );
-        assert!(note::parse_note(&restored_markdown)
-            .frontmatter
-            .managed
-            .expect("managed metadata")
-            .trashed_at
-            .is_none());
-    }
-
-    #[test]
     fn damaged_metadata_uses_catalog_identity_through_forget_and_recovery() {
-        // The timeline prepares this canonical input before lifecycle
-        // metadata transformation and the original atomic publication.
-        let repaired = "---\ngneauxghts:\n  id: known-before-damage\n  kind: note\n---\n\nAuthored content without managed metadata";
-        let (forgotten_markdown, forgotten_id) =
-            prepare_forgotten_note_markdown(repaired, "2026-09-01T12:00:00.000Z".to_string())
-                .expect("prepare damaged forgotten note");
-        assert_eq!(forgotten_id, "known-before-damage");
-
-        let recovered =
-            note::prepare_note_markdown(&forgotten_markdown, Some(&forgotten_markdown), Some(None))
-                .expect("recover damaged forgotten note")
-                .0;
+        let fixture = crate::test_support::TestVault::new("damaged-lifecycle");
+        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &fixture.state,
+            "Damaged identity".into(),
+            "Authored content".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let identity = created.note_id.unwrap();
+        let path = created.path.unwrap();
+        fs::write(&path, "Authored content without managed metadata").unwrap();
+        let forgotten = forget_note_with_state(&fixture.state, Some(path), 7)
+            .unwrap()
+            .unwrap();
         assert_eq!(
-            note::parse_note(&recovered)
-                .frontmatter
-                .managed
-                .expect("recovered managed metadata")
-                .id,
-            "known-before-damage"
+            note::note_id_from_path_or_markdown(
+                None,
+                &fs::read_to_string(&forgotten.forgotten_path).unwrap()
+            )
+            .as_deref(),
+            Some(identity.as_str())
         );
+        let chat = ChatService::new(
+            fixture.notes.path().to_path_buf(),
+            fixture.notes.path().join(".gneauxghts"),
+        )
+        .unwrap();
+        let restored = restore_forgotten_notes_with_state(
+            &fixture.state,
+            &chat,
+            vec![forgotten.forgotten_path],
+        )
+        .unwrap();
+        let markdown = fs::read_to_string(&restored[0].restored_path).unwrap();
+        let parsed = note::parse_note(&markdown);
+        let metadata = parsed.frontmatter.managed.unwrap();
+        assert_eq!(metadata.id, identity);
+        assert!(metadata.trashed_at.is_none());
+        assert_eq!(
+            parsed.body.trim(),
+            "Authored content without managed metadata"
+        );
+        assert!(read_unpruned_state(fixture.notes.path())
+            .unwrap()
+            .forgotten_notes
+            .is_empty());
+        let events = fixture
+            .state
+            .note_timeline()
+            .open_history_mode(NoteIdentity::new(identity))
+            .lifecycle_events()
+            .unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.kind() == LifecycleEventKind::Forgotten));
+        assert!(events
+            .iter()
+            .any(|event| event.kind() == LifecycleEventKind::Recovered));
     }
 }

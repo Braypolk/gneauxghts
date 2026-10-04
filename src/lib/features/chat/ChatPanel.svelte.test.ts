@@ -1,105 +1,29 @@
 import { render } from 'svelte/server';
 import { describe, expect, it } from 'vitest';
 import ChatPanel from './ChatPanel.svelte';
-import type {
-  ChatController,
-  ChatControllerState
-} from './controller.svelte';
+import { createChatController } from './controller.svelte';
+import { fakeApi, settings } from './chatTestSupport';
 
-function controllerWithSnapshot(
-  snapshot: ChatControllerState
-): ChatController {
-  return {
-    getSnapshot: () => snapshot,
-    subscribe: (run) => {
-      run(snapshot);
-      return () => undefined;
-    }
-  } as ChatController;
-}
+const contextNote = { noteId: 'note-1', notePath: '/vault/Note.md', noteTitle: 'Note' };
 
 describe('ChatPanel initial render', () => {
-  it('uses the controller vault state without an approved-only emphasis frame', () => {
-    const snapshot: ChatControllerState = {
-      settings: null,
-      conversations: [],
-      conversationDraft: {
-        revision: 1,
-        title: '',
-        provider: 'openai',
-        model: 'configured-model',
-        reasoningEffort: 'medium',
-        vaultAccess: 'full'
-      },
-      grants: [],
-      policies: [],
-      conversation: null,
-      isInitialized: true,
-      isInitializing: false,
-      isLoadingConversation: false,
-      isSending: false,
-      error: null,
-      activity: null,
-      proposals: [],
-      modelCapabilities: null
-    };
-
-    const body = render(ChatPanel, {
-      props: {
-        controller: controllerWithSnapshot(snapshot),
-        autoInitialize: false,
-        contextNote: {
-          noteId: 'note-1',
-          notePath: '/vault/Note.md',
-          noteTitle: 'Note'
-        }
-      }
-    }).body;
-
+  it('renders the configured vault access from the real controller', async () => {
+    const fake = fakeApi();
+    fake.api.listConversations.mockResolvedValue([]);
+    fake.api.getSettings.mockResolvedValue({ ...settings, defaultVaultAccess: 'full' });
+    const controller = createChatController(fake.api);
+    await controller.initialize();
+    const body = render(ChatPanel, { props: { controller, autoInitialize: false, contextNote } }).body;
     expect(body).toContain('Full vault');
-    expect(body).toContain('min-w-0 w-full max-w-full');
-    expect(body).not.toContain('chat-composer-chip--emphasis');
+    expect(body).toContain('aria-label="Vault access"');
+    controller.dispose();
   });
 
   it('withholds configuration controls before initialization completes', () => {
-    const snapshot: ChatControllerState = {
-      settings: null,
-      conversations: [],
-      conversationDraft: {
-        revision: 0,
-        title: '',
-        provider: 'openai',
-        model: '',
-        reasoningEffort: 'medium',
-        vaultAccess: 'approved'
-      },
-      grants: [],
-      policies: [],
-      conversation: null,
-      isInitialized: false,
-      isInitializing: false,
-      isLoadingConversation: false,
-      isSending: false,
-      error: null,
-      activity: null,
-      proposals: [],
-      modelCapabilities: null
-    };
-
-    const body = render(ChatPanel, {
-      props: {
-        controller: controllerWithSnapshot(snapshot),
-        autoInitialize: false,
-        contextNote: {
-          noteId: 'note-1',
-          notePath: '/vault/Note.md',
-          noteTitle: 'Note'
-        }
-      }
-    }).body;
-
+    const controller = createChatController(fakeApi().api);
+    const body = render(ChatPanel, { props: { controller, autoInitialize: false, contextNote } }).body;
     expect(body).not.toContain('aria-label="Vault access"');
     expect(body).not.toContain('Allow note');
-    expect(body).not.toContain('chat-composer-chip--emphasis');
+    controller.dispose();
   });
 });

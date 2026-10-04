@@ -1,5 +1,6 @@
 use super::*;
 use crate::services::evidence::{EvidenceSession, SearchRequest};
+use crate::services::note_timeline::test_fixtures::{load, HistoryFixture};
 use serde_json::json;
 
 #[test]
@@ -48,7 +49,7 @@ fn query_inventory_groups_surviving_activity_and_validates_freshness() {
             .code
             == crate::services::tool_outcome::FailureCode::Cancelled
     );
-    let (inventory, _, sources) = session
+    let inventory = session
         .inventory(&f.state, None, &HashSet::new(), request.clone(), resolved)
         .unwrap();
     assert!(inventory.complete, "{:?}", inventory.gaps);
@@ -56,14 +57,13 @@ fn query_inventory_groups_surviving_activity_and_validates_freshness() {
     assert!(!inventory.rows[0].uncertain);
     assert!(inventory.rows[0].excerpt.contains("Second"));
     assert!(!inventory.rows[0].excerpt.contains("Later"));
-    assert_eq!(sources.len(), 1);
     let starts: HashSet<_> = inventory.rows[0].activity.iter().map(|a| a.start).collect();
     assert!(starts.contains(&instant("2026-09-12T12:00:00-06:00")));
     assert!(session.is_current(&f.state, None, &HashSet::new()));
     assert!(!session.is_current(
         &f.state,
         None,
-        &HashSet::from([sources[0].0.note_id.clone()])
+        &HashSet::from([inventory.rows[0].note_id.clone()])
     ));
     // Ordinary cursor search shares the new binding and remains current across pages.
     let mut normal = EvidenceSession::default();
@@ -104,28 +104,14 @@ fn query_inventory_groups_surviving_activity_and_validates_freshness() {
 
 #[test]
 fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass() {
-    let _guard = crate::test_support::lock_test_env();
     for dense in [false, true] {
-        let f = Fixture::new();
-        let mut allowed = HashSet::new();
-        for i in 0..55 {
-            let note = note_persistence::persist_note_session_with_outcome(
-                &f.state,
-                format!("Inventory {i}"),
-                format!(
-                    "Unique inventory content {i}. {}",
-                    if dense {
-                        "Long but current note content. ".repeat(400)
-                    } else {
-                        String::new()
-                    }
-                ),
-                None,
-            )
-            .unwrap()
-            .unwrap();
-            allowed.insert(note.note_id.unwrap());
-        }
+        let (f, ids) = load(if dense {
+            HistoryFixture::InventoryDense
+        } else {
+            HistoryFixture::InventorySparse
+        });
+        let allowed = ids.into_iter().collect::<HashSet<_>>();
+        assert_eq!(allowed.len(), if dense { 20 } else { 55 });
         let mut request: SearchRequest = serde_json::from_value(
             json!({"activity_range":{"start":"2020-01-01","end":"2030-01-02"}}),
         )
@@ -133,13 +119,13 @@ fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass()
         let mut seen = HashSet::new();
         let mut pages = 0;
         let mut first_cursor = None;
+        let mut session = EvidenceSession::default();
         loop {
-            let mut session = EvidenceSession::default();
             let resolved = session
                 .normalize_request(&mut request.clone())
                 .unwrap()
                 .unwrap();
-            let (result, _, sources) = session
+            let result = session
                 .inventory(
                     &f.state,
                     Some(&allowed),
@@ -149,7 +135,18 @@ fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass()
                 )
                 .unwrap();
             assert!(!result.rows.is_empty());
+            assert_eq!(
+                session.retained_search_count(),
+                1,
+                "continuation must reuse its original search"
+            );
             if pages == 0 {
+                if dense {
+                    assert!(
+                        result.rows.len() < 50,
+                        "dense page must stop before the row limit"
+                    );
+                }
                 assert!(result.budgets["stopReasons"]
                     .as_array()
                     .unwrap()
@@ -161,32 +158,16 @@ fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass()
                             "display_rows"
                         }));
             }
-            let delivered = sources
-                .iter()
-                .map(|(c, path, title)| crate::chat::ChatSource {
-                    kind: "note".into(),
-                    note_id: Some(c.note_id.clone()),
-                    note_path: Some(path.to_string_lossy().into()),
-                    title: title.clone(),
-                    excerpt: c.excerpt.clone(),
-                    url: None,
-                    anchor: Some(c.id.clone()),
-                    revision: None,
-                    passage: Some(c.clone()),
-                })
-                .collect::<Vec<_>>();
-            let serialized_bytes = serde_json::to_vec(&(&result.rows, delivered))
-                .unwrap()
-                .len();
+            let serialized_bytes = serde_json::to_vec(&result.rows).unwrap().len();
             assert!(serialized_bytes <= 256000, "{serialized_bytes}");
             assert!(
                 serialized_bytes
                     <= result.budgets["inventory"]["usedBytes"].as_u64().unwrap() as usize
             );
             assert!(session.is_current(&f.state, Some(&allowed), &HashSet::new()));
-            for source in sources {
-                assert!(allowed.contains(&source.0.note_id));
-                seen.insert(source.0.note_id);
+            for row in &result.rows {
+                assert!(allowed.contains(&row.note_id));
+                assert!(seen.insert(row.note_id.clone()), "duplicate inventory note");
             }
             pages += 1;
             assert!(pages < 10);
@@ -196,9 +177,8 @@ fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass()
                     first_cursor = Some(cursor.clone());
                 }
                 request.cursor = Some(cursor);
-                let mut stale = EvidenceSession::default();
                 let excluded = HashSet::from([allowed.iter().next().unwrap().clone()]);
-                assert!(stale
+                assert!(session
                     .inventory(
                         &f.state,
                         Some(&allowed),
@@ -220,53 +200,24 @@ fn query_inventory_continues_across_budgets_without_duplicates_or_scope_bypass()
             .note_timeline()
             .clear_note_history(&NoteIdentity::new(id))
             .unwrap();
-        let mut changed = EvidenceSession::default();
-        let resolved = changed
+        let resolved = session
             .normalize_request(&mut request.clone())
             .unwrap()
             .unwrap();
         assert!(
-            changed
+            session
                 .inventory(&f.state, Some(&allowed), &HashSet::new(), request, resolved)
                 .is_err(),
-            "History-only changes must invalidate cross-run inventory offsets"
+            "History-only changes must invalidate same-session inventory offsets"
         );
     }
 }
 
 #[test]
 fn query_inventory_nine_dense_notes_do_not_spend_model_evidence() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    let mut expected = HashSet::new();
-    for i in 0..9 {
-        let title = format!("Dense inventory {i}");
-        let mut body = "Background context that was already present. ".repeat(80);
-        let note = note_persistence::persist_note_session_with_outcome(
-            &f.state,
-            title.clone(),
-            body.clone(),
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        expected.insert(note.note_id.clone().unwrap());
-        for j in 0..12 {
-            f.clock.store(1_000_000 + j * 10_000, Ordering::SeqCst);
-            body.push_str(&format!("\n\nRecorded finding {j}."));
-            note_persistence::persist_note_session_with_outcome(
-                &f.state,
-                title.clone(),
-                body.clone(),
-                note.path.clone(),
-            )
-            .unwrap();
-            f.state
-                .note_timeline()
-                .finalize_editor_capture(&NoteIdentity::new(note.note_id.as_ref().unwrap()))
-                .unwrap();
-        }
-    }
+    let (f, ids) = load(HistoryFixture::NineDense);
+    let expected = ids.into_iter().collect::<HashSet<_>>();
+    assert_eq!(expected.len(), 9);
     let request: SearchRequest = serde_json::from_value(
         json!({"activity_range":{"start":"1970-01-01","end":"2030-01-02","timezone":"UTC"}}),
     )
@@ -277,7 +228,7 @@ fn query_inventory_nine_dense_notes_do_not_spend_model_evidence() {
         .normalize_request(&mut request.clone())
         .unwrap()
         .unwrap();
-    let (result, _, sources) = session
+    let result = session
         .inventory(
             &f.state,
             Some(&expected),
@@ -291,23 +242,15 @@ fn query_inventory_nine_dense_notes_do_not_spend_model_evidence() {
     assert_eq!(result.budgets["modelEvidence"]["usedBytes"], 24000);
     assert!(result.budgets["inventory"]["usedBytes"].as_u64().unwrap() < 256000);
     assert_eq!(result.rows.len(), 9);
-    assert_eq!(sources.len(), 9);
     assert_eq!(
-        sources
+        result
+            .rows
             .iter()
-            .map(|s| s.0.note_id.clone())
+            .map(|row| row.note_id.clone())
             .collect::<HashSet<_>>(),
         expected
     );
     assert!(session.is_current(&f.state, Some(&expected), &HashSet::new()));
-    for (citation, path, title) in sources {
-        let body = std::fs::read_to_string(path).unwrap();
-        assert!(
-            crate::services::evidence::editor_passage_navigation(&body, &title, &citation)
-                .1
-                .is_some()
-        );
-    }
 }
 
 #[test]

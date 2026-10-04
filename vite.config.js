@@ -5,6 +5,26 @@ import { sveltekit } from "@sveltejs/kit/vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+/** @returns {import("vite").Plugin} */
+function e2eServerIdentity() {
+  /** @param {import("vite").ViteDevServer | import("vite").PreviewServer} server */
+  const attach = (server) => {
+    const token = process.env.GNEAUXGHTS_E2E_SERVER_TOKEN;
+    if (!token) return;
+    server.middlewares.use('/__gneauxghts_e2e_reset', (_request, response) => {
+      response.setHeader('Content-Type', 'text/html; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-store');
+      response.end('<!doctype html><meta charset="utf-8"><title>E2E storage reset</title>');
+    });
+    server.middlewares.use('/__gneauxghts_e2e_identity', (_request, response) => {
+      response.setHeader('Content-Type', 'text/plain');
+      response.setHeader('Cache-Control', 'no-store');
+      response.end(token);
+    });
+  };
+  return { name: 'gneauxghts:e2e-server-identity', configureServer: attach, configurePreviewServer: attach };
+}
+
 const languageDataVendorPath = new URL(
   "./src/lib/vendor/codemirrorLanguageData.ts",
   import.meta.url,
@@ -37,7 +57,7 @@ function curatedLanguageData() {
 export default defineConfig(async () => ({
   cacheDir: process.env.VITE_E2E_BROWSER === 'true' ? 'node_modules/.vite-e2e-browser'
     : process.env.VITE_E2E_NATIVE === 'true' ? 'node_modules/.vite-e2e-native' : undefined,
-  plugins: [curatedLanguageData(), sveltekit(), tailwindcss()],
+  plugins: [e2eServerIdentity(), curatedLanguageData(), sveltekit(), tailwindcss()],
   build: {
     rollupOptions: {
       output: {
@@ -75,6 +95,8 @@ export default defineConfig(async () => ({
     },
   },
   test: {
+    // Keep per-file isolation while avoiding a separate process for each worker.
+    pool: "threads",
     environment: "node",
     globals: true,
     include: ["src/**/*.test.ts"],

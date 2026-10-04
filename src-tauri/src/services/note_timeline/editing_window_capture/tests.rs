@@ -106,49 +106,9 @@ impl Fixture {
 }
 impl Drop for Fixture {
     fn drop(&mut self) {
-        crate::state::set_notes_root_override(None).unwrap();
+        let _ = self.state.stop_rebuildable_projection_work();
+        let _ = crate::state::set_notes_root_override(None);
     }
-}
-
-#[test]
-fn editor_command_replaces_endpoint_keeps_anchor_and_bounds_terminal_receipts() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("A");
-    assert!(
-        history_store::pending_window(&history_store::Store::for_test(), &f.note)
-            .unwrap()
-            .is_none()
-    );
-    for index in 0..80 {
-        f.clock.fetch_add(1, Ordering::SeqCst);
-        assert!(f.save(&format!("saved {index}")).commit_warning.is_none());
-    }
-    assert_eq!(
-        f.retained(),
-        vec![(MutationSource::NoteCreation, "A".into())]
-    );
-    let endpoint = f.pending();
-    assert_eq!(
-        endpoint.result_hash,
-        history_store::authored_content_hash(&fs::read_to_string(&f.path).unwrap())
-    );
-    assert_eq!(
-        history_store::current_content_hash(&history_store::Store::for_test(), &f.note).unwrap(),
-        Some(endpoint.result_hash)
-    );
-    assert!(
-        history_store::prepared_intent_count(&history_store::Store::for_test(), "finalized") <= 66
-    );
-    f.seal();
-    assert_eq!(
-        f.retained(),
-        vec![
-            (MutationSource::NoteCreation, "A".into()),
-            (MutationSource::Editor, "saved 79".into())
-        ]
-    );
-    // The combined delta reconstructs from A, never the overwritten saved 78.
 }
 
 #[test]
@@ -449,6 +409,7 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
     let (prepared, proceed) = std::sync::mpsc::channel();
     let (read_done, resumed) = std::sync::mpsc::channel();
     std::thread::scope(|scope| {
+        let mut release = crate::test_support::ReleaseOnDrop::new(read_done);
         let f = &f;
         let writer = scope.spawn(move || {
             crate::state::with_note_file_mutation(|| -> Result<(), String> {
@@ -462,7 +423,9 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
                 let (canonical, intent) = publication.into_parts();
                 fs::write(&f.path, &canonical).unwrap();
                 prepared.send(()).unwrap();
-                resumed.recv().unwrap();
+                resumed
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
                 assert_eq!(
                     history_store::prepared_intent_count(
                         &history_store::Store::for_test(),
@@ -480,7 +443,9 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
                 Ok(())
             })
         });
-        proceed.recv().unwrap();
+        proceed
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         let (delivered, result) = std::sync::mpsc::channel();
         scope.spawn(move || {
             delivered
@@ -499,9 +464,13 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
             history_store::prepared_intent_count(&history_store::Store::for_test(), "prepared"),
             1
         );
-        read_done.send(()).unwrap();
+        release.release();
         writer.join().unwrap().unwrap();
-        let current = result.recv().unwrap().unwrap().unwrap();
+        let current = result
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap()
+            .unwrap();
         assert_eq!(current.body[0].text, "B");
     });
     assert_eq!(
@@ -516,29 +485,63 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
 #[test]
 fn concurrent_reads_and_next_save_serialize_released_capture_recovery() {
     let _guard = crate::test_support::lock_test_env();
-    for _ in 0..10 {
+    for writer_first in [false, true] {
         let f = Fixture::new();
         inject_history_finalization_failure_once();
         assert!(f.save("B").commit_warning.is_some());
-        let start = std::sync::Barrier::new(4);
+        let (acquired, owned) = std::sync::mpsc::channel();
+        let (contended, blocked) = std::sync::mpsc::channel();
+        let (release, resumed) = std::sync::mpsc::channel();
+        let resumed = std::sync::Mutex::new(resumed);
+        let first_owner = std::sync::atomic::AtomicBool::new(true);
+        f.state
+            .note_timeline()
+            .runtime
+            .set_recovery_lock_observer(Some(Arc::new(move |event| match event {
+                runtime::RecoveryLockEvent::Acquired
+                    if first_owner.swap(false, Ordering::SeqCst) =>
+                {
+                    acquired.send(()).unwrap();
+                    resumed
+                        .lock()
+                        .unwrap()
+                        .recv_timeout(std::time::Duration::from_secs(5))
+                        .unwrap();
+                }
+                runtime::RecoveryLockEvent::Contended => contended.send(()).unwrap(),
+                _ => {}
+            })));
         std::thread::scope(|scope| {
-            let reader = || {
-                start.wait();
-                // Recovery is the same owner used by History Mode and current-content
-                // reads; both callers may reach the released receipt simultaneously.
-                f.state.note_timeline().ensure_history_recovered()
+            let mut release = crate::test_support::ReleaseOnDrop::new(release);
+            let call = |writer| {
+                if writer {
+                    assert!(f.save("C").commit_warning.is_none());
+                } else {
+                    f.state.note_timeline().ensure_history_recovered().unwrap();
+                }
             };
-            let first = scope.spawn(reader);
-            let second = scope.spawn(reader);
-            let writer = scope.spawn(|| {
-                start.wait();
-                f.save("C")
-            });
-            start.wait();
-            first.join().unwrap().unwrap();
-            second.join().unwrap().unwrap();
-            assert!(writer.join().unwrap().commit_warning.is_none());
+            let first = scope.spawn(move || call(writer_first));
+            owned
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+            let second = scope.spawn(move || call(false));
+            let third = scope.spawn(move || call(!writer_first));
+            // Both competitors must observe WouldBlock on the real recovery mutex
+            // while the first reader/writer owns it, before any receipt replay.
+            for _ in 0..2 {
+                blocked
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
+            }
+            release.release();
+            first.join().unwrap();
+            second.join().unwrap();
+            third.join().unwrap();
         });
+        f.state
+            .note_timeline()
+            .runtime
+            .set_recovery_lock_observer(None);
         assert_eq!(
             history_store::prepared_intent_count(&history_store::Store::for_test(), "prepared"),
             0
@@ -874,6 +877,7 @@ fn deadline_waits_for_predeadline_publication_and_seals_its_late_success() {
     let (finish, wait_finish) = std::sync::mpsc::channel();
     let (done, wait_done) = std::sync::mpsc::channel();
     std::thread::scope(|scope| {
+        let mut release = crate::test_support::ReleaseOnDrop::new(finish);
         let f = &f;
         scope.spawn(move || {
             crate::state::with_note_file_mutation(|| -> Result<(), String> {
@@ -885,7 +889,9 @@ fn deadline_waits_for_predeadline_publication_and_seals_its_late_success() {
                     "C",
                 )?;
                 ready.send(()).unwrap();
-                wait_finish.recv().unwrap();
+                wait_finish
+                    .recv_timeout(std::time::Duration::from_secs(5))
+                    .unwrap();
                 let (canonical, intent) = prepared.into_parts();
                 fs::write(&f.path, &canonical).unwrap();
                 assert!(f
@@ -903,7 +909,9 @@ fn deadline_waits_for_predeadline_publication_and_seals_its_late_success() {
             })
             .unwrap()
         });
-        wait_ready.recv().unwrap();
+        wait_ready
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         clock.elapsed.store(300_000, Ordering::SeqCst);
         scope.spawn(|| {
             done.send(f.tick()).unwrap();
@@ -911,8 +919,11 @@ fn deadline_waits_for_predeadline_publication_and_seals_its_late_success() {
         assert!(wait_done
             .recv_timeout(std::time::Duration::from_millis(20))
             .is_err());
-        finish.send(()).unwrap();
-        wait_done.recv().unwrap().unwrap();
+        release.release();
+        wait_done
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
     });
     assert_eq!(f.retained().last().unwrap().1, "C");
     assert!(
@@ -1167,6 +1178,7 @@ fn scheduler_runs_without_saves_and_releases_its_runtime_after_owner_drop() {
     }
     assert_eq!(f.retained().last().unwrap().1, "B");
     drop(f);
+    let limit = std::time::Instant::now() + std::time::Duration::from_secs(2);
     while probe() {
         assert!(
             std::time::Instant::now() < limit,
@@ -1185,46 +1197,35 @@ fn clean_close_waits_for_active_save_then_finalizes_and_old_runtime_is_inert_aft
     let (finish, wait_finish) = std::sync::mpsc::channel();
     let (closed, wait_closed) = std::sync::mpsc::channel();
     std::thread::scope(|scope| {
+        let mut release = crate::test_support::ReleaseOnDrop::new(finish);
         let f = &f;
+        *AFTER_SAVE_RENAME.lock().unwrap() = Some(Box::new(move || {
+            ready.send(()).unwrap();
+            wait_finish
+                .recv_timeout(std::time::Duration::from_secs(5))
+                .unwrap();
+        }));
         scope.spawn(move || {
-            crate::state::with_note_file_mutation(|| -> Result<(), String> {
-                let publication = f.state.note_timeline().prepare_revision_publication(
-                    MutationSource::Editor,
-                    &f.path,
-                    Some(&f.path),
-                    Some(&f.note),
-                    "C",
-                )?;
-                ready.send(()).unwrap();
-                wait_finish.recv().unwrap();
-                let (canonical, intent) = publication.into_parts();
-                fs::write(&f.path, &canonical).unwrap();
-                assert!(f
-                    .state
-                    .note_timeline()
-                    .mutate(NoteMutation::editor(
-                        intent,
-                        f.path.clone(),
-                        None,
-                        canonical
-                    ))
-                    .warning()
-                    .is_none());
-                Ok(())
-            })
-            .unwrap()
+            assert!(f.save("C").commit_warning.is_none());
         });
-        wait_ready.recv().unwrap();
+        wait_ready
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap();
         scope.spawn(|| {
             closed
                 .send(f.state.note_timeline().clean_close(f._notes.path()))
                 .unwrap()
         });
-        assert!(wait_closed
-            .recv_timeout(std::time::Duration::from_millis(20))
-            .is_err());
-        finish.send(()).unwrap();
-        wait_closed.recv().unwrap().unwrap();
+        f.state
+            .note_timeline()
+            .runtime
+            .wait_for_close_waiting_on_operations();
+        assert!(wait_closed.try_recv().is_err());
+        release.release();
+        wait_closed
+            .recv_timeout(std::time::Duration::from_secs(5))
+            .unwrap()
+            .unwrap();
     });
     assert_eq!(f.retained().last().unwrap().1, "C");
     let next = crate::test_support::TestDir::new("window-next-vault");
@@ -2382,416 +2383,13 @@ fn deadline_history_corruption_keeps_its_type_and_latches_after_other_due_notes_
     assert_eq!(history_store::diagnostic_scan_counts(), before);
 }
 
-// A second selected vault deliberately reuses the Note Identity and relative
-// path, so scope correctness cannot depend on globally unique fixture identities.
-fn select_other_vault(original: &Fixture) -> Fixture {
-    let app_data = crate::test_support::TestDir::new("bound-context-other-data");
-    let notes = crate::test_support::TestDir::new("bound-context-other-vault");
-    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-    crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-    crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-    let canonical_notes = fs::canonicalize(notes.path()).unwrap();
-    let path = canonical_notes.join(original.path.file_name().unwrap());
-    let markdown = crate::note::repair_managed_note_identity(
-        &crate::note::prepare_note_markdown("Other vault baseline", None, Some(None))
-            .unwrap()
-            .0,
-        original.note.as_str(),
-    )
-    .unwrap();
-    fs::write(&path, markdown).unwrap();
-    let state = Fixture::state();
-    state
-        .note_timeline()
-        .initialize_existing_notes(&canonical_notes)
-        .unwrap();
-    let other = Fixture {
-        state,
-        path,
-        note: original.note.clone(),
-        clock: Arc::new(AtomicU64::new(0)),
-        _app_data: app_data,
-        _notes: notes,
-    };
-    other.continuous();
-    other.save("Other vault pending");
-    other
-}
-
-#[test]
-fn selected_context_keeps_admitted_publication_and_abandonment_in_original_vault() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    let prepared = a
-        .state
-        .note_timeline()
-        .prepare_revision_publication(
-            MutationSource::Editor,
-            &a.path,
-            Some(&a.path),
-            Some(&a.note),
-            "Admitted in A",
-        )
-        .unwrap();
-    let abandoned = a
-        .state
-        .note_timeline()
-        .prepare_revision_publication(
-            MutationSource::NoteCreation,
-            &a._notes.path().join("Never.md"),
-            None,
-            None,
-            "Never published",
-        )
-        .unwrap()
-        .into_parts()
-        .1;
-    let b = select_other_vault(&a);
-    let b_window = b.pending();
-    let b_bytes = fs::read(&b.path).unwrap();
-    let b_observations = fs::read(
-        b._app_data
-            .path()
-            .join("note-timeline-history-observations.json"),
-    )
-    .unwrap();
-    let (canonical, intent) = prepared.into_parts();
-    crate::state::with_note_file_mutation(|| {
-        fs::write(&a.path, &canonical).unwrap();
-        let result = a.state.note_timeline().mutate(NoteMutation::editor(
-            intent,
-            a.path.clone(),
-            None,
-            canonical,
-        ));
-        assert!(result.warning().is_none(), "{:?}", result.warning());
-        abandoned.abandon().unwrap();
-        Ok::<(), HistoryError>(())
-    })
-    .unwrap();
-    assert_eq!(
-        a.pending().result_hash,
-        history_store::authored_content_hash(&fs::read_to_string(&a.path).unwrap())
-    );
-    assert_eq!(
-        history_store::prepared_intent_count(&a.state.note_timeline().runtime.store, "abandoned"),
-        1
-    );
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-    assert_eq!(fs::read(&b.path).unwrap(), b_bytes);
-    assert_eq!(
-        fs::read(
-            b._app_data
-                .path()
-                .join("note-timeline-history-observations.json")
-        )
-        .unwrap(),
-        b_observations
-    );
-    // A command that resolves the newly selected B path cannot publish through A.
-    assert!(note_persistence::persist_note_session_with_outcome(
-        &a.state,
-        "Window".into(),
-        "Wrong vault".into(),
-        Some(b.path.to_string_lossy().into()),
-    )
-    .is_err());
-    assert_eq!(fs::read(&b.path).unwrap(), b_bytes);
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-}
-
-#[test]
-fn selected_context_deadlines_clean_close_and_reads_ignore_later_global_selection() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    let clock = a.continuous();
-    a.save("A endpoint");
-    let b = select_other_vault(&a);
-    let b_window = b.pending();
-    let b_observations_path = b
-        ._app_data
-        .path()
-        .join("note-timeline-history-observations.json");
-    let b_observations = fs::read(&b_observations_path).unwrap();
-    clock.elapsed.store(300_000, Ordering::SeqCst);
-    a.tick().unwrap();
-    assert_eq!(a.retained().last().unwrap().1, "A endpoint");
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-    let access = a
-        .state
-        .note_timeline()
-        .history_mode(HistoryModeGrant::authorized(a.note.clone()));
-    assert_eq!(access.revisions().unwrap().len(), 2);
-    assert!(a
-        .state
-        .note_timeline()
-        .initialize_existing_notes(b._notes.path())
-        .is_err());
-    assert!(a
-        .state
-        .note_timeline()
-        .clean_close(b._notes.path())
-        .is_err());
-    history_store::inject_fault_once(history_store::FaultPoint::Close);
-    assert!(a
-        .state
-        .note_timeline()
-        .clean_close(a._notes.path())
-        .is_err());
-    a.state
-        .note_timeline()
-        .clean_close(a._notes.path())
-        .unwrap();
-    // Do not reopen A merely to inspect its portable metadata.
-    let a_observations: serde_json::Value = serde_json::from_slice(
-        &fs::read(
-            a._app_data
-                .path()
-                .join("note-timeline-history-observations.json"),
-        )
-        .unwrap(),
-    )
-    .unwrap();
-    assert!(a_observations["vaults"]
-        .as_object()
-        .unwrap()
-        .values()
-        .all(|v| v["cleanCloseSequence"].as_u64().unwrap() > 0));
-    assert_eq!(fs::read(&b_observations_path).unwrap(), b_observations);
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-    a.tick().unwrap(); // Closed scheduler is inert.
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-}
-
-#[test]
-fn selected_context_restart_recovery_uses_original_connection_and_markdown() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    let (canonical, intent) = a
-        .state
-        .note_timeline()
-        .prepare_revision_publication(
-            MutationSource::Editor,
-            &a.path,
-            Some(&a.path),
-            Some(&a.note),
-            "Recover A publication",
-        )
-        .unwrap()
-        .into_parts();
-    fs::write(&a.path, canonical).unwrap();
-    drop(intent); // Simulated interrupted publication: durable intent is unresolved.
-    let restarted_a = Fixture::state();
-    let b = select_other_vault(&a);
-    let b_window = b.pending();
-    let b_bytes = fs::read(&b.path).unwrap();
-    let access = restarted_a
-        .note_timeline()
-        .history_mode(HistoryModeGrant::authorized(a.note.clone()));
-    let revisions = access.revisions().unwrap();
-    assert_eq!(revisions.len(), 2);
-    assert_eq!(
-        access
-            .reconstruct(revisions.last().unwrap().identity())
-            .unwrap()
-            .body(),
-        "Recover A publication"
-    );
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-    assert_eq!(fs::read(&b.path).unwrap(), b_bytes);
-    restarted_a
-        .note_timeline()
-        .clean_close(a._notes.path())
-        .unwrap();
-}
-
-#[test]
-fn selected_context_reset_rejects_old_intent_scope_and_keeps_new_deadlines_live() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    let clock = a.continuous();
-    a.save("Before reset");
-    // A released private receipt retains its original context even without a live lease.
-    let old = history_store::prepare_publication(
-        &a.state.note_timeline().runtime.store,
-        MutationSource::TaskAction,
-        &a.path,
-        &fs::read_to_string(&a.path).unwrap(),
-        history_store::PublicationIntentKind::Update,
-        None,
-    );
-    assert!(old.is_err()); // Task actions must first finalize the Editing Window.
-    a.seal();
-    let old = history_store::prepare_publication(
-        &a.state.note_timeline().runtime.store,
-        MutationSource::TaskAction,
-        &a.path,
-        &fs::read_to_string(&a.path).unwrap(),
-        history_store::PublicationIntentKind::Update,
-        None,
-    )
-    .unwrap();
-    a.state
-        .note_timeline()
-        .reset_history(a._notes.path())
-        .unwrap();
-    assert!(matches!(old.abandon(), Err(HistoryError::Stale(_))));
-    a.save("After reset");
-    clock.elapsed.store(300_000, Ordering::SeqCst);
-    a.tick().unwrap();
-    assert_eq!(a.retained().last().unwrap().1, "After reset");
-    assert!(
-        history_store::pending_window(&a.state.note_timeline().runtime.store, &a.note)
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
-fn selected_context_rejects_other_vault_lifecycle_before_callback_or_purge() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    a.save("A pending");
-    let a_window = a.pending();
-    let b = select_other_vault(&a);
-    let b_window = b.pending();
-    let b_bytes = fs::read(&b.path).unwrap();
-    let result = a.state.note_timeline().forget_note(&b.path, 7);
-    assert!(matches!(result, Err(HistoryError::Stale(_))));
-    assert!(a
-        .state
-        .note_timeline()
-        .lifecycle(NoteLifecycleOperation::purged(
-            b.note.clone(),
-            b.path.clone(),
-            10
-        ))
-        .is_err());
-    assert_eq!(fs::read(&b.path).unwrap(), b_bytes);
-    assert_eq!(a.pending().endpoint_intent_id, a_window.endpoint_intent_id);
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-    assert_eq!(
-        history_store::retained_observation_count(&a.state.note_timeline().runtime.store),
-        0
-    );
-}
-
-#[cfg(unix)]
-#[test]
-fn selected_context_accepts_canonical_aliases_but_rejects_symlink_escape() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    let alias_parent = crate::test_support::TestDir::new("bound-vault-alias");
-    let alias = alias_parent.path().join("selected");
-    std::os::unix::fs::symlink(a._notes.path(), &alias).unwrap();
-    crate::state::set_notes_root_override(Some(alias.clone())).unwrap();
-    let alias_state = Fixture::state();
-    let canonical_path = fs::canonicalize(&a.path).unwrap();
-    // Proposal publication supplies canonicalized paths even when selection is a symlink.
-    let prepared = alias_state
-        .note_timeline()
-        .prepare_revision_publication(
-            MutationSource::AcceptedChatProposal,
-            &canonical_path,
-            Some(&canonical_path),
-            Some(&a.note),
-            "Canonical proposal path",
-        )
-        .unwrap();
-    prepared.into_parts().1.abandon().unwrap();
-    let outside = crate::test_support::TestDir::new("bound-vault-outside");
-    std::os::unix::fs::symlink(outside.path(), a._notes.path().join("escape")).unwrap();
-    assert!(alias_state
-        .note_timeline()
-        .prepare_revision_publication(
-            MutationSource::Editor,
-            &alias.join("escape/New.md"),
-            None,
-            None,
-            "Outside",
-        )
-        .is_err());
-    assert!(!outside.path().join("New.md").exists());
-}
-
-#[test]
-fn selected_context_replays_retained_observation_after_global_selection_changes() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    a.save("A endpoint");
-    let original = fs::read_to_string(&a.path).unwrap();
-    fs::write(
-        &a.path,
-        original.strip_suffix("A endpoint").unwrap().to_owned() + "A observed",
-    )
-    .unwrap();
-    history_store::inject_fault_once(history_store::FaultPoint::Finalize);
-    assert!(a
-        .state
-        .note_timeline()
-        .observe(VaultObservation::external_edit(
-            a.path.clone(),
-            1_000_100,
-            None
-        ))
-        .is_err());
-    let b = select_other_vault(&a);
-    let b_window = b.pending();
-    // Later disk bytes must not replace the already captured observation.
-    fs::write(
-        &a.path,
-        original.strip_suffix("A endpoint").unwrap().to_owned() + "A later",
-    )
-    .unwrap();
-    a.state
-        .note_timeline()
-        .recover_lifecycle_publications()
-        .unwrap();
-    assert_eq!(a.retained().last().unwrap().1, "A observed");
-    assert_eq!(
-        history_store::retained_observation_count(&a.state.note_timeline().runtime.store),
-        0
-    );
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-}
-
-#[test]
-fn selected_context_recovers_staged_deletion_without_touching_other_vault() {
-    let _guard = crate::test_support::lock_test_env();
-    let a = Fixture::new();
-    history_store::inject_fault_once(history_store::FaultPoint::Deletion);
-    assert!(a
-        .state
-        .note_timeline()
-        .lifecycle(NoteLifecycleOperation::purged(
-            a.note.clone(),
-            a.path.clone(),
-            100
-        ))
-        .is_err());
-    assert!(!a.path.exists());
-    let b = select_other_vault(&a);
-    let b_bytes = fs::read(&b.path).unwrap();
-    let b_window = b.pending();
-    a.state
-        .note_timeline()
-        .recover_lifecycle_publications()
-        .unwrap();
-    assert!(
-        history_store::pending_deletions_for_recovery(&a.state.note_timeline().runtime.store)
-            .unwrap()
-            .is_empty()
-    );
-    assert!(a.retained().is_empty());
-    assert_eq!(fs::read(&b.path).unwrap(), b_bytes);
-    assert_eq!(b.pending().endpoint_intent_id, b_window.endpoint_intent_id);
-}
+mod selected_context;
 
 mod readiness;
 
 #[test]
 fn focused_evidence_returns_surviving_period_ranges_after_later_edits_and_clear_invalidates() {
-    use crate::services::evidence::{EvidenceSession, SearchRequest};
+    use crate::services::evidence::{EvidenceSession, ReadRequest, SearchRequest};
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
     f.save("A kept launch decision.\nRemovedSecret");
@@ -2816,9 +2414,43 @@ fn focused_evidence_returns_surviving_period_ranges_after_later_edits_and_clear_
         .iter()
         .map(|i| i["evidenceId"].as_str().unwrap().into())
         .collect();
-    let (read, sources) = evidence
+    let (mut read, mut sources) = evidence
         .read(&f.state, None, &excluded, &ids, false)
         .unwrap();
+    let mut delivered_items = Vec::new();
+    let mut delivered_ids = HashSet::new();
+    for page_number in 0..ids.len() {
+        assert!(read["failures"].as_array().unwrap().is_empty(), "{read}");
+        let page_items = read["items"].as_array().unwrap();
+        assert!(!page_items.is_empty(), "{read}");
+        for item in page_items {
+            assert!(
+                delivered_ids.insert(item["evidenceId"].as_str().unwrap().to_string()),
+                "duplicate delivered passage: {item}"
+            );
+        }
+        delivered_items.extend(page_items.iter().cloned());
+        let Some(cursor) = read["nextCursor"].as_str().map(str::to_string) else {
+            assert_eq!(read["delivery"]["complete"], true, "{read}");
+            break;
+        };
+        assert!(page_number + 1 < ids.len(), "read did not complete: {read}");
+        let (next, next_sources) = evidence
+            .read_request(
+                &f.state,
+                None,
+                &excluded,
+                ReadRequest {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+        read = next;
+        sources.extend(next_sources);
+    }
+    assert_eq!(delivered_ids, ids.iter().cloned().collect::<HashSet<_>>());
+    read["items"] = serde_json::Value::Array(delivered_items);
     assert!(read.to_string().contains("launch decision"), "{read}");
     assert!(read["items"]
         .as_array()
@@ -3048,4 +2680,43 @@ fn frontmatter_tags_share_editor_save_capture_and_preserve_other_properties() {
         .unwrap()
         .tags
         .is_empty());
+}
+
+#[test]
+fn retained_observation_replay_preserves_corrupt_error_and_retains_the_unacknowledged_receipt() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("B");
+    let timeline = f.state.note_timeline();
+    let canonical = fs::read_to_string(&f.path).unwrap();
+    fs::write(
+        &f.path,
+        canonical.strip_suffix('B').unwrap().to_owned() + "C",
+    )
+    .unwrap();
+    let observed = timeline
+        .capture_observed_markdown(VaultObservation::external_edit(
+            f.path.clone(),
+            1_000_100,
+            None,
+        ))
+        .unwrap();
+    history_store::retain_observation(&timeline.runtime.store, &observed).unwrap();
+    let db =
+        rusqlite::Connection::open(f._notes.path().join(".gneauxghts/history.sqlite3")).unwrap();
+    db.execute(
+        "UPDATE pending_editing_windows SET payload=X'00' WHERE note_id=?1",
+        [f.note.as_str()],
+    )
+    .unwrap();
+    drop(db);
+    let error = timeline.replay_retained_observations(None).unwrap_err();
+    assert!(matches!(error, HistoryError::Corrupt(_)), "{error:?}");
+    assert!(error
+        .to_string()
+        .contains("Replay retained Note Timeline observation"));
+    assert_eq!(
+        history_store::retained_observation_count(&timeline.runtime.store),
+        1
+    );
 }

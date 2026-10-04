@@ -6,26 +6,42 @@ interface CardFrame {
 }
 
 async function returnToEditor() {
-  return browser.executeAsync((done: (frames: CardFrame[]) => void) => {
+  const result = await browser.executeAsync((done: (result: { frames: CardFrame[]; error?: string }) => void) => {
     const frames: CardFrame[] = [];
-    let firstFrame: number | undefined;
-    const started = performance.now();
+    let settledSince: number | null = null;
+    let frameId = 0;
+    let finished = false;
+    const finish = (error?: string) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(deadline);
+      cancelAnimationFrame(frameId);
+      done({ frames, ...(error ? { error } : {}) });
+    };
+    const deadline = setTimeout(() => finish('Editor route layout did not settle'), 5000);
     const sample = (now: number) => {
+      if (finished) return;
       const card = document.querySelector('[data-testid="workspace-card"]');
+      const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content');
       if (card) {
-        firstFrame ??= now;
         const rect = card.getBoundingClientRect();
         frames.push({ left: rect.left, width: rect.width });
       }
-      if ((firstFrame !== undefined && now - firstFrame >= 500) || now - started > 5000) {
-        done(frames);
-      } else {
-        requestAnimationFrame(sample);
-      }
+      const settled = !!card && !!editor && editor.getClientRects().length > 0 &&
+        getComputedStyle(editor).visibility !== 'hidden' &&
+        !document.querySelector('[data-pane-motion]') &&
+        !card.getAnimations({ subtree: true }).some(animation =>
+          (animation.playState === 'running' || animation.pending) &&
+          animation.effect?.getTiming().iterations !== Infinity);
+      settledSince = settled ? settledSince ?? now : null;
+      if (frames.length > 3 && settledSince !== null && now - settledSince >= 100) finish();
+      else frameId = requestAnimationFrame(sample);
     };
-    requestAnimationFrame(sample);
+    frameId = requestAnimationFrame(sample);
     document.querySelector<HTMLAnchorElement>('nav a[href="/"]')!.click();
   });
+  if (result.error) throw new Error(result.error);
+  return result.frames;
 }
 
 describe('editor route layout', () => {

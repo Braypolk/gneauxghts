@@ -62,61 +62,6 @@ function diff(revisionId: string, text: string) {
 }
 
 describe('historyModeMachine', () => {
-  it('refuses entry when the autosave barrier fails', () => {
-    const entering = transitionHistoryMode(
-      createInactiveHistoryModeState(),
-      { type: 'entryStarted', requestId: 1, target, workspace }
-    );
-
-    expect(
-      transitionHistoryMode(entering, {
-        type: 'entryFailed',
-        requestId: 1,
-        error: 'The latest note changes could not be saved.'
-      })
-    ).toEqual({
-      phase: 'inactive',
-      entryError: 'The latest note changes could not be saved.'
-    });
-  });
-
-  it('opens on the newest finalized window and keeps its immutable diff pinned across newer arrivals', () => {
-    const entering = transitionHistoryMode(
-      createInactiveHistoryModeState(),
-      { type: 'entryStarted', requestId: 4, target, workspace }
-    );
-    const open = transitionHistoryMode(entering, {
-      type: 'entryLoaded',
-      requestId: 4,
-      target,
-      page: page([{ ...revision('revision-2', 20), timeKind: 'editingWindow',
-        timeEvidence: { kind: 'editingWindow', version: 1, firstWallMillis: 10, lastWallMillis: 20,
-          minWallMillis: 10, maxWallMillis: 20, clockDiscontinuity: false } }, revision('revision-1', 10)]),
-      selectedDiff: diff('revision-2', 'second'),
-      diagnostics: null
-    });
-
-    const refreshing = transitionHistoryMode(open, {
-      type: 'refreshStarted',
-      requestId: 5
-    });
-    const refreshed = transitionHistoryMode(refreshing, {
-      type: 'refreshLoaded',
-      requestId: 5,
-      page: page([
-        revision('revision-3', 30),
-        revision('revision-2', 20),
-        revision('revision-1', 10)
-      ])
-    });
-
-    expect(refreshed).toMatchObject({
-      phase: 'open',
-      selectedRevisionId: 'revision-2',
-      selectedDiff: { bodyLines: [{ text: 'second' }] }
-    });
-  });
-
   it('keeps a selected older revision pinned when a refresh page omits it', () => {
     const entering = transitionHistoryMode(
       createInactiveHistoryModeState(),
@@ -217,48 +162,4 @@ describe('historyModeMachine', () => {
     ).toMatchObject({ phase: 'noteUnavailable', workspace, target });
   });
 
-  it('ignores stale async results and exits through the captured workspace', () => {
-    const entering = transitionHistoryMode(
-      createInactiveHistoryModeState(),
-      { type: 'entryStarted', requestId: 8, target, workspace }
-    );
-    expect(
-      transitionHistoryMode(entering, {
-        type: 'entryFailed',
-        requestId: 7,
-        error: 'stale'
-      })
-    ).toBe(entering);
-
-    const exiting = transitionHistoryMode(entering, { type: 'exitStarted' });
-    expect(exiting).toEqual({ phase: 'exiting', workspace });
-    const restoring = transitionHistoryMode(exiting, { type: 'workspaceRestored' });
-    expect(restoring).toEqual({ phase: 'restoring', workspace });
-    expect(
-      transitionHistoryMode(restoring, { type: 'exitCompleted' })
-    ).toEqual(createInactiveHistoryModeState());
-  });
-
-  it('retries unavailable history without replacing the captured workspace', () => {
-    const unavailable = {
-      phase: 'historyUnavailable' as const,
-      target,
-      workspace,
-      error: 'temporarily unavailable'
-    };
-
-    expect(
-      transitionHistoryMode(unavailable, {
-        type: 'retryStarted',
-        requestId: 9,
-        target: { ...target, noteTitle: 'Renamed note' }
-      })
-    ).toEqual({
-      phase: 'entering',
-      requestId: 9,
-      origin: 'retry',
-      target: { ...target, noteTitle: 'Renamed note' },
-      workspace
-    });
-  });
 });

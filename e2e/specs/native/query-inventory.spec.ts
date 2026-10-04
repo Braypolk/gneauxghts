@@ -1,27 +1,12 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { browser, $ } from '@wdio/globals';
+import { createLiveNativeEvaluation, invokeNative as invoke, passageIds, resolvePassages } from '../../support/liveNative';
 type Note = {noteId:string;path:string;title:string};
 type Event = {type:string;status?:string;name?:string;details?:Record<string,unknown>;aggregate?:Record<string,number>};
 type Message = {id:string;role:string;status:string;content:string;error?:string;sources:{title:string;kind:string;noteId?:string;url?:string;anchor?:string;passage?:{id:string}}[];agentEvents:{event:Event}[]};
 type Conversation = {id:string;messages:Message[]};
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync(
-    (command: string, args: Record<string, unknown>, done: (value: { ok: boolean; value?: unknown; error?: string }) => void) => {
-      const native = window as typeof window & {
-        __TAURI_INTERNALS__?: { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
-      };
-      if (!native.__TAURI_INTERNALS__) return done({ ok: false, error: 'Real native IPC is required' });
-      void native.__TAURI_INTERNALS__.invoke(command, args).then(
-        value => done({ ok: true, value }), error => done({ ok: false, error: String(error) })
-      );
-    }, command, args
-  );
-  if (!result.ok) throw new Error(result.error);
-  return result.value as T;
-}
-
 
 const live = process.env.GNEAUX_QUERY_NATIVE === '1' ? describe : describe.skip;
 const smoke = process.env.GNEAUX_QUERY_SMOKE === '1';
@@ -29,32 +14,26 @@ const budget = process.env.GNEAUX_INVENTORY_BUDGET === '1';
 const contextMeasurement = process.env.GNEAUX_CONTEXT_NATIVE === '1';
 const regression = process.env.GNEAUX_QUERY_REGRESSION === '1';
 const baseline = process.env.GNEAUX_QUERY_BASELINE === '1';
+assert([smoke, budget, contextMeasurement, regression, baseline].filter(Boolean).length <= 1, 'Choose one query-inventory scenario mode');
 const fixture = JSON.parse(readFileSync(resolve('e2e/fixtures/query-inventory.json'),'utf8')) as {
  notes:{title:string;body:string}[]; holdout:{id:string;question:string;expected:string;mode:string}[];
 };
 live('Composable evidence capabilities', function() {
  this.timeout(360_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
  const endpoint=process.env.GNEAUX_LIVE_ENDPOINT!;
  const model=process.env.GNEAUX_LIVE_MODEL!;
  const output=process.env.GNEAUX_LIVE_OUTPUT!;
  const results:Record<string,unknown>[]=[];
  const notes:Note[]=[];
  let excluded:Note;
- function persist() {mkdirSync(dirname(resolve(output)),{recursive:true});writeFileSync(output,JSON.stringify({endpoint,model,smoke,regression,baseline,notes,results},null,2));}
- async function save(title:string,markdown:string) {
-  const note=await invoke<Note>('save_note',{title,markdown,currentPath:null});
-  assert(note.path.includes('gneauxghts-native-e2e-'));
-  await invoke('finalize_note_editing_window',{noteId:note.noteId});
-  await invoke('e2e_flush_vault_watcher_path',{path:note.path}); return note;
- }
- before(async()=>{
+ function persist() {evaluation.artifact.write({endpoint,model,smoke,regression,baseline,notes,results});}
+ const save = evaluation.saveNote;
+
+ evaluation.setup(async()=>{
   assert(endpoint&&model&&output);
-  await $('[data-testid="note-title"]').waitForExist({timeout:30_000});
-  const settings=await invoke<Record<string,unknown>>('chat_get_settings');
-  await invoke('chat_set_settings',{settings:{...settings,provider:'local',model,localModel:model,localBaseUrl:endpoint,defaultAccess:'approved',webAccess:'off',reasoningEffort:'medium'}});
-  await invoke('chat_set_local_model_capabilities',{model,capabilities:{tools:true,images:false,audio:false,video:false,reasoningEffort:'medium'}});
-  const semantic=await invoke<Record<string,unknown>>('get_semantic_settings');
-  await invoke('set_semantic_settings',{settings:{...semantic,semanticSearchEnabled:false}});
+  await evaluation.configure({ lexicalOnly: true });
   for(const n of fixture.notes){const note=await save(n.title,n.body);notes.push(note);await invoke('chat_grant_note',{noteId:note.noteId});}
   if(budget) for(let i=0;i<5;i++) {
    const note=await save(`Additional inventory ${i}`, `Background context for note ${i}. ` .repeat(80));
@@ -92,11 +71,9 @@ live('Composable evidence capabilities', function() {
     conversation=await invoke<Conversation>('chat_create_conversation',{request:{title:`Query ${scenario.id}`,provider:'local',model,access:'approved',reasoningEffort:'medium'}});
     await invoke('chat_send_message',{request:{conversationId:conversation.id,content,activeNote:null,attachments:[],selectedContext:[],forceWebSearch:false}});
    }
-   let answer:Message|undefined;
-   await browser.waitUntil(async()=>{const c=await invoke<Conversation>('chat_get_conversation',{conversationId:conversation.id});answer=c.messages.find(m=>m.role==='assistant');if(scenario.mode==='sources'&&answer?.status==='streaming')assert.equal(answer.content,'');return Boolean(answer&&['complete','failed','cancelled'].includes(answer.status));},{timeout:300_000,interval:1000});assert(answer);
-   const links=[...new Set([...answer.content.matchAll(/passage:([^\s)\]]+)/g)].map(m=>m[1]))];
-   const resolutions:Record<string,unknown>[]=[];
-   for(const evidenceId of links){try{const r=await invoke<{source:{title:string};selection:unknown;historicalRevisionId?:string}>('chat_resolve_passage',{conversationId:conversation.id,evidenceId});resolutions.push({evidenceId,status:'resolved',...r});}catch(error){resolutions.push({evidenceId,status:'failed',error:String(error)});}}
+   const answer = await evaluation.waitForAnswer<Message>(conversation.id);
+   const links = passageIds(answer.content);
+   const resolutions = await resolvePassages(conversation.id, links);
    const events=answer.agentEvents.map(e=>e.event);
    results.push({id:scenario.id,repetition,question:content,expected:scenario.expected,status:answer.status,error:answer.error,answer:answer.content,latencyMillis:Date.now()-start,events,sources:answer.sources,resolutions});persist();
    assert.equal(answer.status,'complete',answer.error);

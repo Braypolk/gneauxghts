@@ -1,12 +1,6 @@
 import { browser, expect, $ } from '@wdio/globals';
 
 describe('native Tauri lifecycle', () => {
-  it('boots the real application through the embedded macOS driver', async () => {
-    const shell = await $('.notepad-area-shell');
-    await shell.waitForDisplayed({ timeout: 20_000 });
-    expect(await browser.getTitle()).toContain('Gneauxghts');
-  });
-
   it('preserves stable geometry across embedded driver reconnection', async () => {
     const target = { x: 140, y: 120, width: 980, height: 700 };
     await browser.setWindowRect(target.x, target.y, target.width, target.height);

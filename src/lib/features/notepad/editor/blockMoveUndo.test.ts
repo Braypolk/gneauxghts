@@ -1,15 +1,8 @@
+import { createCommandView } from './commandTestSupport';
 import { describe, expect, it } from 'vitest';
 import { history, undo, redo } from '@codemirror/commands';
 import {
-  EditorState,
-  Transaction,
-  type TransactionSpec
-} from '@codemirror/state';
-import type { EditorView } from '@codemirror/view';
-
-import {
   listBlocks,
-  minimalDocChange,
   moveBlockTo,
   moveCurrentBlock
 } from './blockTypes';
@@ -30,53 +23,9 @@ import {
 // run against a real CodeMirror history, no DOM.
 
 function blockView(doc: string, anchor: number) {
-  let state = EditorState.create({
-    doc,
-    selection: { anchor },
-    extensions: [history()]
-  });
-  const view = {
-    get state() {
-      return state;
-    },
-    dispatch(spec: Transaction | TransactionSpec) {
-      const transaction =
-        spec instanceof Transaction ? spec : state.update(spec);
-      state = transaction.state;
-    },
-    focus() {}
-  } as unknown as EditorView;
-  return { view, readState: () => state };
+  const { view } = createCommandView({ doc, selection: { anchor }, extensions: [history()] });
+  return { view, readState: () => view.state };
 }
-
-describe('minimalDocChange', () => {
-  it('trims shared prefix and suffix to a targeted middle change', () => {
-    // "line1\nline2\nline3" -> "line2\nline1\nline3" (swap first two lines)
-    const change = minimalDocChange('line1\nline2\nline3', 'line2\nline1\nline3');
-    // Only the differing middle is rewritten; the shared "line" prefix and the
-    // shared "\nline3" suffix are left untouched (NOT a from:0/to:len replace).
-    expect(change.from).toBeGreaterThan(0);
-    expect(change.to).toBeLessThan('line1\nline2\nline3'.length);
-    // Sanity: applying the change reproduces the target text.
-    const before = 'line1\nline2\nline3';
-    const after = before.slice(0, change.from) + change.insert + before.slice(change.to);
-    expect(after).toBe('line2\nline1\nline3');
-  });
-
-  it('reports a no-op as an empty change at the divergence point', () => {
-    const change = minimalDocChange('same', 'same');
-    expect(change).toEqual({ from: 4, to: 4, insert: '' });
-  });
-
-  it('handles a pure deletion (block delete) as a targeted removal', () => {
-    // delete the middle line: "a\nb\nc" -> "a\nc"
-    const change = minimalDocChange('a\nb\nc', 'a\nc');
-    const before = 'a\nb\nc';
-    const after = before.slice(0, change.from) + change.insert + before.slice(change.to);
-    expect(after).toBe('a\nc');
-    expect(change.from).toBeLessThan(change.to); // it removes text
-  });
-});
 
 describe('line move + undo/redo caret restoration', () => {
   it('undoes an actual keyboard-style block move without collapsing the caret', () => {

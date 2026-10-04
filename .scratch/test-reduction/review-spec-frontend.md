@@ -1,0 +1,28 @@
+# Independent Spec review: workspace 01 and frontend 05
+
+Status: ready-for-agent
+Progress: review complete; no actionable findings
+
+Reviewed approved D01–D25 (34 executions) and UI-R1–R10 (22 executions), excluding my own editor 02 changes. Compared actual current files with the working-tree snapshot recorded in `baseline.json`, not HEAD. Read `spec.md`, both deletion audits/results, the removed bodies, claimed surviving bodies and the production call paths needed to resolve equivalence questions. This was read-only; no mutation experiment, test run or source edit was performed.
+
+## Outcome
+
+**No meaningful unacknowledged unique coverage loss found.** The implementation matches the approved reductions. The snapshot comparisons contain deleted cases/parameter rows, test-only dead import/interface cleanup and minor whitespace cleanup. They contain no merged scenarios, moved assertion sets, skips, helper framework additions or replacement tests. A direct comparison of all baseline `src/` non-test files found **no production or shared-support changes** in this phase.
+
+Workspace 01 removed 34 cases and 461 physical lines. UI 05 removed 22 cases and 283 physical lines. Those measured results supersede the larger audit estimates; the reports say so explicitly. The transient UI array narrowing removes repeated executions while retaining its existing two production open branches and close equality branches; it does not hide equivalent executions inside another test.
+
+## Coverage checks
+
+- D01–D07: actual document editing keeps model/handle/registry/root identity through first save and rename; adoption tests assert real field changes and revision increment; conflict controller retains keep-local, disk adoption, deleted-note draft recovery and failed-application restoration with successful retry. Generated document sequences still check monotonic conflict identity after every transition. Removed constructor/default assertions do not carry a separate lifetime contract.
+- D08–D17: shared Remember and explicit reference-removal tests survive. Actual pane command composition asserts blocked-close ready state and preparation → retirement → rendered teardown → disposal ordering. The independent store model survives unchanged, along with wrong-token disposal and the sole-chat last-pane policy. The readable adjacent-close case exercises right preference and left fallback. Removed throw-injection cases tested the test helper, not application behavior.
+- D18–D19: History exit/reentry and obsolete citation work remain covered by the actual session. I investigated whether D19 lost lifecycle target updates: it does not. In `historyModeSession.svelte.ts`, `refresh()` does not read/update the target; therefore the renamed target in retained `keeps the entry editor snapshot unchanged while history refreshes` is adopted by `synchronizeAfterLifecycleChange()`, not an earlier refresh. The deleted direct lifecycle test's extra exact page-call count is an acknowledged narrower oracle loss, while its target outcome remains asserted. No restoration requested.
+- D20–D25: real chat context adapter assertions retain sibling-save/snapshot and no-editor retained-context behavior; generic nearest-pane policy remains separately tested. Transient UI kinds share one ordinary-open branch, image viewer has its separate retained payload branch, and closing is generic equality. External conflict source rows merely copy provenance, so removing labels does not delete event-source wiring tests. MRU filtering and nested underscore emphasis directly exercise the removed simpler cases' outcomes.
+- UI-R1–R3: the real Tauri adapter still runs against the complete Rust-owned nested chat request fixture; inventory/version literal checks add no command execution. Timeline error array equality remains exhaustive, while opaque cursor passage remains in the real History API tests.
+- UI-R4–R6: public controller fixtures retain concurrent initialization acquisition, failed and late attachment cleanup, post-disposal operation rejection, actual orphaned-permission cancellation, stale terminal rejection, terminal replay and retry provenance. The failed-open selection recovery machine case remains, correctly preserving a behavior with no equivalent controller test.
+- UI-R7–R8: Atlas cached-display revalidation checks old revision while both visibility and graph requests are pending, then admits the new revision; independent lifetime loading-state assertions survive. Settings setup pins the retry command and completion flag, while the removed general action case only forwards an argument without a retry-specific production branch.
+- UI-R9–R10: settings normalization/ranking/all-word matching remain. Mounted local-model capability coverage asserts model identity and actual capability payload. The API raw activity equality test never established privacy; controller activity behavior and rendered privacy tests remain. Exact catalog aliases, the requested-provider key-status forwarding assertion, and one standalone discovery argument assertion are explicitly accepted low-value tradeoffs, not silently claimed equivalent coverage.
+- The two removed architecture assertions counted exact chat aggregate constructor/transition calls. Ownership and no-mirror checks survive; the scanner and its executable-call probe remain for other actual rules.
+
+## Limits
+
+This is a static independent coverage/scope review. I inspected the browser cases used as surviving owners but did not rerun them. Owner logs report 321 workspace-focused and 99 UI-focused passing tests; root owns combined validation. No extra tests or source changes are required by this review.

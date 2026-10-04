@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { dirname, resolve } from 'node:path';
-import { browser, $ } from '@wdio/globals';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { createLiveNativeEvaluation, invokeNative as invoke, passageIds, resolvePassages } from '../../support/liveNative';
 
 type Note = { noteId: string; path: string; title: string };
 type Source = { noteId?: string; excerpt?: string; passage?: { id: string } };
@@ -9,15 +9,7 @@ type Event = { type: string; name?: string; status?: string; details?: Record<st
 type Message = { id: string; role: string; status: string; content: string; error?: string; sources: Source[]; agentEvents: { event: Event }[] };
 type Conversation = { id: string; messages: Message[] };
 type Question = { id: string; query: string; rubric: string; expectedPassages: { note: string; text: string }[] };
-async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((command: string, args: Record<string, unknown>, done: (v: { ok: boolean; value?: unknown; error?: string }) => void) => {
-    const native = (window as typeof window & { __TAURI_INTERNALS__?: { invoke: (c: string, a: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__;
-    if (!native) return done({ ok: false, error: 'Native IPC required' });
-    void native.invoke(command, args).then(value => done({ ok: true, value }), error => done({ ok: false, error: String(error) }));
-  }, command, args);
-  if (!result.ok) throw new Error(result.error);
-  return result.value as T;
-}
+
 const autonomous = process.env.GNEAUX_AGENT_SIMPLIFICATION === '1';
 const reasoningEffort = process.env.GNEAUX_LIVE_REASONING_EFFORT ?? 'medium';
 assert(['low', 'medium', 'xhigh'].includes(reasoningEffort), 'Unknown Qwen reasoning effort');
@@ -34,28 +26,21 @@ assert(!autonomous || ['baseline', 'lean', 'lean_contract'].includes(process.env
 assert(!autonomous || !process.env.GNEAUX_COMPARISON_LANE, 'Autonomous comparison must not force routing');
 live('Native direct versus research on identical harder questions', function () {
   this.timeout(360_000);
+  const evaluation = createLiveNativeEvaluation();
+  evaluation.installHooks();
   const endpoint = process.env.GNEAUX_LIVE_ENDPOINT!;
   const model = process.env.GNEAUX_LIVE_MODEL!;
   const output = process.env.GNEAUX_LIVE_OUTPUT!;
   const notes = new Map<string, Note>();
   const results: Record<string, unknown>[] = [];
   function persist() {
-    mkdirSync(dirname(resolve(output)), { recursive: true });
-    writeFileSync(output, JSON.stringify({ endpoint, model, reasoningEffort, reverseOrder, method: autonomous ? 'Native autonomous agent; plain user questions, no forced tool route; fresh conversations; lexical only; recorded configuration and case order' : 'Native ChatService and AgentRuntime; fresh conversations; lexical only; same question and fixture, routing instruction differs; candidate lane order alternates before filtering; results record actual execution order', variant: autonomous ? process.env.GNEAUX_AGENT_VARIANT : null, caseFilter: process.env.GNEAUX_COMPARISON_CASE ?? null, laneFilter: process.env.GNEAUX_COMPARISON_LANE ?? null, notes: Object.fromEntries(notes), results }, null, 2));
+    evaluation.artifact.write({ endpoint, model, reasoningEffort, reverseOrder, method: autonomous ? 'Native autonomous agent; plain user questions, no forced tool route; fresh conversations; lexical only; recorded configuration and case order' : 'Native ChatService and AgentRuntime; fresh conversations; lexical only; same question and fixture, routing instruction differs; candidate lane order alternates before filtering; results record actual execution order', variant: autonomous ? process.env.GNEAUX_AGENT_VARIANT : null, caseFilter: process.env.GNEAUX_COMPARISON_CASE ?? null, laneFilter: process.env.GNEAUX_COMPARISON_LANE ?? null, notes: Object.fromEntries(notes), results });
   }
-  before(async () => {
+  evaluation.setup(async () => {
     assert(endpoint && model && output);
-    await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
-    const settings = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_settings', { settings: { ...settings, provider: 'local', model, localModel: model, localBaseUrl: endpoint, defaultAccess: 'approved', webAccess: 'off', reasoningEffort } });
-    await invoke('chat_set_local_model_capabilities', { model, capabilities: { tools: true, images: false, audio: false, video: false, reasoningEffort } });
-    const semantic = await invoke<Record<string, unknown>>('get_semantic_settings');
-    await invoke('set_semantic_settings', { settings: { ...semantic, semanticSearchEnabled: false } });
+    await evaluation.configure({ reasoningEffort, lexicalOnly: true });
     for (const n of fixture.notes) {
-      const note = await invoke<Note>('save_note', { title: n.title, markdown: n.body, currentPath: null });
-      assert(note.path.includes('gneauxghts-native-e2e-'));
-      await invoke('finalize_note_editing_window', { noteId: note.noteId });
-      await invoke('e2e_flush_vault_watcher_path', { path: note.path });
+      const note = await evaluation.saveNote(n.title, n.body);
       notes.set(n.id, note);
       if (n.id === 'private') await invoke('chat_set_note_excluded', { noteId: note.noteId, title: note.title, excluded: true });
       else await invoke('chat_grant_note', { noteId: note.noteId });
@@ -74,20 +59,10 @@ live('Native direct versus research on identical harder questions', function () 
         const conversation = await invoke<Conversation>('chat_create_conversation', { request: { title: `${id} ${lane}`, provider: 'local', model, access: 'approved', reasoningEffort } });
         const start = Date.now();
         await invoke('chat_send_message', { request: { conversationId: conversation.id, content, activeNote: null, attachments: [], selectedContext: [], forceWebSearch: false } });
-        let answer: Message | undefined;
-        await browser.waitUntil(async () => {
-          const current = await invoke<Conversation>('chat_get_conversation', { conversationId: conversation.id });
-          answer = current.messages.find(m => m.role === 'assistant');
-          return Boolean(answer && ['complete', 'failed', 'cancelled'].includes(answer.status));
-        }, { timeout: 300_000, interval: 1000 });
-        assert(answer);
+        const answer = await evaluation.waitForAnswer<Message>(conversation.id);
         const latencyMillis = Date.now() - start;
-        const links = [...new Set([...answer.content.matchAll(/passage:([^\s)\]]+)/g)].map(m => m[1]))];
-        const resolutions: Record<string, unknown>[] = [];
-        for (const evidenceId of links) {
-          try { resolutions.push({ evidenceId, status: 'resolved', ...await invoke<Record<string, unknown>>('chat_resolve_passage', { conversationId: conversation.id, evidenceId }) }); }
-          catch (error) { resolutions.push({ evidenceId, status: 'failed', error: String(error) }); }
-        }
+        const links = passageIds(answer.content);
+        const resolutions = await resolvePassages(conversation.id, links);
         const events = answer.agentEvents.map(e => e.event);
         const diagnostics = events.filter(e => e.type === 'researchCompleted').map(e => e.details!);
         const measurements = events.filter(e => e.type === 'contextMeasured').map(e => e.details!);
@@ -107,6 +82,7 @@ live('Native direct versus research on identical harder questions', function () 
         results.push({ id, lane, question: question.query, routing, rubric: question.rubric, status: answer.status, error: answer.error, answer: answer.content, latencyMillis, coverage, diagnostics, totals, parentCalls: requests.filter(u => !u.worker).length, workerCalls: requests.filter(u => u.worker).length, missingUsageAttempts, unreportedAttempts, tokenCoverage: missingUsageAttempts ? 'partial' : 'complete', sources: answer.sources, resolutions, events });
         persist();
         assert.equal(answer.status, 'complete', answer.error);
+        assert(links.length > 0, 'Known-match comparison fixtures require cited evidence');
         assert(resolutions.every(r => r.status === 'resolved'));
         assert(!answer.sources.some(s => s.noteId === notes.get('private')!.noteId));
         if (lane === 'direct') assert.equal(diagnostics.length, 0, 'Direct must not delegate');

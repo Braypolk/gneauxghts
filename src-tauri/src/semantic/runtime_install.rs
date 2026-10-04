@@ -6,7 +6,8 @@ use std::{
     fs,
     io::{Read, Write},
     path::{Path, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
 };
 
 // Official release assets and their GitHub SHA-256 digests. Keep the version
@@ -157,7 +158,16 @@ impl Drop for Staging {
     }
 }
 
-fn save_verified_archive(mut input: impl Read, path: &Path, expected: &str) -> Result<(), String> {
+fn save_verified_archive(input: impl Read, path: &Path, expected: &str) -> Result<(), String> {
+    save_verified_archive_with_limit(input, path, expected, MAX_ARCHIVE_BYTES)
+}
+
+fn save_verified_archive_with_limit(
+    mut input: impl Read,
+    path: &Path,
+    expected: &str,
+    limit: u64,
+) -> Result<(), String> {
     let mut file = fs::File::create(path).map_err(|err| err.to_string())?;
     let mut hash = Sha256::new();
     let mut bytes = 0u64;
@@ -170,7 +180,7 @@ fn save_verified_archive(mut input: impl Read, path: &Path, expected: &str) -> R
             break;
         }
         bytes += count as u64;
-        if bytes > MAX_ARCHIVE_BYTES {
+        if bytes > limit {
             return Err("Local search download exceeded its size limit.".to_string());
         }
         hash.update(&buffer[..count]);
@@ -212,23 +222,48 @@ fn find_server(directory: &Path, depth: usize) -> Option<PathBuf> {
 }
 
 fn verify_binary(binary: &Path) -> Result<(), String> {
+    verify_binary_with_timeout(binary, Duration::from_secs(10))
+}
+
+fn verify_binary_with_timeout(binary: &Path, timeout: Duration) -> Result<(), String> {
     let mut command = Command::new(binary);
-    command.arg("--version");
+    // Version output is irrelevant to installation admission. Null streams
+    // prevent a malformed runtime from filling a pipe while we await its exit.
+    command
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
         command.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
-    let output = command
-        .output()
+    let mut child = command
+        .spawn()
         .map_err(|err| format!("Local search could not start on this device: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "Local search could not start on this device. Try setup again. {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    let deadline = Instant::now() + timeout;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return if status.success() {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "Local search could not start on this device. Try setup again. {status}"
+                    ))
+                }
+            }
+            Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(5)),
+            result => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(match result {
+                    Err(error) => format!("Local search could not start on this device: {error}"),
+                    _ => "Local search verification timed out. Try setup again.".to_string(),
+                });
+            }
+        }
     }
-    Ok(())
 }
 
 #[cfg(test)]
@@ -295,6 +330,97 @@ mod tests {
             }
         }
         assert!(RuntimeArtifact::for_platform("ios", "aarch64").is_err());
+    }
+
+    #[test]
+    fn bounded_archive_reads_and_interruption_leave_only_disposable_staging() {
+        struct Interrupted;
+        impl Read for Interrupted {
+            fn read(&mut self, _: &mut [u8]) -> io::Result<usize> {
+                Err(io::Error::new(
+                    io::ErrorKind::ConnectionReset,
+                    "fixture interruption",
+                ))
+            }
+        }
+        let root = temp_root();
+        let path = root.0.join("download");
+        let digest = format!("{:x}", Sha256::digest(b"1234"));
+        save_verified_archive_with_limit(io::Cursor::new(b"1234"), &path, &digest, 4).unwrap();
+        assert_eq!(fs::read(&path).unwrap(), b"1234");
+        assert!(
+            save_verified_archive_with_limit(io::Cursor::new(b"12345"), &path, &digest, 4)
+                .unwrap_err()
+                .contains("size limit")
+        );
+        assert!(save_verified_archive(Interrupted, &path, &digest)
+            .unwrap_err()
+            .contains("interrupted"));
+        let staging_path = root.0.clone();
+        drop(root);
+        assert!(!staging_path.exists());
+    }
+
+    #[cfg(unix)]
+    fn script_archive(path: &Path, body: &str) {
+        let gzip = flate2::write::GzEncoder::new(
+            fs::File::create(path).unwrap(),
+            flate2::Compression::default(),
+        );
+        let mut tar = tar::Builder::new(gzip);
+        let mut header = tar::Header::new_gnu();
+        header.set_size(body.len() as u64);
+        header.set_mode(0o755);
+        header.set_cksum();
+        tar.append_data(&mut header, "runtime/llama-server", body.as_bytes())
+            .unwrap();
+        tar.into_inner().unwrap().finish().unwrap();
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn local_archive_is_verified_before_publication_and_discovery() {
+        for succeeds in [false, true] {
+            let root = temp_root();
+            let installer = RuntimeInstaller::new(&root.0);
+            fs::create_dir_all(&installer.root).unwrap();
+            let artifact =
+                RuntimeArtifact::for_platform(std::env::consts::OS, std::env::consts::ARCH)
+                    .unwrap();
+            let archive = root.0.join("local.tar.gz");
+            script_archive(
+                &archive,
+                if succeeds {
+                    "#!/bin/sh\nexit 0\n"
+                } else {
+                    "#!/bin/sh\nexit 1\n"
+                },
+            );
+            let installed = installer.publish_archive(&artifact, &archive, &root.0);
+            if succeeds {
+                assert_eq!(installer.installed_binary(), Some(installed.unwrap()));
+            } else {
+                assert!(installed.is_err());
+                assert!(installer.installed_binary().is_none());
+            }
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn verification_times_out_and_reaps_the_child() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = temp_root();
+        let binary = root.0.join("busy-server");
+        fs::write(&binary, "#!/bin/sh\nwhile :; do :; done\n").unwrap();
+        fs::set_permissions(&binary, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(
+            verify_binary_with_timeout(&binary, Duration::from_millis(20))
+                .unwrap_err()
+                .contains("timed out")
+        );
+        // The bounded verifier returned only after kill+wait; removal does not
+        // leave an owned Child handle or an unreaped verifier process.
     }
 
     // Opt-in live fixture: exercise checksum, extraction, dylib resolution,

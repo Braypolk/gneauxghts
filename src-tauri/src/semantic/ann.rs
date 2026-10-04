@@ -745,19 +745,12 @@ mod tests {
     use crate::semantic::ann_core::ANN_TOMBSTONE_REBUILD_MIN;
     use crate::semantic::{
         chunking::SemanticChunk,
-        db::{
-            ensure_schema, load_note_chunk_labels, open_database, upsert_note_chunks,
-            SemanticNoteMetadata,
-        },
+        db::{load_note_chunk_labels, upsert_note_chunks, SemanticNoteMetadata},
         debug::SemanticDebugState,
     };
+    use crate::test_support::TestDir;
     use blake3::hash;
-    use std::{
-        fs,
-        path::{Path, PathBuf},
-        sync::Arc,
-        time::{SystemTime, UNIX_EPOCH},
-    };
+    use std::{fs, sync::Arc};
 
     #[test]
     fn defaults_to_warming_state_before_initialize_runs() {
@@ -792,14 +785,22 @@ mod tests {
         let temp = TestDir::new("ann-load");
         let semantic_dir = temp.path().join("semantic");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         seed_chunks(&mut connection, "notes/reload.md", 6, 3).expect("seed chunks");
 
         let debug = Arc::new(SemanticDebugState::new());
         let ann = AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).expect("create ann");
         ann.rebuild_from_connection(&connection)
             .expect("rebuild ann from db");
+
+        let manifest: super::AnnManifest = serde_json::from_slice(
+            &fs::read(semantic_dir.join("hnsw.manifest.json")).expect("read manifest"),
+        )
+        .expect("parse v2 manifest");
+        assert_eq!(manifest.schema_version, 2);
+        assert!(semantic_dir.join(manifest.graph_file).is_file());
+        assert!(semantic_dir.join(manifest.vectors_file).is_file());
+        assert!(semantic_dir.join(manifest.source_inventory_file).is_file());
 
         let reloaded =
             AnnIndexState::new(semantic_dir, 3, debug).expect("create reloaded ann state");
@@ -818,8 +819,7 @@ mod tests {
         let temp = TestDir::new("ann-delta-recovery");
         let cache_dir = temp.path().join("cache");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         seed_chunks(&mut connection, "notes/first.md", 3, 3).expect("seed first");
         let initial = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
             .expect("create initial ann");
@@ -851,8 +851,7 @@ mod tests {
         let temp = TestDir::new("ann-interrupted-generation");
         let cache_dir = temp.path().join("cache");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         seed_chunks(&mut connection, "notes/good.md", 3, 3).expect("seed chunks");
         let initial = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
             .expect("create initial");
@@ -876,8 +875,7 @@ mod tests {
         let temp = TestDir::new("ann-last-good");
         let cache_dir = temp.path().join("cache");
         let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         seed_chunks(&mut connection, "notes/good.md", 3, 3).expect("seed chunks");
         let ann = AnnIndexState::new(cache_dir, 3, Arc::new(SemanticDebugState::new()))
             .expect("create ann");
@@ -901,36 +899,11 @@ mod tests {
     }
 
     #[test]
-    fn snapshot_persists_as_manifest_referenced_generation() {
-        let temp = TestDir::new("ann-snapshot-path");
-        let cache_dir = temp.path().join("cache");
-        let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
-        seed_chunks(&mut connection, "notes/snap.md", 4, 3).expect("seed chunks");
-
-        let ann = AnnIndexState::new(cache_dir.clone(), 3, Arc::new(SemanticDebugState::new()))
-            .expect("create ann");
-        ann.rebuild_from_connection(&connection)
-            .expect("rebuild ann from db");
-
-        let manifest_path = cache_dir.join("hnsw.manifest.json");
-        let manifest: super::AnnManifest =
-            serde_json::from_slice(&fs::read(&manifest_path).expect("read manifest"))
-                .expect("parse v2 manifest");
-        assert_eq!(manifest.schema_version, 2);
-        assert!(cache_dir.join(manifest.graph_file).is_file());
-        assert!(cache_dir.join(manifest.vectors_file).is_file());
-        assert!(cache_dir.join(manifest.source_inventory_file).is_file());
-    }
-
-    #[test]
     fn incremental_deletes_request_rebuild_once_tombstones_accumulate() {
         let temp = TestDir::new("ann-tombstones");
         let semantic_dir = temp.path().join("semantic");
         let db_path = semantic_dir.join("semantic.sqlite3");
-        let mut connection = open_database(&db_path).expect("open database");
-        ensure_schema(&connection).expect("ensure schema");
+        let mut connection = crate::semantic::test_support::database(&db_path);
         seed_chunks(
             &mut connection,
             "notes/churn.md",
@@ -996,31 +969,5 @@ mod tests {
             &chunks,
             &embeddings,
         )
-    }
-
-    struct TestDir {
-        path: PathBuf,
-    }
-
-    impl TestDir {
-        fn new(label: &str) -> Self {
-            let unique = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .expect("system time")
-                .as_nanos();
-            let path = std::env::temp_dir().join(format!("gneauxghts-{label}-{unique}"));
-            fs::create_dir_all(&path).expect("create temp dir");
-            Self { path }
-        }
-
-        fn path(&self) -> &Path {
-            &self.path
-        }
-    }
-
-    impl Drop for TestDir {
-        fn drop(&mut self) {
-            let _ = fs::remove_dir_all(&self.path);
-        }
     }
 }

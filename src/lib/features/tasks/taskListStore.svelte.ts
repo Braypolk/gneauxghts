@@ -75,6 +75,22 @@ export class TaskListStore {
   errorMessage = $state('');
 
   #activeRequest = 0;
+  #projectionRevision = 0;
+  #disposeInitialization: (() => void) | null = null;
+  #lifetime = 0;
+  #disposed = false;
+  #groupRequests = new Map<string, number>();
+  #reorderRequest = 0;
+
+  #projectionTicket(noteId: string) {
+    const request = (this.#groupRequests.get(noteId) ?? 0) + 1;
+    this.#groupRequests.set(noteId, request);
+    const lifetime = this.#lifetime;
+    const view = this.#activeRequest;
+    const { filter, showHidden } = this;
+    return () => !this.#disposed && lifetime === this.#lifetime && view === this.#activeRequest &&
+      filter === this.filter && showHidden === this.showHidden && this.#groupRequests.get(noteId) === request;
+  }
   #disposeNoteSaved: (() => void) | null = null;
   #disposeVaultNoteChanged: (() => void) | null = null;
   #disposeVaultChanged: (() => void) | null = null;
@@ -96,7 +112,9 @@ export class TaskListStore {
   }
 
   async load({ background = false } = {}) {
+    if (this.#disposed) return;
     const requestId = ++this.#activeRequest;
+    const projectionRevision = this.#projectionRevision;
 
     if (!background) {
       this.isLoading = true;
@@ -109,6 +127,10 @@ export class TaskListStore {
       });
 
       if (requestId !== this.#activeRequest) return;
+      if (projectionRevision !== this.#projectionRevision) {
+        void this.load({ background: true });
+        return;
+      }
       this.groups = nextGroups;
       this.errorMessage = '';
     } catch (error) {
@@ -163,6 +185,7 @@ export class TaskListStore {
   }
 
   #applyGroupPatch(groupPatch: TaskListGroupPatch) {
+    this.#projectionRevision += 1;
     const existingIndex = this.groups.findIndex((group) => group.noteId === groupPatch.noteId);
 
     if (groupPatch.group && existingIndex === -1) {
@@ -182,31 +205,38 @@ export class TaskListStore {
   }
 
   async refreshGroup(noteId: string) {
+    if (this.#disposed) return;
+    const admit = this.#projectionTicket(noteId);
     try {
       const groupPatch = await invoke<TaskListGroupPatch>('get_task_group', {
         noteId,
         ...this.#currentViewParams()
       });
+      if (!admit()) return;
       this.#applyGroupPatch(groupPatch);
       this.errorMessage = '';
     } catch (error) {
+      if (!admit()) return;
       console.error('Failed to refresh task group:', error);
       void this.load({ background: true });
     }
   }
 
   async toggleNoteCollapsed(group: TaskGroup) {
-    if (this.mutatingNoteIds[group.noteId]) return;
+    if (this.#disposed || this.mutatingNoteIds[group.noteId]) return;
     this.#setNoteMutating(group.noteId, true);
+    const admit = this.#projectionTicket(group.noteId);
     try {
       const groupPatch = await invoke<TaskListGroupPatch>('set_note_collapsed', {
         noteId: group.noteId,
         collapsed: !group.noteCollapsed,
         ...this.#currentViewParams()
       });
+      if (!admit()) { await this.refreshGroup(group.noteId); return; }
       this.#applyGroupPatch(groupPatch);
       this.errorMessage = '';
     } catch (error) {
+      if (!admit()) return;
       console.error('Failed to update collapsed note state:', error);
       this.errorMessage = 'Unable to save collapsed files.';
     } finally {
@@ -215,17 +245,20 @@ export class TaskListStore {
   }
 
   async setTaskHidden(task: TaskItem, hidden: boolean) {
-    if (this.mutatingNoteIds[task.noteId]) return;
+    if (this.#disposed || this.mutatingNoteIds[task.noteId]) return;
     this.#setNoteMutating(task.noteId, true);
+    const admit = this.#projectionTicket(task.noteId);
     try {
       const groupPatch = await invoke<TaskListGroupPatch>('set_task_hidden', {
         taskId: task.taskId,
         hidden,
         ...this.#currentViewParams()
       });
+      if (!admit()) { await this.refreshGroup(task.noteId); return; }
       this.#applyGroupPatch(groupPatch);
       this.errorMessage = '';
     } catch (error) {
+      if (!admit()) return;
       console.error('Failed to update hidden task state:', error);
       this.errorMessage = 'Unable to update hidden tasks.';
     } finally {
@@ -233,83 +266,68 @@ export class TaskListStore {
     }
   }
 
-  async toggleTask(task: TaskItem) {
-    if (this.mutatingNoteIds[task.noteId]) return;
+  async #mutateTask(task: TaskItem, kind: 'toggle' | 'delete' | 'setDueDate', dueDate?: string | null) {
+    if (this.#disposed) return;
+    if (this.mutatingNoteIds[task.noteId]) {
+      if (kind === 'setDueDate') throw new Error('This note is still saving. Try again.');
+      return;
+    }
     this.#setNoteMutating(task.noteId, true);
-    this.togglingTaskKeys = {
-      ...this.togglingTaskKeys,
-      [task.taskKey]: true
-    };
-
+    const keys = kind === 'toggle' ? 'togglingTaskKeys' : kind === 'delete' ? 'deletingTaskKeys' : null;
+    if (keys) this[keys] = { ...this[keys], [task.taskKey]: true };
+    const lifetime = this.#lifetime;
+    const alive = () => !this.#disposed && lifetime === this.#lifetime;
+    const admit = this.#projectionTicket(task.noteId);
+    const params = this.#currentViewParams();
     try {
-      const routed = await routeTaskDocumentMutation({
-        kind: 'toggle',
-        taskId: task.taskId,
-        noteId: task.noteId,
-        notePath: task.notePath
-      });
+      const routed = await routeTaskDocumentMutation({ kind, taskId: task.taskId, noteId: task.noteId, notePath: task.notePath,
+        ...(kind === 'setDueDate' ? { dueDate: dueDate ?? null } : {}) } as Parameters<typeof routeTaskDocumentMutation>[0]);
       if (routed.status === 'applied-to-open-document') {
-        await this.refreshGroup(task.noteId);
+        if (alive()) await this.refreshGroup(task.noteId);
         return;
       }
-      const groupPatch = await invoke<TaskListGroupPatch>('toggle_task', {
-        taskId: task.taskId,
-        ...this.#currentViewParams()
-      });
-      if (groupPatch.commitWarning) {
-        console.warn('Task was toggled with incomplete projections:', groupPatch.commitWarning);
+      const command = kind === 'toggle' ? 'toggle_task' : kind === 'delete' ? 'delete_task' : 'set_task_due_date';
+      const patch = await invoke<TaskListGroupPatch>(command, { taskId: task.taskId, ...params,
+        ...(kind === 'setDueDate' ? { dueDate: dueDate ?? null } : {}) });
+      if (!alive()) return;
+      if (patch.commitWarning) {
+        // Canonical success is never retried. Refresh completion owns clearing this status.
+        this.errorMessage = `${kind === 'delete' ? 'Task deleted' : kind === 'setDueDate' ? 'Due date saved' : 'Task saved'}; the task list is waiting for synchronization.`;
         void this.load({ background: true });
-        this.errorMessage = 'Task saved; the task list is waiting for synchronization.';
-      } else {
-        this.#applyGroupPatch(groupPatch);
+      } else if (admit()) {
+        this.#applyGroupPatch(patch);
         this.errorMessage = '';
+      } else {
+        await this.refreshGroup(task.noteId);
       }
     } catch (error) {
-      console.error('Failed to toggle task:', error);
-      this.errorMessage = 'Unable to update task completion.';
+      if (alive()) this.errorMessage = kind === 'toggle' ? 'Unable to update task completion.' : kind === 'delete' ? 'Unable to delete task.' : 'Unable to update the due date.';
+      if (kind === 'setDueDate') throw error;
     } finally {
-      const nextTogglingTaskKeys = { ...this.togglingTaskKeys };
-      delete nextTogglingTaskKeys[task.taskKey];
-      this.togglingTaskKeys = nextTogglingTaskKeys;
+      if (keys) { const next = { ...this[keys] }; delete next[task.taskKey]; this[keys] = next; }
       this.#setNoteMutating(task.noteId, false);
     }
   }
 
-  async setDueDate(task: TaskItem, dueDate: string | null) {
-    if (this.mutatingNoteIds[task.noteId]) throw new Error('This note is still saving. Try again.');
-    this.#setNoteMutating(task.noteId, true);
-    try {
-      const routed = await routeTaskDocumentMutation({ kind: 'setDueDate', taskId: task.taskId, noteId: task.noteId, notePath: task.notePath, dueDate });
-      if (routed.status === 'applied-to-open-document') {
-        await this.refreshGroup(task.noteId);
-        return;
-      }
-      const patch = await invoke<TaskListGroupPatch>('set_task_due_date', { taskId: task.taskId, dueDate, ...this.#currentViewParams() });
-      if (patch.commitWarning) {
-        void this.load({ background: true });
-        this.errorMessage = 'Due date saved; the task list is waiting for synchronization.';
-      } else {
-        this.#applyGroupPatch(patch);
-        this.errorMessage = '';
-      }
-    } catch (error) {
-      this.errorMessage = 'Unable to update the due date.';
-      throw error;
-    } finally { this.#setNoteMutating(task.noteId, false); }
-  }
+  toggleTask(task: TaskItem) { return this.#mutateTask(task, 'toggle'); }
+  deleteTask(task: TaskItem) { return this.#mutateTask(task, 'delete'); }
+  setDueDate(task: TaskItem, dueDate: string | null) { return this.#mutateTask(task, 'setDueDate', dueDate); }
 
   async setNoteHidden(group: TaskGroup, hidden: boolean) {
-    if (this.mutatingNoteIds[group.noteId]) return;
+    if (this.#disposed || this.mutatingNoteIds[group.noteId]) return;
     this.#setNoteMutating(group.noteId, true);
+    const admit = this.#projectionTicket(group.noteId);
     try {
       const groupPatch = await invoke<TaskListGroupPatch>('set_note_hidden', {
         noteId: group.noteId,
         hidden,
         ...this.#currentViewParams()
       });
+      if (!admit()) { await this.refreshGroup(group.noteId); return; }
       this.#applyGroupPatch(groupPatch);
       this.errorMessage = '';
     } catch (error) {
+      if (!admit()) return;
       console.error('Failed to update hidden note state:', error);
       this.errorMessage = 'Unable to update hidden files.';
     } finally {
@@ -331,6 +349,8 @@ export class TaskListStore {
     if (!movedNoteId) return;
     noteOrder.splice(toIndex, 0, movedNoteId);
 
+    const request = ++this.#reorderRequest;
+    const lifetime = this.#lifetime;
     const previousGroups = this.groups;
     const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
     this.groups = [...previousGroups].sort(
@@ -339,10 +359,14 @@ export class TaskListStore {
         (noteRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER)
     );
 
+    const optimisticGroups = this.groups;
+    const admit = () => !this.#disposed && lifetime === this.#lifetime && request === this.#reorderRequest && this.groups === optimisticGroups;
     try {
       await invoke('set_note_order', { noteIds: noteOrder });
+      if (!admit()) return;
       this.errorMessage = '';
     } catch (error) {
+      if (!admit()) return;
       console.error('Failed to save note order:', error);
       this.groups = previousGroups;
       this.errorMessage = 'Unable to save note order.';
@@ -366,49 +390,10 @@ export class TaskListStore {
     }
   }
 
-  async deleteTask(task: TaskItem) {
-    if (this.mutatingNoteIds[task.noteId]) return;
-    this.#setNoteMutating(task.noteId, true);
-    this.deletingTaskKeys = {
-      ...this.deletingTaskKeys,
-      [task.taskKey]: true
-    };
-
-    try {
-      const routed = await routeTaskDocumentMutation({
-        kind: 'delete',
-        taskId: task.taskId,
-        noteId: task.noteId,
-        notePath: task.notePath
-      });
-      if (routed.status === 'applied-to-open-document') {
-        await this.refreshGroup(task.noteId);
-        return;
-      }
-      const groupPatch = await invoke<TaskListGroupPatch>('delete_task', {
-        taskId: task.taskId,
-        ...this.#currentViewParams()
-      });
-      if (groupPatch.commitWarning) {
-        console.warn('Task was deleted with incomplete projections:', groupPatch.commitWarning);
-        void this.load({ background: true });
-        this.errorMessage = 'Task deleted; the task list is waiting for synchronization.';
-      } else {
-        this.#applyGroupPatch(groupPatch);
-        this.errorMessage = '';
-      }
-    } catch (error) {
-      console.error('Failed to delete task:', error);
-      this.errorMessage = 'Unable to delete task.';
-    } finally {
-      const nextDeletingTaskKeys = { ...this.deletingTaskKeys };
-      delete nextDeletingTaskKeys[task.taskKey];
-      this.deletingTaskKeys = nextDeletingTaskKeys;
-      this.#setNoteMutating(task.noteId, false);
-    }
-  }
-
   initialize() {
+    this.#disposeInitialization?.();
+    this.#disposed = false;
+    const lifetime = ++this.#lifetime;
     const disposeDay = subscribeCalendarDay((today) => { this.today = today; });
     const storedFilter = this.#readStoredTaskFilter();
     if (storedFilter) {
@@ -416,6 +401,7 @@ export class TaskListStore {
     }
 
     void appStore.bootstrap().then(() => {
+      if (this.#disposed || lifetime !== this.#lifetime) return;
       this.#disposeNoteSaved?.();
       this.#disposeVaultNoteChanged?.();
       this.#disposeVaultChanged?.();
@@ -434,11 +420,17 @@ export class TaskListStore {
       this.#disposeVaultChanged = appStore.subscribeVaultChanged(() => {
         void this.load({ background: true });
       });
+    }).catch(() => {
+      if (!this.#disposed && lifetime === this.#lifetime) this.errorMessage = 'Unable to subscribe to task updates.';
     });
     void this.load();
 
-    return () => {
+    const dispose = () => {
       disposeDay();
+      if (lifetime !== this.#lifetime) return;
+      this.#disposed = true;
+      this.#lifetime += 1;
+      this.#activeRequest += 1;
       this.#disposeNoteSaved?.();
       this.#disposeVaultNoteChanged?.();
       this.#disposeVaultChanged?.();
@@ -446,6 +438,8 @@ export class TaskListStore {
       this.#disposeVaultNoteChanged = null;
       this.#disposeVaultChanged = null;
     };
+    this.#disposeInitialization = dispose;
+    return dispose;
   }
 }
 

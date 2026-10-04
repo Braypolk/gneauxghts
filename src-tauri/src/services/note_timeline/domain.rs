@@ -313,16 +313,6 @@ impl NoteMutationResult {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn payload_version(&self) -> PayloadVersion {
-        self.payload_version
-    }
-
-    #[cfg(test)]
-    pub(crate) fn source(&self) -> MutationSource {
-        self.source
-    }
-
     pub(crate) fn note_id(&self) -> &NoteIdentity {
         &self.note_id
     }
@@ -454,27 +444,6 @@ impl RevisionTimeEvidence {
 }
 
 impl NoteRevisionHeader {
-    #[cfg(test)]
-    pub(super) fn issue(
-        note_identity: NoteIdentity,
-        predecessor: Option<TimelineRecordIdentity>,
-        payload_version: PayloadVersion,
-        source: MutationSource,
-    ) -> Self {
-        Self {
-            identity: RevisionIdentity::issue(),
-            note_identity,
-            predecessor,
-            payload_version,
-            source,
-            time_evidence: RevisionTimeEvidence::Committed {
-                committed_at_millis: 0,
-            },
-            content_hash: String::new(),
-            restored_from: None,
-        }
-    }
-
     #[cfg(test)]
     pub(crate) fn predecessor(&self) -> Option<&TimelineRecordIdentity> {
         self.predecessor.as_ref()
@@ -1018,30 +987,6 @@ pub(crate) struct LifecycleEventHeader {
 
 impl LifecycleEventHeader {
     #[cfg(test)]
-    pub(super) fn issue(
-        note_identity: NoteIdentity,
-        predecessor: Option<TimelineRecordIdentity>,
-        payload_version: PayloadVersion,
-        kind: LifecycleEventKind,
-    ) -> Self {
-        Self {
-            identity: LifecycleEventIdentity::issue(),
-            note_identity,
-            predecessor,
-            payload_version,
-            kind,
-            occurred_at_millis: 0,
-            previous_path: None,
-            path: None,
-        }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn payload_version(&self) -> PayloadVersion {
-        self.payload_version
-    }
-
-    #[cfg(test)]
     pub(crate) fn kind(&self) -> LifecycleEventKind {
         self.kind
     }
@@ -1104,12 +1049,10 @@ pub(crate) struct ReconstructedNoteRevision {
     pub(super) body: String,
 }
 
-pub(crate) struct PreparedHistoryIntent {
+pub(super) struct PreparedHistoryIntent {
     pub(super) value: String,
     pub(super) store: Option<history_store::Store>,
     pub(super) prepared_base: Option<history_store::PreparedRevisionBase>,
-    pub(super) operation: Option<OperationGuard>,
-    pub(super) current_content_mutation: Option<CurrentContentMutationGuard>,
 }
 
 impl std::fmt::Debug for PreparedHistoryIntent {
@@ -1134,9 +1077,7 @@ impl PreparedHistoryIntent {
         Self {
             value,
             store: None,
-            operation: None,
             prepared_base: None,
-            current_content_mutation: None,
         }
     }
 
@@ -1144,28 +1085,13 @@ impl PreparedHistoryIntent {
         &self.value
     }
 
-    pub(super) fn with_runtime_leases(
-        mut self,
-        operation: OperationGuard,
-        current_content_mutation: CurrentContentMutationGuard,
-    ) -> Self {
-        self.operation = Some(operation);
-        self.current_content_mutation = Some(current_content_mutation);
-        self
-    }
-
-    pub(crate) fn abandon(self) -> Result<(), HistoryError> {
+    pub(super) fn abandon(self) -> Result<(), HistoryError> {
         let store = self
             .store
             .as_ref()
             .ok_or("Prepared history intent has no store context")?;
         history_store::abandon_publication(store, &self)?;
         history_store::release_publication_receipt(store, &self)
-    }
-
-    pub(crate) fn abandon_after_publication_failure(self, publication_error: String) -> String {
-        self.abandon_after_history_failure(publication_error.into())
-            .to_string()
     }
 
     pub(super) fn abandon_after_history_failure(
@@ -1186,51 +1112,22 @@ impl PreparedHistoryIntent {
             }
         }
     }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(value: &str) -> Self {
-        Self {
-            value: value.to_string(),
-            store: None,
-            operation: None,
-            prepared_base: None,
-            current_content_mutation: None,
-        }
-    }
 }
 
 #[derive(Debug)]
-pub(crate) struct PreparedRevisionPublication {
+pub(super) struct PreparedRevisionPublication {
     pub(super) canonical_markdown: String,
     pub(super) history_intent: PreparedHistoryIntent,
 }
 
 impl PreparedRevisionPublication {
-    pub(crate) fn canonical_markdown(&self) -> &str {
+    #[cfg(test)]
+    pub(super) fn canonical_markdown(&self) -> &str {
         &self.canonical_markdown
     }
 
-    pub(crate) fn into_parts(self) -> (String, PreparedHistoryIntent) {
+    pub(super) fn into_parts(self) -> (String, PreparedHistoryIntent) {
         (self.canonical_markdown, self.history_intent)
-    }
-
-    pub(super) fn with_runtime_leases(
-        mut self,
-        operation: OperationGuard,
-        current_content_mutation: CurrentContentMutationGuard,
-    ) -> Self {
-        self.history_intent = self
-            .history_intent
-            .with_runtime_leases(operation, current_content_mutation);
-        self
-    }
-
-    #[cfg(test)]
-    pub(crate) fn for_test(markdown: &str, history_intent: &str) -> Self {
-        Self {
-            canonical_markdown: markdown.to_string(),
-            history_intent: PreparedHistoryIntent::for_test(history_intent),
-        }
     }
 }
 
@@ -1244,7 +1141,7 @@ impl ReconstructedNoteRevision {
     }
 }
 
-pub(crate) struct NoteMutation {
+pub(super) struct NoteMutation {
     pub(super) source: MutationSource,
     pub(super) history_intent: PreparedHistoryIntent,
     pub(super) path: PathBuf,
@@ -1254,7 +1151,7 @@ pub(crate) struct NoteMutation {
 
 impl NoteMutation {
     #[cfg(test)]
-    pub(crate) fn editor(
+    pub(super) fn editor(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
@@ -1269,7 +1166,8 @@ impl NoteMutation {
         )
     }
 
-    pub(crate) fn task_action(
+    #[cfg(test)]
+    pub(super) fn task_action(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
@@ -1284,7 +1182,8 @@ impl NoteMutation {
         )
     }
 
-    pub(crate) fn accepted_chat_proposal(
+    #[cfg(test)]
+    pub(super) fn accepted_chat_proposal(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
@@ -1299,7 +1198,8 @@ impl NoteMutation {
         )
     }
 
-    pub(crate) fn version_restore(
+    #[cfg(test)]
+    pub(super) fn version_restore(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
@@ -1315,7 +1215,7 @@ impl NoteMutation {
     }
 
     #[cfg(test)]
-    pub(crate) fn note_creation(
+    pub(super) fn note_creation(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
@@ -1331,37 +1231,6 @@ impl NoteMutation {
     }
 
     #[cfg(test)]
-    pub(crate) fn baseline_initialization(
-        history_intent: PreparedHistoryIntent,
-        path: PathBuf,
-        previous_path: Option<PathBuf>,
-        fallback_markdown: String,
-    ) -> Self {
-        Self::with_source(
-            MutationSource::BaselineInitialization,
-            history_intent,
-            path,
-            previous_path,
-            fallback_markdown,
-        )
-    }
-
-    #[cfg(test)]
-    pub(crate) fn recovery_reconciliation(
-        history_intent: PreparedHistoryIntent,
-        path: PathBuf,
-        previous_path: Option<PathBuf>,
-        fallback_markdown: String,
-    ) -> Self {
-        Self::with_source(
-            MutationSource::RecoveryReconciliation,
-            history_intent,
-            path,
-            previous_path,
-            fallback_markdown,
-        )
-    }
-
     pub(super) fn with_source(
         source: MutationSource,
         history_intent: PreparedHistoryIntent,
@@ -1376,16 +1245,6 @@ impl NoteMutation {
             previous_path,
             fallback_markdown,
         }
-    }
-
-    #[cfg(test)]
-    pub(crate) fn source(&self) -> MutationSource {
-        self.source
-    }
-
-    #[cfg(test)]
-    pub(crate) fn path(&self) -> &Path {
-        &self.path
     }
 }
 

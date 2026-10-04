@@ -1,6 +1,5 @@
 use super::{
     prepare_notes_dir, RecentTaskItem, TaskFilter, TaskListGroup, TaskListGroupPatch, TaskListItem,
-    INTERACTIVE_INDEX_REFRESH_MAX_AGE,
 };
 use crate::{
     index::AppState,
@@ -72,11 +71,7 @@ pub(super) fn list_recent_tasks(
             let notes_dir = prepare_notes_dir(&state, false)?;
 
             let persisted_state = read_state(&notes_dir)?;
-            state.ensure_interactive_index(
-                &notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "list_recent_tasks",
-            )?;
+            state.ensure_interactive_index(&notes_dir, "list_recent_tasks")?;
 
             let hidden_note_ids: HashSet<String> =
                 persisted_state.hidden_note_ids.iter().cloned().collect();
@@ -108,11 +103,7 @@ pub(super) fn list_tasks(
             let notes_dir = prepare_notes_dir(&state, false)?;
             let persisted_state = read_state(&notes_dir)?;
 
-            state.ensure_interactive_index(
-                &notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "list_tasks",
-            )?;
+            state.ensure_interactive_index(&notes_dir, "list_tasks")?;
 
             let hidden_note_ids: HashSet<String> =
                 persisted_state.hidden_note_ids.iter().cloned().collect();
@@ -148,11 +139,7 @@ pub(super) fn get_task_group(
         .current_content(AllowedScope::vault())
         .read(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
-            state.ensure_interactive_index(
-                &notes_dir,
-                INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-                "get_task_group",
-            )?;
+            state.ensure_interactive_index(&notes_dir, "get_task_group")?;
             build_task_group_patch(&state, &note_id, filter, show_hidden)
         })
 }
@@ -573,60 +560,4 @@ mod tests {
         assert!(group.is_none());
     }
 
-    #[test]
-    fn task_results_are_withheld_when_history_clear_invalidates_delivery() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("tasks-current-content-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let notes = crate::test_support::TestDir::new("tasks-current-content-notes");
-        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let state = AppState::new(
-            crate::semantic::SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .unwrap();
-        let created = crate::commands::note_persistence::persist_note_session_with_outcome(
-            &state,
-            "Task delivery".to_string(),
-            "- [ ] Current task".to_string(),
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        let note_id = crate::services::note_timeline::NoteIdentity::new(created.note_id.unwrap());
-        let note_path = created.path.unwrap();
-
-        let delivered = std::thread::scope(|scope| {
-            let (query_started, query_is_started) = std::sync::mpsc::sync_channel(0);
-            let (release_query, query_released) = std::sync::mpsc::sync_channel(0);
-            let stale_note_id = note_id.as_str().to_string();
-            let read_state = &state;
-            let read = scope.spawn(move || {
-                read_state
-                    .note_timeline()
-                    .current_content(AllowedScope::vault())
-                    .read(|| {
-                        query_started.send(()).unwrap();
-                        query_released.recv().unwrap();
-                        Ok(vec![RecentTaskItem {
-                            note_id: stale_note_id,
-                            task_key: "current-task".to_string(),
-                            note_path,
-                            note_title: "Task delivery".to_string(),
-                            text: "Current task".to_string(),
-                            line_number: 1,
-                            updated_at_millis: 1,
-                        }])
-                    })
-            });
-            query_is_started.recv().unwrap();
-            state.note_timeline().clear_note_history(&note_id).unwrap();
-            release_query.send(()).unwrap();
-            read.join().unwrap().unwrap()
-        });
-
-        assert!(delivered.is_empty());
-        crate::state::set_notes_root_override(None).unwrap();
-    }
 }

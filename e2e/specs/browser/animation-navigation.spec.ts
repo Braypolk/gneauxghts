@@ -1,63 +1,45 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { resetBrowserWorkspace, openRecentNote, waitForNote } from '../../support/browserWorkspace';
 import type { VaultAtlasResponse } from '../../../src/lib/types/atlas';
 
 async function ready() {
-  await browser.setWindowSize(1440, 1000);
-  await browser.url('/');
-  await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
-  await browser.pause(400);
+  await resetBrowserWorkspace();
 }
 
 describe('navigation motion ownership', () => {
-  it('uses one scroll owner for editor targets and respects reduced motion', async () => {
+  afterEach(async () => {
+    await browser.execute(() => (window as any).__restoreAtlasInvoke?.());
+  });
+
+
+  it('reveals a task destination outside the mounted editor viewport after route navigation', async () => {
     await ready();
-    const result = await browser.executeAsync(async (done: (result: {
-      selectionScrolls: boolean[]; targetBehaviors: string[]; lineBehaviors: string[]; error?: string
-    }) => void) => {
+    const target = 'Offscreen task destination canary';
+    const markdown = Array.from({ length: 350 }, (_, i) => `Paragraph ${i} fills the long note.`).join('\n\n') + `\n\n- [ ] ${target}`;
+    await browser.executeAsync(async (body: string, done: (error: string | null) => void) => {
       try {
-        const navigationPath = '/src/lib/features/notepad/navigation/navigation.ts';
-        const navigation = await import(navigationPath);
-        const viewPath = performance.getEntriesByType('resource').find(entry => entry.name.includes('/@codemirror_view.js'))!.name;
-        const { EditorView } = await import(viewPath);
-        const root = document.querySelector<HTMLElement>('[data-testid="note-editor"]')!;
-        const view = EditorView.findFromDOM(root.querySelector('.cm-content'));
-        const target = root.querySelector<HTMLElement>('.cm-line')!;
-        const selectionScrolls: boolean[] = [];
-        const targetBehaviors: string[] = [];
-        const lineBehaviors: string[] = [];
-        const originalDispatch = view.dispatch;
-        const originalTargetScroll = target.scrollIntoView;
-        const originalLineScroll = view.scrollDOM.scrollTo;
-        const originalMatchMedia = window.matchMedia;
-        try {
-          window.matchMedia = query => {
-            const media = originalMatchMedia.call(window, query);
-            if (query === '(prefers-reduced-motion: reduce)') Object.defineProperty(media, 'matches', { value: true });
-            return media;
-          };
-          view.dispatch = (...args: any[]) => {
-            selectionScrolls.push(args[0].scrollIntoView ?? false);
-            originalDispatch(...args);
-          };
-          target.scrollIntoView = options => targetBehaviors.push((options as ScrollIntoViewOptions).behavior!);
-          view.scrollDOM.scrollTo = (options: ScrollToOptions) => lineBehaviors.push(options.behavior!);
-          navigation.focusEditorTarget(root, target);
-          navigation.focusEditorAtDocumentLine(root, 1);
-        } finally {
-          view.dispatch = originalDispatch;
-          target.scrollIntoView = originalTargetScroll;
-          view.scrollDOM.scrollTo = originalLineScroll;
-          window.matchMedia = originalMatchMedia;
-        }
-        done({ selectionScrolls, targetBehaviors, lineBehaviors });
-      } catch (error) {
-        done({ selectionScrolls: [], targetBehaviors: [], lineBehaviors: [], error: String(error) });
-      }
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.selectionScrolls).toEqual([false, false]);
-    expect(result.targetBehaviors).toEqual(['instant']);
-    expect(result.lineBehaviors).toEqual(['instant']);
+        await window.__TAURI_INTERNALS__.invoke('save_note', { currentPath: '/e2e/alpha.md', title: 'Alpha note', markdown: body });
+        done(null);
+      } catch (error) { done(String(error)); }
+    }, markdown).then(error => expect(error).toBeNull());
+    await openRecentNote('Beta note');
+    await openRecentNote('Alpha note');
+    expect(await browser.execute((text: string) => document.querySelector('[data-testid="note-editor"] .cm-content')!.textContent!.includes(text), target)).toBe(false);
+    await $('a[href="/list"]').click();
+    const task = await $(`button[aria-label="Open task: ${target}"]`);
+    await task.waitForClickable();
+    await task.click();
+    await waitForNote('Alpha note');
+    await browser.waitUntil(async () => browser.execute((text: string) => {
+      const root = document.querySelector<HTMLElement>('[data-testid="note-editor"]')!;
+      const scroller = root.querySelector<HTMLElement>('.cm-scroller')!;
+      const line = [...root.querySelectorAll<HTMLElement>('.cm-line')].find(line => line.textContent?.includes(text));
+      if (!line) return false;
+      const viewport = scroller.getBoundingClientRect();
+      const destination = line.getBoundingClientRect();
+      return scroller.scrollTop > 0 && destination.top >= viewport.top && destination.bottom <= viewport.bottom;
+    }, target), { timeoutMsg: 'Expected the unmounted task destination to become visible in the editor viewport' });
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes.find(note => note.noteId === 'note-alpha')!.markdown)).toBe(markdown);
   });
 
   it('updates map layers once per hover while keeping camera controls working', async () => {
@@ -84,63 +66,70 @@ describe('navigation motion ownership', () => {
       }]
     };
     await browser.execute(fixture => {
-      performance.setResourceTimingBufferSize(3000);
-      performance.clearResourceTimings();
       const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
       const original = native.invoke;
+      (window as any).__restoreAtlasInvoke = () => { native.invoke = original; delete (window as any).__restoreAtlasInvoke; };
       native.invoke = async (cmd, args) => {
         if (cmd === 'get_vault_atlas') return fixture;
         if (cmd === 'search_vault_atlas') return { status: 'ready', reason: null, query: '', generatedAtMillis: 1, matches: [] };
         return original(cmd, args);
       };
     }, fixture);
-    await $('a[aria-label="Map"]').click();
-    await $('.atlas-surface canvas').waitForDisplayed({ timeout: 30_000 });
-    await browser.pause(400);
-    const result = await browser.executeAsync(async (done: (result: {
-      updates: number; layers: number; before: number; after: number; focusZoom: number; error?: string
-    }) => void) => {
-      try {
-        const corePath = performance.getEntriesByType('resource').find(entry => /deck.*core.*\.js/.test(entry.name))!.name;
-        const { Deck } = await import(corePath);
-        const original = Deck.prototype.setProps;
-        let instance: any;
-        let updates = 0;
-        Deck.prototype.setProps = function(props: any) {
-          instance = this;
-          if (props.layers) updates += 1;
-          return original.call(this, props);
-        };
-        const settle = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+    try {
+      await $('a[aria-label="Map"]').click();
+      await $('.atlas-surface canvas').waitForDisplayed({ timeout: 30_000 });
+      await browser.pause(400);
+      const result = await browser.executeAsync(async (done: (result: {
+        updates: number; layers: number; before: number; after: number; focusZoom: number; error?: string
+      }) => void) => {
         try {
-          document.querySelector<HTMLElement>('button[aria-label="Fit map to view"]')!.click();
-          await settle();
-          const before = instance.props.viewState.zoom;
-          updates = 0;
-          const cloudLayer = instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills');
-          const cloud = cloudLayer.props.data[0];
-          cloudLayer.props.onHover({ object: cloud });
-          await settle();
-          const hoverUpdates = updates;
-          window.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }));
-          await settle();
-          const after = instance.props.viewState.zoom;
-          instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills').props.onClick({ object: cloud });
-          await settle();
-          [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Focus cloud'))!.click();
-          await settle();
-          done({ updates: hoverUpdates, layers: instance.props.layers.length, before, after, focusZoom: instance.props.viewState.zoom });
-        } finally {
-          Deck.prototype.setProps = original;
+          const modulePath = '/src/lib/e2e/browserModules.ts';
+          const { Deck } = await import(modulePath);
+          const original = Deck.prototype.setProps;
+          let instance: any;
+          let updates = 0;
+          Deck.prototype.setProps = function(props: any) {
+            instance = this;
+            if (props.layers) updates += 1;
+            return original.call(this, props);
+          };
+          const settle = () => new Promise<void>((resolve, reject) => {
+            let frame = 0;
+            const timer = setTimeout(() => { cancelAnimationFrame(frame); reject(new Error('Map animation frames stalled')); }, 2000);
+            frame = requestAnimationFrame(() => { frame = requestAnimationFrame(() => { clearTimeout(timer); resolve(); }); });
+          });
+          try {
+            document.querySelector<HTMLElement>('button[aria-label="Fit map to view"]')!.click();
+            await settle();
+            const before = instance.props.viewState.zoom;
+            updates = 0;
+            const cloudLayer = instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills');
+            const cloud = cloudLayer.props.data[0];
+            cloudLayer.props.onHover({ object: cloud });
+            await settle();
+            const hoverUpdates = updates;
+            window.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }));
+            await settle();
+            const after = instance.props.viewState.zoom;
+            instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills').props.onClick({ object: cloud });
+            await settle();
+            [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Focus cloud'))!.click();
+            await settle();
+            done({ updates: hoverUpdates, layers: instance.props.layers.length, before, after, focusZoom: instance.props.viewState.zoom });
+          } finally {
+            Deck.prototype.setProps = original;
+          }
+        } catch (error) {
+          done({ updates: 0, layers: 0, before: 0, after: 0, focusZoom: 0, error: String(error) });
         }
-      } catch (error) {
-        done({ updates: 0, layers: 0, before: 0, after: 0, focusZoom: 0, error: String(error) });
-      }
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.updates).toBe(1);
-    expect(result.layers).toBeGreaterThan(0);
-    expect(result.after).toBeGreaterThan(result.before);
-    expect(result.focusZoom).toBeGreaterThanOrEqual(1.2);
+      });
+      expect(result.error).toBeUndefined();
+      expect(result.updates).toBe(1);
+      expect(result.layers).toBeGreaterThan(0);
+      expect(result.after).toBeGreaterThan(result.before);
+      expect(result.focusZoom).toBeGreaterThanOrEqual(1.2);
+    } finally {
+      await browser.execute(() => (window as any).__restoreAtlasInvoke?.());
+    }
   });
 });

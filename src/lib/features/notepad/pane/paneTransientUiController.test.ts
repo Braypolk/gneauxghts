@@ -73,10 +73,6 @@ describe('PaneTransientUiController', () => {
       kind: 'slash-menu',
       paneId: 'left'
     });
-    expect(controller.active).toEqual({
-      kind: 'slash-menu',
-      paneId: 'left'
-    });
 
     controller.applySelectionMenuSnapshot(
       'left',
@@ -95,10 +91,6 @@ describe('PaneTransientUiController', () => {
       kind: 'selection-menu',
       paneId: 'left'
     });
-    expect(controller.active).toEqual({
-      kind: 'selection-menu',
-      paneId: 'left'
-    });
 
     controller.updateWikilinkState('right', {
       active: true,
@@ -106,10 +98,6 @@ describe('PaneTransientUiController', () => {
       suggestions: [],
       selectedIndex: 0,
       activeRequest: 1
-    });
-    expect(controller.active).toEqual({
-      kind: 'wikilink-autocomplete',
-      paneId: 'right'
     });
     expect(controller.active).toEqual({
       kind: 'wikilink-autocomplete',

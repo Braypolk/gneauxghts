@@ -1,3 +1,4 @@
+import catalog from '$lib/contracts/chat-model-catalog.json';
 import type {
   ChatConversationSummary,
   ChatProvider,
@@ -26,34 +27,14 @@ export interface ChatReasoningChoice {
 }
 
 const STANDARD_REASONING: ChatReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
-const GPT_56_REASONING: ChatReasoningEffort[] = [...STANDARD_REASONING, 'max'];
-
-export const OPENAI_CHAT_MODELS: CuratedChatModel[] = [
-  {
-    id: 'gpt-5.6-sol', label: '5.6 Sol',
-    description: 'Highest capability', reasoningEfforts: GPT_56_REASONING
-  },
-  {
-    id: 'gpt-5.6-terra', label: '5.6 Terra',
-    description: 'Balanced', reasoningEfforts: GPT_56_REASONING
-  },
-  {
-    id: 'gpt-5.6-luna', label: '5.6 Luna',
-    description: 'Fast and economical', reasoningEfforts: GPT_56_REASONING
-  },
-  {
-    id: 'gpt-5.5', label: '5.5',
-    description: 'Previous flagship', reasoningEfforts: STANDARD_REASONING
-  },
-  {
-    id: 'gpt-5.4', label: '5.4',
-    description: 'Previous generation', reasoningEfforts: STANDARD_REASONING
-  },
-  {
-    id: 'gpt-5.4-mini', label: '5.4 Mini',
-    description: 'Smaller and economical', reasoningEfforts: STANDARD_REASONING
-  }
-];
+// JSON is shared with the native catalog. Reject invalid reasoning values at this boundary.
+export const OPENAI_CHAT_MODELS: CuratedChatModel[] = catalog.map((model) => ({
+  ...model,
+  reasoningEfforts: model.reasoningEfforts.map((effort): ChatReasoningEffort => {
+    if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') return effort;
+    throw new Error(`Invalid catalog reasoning effort: ${effort}`);
+  })
+}));
 
 const REASONING_LABELS: Record<ChatReasoningEffort, string> = {
   low: 'Light',

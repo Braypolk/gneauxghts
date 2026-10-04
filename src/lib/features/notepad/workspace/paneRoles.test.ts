@@ -1,7 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   adoptChatContextFromLeavingEditor,
-  getChatContextPaneId,
   getNavigationPaneId,
   getNearestEditorPaneId
 } from './paneRoles';
@@ -55,38 +54,6 @@ describe('paneRoles', () => {
         getPaneKind
       })
     ).toBe('left');
-  });
-
-  it('draws chat context from the nearest editor pane', () => {
-    const getPaneKind = kinds({
-      left: 'editor',
-      middle: 'chat',
-      right: 'editor'
-    });
-
-    expect(
-      getChatContextPaneId(
-        ['middle', 'right', 'left'],
-        getPaneKind,
-        'middle'
-      )
-    ).toBe('right');
-  });
-
-  it('falls back to the chat pane retained note when no editor is visible', () => {
-    const getPaneKind = kinds({
-      left: 'chat',
-      middle: 'chat',
-      right: 'chat'
-    });
-
-    expect(
-      getChatContextPaneId(
-        ['left', 'middle', 'right'],
-        getPaneKind,
-        'middle'
-      )
-    ).toBe('middle');
   });
 
   it('copies a leaving editor note onto chat panes that were following it', () => {

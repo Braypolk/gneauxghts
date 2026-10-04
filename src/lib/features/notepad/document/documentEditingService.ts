@@ -326,6 +326,12 @@ export function createDocumentEditingService<TPaneId extends string>(
     return changed;
   }
 
+  function recordReviewEdit(document: NoteDraftState, markdown: string): void {
+    applyMarkdownProjection(document, markdown);
+    deps.scheduleSearch();
+    deps.scheduleRelated();
+  }
+
   function updateTags(document: NoteDraftState, tags: string[]): boolean {
     if (document.working.tagsError || deps.shouldSuppressAutosave(document)) return false;
     const changed = updateDocumentTags(document, tags);
@@ -350,6 +356,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     restoreTransientForgotten,
     resolveUsingExternal,
     recordUserEdit,
+    recordReviewEdit,
     replaceMarkdown,
     updateTitle,
     updateTags

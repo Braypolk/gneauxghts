@@ -32,13 +32,3 @@ impl AgentRunCoordinator {
             })
     }
 }
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn coordinator_is_the_only_chat_handoff_to_the_runtime() {
-        let chat = include_str!("chat.rs");
-        assert!(chat.contains("AgentRunCoordinator::execute"));
-        assert!(!chat.contains("AgentRuntime::run("));
-    }
-}

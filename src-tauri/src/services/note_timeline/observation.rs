@@ -13,11 +13,6 @@ pub(crate) struct ObservationReceipt {
 
 impl ObservationReceipt {
     #[cfg(test)]
-    pub(crate) fn source(&self) -> VaultObservationSource {
-        self.source
-    }
-
-    #[cfg(test)]
     pub(crate) fn kind(&self) -> VaultObservationKind {
         self.kind
     }
@@ -30,16 +25,6 @@ impl ObservationReceipt {
     #[cfg(test)]
     pub(crate) fn previous_path(&self) -> Option<&Path> {
         self.previous_path.as_deref()
-    }
-
-    #[cfg(test)]
-    pub(crate) fn observed_at_millis(&self) -> u64 {
-        self.observed_at_millis
-    }
-
-    #[cfg(test)]
-    pub(crate) fn modified_at_millis(&self) -> Option<u64> {
-        self.modified_at_millis
     }
 
     pub(crate) fn commit_warning(&self) -> Option<&NoteMutationWarning> {
@@ -107,10 +92,10 @@ impl<'a> NoteTimeline<'a> {
             let receipt = self
                 .apply_observation(retained.observation)
                 .map_err(|error| {
-                    format!(
-                        "Replay retained Note Timeline observation {}: {error}",
+                    error.with_context(format!(
+                        "Replay retained Note Timeline observation {}",
                         retained.sequence
-                    )
+                    ))
                 })?;
             history_store::acknowledge_observation(&self.runtime.store, retained.sequence)?;
             if requested_sequence == Some(retained.sequence) {

@@ -2,14 +2,14 @@ use super::{
     forgotten_note_commands::{register_forgotten_chat_folder, resolve_forgotten_target_path},
     index_bridge::remove_notes_index_entry,
     note_persistence::persist_note_session_with_outcome,
-    prepare_notes_dir, prepare_notes_dir_with_state, INTERACTIVE_INDEX_REFRESH_MAX_AGE,
+    prepare_notes_dir, prepare_notes_dir_with_state,
 };
 use crate::{
     agent_tools::ActiveNoteSnapshot,
     chat::{
         ChatAttachmentInput, ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant,
         ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatRunContextItem, ChatService,
-        ChatSettings, LocalModelCapabilitySelection, VaultAccess,
+        ChatDefaults, ChatSettings, LocalModelCapabilitySelection, VaultAccess,
     },
     index::AppState,
     note::DocumentKind,
@@ -147,23 +147,29 @@ struct OpenAiModel {
     owned_by: Option<String>,
 }
 
-const CURATED_OPENAI_CHAT_MODELS: &[&str] = &[
-    "gpt-5.6-sol",
-    "gpt-5.6-terra",
-    "gpt-5.6-luna",
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-];
+#[derive(Deserialize)]
+struct CuratedChatModel {
+    id: String,
+}
+
+fn curated_chat_models() -> &'static [CuratedChatModel] {
+    static CATALOG: std::sync::OnceLock<Vec<CuratedChatModel>> = std::sync::OnceLock::new();
+    CATALOG.get_or_init(|| {
+        serde_json::from_str(include_str!(
+            "../../../src/lib/contracts/chat-model-catalog.json"
+        ))
+        .expect("bundled chat model catalog must be valid")
+    })
+}
 
 fn curated_openai_models(models: Vec<OpenAiModel>) -> Vec<LocalModel> {
     let by_id = models
         .into_iter()
         .map(|model| (model.id.clone(), model))
         .collect::<std::collections::HashMap<_, _>>();
-    CURATED_OPENAI_CHAT_MODELS
+    curated_chat_models()
         .iter()
-        .filter_map(|id| by_id.get(*id))
+        .filter_map(|entry| by_id.get(&entry.id))
         .map(|model| LocalModel {
             id: model.id.clone(),
             owned_by: model.owned_by.clone(),
@@ -327,11 +333,19 @@ pub(crate) fn chat_get_settings(service: State<'_, ChatService>) -> Result<ChatS
 }
 
 #[tauri::command]
-pub(crate) fn chat_set_settings(
+pub(crate) fn chat_set_defaults(
     service: State<'_, ChatService>,
-    settings: ChatSettings,
+    defaults: ChatDefaults,
 ) -> Result<ChatSettings, String> {
-    service.set_settings(settings)
+    service.set_defaults(defaults)
+}
+
+#[tauri::command]
+pub(crate) fn chat_set_atlas_visibility(
+    service: State<'_, ChatService>,
+    visibility: String,
+) -> Result<(), String> {
+    service.set_atlas_visibility(&visibility)
 }
 
 #[tauri::command]
@@ -671,11 +685,7 @@ pub(crate) fn chat_list_note_policies(
 ) -> Result<Vec<ChatNotePolicy>, String> {
     let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir(&state, false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "chat_list_note_policies",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "chat_list_note_policies")?;
     let mut policies = service.list_note_policies()?;
     let index = state
         .notes_index
@@ -708,11 +718,7 @@ pub(crate) fn chat_search_notes(
     }
     let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir(&state, false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "chat_search_notes",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "chat_search_notes")?;
     crate::services::retrieval::retrieve_vault_notes(
         &state,
         query,
@@ -925,11 +931,7 @@ fn suggest_context_with_state(
     }
     let _foreground_guard = state.foreground_guard();
     let notes_dir = prepare_notes_dir_with_state(false, state)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "chat_suggest_context",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "chat_suggest_context")?;
     let excluded = service.excluded_note_ids()?;
     let excluded_note_id = request.exclude_note_id.as_deref();
     let limit = request.limit.clamp(1, 8);
@@ -975,9 +977,9 @@ fn suggest_context_with_state(
             title: item.title,
             section_label: (!item.section_label.trim().is_empty()).then_some(item.section_label),
             excerpt: item.excerpt,
-            start_line: item.start_line,
-            end_line: item.end_line,
-            block_anchor: item.block_anchor,
+            start_line: None,
+            end_line: None,
+            block_anchor: None,
             reason: "related".to_string(),
         })
         .collect::<Vec<_>>();
@@ -1045,11 +1047,7 @@ fn resolve_selected_context(
         return Err("Enable vault access before including note context".to_string());
     }
     let notes_dir = prepare_notes_dir(&state, false)?;
-    state.ensure_interactive_index(
-        &notes_dir,
-        INTERACTIVE_INDEX_REFRESH_MAX_AGE,
-        "chat_resolve_selected_context",
-    )?;
+    state.ensure_interactive_index(&notes_dir, "chat_resolve_selected_context")?;
     let excluded = service.excluded_note_ids()?;
     let index = state
         .notes_index
@@ -1161,11 +1159,11 @@ pub(crate) async fn chat_retry_message(
     if assistant.status != "error" && assistant.status != "cancelled" {
         return Err("Only failed or interrupted assistant messages can be retried".to_string());
     }
+    let original_user_id = service.retry_user_message_id(&conversation_id, &message_id)?;
     let user = conversation
         .messages
         .iter()
-        .rev()
-        .find(|message| message.ordinal < assistant.ordinal && message.role == "user")
+        .find(|message| message.id == original_user_id && message.role == "user")
         .ok_or_else(|| "The original user message is missing".to_string())?;
     let capabilities = model_capabilities(
         &service,
@@ -1408,11 +1406,6 @@ mod attachment_capability_tests {
             excerpt: title.to_string(),
             section_label: String::new(),
             score,
-            lexical_score: Some(score),
-            semantic_score: None,
-            start_line: Some(1),
-            end_line: Some(1),
-            block_anchor: None,
         }
     }
 
@@ -1549,11 +1542,8 @@ pub(crate) fn chat_resolve_passage(
 #[cfg(test)]
 mod typing_responsiveness_tests {
     use super::*;
-    use crate::test_support::{lock_test_env, TestDir};
-    use std::{
-        sync::mpsc,
-        time::{Duration, Instant},
-    };
+    use crate::test_support::{lock_test_env, ReleaseOnDrop, TestDir};
+    use std::{sync::mpsc, time::Duration};
 
     #[test]
     fn related_search_does_not_block_ipc_dispatch_while_index_is_busy() {
@@ -1594,7 +1584,6 @@ mod typing_responsiveness_tests {
             headers: Default::default(),
             invoke_key: tauri::test::INVOKE_KEY.into(),
         };
-        let draft_started = Instant::now();
         tauri::test::get_ipc_response(
             &window,
             request(
@@ -1603,43 +1592,63 @@ mod typing_responsiveness_tests {
             ),
         )
         .unwrap();
-        let draft = tauri::test::get_ipc_response(
-            &window,
-            request("chat_get_composer_draft", json!({"slot":"pane:typing"})),
-        )
-        .unwrap()
-        .deserialize::<String>()
-        .unwrap();
-        let draft_elapsed = draft_started.elapsed();
         let handle = app.handle().clone();
         let (held, acquired) = mpsc::channel();
-        let blocker = std::thread::spawn(move || {
-            let state = handle.state::<AppState>();
-            let _index = state.notes_index.lock().unwrap();
-            held.send(()).unwrap();
-            std::thread::sleep(Duration::from_secs(2));
-        });
-        acquired.recv_timeout(Duration::from_secs(5)).unwrap();
+        let (release, released) = mpsc::channel();
         let (sent, response) = mpsc::channel();
-        let view: &tauri::Webview<tauri::test::MockRuntime> = window.as_ref();
-        let started = Instant::now();
-        view.clone().on_message(request("chat_suggest_context", json!({"request":{
-            "conversationId":null,"vaultAccess":"full","query":"chat typing","excludeNoteId":null,"limit":4
-        }})), Box::new(move |_, _, result, _, _| { let _ = sent.send(result); }));
-        let dispatch_elapsed = started.elapsed();
-        blocker.join().unwrap();
-        let result = response.recv_timeout(Duration::from_secs(10));
-        crate::state::set_notes_root_override(None).unwrap();
-        eprintln!(
-            "CHAT_TYPING_DISPATCH_MS={} DRAFT_ROUNDTRIP_MS={}",
-            dispatch_elapsed.as_millis(),
-            draft_elapsed.as_millis()
-        );
-        assert_eq!(draft, "chat typing");
-        assert!(matches!(result.unwrap(), tauri::ipc::InvokeResponse::Ok(_)));
-        assert!(
-            dispatch_elapsed < Duration::from_millis(250),
-            "IPC dispatch blocked for {dispatch_elapsed:?} on a two-second search dependency"
-        );
+        std::thread::scope(|scope| {
+            let blocker = scope.spawn(move || {
+                let state = handle.state::<AppState>();
+                let _index = state.notes_index.lock().unwrap();
+                held.send(()).unwrap();
+                released
+                    .recv_timeout(Duration::from_secs(5))
+                    .expect("release index blocker");
+            });
+            let mut release = ReleaseOnDrop::new(release);
+            acquired.recv_timeout(Duration::from_secs(2)).unwrap();
+            let view: tauri::Webview<tauri::test::MockRuntime> = window.as_ref().clone();
+            let search = request(
+                "chat_suggest_context",
+                json!({"request":{
+                    "conversationId":null,"vaultAccess":"full","query":"chat typing","excludeNoteId":null,"limit":4
+                }}),
+            );
+            let (dispatched, dispatch_done) = mpsc::channel();
+            scope.spawn(move || {
+                view.on_message(
+                    search,
+                    Box::new(move |_, _, result, _, _| {
+                        let _ = sent.send(result);
+                    }),
+                );
+                let _ = dispatched.send(());
+            });
+            dispatch_done
+                .recv_timeout(Duration::from_secs(2))
+                .expect("search IPC dispatch must yield while dependency is held");
+            let (draft_sent, draft_received) = mpsc::channel();
+            let draft_window = window.clone();
+            let draft_request = request("chat_get_composer_draft", json!({"slot":"pane:typing"}));
+            scope.spawn(move || {
+                let draft = tauri::test::get_ipc_response(&draft_window, draft_request)
+                    .unwrap()
+                    .deserialize::<String>()
+                    .unwrap();
+                let _ = draft_sent.send(draft);
+            });
+            assert_eq!(
+                draft_received
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("independent draft IPC progresses before release"),
+                "chat typing"
+            );
+            release.release();
+            blocker.join().unwrap();
+            assert!(matches!(
+                response.recv_timeout(Duration::from_secs(5)).unwrap(),
+                tauri::ipc::InvokeResponse::Ok(_)
+            ));
+        });
     }
 }

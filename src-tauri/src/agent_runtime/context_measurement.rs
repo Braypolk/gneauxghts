@@ -27,17 +27,24 @@ impl Measurement {
         on_event: AgentEventSink,
         worker: bool,
     ) -> Option<Arc<Self>> {
-        (std::env::var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS").as_deref() == Ok("1")).then(|| {
-            Arc::new(Self {
-                runtime: RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed),
-                sequence: AtomicUsize::new(0),
-                pending: Mutex::new(None),
-                on_event,
-                provider: request.provider.clone(),
-                model: request.model.clone(),
-                worker,
-                result_schema: request.output_schema.clone(),
-            })
+        (std::env::var("GNEAUXGHTS_CONTEXT_DIAGNOSTICS").as_deref() == Ok("1"))
+            .then(|| Self::enabled(request, on_event, worker))
+    }
+
+    pub(super) fn enabled(
+        request: &AgentRuntimeRequest,
+        on_event: AgentEventSink,
+        worker: bool,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            runtime: RUNTIME_SEQUENCE.fetch_add(1, Ordering::Relaxed),
+            sequence: AtomicUsize::new(0),
+            pending: Mutex::new(None),
+            on_event,
+            provider: request.provider.clone(),
+            model: request.model.clone(),
+            worker,
+            result_schema: request.output_schema.clone(),
         })
     }
 
@@ -447,45 +454,87 @@ mod tests {
             time::Instant,
         };
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
         let base = format!("http://{}/v1", listener.local_addr().unwrap());
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();
-        let server = std::thread::spawn(move || {
-            for (model, capacity) in [
-                ("qwen", None),
-                ("qwen", Some(90112)),
-                ("qwen", Some(45056)),
-                ("qwen", None),
-                ("other", Some(32768)),
-            ] {
-                let (mut stream, _) = listener.accept().unwrap();
-                stream
-                    .set_read_timeout(Some(std::time::Duration::from_secs(5)))
-                    .unwrap();
-                let mut request = Vec::new();
-                while !request.ends_with(b"\r\n\r\n") {
-                    let mut byte = [0];
-                    stream.read_exact(&mut byte).unwrap();
-                    request.push(byte[0]);
+        struct ServerGuard {
+            stop: Arc<std::sync::atomic::AtomicBool>,
+            worker: Option<std::thread::JoinHandle<()>>,
+        }
+        impl Drop for ServerGuard {
+            fn drop(&mut self) {
+                self.stop.store(true, Ordering::Release);
+                if let Some(worker) = self.worker.take() {
+                    let _ = worker.join();
                 }
-                assert!(String::from_utf8(request)
-                    .unwrap()
-                    .starts_with("GET /api/v1/models "));
-                count.fetch_add(1, Ordering::SeqCst);
-                let instances = capacity
-                    .map(|c| vec![json!({"id":model,"config":{"context_length":c}})])
-                    .unwrap_or_default();
-                let body =
-                    json!({"models":[{"key":model,"loaded_instances":instances}]}).to_string();
-                write!(
-                    stream,
-                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    body.len(),
-                    body
-                )
-                .unwrap();
             }
-        });
+        }
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let stopped = stop.clone();
+        let mut server = ServerGuard {
+            stop,
+            worker: Some(std::thread::spawn(move || {
+                for (model, capacity) in [
+                    ("qwen", None),
+                    ("qwen", Some(90112)),
+                    ("qwen", Some(45056)),
+                    ("qwen", None),
+                    ("other", Some(32768)),
+                ] {
+                    let deadline = Instant::now() + std::time::Duration::from_secs(5);
+                    let (mut stream, _) = loop {
+                        if stopped.load(Ordering::Acquire) {
+                            return;
+                        }
+                        match listener.accept() {
+                            Ok(stream) => break stream,
+                            Err(error)
+                                if error.kind() == std::io::ErrorKind::WouldBlock
+                                    && Instant::now() < deadline =>
+                            {
+                                std::thread::sleep(std::time::Duration::from_millis(2))
+                            }
+                            Err(error) => {
+                                panic!("metadata fixture accept failed or timed out: {error}")
+                            }
+                        }
+                    };
+                    // macOS inherits the listener's nonblocking mode; the read timeout
+                    // only bounds a blocking stream's wait for request bytes.
+                    stream.set_nonblocking(false).unwrap();
+                    stream
+                        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    while !request.ends_with(b"\r\n\r\n") {
+                        assert!(
+                            request.len() < 8192,
+                            "fixture request header exceeded bound"
+                        );
+                        let mut byte = [0];
+                        stream.read_exact(&mut byte).unwrap();
+                        request.push(byte[0]);
+                    }
+                    assert!(String::from_utf8(request)
+                        .unwrap()
+                        .starts_with("GET /api/v1/models "));
+                    count.fetch_add(1, Ordering::SeqCst);
+                    let instances = capacity
+                        .map(|c| vec![json!({"id":model,"config":{"context_length":c}})])
+                        .unwrap_or_default();
+                    let body =
+                        json!({"models":[{"key":model,"loaded_instances":instances}]}).to_string();
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            })),
+        };
         tauri::async_runtime::block_on(async {
             let probe = CapacityProbe::new(base, None);
             let now = Instant::now();
@@ -504,7 +553,7 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 4);
             assert_eq!(probe.observe_at("other", later).await, Some(32768));
         });
-        server.join().unwrap();
+        server.worker.take().unwrap().join().unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 5);
     }
 

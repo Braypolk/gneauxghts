@@ -10,7 +10,7 @@ import {
 import {
   INITIAL_PANE_ID
 } from '$lib/features/notepad/session/runtimeStore.svelte';
-import { createPaneViewModelFactory } from './paneViewModelFactory';
+import { createPaneViewModelFactory, paneCommandNoteLabel } from './paneViewModelFactory';
 
 describe('pane view model document status', () => {
   it('surfaces an external conflict on the editor branch', () => {
@@ -75,4 +75,14 @@ describe('pane view model document status', () => {
       expect(viewModel.isPinned).toBe(true);
     }
   });
+});
+
+it('derives the pane command label from the current title or filename fallback', () => {
+  const document = createDocumentState({
+    ...createEmptySessionSnapshot(),
+    currentNotePath: '/vault/Source.md'
+  }, 'document:label');
+  expect(paneCommandNoteLabel(document)).toBe('Source');
+  document.working.title = 'Renamed';
+  expect(paneCommandNoteLabel(document)).toBe('Renamed');
 });

@@ -1,6 +1,5 @@
 import {
   Annotation,
-  EditorState,
   StateEffect,
   StateField,
   Transaction,
@@ -100,18 +99,19 @@ const addedLine = {
 
 class HunkActionsWidget extends WidgetType {
   constructor(
+    readonly reviewId: string,
     readonly hunk: ReviewHunkState,
-    readonly onKeep: (hunk: ReviewHunkState) => void,
-    readonly onUndo: (hunk: ReviewHunkState) => void
+    readonly onKeep: (reviewId: string, hunkId: string) => void,
+    readonly onUndo: (reviewId: string, hunkId: string) => void
   ) {
     super();
   }
 
   eq(other: HunkActionsWidget) {
-    // The callbacks receive this widget's hunk snapshot. Bounds must be part
-    // of equality so CodeMirror replaces the widget after user edits map the
-    // range; otherwise Undo would act on the original proposed span.
+    // The review identity prevents a reused widget from dispatching an action
+    // for a superseded proposal that happens to have identical hunk bounds.
     return (
+      other.reviewId === this.reviewId &&
       other.hunk.id === this.hunk.id &&
       other.hunk.status === this.hunk.status &&
       other.hunk.from === this.hunk.from &&
@@ -134,7 +134,7 @@ class HunkActionsWidget extends WidgetType {
     });
     undo.addEventListener('click', (event) => {
       event.preventDefault();
-      this.onUndo(this.hunk);
+      this.onUndo(this.reviewId, this.hunk.id);
     });
     const keep = document.createElement('button');
     keep.type = 'button';
@@ -145,7 +145,7 @@ class HunkActionsWidget extends WidgetType {
     });
     keep.addEventListener('click', (event) => {
       event.preventDefault();
-      this.onKeep(this.hunk);
+      this.onKeep(this.reviewId, this.hunk.id);
     });
     wrap.append(undo, keep);
     return wrap;
@@ -184,8 +184,8 @@ function addedLineRanges(doc: Text, hunk: ReviewHunkState): Range<Decoration>[] 
 function decorations(
   doc: Text,
   state: ProposalReviewState,
-  onKeep: ProposalReviewOptions['onKeep'],
-  onUndo: ProposalReviewOptions['onUndo']
+  onKeep: (reviewId: string, hunkId: string) => void,
+  onUndo: (reviewId: string, hunkId: string) => void
 ): DecorationSet {
   const ranges: Range<Decoration>[] = [];
   for (const hunk of state.hunks) {
@@ -204,7 +204,7 @@ function decorations(
     }
     ranges.push(
       Decoration.widget({
-        widget: new HunkActionsWidget(hunk, onKeep, onUndo),
+        widget: new HunkActionsWidget(state.reviewId, hunk, onKeep, onUndo),
         side: 1
       }).range(hunk.to)
     );
@@ -212,55 +212,15 @@ function decorations(
   return Decoration.set(ranges, true);
 }
 
-export interface ProposalReviewOptions {
-  reviewId: string;
-  hunks: ProposalPreviewHunk[];
-  initialHunks?: ReviewHunkState[];
-  onKeep: (hunk: ReviewHunkState) => void;
-  onUndo: (hunk: ReviewHunkState) => void;
-  onStateChange?: (state: ProposalReviewState) => void;
-}
-
-export interface ProposalReviewExtensionHandle {
-  extension: Extension;
-  read: (state: EditorState) => ProposalReviewState;
-}
-
-/** Editable review metadata layered over real proposed editor text. */
-export function createProposalReviewExtension(options: ProposalReviewOptions): ProposalReviewExtensionHandle {
-  const field = StateField.define<ProposalReviewState>({
-    create() {
-      return {
-        reviewId: options.reviewId,
-        hunks: (options.initialHunks ?? options.hunks.map((hunk) => ({
-          ...hunk,
-          from: hunk.proposedFrom,
-          to: hunk.proposedTo,
-          status: 'pending'
-        }))).map((hunk) => ({ ...hunk }))
-      };
-    },
-    update(value, transaction) {
-      let hunks = value.hunks;
-      for (const effect of transaction.effects) {
-        if (effect.is(resolveReviewHunk)) {
-          hunks = hunks.map((hunk) =>
-            hunk.id === effect.value.id ? { ...hunk, status: effect.value.status } : hunk
-          );
-        }
-      }
-      if (!transaction.docChanged) {
-        return { ...value, hunks };
-      }
+// Only the document root maps positions and owns resolution status.
+export const setDocumentReview = StateEffect.define<ProposalReviewState | null>();
+export const documentReviewField = StateField.define<ProposalReviewState | null>({
+  create: () => null,
+  update(value, transaction) {
+    if (value && transaction.docChanged) {
+      const hunks = value.hunks;
       const isProposalTransaction = transaction.annotation(proposalTransaction);
-      // The shared editor runtime occasionally replaces an entire pane buffer
-      // while mounting or rebinding it. That is a view synchronization, not a
-      // user change to every proposal hunk.
-      const isExternalDocumentReset = transaction.annotation(Transaction.userEvent) === 'input.external-reset';
-      if (isExternalDocumentReset) {
-        return { ...value, hunks };
-      }
-      const changed: ReviewHunkState[] = hunks.map((hunk): ReviewHunkState => {
+  const changed: ReviewHunkState[] = hunks.map((hunk): ReviewHunkState => {
         const isDeletionAnchor = hunk.from === hunk.to;
         const mappedFrom = transaction.changes.mapPos(hunk.from, isDeletionAnchor ? -1 : 1);
         const mappedTo = transaction.changes.mapPos(hunk.to, isDeletionAnchor ? 1 : -1);
@@ -295,22 +255,43 @@ export function createProposalReviewExtension(options: ProposalReviewOptions): P
           status: modified && from === to ? 'kept' : modified ? 'modified' : hunk.status
         };
       });
-      return { ...value, hunks: changed };
-    },
-    provide: (field) => EditorView.decorations.compute([field], (state) =>
-      decorations(state.doc, state.field(field), options.onKeep, options.onUndo)
-    )
-  });
-  return {
-    extension: [
-      field,
-      EditorView.editorAttributes.of({ 'data-proposal-review': 'true' }),
-      EditorView.updateListener.of((update) => {
-        if (!update.docChanged && !update.transactions.some((transaction) => transaction.effects.length)) return;
-        const next = update.state.field(field);
-        queueMicrotask(() => options.onStateChange?.(next));
-      })
-    ],
-    read: (state) => state.field(field)
-  };
+
+      value = { ...value, hunks: changed };
+    }
+    for (const effect of transaction.effects) {
+      if (effect.is(setDocumentReview)) value = effect.value;
+      else if (value && effect.is(resolveReviewHunk)) {
+        value = { ...value, hunks: value.hunks.map(hunk => hunk.id === effect.value.id
+          ? { ...hunk, status: effect.value.status } : hunk) };
+      }
+    }
+    return value;
+  }
+});
+
+// Pane metadata is a read-only projection: view edits never map it independently.
+export const publishReviewProjection = StateEffect.define<ProposalReviewState>();
+export const reviewProjection = StateField.define<ProposalReviewState | null>({
+  create: () => null,
+  update(value, transaction) {
+    for (const effect of transaction.effects) {
+      if (effect.is(publishReviewProjection)) return effect.value;
+    }
+    return value;
+  }
+});
+
+export function createReviewProjection(
+  state: ProposalReviewState,
+  onKeep: (reviewId: string, hunkId: string) => void,
+  onUndo: (reviewId: string, hunkId: string) => void
+): Extension {
+  return [
+    reviewProjection.init(() => state),
+    EditorView.editorAttributes.of({ 'data-proposal-review': 'true' }),
+    EditorView.decorations.compute([reviewProjection], viewState => {
+      const review = viewState.field(reviewProjection);
+      return review ? decorations(viewState.doc, review, onKeep, onUndo) : Decoration.none;
+    })
+  ];
 }

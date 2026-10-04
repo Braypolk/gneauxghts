@@ -27,7 +27,7 @@ export function chatComposerDraftSlot(
 
 export function resolveTargetMessageId(
   targetAnchor: string | null | undefined,
-  conversation: ChatConversation | null
+  conversation: Pick<ChatConversation, 'excerptMessageIds'> | null
 ) {
   const anchor = targetAnchor?.replace(/^\^/, '') ?? '';
   if (!anchor || !conversation) return null;
@@ -36,7 +36,7 @@ export function resolveTargetMessageId(
     : conversation.excerptMessageIds[anchor] ?? null;
 }
 
-export function proposalInitialMarkdown(proposal: ChatAgentProposal) {
+export function proposalInitialMarkdown(proposal: Pick<ChatAgentProposal, 'preview'>) {
   const preview = proposal.preview as { proposedEditorMarkdown?: unknown };
   return typeof preview.proposedEditorMarkdown === 'string'
     ? preview.proposedEditorMarkdown

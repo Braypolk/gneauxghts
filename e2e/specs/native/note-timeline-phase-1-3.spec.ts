@@ -203,15 +203,36 @@ async function openHistory() {
 }
 
 async function loadAllHistory() {
+  const timeline = await $('[aria-label="Note timeline"]');
   while (await $('button=Load older history').isExisting()) {
+    const previousCount = Number(await timeline.getAttribute('data-history-record-count'));
     const loadOlder = await $('button=Load older history');
+    await loadOlder.scrollIntoView();
     await loadOlder.waitForClickable();
     await loadOlder.click();
-    await browser.waitUntil(async () => {
-      const current = await $('button=Load older history');
-      return !(await current.isExisting()) || (await current.isEnabled());
-    });
+    await browser.waitUntil(async () =>
+      (await timeline.getAttribute('aria-busy')) === 'false' &&
+      Number(await timeline.getAttribute('data-history-record-count')) > previousCount,
+    { timeoutMsg: 'Expected the older history page to finish and publish additional records' });
   }
+}
+
+async function previewRevisionRestore(revisionId: string) {
+  const revision = await $(`[data-revision-id="${revisionId}"]`);
+  await browser.waitUntil(async () => (await revision.getAttribute('aria-disabled')) === 'false');
+  await revision.click();
+  // Selection publishes immediately, but its diff request keeps Restore disabled.
+  await browser.waitUntil(async () =>
+    (await revision.getAttribute('aria-pressed')) === 'true' &&
+    (await revision.getAttribute('aria-disabled')) === 'false',
+  { timeoutMsg: 'Expected the selected revision diff to finish before restoring' });
+  const restore = await $('button=Restore this version…');
+  await restore.scrollIntoView();
+  await restore.waitForClickable();
+  await restore.click();
+  const preview = await $('[aria-label="Restore version preview"]');
+  await preview.waitForExist();
+  return preview;
 }
 
 async function revealRevision(revisionId: string) {
@@ -380,10 +401,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await openHistory();
     await loadAllHistory();
     await revealRevision(oldestRevision!.revisionId);
-    await $(`[data-revision-id="${oldestRevision!.revisionId}"]`).click();
-    await $('button=Restore this version…').click();
-    const preview = await $('[aria-label="Restore version preview"]');
-    await preview.waitForExist();
+    const preview = await previewRevisionRestore(oldestRevision!.revisionId);
     expect(await preview.getText()).toContain('Native journey base line 1');
     await preview.$('button=Restore version').click();
     await browser.waitUntil(async () =>
@@ -418,10 +436,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     await openHistory();
     expect(readFileSync(note.path!, 'utf8')).toContain('project: updated');
     await revealRevision(original.revisionId);
-    await $(`[data-revision-id="${original.revisionId}"]`).click();
-    await $('button=Restore this version…').click();
-    const preview = await $('[aria-label="Restore version preview"]');
-    await preview.waitForExist();
+    const preview = await previewRevisionRestore(original.revisionId);
     await preview.$('button=Restore version').click();
     const back = await $('button[aria-label="Back to workspace"]');
     await browser.waitUntil(async () =>
@@ -460,8 +475,12 @@ describe('native Phase 1-3 Note Timeline integration', () => {
     const timeline = await missingCard.$('details');
     await timeline.$('summary').click();
     expect(await timeline.getText()).toContain('30 loaded records');
+    const previousRecordCount = (await timeline.$$('ol > li')).length;
     await timeline.$('button=Load older history').click();
-    await browser.waitUntil(async () => !(await timeline.$('button=Load older history').isExisting()));
+    await browser.waitUntil(async () =>
+      (await timeline.$$('ol > li')).length > previousRecordCount &&
+      !(await timeline.$('button=Loading older history…').isExisting()),
+    { timeoutMsg: 'Expected the retained missing-note history page to finish loading' });
     expect(await timeline.getText()).toContain('Note creation revision');
 
     await missingCard.$('button=Recover').click();

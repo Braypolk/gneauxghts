@@ -152,6 +152,23 @@ describe('composer draft persistence', () => {
     expect(h.persistence.peekSlot()).toBe('conversation:new');
   });
 
+  it('preserves promoted text and rejects a late draft restore until successful send clears it', async () => {
+    const h = harness();
+    let resolve!: (body: string) => void;
+    h.getDraft.mockReturnValueOnce(new Promise(done => { resolve = done; }));
+    const opening = h.persistence.openSlot('pane:left');
+    h.persistence.record('Keep after failed send');
+    h.persistence.promoteSlot('conversation:new', 'Keep after failed send');
+    resolve('old stored text');
+    await opening;
+    await vi.advanceTimersByTimeAsync(100);
+    expect(h.applied).toEqual([]);
+    expect(h.drafts.has('pane:left')).toBe(false);
+    expect(h.drafts.get('conversation:new')).toBe('Keep after failed send');
+    h.persistence.resetSlot('conversation:new');
+    expect(h.drafts.has('conversation:new')).toBe(false);
+  });
+
   it('abandons a pending write when the user starts over', async () => {
     const h = harness();
 

@@ -4,7 +4,7 @@ import {
   invokeHistoryCommand
 } from '$lib/contracts/historyCommand';
 import { open } from '@tauri-apps/plugin-dialog';
-import { appStore } from '$lib/app/appStore.svelte';
+import { appStore, type AppStore } from '$lib/app/appStore.svelte';
 import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
 import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
 import type {
@@ -12,8 +12,8 @@ import type {
   RestoredForgottenNote
 } from '$lib/types/forgottenNotes';
 import type { MissingNoteSummary, RecoveredMissingNote } from '$lib/types/missingNotes';
-import { compareHistoryRecordsNewestFirst } from '$lib/features/history/historyModeMachine';
-import type { VaultFolderInfo, VaultInfo } from '$lib/types/vault';
+import { compareHistoryRecordsNewestFirst, type HistoryModePage } from '$lib/features/history/historyModeMachine';
+import type { CreateVaultFolderResult, VaultFolderInfo, VaultInfo } from '$lib/types/vault';
 import type { HistoryHealthReport } from '$lib/types/history';
 import type {
   SemanticDebugSnapshot,
@@ -22,28 +22,11 @@ import type {
   SemanticStatus
 } from '$lib/types/semantic';
 import {
-  refreshSettingsAfterVaultChange,
-  refreshSettingsForVisibility
-} from './refreshCoordinator';
-import {
-  loadForgottenNotesSlice,
-  loadMissingNoteTimelinePage,
-  loadMissingNotesSlice
-} from './loaders/forgottenLoader';
-import {
-  retrySemanticIndex
-} from './loaders/semanticLoader';
-import { loadSettingsViewSlice } from './loaders/settingsViewLoader';
-import {
   clearVaultHistory as requestVaultHistoryClear,
   loadHistoryHealthSlice,
   resetCorruptHistory as requestCorruptHistoryReset,
   retryHistoryRecovery
 } from './loaders/historyLoader';
-import {
-  createVaultFolderSlice,
-  listVaultFoldersSlice
-} from './loaders/vaultLoader';
 
 type SettingsTab = 'general' | 'forgotten';
 type GeneralSection =
@@ -65,6 +48,14 @@ type SemanticAction =
 export type { GeneralSection, SettingsTab };
 
 export class SettingsStore {
+  constructor(private readonly app: AppStore = appStore) {}
+  #lifetime = 0;
+  #disposed = false;
+  #initialization: Promise<void> | null = null;
+  #historyRevision = 0;
+  #settingsRevision = 0;
+  #settingsWrites: Promise<void> = Promise.resolve();
+
   semanticSettings = $state<SemanticSettings | null>(null);
   semanticDebug = $state<SemanticDebugSnapshot | null>(null);
   settingsLoadError = $state<string | null>(null);
@@ -109,11 +100,11 @@ export class SettingsStore {
   #disposeVaultChanged: (() => void) | null = null;
 
   get semanticStatus(): SemanticStatus | null {
-    return appStore.semanticStatus;
+    return this.app.semanticStatus;
   }
 
   get vaultInfo(): VaultInfo | null {
-    return appStore.vaultInfo;
+    return this.app.vaultInfo;
   }
 
   get usesVaultContainer() {
@@ -173,6 +164,8 @@ export class SettingsStore {
   }
 
   async loadVaultFolders() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (this.vaultInfo?.canPickArbitraryPath !== false) {
       this.vaultFolders = [];
       return;
@@ -180,11 +173,15 @@ export class SettingsStore {
 
     this.isLoadingVaultFolders = true;
     try {
-      this.vaultFolders = await listVaultFoldersSlice();
+      const folders = await invoke<VaultFolderInfo[]>('list_vault_folders');
+      if (lifetime !== this.#lifetime) return;
+      this.vaultFolders = folders;
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to list vault folders:', error);
       this.vaultSaveError = String(error);
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isLoadingVaultFolders = false;
     }
   }
@@ -194,6 +191,8 @@ export class SettingsStore {
   }
 
   async createVaultFolder() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     const name = this.newVaultName.trim();
     if (name === '') {
       this.vaultSaveError = 'Enter a vault name.';
@@ -203,19 +202,24 @@ export class SettingsStore {
     this.isCreatingVaultFolder = true;
     this.vaultSaveError = null;
     try {
-      const result = await createVaultFolderSlice(name);
+      const result = await invoke<CreateVaultFolderResult>('create_vault_folder', { name });
+      if (lifetime !== this.#lifetime) return;
       this.vaultFolders = result.folders;
       this.newVaultName = '';
       this.setVaultPathInput(result.createdPath);
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to create vault folder:', error);
       this.vaultSaveError = String(error);
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isCreatingVaultFolder = false;
     }
   }
 
   async pickVaultDirectory() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (!(this.vaultInfo?.canConfigurePath ?? true)) {
       return;
     }
@@ -232,20 +236,25 @@ export class SettingsStore {
         defaultPath: this.vaultPathInput.trim() || this.vaultInfo?.selectedPath || undefined,
         title: 'Choose vault folder'
       });
+      if (lifetime !== this.#lifetime) return;
       if (typeof selected === 'string' && selected.trim() !== '') {
         this.vaultPathInput = selected;
       }
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to pick vault directory:', error);
       this.vaultSaveError = String(error);
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isPickingVault = false;
     }
   }
 
   async restartApp() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     await restartLifecycle.restart();
-    this.vaultSaveError = restartLifecycle.error;
+    if (lifetime === this.#lifetime) this.vaultSaveError = restartLifecycle.error;
   }
 
   #stopSemanticPolling() {
@@ -262,6 +271,7 @@ export class SettingsStore {
   }
 
   #syncSemanticPolling() {
+    if (this.#disposed) return;
     if (typeof document === 'undefined' || document.visibilityState !== 'visible') {
       this.#stopSemanticPolling();
       return;
@@ -282,8 +292,11 @@ export class SettingsStore {
   }
 
   async loadVaultInfo() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     try {
-      await appStore.refreshVaultInfo();
+      await this.app.refreshVaultInfo();
+      if (lifetime !== this.#lifetime) return;
       this.#syncVaultSnapshot();
     } catch (error) {
       console.error('Failed to load vault info:', error);
@@ -291,18 +304,20 @@ export class SettingsStore {
   }
 
   async loadSemanticStatus() {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (this.#semanticStatusRequest) {
       return this.#semanticStatusRequest;
     }
 
     this.#semanticStatusRequest = (async () => {
       try {
-        await appStore.refreshSemanticStatus();
+        await this.app.refreshSemanticStatus();
         this.#syncSemanticPolling();
       } catch (error) {
         console.error('Failed to load semantic status:', error);
       } finally {
-        this.#semanticStatusRequest = null;
+        if (lifetime === this.#lifetime) this.#semanticStatusRequest = null;
       }
     })();
 
@@ -310,29 +325,32 @@ export class SettingsStore {
   }
 
   loadSemanticState = async () => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
+    const settingsRevision = this.#settingsRevision;
+    const historyRevision = this.#historyRevision;
+    const settingsWritePending = this.isSaving;
+    const historyActionPending = this.isRunningHistoryAction;
     if (this.#semanticStateRequest) {
       return this.#semanticStateRequest;
     }
 
     this.#semanticStateRequest = (async () => {
-      const admission = appStore.beginSnapshotAdmission('vault', 'semanticStatus');
       try {
-        const view = await loadSettingsViewSlice();
-        appStore.admitSnapshot(
-          { vault: view.vault, semanticStatus: view.semanticStatus },
-          admission
-        );
-        this.semanticSettings = view.semanticSettings;
+        const view = await this.app.loadSettingsView();
+        if (lifetime !== this.#lifetime) return;
+        if (!settingsWritePending && !this.isSaving && settingsRevision === this.#settingsRevision) this.semanticSettings = view.semanticSettings;
         this.semanticDebug = view.semanticDebug;
-        this.historyHealth = view.historyHealth;
+        if (!historyActionPending && !this.isRunningHistoryAction && historyRevision === this.#historyRevision) this.historyHealth = view.historyHealth;
         this.#syncVaultSnapshot();
         this.settingsLoadError = null;
         this.#syncSemanticPolling();
       } catch (error) {
+        if (lifetime !== this.#lifetime) return;
         console.error('Failed to load semantic settings:', error);
         this.settingsLoadError = String(error);
       } finally {
-        this.#semanticStateRequest = null;
+        if (lifetime === this.#lifetime) this.#semanticStateRequest = null;
       }
     })();
 
@@ -340,19 +358,23 @@ export class SettingsStore {
   };
 
   loadForgottenNotes = async () => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (this.#forgottenNotesRequest) {
       return this.#forgottenNotesRequest;
     }
 
     this.isLoadingForgottenNotes = true;
     const missingNotesGeneration = ++this.#missingNotesGeneration;
+    this.loadingMissingTimelineNoteId = null;
 
     this.#forgottenNotesRequest = (async () => {
       try {
         const [forgottenNotes, missingNotes] = await Promise.all([
-          loadForgottenNotesSlice(),
-          loadMissingNotesSlice()
+          invoke<ForgottenNoteSummary[]>('list_forgotten_notes'),
+          invokeHistoryCommand<MissingNoteSummary[]>('list_missing_notes')
         ]);
+        if (lifetime !== this.#lifetime || missingNotesGeneration !== this.#missingNotesGeneration) return;
         this.forgottenNotes = forgottenNotes;
         if (missingNotesGeneration === this.#missingNotesGeneration) {
           this.missingNotes = missingNotes;
@@ -363,8 +385,10 @@ export class SettingsStore {
       } catch (error) {
         console.error('Failed to load forgotten notes:', error);
       } finally {
-        this.#forgottenNotesRequest = null;
-        this.isLoadingForgottenNotes = false;
+        if (lifetime === this.#lifetime && missingNotesGeneration === this.#missingNotesGeneration) {
+          this.#forgottenNotesRequest = null;
+          this.isLoadingForgottenNotes = false;
+        }
       }
     })();
 
@@ -372,65 +396,97 @@ export class SettingsStore {
   };
 
   loadHistoryHealth = async () => {
+    if (this.#disposed || this.isRunningHistoryAction) return;
+    const revision = ++this.#historyRevision;
     try {
-      this.historyHealth = await loadHistoryHealthSlice();
+      const health = await loadHistoryHealthSlice();
+      if (revision !== this.#historyRevision) return;
+      this.historyHealth = health;
       this.historyActionError = null;
     } catch (error) {
+      if (revision !== this.#historyRevision) return;
       console.error('Failed to load history health:', error);
       this.historyActionError = historyCommandMessage(error);
     }
   };
 
   retryHistory = async () => {
+    if (this.#disposed || this.isRunningHistoryAction) return;
+    const revision = ++this.#historyRevision;
     this.isRunningHistoryAction = true;
     this.historyActionError = null;
     try {
-      this.historyHealth = await retryHistoryRecovery();
+      const health = await retryHistoryRecovery();
+      if (revision !== this.#historyRevision) return;
+      this.historyHealth = health;
     } catch (error) {
+      if (revision !== this.#historyRevision) return;
       console.error('Failed to retry history recovery:', error);
       this.historyActionError = historyCommandMessage(error);
     } finally {
-      this.isRunningHistoryAction = false;
+      if (revision === this.#historyRevision) this.isRunningHistoryAction = false;
     }
   };
 
   resetCorruptHistory = async () => {
+    if (this.#disposed || this.isRunningHistoryAction) return;
+    const revision = ++this.#historyRevision;
     this.isRunningHistoryAction = true;
     this.historyActionError = null;
     try {
       await requestCorruptHistoryReset();
-      this.historyHealth = await loadHistoryHealthSlice();
+      if (revision !== this.#historyRevision) return;
+      const health = await loadHistoryHealthSlice();
+      if (revision !== this.#historyRevision) return;
+      this.historyHealth = health;
     } catch (error) {
+      if (revision !== this.#historyRevision) return;
       console.error('Failed to reset corrupt history:', error);
       this.historyActionError = historyCommandMessage(error);
     } finally {
-      this.isRunningHistoryAction = false;
+      if (revision === this.#historyRevision) this.isRunningHistoryAction = false;
     }
   };
 
   clearVaultHistory = async () => {
+    if (this.#disposed || this.isRunningHistoryAction) return;
+    const revision = ++this.#historyRevision;
     this.isRunningHistoryAction = true;
     this.historyActionError = null;
     try {
       await requestVaultHistoryClear();
+      if (revision !== this.#historyRevision) return;
     } catch (error) {
+      if (revision !== this.#historyRevision) return;
       console.error('Failed to clear vault history:', error);
       this.historyActionError = historyCommandMessage(error);
-      this.isRunningHistoryAction = false;
+      if (revision === this.#historyRevision) this.isRunningHistoryAction = false;
       return;
     }
 
     try {
-      this.historyHealth = await loadHistoryHealthSlice();
+      const health = await loadHistoryHealthSlice();
+      if (revision !== this.#historyRevision) return;
+      this.historyHealth = health;
     } catch (error) {
+      if (revision !== this.#historyRevision) return;
       console.error('Vault history was cleared, but storage reporting could not refresh:', error);
       this.historyActionError = `Vault history was cleared, but storage reporting could not refresh: ${historyCommandMessage(error)}`;
     } finally {
-      this.isRunningHistoryAction = false;
+      if (revision === this.#historyRevision) this.isRunningHistoryAction = false;
     }
   };
 
+  async #refreshForgottenAfterMutation() {
+    this.#missingNotesGeneration += 1;
+    this.#forgottenNotesRequest = null;
+    this.loadingMissingTimelineNoteId = null;
+    await this.loadForgottenNotes();
+  }
+
   runForgottenAction = async (command: ForgottenAction, forgottenPaths: string[]) => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (forgottenPaths.length === 0) return;
 
     this.isUpdatingForgottenNotes = true;
@@ -444,6 +500,7 @@ export class SettingsStore {
       } else {
         await invoke(command, { forgottenPaths });
       }
+      if (lifetime !== this.#lifetime) return;
       for (const note of restored) {
         if (note.commitWarning) {
           console.warn(
@@ -456,16 +513,20 @@ export class SettingsStore {
       this.setSelectedForgottenPaths((current) =>
         current.filter((path) => !forgottenPaths.includes(path))
       );
-      await this.loadForgottenNotes();
+      await this.#refreshForgottenAfterMutation();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error(`Failed to run ${command}:`, error);
       this.forgottenActionError = String(error);
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isUpdatingForgottenNotes = false;
     }
   };
 
   recoverMissingNote = async (noteId: string) => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     this.isUpdatingMissingNotes = true;
     this.missingActionMessage = null;
     this.missingActionError = null;
@@ -474,6 +535,7 @@ export class SettingsStore {
         'recover_missing_note',
         { noteId }
       );
+      if (lifetime !== this.#lifetime) return;
       if (recovered.commitWarning) {
         console.warn(
           'Missing Note was recovered with incomplete timeline synchronization:',
@@ -482,17 +544,20 @@ export class SettingsStore {
       }
       this.missingActionMessage =
         recovered.commitWarning?.message ?? `Recovered Missing Note to ${recovered.restoredPath}.`;
-      await this.loadForgottenNotes();
+      await this.#refreshForgottenAfterMutation();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to recover Missing Note:', error);
       this.missingActionError = historyCommandMessage(error);
-      await this.loadForgottenNotes();
+      await this.#refreshForgottenAfterMutation();
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isUpdatingMissingNotes = false;
     }
   };
 
   loadMoreMissingNoteHistory = async (noteId: string) => {
+    if (this.#disposed) return;
     const missing = this.missingNotes.find((note) => note.noteId === noteId);
     const cursor = missing?.timeline.nextCursor;
     if (!missing || !cursor || this.loadingMissingTimelineNoteId) return;
@@ -501,7 +566,9 @@ export class SettingsStore {
     const missingNotesGeneration = this.#missingNotesGeneration;
     this.missingActionError = null;
     try {
-      const page = await loadMissingNoteTimelinePage(noteId, cursor);
+      const page = await invokeHistoryCommand<HistoryModePage>('get_missing_note_history_page', {
+        noteId, cursor, limit: 30
+      });
       if (missingNotesGeneration !== this.#missingNotesGeneration) return;
       const current = this.missingNotes.find((note) => note.noteId === noteId);
       if (!current || current.timeline.nextCursor !== cursor) return;
@@ -521,22 +588,27 @@ export class SettingsStore {
       console.error('Failed to load older Missing Note history:', error);
       this.missingActionError = historyCommandMessage(error);
     } finally {
-      this.loadingMissingTimelineNoteId = null;
+      if (missingNotesGeneration === this.#missingNotesGeneration) this.loadingMissingTimelineNoteId = null;
     }
   };
 
   deleteMissingNote = async (noteId: string) => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     this.isUpdatingMissingNotes = true;
     this.missingActionMessage = null;
     this.missingActionError = null;
     try {
       await invokeHistoryCommand<void>('delete_missing_notes', { noteIds: [noteId] });
+      if (lifetime !== this.#lifetime) return;
       this.missingActionMessage = 'Missing Note timeline permanently deleted.';
-      await this.loadForgottenNotes();
+      await this.#refreshForgottenAfterMutation();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to permanently delete Missing Note:', error);
       this.missingActionError = historyCommandMessage(error);
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isUpdatingMissingNotes = false;
     }
   };
@@ -555,20 +627,29 @@ export class SettingsStore {
     );
   };
 
-  async saveSettings() {
-    if (!this.semanticSettings) return;
-
+  saveSettings() {
+    if (!this.semanticSettings || this.#disposed) return Promise.resolve();
+    const settings = { ...this.semanticSettings };
+    const revision = ++this.#settingsRevision;
+    const lifetime = this.#lifetime;
     this.isSaving = true;
-    try {
-      this.semanticSettings = await invoke<SemanticSettings>('set_semantic_settings', {
-        settings: this.semanticSettings
-      });
-      await this.loadSemanticState();
-    } catch (error) {
-      console.error('Failed to save semantic settings:', error);
-    } finally {
-      this.isSaving = false;
-    }
+    this.semanticLayerError = null;
+    const write = this.#settingsWrites.catch(() => undefined).then(async () => {
+      try {
+        const saved = await invoke<SemanticSettings>('set_semantic_settings', { settings });
+        if (lifetime !== this.#lifetime || revision !== this.#settingsRevision) return;
+        this.semanticSettings = saved;
+        await this.loadSemanticState();
+      } catch (error) {
+        if (lifetime !== this.#lifetime || revision !== this.#settingsRevision) return;
+        console.error('Failed to save semantic settings:', error);
+        this.semanticLayerError = String(error);
+      } finally {
+        if (lifetime === this.#lifetime && revision === this.#settingsRevision) this.isSaving = false;
+      }
+    });
+    this.#settingsWrites = write;
+    return write;
   }
 
   updateSetting = <Key extends keyof SemanticSettings>(
@@ -587,26 +668,29 @@ export class SettingsStore {
   };
 
   runAction = async (command: SemanticAction) => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
     try {
-      if (command === 'retry_semantic_index') {
-        await retrySemanticIndex();
-      } else {
-        await invoke(command);
-      }
+      await invoke(command);
+      if (lifetime !== this.#lifetime) return;
       await this.loadSemanticState();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error(`Failed to run ${command}:`, error);
       this.semanticLayerError = String(error);
       this.semanticLayerMessage = null;
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isRunningAction = false;
     }
   };
 
   downloadEmbeddingModel = async () => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     if (this.isRunningAction) return;
     this.isRunningAction = true;
     this.semanticLayerError = null;
@@ -616,24 +700,30 @@ export class SettingsStore {
       await invoke<SemanticModelDownloadResult>(
         'download_semantic_embedding_model'
       );
-      this.semanticLayerMessage = 'Starting local search… The first load can take a few minutes.';
+      if (lifetime === this.#lifetime) this.semanticLayerMessage = 'Starting local search… The first load can take a few minutes.';
       await invoke('prepare_semantic_model');
-      await retrySemanticIndex();
+      await invoke<void>('retry_semantic_index');
+      if (lifetime !== this.#lifetime) return;
       this.semanticLayerMessage = 'Local search is set up. Your notes will now be indexed.';
       this.semanticLayerError = null;
       await this.loadSemanticState();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to download embedding model:', error);
       this.semanticLayerError = String(error);
       this.semanticLayerMessage = null;
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isRunningAction = false;
     }
   };
 
   clearDebugMetrics = async () => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     try {
       await invoke('clear_semantic_debug_metrics');
+      if (lifetime !== this.#lifetime) return;
       await this.loadSemanticState();
     } catch (error) {
       console.error('Failed to clear semantic debug metrics:', error);
@@ -641,38 +731,37 @@ export class SettingsStore {
   };
 
   clearAtlasCache = async () => {
+    if (this.#disposed) return;
+    const lifetime = this.#lifetime;
     this.isRunningAction = true;
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
     try {
-      await invoke('clear_atlas_cache');
-      atlasStore.invalidateCachedResponse();
+      await atlasStore.clearCache();
+      if (lifetime !== this.#lifetime) return;
       this.semanticLayerMessage =
         'Map cache cleared. Re-open Map to run a full cold generation.';
       this.semanticLayerError = null;
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       console.error('Failed to clear atlas cache:', error);
       this.semanticLayerError = String(error);
       this.semanticLayerMessage = null;
     } finally {
+      if (lifetime !== this.#lifetime) return;
       this.isRunningAction = false;
     }
   };
 
   async saveVaultDirectory() {
+    if (this.#disposed) return;
     const operation = ++this.#vaultSaveGeneration;
-    const admission = appStore.beginSnapshotAdmission('vault');
     this.isSavingVault = true;
     this.vaultSaveError = null;
     try {
-      const nextVaultInfo = await invoke<VaultInfo>('set_vault_directory', {
-        path: this.vaultPathInput.trim() === '' ? null : this.vaultPathInput.trim()
-      });
+      await this.app.stageVaultSelection(this.vaultPathInput.trim() || null);
       if (operation !== this.#vaultSaveGeneration) return;
-      const admitted = appStore.admitSnapshot({ vault: nextVaultInfo }, admission).vault;
-      this.#syncVaultSnapshot(
-        admitted || this.vaultInfo?.selectedPath === nextVaultInfo.selectedPath
-      );
+      this.#syncVaultSnapshot(true);
     } catch (error) {
       if (operation !== this.#vaultSaveGeneration) return;
       console.error('Failed to save vault directory:', error);
@@ -684,12 +773,13 @@ export class SettingsStore {
 
   async handleVisibilityChange() {
     if (document.visibilityState === 'visible') {
-      await refreshSettingsForVisibility(this.activeGeneralSection, {
-        loadSemanticState: () => this.loadSemanticState(),
-        loadSemanticStatus: () => this.loadSemanticStatus(),
-        loadVaultInfo: () => this.loadVaultInfo(),
-        loadForgottenNotes: () => this.loadForgottenNotes()
-      });
+      switch (this.activeGeneralSection) {
+        case 'search': await this.loadSemanticState(); break;
+        case 'vault': await this.loadVaultInfo(); break;
+        case 'forgetting': await this.loadForgottenNotes(); break;
+        case 'history': await this.loadHistoryHealth(); break;
+        default: await this.loadSemanticStatus();
+      }
       this.#syncSemanticPolling();
       return;
     }
@@ -704,27 +794,34 @@ export class SettingsStore {
 
     this.#vaultChangeRefreshTimer = window.setTimeout(() => {
       this.#vaultChangeRefreshTimer = null;
-      void refreshSettingsAfterVaultChange({
-        loadSemanticStatus: () => this.loadSemanticStatus(),
-        loadVaultInfo: () => this.loadVaultInfo(),
-        loadForgottenNotes: () => this.loadForgottenNotes()
-      });
+      void this.loadSemanticStatus();
+      void this.loadForgottenNotes();
       void this.loadHistoryHealth();
     }, delayMs);
   }
 
-  async initialize() {
+  initialize() {
+    if (this.#initialization) return this.#initialization;
+    this.#disposed = false;
+    this.#initialization = this.#initialize(this.#lifetime);
+    return this.#initialization;
+  }
+
+  async #initialize(lifetime: number) {
     try {
-      await appStore.bootstrap();
+      await this.app.bootstrap();
     } catch (error) {
+      if (lifetime !== this.#lifetime) return;
       this.settingsLoadError = String(error);
+      this.#initialization = null;
       return;
     }
+    if (lifetime !== this.#lifetime) return;
     this.#syncVaultSnapshot();
     this.#disposeVaultNoteChanged?.();
     this.#disposeSemanticStatus?.();
     this.#disposeVaultChanged?.();
-    this.#disposeVaultNoteChanged = appStore.subscribeVaultNoteChanged((payload) => {
+    this.#disposeVaultNoteChanged = this.app.subscribeVaultNoteChanged((payload) => {
       if (payload.documentKind && payload.documentKind !== 'note') return;
       this.#scheduleVaultChangeRefresh();
     });
@@ -732,16 +829,37 @@ export class SettingsStore {
     // save, rebuild/pause/resume, vault change). Reduce to listening
     // instead of polling those code paths; we still poll while indexing
     // is in progress because background workers don't currently emit.
-    this.#disposeSemanticStatus = appStore.subscribeSemanticStatusChanged(() => {
+    this.#disposeSemanticStatus = this.app.subscribeSemanticStatusChanged(() => {
       this.#syncSemanticPolling();
     });
-    this.#disposeVaultChanged = appStore.subscribeVaultChanged(() => {
+    this.#disposeVaultChanged = this.app.subscribeVaultChanged(() => {
       this.#syncVaultSnapshot();
     });
     await Promise.all([this.loadSemanticState(), this.loadForgottenNotes()]);
   }
 
   dispose() {
+    this.#disposed = true;
+    this.#lifetime += 1;
+    this.#historyRevision += 1;
+    this.#settingsRevision += 1;
+    this.#missingNotesGeneration += 1;
+    this.#vaultSaveGeneration += 1;
+    this.#initialization = null;
+    this.#semanticStateRequest = null;
+    this.#semanticStatusRequest = null;
+    this.#forgottenNotesRequest = null;
+    this.isLoadingForgottenNotes = false;
+    this.isRunningHistoryAction = false;
+    this.isSaving = false;
+    this.isSavingVault = false;
+    this.isRunningAction = false;
+    this.isPickingVault = false;
+    this.isLoadingVaultFolders = false;
+    this.isCreatingVaultFolder = false;
+    this.isUpdatingForgottenNotes = false;
+    this.isUpdatingMissingNotes = false;
+    this.loadingMissingTimelineNoteId = null;
     this.#stopSemanticPolling();
     if (this.#vaultChangeRefreshTimer) {
       window.clearTimeout(this.#vaultChangeRefreshTimer);
@@ -756,6 +874,6 @@ export class SettingsStore {
   }
 }
 
-export function createSettingsStore() {
-  return new SettingsStore();
+export function createSettingsStore(app: AppStore = appStore) {
+  return new SettingsStore(app);
 }
