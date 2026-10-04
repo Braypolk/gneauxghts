@@ -527,6 +527,8 @@ export function installBrowserE2eBackend() {
 
   const callbacks = new Map<number, TauriCallback>();
   const invocations: InvokeRecord[] = [];
+  let atlasOverride: VaultAtlasResponse | null = null;
+  const eventHandlers = new Map<number, { event: string; handler: number }>();
   let callbackId = 0;
   let activeNote = notes.get('note-alpha')!;
   const pinnedNoteIds = new Set<string>();
@@ -562,6 +564,7 @@ export function installBrowserE2eBackend() {
     }
 
     if (command === 'get_vault_atlas') {
+      if (atlasOverride) return atlasOverride;
       return {
         status: 'ready', reason: null, revision: 1, generatedAtMillis: 1,
         structuralGeneration: 'browser-map', labelGeneration: null,
@@ -577,6 +580,11 @@ export function installBrowserE2eBackend() {
         })),
         links: [], clouds: []
       } satisfies VaultAtlasResponse;
+    }
+
+    if (command === 'search_vault_atlas') {
+      const terms = String(args.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      return {status:'ready', reason:null, query:args.query, generatedAtMillis:Date.now(), matches:[...notes.values()].filter(note=>terms.every(term=>`${note.title} ${note.path} ${note.markdown}`.toLowerCase().includes(term))).map(note=>({noteId:note.noteId,notePath:note.path,documentKind:'note',score:1,lexicalScore:1,semanticScore:0,structuralScore:0,reasonLabels:['Fixture body match']}))};
     }
 
     if (command === 'list_tasks' || command === 'get_task_group' || command === 'set_task_due_date') {
@@ -894,8 +902,8 @@ export function installBrowserE2eBackend() {
     if (command === 'retrieve_note_context') {
       return { status: 'ready', scope: args.scope ?? 'note', reason: null, items: [] };
     }
-    if (command === 'plugin:event|listen') return callbackId++;
-    if (command === 'plugin:event|unlisten') return null;
+    if (command === 'plugin:event|listen') { const id = callbackId++; eventHandlers.set(id, {event:String(args.event),handler:Number(args.handler)}); return id; }
+    if (command === 'plugin:event|unlisten') { eventHandlers.delete(Number(args.eventId)); return null; }
     if (command.includes('list_') || command.includes('_list_')) return [];
     if (command.includes('get_settings')) return null;
     return null;
@@ -925,6 +933,10 @@ export function installBrowserE2eBackend() {
 
   window.__GNEAUXGHTS_E2E__ = {
     invocations,
+    setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
+    emit(channel: string, payload: unknown) {
+      for (const [id, listener] of eventHandlers) if (listener.event === channel) callbacks.get(listener.handler)?.({event:channel, id, payload});
+    },
     holdSave(fail = false) {
       let release!: () => void;
       const promise = new Promise<void>(resolve => { release = resolve; });
@@ -955,6 +967,8 @@ declare global {
     __TAURI_INTERNALS__: Record<string, unknown>;
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
+      setAtlas(response: VaultAtlasResponse): void;
+      emit(channel: string, payload: unknown): void;
       holdSave(fail?: boolean): void;
       releaseSave(): void;
       seedImageAsset(name: string): void;

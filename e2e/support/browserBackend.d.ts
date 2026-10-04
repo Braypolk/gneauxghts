@@ -14,6 +14,8 @@ declare global {
   interface Window {
     __GNEAUXGHTS_E2E__?: {
       invocations: BrowserE2EInvocation[];
+      setAtlas(response: import('../../src/lib/types/atlas').VaultAtlasResponse): void;
+      emit(channel: string, payload: unknown): void;
       holdSave(fail?: boolean): void;
       releaseSave(): void;
       seedImageAsset(name: string): void;

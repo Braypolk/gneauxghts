@@ -1174,6 +1174,7 @@ mod tests {
                 centrality: 0.0,
                 importance: 0.0,
                 last_viewed_at_millis: None,
+                effective_open_count: None,
                 created_at_millis: 0,
                 updated_at_millis: 0,
                 preview: String::new(),

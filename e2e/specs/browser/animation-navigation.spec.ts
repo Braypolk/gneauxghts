@@ -60,7 +60,7 @@ describe('navigation motion ownership', () => {
     expect(result.lineBehaviors).toEqual(['instant']);
   });
 
-  it('updates map layers once per hover while keeping camera controls working', async () => {
+  it('keeps hover from moving the map while fit, zoom and region focus work', async () => {
     await ready();
     const fixture: VaultAtlasResponse = {
       status: 'ready', reason: null, revision: 1, generatedAtMillis: 1,
@@ -95,52 +95,22 @@ describe('navigation motion ownership', () => {
       };
     }, fixture);
     await $('a[aria-label="Map"]').click();
-    await $('.atlas-surface canvas').waitForDisplayed({ timeout: 30_000 });
-    await browser.pause(400);
-    const result = await browser.executeAsync(async (done: (result: {
-      updates: number; layers: number; before: number; after: number; focusZoom: number; error?: string
-    }) => void) => {
-      try {
-        const corePath = performance.getEntriesByType('resource').find(entry => /deck.*core.*\.js/.test(entry.name))!.name;
-        const { Deck } = await import(corePath);
-        const original = Deck.prototype.setProps;
-        let instance: any;
-        let updates = 0;
-        Deck.prototype.setProps = function(props: any) {
-          instance = this;
-          if (props.layers) updates += 1;
-          return original.call(this, props);
-        };
-        const settle = () => new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
-        try {
-          document.querySelector<HTMLElement>('button[aria-label="Fit map to view"]')!.click();
-          await settle();
-          const before = instance.props.viewState.zoom;
-          updates = 0;
-          const cloudLayer = instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills');
-          const cloud = cloudLayer.props.data[0];
-          cloudLayer.props.onHover({ object: cloud });
-          await settle();
-          const hoverUpdates = updates;
-          window.dispatchEvent(new KeyboardEvent('keydown', { key: '+', bubbles: true }));
-          await settle();
-          const after = instance.props.viewState.zoom;
-          instance.props.layers.find((layer: any) => layer.id === 'atlas-cloud-fills').props.onClick({ object: cloud });
-          await settle();
-          [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Focus cloud'))!.click();
-          await settle();
-          done({ updates: hoverUpdates, layers: instance.props.layers.length, before, after, focusZoom: instance.props.viewState.zoom });
-        } finally {
-          Deck.prototype.setProps = original;
-        }
-      } catch (error) {
-        done({ updates: 0, layers: 0, before: 0, after: 0, focusZoom: 0, error: String(error) });
-      }
-    });
-    expect(result.error).toBeUndefined();
-    expect(result.updates).toBe(1);
-    expect(result.layers).toBeGreaterThan(0);
-    expect(result.after).toBeGreaterThan(result.before);
-    expect(result.focusZoom).toBeGreaterThanOrEqual(1.2);
+    const node = $('[data-node-id="node-0"] .dot-body');
+    await node.waitForDisplayed({ timeout: 30_000 });
+    const before = await $('.map-world').getAttribute('transform');
+    await node.moveTo();
+    await expect($('.hover-preview strong')).toHaveText('Map note 0');
+    expect(await $('.map-world').getAttribute('transform')).toEqual(before);
+    await node.click();
+    await browser.keys('+');
+    expect(await $('.map-world').getAttribute('transform')).not.toEqual(before);
+    await $('[aria-label="Fit map to view"]').click();
+    expect(await $('.map-world').getAttribute('transform')).toEqual(before);
+    await browser.execute(() => document.querySelector<SVGGElement>('[data-region-id="cloud"]')!.focus());
+    await browser.keys('Enter');
+    await expect(browser).toHaveUrl(expect.stringMatching(/\/map$/));
+    await expect($('.region-name')).toHaveText('Animation cloud');
+    await expect($('.reader')).not.toExist();
+    expect(await $('.map-world').getAttribute('transform')).not.toEqual(before);
   });
 });
