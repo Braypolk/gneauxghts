@@ -1,6 +1,37 @@
 use super::*;
 use crate::test_support::TestDir;
 
+#[test]
+fn atlas_activity_payload_preserves_unknown_history_and_reads_older_cache_nodes() {
+    let old = serde_json::json!({
+        "id":"note", "noteId":"note", "notePath":"/vault/note.md", "title":"Note", "fileName":"note.md", "documentKind":"note",
+        "x":1.0, "y":2.0, "radius":5.0, "cloudId":null, "parentCloudId":null, "childCloudId":null, "clusterId":null, "subclusterId":null,
+        "centrality":0.5, "importance":0.5, "lastViewedAtMillis":null, "createdAtMillis":1, "updatedAtMillis":1, "preview":"body", "tags":[], "isolated":true
+    });
+    let mut nodes = vec![serde_json::from_value::<AtlasNode>(old).unwrap()];
+    assert_eq!(nodes[0].effective_open_count, None);
+    let viewed = 100;
+    let now = viewed + crate::state::OPEN_COUNT_DECAY_INTERVAL_MS * 2;
+    let activity = HashMap::from([(
+        "note".to_string(),
+        NoteActivity {
+            last_viewed_at_millis: viewed,
+            open_count: 5,
+            last_counted_open_at_millis: viewed,
+        },
+    )]);
+    apply_opening_activity(&mut nodes, &activity, now);
+    assert_eq!(nodes[0].effective_open_count, Some(3));
+    assert_eq!(
+        serde_json::to_value(&nodes[0]).unwrap()["effectiveOpenCount"],
+        3
+    );
+    assert_eq!((nodes[0].x, nodes[0].y), (1.0, 2.0));
+    apply_opening_activity(&mut nodes, &HashMap::new(), now);
+    assert_eq!(nodes[0].effective_open_count, None);
+    assert_eq!(nodes[0].last_viewed_at_millis, None);
+}
+
 fn test_dependencies(source_key: &str, input_hash: &str) -> AtlasDependencies {
     AtlasDependencies {
         source_key: source_key.to_string(),

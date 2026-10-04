@@ -376,7 +376,8 @@ describe('AtlasStore asynchronous admission', () => {
   it('joins initialization and never subscribes after disposal during visibility loading', async () => {
     const visibility = deferred<AtlasChatVisibility>();
     const loadVisibility = vi.fn(() => visibility.promise);
-    const store = new AtlasStore(async () => atlasResponse(1), loadVisibility);
+    const loader = vi.fn(async () => atlasResponse(1));
+    const store = new AtlasStore(loader, loadVisibility);
     const first = store.initialize();
     const joined = store.initialize();
     expect(first).toBe(joined);
@@ -387,6 +388,7 @@ describe('AtlasStore asynchronous admission', () => {
     expect(appStoreMock.subscribeNoteSaved).not.toHaveBeenCalled();
     expect(store.chatVisibility).toBe('hidden');
     expect(store.response).toBeNull();
+    expect(loader).not.toHaveBeenCalled();
   });
 
   it('does not let an old refresh clear a newer lifetime loading state', async () => {
@@ -412,7 +414,12 @@ describe('AtlasStore asynchronous admission', () => {
     const store = new AtlasStore(async () => atlasResponse(1), async () => 'hidden', async () => undefined, () => result.promise);
     store.setSearchQuery('old');
     const searching = store.runSearch();
-    if (change === 'query') store.setSearchQuery('new');
+    if (change === 'query') {
+      store.setSearchQuery('new');
+      expect(store.isSearching).toBe(false);
+      // Returning to the same query must not readmit the older request.
+      store.setSearchQuery('old');
+    }
     if (change === 'clear') store.setSearchQuery('');
     if (change === 'visibility') store.setChatVisibility('all');
     if (change === 'cache') await store.clearCache();
@@ -432,6 +439,25 @@ describe('AtlasStore asynchronous admission', () => {
     expect(store.searchError).toBeNull();
     store.dispose();
   });
+
+  it('clears a removed selection and retains the accepted response after refresh fails', async () => {
+    const initial = atlasResponse(1);
+    const loader = vi.fn()
+      .mockResolvedValueOnce(initial)
+      .mockResolvedValueOnce({ ...initial, nodes: [] })
+      .mockRejectedValueOnce(new Error('Unavailable'));
+    const store = new AtlasStore(loader);
+    await store.refresh();
+    store.selectNode(initial.nodes[0]);
+    await store.refresh();
+    expect(store.selectedNodeId).toBeNull();
+    const last = store.response;
+    await store.refresh();
+    expect(store.response).toBe(last);
+    expect(store.error).toContain('Unavailable');
+    store.dispose();
+  });
+
 });
 
 describe('Atlas activation freshness', () => {

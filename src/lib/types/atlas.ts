@@ -34,6 +34,8 @@ export interface AtlasNode {
   centrality: number;
   importance: number;
   lastViewedAtMillis: number | null;
+  /** Backend-decayed opening weight; absent in older cached/fixture payloads. */
+  effectiveOpenCount?: number | null;
   createdAtMillis: number;
   updatedAtMillis: number;
   preview: string;

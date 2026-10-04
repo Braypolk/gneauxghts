@@ -93,6 +93,7 @@ export function createPaneViewModelFactory(
         ...common,
         paneKind,
         canPin: noteId !== null,
+        canOpenFileLocation: getDocumentPath(document) !== null,
         isPinned: noteId !== null && deps.isNotePinned(noteId),
         documentStatus: getDocumentStatusViewModel(document),
         isSlashMenuOpen:

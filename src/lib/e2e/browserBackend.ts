@@ -499,6 +499,7 @@ function historicalDiff(
 
   const callbacks = new Map<number, TauriCallback>();
   const invocations: InvokeRecord[] = [];
+  let atlasOverride: VaultAtlasResponse | null = null;
   let callbackId = 0;
   let createdNoteCount = 0;
   const listeners = new Map<number, { event: string; handler: number }>();
@@ -538,6 +539,7 @@ function historicalDiff(
     }
 
     if (command === 'get_vault_atlas') {
+      if (atlasOverride) return atlasOverride;
       return {
         status: 'ready', reason: null, revision: 1, generatedAtMillis: 1,
         structuralGeneration: 'browser-map', labelGeneration: null,
@@ -553,6 +555,11 @@ function historicalDiff(
         })),
         links: [], clouds: []
       } satisfies VaultAtlasResponse;
+    }
+
+    if (command === 'search_vault_atlas') {
+      const terms = String(args.query ?? '').toLowerCase().split(/\s+/).filter(Boolean);
+      return {status:'ready', reason:null, query:args.query, generatedAtMillis:Date.now(), matches:[...notes.values()].filter(note=>terms.every(term=>`${note.title} ${note.path} ${note.markdown}`.toLowerCase().includes(term))).map(note=>({noteId:note.noteId,notePath:note.path,documentKind:'note',score:1,lexicalScore:1,semanticScore:0,structuralScore:0,reasonLabels:['Fixture body match']}))};
     }
 
     if (command === 'list_tasks' || command === 'get_task_group' || command === 'set_task_due_date') {
@@ -928,6 +935,7 @@ function historicalDiff(
 
   const bridge = {
     invocations,
+    setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
     seedChatControls() { Object.assign(overrides, createChatControlsFixture((event, payload) => bridge.emit(event, payload))); },
     emit(event: string, payload: unknown) {
       for (const [id, listener] of [...listeners]) {

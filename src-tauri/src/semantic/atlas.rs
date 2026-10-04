@@ -236,6 +236,8 @@ pub(crate) struct AtlasNode {
     pub(crate) centrality: f32,
     pub(crate) importance: f32,
     pub(crate) last_viewed_at_millis: Option<u64>,
+    #[serde(default)]
+    pub(crate) effective_open_count: Option<u64>,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
     pub(crate) preview: String,

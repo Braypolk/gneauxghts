@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
   import { createNativeContractProbe, type NativeContractProbe } from "$lib/e2e/nativeContractProbe";
+  import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
@@ -1256,6 +1257,16 @@
       if (document.handle === documentHandle) documentEditing.updateTags(document, tags);
     },
     onOpenHistory: (paneId) => historyMode.enter(paneId),
+    onOpenFileLocation: async (paneId) => {
+      const path = getDocumentPath(getPaneDocumentSession(paneId));
+      if (!path) return;
+      try {
+        await revealItemInDir(path);
+      } catch (error) {
+        console.error("Failed to open file location:", error);
+        window.alert("Could not open the file location. Please try again.");
+      }
+    },
     onKeepMyEdits: async (paneId) => {
       await documentConflicts.keepMyEdits(
         getPaneDocumentSession(paneId),

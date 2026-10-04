@@ -1,4 +1,5 @@
 //! Private Atlas publication implementation; one semantic owner remains authoritative.
+use crate::state::effective_open_count;
 use rayon::prelude::*;
 use std::{
     fs::{self, File},
@@ -65,6 +66,23 @@ fn default_medoid_label_source() -> String {
 }
 
 use super::*;
+
+// Opening history is mutable device-local metadata, never a geometry input.
+fn apply_opening_activity(
+    nodes: &mut [AtlasNode],
+    activity_by_note_id: &HashMap<String, NoteActivity>,
+    now: u64,
+) {
+    for node in nodes {
+        let activity = node
+            .note_id
+            .as_ref()
+            .and_then(|id| activity_by_note_id.get(id));
+        node.last_viewed_at_millis = activity.map(|item| item.last_viewed_at_millis);
+        node.effective_open_count = activity
+            .map(|item| effective_open_count(item.open_count, item.last_viewed_at_millis, now));
+    }
+}
 
 fn atlas_root(cache_dir: &Path) -> PathBuf {
     cache_dir.join("atlas")
@@ -367,6 +385,7 @@ impl AtlasWorkerContext {
                 centrality: node.centrality,
                 importance: node.importance,
                 last_viewed_at_millis: node.last_viewed_at_millis,
+                effective_open_count: None,
                 created_at_millis: node.created_at_millis,
                 updated_at_millis: node.updated_at_millis,
                 preview: node.preview.clone(),
@@ -741,14 +760,8 @@ impl ActiveSemanticState {
             self.work_queue.request_wake()?;
         }
         if let Some(mut response) = published.take() {
-            for node in &mut response.nodes {
-                let last_viewed = node
-                    .note_id
-                    .as_ref()
-                    .and_then(|id| activity_by_note_id.get(id))
-                    .map(|activity| activity.last_viewed_at_millis);
-                node.last_viewed_at_millis = last_viewed;
-            }
+            let now = current_time_millis()?;
+            apply_opening_activity(&mut response.nodes, &activity_by_note_id, now);
             response.status = "ready".to_string();
             response.stale = !compatible;
             response.publish_in_progress = building || queued || label_building || label_queued;
