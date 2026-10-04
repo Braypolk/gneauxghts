@@ -31,6 +31,7 @@
   let pendingZoomPoint: Point | null = null;
   let lastQuery = $state('');
   let lastSearchDataset = $state('');
+  let hasPlotSize = $state(false), framedDataset = $state('');
   const palette = ['#6a9fac', '#aa8cbd', '#ad9a69', '#7f9c7d', '#b58895', '#879aca'];
   let geometry = $derived.by(() => {
     const coordinates = [...response.nodes.map((node) => [node.x, node.y]), ...response.clouds.flatMap((cloud) => cloud.hull)]
@@ -74,65 +75,97 @@
     const name = (node.fileName || node.title).replace(/\.md$/i, '');
     return name.length > titleLimit ? `${name.slice(0, titleLimit - 1).trimEnd()}…` : name;
   }
-  // Account for block dimensions from the start. This layout depends only on
-  // the dataset; the camera, selection, hover and query cannot repack it.
+  // Pack within each original root, then separate whole regions. Individual
+  // notes cannot spill into a neighboring region to solve a global collision.
   let blockLayout = $derived.by(() => {
-    const placed: { x: number; y: number; width: number; height: number }[] = [];
-    return [...geometry.nodes].sort((a, b) => a.y - b.y || a.x - b.x || a.node.id.localeCompare(b.node.id)).map((mark) => {
-      const name = tileTitle(mark.node), lines: string[] = [];
-      let remaining = name;
-      while (remaining.length > 25) {
-        const space = remaining.lastIndexOf(' ', 25);
-        const split = space > 10 ? space : 25;
-        lines.push(remaining.slice(0, split)); remaining = remaining.slice(split).trimStart();
-      }
-      lines.push(remaining);
-      const tileWidth = 190, tileHeight = Math.max(48, lines.length * 16 + 16);
-      const anchor = { x: mark.x, y: mark.y };
-      let box = { x: anchor.x - tileWidth / 2, y: anchor.y - tileHeight / 2, width: tileWidth, height: tileHeight };
-      const collides = (candidate: typeof box) => placed.some((other) => candidate.x < other.x + other.width + 12 && candidate.x + candidate.width + 12 > other.x && candidate.y < other.y + other.height + 12 && candidate.y + candidate.height + 12 > other.y);
-      // Nearest available space around the native position. No screen-edge clamp:
-      // dense regions gain breathing room and remain reachable by panning.
-      for (let ring = 0; collides(box); ring++) {
-        const radius = 20 + ring * 16;
-        const attempts = Math.max(12, Math.ceil(radius / 8));
-        let found = false;
-        for (let i = 0; i < attempts; i++) {
-          const angle = i / attempts * Math.PI * 2;
-          const candidate = { ...box, x: anchor.x + Math.cos(angle) * radius - tileWidth / 2, y: anchor.y + Math.sin(angle) * radius - tileHeight / 2 };
-          if (!collides(candidate)) { box = candidate; found = true; break; }
+    const roots = new Map(geometry.clouds.filter((item) => !item.cloud.parentId).map((item) => [item.cloud.id, item]));
+    const groups = [...new Set(geometry.nodes.map((mark) => mark.rootId ?? mark.node.id))].map((id) => {
+      const marks = geometry.nodes.filter((mark) => (mark.rootId ?? mark.node.id) === id);
+      const anchor = roots.get(id)?.center ?? marks[0];
+      const placed: { x: number; y: number; width: number; height: number }[] = [];
+      const tiles = [...marks].sort((a, b) => a.y - b.y || a.x - b.x || a.node.id.localeCompare(b.node.id)).map((mark) => {
+        const lines: string[] = [];
+        let remaining = tileTitle(mark.node);
+        while (remaining.length > 25) {
+          const space = remaining.lastIndexOf(' ', 25), split = space > 10 ? space : 25;
+          lines.push(remaining.slice(0, split)); remaining = remaining.slice(split).trimStart();
         }
-        if (found) break;
-      }
-      placed.push(box);
-      return { ...box, node: mark.node, color: mark.color, lines };
+        lines.push(remaining);
+        const tileWidth = 190, tileHeight = Math.max(48, lines.length * 16 + 16);
+        const local = { x: mark.x - anchor.x, y: mark.y - anchor.y };
+        let box = { x: local.x - tileWidth / 2, y: local.y - tileHeight / 2, width: tileWidth, height: tileHeight };
+        const collides = (candidate: typeof box) => placed.some((other) => candidate.x < other.x + other.width + 14 && candidate.x + candidate.width + 14 > other.x && candidate.y < other.y + other.height + 14 && candidate.y + candidate.height + 14 > other.y);
+        for (let ring = 0; collides(box); ring++) {
+          const radius = 20 + ring * 16, attempts = Math.max(12, Math.ceil(radius / 8));
+          let found = false;
+          for (let i = 0; i < attempts; i++) {
+            const angle = i / attempts * Math.PI * 2;
+            const candidate = { ...box, x: local.x + Math.cos(angle) * radius - tileWidth / 2, y: local.y + Math.sin(angle) * radius - tileHeight / 2 };
+            if (!collides(candidate)) { box = candidate; found = true; break; }
+          }
+          if (found) break;
+        }
+        placed.push(box);
+        return { ...box, node: mark.node, rootId: mark.rootId, color: mark.color, lines };
+      });
+      const center = { x: (Math.min(...tiles.map((tile) => tile.x)) + Math.max(...tiles.map((tile) => tile.x + tile.width))) / 2,
+        y: (Math.min(...tiles.map((tile) => tile.y)) + Math.max(...tiles.map((tile) => tile.y + tile.height))) / 2 };
+      for (const tile of tiles) { tile.x -= center.x; tile.y -= center.y; }
+      const radius = Math.max(...tiles.flatMap((tile) => [Math.hypot(tile.x, tile.y), Math.hypot(tile.x + tile.width, tile.y), Math.hypot(tile.x, tile.y + tile.height), Math.hypot(tile.x + tile.width, tile.y + tile.height)])) + 80;
+      return { id, anchor, x: anchor.x, y: anchor.y, radius, tiles };
     });
+    // Start by dilating the original arrangement, retaining its compass ordering.
+    // Resolve the remaining close pairs by moving complete regions, not notes.
+    const nearestRatios = groups.map((a) => {
+      const neighbors = groups.filter((b) => a !== b).map((b) => ({ distance: Math.hypot(a.anchor.x - b.anchor.x, a.anchor.y - b.anchor.y), needed: a.radius + b.radius + 110 })).sort((a, b) => a.distance - b.distance);
+      return neighbors.length ? neighbors[0].needed / Math.max(1, neighbors[0].distance) : 1;
+    }).sort((a, b) => a - b);
+    const dilation = Math.max(1, nearestRatios[Math.floor(nearestRatios.length / 2)] ?? 1);
+    for (const group of groups) { group.x *= dilation; group.y *= dilation; }
+    for (let pass = 0; pass < 240; pass++) {
+      let maximumOverlap = 0;
+      for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j];
+        const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
+        const overlap = a.radius + b.radius + 110 - distance;
+        if (overlap <= 0) continue;
+        maximumOverlap = Math.max(maximumOverlap, overlap);
+        const angle = (i * 7 + j * 3) * 2.4;
+        const ux = distance > 0.001 ? dx / distance : Math.cos(angle), uy = distance > 0.001 ? dy / distance : Math.sin(angle);
+        const shift = (overlap + 0.1) / 2;
+        a.x -= ux * shift; a.y -= uy * shift; b.x += ux * shift; b.y += uy * shift;
+      }
+      if (maximumOverlap < 0.1) break;
+    }
+    return groups.flatMap((group) => group.tiles.map((tile) => ({ ...tile, x: tile.x + group.x, y: tile.y + group.y })));
   });
   let blockById = $derived(new Map(blockLayout.map((tile) => [tile.node.id, { ...tile, center: { x: tile.x + tile.width / 2, y: tile.y + tile.height / 2 } }])));
-  function convexHull(points: Point[]): Point[] {
-    const sorted = [...points].sort((a, b) => a.x - b.x || a.y - b.y);
-    if (sorted.length < 3) return sorted;
-    const cross = (a: Point, b: Point, c: Point) => (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x);
-    const half = (values: Point[]) => {
-      const result: Point[] = [];
-      for (const point of values) {
-        while (result.length > 1 && cross(result[result.length - 2], result[result.length - 1], point) <= 0) result.pop();
-        result.push(point);
-      }
-      return result.slice(0, -1);
-    };
-    return [...half(sorted), ...half([...sorted].reverse())];
+  function softenHull(points: Point[]) {
+    let current = points;
+    for (let pass = 0; pass < 2; pass++) {
+      current = current.flatMap((a, i) => {
+        const b = current[(i + 1) % current.length];
+        return [{ x: a.x * 0.75 + b.x * 0.25, y: a.y * 0.75 + b.y * 0.25 }, { x: a.x * 0.25 + b.x * 0.75, y: a.y * 0.25 + b.y * 0.75 }];
+      });
+    }
+    return current;
   }
-  // Topic boundaries now enclose their actual blocks, rather than the old dots.
+  // Same radial envelope and smoothing approach as original Atlas, with the
+  // actual block corners contributing extent instead of just dot centers.
   let blockClouds = $derived(geometry.clouds.map((item) => {
-    const members = blockLayout.filter((tile) => item.cloud.memberNodeIds.includes(tile.node.id));
-    const points = convexHull(members.flatMap((tile) => [
-      { x: tile.x - 22, y: tile.y - 34 }, { x: tile.x + tile.width + 22, y: tile.y - 34 },
-      { x: tile.x + tile.width + 22, y: tile.y + tile.height + 22 }, { x: tile.x - 22, y: tile.y + tile.height + 22 }
-    ]));
-    const top = points.length ? Math.min(...points.map((point) => point.y)) : 0;
-    const topEdge = points.filter((point) => point.y === top);
-    return { ...item, points, labelPoint: { x: topEdge.length ? Math.min(...topEdge.map((point) => point.x)) + 22 : 0, y: top + 20 } };
+    const members = blockLayout.filter((tile) => item.cloud.parentId ? item.cloud.memberNodeIds.includes(tile.node.id) : tile.rootId === item.cloud.id);
+    if (!members.length) return { ...item, points: [], labelPoint: { x: 0, y: 0 } };
+    const minX = Math.min(...members.map((tile) => tile.x)), maxX = Math.max(...members.map((tile) => tile.x + tile.width));
+    const minY = Math.min(...members.map((tile) => tile.y)), maxY = Math.max(...members.map((tile) => tile.y + tile.height));
+    const center = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+    const corners = members.flatMap((tile) => [{ x: tile.x, y: tile.y }, { x: tile.x + tile.width, y: tile.y }, { x: tile.x + tile.width, y: tile.y + tile.height }, { x: tile.x, y: tile.y + tile.height }]);
+    const radial = Array.from({ length: 64 }, (_, i) => {
+      const angle = i / 64 * Math.PI * 2, dx = Math.cos(angle), dy = Math.sin(angle);
+      const extent = Math.max(...corners.map((point) => (point.x - center.x) * dx + (point.y - center.y) * dy));
+      const radius = Math.max(80, extent + 54);
+      return { x: center.x + dx * radius, y: center.y + dy * radius };
+    });
+    return { ...item, points: softenHull(radial), labelPoint: { x: (minX + maxX) / 2, y: minY - 22 } };
   }).filter((item) => item.points.length));
   let worldBounds = $derived.by(() => {
     const points = blockClouds.flatMap((cloud) => cloud.points).concat(blockLayout.flatMap((tile) => [{ x: tile.x, y: tile.y }, { x: tile.x + tile.width, y: tile.y + tile.height }]));
@@ -162,7 +195,15 @@
     examples: item.cloud.representativeNodeIds.map((id) => byId.get(id)?.node).filter((node): node is AtlasNode => !!node)
   })));
   let inspectedRegion = $derived(regions.find((item) => item.cloud.id === inspectedRegionId));
-  function inspectRegion(id: string) { closeCard(); inspectedRegionId = id; }
+  function inspectRegion(id: string) {
+    closeCard(); inspectedRegionId = id;
+    const region = blockClouds.find((item) => item.cloud.id === id);
+    if (!region) return;
+    const x = (Math.min(...region.points.map((point) => point.x)) + Math.max(...region.points.map((point) => point.x))) / 2;
+    const y = (Math.min(...region.points.map((point) => point.y)) + Math.max(...region.points.map((point) => point.y))) / 2;
+    clearZoomQueue(); zoom = 1;
+    panX = worldBounds.center.x - x; panY = worldBounds.center.y - y;
+  }
   let hoverPosition = $derived.by(() => {
     const tile = hovered ? blockById.get(hovered.node.id) : null;
     const point = tile ? screen({ x: tile.x + tile.width, y: tile.y }) : { x: 0, y: 0 };
@@ -241,7 +282,7 @@
   function movePan(event: PointerEvent) { if (!drag) return; const point = canvasPoint(event); panX = drag.originalX + point.x - drag.x; panY = drag.originalY + point.y - drag.y; }
   function stopPan(event: PointerEvent) { drag = null; if (svgElement.hasPointerCapture(event.pointerId)) svgElement.releasePointerCapture(event.pointerId); }
   function setZoomAt(next: number, point: Point) {
-    next = Math.max(0.04, Math.min(4, next));
+    next = Math.max(Math.min(0.04, fitScale * 0.5), Math.min(4, next));
     const ratio = next / zoom; panX = point.x - width / 2 - (point.x - width / 2 - panX) * ratio; panY = point.y - height / 2 - (point.y - height / 2 - panY) * ratio; zoom = next;
   }
   function clearZoomQueue() {
@@ -269,6 +310,12 @@
   }
   function reset() { clearZoomQueue(); zoom = fitScale; panX = 0; panY = 0; }
   $effect(() => {
+    if (!hasPlotSize) return;
+    const dataset = `${response.structuralGeneration}:${response.revision}:${response.nodes.length}`;
+    if (framedDataset === dataset) return;
+    framedDataset = dataset; reset();
+  });
+  $effect(() => {
     const text = query.trim();
     const dataset = `${response.structuralGeneration}:${response.revision}:${response.nodes.length}`;
     if (lastQuery === text && lastSearchDataset === dataset) return;
@@ -280,7 +327,7 @@
     if (first) { changeActive(first, true); browseOriginId = first.id; } else closeCard();
   });
   onMount(() => {
-    const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0 && entry.contentRect.height > 0) { width = entry.contentRect.width; height = entry.contentRect.height; } });
+    const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0 && entry.contentRect.height > 0) { width = entry.contentRect.width; height = entry.contentRect.height; hasPlotSize = true; } });
     if (plotElement) observer.observe(plotElement);
     return () => { observer.disconnect(); clearZoomQueue(); };
   });
@@ -288,7 +335,7 @@
 
 <svelte:window onkeydown={keyBrowse}/>
 <section class="fusion" aria-label="Atlas fusion hybrid visualization">
-  <header><div><h1>Atlas, with your notes within reach.</h1><p>One block map · titles scale with zoom · read without covering the map</p></div><span>{response.nodes.length} notes{query.trim() ? ` · ${matching.length} matches` : ''}</span></header>
+  <header><div><h1>Atlas, with your notes within reach.</h1><p>Spaced topic islands · titles scale with zoom · read without covering the map</p></div><span>{response.nodes.length} notes{query.trim() ? ` · ${matching.length} matches` : ''}</span></header>
   <div class="controls">
     <label>Connections <select bind:value={kind} aria-label="Fusion connection type"><option value="both">Linked + similar</option><option value="wikilink">Explicit links</option><option value="semantic">Semantic matches</option></select></label>
     <label>Strength <input type="range" min="0" max="1" step="0.05" bind:value={threshold} aria-label="Fusion connection strength"/><output>{Number(threshold).toFixed(2)}</output></label>
@@ -307,7 +354,7 @@
           {#each blockClouds.filter((item) => !item.cloud.parentId || showChildren) as item (item.cloud.id)}
             <polygon data-cloud-id={item.cloud.id} points={item.points.map((point) => `${point.x},${point.y}`).join(' ')} fill={item.color} fill-opacity={item.cloud.parentId ? 0.05 : 0.1} stroke={item.color} stroke-opacity="0.5" stroke-width="1.5" stroke-dasharray={item.cloud.parentId ? '5 5' : 'none'}/>
             <g role="button" tabindex="0" data-region-id={item.cloud.id} aria-label={`Explore region ${regionName(item.cloud.id, item.cloud.label)}`} onclick={() => inspectRegion(item.cloud.parentId ?? item.cloud.id)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspectRegion(item.cloud.parentId ?? item.cloud.id); } }}>
-              <text x={item.labelPoint.x} y={item.labelPoint.y} font-size="14" font-weight="600" fill="var(--color-muted-foreground)">{regionName(item.cloud.id, item.cloud.label).slice(0, 32)}</text>
+              <text x={item.labelPoint.x} y={item.labelPoint.y} text-anchor="middle" font-size="20" font-weight="550" fill="var(--color-muted-foreground)">{regionName(item.cloud.id, item.cloud.label).slice(0, 32)}</text>
             </g>
           {/each}
           <g class="tile-links" pointer-events="none">{#each links as link (link.id)}
@@ -316,7 +363,7 @@
           {/each}</g>
         <g class="filename-labels">
           {#each filenameLabels as label (label.node.id)}
-            <g class="note-tile" role="button" tabindex="0" data-node-id={label.node.id} data-filename-id={label.node.id} aria-label={`Pin ${label.node.fileName || label.node.title}`}
+            <g class="note-tile" role="button" tabindex="0" data-node-id={label.node.id} data-filename-id={label.node.id} data-root-id={label.rootId} aria-label={`Pin ${label.node.fileName || label.node.title}`}
               onmouseenter={() => hoveredId = label.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = label.node.id} onblur={() => hoveredId = null}
               onclick={() => pin(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(label.node); } }}>
               <title>{label.node.fileName || label.node.title}</title>
@@ -347,9 +394,9 @@
       </article>
     {/if}
     {#if !active}
-      <section class="region-guide" aria-label="Region guide">
+      {#key inspectedRegionId}<section class="region-guide" aria-label="Region guide">
         {#if inspectedRegion}
-          <div class="guide-heading"><strong>Notes in this region</strong><button onclick={() => inspectedRegionId = null}>All regions</button></div>
+          <div class="guide-heading"><strong>Notes in this region</strong><button onclick={() => { inspectedRegionId = null; reset(); }}>All regions</button></div>
           <label class="rename">Region name<input aria-label="Region name" value={inspectedRegion.name} oninput={(event) => regionNames = { ...regionNames, [inspectedRegion.cloud.id]: event.currentTarget.value }}/></label>
           <small class="rename-hint">Name changes stay in this prototype.</small>
           <p class="region-count">{inspectedRegion.cloud.noteCount} notes · examples from this region</p>
@@ -357,9 +404,9 @@
         {:else}
           <div class="guide-heading"><strong>Regions</strong><span>{regions.length}</span></div>
           <p class="guide-help">Example notes give each region context. Select a region to see more or rename it.</p>
-          <div class="region-list">{#each regions as region (region.cloud.id)}<button onclick={() => inspectedRegionId = region.cloud.id}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => node.title || node.fileName).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
+          <div class="region-list">{#each regions as region (region.cloud.id)}<button onclick={() => inspectRegion(region.cloud.id)}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => node.title || node.fileName).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
         {/if}
-      </section>
+      </section>{/key}
     {/if}
   </aside>
   </div>
