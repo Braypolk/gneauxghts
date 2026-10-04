@@ -202,17 +202,28 @@
   let fitScale = $derived(Math.min(Math.max(1, width - 48) / worldBounds.width, Math.max(1, height - 48) / worldBounds.height));
   let cameraScale = $derived(zoom);
   const screen = (point: Point): Point => ({ x: width / 2 + (point.x - worldBounds.center.x) * cameraScale + panX, y: height / 2 + (point.y - worldBounds.center.y) * cameraScale + panY });
-  let explicitDegree = $derived.by(() => {
-    const counts = new Map<string, Set<string>>();
-    for (const link of response.links.filter((link) => link.kind === 'wikilink')) {
-      if (!counts.has(link.sourceId)) counts.set(link.sourceId, new Set());
-      if (!counts.has(link.targetId)) counts.set(link.targetId, new Set());
-      counts.get(link.sourceId)!.add(link.targetId); counts.get(link.targetId)!.add(link.sourceId);
-    }
-    return new Map([...counts].map(([id, neighbors]) => [id, neighbors.size]));
-  });
-  const dotRadius = (id: string) => (5 + Math.min(5, Math.sqrt(explicitDegree.get(id) ?? 0))) * 0.65;
-  const visibleRadius = (id: string) => Math.max(2, dotRadius(id) * cameraScale);
+  // Published Atlas centrality includes weighted explicit and similarity links.
+  // Size expresses connectedness, independently of opening activity.
+  const connectedness = (node: AtlasNode) => Number.isFinite(node.centrality) ? Math.max(0, Math.min(1, node.centrality)) : 0;
+  const dotRadius = (id: string) => 3.25 + 3.25 * connectedness(byId.get(id)!.node);
+  // Keep relative sizes visible at overview, then scale linearly with the map.
+  const visibleRadius = (id: string) => Math.max(2 + 1.5 * connectedness(byId.get(id)!.node), dotRadius(id) * cameraScale);
+  const activityNow = Date.now();
+  function attention(node: AtlasNode) {
+    const weight = usage(node);
+    const hasTimestamp = typeof node.lastViewedAtMillis === 'number' && Number.isFinite(node.lastViewedAtMillis) && node.lastViewedAtMillis > 0;
+    const recency = hasTimestamp ? Math.pow(2, -Math.max(0, activityNow - node.lastViewedAtMillis!) / (14 * 86400000)) : null;
+    const frequency = weight === null ? null : Math.min(1, Math.log1p(weight) / Math.log(5));
+    if (recency !== null && frequency !== null) return recency * 0.65 + frequency * 0.35;
+    return recency ?? frequency ?? 0;
+  }
+  function dotOpacity(node: AtlasNode) {
+    if (node.id === activeId || node.id === hoveredId) return 1;
+    if (query.trim()) return matchesQuery(node, query) ? 1 : activeId && relatedNodeIds.has(node.id) ? 0.85 : 0.18;
+    if (activeId) return relatedNodeIds.has(node.id) ? 0.9 : 0.18;
+    // Unknown or old activity remains clearly visible; it does not mean never read.
+    return 0.6 + 0.3 * attention(node);
+  }
   let labelSize = $derived(labelWorldSize * cameraScale);
   let labelOpacity = $derived.by(() => {
     const value = Math.max(0, Math.min(1, (cameraScale - Number(labelZoom) * 0.55) / (Number(labelZoom) * 0.65)));
@@ -377,12 +388,11 @@
           <g class="graph-dots">
             {#each geometry.nodes as mark (mark.node.id)}
               <g class="note-dot" role="button" tabindex="0" data-node-id={mark.node.id} data-root-id={mark.rootId} aria-label={`Pin ${mark.node.fileName || mark.node.title}`}
-                opacity={activeId && !relatedNodeIds.has(mark.node.id) ? 0.18 : matchesQuery(mark.node, query) ? 1 : 0.25}
                 onmouseenter={() => hoveredId = mark.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = mark.node.id} onblur={() => hoveredId = null}
                 onclick={() => pin(mark.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(mark.node); } }}>
                 <title>{mark.node.fileName || mark.node.title}</title>
                 <circle class="dot-hit" cx={mark.x} cy={mark.y} r={Math.max(visibleRadius(mark.node.id), 8) / cameraScale} fill="transparent"/>
-                <circle class="dot-body" cx={mark.x} cy={mark.y} r={visibleRadius(mark.node.id) / cameraScale} fill={mark.color} stroke={focusId === mark.node.id ? 'var(--color-foreground)' : 'none'} stroke-width="1.5" vector-effect="non-scaling-stroke"/>
+                <circle class="dot-body" cx={mark.x} cy={mark.y} r={visibleRadius(mark.node.id) / cameraScale} fill={mark.color} fill-opacity={dotOpacity(mark.node)} data-connectedness={connectedness(mark.node)} data-attention={attention(mark.node)} stroke={focusId === mark.node.id ? 'var(--color-foreground)' : 'none'} stroke-width="1.5" vector-effect="non-scaling-stroke"/>
               </g>
             {/each}
           </g>
@@ -432,7 +442,7 @@
           <div class="region-examples">{#each inspectedRegion.examples as node (node.id)}<button onclick={() => pin(node)}><strong>{node.title || node.fileName}</strong><span>{excerptText(node.preview).slice(0, 150)}</span></button>{/each}</div>
         {:else}
           <div class="guide-heading"><strong>Regions · {regions.length}</strong></div>
-          <p class="guide-help">Example notes give each region context. Select a region to see more or rename it.</p>
+          <p class="guide-help">Larger dots have stronger or more Atlas connections. Brighter dots have more recent opening activity; dimmer notes remain available to rediscover.</p>
           <div class="region-list">{#each regions as region (region.cloud.id)}<button onclick={() => inspectRegion(region.cloud.id)}><span><i style:background={region.color}></i><strong>{region.name}</strong><small>{region.cloud.noteCount}</small></span><p>{region.examples.slice(0, 2).map((node) => node.title || node.fileName).join(' · ') || 'No example notes available.'}</p></button>{/each}</div>
         {/if}
       </section>{/key}
