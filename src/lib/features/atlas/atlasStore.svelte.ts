@@ -71,6 +71,7 @@ export class AtlasStore {
   #visibilitySequence = 0;
   #visibilityPersistence = Promise.resolve();
   #searchSequence = 0;
+  #initializeSequence = 0;
   #loadAtlas: AtlasResponseLoader;
   #loadChatVisibility: AtlasChatVisibilityLoader;
   #saveChatVisibility: AtlasChatVisibilitySaver;
@@ -221,10 +222,12 @@ export class AtlasStore {
   });
 
   async initialize() {
+    const initializeSequence = ++this.#initializeSequence;
     this.#disposed = false;
     this.#initialized = true;
     const visibilitySequence = this.#visibilitySequence;
     const persistedVisibility = await this.#loadChatVisibility().catch(() => null);
+    if (this.#disposed || initializeSequence !== this.#initializeSequence) return;
     if (
       persistedVisibility &&
       visibilitySequence === this.#visibilitySequence &&
@@ -233,6 +236,7 @@ export class AtlasStore {
       this.#applyChatVisibility(persistedVisibility, false);
     }
     await appStore.bootstrap().catch(() => undefined);
+    if (this.#disposed || initializeSequence !== this.#initializeSequence) return;
     this.#lastIndexingInProgress = appStore.semanticStatus?.indexingInProgress ?? false;
     this.#lastIndexedAtMillis = appStore.semanticStatus?.lastIndexedAtMillis ?? null;
     this.#disposeCallbacks.push(
@@ -279,6 +283,9 @@ export class AtlasStore {
 
   dispose() {
     this.#disposed = true;
+    this.#initializeSequence += 1;
+    this.#searchSequence += 1;
+    this.isSearching = false;
     this.#initialized = false;
     this.#refreshSequence += 1;
     if (this.#refreshTimer) {
@@ -435,6 +442,8 @@ export class AtlasStore {
   }
 
   setSearchQuery(query: string) {
+    this.#searchSequence += 1;
+    this.isSearching = false;
     this.searchQuery = query;
     if (this.searchResponse?.query !== query.trim()) {
       this.searchResponse = null;
@@ -461,6 +470,7 @@ export class AtlasStore {
 
   async runSearch(query = this.searchQuery.trim()) {
     const sequence = ++this.#searchSequence;
+    const visibility = this.chatVisibility;
     if (!query) {
       this.searchResponse = null;
       this.searchError = null;
@@ -472,12 +482,12 @@ export class AtlasStore {
     try {
       const response = await invoke<AtlasSearchResponse>('search_vault_atlas', {
         query,
-        chatVisibility: this.chatVisibility
+        chatVisibility: visibility
       });
-      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
+      if (this.#disposed || sequence !== this.#searchSequence || visibility !== this.chatVisibility || query !== this.searchQuery.trim()) return;
       this.searchResponse = response;
     } catch (error) {
-      if (sequence !== this.#searchSequence) return;
+      if (this.#disposed || sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
       this.searchError = String(error);
     } finally {
       if (sequence === this.#searchSequence) {
@@ -500,6 +510,8 @@ export class AtlasStore {
   }
 
   #applyChatVisibility(visibility: AtlasChatVisibility, refresh: boolean) {
+    this.#searchSequence += 1;
+    this.isSearching = false;
     this.chatVisibility = visibility;
     this.selectedNodeId = null;
     this.selectedCloudId = null;

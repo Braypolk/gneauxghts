@@ -237,11 +237,30 @@ pub(crate) struct AtlasNode {
     pub(crate) centrality: f32,
     pub(crate) importance: f32,
     pub(crate) last_viewed_at_millis: Option<u64>,
+    #[serde(default)]
+    pub(crate) effective_open_count: Option<u64>,
     pub(crate) created_at_millis: u64,
     pub(crate) updated_at_millis: u64,
     pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
     pub(crate) isolated: bool,
+}
+
+// Opening history is mutable device-local metadata, never a geometry input.
+fn apply_opening_activity(
+    nodes: &mut [AtlasNode],
+    activity_by_note_id: &HashMap<String, NoteActivity>,
+    now: u64,
+) {
+    for node in nodes {
+        let activity = node
+            .note_id
+            .as_ref()
+            .and_then(|id| activity_by_note_id.get(id));
+        node.last_viewed_at_millis = activity.map(|item| item.last_viewed_at_millis);
+        node.effective_open_count = activity
+            .map(|item| effective_open_count(item.open_count, item.last_viewed_at_millis, now));
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -1015,6 +1034,7 @@ impl AtlasWorkerContext {
                 centrality: node.centrality,
                 importance: node.importance,
                 last_viewed_at_millis: node.last_viewed_at_millis,
+                effective_open_count: None,
                 created_at_millis: node.created_at_millis,
                 updated_at_millis: node.updated_at_millis,
                 preview: node.preview.clone(),
@@ -1389,14 +1409,8 @@ impl ActiveSemanticState {
             self.work_queue.request_wake()?;
         }
         if let Some(mut response) = published.take() {
-            for node in &mut response.nodes {
-                let last_viewed = node
-                    .note_id
-                    .as_ref()
-                    .and_then(|id| activity_by_note_id.get(id))
-                    .map(|activity| activity.last_viewed_at_millis);
-                node.last_viewed_at_millis = last_viewed;
-            }
+            let now = current_time_millis()?;
+            apply_opening_activity(&mut response.nodes, &activity_by_note_id, now);
             response.status = "ready".to_string();
             response.stale = !compatible;
             response.publish_in_progress = building || queued || label_building || label_queued;
@@ -4524,6 +4538,37 @@ mod tests {
             cloud_algorithm_version: ATLAS_CLOUD_ALGORITHM_VERSION,
             layout_algorithm_version: ATLAS_LAYOUT_ALGORITHM_VERSION,
         }
+    }
+
+    #[test]
+    fn atlas_activity_payload_preserves_unknown_history_and_reads_older_cache_nodes() {
+        let old = serde_json::json!({
+            "id":"note", "noteId":"note", "notePath":"/vault/note.md", "title":"Note", "fileName":"note.md", "documentKind":"note",
+            "x":1.0, "y":2.0, "radius":5.0, "cloudId":null, "parentCloudId":null, "childCloudId":null, "clusterId":null, "subclusterId":null,
+            "centrality":0.5, "importance":0.5, "lastViewedAtMillis":null, "createdAtMillis":1, "updatedAtMillis":1, "preview":"body", "tags":[], "isolated":true
+        });
+        let mut nodes = vec![serde_json::from_value::<AtlasNode>(old).unwrap()];
+        assert_eq!(nodes[0].effective_open_count, None);
+        let viewed = 100;
+        let now = viewed + crate::state::OPEN_COUNT_DECAY_INTERVAL_MS * 2;
+        let activity = HashMap::from([(
+            "note".to_string(),
+            NoteActivity {
+                last_viewed_at_millis: viewed,
+                open_count: 5,
+                last_counted_open_at_millis: viewed,
+            },
+        )]);
+        apply_opening_activity(&mut nodes, &activity, now);
+        assert_eq!(nodes[0].effective_open_count, Some(3));
+        assert_eq!(
+            serde_json::to_value(&nodes[0]).unwrap()["effectiveOpenCount"],
+            3
+        );
+        assert_eq!((nodes[0].x, nodes[0].y), (1.0, 2.0));
+        apply_opening_activity(&mut nodes, &HashMap::new(), now);
+        assert_eq!(nodes[0].effective_open_count, None);
+        assert_eq!(nodes[0].last_viewed_at_millis, None);
     }
 
     #[test]

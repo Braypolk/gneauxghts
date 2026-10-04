@@ -19,6 +19,9 @@ import type {
 } from '$lib/types/atlas';
 import type { AtlasChatVisibility } from '$lib/features/chat/types';
 
+const invokeMock = vi.hoisted(() => vi.fn());
+vi.mock('@tauri-apps/api/core', () => ({invoke: invokeMock}));
+
 const appStoreMock = vi.hoisted(() => ({
   bootstrap: vi.fn(async () => undefined),
   semanticStatus: null,
@@ -408,6 +411,51 @@ describe('AtlasStore stale-while-revalidate', () => {
       'all'
     ]);
     expect(store.response).toBe(selectedVariant);
+    store.dispose();
+  });
+});
+
+
+describe('AtlasStore route and search races', () => {
+  afterEach(() => { vi.clearAllMocks(); });
+
+  it('does not attach subscriptions when initialization finishes after leaving the map', async () => {
+    const visibility = deferred<AtlasChatVisibility>();
+    const loader = vi.fn(async () => atlasResponse(1));
+    const store = new AtlasStore(loader, () => visibility.promise);
+    const initializing = store.initialize();
+    store.dispose();
+    visibility.resolve('all');
+    await initializing;
+    expect(appStoreMock.subscribeNoteSaved).not.toHaveBeenCalled();
+    expect(loader).not.toHaveBeenCalled();
+  });
+
+  it('drops a completed search after its query is changed and changed back', async () => {
+    const pending = deferred<import('$lib/types/atlas').AtlasSearchResponse>();
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const store = new AtlasStore();
+    store.setSearchQuery('alpha');
+    const searching = store.runSearch();
+    store.setSearchQuery('beta');
+    store.setSearchQuery('alpha');
+    pending.resolve({status:'ready', reason:null, query:'alpha', generatedAtMillis:1, matches:[]});
+    await searching;
+    expect(store.searchResponse).toBeNull();
+    store.dispose();
+  });
+
+  it('clears a removed selection during refresh and does not replace a failure with demo data', async () => {
+    const initial = atlasResponse(1);
+    const loader = vi.fn().mockResolvedValueOnce(initial).mockResolvedValueOnce({...initial, nodes:[]}).mockRejectedValueOnce(new Error('Unavailable'));
+    const store = new AtlasStore(loader);
+    await store.refresh(); store.selectNode(initial.nodes[0]);
+    await store.refresh();
+    expect(store.selectedNodeId).toBeNull();
+    const last = store.response;
+    await store.refresh();
+    expect(store.response).toBe(last);
+    expect(store.error).toContain('Unavailable');
     store.dispose();
   });
 });

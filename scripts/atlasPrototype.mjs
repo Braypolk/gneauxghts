@@ -10,10 +10,10 @@ const args = process.argv.slice(2);
 const vaultArgument = args.indexOf('--vault');
 let snapshot = null;
 let vaultRoot = null;
-let source = 'demo';
+const demoMode = args.includes('--demo');
+let source = demoMode ? 'demo' : 'unavailable';
 let snapshotNotice = '';
-let snapshotActivity = {counts:{},countAvailable:false,notice:'Opening activity unavailable; cached last-viewed timestamps only.'};
-if (!args.includes('--demo')) {
+async function loadSnapshot() {
   try {
     const config = vaultArgument >= 0 ? {notesRoot:args[vaultArgument + 1]} : await json(join(homedir(), 'Library/Application Support/com.braypolkinghorne.gneauxghts/.gneauxghts-state.json'));
     vaultRoot = resolve(vaultArgument >= 0 ? args[vaultArgument + 1] : config.notesRoot || join(homedir(), 'Documents/Gneauxghts'));
@@ -56,20 +56,28 @@ if (!args.includes('--demo')) {
           const idleSteps = row.last_viewed_at_millis > 0 ? Math.floor(Math.max(0,now - row.last_viewed_at_millis) / (36 * 60 * 60 * 1000)) : 0;
           counts[node.id] = Math.max(0,Number(row.open_count) - idleSteps);
         }
-        snapshotActivity = {counts,countAvailable:true,notice:'App-recorded opening activity: 8-hour counting cooldown, minus one per 36 hours idle. Last viewed can include restored sessions. This is a recent activity weight, not lifetime views.'};
+        for (const node of snapshot.nodes) node.effectiveOpenCount = counts[node.id] ?? null;
+
       } catch { /* Timestamp-only compatibility with earlier app-state schemas. */ }
     } catch { snapshotNotice = 'Open-history data unavailable; review order uses the cached timestamps.'; }
     if (!snapshot.nodes.length) throw new Error('No readable notes in the cached Atlas.');
     source = 'vault';
-    console.log(`Atlas lab: ${snapshot.nodes.length} notes from a read-only vault snapshot.`);
   } catch {
     snapshot = null;
-    snapshotNotice = 'No published Atlas snapshot found. Using the fictional demo vault.';
+    source = 'unavailable';
+    snapshotNotice = 'No readable published Atlas snapshot found. Open the native app and finish indexing, or launch the lab explicitly with --demo.';
   }
 }
 
+if (!demoMode) await loadSnapshot();
 let demo;
-const bodies = new Map();
+const emptyResponse = () => ({ ...demo, status: 'unavailable', reason: snapshotNotice, nodes: [], links: [], clouds: [], publishInProgress: false, stale: false });
+async function noteBody(node, isVault) {
+  if (!isVault) return node.preview;
+  const delta = relative(vaultRoot, resolve(node.notePath));
+  if (delta.startsWith('..') || isAbsolute(delta)) throw new Error('Outside vault');
+  return (await readFile(node.notePath, 'utf8')).replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '').trimStart();
+}
 const server = await createServer({
   server: {host:'127.0.0.1',port:1422,strictPort:true,hmr:false},
   plugins: [{
@@ -95,26 +103,32 @@ const server = await createServer({
         res.setHeader('Cache-Control','no-store');
         const respond = (data) => res.end(JSON.stringify(data));
         try {
-          if (req.url?.startsWith('/snapshot')) return respond({response:snapshot || demo,source,notice:snapshotNotice,activity:snapshot ? snapshotActivity : {counts:{},countAvailable:false,notice:'Fictional last-viewed timestamps; no opening counts in this demo.'}});
+          if (req.url?.startsWith('/snapshot')) { if (!demoMode) await loadSnapshot(); return respond({response:snapshot || (demoMode ? demo : emptyResponse()),source,notice:snapshotNotice}); }
           if (req.method !== 'POST' || req.url !== '/command') {res.statusCode=404; return respond({error:'Not found'});}
           let raw=''; for await (const chunk of req) raw += chunk;
           const {command,args={},source:requestedSource}=JSON.parse(raw);
-          const isVault = !!snapshot && requestedSource !== 'demo';
-          const response=isVault ? snapshot : demo;
+          const useDemo = demoMode || requestedSource === 'demo';
+          if (command === 'get_vault_atlas' && !useDemo) await loadSnapshot();
+          const isVault = !!snapshot && !useDemo;
+          const response = useDemo ? demo : snapshot ?? emptyResponse();
           if (command === 'get_vault_atlas') return respond(response);
           if (command === 'search_vault_atlas') {
-            const query=String(args.query || '').trim().toLowerCase();
-            return respond({status:'ready',reason:null,query:args.query,generatedAtMillis:Date.now(),matches:response.nodes.filter(node => `${node.title} ${node.preview} ${node.tags.join(' ')}`.toLowerCase().includes(query)).map(node=>({noteId:node.noteId,notePath:node.notePath,documentKind:node.documentKind,score:1,semanticScore:0,lexicalScore:1,structuralScore:0,reasonLabels:['Text match (prototype)']}))});
+            // Offline lab adapter: full-body lexical/tag matching only. Native
+            // production calls the real indexed lexical/semantic Atlas search.
+            const tags = [];
+            const text = String(args.query || '').replace(/(?:tag:|#)(?:"([^"]+)"|([^\s]+))/gi, (_, quoted, bare) => { tags.push((quoted || bare).toLowerCase()); return ''; }).trim().toLowerCase();
+            const terms = text.split(/\s+/).filter(Boolean);
+            const candidates = await Promise.all(response.nodes.map(async node => {
+              if (!tags.every(tag => node.tags.some(value => value.toLowerCase().replace(/^#/, '') === tag))) return null;
+              const body = await noteBody(node, isVault).catch(() => '');
+              const content = `${node.title} ${node.fileName} ${body}`.toLowerCase();
+              return terms.every(term => content.includes(term)) ? node : null;
+            }));
+            return respond({status:response.status,reason:response.reason,query:args.query,generatedAtMillis:Date.now(),matches:candidates.filter(Boolean).map(node=>({noteId:node.noteId,notePath:node.notePath,documentKind:node.documentKind,score:1,semanticScore:0,lexicalScore:1,structuralScore:tags.length ? 1 : 0,reasonLabels:['Text match (offline lab)']}))});
           }
           const node=response.nodes.find(node => (args.noteId && node.noteId === args.noteId) || node.notePath === args.path || node.id === args.id);
           if (!node) {res.statusCode=404;return respond({error:'Note not in snapshot'});}
-          let markdown=node.preview;
-          if (isVault) {
-            const delta=relative(vaultRoot,resolve(node.notePath));
-            if (delta.startsWith('..') || isAbsolute(delta)) throw new Error('Outside vault');
-            if (!bodies.has(node.id)) bodies.set(node.id, await readFile(node.notePath,'utf8'));
-            markdown=bodies.get(node.id).replace(/^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/, '').trimStart();
-          }
+          const markdown = await noteBody(node, isVault);
           return respond({noteId:node.noteId,title:node.title,markdown,path:node.notePath,tags:node.tags});
         } catch {res.statusCode=500;respond({error:'Could not read the comparison source'});}
       });
@@ -123,6 +137,7 @@ const server = await createServer({
 });
 demo = (await server.ssrLoadModule('/src/lib/features/atlas/prototype/demo.ts')).createDemoAtlas();
 await server.listen();
+console.log(`Atlas lab: ${source}, ${snapshot?.nodes.length ?? (demoMode ? demo.nodes.length : 0)} notes. Read-only offline snapshot; text/tag search only.`);
 console.log('Open http://127.0.0.1:1422/map/prototype?variant=fusion');
 console.log('Original Atlas comparison: http://127.0.0.1:1422/map');
 const close=async()=>{await server.close();process.exit(0);};

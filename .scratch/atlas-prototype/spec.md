@@ -6,6 +6,12 @@ The user selected the fusion view for further work and requested one clean full-
 
 The current view has the original Atlas bottom-centered search, a Fit map action, stable spaced dots with zoom-faded names, names inside clouds, and a floating dismissible note/region info panel. Extra filters and collection/export chrome are removed. The original production /map route remains untouched. The surviving preview is captured on codex/atlas-fusion-v3-prototype. See issues/03-atlas-fusion-v3.md for the current scope and checks.
 
+### Integration preparation — 2026-10-03
+
+Fusion stays on the development preview route; the main `/map` renderer is unchanged. The preview now consumes the same AtlasStore lifecycle, indexed search and selected-note state as the main map. Editor handoff uses the existing pending navigation target. Native Atlas nodes expose an optional, backend-decayed effectiveOpenCount; older cached payloads remain readable. Normal data refresh retains the camera and invalidates stale source reads. Transient region renaming is removed. Layout and captions are separately cached, with spatial indexing for spacing checks.
+
+The offline lab refreshes published snapshots and full source bytes, supports full-body text/tag matching, and reports missing data rather than silently supplying fiction. It cannot exercise native semantic retrieval or live native indexing events. Use `--demo` explicitly for fictional data. See [integration preparation](issues/04-integration-preparation.md) for validation and remaining native smoke checks.
+
 The sections below describe the historical comparison rounds, whose active UI has now been retired.
 
 
