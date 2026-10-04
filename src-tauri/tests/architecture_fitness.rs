@@ -509,11 +509,22 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         ],
     );
     for caller in [&proposals, &tasks, &proposal_writers, &note_persistence] {
-        assert_contains_none(caller, &[
-            "PreparedHistoryIntent", "PreparedRevisionPublication", "NoteMutation::",
-            "prepare_revision_publication", ".mutate(", "abandon_after", "with_note_file_mutation",
-            "atomic_write_note", "atomic_create_note", "record_expected_write", "fs::write",
-        ]);
+        assert_contains_none(
+            caller,
+            &[
+                "PreparedHistoryIntent",
+                "PreparedRevisionPublication",
+                "NoteMutation::",
+                "prepare_revision_publication",
+                ".mutate(",
+                "abandon_after",
+                "with_note_file_mutation",
+                "atomic_write_note",
+                "atomic_create_note",
+                "record_expected_write",
+                "fs::write",
+            ],
+        );
     }
     assert_contains_none(
         &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),
@@ -632,10 +643,7 @@ fn interactive_history_waits_run_offthread_and_readiness_stays_observational() {
     }
     let commands = repository_file("src-tauri/src/commands.rs");
     let worker = rust_function(&commands, "on_app_worker");
-    assert_contains_all(
-        worker,
-        &["spawn_blocking", ".await"],
-    );
+    assert_contains_all(worker, &["spawn_blocking", ".await"]);
     assert_contains_none(worker, &["HistoryCommandError", "note_timeline()"]);
     for command in ["bootstrap_app", "load_note_session"] {
         assert_contains_all(

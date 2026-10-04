@@ -300,5 +300,4 @@ mod tests {
 
         assert_eq!(actual, load_json_fixture("project-atlas.chunks.json"));
     }
-
 }

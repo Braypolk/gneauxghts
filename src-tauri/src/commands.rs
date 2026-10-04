@@ -935,12 +935,17 @@ mod tests {
             fs::canonicalize(selected.path()).unwrap().to_string_lossy()
         );
         assert!(info.requires_restart);
-        state.note_timeline().edit_note(
-            crate::services::note_timeline::MutationSource::Editor,
-            &note_path,
-            Some(&crate::services::note_timeline::NoteIdentity::new("switch-active-note")),
-            |_| Ok("Changed after switch".into()),
-        ).expect("staging a selection must not stop running-vault mutations");
+        state
+            .note_timeline()
+            .edit_note(
+                crate::services::note_timeline::MutationSource::Editor,
+                &note_path,
+                Some(&crate::services::note_timeline::NoteIdentity::new(
+                    "switch-active-note",
+                )),
+                |_| Ok("Changed after switch".into()),
+            )
+            .expect("staging a selection must not stop running-vault mutations");
         assert!(!state.note_timeline().is_cleanly_closed().unwrap());
         let externally_changed = "---\ngneauxghts:\n  id: switch-active-note\n  kind: note\n---\n\nChanged by the old watcher";
         fs::write(&note_path, externally_changed).unwrap();

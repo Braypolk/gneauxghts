@@ -227,6 +227,46 @@ describe('date commands and chip pickers', () => {
     await waitForSaved('@due(');
   });
 
+  it('saves editable deadline wording and preserves custom or absent wording on date changes', async () => {
+    const waitForExactSave = async (markdown: string) => browser.waitUntil(async () => (await savedMarkdown()) === markdown);
+    await editorText('- [ ] Ship it\nOther notes');
+    await waitForExactSave('- [ ] Ship it\nOther notes');
+    const addDate = await $('button[aria-label="Add due date"]');
+    await addDate.moveTo();
+    await addDate.click();
+    await $('[aria-label="Date or shortcut"]').setValue('2099-01-01');
+    await $('button=Apply').click();
+    await $('dialog.date-time-picker').waitForExist({ reverse: true });
+    await waitForExactSave('- [ ] Ship it due @due(2099-01-01)\nOther notes');
+
+    await editorText('- [ ] Ship it by @due(2099-01-01), before lunch\nOther notes');
+    await waitForExactSave('- [ ] Ship it by @due(2099-01-01), before lunch\nOther notes');
+    await $('button[aria-label="Edit due date: 2099-01-01"]').click();
+    await $('dialog.date-time-picker').waitForDisplayed();
+    expect(await $('[aria-label="Date or shortcut"]').isExisting()).toBe(false);
+    expect(await browser.execute(() => window.getSelection()!.toString())).toBe('2099-01-01');
+    expect(await browser.execute(() => document.activeElement?.classList.contains('cm-content'))).toBe(true);
+    await $('.selection-panel').waitForExist({ reverse: true });
+    await browser.keys(Array.from('2099-01-02'));
+    await $('dialog.date-time-picker').waitForExist({ reverse: true });
+    await waitForExactSave('- [ ] Ship it by @due(2099-01-02), before lunch\nOther notes');
+    await browser.keys(['Meta', 'z']);
+    await waitForExactSave('- [ ] Ship it by @due(2099-01-01), before lunch\nOther notes');
+
+    await editorText('- [ ] Ship it @due(2099-01-02)\nOther notes');
+    await waitForExactSave('- [ ] Ship it @due(2099-01-02)\nOther notes');
+    const chip = await $('button[aria-label="Edit due date: 2099-01-02"]');
+    expect(await chip.getText()).not.toContain('Due');
+    await chip.click();
+    await $('dialog.date-time-picker').waitForDisplayed();
+    expect(await $('[aria-label="Date or shortcut"]').isExisting()).toBe(false);
+    await $('dialog [data-bits-day][data-value="2099-01-03"]').click();
+    await $('button=Apply').click();
+    await $('dialog.date-time-picker').waitForExist({ reverse: true });
+    await waitForExactSave('- [ ] Ship it @due(2099-01-03)\nOther notes');
+    expect(await savedMarkdown()).not.toContain('Ship it due');
+  });
+
   it('composes task-list deadline and completion filters and edits dates through the picker', async () => {
     await editorText('- [ ] Late @due(2000-01-01)\n- [x] Done @due(2000-01-01)\n- [ ] Undated');
     await waitForSaved('Undated');

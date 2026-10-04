@@ -83,16 +83,23 @@ export function taskDescription(text: string): string {
 /** Explicit edits consolidate valid annotations; invalid/unknown text stays intact. */
 export function setTaskLineDueDate(text: string, date: string | null): string {
   if (date !== null && !validCalendarDate(date)) throw new Error('Choose a valid calendar date.');
+  const annotations = dueAnnotations(text);
   let result = text;
-  for (const annotation of dueAnnotations(text).reverse()) {
+  for (const annotation of [...annotations].reverse()) {
+    if (date !== null && annotation === annotations[0]) {
+      // Keep editable deadline wording and the date's position in the sentence.
+      result = result.slice(0, annotation.from) + `@due(${date})` + result.slice(annotation.to);
+      continue;
+    }
     // Consume just one separating space, retaining all other authored whitespace.
     const from = annotation.from > 0 && text[annotation.from - 1] === ' ' ? annotation.from - 1 : annotation.from;
     result = result.slice(0, from) + result.slice(annotation.to);
   }
   if (date === null) return result;
   const content = result.trimEnd();
+  const wording = /(?:^|\s)due$/i.test(content) ? '' : ' due';
   // Keep trailing spaces at the end: two spaces encode a Markdown hardbreak.
-  const updated = `${content} @due(${date})${result.slice(content.length)}`;
+  const updated = annotations.length ? result : `${content}${wording} @due(${date})${result.slice(content.length)}`;
   if (taskDueDate(updated) !== date) throw new Error('Close any unfinished inline code or link before adding a due date.');
   return updated;
 }

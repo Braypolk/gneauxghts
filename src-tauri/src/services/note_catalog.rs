@@ -461,7 +461,9 @@ mod tests {
             .unwrap()
             .is_empty());
         let allowed_ids = std::collections::HashSet::from(["projection-id".to_string()]);
-        let (matches, count) = lexical.evidence_matches("managed", &allowed_ids, 10).unwrap();
+        let (matches, count) = lexical
+            .evidence_matches("managed", &allowed_ids, 10)
+            .unwrap();
         assert_eq!(count, 1);
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0, "projection-id");
@@ -473,7 +475,9 @@ mod tests {
         catalog
             .remove(&path, CatalogWriteMode::ManagedProjection)
             .unwrap();
-        let (matches, count) = lexical.evidence_matches("managed", &allowed_ids, 10).unwrap();
+        let (matches, count) = lexical
+            .evidence_matches("managed", &allowed_ids, 10)
+            .unwrap();
         assert!(matches.is_empty());
         assert_eq!(count, 0);
         assert_eq!(

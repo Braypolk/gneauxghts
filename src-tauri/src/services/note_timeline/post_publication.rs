@@ -590,5 +590,4 @@ mod tests {
             .any(|issue| issue.stage == MutationWarningStage::SemanticUpdate));
         assert_eq!(outcome.required_consistency_warning(), None);
     }
-
 }

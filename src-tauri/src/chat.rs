@@ -803,7 +803,10 @@ impl ChatService {
             return Err("Atlas visibility must be hidden, remembered, or all".to_string());
         }
         self.connection()?
-            .execute("UPDATE chat_settings SET atlas_visibility = ?1 WHERE id = 1", [visibility])
+            .execute(
+                "UPDATE chat_settings SET atlas_visibility = ?1 WHERE id = 1",
+                [visibility],
+            )
             .map_err(|error| error.to_string())?;
         Ok(())
     }

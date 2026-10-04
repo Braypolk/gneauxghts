@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { createAtlasLayout, noteTitle, insideWithMargin } from './atlasLayout';
+import { createAtlasLayout, noteTitle } from './atlasLayout';
 import { createDemoAtlas } from '../../../../scripts/fixtures/atlasDemo';
 
 const positions = (map: ReturnType<ReturnType<typeof createAtlasLayout>>) => map.nodes.map(({node, x, y}) => [node.id, x, y]);
@@ -12,9 +12,19 @@ describe('Atlas spaced layout', () => {
     atlas.nodes = Array.from({length: 80}, (_, i) => ({...atlas.nodes[0], id: `dense-${i}`, x: 0, y: 0, fileName: `${'Long note title '.repeat(5)}${i}.md`}));
     atlas.clouds = [{...root, memberNodeIds: atlas.nodes.map(node => node.id), centroid: [0,0], hull: [[-110,-100],[110,-100],[110,100],[-110,100]]}];
     const result = createAtlasLayout()(atlas);
+    // This fixture stays rectangular after layout. Use independent bounds,
+    // not the same containment predicate that decides whether to grow it.
+    const outline = result.clouds[0].points;
+    const left = Math.min(...outline.map(point => point.x));
+    const right = Math.max(...outline.map(point => point.x));
+    const top = Math.min(...outline.map(point => point.y));
+    const bottom = Math.max(...outline.map(point => point.y));
     for (let i = 0; i < result.nodes.length; i++) {
       const a = result.nodes[i];
-      expect(insideWithMargin(a, result.clouds[0].points, 19.9)).toBe(true);
+      expect(a.x).toBeGreaterThanOrEqual(left + 19.9);
+      expect(a.x).toBeLessThanOrEqual(right - 19.9);
+      expect(a.y).toBeGreaterThanOrEqual(top + 19.9);
+      expect(a.y).toBeLessThanOrEqual(bottom - 19.9);
       for (const b of result.nodes.slice(i + 1)) expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThanOrEqual(41.999);
     }
     expect(positions(createAtlasLayout()(atlas))).toEqual(positions(result));

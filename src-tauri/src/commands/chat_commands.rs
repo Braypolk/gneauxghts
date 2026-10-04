@@ -7,9 +7,9 @@ use super::{
 use crate::{
     agent_tools::ActiveNoteSnapshot,
     chat::{
-        ChatAttachmentInput, ChatConversation, ChatConversationSummary, ChatExcerpt, ChatGrant,
-        ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatRunContextItem, ChatService,
-        ChatDefaults, ChatSettings, LocalModelCapabilitySelection, VaultAccess,
+        ChatAttachmentInput, ChatConversation, ChatConversationSummary, ChatDefaults, ChatExcerpt,
+        ChatGrant, ChatNotePolicy, ChatRequest, ChatRequestAccepted, ChatRunContextItem,
+        ChatService, ChatSettings, LocalModelCapabilitySelection, VaultAccess,
     },
     index::AppState,
     note::DocumentKind,

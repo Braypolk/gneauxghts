@@ -7,15 +7,19 @@ When the caret leaves matching date/time text, it keeps the surrounding text sty
 For a task deadline, type `/due` on its checkbox line, use its Add due date control, or click an existing due date. The same picker is available in the master task list. Deadlines are date-only and live in the note:
 
 ```markdown
-- [ ] Send the proposal @due(2026-10-02)
-  - [ ] Check the figures @due(2026-10-01)
+- [ ] Send the proposal due @due(2026-10-02)
+  - [ ] Check the figures due @due(2026-10-01)
 ```
 
 Each task owns its date. Parent dates do not propagate to children, and inserting ordinary date text in a task does not set a deadline. No creation dates are automatically stamped or inferred.
 
+Adding a deadline inserts the word `due` as ordinary note text before the annotation, unless the task already ends with `due`. You can change that word to `by`, `deadline`, or any other wording, or delete it. Later date edits preserve your wording and the date's position. The date control displays only the date or relative label, with “Overdue” for late open tasks. Existing deadlines and ordinary dates are not rewritten. Removing a deadline clears its annotation and keeps the surrounding authored wording for you to edit.
+
+Click an existing deadline in the note to select just its `YYYY-MM-DD` date for direct typing, keeping `@due(` and `)` intact. The calendar opens beside it while keyboard focus stays in the note, with no separate popup date textbox. Typing dismisses the calendar and saves as an ordinary note edit; Undo restores the previous date. You can also choose a calendar day or preset and click Apply, or use Remove due date. Cancel, Escape, and outside clicks discard pending calendar choices. Adding a new deadline and editing from the master task list still use the popup's date textbox.
+
 The picker accepts ISO dates, Today, Tomorrow, Next week, full English weekday names, and `in N days` (0–365). Next week means seven calendar days from today. A weekday means its next occurrence, including today. The resolved date is shown before Apply. Cancel changes nothing; cancelling `/due` leaves the typed token in the note.
 
-Use Remove due date to clear a deadline. The first valid `@due(YYYY-MM-DD)` is effective. Explicit edits consolidate valid duplicates into one suffix; removal clears valid duplicates. Invalid, escaped, inline-code, and link annotations remain text. Four-digit Gregorian dates from 0001–9999 are supported. Editing outside Gneauxghts, reloading, or moving a note keeps deadlines portable.
+Use Remove due date to clear a deadline. The first valid `@due(YYYY-MM-DD)` is effective. Explicit edits update that annotation in place and remove valid duplicates; removal clears valid duplicates. Invalid, escaped, inline-code, and link annotations remain text. Four-digit Gregorian dates from 0001–9999 are supported. Editing outside Gneauxghts, reloading, or moving a note keeps deadlines portable.
 
 Reference-link labels are preserved, even when their definitions are elsewhere in the note. Code spans or links that remain open on the task line are protected conservatively; close them on that line before adding a deadline with the picker. Date edits preserve trailing spaces used for Markdown line breaks.
 

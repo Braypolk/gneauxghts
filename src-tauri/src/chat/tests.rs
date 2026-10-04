@@ -609,7 +609,8 @@ fn chat_defaults_and_atlas_visibility_do_not_overwrite_each_other() {
     assert_eq!(settings.service_tier, ChatServiceTier::Standard);
     settings.service_tier = ChatServiceTier::Flex;
     // A settings form retains the earlier read projection while Atlas changes.
-    let defaults: ChatDefaults = serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
+    let defaults: ChatDefaults =
+        serde_json::from_value(serde_json::to_value(settings).unwrap()).unwrap();
     service.set_atlas_visibility("remembered").unwrap();
     let saved = service.set_defaults(defaults).expect("save flex setting");
     assert_eq!(saved.atlas_visibility, "remembered");
@@ -1513,7 +1514,8 @@ fn durable_proposals_supersede_the_same_target_across_runs() {
 fn proposal_commit_intent_converges_to_committed_after_success() {
     let fixture = crate::test_support::TestVault::new("chat-proposal-commit-success");
     let root = &fixture.notes;
-    let service = ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+    let service =
+        ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
     let path = root.path().join("Plan.md");
     let original = "# Plan\n\nOld body";
     fs::write(&path, original).unwrap();
@@ -1537,12 +1539,19 @@ fn proposal_commit_intent_converges_to_committed_after_success() {
         service.get_agent_proposal(&proposal.id).unwrap().status,
         "committing"
     );
-    let result = fixture.state.note_timeline().edit_note(
-        crate::services::note_timeline::MutationSource::AcceptedChatProposal,
-        &intent.target_path, None,
-        |current| { assert_eq!(content_hash(current), content_hash(original)); Ok("New body".to_string()) },
-    )
-    .unwrap();
+    let result = fixture
+        .state
+        .note_timeline()
+        .edit_note(
+            crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+            &intent.target_path,
+            None,
+            |current| {
+                assert_eq!(content_hash(current), content_hash(original));
+                Ok("New body".to_string())
+            },
+        )
+        .unwrap();
     assert!(result.warning().is_none());
 
     let resolved = service
@@ -1555,7 +1564,8 @@ fn proposal_commit_intent_converges_to_committed_after_success() {
 fn startup_recovers_canonical_write_after_status_update_was_missed() {
     let fixture = crate::test_support::TestVault::new("chat-proposal-startup-recovery");
     let root = &fixture.notes;
-    let service = ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+    let service =
+        ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
     let data = root.path().join(".gneauxghts");
     let path = root.path().join("Plan.md");
     let original = "# Plan\n\nOld body";
@@ -1581,12 +1591,19 @@ fn startup_recovers_canonical_write_after_status_update_was_missed() {
             &plan.intended_editor_content_hash,
         )
         .unwrap();
-    fixture.state.note_timeline().edit_note(
-        crate::services::note_timeline::MutationSource::AcceptedChatProposal,
-        &intent.target_path, None,
-        |current| { assert_eq!(content_hash(current), content_hash(original)); Ok("\n\nRecovered body".to_string()) },
-    )
-    .unwrap();
+    fixture
+        .state
+        .note_timeline()
+        .edit_note(
+            crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+            &intent.target_path,
+            None,
+            |current| {
+                assert_eq!(content_hash(current), content_hash(original));
+                Ok("\n\nRecovered body".to_string())
+            },
+        )
+        .unwrap();
     drop(service);
 
     let reopened = ChatService::new(root.path().to_path_buf(), data).unwrap();
@@ -1600,7 +1617,8 @@ fn startup_recovers_canonical_write_after_status_update_was_missed() {
 fn explicit_recovery_converges_after_status_write_failure() {
     let fixture = crate::test_support::TestVault::new("chat-proposal-status-write-recovery");
     let root = &fixture.notes;
-    let service = ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+    let service =
+        ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
     let path = root.path().join("Plan.md");
     let original = "# Plan\n\nOld body";
     fs::write(&path, original).unwrap();
@@ -1625,12 +1643,19 @@ fn explicit_recovery_converges_after_status_write_failure() {
             &plan.intended_editor_content_hash,
         )
         .unwrap();
-    fixture.state.note_timeline().edit_note(
-        crate::services::note_timeline::MutationSource::AcceptedChatProposal,
-        &intent.target_path, None,
-        |current| { assert_eq!(content_hash(current), content_hash(original)); Ok("Recovered body".to_string()) },
-    )
-    .unwrap();
+    fixture
+        .state
+        .note_timeline()
+        .edit_note(
+            crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+            &intent.target_path,
+            None,
+            |current| {
+                assert_eq!(content_hash(current), content_hash(original));
+                Ok("Recovered body".to_string())
+            },
+        )
+        .unwrap();
     service
         .connection()
         .unwrap()
@@ -1705,7 +1730,8 @@ fn mismatched_commit_target_recovers_as_conflict_without_reapplying() {
 fn fixed_creation_target_collision_becomes_conflict_without_new_path() {
     let fixture = crate::test_support::TestVault::new("chat-proposal-create-collision");
     let root = &fixture.notes;
-    let service = ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
+    let service =
+        ChatService::new(root.path().to_path_buf(), root.path().join(".gneauxghts")).unwrap();
     let target = root.path().join("Created.md");
     let proposal = stage_test_proposal(
         &service,
@@ -1730,10 +1756,15 @@ fn fixed_creation_target_collision_becomes_conflict_without_new_path() {
         .unwrap();
     fs::write(&target, "Occupying note").unwrap();
 
-    let result = fixture.state.note_timeline().create_note_at(
-        crate::services::note_timeline::MutationSource::AcceptedChatProposal,
-        &intent.target_path, "Intended body",
-    ).unwrap();
+    let result = fixture
+        .state
+        .note_timeline()
+        .create_note_at(
+            crate::services::note_timeline::MutationSource::AcceptedChatProposal,
+            &intent.target_path,
+            "Intended body",
+        )
+        .unwrap();
     assert!(result.is_none());
     service
         .finish_agent_proposal_commit(&proposal.id, "conflict")

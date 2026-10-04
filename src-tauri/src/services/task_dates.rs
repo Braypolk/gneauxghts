@@ -5,6 +5,7 @@ use std::sync::LazyLock;
 static ANNOTATION: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"@due\((\d{4}-\d{2}-\d{2})\)").unwrap());
 static PROTECTED: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"<[^>]*>").unwrap());
+static DUE_WORD: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)(?:^|\s)due$").unwrap());
 
 pub(crate) fn valid_calendar_date(value: &str) -> bool {
     let bytes = value.as_bytes();
@@ -210,8 +211,15 @@ pub(crate) fn set_task_line_due_date(text: &str, date: Option<&str>) -> Result<S
     if date.is_some_and(|date| !valid_calendar_date(date)) {
         return Err("Choose a valid calendar date".into());
     }
+    let annotations = due_annotations(text);
     let mut result = text.to_string();
-    for (from, to, _) in due_annotations(text).into_iter().rev() {
+    for (index, (from, to, _)) in annotations.iter().enumerate().rev() {
+        let (from, to) = (*from, *to);
+        if let Some(date) = date.filter(|_| index == 0) {
+            // Keep editable deadline wording and the date's sentence position.
+            result.replace_range(from..to, &format!("@due({date})"));
+            continue;
+        }
         let from = if from > 0 && text.as_bytes()[from - 1] == b' ' {
             from - 1
         } else {
@@ -222,8 +230,20 @@ pub(crate) fn set_task_line_due_date(text: &str, date: Option<&str>) -> Result<S
     Ok(match date {
         Some(date) => {
             let content = result.trim_end();
+            let wording = if DUE_WORD.is_match(content) {
+                ""
+            } else {
+                " due"
+            };
             // Trailing spaces can encode an authored Markdown hardbreak.
-            let updated = format!("{content} @due({date}){}", &result[content.len()..]);
+            let updated = if annotations.is_empty() {
+                format!(
+                    "{content}{wording} @due({date}){}",
+                    &result[content.len()..]
+                )
+            } else {
+                result
+            };
             if task_due_date(&updated).as_deref() != Some(date) {
                 return Err(
                     "Close any unfinished inline code or link before adding a due date".into(),
@@ -453,7 +473,7 @@ mod tests {
         assert!(
             set_due_date_in_markdown(markdown, 4, "Real", Some("2026-10-03"))
                 .unwrap()
-                .contains("+ [ ] Real @due(2026-10-03)")
+                .contains("+ [ ] Real due @due(2026-10-03)")
         );
     }
 
@@ -481,7 +501,7 @@ mod tests {
         let markdown = "- [ ] Review  \n  continued task description\n";
         assert_eq!(
             set_due_date_in_markdown(markdown, 1, "Review", Some("2026-10-03")).unwrap(),
-            "- [ ] Review @due(2026-10-03)  \n  continued task description\n"
+            "- [ ] Review due @due(2026-10-03)  \n  continued task description\n"
         );
         let code = "- [ ] Review `example @due(2026-10-01)\n  ends here`\n";
         assert!(set_due_date_in_markdown(

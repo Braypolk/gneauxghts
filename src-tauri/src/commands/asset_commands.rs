@@ -19,8 +19,12 @@ pub(crate) fn read_image_asset_fingerprint(
     let assets_dir = prepare_notes_dir(&state, false)?.join(ASSETS_DIRECTORY_NAME);
     let path = resolve_asset_image_path(&assets_dir, &file_name)?;
     let metadata = fs::metadata(path).map_err(|err| err.to_string())?;
-    let modified = metadata.modified().map_err(|err| err.to_string())?
-        .duration_since(std::time::UNIX_EPOCH).map_err(|err| err.to_string())?.as_nanos();
+    let modified = metadata
+        .modified()
+        .map_err(|err| err.to_string())?
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_err(|err| err.to_string())?
+        .as_nanos();
     Ok(format!("{}:{modified}", metadata.len()))
 }
 
@@ -49,7 +53,12 @@ pub(crate) fn store_pasted_image(
     let assets_dir = notes_dir.join(ASSETS_DIRECTORY_NAME);
     fs::create_dir_all(&assets_dir).map_err(|err| err.to_string())?;
 
-    let target_path = write_new_image_asset(&assets_dir, &bytes, original_name.as_deref(), mime_type.as_deref())?;
+    let target_path = write_new_image_asset(
+        &assets_dir,
+        &bytes,
+        original_name.as_deref(),
+        mime_type.as_deref(),
+    )?;
 
     Ok(StoredImageAsset {
         file_name: target_path
@@ -62,11 +71,18 @@ pub(crate) fn store_pasted_image(
 }
 
 fn write_new_image_asset(
-    assets_dir: &Path, bytes: &[u8], original_name: Option<&str>, mime_type: Option<&str>,
+    assets_dir: &Path,
+    bytes: &[u8],
+    original_name: Option<&str>,
+    mime_type: Option<&str>,
 ) -> Result<PathBuf, String> {
     loop {
         let path = resolve_pasted_image_path(assets_dir, original_name, mime_type);
-        match fs::OpenOptions::new().write(true).create_new(true).open(&path) {
+        match fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
             Ok(mut file) => {
                 if let Err(error) = file.write_all(bytes) {
                     drop(file);
@@ -105,7 +121,9 @@ pub(super) fn resolve_asset_image_path(
 
     let file_path = Path::new(trimmed);
     if trimmed.contains(['\\', ':'])
-        || !file_path.components().all(|part| matches!(part, std::path::Component::Normal(_)))
+        || !file_path
+            .components()
+            .all(|part| matches!(part, std::path::Component::Normal(_)))
     {
         return Err("Image asset path must be relative to the assets folder".to_string());
     }

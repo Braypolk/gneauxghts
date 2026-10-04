@@ -137,18 +137,28 @@ pub fn without_string_literals(source: &str) -> String {
         for token in stream {
             match token {
                 TokenTree::Group(group) => gather(group.stream(), coordinates, ranges),
-                TokenTree::Literal(literal) if literal.to_string().contains('"') => ranges.push(coordinates.range(literal.span())),
+                TokenTree::Literal(literal) if literal.to_string().contains('"') => {
+                    ranges.push(coordinates.range(literal.span()))
+                }
                 _ => {}
             }
         }
     }
     // Non-Rust product files retain their existing explicit contract checks.
-    if syn::parse_file(source).is_err() { return source.into(); }
+    if syn::parse_file(source).is_err() {
+        return source.into();
+    }
     let coordinates = Coordinates::new(source);
     let mut ranges = Vec::new();
     gather(source.parse().unwrap(), &coordinates, &mut ranges);
     let mut bytes = source.as_bytes().to_vec();
-    for span in ranges { for byte in &mut bytes[span] { if *byte != b'\n' { *byte = b' '; } } }
+    for span in ranges {
+        for byte in &mut bytes[span] {
+            if *byte != b'\n' {
+                *byte = b' ';
+            }
+        }
+    }
     String::from_utf8(bytes).unwrap()
 }
 

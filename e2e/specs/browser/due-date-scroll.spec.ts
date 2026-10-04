@@ -43,7 +43,7 @@ describe('due-date scroll restoration', () => {
     await $('[aria-label="Date or shortcut"]').setValue('2099-01-01');
     await $('button=Apply').click();
     await $('dialog.date-time-picker').waitForExist({ reverse: true });
-    await waitForSaved('Scrolled task @due(2099-01-01)');
+    await waitForSaved('Scrolled task due @due(2099-01-01)');
     expect(Math.abs((await scrollPosition()) - before)).toBeLessThanOrEqual(2);
     expect(await browser.execute(() => document.activeElement?.classList.contains('cm-content'))).toBe(true);
 

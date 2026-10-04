@@ -221,7 +221,7 @@ mod tests {
                 TaskMutationKind::SetDueDate {
                     due_date: Some("2026-10-02".into()),
                 },
-                "# Tasks\n\n- [ ] Ship it @due(2026-10-02)\n- [ ] Keep",
+                "# Tasks\n\n- [ ] Ship it due @due(2026-10-02)\n- [ ] Keep",
             ),
         ] {
             let actual = transform_task_document(kind, markdown, 3, "Ship it").unwrap();
@@ -318,7 +318,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             prepared.updated_editor_markdown,
-            "- [ ] Ship it @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
+            "- [ ] Ship it due @due(2026-10-02)\n  - [ ] Child @due(2026-10-01)\n"
         );
         let fixture = crate::test_support::TestVault::new("task-due-commit");
         let task = seed_task(&fixture, working);

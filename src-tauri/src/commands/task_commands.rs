@@ -559,5 +559,4 @@ mod tests {
         );
         assert!(group.is_none());
     }
-
 }

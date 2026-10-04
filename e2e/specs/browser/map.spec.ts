@@ -1,20 +1,52 @@
 import { browser, expect, $ } from '@wdio/globals';
+import { openRecentNote, resetBrowserWorkspace, waitForNote } from '../../support/browserWorkspace';
+import type { AtlasCloud, VaultAtlasResponse } from '../../../src/lib/types/atlas';
 
 const alpha = '[data-node-id="note-alpha"] .dot-body';
 const beta = '[data-node-id="note-beta"] .dot-body';
 async function transform() { return $('.map-world').getAttribute('transform'); }
 
+async function atlasSnapshot() {
+  return browser.execute(async () => {
+    const native = window.__TAURI_INTERNALS__ as {
+      invoke(command: 'get_vault_atlas', args: Record<string, never>): Promise<VaultAtlasResponse>;
+    };
+    return native.invoke('get_vault_atlas', {});
+  });
+}
+
+async function publishAtlas(response: VaultAtlasResponse, deleted = false) {
+  await browser.execute((atlas, removed) => {
+    window.__GNEAUXGHTS_E2E__!.setAtlas(atlas);
+    window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {
+      documentKind: 'note', notePath: '/e2e/alpha.md', deleted: removed, source: 'external', chatId: null
+    });
+  }, response, deleted);
+}
+
 describe('Atlas map', () => {
   beforeEach(async () => {
-    await browser.url('/map');
-    await $(beta).waitForDisplayed({ timeout:30_000 });
+    await resetBrowserWorkspace();
+    await $('a[aria-label="Map"]').click();
+    await $(beta).waitForDisplayed({ timeout: 30_000 });
   });
 
+  afterEach(async () => { await browser.releaseActions(); });
+
   it('opens the picked note in the editor with double-click', async () => {
+    // Keep the clicked left-hand note outside the right-hand reader overlay.
+    // Establish Beta through the real workspace so a missing handoff cannot pass
+    // by reopening the default Alpha fixture.
+    await $('a[href="/"]').click();
+    await waitForNote('Alpha note');
+    await openRecentNote('Beta note');
+    await $('a[aria-label="Map"]').click();
+    await $(beta).waitForDisplayed();
     await $(beta).click();
+    await expect($('.reader h2')).toHaveText('beta');
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().activeNoteId)).toBe('note-beta');
     await $(alpha).doubleClick();
-    await $('[data-testid="note-title"]').waitForDisplayed();
-    await expect($('[data-testid="note-title"]')).toHaveValue('Alpha note');
+    await waitForNote('Alpha note');
   });
 
   it('opens the selected note with Enter and the reader button', async () => {
@@ -52,73 +84,76 @@ describe('Atlas map', () => {
     await $(alpha).click();
     await browser.keys('+');
     const before = await transform();
-    await browser.execute(async () => {
-      const internal = window.__TAURI_INTERNALS__ as {invoke:(command:string,args:unknown)=>Promise<any>};
-      const atlas = await internal.invoke('get_vault_atlas', {});
-      atlas.nodes = atlas.nodes.filter((node:any) => node.id !== 'note-alpha'); atlas.revision++;
-      window.__GNEAUXGHTS_E2E__!.setAtlas(atlas);
-      window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {documentKind:'note',path:'/e2e/alpha.md'});
-    });
-    await $(alpha).waitForExist({ reverse:true });
+    const atlas = await atlasSnapshot();
+    atlas.nodes = atlas.nodes.filter(node => node.id !== 'note-alpha');
+    atlas.revision++;
+    await publishAtlas(atlas, true);
+    await $(alpha).waitForExist({ reverse: true });
     await expect($('.reader')).not.toExist();
     await expect($('[data-filename-id="note-beta"]')).toExist();
     expect(await transform()).toEqual(before);
   });
+
 
   it('invalidates loaded source when a selected note changes', async () => {
     await $(alpha).click();
     await $('button=Read full note').click();
     await expect($('.full-source')).toHaveText(expect.stringContaining('Alpha line 80'));
     const before = await transform();
-    await browser.execute(async () => {
-      const internal = window.__TAURI_INTERNALS__ as {invoke:(command:string,args:unknown)=>Promise<any>};
-      const atlas = await internal.invoke('get_vault_atlas', {});
-      atlas.nodes[0].preview = 'Changed note excerpt'; atlas.nodes[0].updatedAtMillis++; atlas.revision++;
-      window.__GNEAUXGHTS_E2E__!.setAtlas(atlas);
-      window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {documentKind:'note',path:'/e2e/alpha.md'});
-    });
+    const atlas = await atlasSnapshot();
+    const selected = atlas.nodes.find(node => node.id === 'note-alpha')!;
+    selected.preview = 'Changed note excerpt';
+    selected.updatedAtMillis++;
+    atlas.revision++;
+    await publishAtlas(atlas);
     await expect($('.reader-excerpt')).toHaveText('Changed note excerpt');
     await expect($('.full-source')).not.toExist();
     expect(await transform()).toEqual(before);
   });
 
+
   it('reports empty and unavailable responses without substituting demo notes', async () => {
-    await browser.execute(async () => {
-      const internal = window.__TAURI_INTERNALS__ as {invoke:(command:string,args:unknown)=>Promise<any>};
-      const atlas = await internal.invoke('get_vault_atlas', {});
-      window.__GNEAUXGHTS_E2E__!.setAtlas({...atlas, nodes:[], clouds:[], links:[], status:'empty'});
-      window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {documentKind:'note',path:'/e2e/alpha.md'});
-    });
+    const atlas = await atlasSnapshot();
+    const empty = { ...atlas, nodes: [], clouds: [], links: [], status: 'empty' as const };
+    await publishAtlas(empty);
     await expect($('.loading strong')).toHaveText('No map yet');
-    await browser.execute(async () => {
-      const internal = window.__TAURI_INTERNALS__ as {invoke:(command:string,args:unknown)=>Promise<any>};
-      const atlas = await internal.invoke('get_vault_atlas', {});
-      window.__GNEAUXGHTS_E2E__!.setAtlas({...atlas, status:'unavailable', reason:'Indexing unavailable'});
-      window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {documentKind:'note',path:'/e2e/alpha.md'});
-    });
+    await publishAtlas({ ...empty, status: 'unavailable', reason: 'Indexing unavailable' });
     await expect($('.loading strong')).toHaveText('Semantic map unavailable');
     await expect($('.loading p')).toHaveText('Indexing unavailable');
     await expect($('.map-world')).not.toExist();
   });
 
+
   it('renders and navigates a larger vault without dropping notes', async () => {
-    await browser.execute(async () => {
-      const internal = window.__TAURI_INTERNALS__ as {invoke:(command:string,args:unknown)=>Promise<any>};
-      const atlas = await internal.invoke('get_vault_atlas', {}), sample = atlas.nodes[0];
-      atlas.nodes = Array.from({length:2000}, (_, i) => {
-        const root = i % 18, offset = Math.floor(i / 18), angle = offset * 2.399963, radius = 15 * Math.sqrt(offset);
-        return {...sample,id:`large-${i}`,fileName:`Note ${i}.md`,cloudId:`root-${root}`,parentCloudId:`root-${root}`,x:root % 6 * 300 + Math.cos(angle) * radius,y:Math.floor(root / 6) * 300 + Math.sin(angle) * radius};
-      });
-      atlas.clouds = Array.from({length:18}, (_, root) => {
-        const x = root % 6 * 300, y = Math.floor(root / 6) * 300;
-        const members = atlas.nodes.filter((node:any) => node.cloudId === `root-${root}`).map((node:any)=>node.id);
-        return {id:`root-${root}`,parentId:null,level:0,label:`Region ${root}`,labelSource:'keybert',noteCount:members.length,density:1,color:[100,150,180,255],centroid:[x,y],radius:110,hull:[[-110,-100],[110,-100],[110,100],[-110,100]].map(([dx,dy])=>[x+dx,y+dy]),memberNodeIds:members,coreNodeIds:members,outlierNodeIds:[],childCloudIds:[],representativeNodeIds:members.slice(0,3)};
-      });
-      atlas.revision++; atlas.labelGeneration = 'large-labels';
-      window.__GNEAUXGHTS_E2E__!.setAtlas(atlas);
-      window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {documentKind:'note',path:'/e2e/alpha.md'});
+    const atlas = await atlasSnapshot();
+    const sample = atlas.nodes[0];
+    atlas.nodes = Array.from({ length: 2000 }, (_, i) => {
+      const root = i % 18;
+      const offset = Math.floor(i / 18);
+      const angle = offset * 2.399963;
+      const radius = 15 * Math.sqrt(offset);
+      return {
+        ...sample, id: `large-${i}`, noteId: `large-${i}`, notePath: `/e2e/large-${i}.md`,
+        fileName: `Note ${i}.md`, cloudId: `root-${root}`, parentCloudId: `root-${root}`,
+        x: root % 6 * 300 + Math.cos(angle) * radius,
+        y: Math.floor(root / 6) * 300 + Math.sin(angle) * radius
+      };
     });
-    await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('[data-node-id]').length === 2000), {timeout:15_000});
+    atlas.clouds = Array.from({ length: 18 }, (_, root): AtlasCloud => {
+      const x = root % 6 * 300;
+      const y = Math.floor(root / 6) * 300;
+      const members = atlas.nodes.filter(node => node.cloudId === `root-${root}`).map(node => node.id);
+      return {
+        id: `root-${root}`, parentId: null, level: 0, label: `Region ${root}`, labelSource: 'keybert',
+        noteCount: members.length, density: 1, color: [100, 150, 180, 255], centroid: [x, y], radius: 110,
+        hull: [[x - 110, y - 100], [x + 110, y - 100], [x + 110, y + 100], [x - 110, y + 100]],
+        memberNodeIds: members, coreNodeIds: members, outlierNodeIds: [], childCloudIds: [], representativeNodeIds: members.slice(0, 3)
+      };
+    });
+    atlas.revision++;
+    atlas.labelGeneration = 'large-labels';
+    await publishAtlas(atlas);
+    await browser.waitUntil(async () => browser.execute(() => document.querySelectorAll('[data-node-id]').length === 2000), { timeout: 15_000 });
     expect(await browser.execute(() => document.querySelectorAll('[data-filename-id]').length)).toBe(2000);
     const before = await transform();
     await browser.keys('+');
@@ -126,6 +161,39 @@ describe('Atlas map', () => {
     await $('[aria-label="Fit map to view"]').click();
     expect(await browser.execute(() => document.querySelectorAll('[data-node-id]').length)).toBe(2000);
   });
+
+  it('keeps hover from moving the map while fit, zoom and region focus work', async () => {
+    const atlas = await atlasSnapshot();
+    const members = atlas.nodes.map(node => node.id);
+    atlas.nodes = atlas.nodes.map(node => ({ ...node, cloudId: 'cloud', parentCloudId: 'cloud' }));
+    atlas.clouds = [{
+      id: 'cloud', parentId: null, level: 0, label: 'Animation cloud', labelSource: 'keybert',
+      noteCount: members.length, density: 1, color: [100, 120, 160, 255], centroid: [0, 0], radius: 250,
+      hull: [[-250, -100], [250, -100], [250, 100], [-250, 100]],
+      memberNodeIds: members, coreNodeIds: members, outlierNodeIds: [], childCloudIds: [], representativeNodeIds: [members[0]]
+    }];
+    atlas.revision++;
+    atlas.labelGeneration = 'animation-labels';
+    await publishAtlas(atlas);
+    await $('[data-region-id="cloud"]').waitForDisplayed();
+    await $('[aria-label="Fit map to view"]').click();
+    const before = await transform();
+    await $(alpha).moveTo();
+    await expect($('.hover-preview strong')).toHaveText('Alpha note');
+    expect(await transform()).toEqual(before);
+    await $(alpha).click();
+    await browser.keys('+');
+    expect(await transform()).not.toEqual(before);
+    await $('[aria-label="Fit map to view"]').click();
+    expect(await transform()).toEqual(before);
+    await browser.execute(() => document.querySelector<SVGGElement>('[data-region-id="cloud"]')!.focus());
+    await browser.keys('Enter');
+    await expect(browser).toHaveUrl(expect.stringMatching(/\/map$/));
+    await expect($('.region-name')).toHaveText('Animation cloud');
+    await expect($('.reader')).not.toExist();
+    expect(await transform()).not.toEqual(before);
+  });
+
 
   it('keeps note taps selectable and supports two-pointer pinch', async () => {
     const rect = await $(beta).getLocation();

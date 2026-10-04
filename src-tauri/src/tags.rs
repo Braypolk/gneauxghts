@@ -258,9 +258,14 @@ mod tests {
             "# Keep this end-of-frontmatter comment",
         ] {
             let raw = format!("---\ntags:\n  - old\n{suffix}\n---\n\nBody");
-            let updated = apply_edit(&raw, Some(&TagEdit {
-                previous: vec!["old".into()], tags: vec!["new".into()],
-            })).unwrap();
+            let updated = apply_edit(
+                &raw,
+                Some(&TagEdit {
+                    previous: vec!["old".into()],
+                    tags: vec!["new".into()],
+                }),
+            )
+            .unwrap();
             assert!(updated.contains(suffix), "lost comment in {updated}");
             assert_eq!(read_tags(&updated).unwrap(), vec!["new"]);
             assert!(updated.ends_with("\n---\n\nBody"));

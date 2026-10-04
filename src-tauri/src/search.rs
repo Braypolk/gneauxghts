@@ -158,7 +158,12 @@ fn score_search_candidate(
         normalized_query,
         query_terms,
     )?;
-    let original_match_offset = original_span(&candidate.paragraph.text, search_match.match_offset, search_match.match_offset).0;
+    let original_match_offset = original_span(
+        &candidate.paragraph.text,
+        search_match.match_offset,
+        search_match.match_offset,
+    )
+    .0;
     let mut score = 0;
 
     if paragraph_phrase_match {
@@ -386,12 +391,23 @@ mod tests {
             ("💡 İ Needle".to_string(), "needle", "Needle"),
             ("İstanbul".to_string(), "i", "İ"),
             ("a e\u{301} z".to_string(), "e\u{301}", "e\u{301}"),
-            (format!("{} needle {}", " ".repeat(200), "x".repeat(200)), "needle", "needle"),
+            (
+                format!("{} needle {}", " ".repeat(200), "x".repeat(200)),
+                "needle",
+                "needle",
+            ),
         ] {
             let (excerpt, ranges, _) = build_search_preview(&text, query, &[query]).unwrap();
-            let highlighted: Vec<String> = ranges.iter().map(|range| {
-                excerpt.chars().skip(range.start).take(range.end - range.start).collect()
-            }).collect();
+            let highlighted: Vec<String> = ranges
+                .iter()
+                .map(|range| {
+                    excerpt
+                        .chars()
+                        .skip(range.start)
+                        .take(range.end - range.start)
+                        .collect()
+                })
+                .collect();
             assert_eq!(highlighted, vec![expected], "{text:?} / {excerpt:?}");
         }
     }

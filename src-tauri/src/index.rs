@@ -17,8 +17,8 @@ use std::{
         atomic::{AtomicUsize, Ordering},
         Arc, Mutex,
     },
-    time::UNIX_EPOCH,
     time::Instant,
+    time::UNIX_EPOCH,
 };
 
 /// Lightweight draft pointer used internally for search/related/wikilink

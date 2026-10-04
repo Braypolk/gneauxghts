@@ -272,10 +272,7 @@ pub(crate) fn list_recent_notes(
                 db_prune_recent_state(&previous, &persisted_state)?;
             }
 
-            state.ensure_interactive_index(
-                &notes_dir,
-                        "list_recent_notes",
-            )?;
+            state.ensure_interactive_index(&notes_dir, "list_recent_notes")?;
             let index = state
                 .notes_index
                 .lock()
@@ -419,10 +416,7 @@ pub(crate) fn list_recent_focus(
             let previous = persisted_state.clone();
             let prune_changed = prune_recent_note_ids(&mut persisted_state, &notes_dir);
 
-            state.ensure_interactive_index(
-                &notes_dir,
-                        "list_recent_focus",
-            )?;
+            state.ensure_interactive_index(&notes_dir, "list_recent_focus")?;
             let index = state
                 .notes_index
                 .lock()
@@ -542,23 +536,58 @@ pub(crate) async fn search_notes_hybrid(
     lexical_weight: Option<f32>,
     current_tags: Option<Vec<String>>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    search_notes_hybrid_for_state(state.inner(), query, current_path, current_title,
-        current_markdown, current_body_hash, limit, semantic_weight, lexical_weight, current_tags).await
+    search_notes_hybrid_for_state(
+        state.inner(),
+        query,
+        current_path,
+        current_title,
+        current_markdown,
+        current_body_hash,
+        limit,
+        semantic_weight,
+        lexical_weight,
+        current_tags,
+    )
+    .await
 }
 
 #[allow(clippy::too_many_arguments)]
 async fn search_notes_hybrid_for_state(
-    state: &AppState, query: String, current_path: Option<String>, current_title: String,
-    current_markdown: Option<String>, current_body_hash: Option<String>, limit: usize,
-    semantic_weight: Option<f32>, lexical_weight: Option<f32>, current_tags: Option<Vec<String>>,
+    state: &AppState,
+    query: String,
+    current_path: Option<String>,
+    current_title: String,
+    current_markdown: Option<String>,
+    current_body_hash: Option<String>,
+    limit: usize,
+    semantic_weight: Option<f32>,
+    lexical_weight: Option<f32>,
+    current_tags: Option<Vec<String>>,
 ) -> Result<Vec<NoteSearchResult>, String> {
-    state.note_timeline().current_content(AllowedScope::vault()).read_async(async {
-        let results = search_notes_hybrid_unchecked(state, query, current_path, current_title,
-            current_markdown, current_body_hash, limit, semantic_weight, lexical_weight, current_tags).await?;
-        #[cfg(test)]
-        if let Some(hook) = SEARCH_DELIVERY_HOOK.lock().unwrap().as_ref() { hook(); }
-        Ok(results)
-    }).await
+    state
+        .note_timeline()
+        .current_content(AllowedScope::vault())
+        .read_async(async {
+            let results = search_notes_hybrid_unchecked(
+                state,
+                query,
+                current_path,
+                current_title,
+                current_markdown,
+                current_body_hash,
+                limit,
+                semantic_weight,
+                lexical_weight,
+                current_tags,
+            )
+            .await?;
+            #[cfg(test)]
+            if let Some(hook) = SEARCH_DELIVERY_HOOK.lock().unwrap().as_ref() {
+                hook();
+            }
+            Ok(results)
+        })
+        .await
 }
 
 #[cfg(test)]
@@ -609,7 +638,10 @@ async fn search_notes_hybrid_unchecked(
     )?;
     let draft = resolved_current.draft;
     let resolved_body = resolved_current.body.unwrap_or_default();
-    let cache_body_hash = draft.hash.clone().unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
+    let cache_body_hash = draft
+        .hash
+        .clone()
+        .unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
     let cache_fingerprint = build_search_fingerprint(
         &format!(
             "{}|{:?}|{:?}",
@@ -667,16 +699,16 @@ async fn search_notes_hybrid_unchecked(
         let note_lookup = note_access_lookup_for_candidates(state, &lexical_candidates, &[]);
         let now = current_time_millis().unwrap_or(0);
         let results = merge_note_candidates(
-                lexical_candidates,
-                Vec::new(),
-                &normalized_query,
-                current_path.as_deref(),
-                effective_limit,
-                lexical_weight,
-                semantic_weight,
-                &activity_by_note_id,
-                &note_lookup,
-                now,
+            lexical_candidates,
+            Vec::new(),
+            &normalized_query,
+            current_path.as_deref(),
+            effective_limit,
+            lexical_weight,
+            semantic_weight,
+            &activity_by_note_id,
+            &note_lookup,
+            now,
         );
         search_cache_put(cache_fingerprint, cache_generation, results.clone());
         return Ok(results);
@@ -728,16 +760,16 @@ async fn search_notes_hybrid_unchecked(
         note_access_lookup_for_candidates(state, &lexical_candidates, &semantic_matches);
     let now = current_time_millis().unwrap_or(0);
     let ranked = merge_note_candidates(
-            lexical_candidates,
-            semantic_matches,
-            &normalized_query,
-            current_path.as_deref(),
-            effective_limit,
-            lexical_weight,
-            semantic_weight,
-            &activity_by_note_id,
-            &note_lookup,
-            now,
+        lexical_candidates,
+        semantic_matches,
+        &normalized_query,
+        current_path.as_deref(),
+        effective_limit,
+        lexical_weight,
+        semantic_weight,
+        &activity_by_note_id,
+        &note_lookup,
+        now,
     );
     let elapsed = started_at.elapsed().as_millis().min(u128::from(u64::MAX)) as u64;
     let semantic_failed = semantic_error.is_some();
@@ -829,7 +861,10 @@ async fn get_related_notes_unchecked(
     )?;
     let draft = resolved_current.draft;
     let resolved_body = resolved_current.body.unwrap_or_default();
-    let cache_body_hash = draft.hash.clone().unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
+    let cache_body_hash = draft
+        .hash
+        .clone()
+        .unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
     let fingerprint = build_related_fingerprint(
         current_path.as_deref(),
         Some(&cache_body_hash),
@@ -1046,8 +1081,16 @@ fn build_search_fingerprint(
     semantic_weight: Option<f32>,
 ) -> String {
     // Structured framing avoids collisions when user inputs contain separators.
-    serde_json::to_string(&(normalized_query, current_path.map(|path| path.to_string_lossy()), body_hash, title, limit,
-        lexical_weight.map(f32::to_bits), semantic_weight.map(f32::to_bits))).unwrap()
+    serde_json::to_string(&(
+        normalized_query,
+        current_path.map(|path| path.to_string_lossy()),
+        body_hash,
+        title,
+        limit,
+        lexical_weight.map(f32::to_bits),
+        semantic_weight.map(f32::to_bits),
+    ))
+    .unwrap()
 }
 
 fn build_related_fingerprint(
@@ -1057,22 +1100,48 @@ fn build_related_fingerprint(
     selected_text: Option<&str>,
     limit: usize,
 ) -> String {
-    serde_json::to_string(&(current_path.map(|path| path.to_string_lossy()), body_hash, title, selected_text, limit)).unwrap()
+    serde_json::to_string(&(
+        current_path.map(|path| path.to_string_lossy()),
+        body_hash,
+        title,
+        selected_text,
+        limit,
+    ))
+    .unwrap()
 }
 
 /// Ordinary search excludes chat projections before normalization and truncation.
 /// Evidence/chat callers retain the reusable merger's broader kind policy.
 #[allow(clippy::too_many_arguments)]
 fn merge_note_candidates(
-    lexical: Vec<ScoredSearchResult>, semantic: Vec<SemanticChunkMatch>,
-    query: &str, current_path: Option<&Path>, limit: usize,
-    lexical_weight: f32, semantic_weight: f32,
-    activity: &HashMap<String, NoteActivity>, lookup: &NoteAccessLookup, now: u64,
+    lexical: Vec<ScoredSearchResult>,
+    semantic: Vec<SemanticChunkMatch>,
+    query: &str,
+    current_path: Option<&Path>,
+    limit: usize,
+    lexical_weight: f32,
+    semantic_weight: f32,
+    activity: &HashMap<String, NoteActivity>,
+    lookup: &NoteAccessLookup,
+    now: u64,
 ) -> Vec<NoteSearchResult> {
     merge_hybrid_candidates(
-        lexical.into_iter().filter(|item| item.result.document_kind == crate::note::DocumentKind::Note).collect(),
-        semantic.into_iter().filter(|item| item.document_kind == crate::note::DocumentKind::Note).collect(),
-        query, current_path, limit, lexical_weight, semantic_weight, activity, lookup, now,
+        lexical
+            .into_iter()
+            .filter(|item| item.result.document_kind == crate::note::DocumentKind::Note)
+            .collect(),
+        semantic
+            .into_iter()
+            .filter(|item| item.document_kind == crate::note::DocumentKind::Note)
+            .collect(),
+        query,
+        current_path,
+        limit,
+        lexical_weight,
+        semantic_weight,
+        activity,
+        lookup,
+        now,
     )
 }
 
@@ -1090,10 +1159,7 @@ fn collect_lexical_candidates(
     tag_query: &crate::tags::TagQuery,
     current_tags: Option<&[String]>,
 ) -> Result<Vec<ScoredSearchResult>, String> {
-    state.ensure_interactive_index(
-        notes_dir,
-        "search_notes_all",
-    )?;
+    state.ensure_interactive_index(notes_dir, "search_notes_all")?;
     let index = state
         .notes_index
         .lock()
@@ -1112,9 +1178,9 @@ fn collect_lexical_candidates(
             note.note_id = canonical.note_id.clone();
             note.document_kind = canonical.document_kind;
         }
-        note.tags = current_tags.map(<[String]>::to_vec).unwrap_or_else(|| {
-            canonical.map(|note| note.tags.clone()).unwrap_or_default()
-        });
+        note.tags = current_tags
+            .map(<[String]>::to_vec)
+            .unwrap_or_else(|| canonical.map(|note| note.tags.clone()).unwrap_or_default());
     }
     let mut candidates = Vec::new();
     if tag_query.tags.is_empty() && !query_terms.is_empty() {
@@ -1681,7 +1747,9 @@ mod current_content_delivery_tests {
                         }])
                     })
             });
-            query_is_started.recv_timeout(Duration::from_secs(5)).unwrap();
+            query_is_started
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap();
             crate::commands::note_persistence::persist_note_session_with_outcome(
                 &state,
                 "Changing search note".to_string(),
@@ -1785,10 +1853,7 @@ pub(crate) async fn list_note_tags<R: tauri::Runtime>(
 ) -> Result<Vec<String>, String> {
     super::on_app_worker(app, |state| {
         let notes_dir = prepare_notes_dir(state, false)?;
-        state.ensure_interactive_index(
-            &notes_dir,
-                "list_note_tags",
-        )?;
+        state.ensure_interactive_index(&notes_dir, "list_note_tags")?;
         let index = state
             .notes_index
             .lock()
@@ -1870,16 +1935,27 @@ mod tag_search_tests {
         // the open note's canonical identity through the current-content gate.
         for query in ["#renovation", "tag:renovation"] {
             let results = tauri::async_runtime::block_on(
-                state.note_timeline().current_content(AllowedScope::vault()).read_async(
-                    search_notes_hybrid_unchecked(
-                        &state, query.into(), saved.path.clone(), saved.title.clone(),
-                        Some(saved.markdown.clone()), None, 12, None, None,
+                state
+                    .note_timeline()
+                    .current_content(AllowedScope::vault())
+                    .read_async(search_notes_hybrid_unchecked(
+                        &state,
+                        query.into(),
+                        saved.path.clone(),
+                        saved.title.clone(),
+                        Some(saved.markdown.clone()),
+                        None,
+                        12,
+                        None,
+                        None,
                         Some(vec!["renovation".into()]),
-                    )
-                )
-            ).unwrap();
-            assert!(results.iter().any(|result| result.note_id == saved.note_id),
-                "open-note tag query was removed by current-content delivery: {query}");
+                    )),
+            )
+            .unwrap();
+            assert!(
+                results.iter().any(|result| result.note_id == saved.note_id),
+                "open-note tag query was removed by current-content delivery: {query}"
+            );
         }
         assert!(search("#reno").is_empty());
         assert!(search("#renovation #missing").is_empty());
@@ -1903,33 +1979,73 @@ mod command_composition_regressions {
         let fixture = crate::test_support::TestVault::new("search-draft-cache");
         let search = |title: &str, body: &str| {
             tauri::async_runtime::block_on(search_notes_hybrid_unchecked(
-                &fixture.state, "needle".into(), None, title.into(), Some(body.into()), None,
-                12, None, None, None,
-            )).unwrap()
+                &fixture.state,
+                "needle".into(),
+                None,
+                title.into(),
+                Some(body.into()),
+                None,
+                12,
+                None,
+                None,
+                None,
+            ))
+            .unwrap()
         };
         invalidate_result_caches();
         assert!(!search("needle", "ordinary prose").is_empty());
-        assert!(search("other", "ordinary prose").is_empty(), "title-only replacement must miss cache");
-        assert!(!search("other", "needle in the body").is_empty(), "legacy no-hash requests must distinguish bodies");
-        assert_ne!(build_related_fingerprint(None, Some("same-body"), "one", None, 5),
-            build_related_fingerprint(None, Some("same-body"), "two", None, 5));
+        assert!(
+            search("other", "ordinary prose").is_empty(),
+            "title-only replacement must miss cache"
+        );
+        assert!(
+            !search("other", "needle in the body").is_empty(),
+            "legacy no-hash requests must distinguish bodies"
+        );
+        assert_ne!(
+            build_related_fingerprint(None, Some("same-body"), "one", None, 5),
+            build_related_fingerprint(None, Some("same-body"), "two", None, 5)
+        );
     }
 
     #[test]
     fn ordinary_search_filters_chat_candidates_before_ranking_and_limit() {
         let candidate = |title: &str, score, kind| SemanticChunkMatch {
-            note_path: format!("/notes/{title}.md"), note_title: title.into(),
-            section_label: "Paragraph 1".into(), excerpt: "needle".into(),
-            match_text: "needle".into(), score, start_line: 1, end_line: 1,
-            document_kind: kind, block_anchor: None,
+            note_path: format!("/notes/{title}.md"),
+            note_title: title.into(),
+            section_label: "Paragraph 1".into(),
+            excerpt: "needle".into(),
+            match_text: "needle".into(),
+            score,
+            start_line: 1,
+            end_line: 1,
+            document_kind: kind,
+            block_anchor: None,
         };
-        let results = merge_note_candidates(vec![], vec![
-            candidate("chat", 10.0, crate::note::DocumentKind::ChatIndex),
-            candidate("one", 2.0, crate::note::DocumentKind::Note),
-            candidate("two", 1.0, crate::note::DocumentKind::Note),
-        ], "needle", None, 2, 0.0, 1.0, &HashMap::new(), &NoteAccessLookup::empty(), 0);
+        let results = merge_note_candidates(
+            vec![],
+            vec![
+                candidate("chat", 10.0, crate::note::DocumentKind::ChatIndex),
+                candidate("one", 2.0, crate::note::DocumentKind::Note),
+                candidate("two", 1.0, crate::note::DocumentKind::Note),
+            ],
+            "needle",
+            None,
+            2,
+            0.0,
+            1.0,
+            &HashMap::new(),
+            &NoteAccessLookup::empty(),
+            0,
+        );
         assert_eq!(results.len(), 2);
-        assert_eq!(results.iter().map(|item| item.file_name.as_str()).collect::<Vec<_>>(), ["one", "two"]);
+        assert_eq!(
+            results
+                .iter()
+                .map(|item| item.file_name.as_str())
+                .collect::<Vec<_>>(),
+            ["one", "two"]
+        );
     }
 }
 
@@ -1946,35 +2062,67 @@ mod actual_search_delivery_tests {
             let fixture = crate::test_support::TestVault::new("actual-search-delivery");
             let state = &fixture.state;
             let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
-                state, "Changing note".into(), "Old searchable prose".into(), None,
-            ).unwrap().unwrap();
-            let query = || tauri::async_runtime::block_on(search_notes_hybrid_for_state(
-                state, "searchable".into(), None, String::new(), Some(String::new()), None, 12, None, None, None,
-            )).unwrap();
-            if warm_cache { assert!(!query().is_empty()); }
+                state,
+                "Changing note".into(),
+                "Old searchable prose".into(),
+                None,
+            )
+            .unwrap()
+            .unwrap();
+            let query = || {
+                tauri::async_runtime::block_on(search_notes_hybrid_for_state(
+                    state,
+                    "searchable".into(),
+                    None,
+                    String::new(),
+                    Some(String::new()),
+                    None,
+                    12,
+                    None,
+                    None,
+                    None,
+                ))
+                .unwrap()
+            };
+            if warm_cache {
+                assert!(!query().is_empty());
+            }
             let (started, entered) = std::sync::mpsc::channel();
             let (release, released) = std::sync::mpsc::channel();
             let released = Mutex::new(released);
             struct ResetHook;
             impl Drop for ResetHook {
-                fn drop(&mut self) { *SEARCH_DELIVERY_HOOK.lock().unwrap() = None; }
+                fn drop(&mut self) {
+                    *SEARCH_DELIVERY_HOOK.lock().unwrap() = None;
+                }
             }
             let _reset = ResetHook;
             *SEARCH_DELIVERY_HOOK.lock().unwrap() = Some(Box::new(move || {
                 started.send(()).unwrap();
-                released.lock().unwrap().recv_timeout(Duration::from_secs(5)).unwrap();
+                released
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap();
             }));
             let result = std::thread::scope(|scope| {
                 let read = scope.spawn(query);
                 let mut release = crate::test_support::ReleaseOnDrop::new(release);
                 entered.recv_timeout(Duration::from_secs(5)).unwrap();
                 crate::commands::note_persistence::persist_note_session_with_outcome(
-                    state, "Changing note".into(), "New searchable prose".into(), saved.path.clone(),
-                ).unwrap();
+                    state,
+                    "Changing note".into(),
+                    "New searchable prose".into(),
+                    saved.path.clone(),
+                )
+                .unwrap();
                 release.release();
                 read.join().unwrap()
             });
-            assert!(result.is_empty(), "obsolete real query delivered; warm_cache={warm_cache}");
+            assert!(
+                result.is_empty(),
+                "obsolete real query delivered; warm_cache={warm_cache}"
+            );
         }
     }
 }

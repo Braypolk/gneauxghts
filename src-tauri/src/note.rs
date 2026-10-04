@@ -563,8 +563,15 @@ pub(crate) fn timestamp_millis_to_rfc3339(timestamp_millis: u64) -> String {
 // Keep that narrow grammar; accepting offsets/fractions is a separate format change.
 pub(crate) fn parse_rfc3339_millis(value: &str) -> Option<u64> {
     let value = value.trim();
-    if value.len() != 20 || [0..4, 5..7, 8..10, 11..13, 14..16, 17..19]
-        .iter().any(|range| !value.as_bytes()[range.clone()].iter().all(u8::is_ascii_digit)) {
+    if value.len() != 20
+        || [0..4, 5..7, 8..10, 11..13, 14..16, 17..19]
+            .iter()
+            .any(|range| {
+                !value.as_bytes()[range.clone()]
+                    .iter()
+                    .all(u8::is_ascii_digit)
+            })
+    {
         return None;
     }
     let year = value.get(0..4)?.parse::<i64>().ok()?;
@@ -652,10 +659,19 @@ mod tests {
 
     #[test]
     fn managed_timestamps_reject_impossible_calendar_days() {
-        for value in ["2026-02-29T00:00:00Z", "2026-02-31T00:00:00Z", "2026-04-31T00:00:00Z", "2100-02-29T00:00:00Z"] {
+        for value in [
+            "2026-02-29T00:00:00Z",
+            "2026-02-31T00:00:00Z",
+            "2026-04-31T00:00:00Z",
+            "2100-02-29T00:00:00Z",
+        ] {
             assert_eq!(parse_rfc3339_millis(value), None, "{value}");
         }
-        for value in ["2024-02-29T00:00:00Z", "2000-02-29T00:00:00Z", "2026-04-30T00:00:00Z"] {
+        for value in [
+            "2024-02-29T00:00:00Z",
+            "2000-02-29T00:00:00Z",
+            "2026-04-30T00:00:00Z",
+        ] {
             let parsed = parse_rfc3339_millis(value).unwrap();
             assert_eq!(timestamp_millis_to_rfc3339(parsed), value);
         }
@@ -666,16 +682,26 @@ mod tests {
         assert_eq!(parse_rfc3339_millis("1970-01-01T00:00:00Z"), Some(0));
         assert_eq!(parse_rfc3339_millis(" 1970-01-01T00:00:01Z "), Some(1_000));
         for value in [
-            "1969-12-31T23:59:59Z", "2026-00-01T00:00:00Z",
-            "2026-13-01T00:00:00Z", "2026-01-00T00:00:00Z",
-            "2026-01-01T24:00:00Z", "2026-01-01T00:60:00Z",
-            "2026-01-01T00:00:61Z", "2026-01-01 00:00:00Z",
-            "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00.000Z",
-            "2026-01-01T00:00:00z", "2026-1-01T00:00:00Z",
-            "2026-é1-01T00:00:00Z", "2026-+1-01T00:00:00Z",
-            "2026-01-+1T00:00:00Z", "2026-01-01T+1:00:00Z",
-            "2026-01-01T00:+1:00Z", "2026-01-01T00:00:+1Z",
-            "2026-01-01T00:00:60Z", "1969-12-31T23:59:60Z",
+            "1969-12-31T23:59:59Z",
+            "2026-00-01T00:00:00Z",
+            "2026-13-01T00:00:00Z",
+            "2026-01-00T00:00:00Z",
+            "2026-01-01T24:00:00Z",
+            "2026-01-01T00:60:00Z",
+            "2026-01-01T00:00:61Z",
+            "2026-01-01 00:00:00Z",
+            "2026-01-01T00:00:00+00:00",
+            "2026-01-01T00:00:00.000Z",
+            "2026-01-01T00:00:00z",
+            "2026-1-01T00:00:00Z",
+            "2026-é1-01T00:00:00Z",
+            "2026-+1-01T00:00:00Z",
+            "2026-01-+1T00:00:00Z",
+            "2026-01-01T+1:00:00Z",
+            "2026-01-01T00:+1:00Z",
+            "2026-01-01T00:00:+1Z",
+            "2026-01-01T00:00:60Z",
+            "1969-12-31T23:59:60Z",
         ] {
             assert_eq!(parse_rfc3339_millis(value), None, "{value}");
         }
