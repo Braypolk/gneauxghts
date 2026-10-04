@@ -34,7 +34,7 @@
   let lastSearchDataset = $state('');
   let hasPlotSize = $state(false), framedDataset = $state('');
   const palette = ['#6a9fac', '#aa8cbd', '#ad9a69', '#7f9c7d', '#b58895', '#879aca'];
-  const nodeSpacing = 42, readingScale = 2.5;
+  const nodeSpacing = 42, labelWorldSize = 6.5;
   function titleWidth(title: string, size: number) {
     return [...title].reduce((sum, char) => sum + ('ilI.,:;!| '.includes(char) ? 0.3 : 'MW@%'.includes(char) ? 0.85 : 0.56), 0) * size;
   }
@@ -73,17 +73,16 @@
       const cloud = clouds.find((item) => item.cloud.id === (node.childCloudId ?? node.cloudId ?? node.parentCloudId));
       return { node, ...project(node.x, node.y), rootId: root?.id ?? null, color: cloud?.color ?? '#959da6' };
     });
-    // Pack nearby notes once per dataset, with room for names at a common
-    // reading scale. Neither camera nor selected/hovered state enters layout.
+    // Pack nearby notes once per dataset, reserving their fixed world-space
+    // names. Neither camera nor selected/hovered state enters layout.
     const groups = [...new Set(nodes.map((mark) => mark.rootId ?? mark.node.id))].map((id) => {
       const root = clouds.find((item) => item.cloud.id === id);
       const originals = nodes.filter((mark) => (mark.rootId ?? mark.node.id) === id);
       const anchor = root?.center ?? originals[0];
       const placed: (typeof nodes[number] & { box: { left: number; right: number; top: number; bottom: number } })[] = [];
-      const nameSize = 12 * Math.pow(readingScale, 0.3);
       for (const mark of [...originals].sort((a, b) => a.y - b.y || a.x - b.x || a.node.id.localeCompare(b.node.id))) {
         const preferred = { x: mark.x - anchor.x, y: mark.y - anchor.y };
-        const halfWidth = (titleWidth(tileTitle(mark.node), nameSize) * 1.12 + 12) / readingScale / 2;
+        const halfWidth = titleWidth(tileTitle(mark.node), labelWorldSize) * 1.12 / 2 + 3;
         const labelBox = (point: Point) => ({ left: point.x - halfWidth, right: point.x + halfWidth, top: point.y + 1, bottom: point.y + 18 });
         const collides = (point: Point) => {
           const box = labelBox(point);
@@ -191,33 +190,21 @@
     }
     return new Map([...counts].map(([id, neighbors]) => [id, neighbors.size]));
   });
-  const dotRadius = (id: string) => 5 + Math.min(5, Math.sqrt(explicitDegree.get(id) ?? 0));
-  const visibleRadius = (id: string) => Math.max(2, Math.min(12, dotRadius(id) * Math.sqrt(cameraScale)));
-  let labelSize = $derived(Math.max(9, Math.min(18, 12 * Math.pow(cameraScale, 0.3))));
+  const dotRadius = (id: string) => (5 + Math.min(5, Math.sqrt(explicitDegree.get(id) ?? 0))) * 0.65;
+  const visibleRadius = (id: string) => Math.max(2, dotRadius(id) * cameraScale);
+  let labelSize = $derived(labelWorldSize * cameraScale);
   let labelOpacity = $derived.by(() => {
     const value = Math.max(0, Math.min(1, (cameraScale - Number(labelZoom) * 0.55) / (Number(labelZoom) * 0.65)));
     return value * value * (3 - 2 * value);
   });
-  // Labels stay attached below their dot. Fade and omit collisions rather than
-  // displacing names into detached callouts or changing the spatial layout.
-  let filenameLabels = $derived.by(() => {
-    const boxes: { left: number; right: number; top: number; bottom: number }[] = [];
-    const priority = (id: string) => id === activeId ? 0 : id === hoveredId ? 1 : query.trim() && matchesQuery(byId.get(id)!.node, query) ? 2 : relatedNodeIds.has(id) ? 3 : 4;
-    const candidates = geometry.nodes.filter((mark) => !activeId || relatedNodeIds.has(mark.node.id)).map((mark) => {
-      const point = screen(mark), title = tileTitle(mark.node);
-      const emphasized = mark.node.id === focusId || (!!focusId && relatedNodeIds.has(mark.node.id));
-      const opacity = emphasized ? 1 : labelOpacity;
-      const y = point.y + visibleRadius(mark.node.id) + labelSize + 4;
-      const textWidth = titleWidth(title, labelSize);
-      return { ...mark, title, x: point.x, y, opacity, box: { left: point.x - textWidth / 2 - 4, right: point.x + textWidth / 2 + 4, top: y - labelSize - 2, bottom: y + 4 } };
-    }).filter((label) => label.opacity > 0.01 && label.box.right > 0 && label.box.left < width && label.box.bottom > 0 && label.box.top < height)
-      .sort((a, b) => priority(a.node.id) - priority(b.node.id) || a.node.id.localeCompare(b.node.id));
-    return candidates.filter((label) => {
-      const overlaps = boxes.some((box) => label.box.left < box.right && label.box.right > box.left && label.box.top < box.bottom && label.box.bottom > box.top);
-      if (overlaps && label.node.id !== activeId && label.node.id !== hoveredId) return false;
-      boxes.push(label.box); return true;
-    });
-  });
+  // Every eligible name remains mounted and follows the same zoom rate.
+  // One shared fade replaces per-name collision and viewport visibility gates.
+  let filenameLabels = $derived(geometry.nodes.filter((mark) => !activeId || relatedNodeIds.has(mark.node.id)).map((mark) => {
+    const point = screen(mark);
+    return { ...mark, title: tileTitle(mark.node), x: point.x,
+      y: point.y + visibleRadius(mark.node.id) + (labelWorldSize + 3) * cameraScale,
+      opacity: activeId ? 1 : labelOpacity };
+  }));
   function dotConnection(link: AtlasLink) {
     const a = dotById.get(link.sourceId)!, b = dotById.get(link.targetId)!;
     const dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
@@ -377,7 +364,7 @@
     <label><input type="checkbox" bind:checked={allLinks}/>All links</label>
     <label>Activity <select bind:value={activityMode} aria-label="Fusion activity encoding"><option value="none">Off</option><option value="recency">Last opened</option>{#if activity?.countAvailable}<option value="frequency">Opening activity</option>{/if}</select></label>
     <label><input type="checkbox" bind:checked={showChildren}/>Subtopics</label>
-    <label title="Lower values reveal names sooner; overlapping names wait for more space.">Names <input type="range" min="0.15" max="1.5" step="0.05" bind:value={labelZoom} aria-label="Fusion name fade threshold"/></label>
+    <label title="All names fade together. Lower values reveal them sooner.">Names <input type="range" min="0.15" max="1.5" step="0.05" bind:value={labelZoom} aria-label="Fusion name fade threshold"/></label>
     <div class="map-controls"><button onclick={() => stepZoom(-1)} aria-label="Fusion zoom out">−</button><span>{zoom.toFixed(2)}×</span><button onclick={() => stepZoom(1)} aria-label="Fusion zoom in">+</button><button onclick={reset}>Fit map</button></div>
   </div>
   <div class="workbench" bind:this={workbenchElement}>
@@ -416,11 +403,11 @@
         </g>
         <g class="filename-labels">
           {#each filenameLabels as label (label.node.id)}
-            <g class="note-name" role="button" tabindex="0" data-filename-id={label.node.id} aria-label={`Read ${label.node.fileName || label.node.title}`}
+            <g class="note-name" role="button" tabindex={label.opacity > 0.05 ? 0 : -1} aria-hidden={label.opacity <= 0.01} pointer-events={label.opacity > 0.05 ? 'auto' : 'none'} data-filename-id={label.node.id} aria-label={`Read ${label.node.fileName || label.node.title}`}
               onmouseenter={() => hoveredId = label.node.id} onmouseleave={() => hoveredId = null} onfocus={() => hoveredId = label.node.id} onblur={() => hoveredId = null}
               onclick={() => pin(label.node)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); pin(label.node); } }}>
               <title>{label.node.fileName || label.node.title}</title>
-              <text x={label.x} y={label.y} text-anchor="middle" font-size={labelSize} font-weight={focusId === label.node.id ? '600' : '400'} fill="var(--color-foreground)" stroke="var(--color-background)" stroke-width="3" stroke-linejoin="round" paint-order="stroke" opacity={label.opacity}>{label.title}</text>
+              <text x={label.x} y={label.y} text-anchor="middle" font-size={labelSize} font-weight={activeId === label.node.id ? '600' : '400'} fill="var(--color-foreground)" stroke="var(--color-background)" stroke-width={0.8 * cameraScale} stroke-linejoin="round" paint-order="stroke" opacity={label.opacity}>{label.title}</text>
             </g>
           {/each}
         </g>
@@ -464,6 +451,7 @@
 
 <style>
   .fusion{container-type:inline-size;height:100%;min-height:0;display:flex;flex-direction:column;color:var(--color-foreground);outline:none}header{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:7px 12px 8px}h1{font-size:16px;font-weight:620;letter-spacing:-.025em;margin:0 0 3px}header p{font-size:10px;color:var(--color-muted-foreground);margin:0}header>span{font-size:10px;white-space:nowrap;color:var(--color-muted-foreground)}.controls{display:flex;flex-wrap:wrap;align-items:center;gap:11px;padding:6px 12px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);font-size:10px;color:var(--color-muted-foreground)}.controls label{display:flex;align-items:center;gap:5px}.controls input[type=range]{width:65px;accent-color:#829fae}.controls input[type=checkbox]{accent-color:#829fae}output{width:23px}select{font-size:10px;background:var(--color-background);color:var(--color-foreground);border:1px solid var(--color-border);border-radius:4px;padding:4px}.map-controls{margin-left:auto;display:flex;align-items:center;gap:5px}.map-controls button{border:1px solid var(--color-border);padding:3px 6px;border-radius:4px;color:var(--color-foreground)}button{cursor:pointer}button:disabled{opacity:.4;cursor:default}button:focus-visible,select:focus-visible,.reader:focus-visible,.full-source:focus-visible{outline:2px solid var(--color-ring);outline-offset:2px}.plot{position:relative;flex:1;min-height:0;overflow:hidden;background:var(--color-background)}svg{width:100%;height:100%;max-height:100%;touch-action:none;user-select:none;cursor:grab}svg:active{cursor:grabbing}svg g[role=button]{cursor:pointer;outline:none}svg g[role=button]:focus-visible>.dot-body,.note-dot:hover>.dot-body{stroke:var(--color-foreground);stroke-width:2px}.note-name:focus-visible>text{fill:var(--color-ring)}
+  .note-name text{transition:opacity 120ms linear}@media(prefers-reduced-motion:reduce){.note-name text{transition:none}}
   .hover-preview{position:absolute;width:208px;max-height:88px;overflow:hidden;pointer-events:none;z-index:4;background:color-mix(in srgb,var(--color-background) 97%,transparent);border:1px solid var(--color-border);border-radius:6px;padding:8px;box-shadow:0 4px 13px #00000012}.hover-preview strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:11px;font-weight:600}.hover-preview p{font-size:9px;line-height:1.5;color:var(--color-muted-foreground);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;line-clamp:2;overflow:hidden;margin:4px 0}.hover-preview>span{font-size:8px;color:var(--color-muted-foreground)}
   .workbench{flex:1;min-height:360px;display:grid;grid-template-columns:minmax(0,1fr) 304px;overflow:hidden}.dock{min-height:0;min-width:0;border-left:1px solid var(--color-border);background:var(--color-background);overflow:hidden}.reader{height:100%;display:flex;flex-direction:column;gap:0;overflow:hidden;padding:12px;background:var(--color-background)}.reader-heading{display:flex;align-items:center;justify-content:space-between;font-size:8px;color:var(--color-muted-foreground)}.reader-heading button{font-size:16px;line-height:1}.reader h2{font-size:13px;font-weight:620;line-height:1.35;white-space:normal;overflow-wrap:anywhere;margin:6px 0 3px}.activity-detail{font-size:8px;color:var(--color-muted-foreground);margin:0 0 7px}.browse{display:flex;justify-content:space-between;align-items:center;gap:7px;border-top:1px solid var(--color-border);border-bottom:1px solid var(--color-border);padding:6px 0;font-size:9px}.browse label,.browse>div{display:flex;gap:5px;align-items:center}.browse select{font-size:9px;padding:3px;max-width:114px}.browse button{font-size:12px;border:1px solid var(--color-border);border-radius:3px;width:20px;height:20px}.browse>div>span{font-size:8px;white-space:nowrap}.reader-excerpt,.full-source{flex:1;min-height:0;overflow:auto;margin:8px 0;font-size:11px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}.reader-excerpt{overflow:auto;overscroll-behavior:contain}.full-source{font-size:10px;padding-right:3px;overscroll-behavior:contain}.reader-footer{border-top:1px solid var(--color-border);padding-top:7px;font-size:8px;color:var(--color-muted-foreground)}.reader-footer>div{display:flex;flex-wrap:wrap;gap:5px;margin-top:5px}.reader-footer button{padding:4px 6px;border:1px solid var(--color-border);border-radius:4px;font-size:9px;color:var(--color-foreground)}.reader-footer small{display:block;margin-top:4px;font-size:8px}
   .reader-heading,.reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}
