@@ -89,9 +89,6 @@ const server = await createServer({
       }
       ${marker}`);
     },
-    transformIndexHtml() {
-      return [{tag:'script',attrs:{type:'module'},children:`const badge=document.createElement('a');badge.href='/map/prototype?variant=fusion';badge.textContent='Atlas lab · read-only comparison';badge.style.cssText='position:fixed;top:5px;left:12px;z-index:9999;font:11px system-ui;color:#74958c;text-decoration:none';document.body.append(badge);`}];
-    },
     configureServer(vite) {
       vite.middlewares.use('/__atlas-prototype', async (req, res) => {
         res.setHeader('Content-Type','application/json');

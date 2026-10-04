@@ -1,5 +1,14 @@
 # Atlas visualization lab — eight comparisons and V3 fusion
 
+## Current direction — 2026-10-03 cleanup
+
+The user selected the fusion view for further work and requested one clean full-screen preview. Only AtlasFusion is active at /map/prototype; legacy variant parameters no longer switch renderers. Earlier A–H components and the comparison switcher are removed. Their complete source and earlier spec are recoverable on codex/atlas-prototypes-before-cleanup (8c4856d31d31d81cbbd286b7503c3da9d8b0fb4a).
+
+The current view has the original Atlas bottom-centered search, a Fit map action, stable spaced dots with zoom-faded names, names inside clouds, and a floating dismissible note/region info panel. Extra filters and collection/export chrome are removed. The original production /map route remains untouched. The surviving preview is captured on codex/atlas-fusion-v3-prototype. See issues/03-atlas-fusion-v3.md for the current scope and checks.
+
+The sections below describe the historical comparison rounds, whose active UI has now been retired.
+
+
 The first experiment was rejected: shelves, map/list, local neighbors and a review queue changed the browsing workflow instead of testing different whole-vault visualizations. Its primary source is preserved on `codex/atlas-interaction-prototype`. The revised experiment asks: **which visual encoding helps a person see all their notes, inspect how ideas relate, and narrow attention without losing the overview?** No production choice has been made.
 
 ## Run
@@ -61,7 +70,7 @@ Record ease of targeting, readable context, false inferred relationships, useful
 
 The launcher binds only to `127.0.0.1:1422`, reads the configured vault's published Atlas and compatible labels, suppresses missing files, and reads activity through SQLite's read-only mode. The snapshot observed during the additional round contains 166 notes, 16 root topics, 4 notes outside those topic memberships, and 2,916 links (2,827 semantic, 89 explicit). Those are snapshot facts, not general scale guarantees. Snapshot data and source bodies stay in process memory; no vault content is copied into source control. Indexed excerpts and later-read bodies can differ. Restart the launcher to acquire a newer snapshot.
 
-`pnpm atlas:lab --demo` forces 38 fictional notes; the Demo button can also switch data in the browser. `pnpm atlas:lab --vault /absolute/vault/path` selects another published cache. Fallback data is explicitly labelled. The normal browser shell runs against the existing E2E mock; Atlas/source commands alone use read-only comparison data. This does not mutate the installed app or vault.
+`pnpm atlas:lab --demo` forces 38 fictional notes; earlier comparisons also offered an in-browser Demo button. `pnpm atlas:lab --vault /absolute/vault/path` selects another published cache. Fallback data is explicitly labelled. The normal browser shell runs against the existing E2E mock; Atlas/source commands alone use read-only comparison data. This does not mutate the installed app or vault.
 
 The lab is development-only, under the real app shell at `/map/prototype`, preserving the user-requested baseline. The source Atlas route and AtlasStore remain untouched. All state changes are in memory. These SVG experiments do not establish production performance at thousands of notes, algorithm quality, or usability with other people's vaults. A chosen approach requires production implementation and user testing.
 

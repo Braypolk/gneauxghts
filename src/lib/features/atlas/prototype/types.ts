@@ -1,14 +1,5 @@
-// Throwaway Atlas UI experiments. All working-set mutations stay in memory.
-import type { AtlasCloud, AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
-
-export interface PrototypeProps {
-  response: VaultAtlasResponse;
-  selectedIds: string[];
-  query: string;
-  onToggle: (id: string) => void;
-  onAddMany: (ids: string[]) => void;
-  onPreview: (node: AtlasNode) => void;
-}
+// Search and activity display helpers for the surviving Atlas preview.
+import type { AtlasNode } from '$lib/types/atlas';
 
 export function matchesQuery(node: AtlasNode, query: string): boolean {
   const tags: string[] = [];
@@ -18,14 +9,6 @@ export function matchesQuery(node: AtlasNode, query: string): boolean {
   return tags.every(tag => node.tags.some(value => value.toLowerCase().replace(/^#/, '') === tag))
     && topics.every(id => [node.cloudId,node.parentCloudId,node.childCloudId].includes(id))
     && (!text || `${node.title} ${node.preview} ${node.tags.join(' ')}`.toLowerCase().includes(text));
-}
-
-export function topicLabel(cloud: AtlasCloud): string {
-  return cloud.label || 'Unlabelled region';
-}
-
-export function topTopics(response: VaultAtlasResponse): AtlasCloud[] {
-  return response.clouds.filter((cloud) => !cloud.parentId);
 }
 
 export function daysAgo(timestamp: number | null): string {
