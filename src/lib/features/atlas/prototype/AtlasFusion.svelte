@@ -167,9 +167,36 @@
   }
   // Spaced geography stays fixed; camera and label visibility never repack it.
   let dotById = $derived(new Map(geometry.nodes.map((mark) => [mark.node.id, mark])));
-  let graphClouds = $derived(geometry.clouds.map((item) => ({ ...item,
-    labelPoint: { x: item.center.x, y: Math.min(...item.points.map((point) => point.y)) - 14 }
-  })).filter((item) => item.points.length));
+  let graphClouds = $derived(geometry.clouds.filter((item) => item.points.length).map((item) => {
+    const text = regionName(item.cloud.id, item.cloud.label).slice(0, 32);
+    const top = Math.min(...item.points.map((point) => point.y));
+    const bottom = Math.max(...item.points.map((point) => point.y));
+    const left = Math.min(...item.points.map((point) => point.x)), right = Math.max(...item.points.map((point) => point.x));
+    const middleX = (left + right) / 2;
+    const occupied = geometry.nodes.filter((mark) => item.cloud.parentId ? item.cloud.memberNodeIds.includes(mark.node.id) : mark.rootId === item.cloud.id).map((mark) => {
+      const halfWidth = Math.max(9, titleWidth(tileTitle(mark.node), labelWorldSize) * 1.12 / 2 + 2);
+      return { left: mark.x - halfWidth, right: mark.x + halfWidth, top: mark.y - 9, bottom: mark.y + 19 };
+    });
+    let fallback: { labelPoint: Point; labelFontSize: number } | null = null;
+    // Place the whole name inside the upper part of the original silhouette.
+    // Narrow clouds can use smaller type; note positions and camera stay fixed.
+    for (let size = 20; size >= 4; size--) {
+      const halfWidth = titleWidth(text, size) * 1.12 / 2;
+      const candidates = [item.center.x, middleX];
+      for (let x = left + halfWidth + 8; x <= right - halfWidth - 8; x += 8) candidates.push(x);
+      candidates.sort((a, b) => Math.abs(a - item.center.x) - Math.abs(b - item.center.x));
+      for (let y = top + size + 8; y <= bottom - 8; y += 6) {
+        for (const x of candidates) {
+          const corners = [{ x: x - halfWidth, y: y - size }, { x: x + halfWidth, y: y - size }, { x: x - halfWidth, y: y + 4 }, { x: x + halfWidth, y: y + 4 }];
+          if (!corners.every((point) => insideWithMargin(point, item.points, 4))) continue;
+          const placement = { labelPoint: { x, y }, labelFontSize: size };
+          fallback ??= placement;
+          if (!occupied.some((box) => x - halfWidth < box.right && x + halfWidth > box.left && y - size < box.bottom && y + 4 > box.top)) return { ...item, ...placement };
+        }
+      }
+    }
+    return { ...item, ...(fallback ?? { labelPoint: item.center, labelFontSize: 4 }) };
+  }));
   let worldBounds = $derived.by(() => {
     const points = graphClouds.flatMap((cloud) => cloud.points).concat(geometry.nodes);
     const minX = points.length ? Math.min(...points.map((point) => point.x)) : -100;
@@ -397,7 +424,7 @@
           </g>
           {#each graphClouds.filter((item) => !item.cloud.parentId || showChildren) as item (item.cloud.id)}
             <g role="button" tabindex="0" data-region-id={item.cloud.id} aria-label={`Explore region ${regionName(item.cloud.id, item.cloud.label)}`} onclick={() => inspectRegion(item.cloud.parentId ?? item.cloud.id)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); inspectRegion(item.cloud.parentId ?? item.cloud.id); } }}>
-              <text x={item.labelPoint.x} y={item.labelPoint.y} text-anchor="middle" font-size="20" font-weight="550" fill="var(--color-muted-foreground)">{regionName(item.cloud.id, item.cloud.label).slice(0, 32)}</text>
+              <text x={item.labelPoint.x} y={item.labelPoint.y} text-anchor="middle" font-size={item.labelFontSize} font-weight="550" fill="var(--color-muted-foreground)">{regionName(item.cloud.id, item.cloud.label).slice(0, 32)}</text>
             </g>
           {/each}
         </g>
