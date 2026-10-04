@@ -11,12 +11,11 @@
     selectedNodeId: string | null;
     selectNode: (node: AtlasNode | null) => void;
     matchingIds: ReadonlySet<string>;
-    searchReady: boolean;
     openNode: (node: AtlasNode) => Promise<void>;
     readSource: (node: AtlasNode) => Promise<string>;
     search: Snippet<[() => void]>;
   };
-  let { response, query, selectedNodeId, selectNode, matchingIds, searchReady, openNode, readSource, search }: Props = $props();
+  let { response, query, selectedNodeId, selectNode, matchingIds, openNode, readSource, search }: Props = $props();
   let inspectedRegionId = $state<string | null>(null);
   let workbenchElement = $state<HTMLDivElement | null>(null);
   let activeId = $derived(selectedNodeId);
@@ -35,7 +34,6 @@
   let sourceSignature = '';
   let zoomFrame = 0, pendingZoomDelta = 0;
   let pendingZoomPoint: Point | null = null;
-  let lastSearch = '';
   let hasPlotSize = $state(false), hasFramed = false;
   let cameraCenter = $state<Point>({ x: 0, y: 0 });
   const layout = createAtlasLayout();
@@ -259,16 +257,6 @@
     // A refreshed excerpt/path invalidates the previously read source, including in-flight reads.
     const signature = active ? `${active.node.id}:${active.node.notePath}:${active.node.updatedAtMillis}:${active.node.preview}` : '';
     if (signature !== sourceSignature) { sourceSignature = signature; fullText = null; readStatus = 'idle'; readSequence++; if (active) panelOpen = true; }
-  });
-  $effect(() => {
-    const text = query.trim();
-    if (!text) { lastSearch = ''; return; }
-    if (!searchReady) return;
-    const signature = `${text}:${matching.map(node => node.id).join('|')}`;
-    if (signature === lastSearch) return;
-    lastSearch = signature;
-    const first = matching[0];
-    if (first) { changeActive(first, true); browseOriginId = first.id; } else closeCard();
   });
   onMount(() => {
     const observer = new ResizeObserver(([entry]) => { if (entry.contentRect.width > 0 && entry.contentRect.height > 0) { width = entry.contentRect.width; height = entry.contentRect.height; hasPlotSize = true; } });

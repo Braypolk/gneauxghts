@@ -31,3 +31,10 @@ Resolve the readiness findings before replacing the original map, reuse its exis
 ## Boundary before promotion
 
 The main /map route source remains unchanged. This prepares shared behavior; it does not merge the new renderer or remove the development guard. Browser fixtures validate command/event wiring rather than actual native semantic retrieval. A native smoke check after promotion should cover model availability, indexing completion and native WebView input. Native activity contract is compiled and tested, but the currently running offline lab does not rebuild the desktop binary.
+
+
+## Follow-up: search without automatic selection
+
+User asks that searching not automatically select a note. Removed the search-result selection effect and its renderer prop/state. Search only highlights matches; it does not open/close the reader, switch an explicit selection, or move the camera. Existing indexed-search regression now verifies highlight opacity with a closed panel, and an additional case verifies preservation of a manually chosen note through matching and empty searches.
+
+Validation: nine Fusion browser regressions pass, including passive highlights and preservation of explicit selection; pnpm check reports zero errors/warnings and E2E TypeScript passes.

@@ -33,7 +33,7 @@
 {#if dev}
   <main class="atlas-preview">
     {#if atlas.response?.nodes.length}
-      <AtlasFusion response={atlas.response} query={atlas.searchQuery} selectedNodeId={atlas.selectedNodeId} selectNode={(node) => atlas.selectNode(node)} {matchingIds} {searchReady} {readSource} {openNode}>
+      <AtlasFusion response={atlas.response} query={atlas.searchQuery} selectedNodeId={atlas.selectedNodeId} selectNode={(node) => atlas.selectNode(node)} {matchingIds} {readSource} {openNode}>
         {#snippet search(fitMap)}
           <SearchDock pageInset class="atlas-search-dock">
             <SearchBar class="atlas-search-bar" value={atlas.searchQuery} placeholder="Find notes" ariaLabel="Search map notes"

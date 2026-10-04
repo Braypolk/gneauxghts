@@ -30,10 +30,22 @@ describe('Fusion map production behaviors', () => {
   it('uses indexed results for body text beyond the map excerpt without moving the camera', async () => {
     const before = await transform();
     await $('[aria-label="Search map notes"]').setValue('synchronized row');
-    await $('.reader h2').waitForDisplayed();
-    await expect($('.reader h2')).toHaveText('beta');
     await expect($('.search-status')).toHaveText('1 matching notes');
+    await expect($('.reader')).not.toExist();
+    await expect($('.regions-toggle')).toHaveAttribute('aria-expanded', 'false');
+    await expect($(beta)).toHaveAttribute('fill-opacity', '1');
+    await expect($(alpha)).toHaveAttribute('fill-opacity', '0.18');
     expect(await transform()).toEqual(before);
+  });
+
+  it('keeps an explicitly selected note when search changes or has no matches', async () => {
+    await $(alpha).click();
+    await $('[aria-label="Search map notes"]').setValue('synchronized row');
+    await expect($('.search-status')).toHaveText('1 matching notes');
+    await expect($('.reader h2')).toHaveText('alpha');
+    await $('[aria-label="Search map notes"]').setValue('no-such-note-match');
+    await expect($('.search-status')).toHaveText('0 matching notes');
+    await expect($('.reader h2')).toHaveText('alpha');
   });
 
   it('refreshes live data while preserving the camera and clears a deleted selection', async () => {
