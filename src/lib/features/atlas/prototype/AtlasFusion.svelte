@@ -1,5 +1,5 @@
 <script lang="ts">
-  // V3 experiment: original topic geography with dots and zoom-faded plain names, inspired by Obsidian.
+  // V3 experiment: topic geography with spaced dots and zoom-faded plain names, inspired by Obsidian.
   import { onMount } from 'svelte';
   import type { AtlasNode, AtlasLink } from '$lib/types/atlas';
   import { matchesQuery, daysAgo, type PrototypeProps } from './types';
@@ -34,6 +34,28 @@
   let lastSearchDataset = $state('');
   let hasPlotSize = $state(false), framedDataset = $state('');
   const palette = ['#6a9fac', '#aa8cbd', '#ad9a69', '#7f9c7d', '#b58895', '#879aca'];
+  const nodeSpacing = 42, readingScale = 2.5;
+  function titleWidth(title: string, size: number) {
+    return [...title].reduce((sum, char) => sum + ('ilI.,:;!| '.includes(char) ? 0.3 : 'MW@%'.includes(char) ? 0.85 : 0.56), 0) * size;
+  }
+  function insideWithMargin(point: Point, polygon: Point[], margin: number) {
+    let inside = false, distance = Infinity;
+    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+      const a = polygon[i], b = polygon[j];
+      if ((a.y > point.y) !== (b.y > point.y) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
+      const dx = b.x - a.x, dy = b.y - a.y;
+      const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / Math.max(0.001, dx * dx + dy * dy)));
+      distance = Math.min(distance, Math.hypot(point.x - a.x - dx * t, point.y - a.y - dy * t));
+    }
+    return inside && distance >= margin;
+  }
+  function fitCloud(points: Point[], members: Point[]) {
+    let scale = 1, fitted = points;
+    for (let pass = 0; pass < 120 && members.some((point) => !insideWithMargin(point, fitted, 20)); pass++) {
+      scale *= 1.04; fitted = points.map((point) => ({ x: point.x * scale, y: point.y * scale }));
+    }
+    return fitted;
+  }
   let geometry = $derived.by(() => {
     const coordinates = [...response.nodes.map((node) => [node.x, node.y]), ...response.clouds.flatMap((cloud) => cloud.hull)]
       .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
@@ -51,7 +73,75 @@
       const cloud = clouds.find((item) => item.cloud.id === (node.childCloudId ?? node.cloudId ?? node.parentCloudId));
       return { node, ...project(node.x, node.y), rootId: root?.id ?? null, color: cloud?.color ?? '#959da6' };
     });
-    return { nodes, clouds, project };
+    // Pack nearby notes once per dataset, with room for names at a common
+    // reading scale. Neither camera nor selected/hovered state enters layout.
+    const groups = [...new Set(nodes.map((mark) => mark.rootId ?? mark.node.id))].map((id) => {
+      const root = clouds.find((item) => item.cloud.id === id);
+      const originals = nodes.filter((mark) => (mark.rootId ?? mark.node.id) === id);
+      const anchor = root?.center ?? originals[0];
+      const placed: (typeof nodes[number] & { box: { left: number; right: number; top: number; bottom: number } })[] = [];
+      const nameSize = 12 * Math.pow(readingScale, 0.3);
+      for (const mark of [...originals].sort((a, b) => a.y - b.y || a.x - b.x || a.node.id.localeCompare(b.node.id))) {
+        const preferred = { x: mark.x - anchor.x, y: mark.y - anchor.y };
+        const halfWidth = (titleWidth(tileTitle(mark.node), nameSize) * 1.12 + 12) / readingScale / 2;
+        const labelBox = (point: Point) => ({ left: point.x - halfWidth, right: point.x + halfWidth, top: point.y + 1, bottom: point.y + 18 });
+        const collides = (point: Point) => {
+          const box = labelBox(point);
+          return placed.some((other) => Math.hypot(point.x - other.x, point.y - other.y) < nodeSpacing ||
+            (box.left < other.box.right && box.right > other.box.left && box.top < other.box.bottom && box.bottom > other.box.top));
+        };
+        let point = preferred;
+        for (let ring = 1; collides(point); ring++) {
+          const radius = ring * 6, attempts = Math.max(16, Math.ceil(radius / 3));
+          let found = false;
+          for (let i = 0; i < attempts; i++) {
+            const angle = i / attempts * Math.PI * 2;
+            const candidate = { x: preferred.x + Math.cos(angle) * radius, y: preferred.y + Math.sin(angle) * radius };
+            if (!collides(candidate)) { point = candidate; found = true; break; }
+          }
+          if (found) break;
+        }
+        placed.push({ ...mark, ...point, box: labelBox(point) });
+      }
+      // Keep the original mean inside the region; avoid a directional packing drift.
+      const offset = { x: (placed.reduce((sum, mark) => sum + mark.x, 0) - originals.reduce((sum, mark) => sum + mark.x - anchor.x, 0)) / originals.length,
+        y: (placed.reduce((sum, mark) => sum + mark.y, 0) - originals.reduce((sum, mark) => sum + mark.y - anchor.y, 0)) / originals.length };
+      for (const mark of placed) {
+        mark.x -= offset.x; mark.y -= offset.y;
+        mark.box.left -= offset.x; mark.box.right -= offset.x; mark.box.top -= offset.y; mark.box.bottom -= offset.y;
+      }
+      // Retain the original blob silhouette, growing it only enough to contain
+      // the separated dots. Whole regions then move apart if their envelopes meet.
+      const outline = root ? fitCloud(root.points.map((point) => ({ x: point.x - anchor.x, y: point.y - anchor.y })), placed) : [];
+      const envelope = outline.concat(placed.flatMap((mark) => [{ x: mark.box.left, y: mark.box.top }, { x: mark.box.right, y: mark.box.bottom }]));
+      const radius = Math.max(24, ...envelope.map((point) => Math.hypot(point.x, point.y))) + 12;
+      return { id, anchor, x: anchor.x, y: anchor.y, placed, outline, radius };
+    });
+    for (let pass = 0; pass < 240; pass++) {
+      let overlapFound = false;
+      for (let i = 0; i < groups.length; i++) for (let j = i + 1; j < groups.length; j++) {
+        const a = groups[i], b = groups[j], dx = b.x - a.x, dy = b.y - a.y, distance = Math.hypot(dx, dy);
+        const overlap = a.radius + b.radius + 28 - distance;
+        if (overlap <= 0) continue;
+        overlapFound = true;
+        const angle = (i * 7 + j * 3) * 2.4;
+        const ux = distance > 0.001 ? dx / distance : Math.cos(angle), uy = distance > 0.001 ? dy / distance : Math.sin(angle);
+        const shift = (overlap + 0.1) / 2;
+        a.x -= ux * shift; a.y -= uy * shift; b.x += ux * shift; b.y += uy * shift;
+      }
+      if (!overlapFound) break;
+    }
+    const spacedNodes = groups.flatMap((group) => group.placed.map(({ box, ...mark }) => ({ ...mark, x: mark.x + group.x, y: mark.y + group.y })));
+    const spacedClouds = clouds.map((item) => {
+      const group = groups.find((group) => group.id === item.cloud.id);
+      if (group) return { ...item, center: { x: group.x, y: group.y }, points: group.outline.map((point) => ({ x: point.x + group.x, y: point.y + group.y })) };
+      const members = spacedNodes.filter((mark) => item.cloud.memberNodeIds.includes(mark.node.id));
+      if (!members.length) return { ...item, points: [] };
+      const center = { x: members.reduce((sum, mark) => sum + mark.x, 0) / members.length, y: members.reduce((sum, mark) => sum + mark.y, 0) / members.length };
+      const outline = fitCloud(item.points.map((point) => ({ x: point.x - item.center.x, y: point.y - item.center.y })), members.map((mark) => ({ x: mark.x - center.x, y: mark.y - center.y })));
+      return { ...item, center, points: outline.map((point) => ({ x: point.x + center.x, y: point.y + center.y })) };
+    });
+    return { nodes: spacedNodes, clouds: spacedClouds, project };
   });
   let byId = $derived(new Map(geometry.nodes.map((mark) => [mark.node.id, mark])));
   let active = $derived(byId.get(activeId ?? ''));
@@ -76,7 +166,7 @@
     const name = (node.fileName || node.title).replace(/\.md$/i, '');
     return name.length > titleLimit ? `${name.slice(0, titleLimit - 1).trimEnd()}…` : name;
   }
-  // Restore the original Atlas geography. Labels never move nodes or clouds.
+  // Spaced geography stays fixed; camera and label visibility never repack it.
   let dotById = $derived(new Map(geometry.nodes.map((mark) => [mark.node.id, mark])));
   let graphClouds = $derived(geometry.clouds.map((item) => ({ ...item,
     labelPoint: { x: item.center.x, y: Math.min(...item.points.map((point) => point.y)) - 14 }
@@ -118,7 +208,7 @@
       const emphasized = mark.node.id === focusId || (!!focusId && relatedNodeIds.has(mark.node.id));
       const opacity = emphasized ? 1 : labelOpacity;
       const y = point.y + visibleRadius(mark.node.id) + labelSize + 4;
-      const textWidth = [...title].reduce((sum, char) => sum + ('ilI.,:;!| '.includes(char) ? 0.3 : 'MW@%'.includes(char) ? 0.85 : 0.56), 0) * labelSize;
+      const textWidth = titleWidth(title, labelSize);
       return { ...mark, title, x: point.x, y, opacity, box: { left: point.x - textWidth / 2 - 4, right: point.x + textWidth / 2 + 4, top: y - labelSize - 2, bottom: y + 4 } };
     }).filter((label) => label.opacity > 0.01 && label.box.right > 0 && label.box.left < width && label.box.bottom > 0 && label.box.top < height)
       .sort((a, b) => priority(a.node.id) - priority(b.node.id) || a.node.id.localeCompare(b.node.id));
