@@ -248,6 +248,12 @@ mod tests {
             },
             AppEvent::SemanticStatusChanged(Box::new(SemanticStatus {
                 settings: SemanticSettings::default(),
+                image_coverage: crate::semantic::images::ImageCoverage::default(),
+                text_ready: true,
+                image_capability: "unsupported".into(),
+                migration_state: "active".into(),
+                previous_generation_available: true,
+                next_provider: crate::semantic::generation::NextProvider::Gemma,
                 model: ModelInfo {
                     id: "jina-v5-nano".to_string(),
                     label: "Jina embeddings v5 nano".to_string(),

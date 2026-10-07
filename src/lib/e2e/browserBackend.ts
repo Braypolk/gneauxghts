@@ -118,10 +118,17 @@ let forgottenNoteRetentionDays = 7;
 
 const semanticStatus = {
   settings: {
+    imageTokens: 70,
     semanticSearchEnabled: false,
     lexicalWeight: 1,
     semanticWeight: 0
   },
+  imageCoverage: { indexed: 0, failed: 0, unsupported: 0 },
+  textReady: false,
+  imageCapability: 'unsupported',
+  migrationState: 'unavailable',
+  previousGenerationAvailable: false,
+  nextProvider: 'gemma',
   model: {
     id: 'e2e-disabled',
     label: 'Disabled in E2E',
@@ -853,6 +860,7 @@ function historicalDiff(
       historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 12_288 };
       return null;
     }
+    if (command === 'search_media') return [];
     if (command === 'search_notes_hybrid') {
       const tokens = String(args.query ?? '').toLowerCase().split(/\s+/);
       const tagFilters = tokens.filter((token) => token.startsWith('#') || token.startsWith('tag:'))

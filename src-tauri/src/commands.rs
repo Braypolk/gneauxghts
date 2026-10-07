@@ -4,6 +4,7 @@ pub(crate) mod chat_commands;
 pub(crate) mod forgotten_note_commands;
 pub(crate) mod history_commands;
 mod index_bridge;
+pub(crate) mod media_search;
 pub(crate) mod note_persistence;
 mod note_session;
 pub(crate) mod proposal_commands;
@@ -718,6 +719,16 @@ pub(crate) fn set_semantic_settings(
     state.semantic.warmup_model_in_background();
     emit_semantic_status_changed(&state);
     Ok(next_settings)
+}
+
+#[tauri::command]
+pub(crate) fn stage_semantic_provider(
+    state: State<'_, AppState>,
+    use_previous: bool,
+) -> Result<(), String> {
+    state.semantic.stage_next_provider(use_previous)?;
+    emit_semantic_status_changed(&state);
+    Ok(())
 }
 
 #[tauri::command]

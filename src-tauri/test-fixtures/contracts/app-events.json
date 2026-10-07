@@ -24,6 +24,7 @@
       "payload": {
         "settings": {
           "semanticSearchEnabled": true,
+          "imageTokens": 70,
           "lexicalWeight": 0.5,
           "semanticWeight": 0.4000000059604645
         },
@@ -39,6 +40,11 @@
           "ready": true,
           "status": "ready",
           "error": null
+        },
+        "imageCoverage": {
+          "indexed": 0,
+          "failed": 0,
+          "unsupported": 0
         },
         "platformSupported": true,
         "disabledReason": null,
@@ -77,7 +83,12 @@
         "retryExhausted": false,
         "progressCurrent": 12,
         "progressTotal": 12,
-        "rebuildReason": null
+        "rebuildReason": null,
+        "textReady": true,
+        "imageCapability": "unsupported",
+        "migrationState": "active",
+        "previousGenerationAvailable": true,
+        "nextProvider": "gemma"
       }
     },
     {

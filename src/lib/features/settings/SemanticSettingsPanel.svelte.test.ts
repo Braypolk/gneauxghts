@@ -126,3 +126,11 @@ describe('semantic search readiness', () => {
     expect(readiness({ platformSupported: false })).toMatchObject({ state: 'unavailable' });
   });
 });
+
+it('offers both image budgets and selects the persisted preference', () => {
+  const html = renderPanel({ ...freshStatus, settings: { ...freshStatus.settings, imageTokens: 140 } });
+  expect(html).toContain('Standard · 70 tokens');
+  expect(html).toContain('Higher detail · 140 tokens');
+  expect(html).toMatch(/<option[^>]*value="140"[^>]*selected/);
+  expect(html).toContain('rebuilds image embeddings');
+});

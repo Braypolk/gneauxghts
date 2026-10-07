@@ -104,6 +104,7 @@ impl SemanticDocumentBatch {
 
 #[derive(Clone, Default)]
 pub(crate) struct PendingIndexState {
+    pub(crate) image_scan_requested: bool,
     pub(crate) full_scan_requested: bool,
     pub(crate) force_full_scan: bool,
     pub(crate) rebuild_requested: bool,
@@ -122,9 +123,9 @@ pub(crate) struct PendingIndexState {
 }
 
 impl PendingIndexState {
-    #[cfg(test)]
     fn is_empty(&self) -> bool {
         !self.full_scan_requested
+            && !self.image_scan_requested
             && !self.rebuild_requested
             && !self.automatic_rebuild_requested
             && !self.edge_refresh_requested
@@ -374,6 +375,8 @@ pub(crate) struct IndexingWorkerContext {
     pub(crate) provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     pub(crate) ann: Arc<AnnIndexState>,
     pub(crate) note_ann: Arc<NoteAnnIndexState>,
+    pub(crate) image_ann: Arc<super::image_ann::ImageAnnIndex>,
+    pub(crate) generation: Arc<super::generation::SemanticGeneration>,
     pub(crate) queue: SemanticWorkQueue,
     pub(crate) index_revision: Arc<AtomicU64>,
     pub(crate) runtime: Arc<Mutex<RuntimeState>>,
@@ -426,6 +429,7 @@ fn process_pending_jobs(context: &IndexingWorkerContext) {
 // A claim removes only its own inputs. Unselected work and arrivals remain in the
 // producer-owned queue, so completing a bulk scan cannot replay stale mutations.
 enum SelectedJob {
+    Images,
     Rebuild,
     FullScan { force: bool },
     Documents(SemanticDocumentBatch),
@@ -455,6 +459,8 @@ impl SelectedJob {
                 std::mem::take(&mut pending.deleted_notes),
                 std::mem::take(&mut pending.moved_notes),
             ))
+        } else if std::mem::take(&mut pending.image_scan_requested) {
+            Self::Images
         } else if std::mem::take(&mut pending.automatic_rebuild_requested) {
             // Rebuilding publishes both snapshots, subsuming the existing request.
             pending.snapshot_publish_requested = false;
@@ -475,6 +481,7 @@ impl SelectedJob {
     fn requeue(self, pending: &mut PendingIndexState) {
         let mut retry = PendingIndexState::default();
         match self {
+            Self::Images => retry.image_scan_requested = true,
             Self::Rebuild => retry.rebuild_requested = true,
             Self::FullScan { force } => {
                 retry.full_scan_requested = true;
@@ -516,10 +523,18 @@ fn process_pending_jobs_with_wait(
     }
     let mut atlas_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
     let mut label_retry_attempts = HashMap::<AtlasGenerationKey, u32>::new();
+    let mut activation_retry_attempts = 0;
     let cache_dir = db_path
         .parent()
         .map(|parent| parent.join(crate::state::VAULT_CACHE_DIR_NAME))
         .unwrap_or_else(|| PathBuf::from(crate::state::VAULT_CACHE_DIR_NAME));
+    let cache_dir = if db_path.file_stem().and_then(|s| s.to_str())
+        == Some(super::litert::text_namespace().as_str())
+    {
+        cache_dir.join(super::litert::text_namespace())
+    } else {
+        cache_dir
+    };
     loop {
         if !context.queue.is_accepting() || background_gate.is_manually_paused().unwrap_or(true) {
             return;
@@ -530,16 +545,111 @@ fn process_pending_jobs_with_wait(
             .and_then(|mut pending| SelectedJob::claim(&mut pending))
         {
             Some(job) => job,
-            None => return,
+            None => {
+                if !context.generation.is_active() {
+                    let activation = (|| {
+                        let connection = open_database(db_path)?;
+                        let ready = !ann.needs_rebuild() && !note_ann.needs_rebuild();
+                        let preparation = context.generation.prepare_activation(
+                            &connection,
+                            &context.notes_dir,
+                            ready,
+                        )?;
+                        let next = pending
+                            .lock()
+                            .map_err(|_| "Semantic work queue unavailable")?;
+                        if !next.is_empty() {
+                            return Ok::<_, String>(ActivationOutcome::WorkQueued);
+                        }
+                        match preparation {
+                            super::generation::ActivationPreparation::Ready(proof) => context
+                                .generation
+                                .publish(&connection, proof)
+                                .map(|published| {
+                                    if published {
+                                        ActivationOutcome::Settled
+                                    } else {
+                                        ActivationOutcome::Retry
+                                    }
+                                }),
+                            super::generation::ActivationPreparation::StaleSources => {
+                                drop(next);
+                                context.queue.enqueue(|p| p.full_scan_requested = true)?;
+                                Ok(ActivationOutcome::WorkQueued)
+                            }
+                            super::generation::ActivationPreparation::Waiting => {
+                                Ok(if ready && context.generation.reconciliation_complete() {
+                                    ActivationOutcome::Retry
+                                } else {
+                                    ActivationOutcome::Settled
+                                })
+                            }
+                        }
+                    })();
+                    match activation {
+                        Ok(ActivationOutcome::WorkQueued) => continue,
+                        Ok(ActivationOutcome::Retry) => {
+                            activation_retry_attempts += 1;
+                            if activation_retry_attempts < 10 {
+                                // History/baseline work can change source admission
+                                // without queuing embeddings. Retry after it settles,
+                                // outside the producer lock and with shutdown support.
+                                if wait(Duration::from_millis(100)) {
+                                    continue;
+                                }
+                            } else {
+                                update_runtime(runtime, |s| {
+                                    s.last_error = Some("Source publication remained busy; retry local search setup.".into());
+                                    s.health = SemanticHealth::Degraded;
+                                    s.retry_exhausted = true;
+                                });
+                            }
+                        }
+                        Err(error) => {
+                            update_runtime(runtime, |s| {
+                                s.last_error = Some(error);
+                                s.health = SemanticHealth::Degraded;
+                            });
+                        }
+                        Ok(ActivationOutcome::Settled) => {}
+                    }
+                }
+                return;
+            }
         };
         let mut atlas_retry_delay = Duration::ZERO;
         let outcome = match &job {
+            SelectedJob::Images => {
+                run_job(db_path, runtime, debug, "Indexing images", |connection| {
+                    let count = super::images::reconcile(
+                        connection,
+                        &context.notes_dir,
+                        provider,
+                        &context.image_ann,
+                        || {
+                            background_gate.checkpoint_manual_pause();
+                            if context.queue.is_accepting() {
+                                Ok(())
+                            } else {
+                                Err("Image indexing stopped.".into())
+                            }
+                        },
+                    )?;
+                    Ok(JobOutcome {
+                        embedded_count: count,
+                        ..Default::default()
+                    })
+                })
+            }
             SelectedJob::Rebuild => run_job(
                 db_path,
                 runtime,
                 debug,
                 "Rebuilding semantic index",
-                |connection| process_rebuild(connection, context),
+                |connection| {
+                    let _exclusive = context.generation.exclusive_rebuild()?;
+                    process_rebuild(connection, context)
+                },
             ),
             SelectedJob::FullScan { force } => {
                 run_job(db_path, runtime, debug, "Scanning notes", |connection| {
@@ -635,7 +745,7 @@ fn process_pending_jobs_with_wait(
                             let stats = rebuild_edges_with_provenance(
                                 connection,
                                 EDGE_NEIGHBORS_PER_NOTE,
-                                EDGE_MIN_SCORE,
+                                provider.minimum_edge_score(),
                                 &note_ann_generation,
                                 note_ann.model_signature(),
                                 |current, total| {
@@ -655,7 +765,7 @@ fn process_pending_jobs_with_wait(
                             repair_dirty_edges(
                                 connection,
                                 EDGE_NEIGHBORS_PER_NOTE,
-                                EDGE_MIN_SCORE,
+                                provider.minimum_edge_score(),
                                 EDGE_INCREMENTAL_CANDIDATE_K,
                                 &note_ann_generation,
                                 note_ann.model_signature(),
@@ -823,7 +933,14 @@ fn process_pending_jobs_with_wait(
         };
 
         if let Some(outcome) = outcome {
-            let atlas = matches!(job, SelectedJob::Atlas(..) | SelectedJob::AtlasLabels(..));
+            if matches!(job, SelectedJob::FullScan { .. } | SelectedJob::Rebuild) {
+                context.generation.scan_finished();
+            }
+            // Image publication does not change text/aggregate geometry or Atlas epochs.
+            let atlas = matches!(
+                job,
+                SelectedJob::Atlas(..) | SelectedJob::AtlasLabels(..) | SelectedJob::Images
+            );
             let next_revision = if atlas {
                 context.index_revision.load(Ordering::Acquire)
             } else {
@@ -840,6 +957,7 @@ fn process_pending_jobs_with_wait(
                 }
                 match &job {
                     SelectedJob::Documents(_) | SelectedJob::FullScan { .. } => {
+                        next.image_scan_requested = true;
                         if matches!(job, SelectedJob::FullScan { .. }) || outcome.scanned_count > 0
                         {
                             if ann.needs_rebuild() || note_ann.needs_rebuild() {
@@ -854,6 +972,9 @@ fn process_pending_jobs_with_wait(
                         }
                     }
                     SelectedJob::Rebuild | SelectedJob::RebuildAnn | SelectedJob::Snapshot => {
+                        if matches!(job, SelectedJob::Rebuild) {
+                            next.image_scan_requested = true;
+                        }
                         // Published note ANN generations require matching edge provenance.
                         next.edge_refresh_requested = true;
                         update_runtime(runtime, |state| state.edges_stale = true);
@@ -934,6 +1055,12 @@ fn process_pending_jobs_with_wait(
     }
 }
 
+enum ActivationOutcome {
+    Settled,
+    WorkQueued,
+    Retry,
+}
+
 fn atlas_failure_backoff(attempt: u32) -> Duration {
     const BASE_MILLIS: u64 = 100;
     const MAX_MILLIS: u64 = 2_000;
@@ -967,6 +1094,7 @@ fn merge_retry_batch(target: &mut PendingIndexState, retry: PendingIndexState) {
     let mut merged = retry;
 
     merged.full_scan_requested |= newer.full_scan_requested;
+    merged.image_scan_requested |= newer.image_scan_requested;
     merged.force_full_scan |= newer.force_full_scan;
     merged.rebuild_requested |= newer.rebuild_requested;
     merged.automatic_rebuild_requested |= newer.automatic_rebuild_requested;
@@ -1184,8 +1312,6 @@ where
 
 /// Maximum inferred neighbors recorded per note during edge rebuild.
 const EDGE_NEIGHBORS_PER_NOTE: usize = 6;
-/// Minimum cosine similarity for two notes to be linked.
-const EDGE_MIN_SCORE: f32 = 0.42;
 /// Dirty batches above this bound use the existing full reconciliation path.
 pub(crate) const EDGE_MAX_INCREMENTAL_DIRTY_NOTES: usize = 32;
 /// Search wider than the emitted top-K to catch reverse-neighbor changes.
@@ -2168,6 +2294,10 @@ mod tests {
     ) -> IndexingWorkerContext {
         let (queue, _) = SemanticWorkQueue::new(initial);
         IndexingWorkerContext {
+            image_ann: Arc::new(super::super::image_ann::ImageAnnIndex::new(
+                db_path.parent().unwrap().join("images"),
+            )),
+            generation: Arc::new(super::super::generation::SemanticGeneration::ready_for_test()),
             db_path,
             notes_dir,
             provider,
@@ -2178,6 +2308,57 @@ mod tests {
             runtime: Arc::new(Mutex::new(RuntimeState::default())),
             debug,
             background_gate: Arc::new(BackgroundWorkGate::new()),
+        }
+    }
+
+    #[test]
+    fn activation_retries_source_work_without_an_embedding_wake_and_bounds_busy_sources() {
+        for settles in [true, false] {
+            let temp = TestDir::new("activation-source-retry");
+            let notes = temp.path().join("notes");
+            fs::create_dir_all(&notes).unwrap();
+            let path = temp.path().join("semantic.sqlite3");
+            let connection = crate::semantic::test_support::database(&path);
+            let debug = Arc::new(SemanticDebugState::new());
+            let ann =
+                Arc::new(AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).unwrap());
+            let note_ann = test_note_ann(&temp.path().join("cache"));
+            ann.rebuild_from_connection(&connection).unwrap();
+            note_ann.rebuild_from_connection(&connection).unwrap();
+            let mut context = worker_context(
+                path,
+                notes,
+                Arc::new(MockEmbeddingProvider),
+                ann,
+                note_ann,
+                debug,
+                PendingIndexState::default(),
+            );
+            let generation = Arc::new(
+                super::super::generation::SemanticGeneration::staging(&connection, "mock".into())
+                    .unwrap(),
+            );
+            generation.scan_finished();
+            generation.recall_finished();
+            let (admission, mutation) =
+                crate::services::note_timeline::SemanticSourceAdmission::with_pending_test_mutation(
+                );
+            generation.bind_sources(admission);
+            context.generation = generation.clone();
+            let mut mutation = Some(mutation);
+            let mut waits = 0;
+            process_pending_jobs_with_wait(&context, |delay| {
+                assert_eq!(delay, std::time::Duration::from_millis(100));
+                waits += 1;
+                if settles {
+                    drop(mutation.take());
+                }
+                true
+            });
+            assert_eq!(generation.is_active(), settles);
+            assert_eq!(waits, if settles { 1 } else { 9 });
+            assert_eq!(context.runtime.lock().unwrap().retry_exhausted, !settles);
+            assert!(context.queue.pending.lock().unwrap().is_empty());
         }
     }
 
@@ -2198,6 +2379,10 @@ mod tests {
         let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
         let gate = Arc::new(BackgroundWorkGate::new());
         let context = IndexingWorkerContext {
+            image_ann: Arc::new(super::super::image_ann::ImageAnnIndex::new(
+                db_path.parent().unwrap().join("images"),
+            )),
+            generation: Arc::new(super::super::generation::SemanticGeneration::ready_for_test()),
             db_path,
             notes_dir,
             provider: Arc::new(MockEmbeddingProvider),

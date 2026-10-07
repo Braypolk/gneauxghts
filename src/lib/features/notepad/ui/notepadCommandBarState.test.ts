@@ -4,7 +4,7 @@ import {
   deriveNotepadCommandBarVisibleItems
 } from './notepadCommandBarState.svelte';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-import type { SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
 
 function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   return {
@@ -74,6 +74,24 @@ describe('createNotepadCommandBarState', () => {
       ...overrides
     });
   }
+
+  it('selects an image with arrows and Enter through the shared result navigation', () => {
+    const image: ImageSearchItem = { kind: 'image', noteId: 'image-note', notePath: '/vault/Pictures.md', noteTitle: 'Pictures', noteHash: 'note', assetName: 'chart.png', assetHash: 'asset', sourceStart: 2, sourceEnd: 20, score: .85 };
+    const onImageSelect = vi.fn();
+    const onSearchSelect = vi.fn();
+    const closeSearch = vi.fn();
+    const state = createState({
+      getSearchQuery: () => 'growth chart',
+      getVisibleItems: () => [{ kind: 'search', item: searchItem() }, { kind: 'image', item: image }],
+      onImageSelect, onSearchSelect, closeSearch
+    });
+    const key = (key: string) => ({ key, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    state.handleSearchKeydown(key('ArrowDown'));
+    state.handleSearchKeydown(key('Enter'));
+    expect(onImageSelect).toHaveBeenCalledWith(image);
+    expect(onSearchSelect).not.toHaveBeenCalled();
+    expect(closeSearch).toHaveBeenCalledOnce();
+  });
 
   it('returns the user to where they were when Escape dismisses search', () => {
     const calls: string[] = [];

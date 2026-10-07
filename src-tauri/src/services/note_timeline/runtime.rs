@@ -539,3 +539,94 @@ impl Drop for NoteTimelineRuntime {
         }
     }
 }
+
+/// Read-only source admission for semantic generation publication. Note
+/// Timeline retains ownership of current-content mutation coordination.
+#[derive(Clone)]
+pub(crate) struct SemanticSourceAdmission {
+    coordinator: Arc<CurrentContentCoordinator>,
+}
+pub(crate) struct SemanticSourceVersion(CurrentContentVersion);
+impl SemanticSourceAdmission {
+    #[cfg(test)]
+    pub(crate) fn with_pending_test_mutation() -> (Self, impl Drop) {
+        let coordinator = Arc::new(CurrentContentCoordinator::default());
+        coordinator.state.lock().unwrap().active_mutations = 1;
+        (
+            Self {
+                coordinator: coordinator.clone(),
+            },
+            CurrentContentMutationGuard { coordinator },
+        )
+    }
+    pub(crate) fn capture(&self) -> Result<Option<SemanticSourceVersion>, String> {
+        let state = self
+            .coordinator
+            .state
+            .lock()
+            .map_err(|_| "Current source admission unavailable")?;
+        Ok(
+            (state.active_mutations == 0).then_some(SemanticSourceVersion(CurrentContentVersion {
+                generation: state.generation,
+            })),
+        )
+    }
+    pub(crate) fn publish_if_current(
+        &self,
+        version: SemanticSourceVersion,
+        publish: impl FnOnce() -> Result<(), String>,
+    ) -> Result<bool, String> {
+        let state = self
+            .coordinator
+            .state
+            .lock()
+            .map_err(|_| "Current source admission unavailable")?;
+        if state.active_mutations != 0 || state.generation != version.0.generation {
+            return Ok(false);
+        }
+        publish()?;
+        Ok(true)
+    }
+}
+impl NoteTimelineRuntime {
+    pub(crate) fn semantic_source_admission(&self) -> SemanticSourceAdmission {
+        SemanticSourceAdmission {
+            coordinator: self.current_content.clone(),
+        }
+    }
+}
+
+#[cfg(test)]
+mod semantic_admission_tests {
+    use super::*;
+    #[test]
+    fn a_prepared_semantic_generation_cannot_publish_across_source_mutation() {
+        let coordinator = Arc::new(CurrentContentCoordinator::default());
+        let admission = SemanticSourceAdmission {
+            coordinator: coordinator.clone(),
+        };
+        let version = admission.capture().unwrap().unwrap();
+        {
+            coordinator.state.lock().unwrap().active_mutations += 1;
+            assert!(admission.capture().unwrap().is_none());
+            let _mutation = CurrentContentMutationGuard {
+                coordinator: coordinator.clone(),
+            };
+        }
+        let published = std::sync::atomic::AtomicBool::new(false);
+        assert!(!admission
+            .publish_if_current(version, || {
+                published.store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            })
+            .unwrap());
+        assert!(!published.load(std::sync::atomic::Ordering::Acquire));
+        let fresh = admission.capture().unwrap().unwrap();
+        assert!(admission
+            .publish_if_current(fresh, || {
+                published.store(true, std::sync::atomic::Ordering::Release);
+                Ok(())
+            })
+            .unwrap());
+    }
+}

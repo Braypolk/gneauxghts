@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount, tick, untrack } from "svelte";
+  import { invoke } from '@tauri-apps/api/core';
+  import type { ImageSearchItem } from '$lib/types/semantic';
   import { createNativeContractProbe, type NativeContractProbe } from "$lib/e2e/nativeContractProbe";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
@@ -210,6 +212,24 @@
       });
     },
   });
+
+  let imageNavigation = 0;
+  async function openSearchedImage(item: ImageSearchItem) {
+    const request = ++imageNavigation;
+    try {
+      await commands.openNotePath(item.notePath, { noteId: item.noteId });
+      await tick();
+      if (request !== imageNavigation || getDocumentPath(getDocumentSession()) !== item.notePath) return;
+      const currentMarkdown = getCurrentMarkdown();
+      const paneId = getNavigationPaneId();
+      const valid = await invoke<boolean>('validate_image_search_result', { item, currentMarkdown });
+      if (request !== imageNavigation || getDocumentPath(getDocumentSession()) !== item.notePath) return;
+      if (getCurrentMarkdown() !== currentMarkdown || getNavigationPaneId() !== paneId) return;
+      if (!valid || !editorCapabilities.get(paneId)?.openImageViewer({ from: item.sourceStart, to: item.sourceEnd, asset: item.assetName })) {
+        searchState.mediaError = 'This image occurrence changed. Search again to refresh it.';
+      }
+    } catch (error) { searchState.mediaError = String(error); }
+  }
 
   const relatedState = createRelatedNotesStore({
     getCurrentTitle: () => featureHost.getActiveDocumentSnapshot().title,
@@ -1516,6 +1536,12 @@
             onRemember: () => void chatCoordinator.startNewActiveItem(),
           }}
           search={{
+            imageResults: searchState.imageResults,
+            imageQueryUrl: searchState.imageQueryUrl,
+            mediaError: searchState.mediaError,
+            onQueryImage: searchState.chooseQueryImage,
+            onSearchClear: searchState.clearSearch,
+            onImageSelect: openSearchedImage,
             searchMode: searchState.searchMode,
             searchQuery: searchState.searchQuery,
             matchCase: searchState.matchCase,

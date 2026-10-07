@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { imageWidthChanges, parseImageEmbeds, resolveImageAssetName } from './imageEmbedParser';
@@ -50,4 +51,11 @@ describe('reference and comment edge cases', () => {
   it('keeps escaped label pipes literal', () => {
     expect(parseImageEmbeds('![name\\|100](a.png)')[0].target.width).toBeNull();
   });
+});
+
+it('matches the backend complete-document inventory fixtures', () => {
+  const cases = JSON.parse(readFileSync(new URL('../../../../../src-tauri/test-fixtures/image-inventory.json', import.meta.url).pathname, 'utf8')) as Array<{ name: string; markdown: string; assets: string[] }>;
+  for (const fixture of cases) {
+    expect(parseImageEmbeds(fixture.markdown).filter(ref => ref.assetName).map(ref => ref.assetName), fixture.name).toEqual(fixture.assets);
+  }
 });

@@ -177,6 +177,7 @@ impl AppState {
             running_vault.root().to_path_buf(),
             running_vault.app_local_observation_dir().to_path_buf(),
         )?;
+        semantic.bind_current_sources(note_timeline.semantic_source_admission());
         let app_state_storage = AppStateStorage::bind(running_vault.data_dir())?;
         let lexical = Arc::new(LexicalIndex::new()?);
         let foreground_activity = Arc::new(ForegroundActivity::default());

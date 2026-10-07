@@ -1,4 +1,5 @@
 export interface SemanticSettings {
+  imageTokens: 70 | 140;
   semanticSearchEnabled: boolean;
   lexicalWeight: number;
   semanticWeight: number;
@@ -34,6 +35,12 @@ export interface SemanticIndexJob {
 }
 
 export interface SemanticStatus {
+  imageCoverage: { indexed: number; failed: number; unsupported: number };
+  textReady: boolean;
+  imageCapability: 'available' | 'unsupported' | 'failed';
+  migrationState: 'active' | 'staging' | 'failed' | 'unavailable';
+  previousGenerationAvailable: boolean;
+  nextProvider: 'gemma' | 'jina';
   settings: SemanticSettings;
   model: SemanticModelInfo;
   platformSupported: boolean;
@@ -67,6 +74,21 @@ export interface SemanticStatus {
   progressTotal: number;
   rebuildReason: string | null;
 }
+
+export interface ImageSearchItem {
+  kind: 'image';
+  noteId: string;
+  notePath: string;
+  noteTitle: string;
+  noteHash: string;
+  assetName: string;
+  assetHash: string;
+  sourceStart: number;
+  sourceEnd: number;
+  score: number;
+}
+
+export type MediaSearchItem = ImageSearchItem | (SearchItem & { kind: 'passage' });
 
 export interface SemanticDebugMetrics {
   runtimeSpawnCount: number;

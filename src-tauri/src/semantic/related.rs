@@ -1,4 +1,3 @@
-use super::similarity::MIN_SEMANTIC_MATCH_SCORE;
 use super::{
     chunking, content_hash, load_note_record, load_related_note_previews,
     load_related_note_previews_for_paths, open_database, ActiveSemanticState, RelatedNoteMatch,
@@ -239,7 +238,7 @@ impl ActiveSemanticState {
 
         let scored_paths = neighbors
             .into_iter()
-            .filter(|neighbor| neighbor.score >= MIN_SEMANTIC_MATCH_SCORE)
+            .filter(|neighbor| neighbor.score >= self.provider.minimum_text_score())
             .map(|neighbor| (neighbor.note_path, neighbor.score))
             .collect::<Vec<_>>();
         if scored_paths.is_empty() {

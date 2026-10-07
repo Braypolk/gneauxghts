@@ -377,6 +377,10 @@ fn collect_watch_result(queue: &DirtyQueue, notes_dir: &Path, result: notify::Re
     let mut batch = Vec::new();
     let mut seen = HashSet::new();
     for path in event.paths {
+        if path.starts_with(notes_dir.join("assets")) {
+            batch.push(path);
+            continue;
+        }
         if !seen.insert(path.clone()) || !is_watchable_markdown_path(&path, notes_dir) {
             continue;
         }
@@ -505,6 +509,16 @@ fn flush_dirty_batch(
         return Ok(());
     };
     let timeline = state.note_timeline();
+    let has_assets = paths
+        .iter()
+        .any(|p| p.starts_with(notes_dir.join("assets")));
+    if has_assets {
+        state.semantic.queue_image_reconciliation()?;
+    }
+    let paths = paths
+        .into_iter()
+        .filter(|p| !p.starts_with(notes_dir.join("assets")))
+        .collect();
     let resolved = resolve_batch(notes_dir, paths)?;
     let mut ordinary_present = Vec::new();
     let mut ordinary_removed = Vec::new();
@@ -851,6 +865,9 @@ fn spawn_background_reconcile_loop(
             };
             if !notes_dir.exists() {
                 continue;
+            }
+            if let Err(error) = state.semantic.queue_image_reconciliation() {
+                eprintln!("Image reconciliation admission failed: {error}");
             }
             match state.reconcile_full_vault_scan_observing(
                 &notes_dir,

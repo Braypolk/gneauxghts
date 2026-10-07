@@ -1,4 +1,5 @@
-import type { SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, MediaSearchItem, SearchItem } from '$lib/types/semantic';
+import { invoke } from '@tauri-apps/api/core';
 import {
   getIndexedRecentItem,
   loadLatestCollection,
@@ -45,6 +46,8 @@ interface SearchStoreDeps {
   onSearchHighlightsChange?: (state: Pick<NotepadSearchState, 'searchMode' | 'searchQuery' | 'matchCase' | 'matchWholeWord'>) => void;
 }
 
+interface ImageQuerySource { file: File; encoded?: string }
+
 /**
  * Svelte 5 rune-backed search store.
  *
@@ -64,6 +67,12 @@ export class NotepadSearchStore {
   recentNotes = $state<SearchItem[]>([]);
   recentTasks = $state<RecentTaskItem[]>([]);
   isSearching = $state(false);
+  imageResults = $state<ImageSearchItem[]>([]);
+  imageQueryUrl = $state<string | null>(null);
+  mediaError = $state<string | null>(null);
+  #queryImage: ImageQuerySource | null = null;
+  #pendingImage: { source: ImageQuerySource; query: string | null; requestId: number } | null = null;
+  #processingImage = false;
 
   #deps: SearchStoreDeps;
   #searchTimer: number | null = null;
@@ -109,6 +118,9 @@ export class NotepadSearchStore {
   }
 
   clearSearch = () => {
+    this.#releaseImageQuery();
+    this.imageResults = [];
+    this.mediaError = null;
     this.searchQuery = '';
     this.searchResults = [];
     this.isSearching = false;
@@ -117,9 +129,70 @@ export class NotepadSearchStore {
     this.#clearPendingSearchTimer();
   };
 
+  #releaseImageQuery() {
+    if (this.imageQueryUrl) URL.revokeObjectURL(this.imageQueryUrl);
+    this.imageQueryUrl = null;
+    this.#pendingImage = null;
+    this.#queryImage = null;
+  }
+
+  chooseQueryImage = async (file: File) => {
+    const query = this.searchQuery;
+    this.clearSearch();
+    if (file.size > 20 * 1024 * 1024 || file.size === 0) {
+      this.mediaError = 'Choose a nonempty image smaller than 20 MiB.';
+      return;
+    }
+    this.searchMode = 'all';
+    this.imageQueryUrl = URL.createObjectURL(file);
+    this.#queryImage = { file };
+    this.searchQuery = query;
+    await this.#queueImageQuery(query, this.#activeSearchRequest);
+  };
+
+  #queueImageQuery = async (query: string, requestId: number) => {
+    if (!this.#queryImage) return;
+    this.isSearching = true;
+    this.#pendingImage = { source: this.#queryImage, query: query.trim() || null, requestId };
+    if (this.#processingImage) return;
+    this.#processingImage = true;
+    try {
+      while (this.#pendingImage) {
+        const { source, query, requestId } = this.#pendingImage;
+        this.#pendingImage = null;
+        try {
+          const encoded = source.encoded ?? await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(String(reader.result).split(",", 2)[1]);
+            reader.onerror = () => reject(reader.error ?? new Error("Could not read image"));
+            reader.readAsDataURL(source.file);
+          });
+          source.encoded = encoded;
+          if (requestId !== this.#activeSearchRequest) continue;
+          const results = await invoke<MediaSearchItem[]>('search_media', { query, imageBase64: encoded });
+          if (requestId !== this.#activeSearchRequest) continue;
+          this.imageResults = results.filter((item): item is ImageSearchItem => item.kind === 'image');
+          this.searchResults = results.filter((item): item is SearchItem & { kind: 'passage' } => item.kind === 'passage');
+          this.isSearching = false;
+        } catch (error) {
+          if (requestId !== this.#activeSearchRequest) continue;
+          this.mediaError = String(error);
+          this.isSearching = false;
+        }
+      }
+    } finally { this.#processingImage = false; }
+  };
+
   runSearch = async (query: string) => {
     const requestId = ++this.#activeSearchRequest;
+    this.imageResults = [];
+    this.mediaError = null;
     const trimmedQuery = query.trim();
+    if (this.#queryImage && this.searchMode === 'all') {
+      this.#emitHighlightsChange();
+      await this.#queueImageQuery(trimmedQuery, requestId);
+      return;
+    }
     if (trimmedQuery === '') {
       this.#clearPendingSearchTimer();
       this.searchResults = [];
@@ -153,6 +226,8 @@ export class NotepadSearchStore {
         return;
       }
 
+      const media = invoke<MediaSearchItem[]>('search_media', { query: trimmedQuery, imageBase64: null })
+        .then(results => ({ results, error: null }), error => ({ results: [] as MediaSearchItem[], error: String(error) }));
       const results = await searchNotes(trimmedQuery, {
         currentPath: this.#deps.getCurrentPath(),
         currentTitle: this.#deps.getCurrentTitle(),
@@ -166,6 +241,10 @@ export class NotepadSearchStore {
 
       this.searchResults = results;
       this.isSearching = false;
+      const images = await media;
+      if (requestId !== this.#activeSearchRequest) return;
+      this.imageResults = images.results.filter((item): item is ImageSearchItem => item.kind === 'image');
+      this.mediaError = images.error;
     } catch (error) {
       if (requestId !== this.#activeSearchRequest) {
         return;
@@ -182,7 +261,7 @@ export class NotepadSearchStore {
     this.#activeSearchRequest += 1;
     this.#clearPendingSearchTimer();
 
-    if (this.searchQuery.trim() === '') {
+    if (this.searchQuery.trim() === '' && !this.#queryImage) {
       this.searchResults = [];
       this.isSearching = false;
       return;
@@ -288,9 +367,11 @@ export class NotepadSearchStore {
   };
 
   handleSearchInput = (value: string) => {
+    this.imageResults = [];
+    this.mediaError = null;
     this.searchQuery = value;
 
-    if (value.trim() === '') {
+    if (value.trim() === '' && !this.#queryImage) {
       this.#activeSearchRequest += 1;
       this.#clearPendingSearchTimer();
       this.searchResults = [];
@@ -300,12 +381,22 @@ export class NotepadSearchStore {
       return;
     }
 
+    if (this.#queryImage) {
+      this.searchResults = [];
+      this.isSearching = true;
+    }
     // Highlights are emitted post-debounce inside runSearch so that we don't
     // hit the editor on every keystroke.
     this.scheduleSearch();
   };
 
   handleSearchModeChange = async (mode: SearchMode) => {
+    this.#activeSearchRequest += 1;
+    this.#releaseImageQuery();
+    this.imageResults = [];
+    this.mediaError = null;
+    this.searchResults = [];
+    this.isSearching = false;
     this.searchMode = mode;
     // Mode changes are explicit and infrequent; refresh highlights immediately.
     this.#emitHighlightsChange();
@@ -318,7 +409,7 @@ export class NotepadSearchStore {
   #refreshSearchAfterOptionChange = async () => {
     this.#emitHighlightsChange();
     this.#clearPendingSearchTimer();
-    if (this.searchQuery.trim() !== '') {
+    if (this.searchQuery.trim() !== '' || this.#queryImage) {
       await this.runSearch(this.searchQuery);
     }
   };
@@ -362,6 +453,7 @@ export class NotepadSearchStore {
   };
 
   dispose = () => {
+    this.#releaseImageQuery();
     this.#clearPendingSearchTimer();
     this.#activeSearchRequest += 1;
     this.#activeRecentNotesRequest += 1;

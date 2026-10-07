@@ -1,0 +1,42 @@
+{
+  "date": "2026-10-06",
+  "platform": "macOS ARM64 / Apple M4 Pro",
+  "provider": "production Gemma LiteRT, GPU",
+  "query_image": "privacy.png",
+  "refinement": "Network Connection settings with proxy server and offline mode",
+  "scope": "Two constructed screenshot candidates; this checks query composition, not broad search quality.",
+  "runs": [
+    {
+      "backend": "ready \u00b7 GPU",
+      "candidates": [
+        "privacy",
+        "network"
+      ],
+      "combined_scores": [
+        0.8926661610603333,
+        0.9085310101509094
+      ],
+      "image_only_scores": [
+        1.0,
+        0.903548002243042
+      ],
+      "tokens": 70
+    },
+    {
+      "backend": "ready \u00b7 GPU",
+      "candidates": [
+        "privacy",
+        "network"
+      ],
+      "combined_scores": [
+        0.9054979681968689,
+        0.9068676233291626
+      ],
+      "image_only_scores": [
+        1.0,
+        0.9157237410545349
+      ],
+      "tokens": 140
+    }
+  ]
+}

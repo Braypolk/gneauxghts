@@ -1114,8 +1114,8 @@ fn build_related_fingerprint(
 /// Evidence/chat callers retain the reusable merger's broader kind policy.
 #[allow(clippy::too_many_arguments)]
 fn merge_note_candidates(
-    lexical: Vec<ScoredSearchResult>,
-    semantic: Vec<SemanticChunkMatch>,
+    mut lexical: Vec<ScoredSearchResult>,
+    mut semantic: Vec<SemanticChunkMatch>,
     query: &str,
     current_path: Option<&Path>,
     limit: usize,
@@ -1125,6 +1125,22 @@ fn merge_note_candidates(
     lookup: &NoteAccessLookup,
     now: u64,
 ) -> Vec<NoteSearchResult> {
+    lexical.sort_by(|a, b| {
+        b.score
+            .cmp(&a.score)
+            .then(a.result.file_name.cmp(&b.result.file_name))
+    });
+    semantic.sort_by(|a, b| {
+        b.score
+            .total_cmp(&a.score)
+            .then(a.note_path.cmp(&b.note_path))
+    });
+    for (rank, item) in lexical.iter_mut().enumerate() {
+        item.score = (1_000_000.0 * 61.0 / (61.0 + rank as f64)) as usize;
+    }
+    for (rank, item) in semantic.iter_mut().enumerate() {
+        item.score = 61.0 / (61.0 + rank as f32);
+    }
     merge_hybrid_candidates(
         lexical
             .into_iter()

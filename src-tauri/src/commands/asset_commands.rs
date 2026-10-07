@@ -110,36 +110,7 @@ pub(super) fn read_image_asset_data_url_from_assets_dir(
     ))
 }
 
-pub(super) fn resolve_asset_image_path(
-    assets_dir: &Path,
-    file_name: &str,
-) -> Result<PathBuf, String> {
-    let trimmed = file_name.trim();
-    if trimmed.is_empty() {
-        return Err("Image asset name is empty".to_string());
-    }
-
-    let file_path = Path::new(trimmed);
-    if trimmed.contains(['\\', ':'])
-        || !file_path
-            .components()
-            .all(|part| matches!(part, std::path::Component::Normal(_)))
-    {
-        return Err("Image asset path must be relative to the assets folder".to_string());
-    }
-
-    let asset_path = assets_dir.join(trimmed);
-    if !asset_path.is_file() {
-        return Err("Image asset was not found".to_string());
-    }
-
-    let root = assets_dir.canonicalize().map_err(|err| err.to_string())?;
-    let canonical = asset_path.canonicalize().map_err(|err| err.to_string())?;
-    if !canonical.starts_with(&root) {
-        return Err("Image asset is outside the assets folder".to_string());
-    }
-    Ok(canonical)
-}
+pub(super) use crate::asset_paths::resolve_asset_image_path;
 
 pub(super) fn mime_type_from_asset_name(file_name: &str) -> &'static str {
     match asset_extension_from_name(file_name)

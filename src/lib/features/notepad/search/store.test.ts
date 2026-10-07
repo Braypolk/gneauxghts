@@ -18,14 +18,17 @@ function result(fileName: string): SearchItem {
   };
 }
 
-const { searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, setNotePinnedMock } =
+const { invokeMock, searchNotesMock, listRecentFocusMock, listRecentNotesMock, listRecentTasksMock, setNotePinnedMock } =
   vi.hoisted(() => ({
+    invokeMock: vi.fn(),
     searchNotesMock: vi.fn(),
     listRecentFocusMock: vi.fn(),
     listRecentNotesMock: vi.fn(),
     listRecentTasksMock: vi.fn(),
     setNotePinnedMock: vi.fn()
   }));
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
 vi.mock('$lib/features/notepad/search/search', () => ({
   searchNotes: searchNotesMock,
@@ -42,6 +45,7 @@ describe('NotepadSearchStore', () => {
       setTimeout: globalThis.setTimeout,
       clearTimeout: globalThis.clearTimeout
     });
+    invokeMock.mockReset().mockResolvedValue([]);
     searchNotesMock.mockReset();
     listRecentFocusMock.mockReset();
     listRecentNotesMock.mockReset();
@@ -65,6 +69,171 @@ describe('NotepadSearchStore', () => {
       openNote: vi.fn(async () => {})
     });
   }
+
+
+  it('retires image work and releases its preview when switching to current-note find', async () => {
+    const pending = deferred<unknown[]>();
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    const search = store.chooseQueryImage({ size: 5 } as File);
+    await Promise.resolve();
+    expect(invokeMock).toHaveBeenCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    await store.handleSearchModeChange('current');
+    pending.resolve([{ kind:'image', assetName:'obsolete.png' }]);
+    await search;
+    expect(store.imageQueryUrl).toBeNull();
+    expect(store.imageResults).toEqual([]);
+    expect(store.searchResults).toEqual([]);
+    expect(store.isSearching).toBe(false);
+    expect(revoke).toHaveBeenCalledWith('blob:query');
+  });
+
+  it.each(['results', 'error'])('keeps an image query cleared after late %s arrive', async (outcome) => {
+    const pending = deferred<unknown[]>();
+    invokeMock.mockReturnValueOnce(pending.promise);
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    store.handleSearchInput('refinement');
+    const search = store.chooseQueryImage({ size: 5 } as File);
+    await Promise.resolve();
+    store.clearSearch();
+    expect(store.imageQueryUrl).toBeNull();
+    expect(store.isSearching).toBe(false);
+    if (outcome === 'results') {
+      pending.resolve([{ kind: 'image', assetName: 'obsolete.png' }, { ...result('obsolete'), kind: 'passage' }]);
+    } else {
+      pending.reject(new Error('obsolete failure'));
+    }
+    await search;
+    expect(store.imageResults).toEqual([]);
+    expect(store.searchResults).toEqual([]);
+    expect(store.mediaError).toBeNull();
+    expect(store.imageQueryUrl).toBeNull();
+    expect(store.isSearching).toBe(false);
+    expect(revoke).toHaveBeenCalledWith('blob:query');
+  });
+
+  it('keeps the image while refining text, and returns to image-only when text is deleted', async () => {
+    const revoke = vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    const read = vi.fn();
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { read(); this.onload?.(); }
+    });
+    const store = createStore();
+    store.handleSearchInput('initial context');
+    await store.chooseQueryImage({ size: 5 } as File);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'initial context', imageBase64: 'aW1hZ2U=' });
+    store.handleSearchInput('network settings');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(store.imageQueryUrl).toBe('blob:query');
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'network settings', imageBase64: 'aW1hZ2U=' });
+    store.handleSearchInput('');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    expect(store.imageQueryUrl).toBe('blob:query');
+    expect(read).toHaveBeenCalledOnce();
+    expect(searchNotesMock).not.toHaveBeenCalled();
+    expect(revoke).not.toHaveBeenCalled();
+    store.clearSearch();
+    expect(revoke).toHaveBeenCalledWith('blob:query');
+  });
+
+  it.each(['case', 'whole word'])('reruns an image query when %s changes during empty-text debounce', async (option) => {
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    store.handleSearchInput('refinement');
+    await store.chooseQueryImage({ size: 5 } as File);
+    store.handleSearchInput('');
+    if (option === 'case') await store.handleMatchCaseChange(true);
+    else await store.handleMatchWholeWordChange(true);
+    await vi.advanceTimersByTimeAsync(120);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: null, imageBase64: 'aW1hZ2U=' });
+    expect(store.isSearching).toBe(false);
+    expect(store.imageQueryUrl).toBe('blob:query');
+    store.clearSearch();
+  });
+
+  it('coalesces text refinements during image inference and never admits the old response', async () => {
+    const pending = deferred<unknown[]>();
+    invokeMock.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([{ ...result('refined'), kind: 'passage' }]);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('FileReader', class {
+      result = 'data:image/png;base64,aW1hZ2U=';
+      onload: (() => void) | null = null;
+      readAsDataURL() { this.onload?.(); }
+    });
+    const store = createStore();
+    const search = store.chooseQueryImage({ size: 5 } as File);
+    await Promise.resolve();
+    store.handleSearchInput('superseded');
+    await vi.advanceTimersByTimeAsync(120);
+    store.handleSearchInput('latest refinement');
+    await vi.advanceTimersByTimeAsync(120);
+    expect(invokeMock).toHaveBeenCalledOnce();
+    pending.resolve([{ ...result('obsolete'), kind: 'passage' }]);
+    await search;
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock).toHaveBeenLastCalledWith('search_media', { query: 'latest refinement', imageBase64: 'aW1hZ2U=' });
+    expect(store.searchResults.map(item => item.fileName)).toEqual(['refined']);
+    store.clearSearch();
+  });
+
+  it('coalesces replacement images to the latest pending input', async () => {
+    const pending = deferred<unknown[]>();
+    invokeMock.mockReturnValueOnce(pending.promise).mockResolvedValueOnce([]);
+    vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:query');
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {});
+    vi.stubGlobal('FileReader', class {
+      result = '';
+      onload: (() => void) | null = null;
+      readAsDataURL(file: File) { this.result = `data:image/png;base64,${file.name}`; this.onload?.(); }
+    });
+    const store = createStore();
+    const search = store.chooseQueryImage({ size:5, name:'first' } as File);
+    await Promise.resolve();
+    await store.chooseQueryImage({ size:5, name:'superseded' } as File);
+    await store.chooseQueryImage({ size:5, name:'latest' } as File);
+    pending.resolve([{kind:'image',assetName:'old.png'}]);
+    await search;
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    expect(invokeMock.mock.calls[1][1].imageBase64).toBe('latest');
+    expect(store.imageResults).toEqual([]);
+    store.dispose();
+  });
+
+  it('keeps keyword passages when the image semantic channel fails', async () => {
+    invokeMock.mockRejectedValue(new Error('Model unavailable'));
+    searchNotesMock.mockResolvedValue([result('Keyword')]);
+    const store = createStore();
+    await store.runSearch('word');
+    expect(store.searchResults).toEqual([result('Keyword')]);
+    expect(store.mediaError).toContain('Model unavailable');
+    expect(store.isSearching).toBe(false);
+  });
 
   it.each(['success', 'error'] as const)(
     'ignores an old %s during replacement debounce without emitting early highlights',

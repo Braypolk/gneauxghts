@@ -5,7 +5,14 @@ import type { SemanticStatus } from '$lib/types/semantic';
 import type { VaultInfo } from '$lib/types/vault';
 
 export const semanticStatusFixture: SemanticStatus = {
+  imageCoverage: { indexed: 0, failed: 0, unsupported: 0 },
+  textReady: false,
+  imageCapability: 'unsupported',
+  migrationState: 'unavailable',
+  previousGenerationAvailable: false,
+  nextProvider: 'gemma',
   "settings": {
+    "imageTokens": 70,
     "semanticSearchEnabled": true,
     "lexicalWeight": 0.5,
     "semanticWeight": 0.4000000059604645

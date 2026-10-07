@@ -59,8 +59,10 @@ use test_support::{
 // their existing private modules.
 
 use self::post_publication::PublicationOutcome;
-pub(crate) use self::runtime::NoteTimelineRuntime;
 use self::runtime::{CurrentContentMutationGuard, CurrentContentVersion, OperationGuard};
+pub(crate) use self::runtime::{
+    NoteTimelineRuntime, SemanticSourceAdmission, SemanticSourceVersion,
+};
 use crate::{
     index::{build_indexed_note, AppState, NoteTimelineOwnerToken},
     path_utils::{collect_markdown_files_recursively, unique_path_in_dir},

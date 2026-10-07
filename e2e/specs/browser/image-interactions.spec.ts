@@ -15,6 +15,14 @@ async function body() {
     return snapshot.notes.find(note => note.noteId === snapshot.activeNoteId)!.markdown;
   });
 }
+async function pasteSearchImage() {
+  const input = await $('[data-testid="note-search-input"]');
+  await browser.execute((input: HTMLElement) => {
+    const files = new DataTransfer();
+    files.items.add(new File([Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg=='), c => c.charCodeAt(0))], 'query.png', { type: 'image/png' }));
+    input.dispatchEvent(new ClipboardEvent('paste', { clipboardData: files, bubbles: true, cancelable: true }));
+  }, input);
+}
 async function selectImage() {
   await $('.gn-image-embed button[aria-label="Zoom image"]').click();
   await $('dialog.gn-image-viewer').waitForDisplayed();
@@ -254,6 +262,91 @@ describe('image interactions', () => {
     } finally {
       await browser.execute(() => (window as any).__restoreImageClipboard?.());
     }
+  });
+
+  it('uses a temporary search image and opens the exact current viewer occurrence', async () => {
+    const markdown = 'Before\n\n![[second.png|200]]\n\nAfter';
+    await insertMarkdown(markdown);
+    await browser.waitUntil(async () => (await body()) === markdown);
+    await browser.execute(async (markdown) => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
+      const snapshot = window.__GNEAUXGHTS_E2E__!.snapshot();
+      const note = snapshot.notes.find(note => note.noteId === snapshot.activeNoteId)!;
+      const from = markdown.indexOf('![[second.png|200]]');
+      Object.assign(window.__GNEAUXGHTS_E2E_COMMANDS__!, {
+        search_media: () => [{ kind: 'image', noteId: note.noteId, notePath: note.path, noteTitle: note.title,
+          noteHash: 'fixture', assetName: 'second.png', assetHash: 'fixture', sourceStart: from,
+          sourceEnd: from + '![[second.png|200]]'.length, score: 0.8 }],
+        read_image_search_thumbnail: () => native.invoke('read_image_asset_data_url', { fileName: 'second.png' }),
+        validate_image_search_result: (args: { currentMarkdown: string }) => args.currentMarkdown === markdown
+      });
+    }, markdown);
+    const input = await $('[data-testid="note-search-input"]');
+    await input.click();
+    await $('button[aria-label="Search all notes"]').click();
+    await pasteSearchImage();
+    const hit = await $('button[aria-label="Open second.png in Alpha note"]');
+    await hit.waitForDisplayed();
+    await $('.image-search-result img').waitForDisplayed();
+    const previewIsInsideBar = () => browser.execute(() => {
+      const preview = document.querySelector('img[alt="Search query"]');
+      const bar = document.querySelector('[data-testid="note-search-input"]')?.closest('.shared-search-bar-shell');
+      if (!preview || !bar || !bar.contains(preview) || preview.closest('.search-results-panel')) return false;
+      const image = preview.getBoundingClientRect();
+      const shell = bar.getBoundingClientRect();
+      const magnifier = bar.querySelector('svg');
+      if (!magnifier) return false;
+      const icon = magnifier.getBoundingClientRect();
+      return icon.width > 0 && icon.right <= image.left && image.left >= shell.left && image.right <= shell.right && image.top >= shell.top && image.bottom <= shell.bottom;
+    });
+    expect(await previewIsInsideBar()).toBe(true);
+    await browser.saveScreenshot('/private/tmp/gemma-image-query-inline-desktop.png');
+    await browser.setWindowSize(420, 900);
+    await waitForTwoAnimationFrames();
+    expect(await previewIsInsideBar()).toBe(true);
+    await browser.saveScreenshot('/private/tmp/gemma-image-query-inline-mobile.png');
+    await browser.setWindowSize(1440, 1000);
+    await waitForTwoAnimationFrames();
+    const queryPreviewUrl = await $('img[alt="Search query"]').getAttribute('src');
+    await input.setValue('proxy server and offline mode');
+    await browser.waitUntil(() => browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.some(entry =>
+      entry.command === 'search_media' && entry.args.query === 'proxy server and offline mode' && typeof entry.args.imageBase64 === 'string'
+    )));
+    await hit.waitForDisplayed();
+    expect(await $('img[alt="Search query"]').getAttribute('src')).toBe(queryPreviewUrl);
+    const clear = await $('button[aria-label="Clear search"]');
+    expect(await clear.isExisting()).toBe(true);
+    await clear.click();
+    await hit.waitForExist({ reverse: true });
+    expect(await $('img[alt="Search query"]').isExisting()).toBe(false);
+    expect(await input.getValue()).toBe('');
+    expect(await browser.execute(() => document.activeElement?.getAttribute('data-testid'))).toBe('note-search-input');
+    await input.click();
+    expect(await hit.isExisting()).toBe(false);
+    await pasteSearchImage();
+    await hit.waitForDisplayed();
+    await input.setValue('network settings');
+    await browser.waitUntil(() => browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.some(entry =>
+      entry.command === 'search_media' && entry.args.query === 'network settings' && typeof entry.args.imageBase64 === 'string'
+    )));
+    await hit.waitForDisplayed();
+    await browser.keys('Escape');
+    await hit.waitForExist({ reverse: true });
+    expect(await $('img[alt="Search query"]').isExisting()).toBe(false);
+    expect(await input.getValue()).toBe('');
+    await pasteSearchImage();
+    await hit.waitForDisplayed();
+    await input.click();
+    await browser.keys('ArrowDown');
+    await browser.keys('Enter');
+    await $('dialog.gn-image-viewer').waitForDisplayed();
+    expect(await $('dialog header').getText()).toContain('second.png');
+    expect(await body()).toBe(markdown);
+    const calls = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations);
+    expect(calls.some(entry => entry.command === 'search_media' && typeof entry.args.imageBase64 === 'string')).toBe(true);
+    expect(calls.some(entry => entry.command === 'validate_image_search_result')).toBe(true);
+    expect(calls.filter(entry => entry.command === 'store_pasted_image')).toHaveLength(0);
+    await browser.keys('Escape');
   });
 
 });

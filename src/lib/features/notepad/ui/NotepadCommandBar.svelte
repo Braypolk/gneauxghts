@@ -1,12 +1,17 @@
 <script lang="ts">
   import { onDestroy, tick, untrack } from 'svelte';
+  import { invoke } from '@tauri-apps/api/core';
+  import { rankMediaResults } from '../search/mediaRanking';
+  import ImageSearchResult from '../search/ImageSearchResult.svelte';
+  import { createImageAssetLoader } from '../images/imageAssetLoader';
   import {
     Eraser,
     Undo2,
     SquarePen,
     MessagesSquare,
     Pin,
-    PinOff
+    PinOff,
+    ImagePlus,
   } from '@lucide/svelte';
   import {
     appSettings,
@@ -28,7 +33,7 @@
     type SearchChoice
   } from '$lib/ui/search/SearchBar.svelte';
   import '$lib/ui/search/searchDock.css';
-  import type { SearchItem } from '$lib/types/semantic';
+  import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
   import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
   interface Props {
@@ -56,6 +61,18 @@
   );
 
   const searchMode = $derived(search.searchMode);
+  const imageResults = $derived(search.imageResults ?? []);
+  const imageQueryUrl = $derived(search.imageQueryUrl ?? null);
+  let queryImageInput = $state<HTMLInputElement | null>(null);
+  const thumbnails = createImageAssetLoader(key => {
+    const [fileName, assetHash] = JSON.parse(key) as [string, string];
+    return invoke<string>('read_image_search_thumbnail', { fileName, assetHash });
+  }, () => 'running-vault', undefined, { entries: 24, bytes: 6 * 1024 * 1024 });
+  onDestroy(() => thumbnails.destroy());
+  function loadThumbnail(item: ImageSearchItem) {
+    return thumbnails.load(JSON.stringify([item.assetName, item.assetHash]));
+  }
+  function chooseImage(file: File) { searchBar?.focusSearch(); void search.onQueryImage?.(file); }
   const searchQuery = $derived(search.searchQuery);
   const matchCase = $derived(search.matchCase);
   const matchWholeWord = $derived(search.matchWholeWord);
@@ -111,18 +128,22 @@
     searchMode === 'current' ? dedupeCurrentSearchResults(searchResults) : searchResults
   );
   const visibleItems = $derived.by<NotepadCommandBarVisibleItem[]>(() =>
-    deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
+    searchMode === 'all' && (searchQuery.trim() !== '' || imageQueryUrl)
+      ? rankMediaResults(visibleSearchResults, imageResults).map(item => item.kind === 'image'
+          ? { kind: 'image' as const, item }
+          : { kind: 'search' as const, item })
+      : deriveNotepadCommandBarVisibleItems(searchQuery, visibleSearchResults, pinnedNotes, recentLocations)
   );
   const hasRecentContent = $derived(pinnedNotes.length > 0 || recentLocations.length > 0);
   const hasVisibleSearchContent = $derived(
-    searchQuery.trim() === '' ? hasRecentContent : visibleItems.length > 0
+    searchQuery.trim() === '' && !imageQueryUrl ? hasRecentContent : visibleItems.length > 0
   );
   const canNavigateCurrentSearchResults = $derived(
     searchMode === 'current' && searchQuery.trim() !== '' && searchResults.length > 0
   );
 
   const commandBarState = createNotepadCommandBarState({
-    getSearchQuery: () => searchQuery,
+    getSearchQuery: () => imageQueryUrl ? "image query" : searchQuery,
     getSearchResults: () => visibleSearchResults,
     getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
     getPinnedNotes: () => pinnedNotes,
@@ -133,7 +154,12 @@
     isForgetActionAvailable: () => canForget && !canUnforget,
     getForgetItemLabel: () => forgetItemLabel,
     onSearchInput: (value) => onSearchInput(value),
+    onSearchClear: () => {
+      if (search.onSearchClear) search.onSearchClear();
+      else onSearchInput('');
+    },
     onSearchSelect: (result) => onSearchSelect(result),
+    onImageSelect: (result) => { void search.onImageSelect?.(result); },
     onSearchNavigate: (result) => onSearchNavigate?.(result),
     onPinnedNoteSelect: (result) => onPinnedNoteSelect(result),
     onRecentLocationSelect: (entry) => onRecentLocationSelect(entry),
@@ -149,13 +175,11 @@
   // items so transient writable-store flips (e.g. isSearching toggling on a
   // keystroke that hasn't changed results yet) do not reset activeIndex.
   const visibleItemsFingerprint = $derived(
-    `${searchQuery.trim() === '' ? 'recents' : 'search'}|${visibleItems.length}|${visibleSearchResults.length}|${
-      visibleItems[0]
-        ? visibleItems[0].kind === 'location'
-            ? `l:${visibleItems[0].item.location.kind}:${visibleItems[0].item.label}`
-            : `${visibleItems[0].kind === 'pinned' ? 'p' : 's'}:${visibleItems[0].item.notePath ?? ''}|${visibleItems[0].item.fileName}|${visibleItems[0].item.sectionLabel ?? ''}|${visibleItems[0].item.matchText ?? ''}`
-        : ''
-    }`
+    JSON.stringify(visibleItems.map(entry => entry.kind === 'location'
+      ? [entry.kind, entry.item.location, entry.item.label]
+      : entry.kind === 'image'
+        ? [entry.kind, entry.item.notePath, entry.item.sourceStart, entry.item.assetHash]
+        : [entry.kind, entry.item.notePath, entry.item.sectionLabel, entry.item.matchText]))
   );
 
   $effect(() => {
@@ -520,8 +544,11 @@
         class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
         data-search-navigation-mode={commandBarState.searchNavigationMode}
       >
-        {#if isSearching && searchQuery.trim() !== ''}
+        {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
+        {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
           <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
+        {:else if imageQueryUrl && visibleItems.length === 0}
+          {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">No matching images or text passages yet.</p>{/if}
         {:else if !hasVisibleSearchContent}
           <div class="px-4 py-3 text-sm text-muted-foreground">
             {#if searchQuery.trim() === ''}
@@ -530,7 +557,7 @@
               No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
             {/if}
           </div>
-        {:else if searchQuery.trim() === ''}
+        {:else if searchQuery.trim() === '' && !imageQueryUrl}
           <div
             bind:this={searchResultsViewport}
             class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
@@ -611,7 +638,14 @@
           </div>
         {:else}
           <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
-            {#each visibleSearchResults as item, index (`${item.notePath ?? 'current'}-${item.sectionLabel}-${item.matchText}-${index}`)}
+            {#each visibleItems as entry, index (index)}
+              {#if entry.kind === 'image'}
+                <ImageSearchResult item={entry.item} load={loadThumbnail}
+                  active={index === commandBarState.activeIndex}
+                  onPointerEnter={() => commandBarState.handleSearchItemPointerEnter(index)}
+                  onSelect={() => commandBarState.selectItem(entry)} />
+              {:else if entry.kind === 'search'}
+              {@const item = entry.item}
               <button
                 type="button"
                 data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
@@ -669,17 +703,24 @@
                   </p>
                 {/if}
               </button>
+              {/if}
             {/each}
           </div>
         {/if}
       </div>
     {/snippet}
 
+    {#snippet imageQueryPreview()}
+      <img src={imageQueryUrl} alt="Search query"
+        class="h-8 w-10 shrink-0 rounded-md border border-border/60 bg-card object-cover" />
+    {/snippet}
+
     <SearchBar
       class="notepad-search-bar"
       bind:this={searchBar}
       value={searchQuery}
-      placeholder={searchMode === 'current' ? 'Search this note' : 'Search all notes'}
+      hasQuery={imageQueryUrl !== null}
+      placeholder={imageQueryUrl ? 'Add text to refine this image' : searchMode === 'current' ? 'Search this note' : 'Search all notes'}
       ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
       testId="note-search-input"
       matchCase={matchCase}
@@ -692,14 +733,26 @@
       blurOnEscape={false}
       shortcut={{ enabled: true, defaultScopeId: 'current', allScopeId: 'all' }}
       onValueChange={onSearchInput}
+      onClear={search.onSearchClear}
       onOpen={handleSharedSearchOpen}
       onScopeChange={handleSharedSearchModeChange}
       onMatchCaseChange={onMatchCaseChange}
       onMatchWholeWordChange={onMatchWholeWordChange}
       onNavigate={(delta) => commandBarState.navigateSearchResult(delta)}
       onInputKeydown={commandBarState.handleSearchKeydown}
+      onImageFile={searchMode === 'all' ? chooseImage : undefined}
+      queryPreview={imageQueryUrl ? imageQueryPreview : undefined}
       panel={searchPanel}
-    />
+    >
+      {#snippet children()}
+        {#if searchMode === 'all' && search.onQueryImage}
+          <input bind:this={queryImageInput} type="file" accept="image/png,image/jpeg,image/webp" hidden
+            onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file) chooseImage(file); event.currentTarget.value = ''; }} />
+          <button type="button" aria-label="Search with an image" title="Choose, paste, or drop an image to search"
+            class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-accent" onclick={() => queryImageInput?.click()}><ImagePlus size={16} /></button>
+        {/if}
+      {/snippet}
+    </SearchBar>
 
     <div
       class="inline-flex shrink-0 items-center rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm"

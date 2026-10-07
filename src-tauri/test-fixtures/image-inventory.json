@@ -1,0 +1,59 @@
+[
+  {
+    "name": "wiki whitespace",
+    "markdown": "![[ photo.png ]] ![[a.png|100 ]] ![[b.png|x80]]",
+    "assets": [
+      "photo.png",
+      "a.png",
+      "b.png"
+    ]
+  },
+  {
+    "name": "unicode and dimensions",
+    "markdown": "😀 ![[assets/sub/a.png|100x80]]",
+    "assets": [
+      "sub/a.png"
+    ]
+  },
+  {
+    "name": "reference",
+    "markdown": "![photo][]\n\n[photo]: <folder/a%20b.png>",
+    "assets": [
+      "folder/a b.png"
+    ]
+  },
+  {
+    "name": "literal exclusions",
+    "markdown": "```\n![[fenced.png]]\n```\n\n    ![indent](i.png)\n\n`![[inline.png]]` \\![[escaped.png]] %% ![[comment.png]] %%\n\n<!-- ![[html.png]] -->\n\n> ![real](real.png)",
+    "assets": [
+      "real.png"
+    ]
+  },
+  {
+    "name": "one decoding pass",
+    "markdown": "![[a%2520b.png]] ![photo](a%20b.png)",
+    "assets": [
+      "a%20b.png",
+      "a b.png"
+    ]
+  },
+  {
+    "name": "unsafe",
+    "markdown": "![[../escape.png]] ![[sub/../escape.png]] ![remote](https://example.com/a.png) ![[a%ZZ.png]]",
+    "assets": []
+  },
+  {
+    "name": "metadata-looking word",
+    "markdown": "notes: ![[ANIM.png]]",
+    "assets": [
+      "ANIM.png"
+    ]
+  },
+  {
+    "name": "malformed dimension whitespace",
+    "markdown": "![[a.png| 100]] ![[b.png|100 ]]",
+    "assets": [
+      "b.png"
+    ]
+  }
+]

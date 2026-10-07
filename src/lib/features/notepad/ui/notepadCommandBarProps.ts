@@ -1,5 +1,5 @@
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-import type { SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
 import type { SearchMode } from '$lib/features/notepad/search/search';
 
 /**
@@ -26,6 +26,12 @@ export interface NotepadCommandBarRememberProps {
  * Search/results bundle: the central search input and result list.
  */
 export interface NotepadCommandBarSearchProps {
+  imageResults?: ImageSearchItem[];
+  imageQueryUrl?: string | null;
+  mediaError?: string | null;
+  onQueryImage?: (file: File) => void | Promise<void>;
+  onSearchClear?: () => void;
+  onImageSelect?: (item: ImageSearchItem) => void | Promise<void>;
   searchMode: SearchMode;
   searchQuery: string;
   matchCase: boolean;

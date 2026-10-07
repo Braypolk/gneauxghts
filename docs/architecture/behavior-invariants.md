@@ -482,6 +482,17 @@ downloads are pinned and checksum-verified; extraction and executable startup
 must succeed before the complete runtime directory becomes discoverable.
 Interrupted setup remains retryable, and keyword search stays available.
 
+A semantic provider change uses a separate representation namespace and one
+resident model. Semantic queries hold a generation read lease; activation waits
+for current ordinary-note and remembered-chat reconciliation and durable ANN
+publication. NoteTimeline validates the prepared source version at publication.
+Busy or superseded source proofs retry outside the producer lock with a bounded,
+interruptible delay. Rebuild withdraws new read admission before the worker waits
+for existing readers. Keyword search remains available while staging. Retained
+Jina files permit a next-launch recovery choice without rebinding the running
+vault or mixing vectors. Image vectors/ANN are separate derived data; changing
+70/140 tokens rebuilds image work without changing text/Atlas identity.
+
 ### Editing Windows preserve explicit boundaries
 
 The first distinct successful Editor publication starts a fixed five-minute

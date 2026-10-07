@@ -48,6 +48,8 @@
 
   interface Props {
     value: string;
+    /** A non-text query uses the same clear control and expanded layout. */
+    hasQuery?: boolean;
     placeholder: string;
     ariaLabel: string;
     testId?: string;
@@ -73,12 +75,15 @@
     onMatchWholeWordChange?: (enabled: boolean) => void | Promise<void>;
     onNavigate?: (delta: 1 | -1) => void | Promise<void>;
     onInputKeydown?: (event: KeyboardEvent) => void;
+    onImageFile?: (file: File) => void | Promise<void>;
+    queryPreview?: Snippet;
     panel?: Snippet;
     children?: Snippet;
   }
 
   let {
     value,
+    hasQuery = false,
     placeholder,
     ariaLabel,
     testId,
@@ -104,6 +109,8 @@
     onMatchWholeWordChange,
     onNavigate,
     onInputKeydown,
+    onImageFile,
+    queryPreview,
     panel,
     children
   }: Props = $props();
@@ -112,7 +119,7 @@
   let shellEl = $state<HTMLDivElement | null>(null);
   let isOpen = $state(false);
 
-  const isExpanded = $derived(isOpen || value.trim() !== '');
+  const isExpanded = $derived(isOpen || value.trim() !== '' || hasQuery);
   const activeScope = $derived(scopeOptions.find((option) => option.id === scopeId) ?? null);
   const activeSearchType = $derived(searchTypeOptions.find((option) => option.id === searchTypeId) ?? null);
   const activeTone = $derived(activeSearchType?.tone ?? activeScope?.tone ?? scopeId ?? 'default');
@@ -255,8 +262,21 @@
   data-search-active={isOpen ? 'true' : 'false'}
   onfocusin={handleFocusIn}
   onfocusout={handleFocusOut}
+  role="search"
+  onpaste={(event) => {
+    const file = Array.from(event.clipboardData?.files ?? []).find(file => file.type.startsWith('image/'));
+    if (file && onImageFile) { event.preventDefault(); openSearch(); void onImageFile(file); }
+  }}
+  ondragover={(event) => { if (onImageFile && event.dataTransfer?.types.includes('Files')) event.preventDefault(); }}
+  ondrop={(event) => {
+    const file = event.dataTransfer?.files[0];
+    if (file && onImageFile) { event.preventDefault(); openSearch(); void onImageFile(file); }
+  }}
 >
-  <Search class="hidden h-4 w-4 shrink-0 text-muted-foreground min-[420px]:block" />
+  <Search class={`${queryPreview ? '' : 'hidden min-[420px]:block'} h-4 w-4 shrink-0 text-muted-foreground`} />
+  {#if queryPreview}
+    {@render queryPreview()}
+  {/if}
   <div class="min-w-0 flex-1">
     <input
       bind:this={inputEl}
@@ -275,7 +295,7 @@
   </div>
 
   <div class="shared-search-controls flex shrink-0 items-center gap-0.5">
-    {#if value.length > 0}
+    {#if value.length > 0 || hasQuery}
       <button
         type="button"
         class="mobile-dense-touch-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"

@@ -4,6 +4,7 @@ mod agent_run_coordinator;
 mod agent_runtime;
 mod agent_tools;
 mod app;
+mod asset_paths;
 mod chat;
 mod commands;
 #[cfg(feature = "e2e-wdio")]
@@ -207,6 +208,7 @@ pub fn run() {
                 ChatService::new_managed(notes_dir, vault_data_dir, app.handle().clone())?;
             if let Some(state) = app.try_state::<AppState>() {
                 chat_service.reconcile_semantic_recall(&state.semantic)?;
+                state.semantic.finish_startup_reconciliation()?;
             }
             app.manage(chat_service);
             // Vault watcher registration walks the notes directory tree
@@ -344,6 +346,9 @@ pub fn run() {
             commands::delete_task,
             commands::task_commands::prepare_task_document_mutation,
             commands::search_commands::search_notes_hybrid,
+            commands::media_search::search_media,
+            commands::media_search::validate_image_search_result,
+            commands::media_search::read_image_search_thumbnail,
             commands::search_commands::list_note_tags,
             commands::search_commands::get_related_notes,
             commands::search_commands::retrieve_note_context,
@@ -392,6 +397,7 @@ pub fn run() {
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,
+            commands::stage_semantic_provider,
             commands::get_semantic_debug_metrics,
             commands::clear_semantic_debug_metrics,
             commands::rebuild_semantic_index,

@@ -116,12 +116,14 @@
       "args": {
         "settings": {
           "semanticSearchEnabled": true,
+          "imageTokens": 70,
           "lexicalWeight": 0.5,
           "semanticWeight": 0.4000000059604645
         }
       },
       "result": {
         "semanticSearchEnabled": true,
+        "imageTokens": 70,
         "lexicalWeight": 0.5,
         "semanticWeight": 0.4000000059604645
       }

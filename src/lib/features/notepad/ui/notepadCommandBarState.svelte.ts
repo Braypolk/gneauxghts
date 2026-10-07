@@ -10,11 +10,12 @@ import {
   pointListSelection,
   type ListNavigationMode
 } from '$lib/ui/listSelection';
-import type { SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
+  | { kind: 'image'; item: ImageSearchItem }
   | { kind: 'pinned'; item: SearchItem }
   | { kind: 'location'; item: LocationHistoryEntry };
 
@@ -43,7 +44,9 @@ interface NotepadCommandBarStateDeps {
   isForgetActionAvailable: () => boolean;
   getForgetItemLabel?: () => string;
   onSearchInput: (value: string) => void;
+  onSearchClear?: () => void;
   onSearchSelect: (result: SearchItem) => void;
+  onImageSelect?: (result: ImageSearchItem) => void;
   onSearchNavigate?: (result: SearchItem) => void | Promise<void>;
   onPinnedNoteSelect: (result: SearchItem) => void;
   onRecentLocationSelect: (entry: LocationHistoryEntry) => void;
@@ -142,6 +145,11 @@ class NotepadCommandBarController {
     this.#deps.onSearchCommit?.();
     this.#closeSearchPanel();
 
+    if (item.kind === 'image') {
+      this.#deps.onImageSelect?.(item.item);
+      return;
+    }
+
     if (item.kind === 'pinned') {
       this.#deps.onPinnedNoteSelect(item.item);
       return;
@@ -206,7 +214,8 @@ class NotepadCommandBarController {
     if (event.key === 'Escape') {
       event.preventDefault();
       if (this.#deps.getSearchQuery().trim() !== '') {
-        this.#deps.onSearchInput('');
+        if (this.#deps.onSearchClear) this.#deps.onSearchClear();
+        else this.#deps.onSearchInput('');
         return;
       }
 

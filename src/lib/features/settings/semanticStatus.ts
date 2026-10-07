@@ -43,6 +43,10 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
     description: status.indexUsable ? 'Existing matches are available, but recent changes could not be indexed.' : 'Your notes could not be indexed. Retry to finish setting up search.',
     action: 'retry_semantic_index', actionLabel: 'Retry now'
   };
+  if (status.migrationState === 'staging' && !status.indexingInProgress) return {
+    state: 'waiting', guidance: 'No action needed', title: 'Building compatible search',
+    description: 'Reconciling notes and remembered passages before activating this generation. Keyword search is available.'
+  };
   if (status.indexingInProgress) return {
     state: 'working', guidance: 'No action needed', title: status.currentJobLabel ?? 'Indexing notes',
     description: 'Updating your search index now. You can keep using the app.'

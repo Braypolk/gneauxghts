@@ -1,0 +1,2537 @@
+{
+  "models": {
+    "cpu70": {
+      "backend": "cpu",
+      "vision_tokens": 70,
+      "text_min_signature": 128,
+      "text_max_signature": 1024,
+      "output_dimensions": 768,
+      "model_bytes": 387710976,
+      "fixture_sha256": "8f49500cbd172448b398095df16ad7a5351825add3a8c642b61471158b014fbb",
+      "runtime_version": "0.18.0",
+      "cache": "/private/tmp/gneauxghts-gemma-spike/litert-cache-cpu70",
+      "phases": {
+        "before_runtime_import": {
+          "rss_bytes": 31703040,
+          "peak_rss_bytes": 32079872,
+          "physical_footprint_bytes": 19988960,
+          "peak_physical_footprint_bytes": 20365792
+        },
+        "after_runtime_import": {
+          "rss_bytes": 33226752,
+          "peak_rss_bytes": 33374208,
+          "physical_footprint_bytes": 21447136,
+          "peak_physical_footprint_bytes": 21594592
+        },
+        "after_engine_load": {
+          "rss_bytes": 578732032,
+          "peak_rss_bytes": 578732032,
+          "physical_footprint_bytes": 228574408,
+          "peak_physical_footprint_bytes": 228574408
+        },
+        "after_text_work": {
+          "rss_bytes": 690601984,
+          "peak_rss_bytes": 690601984,
+          "physical_footprint_bytes": 264914168,
+          "peak_physical_footprint_bytes": 264914168
+        },
+        "after_first_images": {
+          "rss_bytes": 1055981568,
+          "peak_rss_bytes": 1055981568,
+          "physical_footprint_bytes": 409994608,
+          "peak_physical_footprint_bytes": 409994608
+        },
+        "after_text_and_vision_work": {
+          "rss_bytes": 1056931840,
+          "peak_rss_bytes": 1056931840,
+          "physical_footprint_bytes": 410944880,
+          "peak_physical_footprint_bytes": 410944880
+        },
+        "after_two_seconds_idle": {
+          "rss_bytes": 1056980992,
+          "peak_rss_bytes": 1056980992,
+          "physical_footprint_bytes": 410994032,
+          "peak_physical_footprint_bytes": 410994032
+        },
+        "after_engine_close": {
+          "rss_bytes": 250232832,
+          "peak_rss_bytes": 1057767424,
+          "physical_footprint_bytes": 90571592,
+          "peak_physical_footprint_bytes": 411829640
+        }
+      },
+      "reported_model_metadata": {
+        "modalities": {
+          "text": true,
+          "vision": true,
+          "audio": true,
+          "video": false
+        },
+        "embedding_dimension": 768,
+        "text_signatures": [
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          8192
+        ],
+        "vision_signatures": [
+          70,
+          140
+        ]
+      },
+      "startup_ms": 417.43725002743304,
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9166666666666666,
+        "rankings": [
+          [
+            0,
+            9,
+            1,
+            5,
+            15,
+            8,
+            14,
+            2,
+            6,
+            7,
+            4,
+            12,
+            13,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            4,
+            2,
+            6,
+            7,
+            15,
+            14,
+            11,
+            13,
+            12,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            8,
+            4,
+            11,
+            2,
+            12,
+            15,
+            5,
+            13,
+            6,
+            0,
+            9,
+            1
+          ],
+          [
+            5,
+            7,
+            14,
+            15,
+            8,
+            9,
+            1,
+            4,
+            2,
+            6,
+            11,
+            0,
+            10,
+            12,
+            3,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            8,
+            1,
+            0,
+            14,
+            15,
+            2,
+            7,
+            4,
+            10,
+            13,
+            11,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            8,
+            10,
+            2,
+            15,
+            1,
+            6,
+            4,
+            0,
+            12,
+            9,
+            13,
+            3
+          ],
+          [
+            8,
+            14,
+            1,
+            4,
+            7,
+            6,
+            15,
+            9,
+            11,
+            5,
+            10,
+            2,
+            0,
+            3,
+            12,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            0,
+            8,
+            7,
+            4,
+            6,
+            2,
+            13,
+            12,
+            11,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            11,
+            7,
+            5,
+            9,
+            0,
+            2,
+            10,
+            12,
+            6,
+            13,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            7,
+            11,
+            5,
+            10,
+            8,
+            1,
+            9,
+            12,
+            2,
+            0,
+            13,
+            6,
+            3
+          ],
+          [
+            7,
+            15,
+            14,
+            5,
+            4,
+            8,
+            11,
+            10,
+            1,
+            6,
+            12,
+            2,
+            0,
+            13,
+            9,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            1,
+            12,
+            6,
+            13,
+            14,
+            9,
+            11,
+            0,
+            4,
+            7,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 68.47914605168626,
+        "p95_ms": 71.481249993667
+      },
+      "first_four_images_ms": 945.1446250313893,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            0,
+            1,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            1,
+            0
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 225.67429195623845,
+        "p95_ms": 231.05162498541176
+      }
+    },
+    "gpu70": {
+      "backend": "gpu",
+      "vision_tokens": 70,
+      "text_min_signature": 128,
+      "text_max_signature": 1024,
+      "output_dimensions": 768,
+      "model_bytes": 387710976,
+      "fixture_sha256": "8f49500cbd172448b398095df16ad7a5351825add3a8c642b61471158b014fbb",
+      "runtime_version": "0.18.0",
+      "cache": "/private/tmp/gneauxghts-gemma-spike/litert-cache-gpu70",
+      "phases": {
+        "before_runtime_import": {
+          "rss_bytes": 31637504,
+          "peak_rss_bytes": 32014336,
+          "physical_footprint_bytes": 19923424,
+          "peak_physical_footprint_bytes": 20300256
+        },
+        "after_runtime_import": {
+          "rss_bytes": 33144832,
+          "peak_rss_bytes": 33308672,
+          "physical_footprint_bytes": 21365216,
+          "peak_physical_footprint_bytes": 21529056
+        },
+        "after_engine_load": {
+          "rss_bytes": 766476288,
+          "peak_rss_bytes": 766476288,
+          "physical_footprint_bytes": 504022768,
+          "peak_physical_footprint_bytes": 504022768
+        },
+        "after_text_work": {
+          "rss_bytes": 771833856,
+          "peak_rss_bytes": 771833856,
+          "physical_footprint_bytes": 615335688,
+          "peak_physical_footprint_bytes": 615335688
+        },
+        "after_first_images": {
+          "rss_bytes": 780926976,
+          "peak_rss_bytes": 784875520,
+          "physical_footprint_bytes": 667289352,
+          "peak_physical_footprint_bytes": 675448584
+        },
+        "after_text_and_vision_work": {
+          "rss_bytes": 637829120,
+          "peak_rss_bytes": 787644416,
+          "physical_footprint_bytes": 672499464,
+          "peak_physical_footprint_bytes": 678905608
+        },
+        "after_two_seconds_idle": {
+          "rss_bytes": 639172608,
+          "peak_rss_bytes": 787644416,
+          "physical_footprint_bytes": 595855112,
+          "peak_physical_footprint_bytes": 678905608
+        },
+        "after_engine_close": {
+          "rss_bytes": 359055360,
+          "peak_rss_bytes": 787644416,
+          "physical_footprint_bytes": 89818528,
+          "peak_physical_footprint_bytes": 678905608
+        }
+      },
+      "reported_model_metadata": {
+        "modalities": {
+          "text": true,
+          "vision": true,
+          "audio": true,
+          "video": false
+        },
+        "embedding_dimension": 768,
+        "text_signatures": [
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          8192
+        ],
+        "vision_signatures": [
+          70,
+          140
+        ]
+      },
+      "startup_ms": 1272.808333975263,
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9027777777777778,
+        "rankings": [
+          [
+            0,
+            9,
+            1,
+            5,
+            14,
+            8,
+            15,
+            2,
+            6,
+            7,
+            4,
+            13,
+            12,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            2,
+            4,
+            6,
+            15,
+            7,
+            14,
+            11,
+            13,
+            12,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            8,
+            11,
+            4,
+            12,
+            15,
+            2,
+            5,
+            13,
+            6,
+            9,
+            0,
+            1
+          ],
+          [
+            5,
+            7,
+            14,
+            15,
+            8,
+            9,
+            1,
+            4,
+            2,
+            6,
+            11,
+            10,
+            12,
+            0,
+            3,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            8,
+            1,
+            0,
+            14,
+            2,
+            15,
+            7,
+            4,
+            10,
+            11,
+            13,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            8,
+            10,
+            2,
+            15,
+            1,
+            6,
+            4,
+            0,
+            9,
+            12,
+            13,
+            3
+          ],
+          [
+            8,
+            14,
+            1,
+            4,
+            7,
+            6,
+            15,
+            9,
+            5,
+            11,
+            10,
+            2,
+            0,
+            3,
+            12,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            8,
+            0,
+            4,
+            7,
+            6,
+            2,
+            13,
+            12,
+            11,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            5,
+            11,
+            7,
+            9,
+            0,
+            2,
+            10,
+            12,
+            6,
+            13,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            11,
+            7,
+            5,
+            10,
+            8,
+            1,
+            9,
+            12,
+            2,
+            13,
+            0,
+            6,
+            3
+          ],
+          [
+            7,
+            14,
+            15,
+            5,
+            4,
+            8,
+            11,
+            10,
+            1,
+            12,
+            6,
+            2,
+            0,
+            13,
+            9,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            1,
+            6,
+            12,
+            9,
+            13,
+            11,
+            14,
+            0,
+            7,
+            4,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 14.867479505483061,
+        "p95_ms": 15.131708001717925
+      },
+      "first_four_images_ms": 282.79641701374203,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            0,
+            1,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            1,
+            0
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 71.2437920155935,
+        "p95_ms": 72.77154095936567
+      }
+    },
+    "cpu140": {
+      "backend": "cpu",
+      "vision_tokens": 140,
+      "text_min_signature": 128,
+      "text_max_signature": 1024,
+      "output_dimensions": 768,
+      "model_bytes": 387710976,
+      "fixture_sha256": "8f49500cbd172448b398095df16ad7a5351825add3a8c642b61471158b014fbb",
+      "runtime_version": "0.18.0",
+      "cache": "/private/tmp/gneauxghts-gemma-spike/litert-cache-cpu140",
+      "phases": {
+        "before_runtime_import": {
+          "rss_bytes": 31670272,
+          "peak_rss_bytes": 32047104,
+          "physical_footprint_bytes": 19956192,
+          "peak_physical_footprint_bytes": 20333024
+        },
+        "after_runtime_import": {
+          "rss_bytes": 33226752,
+          "peak_rss_bytes": 33390592,
+          "physical_footprint_bytes": 21463544,
+          "peak_physical_footprint_bytes": 21627384
+        },
+        "after_engine_load": {
+          "rss_bytes": 581451776,
+          "peak_rss_bytes": 581451776,
+          "physical_footprint_bytes": 231310560,
+          "peak_physical_footprint_bytes": 231310560
+        },
+        "after_text_work": {
+          "rss_bytes": 693747712,
+          "peak_rss_bytes": 693747712,
+          "physical_footprint_bytes": 268076304,
+          "peak_physical_footprint_bytes": 268076304
+        },
+        "after_first_images": {
+          "rss_bytes": 1321959424,
+          "peak_rss_bytes": 1321959424,
+          "physical_footprint_bytes": 676120136,
+          "peak_physical_footprint_bytes": 676120136
+        },
+        "after_text_and_vision_work": {
+          "rss_bytes": 1323335680,
+          "peak_rss_bytes": 1323335680,
+          "physical_footprint_bytes": 677496392,
+          "peak_physical_footprint_bytes": 677496392
+        },
+        "after_two_seconds_idle": {
+          "rss_bytes": 1323368448,
+          "peak_rss_bytes": 1323368448,
+          "physical_footprint_bytes": 677529160,
+          "peak_physical_footprint_bytes": 677529160
+        },
+        "after_engine_close": {
+          "rss_bytes": 247578624,
+          "peak_rss_bytes": 1324089344,
+          "physical_footprint_bytes": 94880560,
+          "peak_physical_footprint_bytes": 678299208
+        }
+      },
+      "reported_model_metadata": {
+        "modalities": {
+          "text": true,
+          "vision": true,
+          "audio": true,
+          "video": false
+        },
+        "embedding_dimension": 768,
+        "text_signatures": [
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          8192
+        ],
+        "vision_signatures": [
+          70,
+          140
+        ]
+      },
+      "startup_ms": 925.7395840249956,
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9166666666666666,
+        "rankings": [
+          [
+            0,
+            9,
+            1,
+            5,
+            15,
+            8,
+            14,
+            2,
+            6,
+            7,
+            4,
+            12,
+            13,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            4,
+            2,
+            6,
+            7,
+            15,
+            14,
+            11,
+            13,
+            12,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            8,
+            4,
+            11,
+            2,
+            12,
+            15,
+            5,
+            13,
+            6,
+            0,
+            9,
+            1
+          ],
+          [
+            5,
+            7,
+            14,
+            15,
+            8,
+            9,
+            1,
+            4,
+            2,
+            6,
+            11,
+            0,
+            10,
+            12,
+            3,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            8,
+            1,
+            0,
+            14,
+            15,
+            2,
+            7,
+            4,
+            10,
+            13,
+            11,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            8,
+            10,
+            2,
+            15,
+            1,
+            6,
+            4,
+            0,
+            12,
+            9,
+            13,
+            3
+          ],
+          [
+            8,
+            14,
+            1,
+            4,
+            7,
+            6,
+            15,
+            9,
+            11,
+            5,
+            10,
+            2,
+            0,
+            3,
+            12,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            0,
+            8,
+            7,
+            4,
+            6,
+            2,
+            13,
+            12,
+            11,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            11,
+            7,
+            5,
+            9,
+            0,
+            2,
+            10,
+            12,
+            6,
+            13,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            7,
+            11,
+            5,
+            10,
+            8,
+            1,
+            9,
+            12,
+            2,
+            0,
+            13,
+            6,
+            3
+          ],
+          [
+            7,
+            15,
+            14,
+            5,
+            4,
+            8,
+            11,
+            10,
+            1,
+            6,
+            12,
+            2,
+            0,
+            13,
+            9,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            1,
+            12,
+            6,
+            13,
+            14,
+            9,
+            11,
+            0,
+            4,
+            7,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 65.76610443880782,
+        "p95_ms": 69.12612495943904
+      },
+      "first_four_images_ms": 1709.228083025664,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            1,
+            0
+          ],
+          [
+            3,
+            1,
+            0,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            0,
+            1
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 407.31191652594134,
+        "p95_ms": 419.2475419258699
+      }
+    },
+    "gpu140": {
+      "backend": "gpu",
+      "vision_tokens": 140,
+      "text_min_signature": 128,
+      "text_max_signature": 1024,
+      "output_dimensions": 768,
+      "model_bytes": 387710976,
+      "fixture_sha256": "8f49500cbd172448b398095df16ad7a5351825add3a8c642b61471158b014fbb",
+      "runtime_version": "0.18.0",
+      "cache": "/private/tmp/gneauxghts-gemma-spike/litert-cache-gpu140",
+      "phases": {
+        "before_runtime_import": {
+          "rss_bytes": 31653888,
+          "peak_rss_bytes": 32030720,
+          "physical_footprint_bytes": 19939808,
+          "peak_physical_footprint_bytes": 20316640
+        },
+        "after_runtime_import": {
+          "rss_bytes": 33161216,
+          "peak_rss_bytes": 33325056,
+          "physical_footprint_bytes": 21381600,
+          "peak_physical_footprint_bytes": 21545440
+        },
+        "after_engine_load": {
+          "rss_bytes": 794230784,
+          "peak_rss_bytes": 794230784,
+          "physical_footprint_bytes": 460359504,
+          "peak_physical_footprint_bytes": 471238216
+        },
+        "after_text_work": {
+          "rss_bytes": 799588352,
+          "peak_rss_bytes": 799588352,
+          "physical_footprint_bytes": 643041128,
+          "peak_physical_footprint_bytes": 643041128
+        },
+        "after_first_images": {
+          "rss_bytes": 820051968,
+          "peak_rss_bytes": 827981824,
+          "physical_footprint_bytes": 775341928,
+          "peak_physical_footprint_bytes": 787154792
+        },
+        "after_text_and_vision_work": {
+          "rss_bytes": 820330496,
+          "peak_rss_bytes": 828735488,
+          "physical_footprint_bytes": 775112552,
+          "peak_physical_footprint_bytes": 788006784
+        },
+        "after_two_seconds_idle": {
+          "rss_bytes": 820723712,
+          "peak_rss_bytes": 828735488,
+          "physical_footprint_bytes": 697583464,
+          "peak_physical_footprint_bytes": 788006784
+        },
+        "after_engine_close": {
+          "rss_bytes": 399835136,
+          "peak_rss_bytes": 828735488,
+          "physical_footprint_bytes": 103040608,
+          "peak_physical_footprint_bytes": 788006784
+        }
+      },
+      "reported_model_metadata": {
+        "modalities": {
+          "text": true,
+          "vision": true,
+          "audio": true,
+          "video": false
+        },
+        "embedding_dimension": 768,
+        "text_signatures": [
+          128,
+          256,
+          512,
+          1024,
+          2048,
+          8192
+        ],
+        "vision_signatures": [
+          70,
+          140
+        ]
+      },
+      "startup_ms": 4426.723415963352,
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9027777777777778,
+        "rankings": [
+          [
+            0,
+            9,
+            1,
+            5,
+            14,
+            8,
+            15,
+            2,
+            6,
+            7,
+            4,
+            13,
+            12,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            2,
+            4,
+            6,
+            15,
+            7,
+            14,
+            11,
+            13,
+            12,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            8,
+            11,
+            4,
+            12,
+            15,
+            2,
+            5,
+            13,
+            6,
+            9,
+            0,
+            1
+          ],
+          [
+            5,
+            7,
+            14,
+            15,
+            8,
+            9,
+            1,
+            4,
+            2,
+            6,
+            11,
+            10,
+            12,
+            0,
+            3,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            8,
+            1,
+            0,
+            14,
+            2,
+            15,
+            7,
+            4,
+            10,
+            11,
+            13,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            8,
+            10,
+            2,
+            15,
+            1,
+            6,
+            4,
+            0,
+            9,
+            12,
+            13,
+            3
+          ],
+          [
+            8,
+            14,
+            1,
+            4,
+            7,
+            6,
+            15,
+            9,
+            5,
+            11,
+            10,
+            2,
+            0,
+            3,
+            12,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            8,
+            0,
+            4,
+            7,
+            6,
+            2,
+            13,
+            12,
+            11,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            5,
+            11,
+            7,
+            9,
+            0,
+            2,
+            10,
+            12,
+            6,
+            13,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            11,
+            7,
+            5,
+            10,
+            8,
+            1,
+            9,
+            12,
+            2,
+            13,
+            0,
+            6,
+            3
+          ],
+          [
+            7,
+            14,
+            15,
+            5,
+            4,
+            8,
+            11,
+            10,
+            1,
+            12,
+            6,
+            2,
+            0,
+            13,
+            9,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            1,
+            6,
+            12,
+            9,
+            13,
+            11,
+            14,
+            0,
+            7,
+            4,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 15.127166523598135,
+        "p95_ms": 15.888583031482995
+      },
+      "first_four_images_ms": 598.1678329408169,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            1,
+            0
+          ],
+          [
+            3,
+            0,
+            1,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            1,
+            0
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 144.3446875200607,
+        "p95_ms": 150.34820802975446
+      }
+    }
+  },
+  "memory_metric": "macOS TASK_VM_INFO physical footprint and native RSS high-water marks; separate fresh processes",
+  "gguf_controls": {
+    "jina": {
+      "text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            9,
+            1,
+            5,
+            6,
+            14,
+            8,
+            15,
+            2,
+            13,
+            4,
+            7,
+            12,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            0,
+            9,
+            4,
+            5,
+            8,
+            14,
+            2,
+            6,
+            15,
+            7,
+            13,
+            12,
+            11,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            4,
+            15,
+            8,
+            7,
+            14,
+            13,
+            5,
+            11,
+            12,
+            0,
+            6,
+            9,
+            2,
+            1
+          ],
+          [
+            5,
+            15,
+            14,
+            7,
+            9,
+            4,
+            2,
+            1,
+            11,
+            6,
+            8,
+            10,
+            0,
+            12,
+            3,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            0,
+            1,
+            15,
+            4,
+            2,
+            8,
+            14,
+            11,
+            10,
+            13,
+            3,
+            7,
+            12
+          ],
+          [
+            7,
+            10,
+            11,
+            5,
+            15,
+            8,
+            12,
+            14,
+            13,
+            2,
+            1,
+            4,
+            6,
+            9,
+            3,
+            0
+          ],
+          [
+            8,
+            4,
+            1,
+            6,
+            14,
+            9,
+            11,
+            15,
+            10,
+            7,
+            0,
+            5,
+            12,
+            13,
+            2,
+            3
+          ],
+          [
+            9,
+            5,
+            15,
+            1,
+            4,
+            0,
+            6,
+            14,
+            8,
+            13,
+            7,
+            12,
+            10,
+            2,
+            11,
+            3
+          ],
+          [
+            4,
+            1,
+            14,
+            15,
+            8,
+            7,
+            5,
+            11,
+            6,
+            12,
+            0,
+            10,
+            9,
+            2,
+            13,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            5,
+            1,
+            10,
+            11,
+            8,
+            7,
+            12,
+            13,
+            2,
+            6,
+            9,
+            0,
+            3
+          ],
+          [
+            15,
+            7,
+            14,
+            5,
+            4,
+            10,
+            11,
+            13,
+            1,
+            12,
+            0,
+            6,
+            3,
+            2,
+            8,
+            9
+          ],
+          [
+            2,
+            8,
+            6,
+            11,
+            0,
+            13,
+            10,
+            12,
+            1,
+            9,
+            14,
+            7,
+            5,
+            4,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 4.800104012247175,
+        "p95_ms": 5.050084087997675
+      },
+      "documents_per_second": 274.49177771333996,
+      "resources": {
+        "startup_ms": 534.6314590424299,
+        "server_pid": 85256,
+        "args": [
+          "/opt/homebrew/bin/llama-server",
+          "-m",
+          "/Users/bray.polkinghorne/Library/Application Support/com.braypolkinghorne.gneauxghts/semantic/models/jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf",
+          "--embeddings",
+          "--pooling",
+          "last",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "60948",
+          "--ctx-size",
+          "8192",
+          "--threads",
+          "12",
+          "--threads-batch",
+          "12",
+          "--parallel",
+          "4",
+          "-ngl",
+          "99",
+          "--log-verbosity",
+          "3"
+        ],
+        "model_bytes": 181601344,
+        "projector_bytes": 0,
+        "macos_native": {
+          "rss_bytes": 377798656,
+          "physical_footprint_bytes": 205374496,
+          "peak_physical_footprint_bytes": 205374496
+        },
+        "idle_rss_bytes": 377798656,
+        "peak_rss_bytes": 377798656
+      }
+    },
+    "gemma_f16_projector": {
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9166666666666666,
+        "rankings": [
+          [
+            0,
+            9,
+            5,
+            1,
+            14,
+            15,
+            6,
+            8,
+            7,
+            12,
+            13,
+            4,
+            2,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            4,
+            14,
+            7,
+            15,
+            13,
+            6,
+            11,
+            12,
+            2,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            11,
+            8,
+            4,
+            15,
+            5,
+            12,
+            13,
+            2,
+            6,
+            9,
+            0,
+            1
+          ],
+          [
+            5,
+            14,
+            7,
+            15,
+            9,
+            8,
+            4,
+            1,
+            2,
+            6,
+            0,
+            10,
+            11,
+            3,
+            12,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            1,
+            0,
+            8,
+            14,
+            15,
+            7,
+            2,
+            4,
+            11,
+            10,
+            13,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            10,
+            8,
+            15,
+            4,
+            6,
+            12,
+            0,
+            1,
+            2,
+            3,
+            13,
+            9
+          ],
+          [
+            8,
+            14,
+            6,
+            4,
+            7,
+            15,
+            1,
+            9,
+            5,
+            11,
+            10,
+            3,
+            0,
+            12,
+            2,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            7,
+            0,
+            8,
+            4,
+            6,
+            13,
+            12,
+            11,
+            2,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            11,
+            7,
+            5,
+            9,
+            10,
+            0,
+            12,
+            2,
+            13,
+            6,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            7,
+            11,
+            10,
+            5,
+            9,
+            8,
+            1,
+            12,
+            0,
+            13,
+            2,
+            6,
+            3
+          ],
+          [
+            7,
+            15,
+            14,
+            5,
+            4,
+            11,
+            10,
+            8,
+            12,
+            6,
+            1,
+            13,
+            9,
+            0,
+            2,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            12,
+            1,
+            6,
+            14,
+            13,
+            11,
+            9,
+            0,
+            7,
+            4,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 10.955333535093814,
+        "p95_ms": 13.945041922852397
+      },
+      "documents_per_second": 140.16967102053155,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            1,
+            0,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            0,
+            1
+          ]
+        ]
+      },
+      "image_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            0,
+            2,
+            1
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 342.094021034427,
+        "p95_ms": 345.73945798911154
+      },
+      "corrupt_image_http_status": 500,
+      "text_after_corrupt_image": true,
+      "resources": {
+        "startup_ms": 1657.4986670166254,
+        "server_pid": 85271,
+        "args": [
+          "/private/tmp/gneauxghts-gemma-spike/runtime/llama-b11454/llama-server",
+          "-m",
+          "/private/tmp/gneauxghts-gemma-spike/embeddinggemma-2-Q8_0.gguf",
+          "--embeddings",
+          "--pooling",
+          "mean",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "61002",
+          "--ctx-size",
+          "8192",
+          "--threads",
+          "12",
+          "--threads-batch",
+          "12",
+          "--parallel",
+          "4",
+          "-ngl",
+          "99",
+          "--log-verbosity",
+          "3",
+          "--mmproj",
+          "/private/tmp/gneauxghts-gemma-spike/mmproj-F16.gguf",
+          "--batch-size",
+          "2048",
+          "--ubatch-size",
+          "2048",
+          "--image-min-tokens",
+          "280",
+          "--image-max-tokens",
+          "280"
+        ],
+        "model_bytes": 309855520,
+        "projector_bytes": 980895232,
+        "macos_native": {
+          "rss_bytes": 1866203136,
+          "physical_footprint_bytes": 1708820712,
+          "peak_physical_footprint_bytes": 1708820712
+        },
+        "idle_rss_bytes": 1866203136,
+        "peak_rss_bytes": 1866776576
+      }
+    },
+    "gemma_q8_no_audio": {
+      "text": {
+        "top1": 0.8333333333333334,
+        "mrr": 0.9166666666666666,
+        "rankings": [
+          [
+            0,
+            9,
+            5,
+            1,
+            14,
+            15,
+            6,
+            8,
+            7,
+            12,
+            13,
+            4,
+            2,
+            10,
+            11,
+            3
+          ],
+          [
+            1,
+            8,
+            9,
+            0,
+            5,
+            4,
+            14,
+            7,
+            15,
+            13,
+            6,
+            11,
+            12,
+            2,
+            10,
+            3
+          ],
+          [
+            3,
+            10,
+            14,
+            7,
+            11,
+            8,
+            4,
+            15,
+            5,
+            12,
+            13,
+            2,
+            6,
+            9,
+            0,
+            1
+          ],
+          [
+            5,
+            14,
+            7,
+            15,
+            9,
+            8,
+            4,
+            1,
+            2,
+            6,
+            0,
+            10,
+            11,
+            3,
+            12,
+            13
+          ],
+          [
+            6,
+            9,
+            5,
+            1,
+            0,
+            8,
+            14,
+            15,
+            7,
+            2,
+            4,
+            11,
+            10,
+            13,
+            12,
+            3
+          ],
+          [
+            7,
+            5,
+            11,
+            14,
+            10,
+            8,
+            15,
+            4,
+            6,
+            12,
+            0,
+            1,
+            2,
+            3,
+            13,
+            9
+          ],
+          [
+            8,
+            14,
+            6,
+            4,
+            7,
+            15,
+            1,
+            9,
+            5,
+            11,
+            10,
+            3,
+            0,
+            12,
+            2,
+            13
+          ],
+          [
+            5,
+            9,
+            15,
+            1,
+            14,
+            7,
+            0,
+            8,
+            4,
+            6,
+            13,
+            12,
+            11,
+            2,
+            10,
+            3
+          ],
+          [
+            4,
+            14,
+            1,
+            15,
+            8,
+            11,
+            7,
+            5,
+            9,
+            10,
+            0,
+            12,
+            2,
+            13,
+            6,
+            3
+          ],
+          [
+            14,
+            4,
+            15,
+            7,
+            11,
+            10,
+            5,
+            9,
+            8,
+            1,
+            12,
+            0,
+            13,
+            2,
+            6,
+            3
+          ],
+          [
+            7,
+            15,
+            14,
+            5,
+            4,
+            11,
+            10,
+            8,
+            12,
+            6,
+            1,
+            13,
+            9,
+            0,
+            2,
+            3
+          ],
+          [
+            2,
+            8,
+            5,
+            12,
+            1,
+            6,
+            14,
+            13,
+            11,
+            9,
+            0,
+            7,
+            4,
+            10,
+            15,
+            3
+          ]
+        ]
+      },
+      "text_latency": {
+        "samples": 40,
+        "p50_ms": 10.707854002248496,
+        "p95_ms": 13.959834002889693
+      },
+      "documents_per_second": 157.6526823822253,
+      "text_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            1,
+            0,
+            2
+          ]
+        ]
+      },
+      "image_to_text": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            2,
+            0,
+            1
+          ]
+        ]
+      },
+      "image_to_image": {
+        "top1": 1,
+        "mrr": 1.0,
+        "rankings": [
+          [
+            0,
+            1,
+            3,
+            2
+          ],
+          [
+            1,
+            0,
+            3,
+            2
+          ],
+          [
+            2,
+            3,
+            0,
+            1
+          ],
+          [
+            3,
+            0,
+            2,
+            1
+          ]
+        ]
+      },
+      "image_latency": {
+        "samples": 40,
+        "p50_ms": 350.93547898577526,
+        "p95_ms": 353.7887909915298
+      },
+      "corrupt_image_http_status": 500,
+      "text_after_corrupt_image": true,
+      "resources": {
+        "startup_ms": 941.6017080657184,
+        "server_pid": 85654,
+        "args": [
+          "/private/tmp/gneauxghts-gemma-spike/runtime/llama-b11454/llama-server",
+          "-m",
+          "/private/tmp/gneauxghts-gemma-spike/embeddinggemma-2-Q8_0.gguf",
+          "--embeddings",
+          "--pooling",
+          "mean",
+          "--host",
+          "127.0.0.1",
+          "--port",
+          "61137",
+          "--ctx-size",
+          "8192",
+          "--threads",
+          "12",
+          "--threads-batch",
+          "12",
+          "--parallel",
+          "4",
+          "-ngl",
+          "99",
+          "--log-verbosity",
+          "3",
+          "--mmproj",
+          "/private/tmp/gneauxghts-gemma-spike/mmproj-Q8_0-no-audio-experiment.gguf",
+          "--batch-size",
+          "2048",
+          "--ubatch-size",
+          "2048",
+          "--image-min-tokens",
+          "280",
+          "--image-max-tokens",
+          "280"
+        ],
+        "model_bytes": 309855520,
+        "projector_bytes": 554821120,
+        "macos_native": {
+          "rss_bytes": 1145733120,
+          "physical_footprint_bytes": 811533944,
+          "peak_physical_footprint_bytes": 869664400
+        },
+        "idle_rss_bytes": 1145733120,
+        "peak_rss_bytes": 1202651136
+      }
+    }
+  },
+  "cpu_gpu_minimum_vector_cosine": {
+    "70": 0.9948869265140016,
+    "140": 0.9948869265140016
+  },
+  "limitations": [
+    "LiteRT uses int4 text/int8 vision QAT versus Q8 GGUF backbone",
+    "LiteRT image soft-token budgets 70/140 versus 280 for GGUF",
+    "LiteRT process includes Python and probe overhead; GGUF measurement covers server only",
+    "Fresh processes and initially empty per-backend caches; no startup percentile or full-vault benchmark",
+    "ModelInfo advertises audio=true, but runtime logs confirm audio encoder model sections are absent/skipped; no audio requests were sent"
+  ]
+}

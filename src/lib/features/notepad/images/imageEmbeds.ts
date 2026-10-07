@@ -9,6 +9,12 @@ import { imageWidthChanges, type ImageEmbedMatch } from './imageEmbedParser';
 import { imageSourceEffect, imageShowsSource, imageState, selectedImage } from './imageState';
 import { restoreImageOrigin, type ImageViewerSession } from './imageViewerModel';
 const sizeEntry = StateEffect.define<number | null>();
+const openViewer = StateEffect.define<{ from: number; to: number; asset: string }>();
+export function openImageViewerAt(view: EditorView, locator: { from: number; to: number; asset: string }) {
+  if (!view.state.field(imageState, false)?.images.some(image => image.from === locator.from && image.to === locator.to && image.assetName === locator.asset)) return false;
+  view.dispatch({ effects: openViewer.of(locator) });
+  return true;
+}
 const sizeEntryField = StateField.define<number | null>({ create: () => null, update(value, tr) {
   let next = value == null ? null : tr.changes.mapPos(value, -1);
   for (const effect of tr.effects) if (effect.is(sizeEntry)) next = effect.value;
@@ -104,6 +110,16 @@ export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (vie
   }
   const lifecycle = ViewPlugin.fromClass(class {
     update(update: import('@codemirror/view').ViewUpdate) {
+      for (const transaction of update.transactions) for (const effect of transaction.effects) {
+        if (!effect.is(openViewer)) continue;
+        const doc = update.state.doc, lifetime = update.state.field(imageState).lifetime;
+        const locator = effect.value;
+        queueMicrotask(() => {
+          if (update.view.state.doc !== doc || update.view.state.field(imageState, false)?.lifetime !== lifetime) return;
+          const image = update.view.state.field(imageState).images.find(image => image.from === locator.from && image.to === locator.to && image.assetName === locator.asset);
+          if (image) actions.open(update.view, image);
+        });
+      }
       if (update.docChanged || update.state.readOnly !== update.startState.readOnly || update.transactions.some(tr => tr.reconfigured)) invalidate();
       if (update.docChanged || update.transactions.some(tr => tr.reconfigured)) for (const listener of [...viewListeners]) listener(update);
     }

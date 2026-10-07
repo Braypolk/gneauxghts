@@ -11,6 +11,7 @@ import {
 import { slashMenuHideFromUi } from './slashMenu';
 import { selectionMenuHideFromUi } from './selectionMenu';
 import { Transaction } from '@codemirror/state';
+import { openImageViewerAt } from '../images/imageEmbeds';
 
 export interface EditorSelectionCapabilitySnapshot {
   anchor: number;
@@ -42,6 +43,7 @@ export interface EditorMarkdownInsertResult {
 }
 
 export interface EditorCapabilityAdapter {
+  openImageViewer: (locator: { from: number; to: number; asset: string }) => boolean;
   /** True when the live CodeMirror controller (and review compartment) exist. */
   isReady: () => boolean;
   focus: () => boolean;
@@ -144,6 +146,10 @@ export function createEditorCapabilityAdapter(
       return true;
     },
     readSnapshot: () => readEditorState(getController()),
+    openImageViewer: locator => {
+      const controller = getController();
+      return controller ? openImageViewerAt(controller.view, locator) : false;
+    },
     readSelection: () => {
       const controller = getController();
       if (!controller) {

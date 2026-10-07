@@ -1,0 +1,162 @@
+{
+  "runtime": {
+    "version": "b11454",
+    "revision": "4625240437c6821ee5c2da99e12d4817c6a8f07f",
+    "required_merge": "4fbc76dec51d0add466f0210855c0596589b60d4",
+    "artifacts": [
+      {
+        "platform": "macos-arm64",
+        "filename": "llama-b11454-bin-macos-arm64.tar.gz",
+        "sha256": "c43f465f442752ebb55adda996653798ac23f62fcc7f8c5e6452d57d40ff34b0",
+        "download_bytes": 12006024,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-macos-arm64.tar.gz",
+        "native_start_verified": true
+      },
+      {
+        "platform": "macos-x64",
+        "filename": "llama-b11454-bin-macos-x64.tar.gz",
+        "sha256": "c5cd5f7ec3236fffc9cab3f3ad46a088fbe99245d70bc43014673e3113e6a102",
+        "download_bytes": 11524031,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-macos-x64.tar.gz",
+        "native_start_verified": false
+      },
+      {
+        "platform": "ubuntu-x64",
+        "filename": "llama-b11454-bin-ubuntu-x64.tar.gz",
+        "sha256": "02c892db355f05876e4fea2d0131881c987df3349dbcea35a30d1256822d3987",
+        "download_bytes": 17727706,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-ubuntu-x64.tar.gz",
+        "native_start_verified": false
+      },
+      {
+        "platform": "ubuntu-arm64",
+        "filename": "llama-b11454-bin-ubuntu-arm64.tar.gz",
+        "sha256": "f14023248e8fe3ca2bd9427419b8091d821eeb71561678f53b9b0b84b6b49966",
+        "download_bytes": 13723357,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-ubuntu-arm64.tar.gz",
+        "native_start_verified": false
+      },
+      {
+        "platform": "win-cpu-x64",
+        "filename": "llama-b11454-bin-win-cpu-x64.zip",
+        "sha256": "41e4910dbf94d1d67bc951e3a04f5761be1953eb79c001e4aabe4ac1bccbdf6c",
+        "download_bytes": 19437395,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-win-cpu-x64.zip",
+        "native_start_verified": false
+      },
+      {
+        "platform": "win-cpu-arm64",
+        "filename": "llama-b11454-bin-win-cpu-arm64.zip",
+        "sha256": "8b71462cabcdc7deeca023f900373a9881dfce0107c0c93e8069326b780e2951",
+        "download_bytes": 12263634,
+        "url": "https://github.com/ggml-org/llama.cpp/releases/download/b11454/llama-b11454-bin-win-cpu-arm64.zip",
+        "native_start_verified": false
+      }
+    ]
+  },
+  "model": {
+    "repository": "unsloth/embeddinggemma-2-GGUF",
+    "revision": "ba3888272494be64ed88c9eb536ddc61a1be73d5",
+    "artifacts": [
+      {
+        "filename": "embeddinggemma-2-Q8_0.gguf",
+        "sha256": "6f1bd4ac6c5df7444f9cca7ca36cafe6cfa34cd6f49fefb1e0b4be8143aed8bc",
+        "download_bytes": 309855520
+      },
+      {
+        "filename": "embeddinggemma-2-F16.gguf",
+        "sha256": "0d4350867eddbb94af485501a3d07e9374c47779d88f8a39cd1abd6a8e2d0901",
+        "download_bytes": 557950240
+      },
+      {
+        "filename": "mmproj-F16.gguf",
+        "sha256": "74bf65c860d292a1eebafd7ca85b44532a2528f03017f9204fe1695916d2c66f",
+        "download_bytes": 980895232
+      },
+      {
+        "filename": "mmproj-Q8_0.gguf",
+        "sha256": "90e7b0238009e2954f856f2081dcf7f35af026b64c765e98f4777053e1754460",
+        "download_bytes": 554821120,
+        "purpose": "memory experiment; not selected for production"
+      }
+    ]
+  },
+  "policy": {
+    "pooling": "mean",
+    "output_dimensions": 768,
+    "projection": "trained dense layers from GGUF",
+    "normalization": "L2",
+    "query_prefix": "task: search result | query: ",
+    "document_prefix": "title: none | text: ",
+    "image_input": "image-only structured content; no task prefix",
+    "text_token_budget": 1024,
+    "image_soft_token_budget": 280,
+    "batch_tokens": 2048,
+    "microbatch_tokens": 2048,
+    "vision_preprocessing": "runtime geometry-preserving preprocessing; fixed 280 soft-token budget; EXIF/alpha app policy not yet implemented",
+    "production_approved": false,
+    "image_preprocessing_revision": "runtime-b11454-soft280-v1-spike",
+    "observed_image_prompt_tokens": 298,
+    "activation_decision": "retain Jina: text recall gate failed"
+  },
+  "memory_experiment": {
+    "audio_disabled_copy": {
+      "source_sha256": "90e7b0238009e2954f856f2081dcf7f35af026b64c765e98f4777053e1754460",
+      "sha256": "6fa5d0913d818ddb9fb161d81661cdbb783f57f4a64744c4a309244ace65f742",
+      "changed_metadata": "clip.has_audio_encoder=false",
+      "changed_byte_offsets": [
+        1245
+      ],
+      "all_tensor_bytes_unchanged": true,
+      "production_approved": false
+    }
+  },
+  "litert_experiment": {
+    "model": {
+      "repository": "litert-community/embeddinggemma-2-text-vision-440m-litert-lm",
+      "revision": "e301f74d5551b0c2641bd5cb4652a76239d5c5f8",
+      "filename": "embeddinggemma-2-text-vision-440m.litertlm",
+      "download_bytes": 387710976,
+      "sha256": "92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0",
+      "download_verified": true
+    },
+    "runtime": {
+      "package": "litert-lm-api",
+      "version": "0.18.0",
+      "filename": "litert_lm_api-0.18.0-py3-none-macosx_12_0_arm64.whl",
+      "sha256": "9fd0c55835e469a035c1b75cde4797b26292963c2c36d9fcdfceb965ffa08a37",
+      "download_verified": true
+    },
+    "production_approved": false
+  },
+  "implementation_target": {
+    "runtime": "LiteRT-LM",
+    "model": "EmbeddingGemma 2 text/vision 440M",
+    "preferred_backend": "gpu",
+    "fallback_backend": "cpu",
+    "fallback_trigger": "GPU initialization failure after failed-attempt cleanup",
+    "backend_preference_source": "user instruction, 2026-10-06",
+    "cross_backend_index_compatibility": "M4 macOS ARM64 CPU/GPU native cross-index fixture passed at70 and140:48/48 top1 each, min cosine0.9948868; no cross-platform claim",
+    "production_integration_implemented": true,
+    "production_approved": true,
+    "default_image_tokens": 70,
+    "optional_image_tokens": [
+      140
+    ],
+    "native_api": "LiteRT-LM 0.18 C embedding API; no Python runtime",
+    "approval_scope": "user selected LiteRT/GPU/70 with optional 140 and full implementation; staging/recovery, ANN/ranking and coverage implemented; broader quality/platform/reference validation remains limited",
+    "overflow": "native chunk-and-average; no truncation",
+    "text_namespace": "embeddinggemma2-litert018-qat-768-average-v2-92dcbea108899e5d-{os}-{arch}",
+    "image_preprocessing": "png-jpeg-staticwebp-exif-white-v1",
+    "generation_activation": "source/recall reconciliation, durable text snapshots, NoteTimeline source version admission, read leases and bounded publication retries",
+    "recovery": "retained Jina provider staged for next launch; one resident runtime",
+    "image_ann": "immutable scoped HNSW snapshots with SQLite reranking; current/previous generation retention",
+    "admission_floors": {
+      "text_text": 0.7,
+      "text_image": 0.7,
+      "image_text": 0.75,
+      "image_image": 0.8,
+      "note_edges": 0.75
+    }
+  }
+}

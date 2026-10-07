@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { invoke } from '@tauri-apps/api/core';
   import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
   import { Check, ChevronRight, CircleAlert, Clock3, LoaderCircle, Pause, RefreshCcw, SearchCheck } from '@lucide/svelte';
   import { searchReadiness } from './semanticStatus';
@@ -69,6 +70,16 @@
     void runAction('rebuild_semantic_index');
   }
 
+  async function stageProvider(usePrevious: boolean) {
+    isRefreshing = true;
+    refreshError = null;
+    try {
+      await invoke('stage_semantic_provider', { usePrevious });
+      await loadSemanticState();
+    } catch (error) { refreshError = String(error); }
+    finally { isRefreshing = false; }
+  }
+
   async function refresh() {
     isRefreshing = true;
     refreshError = null;
@@ -107,6 +118,39 @@
         <span class="semantic-switch-track" aria-hidden="true"><span></span></span>
       </label>
     </div>
+
+    <div class="semantic-row" data-settings-anchor="semantic-image-detail">
+      <div class="semantic-row-copy">
+        <h4><label for="semantic-image-detail">Image search detail</label></h4>
+        <p id="semantic-image-detail-hint">70 tokens uses less memory and indexes faster. 140 tokens captures more visual detail. Changing this rebuilds image embeddings; text embeddings stay the same.</p>
+      </div>
+      <select id="semantic-image-detail" aria-describedby="semantic-image-detail-hint"
+        disabled={busy || !semanticStatus.platformSupported || semanticStatus.imageCapability === "unsupported"}
+        onchange={(event) => updateSetting('imageTokens', Number(event.currentTarget.value) as 70 | 140)}>
+        <option value="70" selected={(semanticSettings.imageTokens ?? 70) === 70}>Standard · 70 tokens</option>
+        <option value="140" selected={semanticSettings.imageTokens === 140}>Higher detail · 140 tokens</option>
+      </select>
+    </div>
+    {#if semanticStatus.imageCoverage}
+      <p role="status">Images: {semanticStatus.imageCoverage.indexed} indexed · {semanticStatus.imageCoverage.unsupported} unsupported · {semanticStatus.imageCoverage.failed} failed</p>
+    {/if}
+
+    <p class="semantic-notice" role="status">
+      Text search: {semanticStatus.textReady ? 'ready' : 'preparing'}.
+      {#if semanticStatus.imageCapability === 'failed'}Vision could not initialize. Text search is available; retry local search setup to retry vision.{/if}
+      {#if semanticStatus.imageCapability === 'unsupported'}Image search is unavailable on this platform or with the previous provider.{/if}
+      {#if semanticStatus.migrationState === 'staging'}Building a compatible search generation. Keyword search is available.{/if}
+      {#if semanticStatus.migrationState === 'failed'}Migration needs a retry. The previous generation is preserved.{/if}
+    </p>
+    {#if semanticStatus.previousGenerationAvailable}
+      <div class="semantic-row">
+        <div class="semantic-row-copy">
+          <h4>Search recovery</h4>
+          <p>Next launch: {semanticStatus.nextProvider === 'jina' ? 'previous Jina text search' : 'Gemma text and image search'}. Restart the app after changing this choice.</p>
+        </div>
+        {@render action(semanticStatus.nextProvider === 'jina' ? 'Use Gemma next launch' : 'Use previous search next launch', () => { void stageProvider(semanticStatus.nextProvider !== 'jina'); })}
+      </div>
+    {/if}
 
     {#if !semanticStatus.platformSupported}
       <p class="semantic-notice" role="status">{semanticStatus.disabledReason ?? 'Semantic search is unavailable on this platform.'}</p>

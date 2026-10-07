@@ -1,0 +1,50 @@
+{
+  "thresholds": {
+    "text_mrr_max_regression": 0.05,
+    "text_top1_max_regression": 0.1,
+    "text_p95_max_baseline_ratio": 3,
+    "image_p95_max_ms": 3000,
+    "peak_rss_max_bytes": 4294967296,
+    "text_image_top1_min": 0.75,
+    "quantization_cosine_min": 0.98,
+    "quantization_top1_agreement_min": 0.95
+  },
+  "documents": [
+    "SQLite transactions commit all changes atomically. A rollback leaves the previous durable state intact.",
+    "A note keeps its stable identity when it is renamed or moved to another folder. Its history follows that identity.",
+    "Remote work meetings happen at 09:00 Mountain time. Daylight saving changes the offset from UTC.",
+    "The pasta sauce uses roasted tomatoes, garlic, olive oil, and fresh basil. Simmer it for twenty minutes.",
+    "The image viewer displays local PNG and JPEG files embedded in Markdown notes. Dragging an image imports it into assets.",
+    "Keyword search stays available while the semantic embedding model downloads and its index rebuilds.",
+    "The application shuts down its owned child processes and waits for them to exit before closing the vault.",
+    "Remembered passage: We decided to use blue for the search button because it stood out against the dark background.",
+    "Remembered passage: The client said the packaging must be submitted by Friday, and Alice owns the proof review.",
+    "A failed model upgrade preserves the old database generation and model files so the previous provider can restart.",
+    "A red circular shape is centered on a white background.",
+    "A blue square is centered on a white background.",
+    "A line chart trends upward from left to right, showing increasing values.",
+    "A line chart trends downward from left to right, showing decreasing values.",
+    "Inline code, fenced code, and Markdown comments contain literal examples rather than searchable image occurrences.",
+    "Alpha transparency is composited onto a fixed background before image embeddings are computed."
+  ],
+  "queries": [
+    {"text": "How do we avoid half-written database changes?", "relevant": [0]},
+    {"text": "Does moving a document lose its revisions?", "relevant": [1]},
+    {"text": "What ingredients go into the tomato dinner recipe?", "relevant": [3]},
+    {"text": "Can I still find words while local AI is setting up?", "relevant": [5]},
+    {"text": "How do we prevent a model server from being left running after exit?", "relevant": [6]},
+    {"text": "What color did we agree to use for the search control?", "relevant": [7]},
+    {"text": "Who is responsible for reviewing the packaging proof?", "relevant": [8]},
+    {"text": "How can we recover if changing embedding models fails?", "relevant": [9]},
+    {"text": "Can I preview pictures attached inside my notes?", "relevant": [4]},
+    {"text": "Do example image links inside code count as actual pictures?", "relevant": [14]},
+    {"text": "How are see-through pixels handled for visual search?", "relevant": [15]},
+    {"text": "When are the distributed team's daily meetings?", "relevant": [2]}
+  ],
+  "image_descriptions": [
+    "A line chart trends upward from left to right, showing increasing values.",
+    "A line chart trends downward from left to right, showing decreasing values.",
+    "A red circular shape is centered on a white background.",
+    "A blue square is centered on a white background."
+  ]
+}

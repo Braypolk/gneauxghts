@@ -1,0 +1,36 @@
+{
+  "70": {
+    "backend": "ready \u00b7 GPU",
+    "image_p50_ms": 108.313042,
+    "image_p95_ms": 164.36070899999999,
+    "peak_physical_bytes": 655574744,
+    "peak_rss_bytes": 759676928,
+    "physical_bytes": 649660120,
+    "rss_bytes": 754941952,
+    "startup_ms": 18593.763667,
+    "text_p50_ms": 14.666500000000001,
+    "text_p95_ms": 15.173125,
+    "tokens": 70
+  },
+  "140": {
+    "backend": "ready \u00b7 GPU",
+    "image_p50_ms": 185.050584,
+    "image_p95_ms": 195.215541,
+    "peak_physical_bytes": 768526208,
+    "peak_rss_bytes": 801128448,
+    "physical_bytes": 754435968,
+    "rss_bytes": 428261376,
+    "startup_ms": 17974.897542000002,
+    "text_p50_ms": 14.922834,
+    "text_p95_ms": 15.930709000000002,
+    "tokens": 140
+  },
+  "method": {
+    "host": "M4 Pro / macOS ARM64 /24GB",
+    "build": "cargo test debug, native Rust production provider; fresh process/cache per budget",
+    "samples_per_channel": 40,
+    "memory": "Mach task_vm_info lifetime peaks",
+    "limits": "isolated provider+test harness; not total app or release-build latency; startup includes once-per-process SHA verification",
+    "cross_backend": "both directions CPU/GPU, text/images, 48/48 top1 each budget, min cosine0.9948868"
+  }
+}

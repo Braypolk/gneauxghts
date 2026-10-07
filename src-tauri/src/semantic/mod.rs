@@ -7,7 +7,16 @@ pub(crate) mod chunking;
 pub(crate) mod db;
 pub(crate) mod debug;
 pub(crate) mod embed;
+pub(crate) mod generation;
+mod image_ann;
+pub(crate) mod image_input;
+mod image_inventory;
+pub(crate) mod images;
 pub(crate) mod indexer;
+mod legacy_jina;
+mod litert;
+mod litert_ffi;
+mod litert_install;
 pub(crate) mod note_ann;
 pub(crate) mod related;
 mod runtime_install;
@@ -27,15 +36,16 @@ use self::{
         mark_running_jobs_interrupted, open_database, save_semantic_settings,
     },
     debug::{SemanticDebugSnapshot, SemanticDebugState},
-    embed::{EmbeddingInputKind, EmbeddingProvider, JinaLlamaEmbeddingProvider, ModelInfo},
+    embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
     indexer::{
         chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, IndexingWorkerContext,
         PendingIndexState, PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument,
         SemanticWorkQueue,
     },
+    litert::GemmaLiteRtEmbeddingProvider,
     note_ann::NoteAnnIndexState,
     related::{build_excerpt, related_scope_label},
-    similarity::{cosine_similarity, MIN_SEMANTIC_MATCH_SCORE},
+    similarity::cosine_similarity,
 };
 use crate::time::current_time_millis;
 use serde::{Deserialize, Serialize};
@@ -55,6 +65,8 @@ pub(crate) const SEMANTIC_RETRY_MAX_ATTEMPTS: u32 = 3;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticSettings {
+    #[serde(default = "default_image_tokens")]
+    pub(crate) image_tokens: u16,
     pub(crate) semantic_search_enabled: bool,
     pub(crate) lexical_weight: f32,
     pub(crate) semantic_weight: f32,
@@ -63,11 +75,16 @@ pub(crate) struct SemanticSettings {
 impl Default for SemanticSettings {
     fn default() -> Self {
         Self {
+            image_tokens: default_image_tokens(),
             semantic_search_enabled: true,
             lexical_weight: 0.5,
             semantic_weight: 0.4,
         }
     }
+}
+
+fn default_image_tokens() -> u16 {
+    70
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -106,6 +123,12 @@ impl SemanticHealth {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticStatus {
+    pub(crate) image_coverage: images::ImageCoverage,
+    pub(crate) text_ready: bool,
+    pub(crate) image_capability: String,
+    pub(crate) migration_state: String,
+    pub(crate) previous_generation_available: bool,
+    pub(crate) next_provider: generation::NextProvider,
     pub(crate) settings: SemanticSettings,
     pub(crate) model: ModelInfo,
     pub(crate) platform_supported: bool,
@@ -256,6 +279,8 @@ struct ActiveSemanticState {
     debug: Arc<SemanticDebugState>,
     ann: Arc<AnnIndexState>,
     note_ann: Arc<NoteAnnIndexState>,
+    image_ann: Arc<image_ann::ImageAnnIndex>,
+    generation: Arc<generation::SemanticGeneration>,
     work_queue: SemanticWorkQueue,
     index_revision: Arc<AtomicU64>,
     related_query_cache: Mutex<Vec<(String, u64, RelatedNotesResponse)>>,
@@ -291,14 +316,32 @@ impl SemanticState {
         notes_dir: PathBuf,
         bundled_runtime_path: Option<PathBuf>,
     ) -> Result<Self, String> {
+        let next_provider = generation::next_provider(&vault_data_dir)?;
+        let legacy = next_provider == generation::NextProvider::Jina
+            || (!GemmaLiteRtEmbeddingProvider::supported()
+                && vault_data_dir.join("semantic.sqlite3").is_file());
+        if !legacy && !GemmaLiteRtEmbeddingProvider::supported() {
+            return Ok(Self::new_disabled("Gemma local search is unavailable on this device architecture. Keyword search remains available."));
+        }
         fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
-        // Vault-local, portable: semantic.sqlite3 lives directly under
-        // `<vault>/.gneauxghts`; the rebuildable ANN/HNSW + lexical/graph
-        // sidecars live under `<vault>/.gneauxghts/cache`.
+        // Derived databases and sidecars are vault-local and separated by
+        // representation/platform; model artifacts remain device-local.
         fs::create_dir_all(&vault_data_dir).map_err(|err| err.to_string())?;
-        let cache_dir = vault_data_dir.join(crate::state::VAULT_CACHE_DIR_NAME);
+        let cache_dir = vault_data_dir
+            .join(crate::state::VAULT_CACHE_DIR_NAME)
+            .join(if legacy {
+                "".into()
+            } else {
+                litert::text_namespace()
+            });
         fs::create_dir_all(&cache_dir).map_err(|err| err.to_string())?;
-        let db_path = vault_data_dir.join("semantic.sqlite3");
+        // A separate representation namespace preserves Jina's last-good
+        // database and sidecars and cannot reuse same-dimension Jina vectors.
+        let db_path = vault_data_dir.join(if legacy {
+            "semantic.sqlite3".into()
+        } else {
+            format!("{}.sqlite3", litert::text_namespace())
+        });
 
         // The model cache (large, device-specific, non-portable) stays
         // GLOBAL in app_data_dir; only the index + caches are vault-local.
@@ -307,15 +350,38 @@ impl SemanticState {
         ensure_schema(&connection)?;
         mark_running_jobs_interrupted(&connection)?;
         let stored_settings = load_semantic_settings(&connection)?;
-        let initial_settings = stored_settings.clone().unwrap_or_default();
+        let initial_settings = if let Some(settings) = stored_settings.clone() {
+            settings
+        } else {
+            let legacy = vault_data_dir.join("semantic.sqlite3");
+            if legacy.is_file() {
+                load_semantic_settings(&open_database(&legacy)?)?.unwrap_or_default()
+            } else {
+                SemanticSettings::default()
+            }
+        };
         if stored_settings.is_none() {
             save_semantic_settings(&connection, &initial_settings)?;
         }
         let settings = Arc::new(Mutex::new(initial_settings));
         let debug = Arc::new(SemanticDebugState::new());
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(
-            JinaLlamaEmbeddingProvider::new(app_data_dir, bundled_runtime_path, debug.clone())?,
-        );
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = if legacy {
+            Arc::new(legacy_jina::JinaLlamaEmbeddingProvider::new(
+                app_data_dir,
+                bundled_runtime_path,
+                debug.clone(),
+            )?)
+        } else {
+            Arc::new(GemmaLiteRtEmbeddingProvider::new(
+                app_data_dir,
+                settings.clone(),
+                debug.clone(),
+            ))
+        };
+        let generation = Arc::new(generation::SemanticGeneration::staging(
+            &connection,
+            provider.model_info().fingerprint(),
+        )?);
         let ann = Arc::new(AnnIndexState::new(
             semantic_dir.clone(),
             provider.model_info().dimensions,
@@ -340,6 +406,7 @@ impl SemanticState {
         // thread.
         drop(connection);
 
+        let image_ann = Arc::new(image_ann::ImageAnnIndex::new(semantic_dir.clone()));
         let initial_runtime = RuntimeState {
             edges_stale: initial_edges_stale,
             ..Default::default()
@@ -359,6 +426,8 @@ impl SemanticState {
                 provider: provider.clone(),
                 ann: ann.clone(),
                 note_ann: note_ann.clone(),
+                image_ann: image_ann.clone(),
+                generation: generation.clone(),
                 queue: work_queue.clone(),
                 index_revision: index_revision.clone(),
                 runtime: runtime.clone(),
@@ -377,6 +446,8 @@ impl SemanticState {
             debug: debug.clone(),
             ann: ann.clone(),
             note_ann: note_ann.clone(),
+            image_ann,
+            generation,
             work_queue: work_queue.clone(),
             index_revision,
             related_query_cache: Mutex::new(Vec::new()),
@@ -401,6 +472,40 @@ impl SemanticState {
         Ok(Self {
             inner: SemanticStateInner::Active(state),
         })
+    }
+
+    pub(crate) fn stage_next_provider(&self, use_previous: bool) -> Result<(), String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Err("Local search is unavailable".into());
+        };
+        generation::stage_provider(
+            state
+                .db_path
+                .parent()
+                .ok_or("Semantic vault data unavailable")?,
+            if use_previous {
+                generation::NextProvider::Jina
+            } else {
+                generation::NextProvider::Gemma
+            },
+        )
+    }
+
+    pub(crate) fn bind_current_sources(
+        &self,
+        admission: crate::services::note_timeline::SemanticSourceAdmission,
+    ) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.generation.bind_sources(admission);
+        }
+    }
+
+    pub(crate) fn finish_startup_reconciliation(&self) -> Result<(), String> {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.generation.recall_finished();
+            state.work_queue.enqueue(|_| {})?;
+        }
+        Ok(())
     }
 
     pub(crate) fn new_disabled(reason: impl Into<String>) -> Self {
@@ -713,6 +818,7 @@ impl SemanticState {
                     |metrics| metrics.index_job_enqueued_count += 1,
                 );
                 state.work_queue.enqueue(|pending| {
+                    state.generation.rebuilding();
                     pending.rebuild_requested = true;
                     pending.full_scan_requested = false;
                     pending.force_full_scan = false;
@@ -936,16 +1042,26 @@ impl SemanticState {
         &self,
         next_settings: SemanticSettings,
     ) -> Result<SemanticSettings, String> {
+        if !matches!(next_settings.image_tokens, 70 | 140) {
+            return Err("Image detail must use 70 or 140 tokens.".into());
+        }
         match &self.inner {
             SemanticStateInner::Active(state) => {
                 let connection = open_database(&state.db_path)?;
                 ensure_schema(&connection)?;
-                save_semantic_settings(&connection, &next_settings)?;
-                *state
+                let mut settings = state
                     .settings
                     .lock()
-                    .map_err(|_| "Semantic settings lock poisoned".to_string())? =
-                    next_settings.clone();
+                    .map_err(|_| "Semantic settings lock poisoned".to_string())?;
+                let images_changed = settings.image_tokens != next_settings.image_tokens;
+                save_semantic_settings(&connection, &next_settings)?;
+                *settings = next_settings.clone();
+                drop(settings);
+                if images_changed {
+                    state
+                        .work_queue
+                        .enqueue(|pending| pending.image_scan_requested = true)?;
+                }
                 Ok(next_settings)
             }
             SemanticStateInner::Disabled(state) => {
@@ -967,6 +1083,76 @@ impl SemanticState {
         }
     }
 
+    pub(crate) fn queue_image_reconciliation(&self) -> Result<(), String> {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state
+                .work_queue
+                .enqueue(|pending| pending.image_scan_requested = true)?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn media_matches(
+        &self,
+        text: Option<&str>,
+        image: Option<&[u8]>,
+        allowed: Option<&std::collections::HashSet<String>>,
+        root: &Path,
+    ) -> Result<(Vec<images::ImageMatch>, Vec<SemanticChunkMatch>), String> {
+        let SemanticStateInner::Active(state) = &self.inner else {
+            return Err("Image search is unavailable on this device.".into());
+        };
+        let _work = state.work_queue.admit_work()?;
+        if !state.get_settings()?.semantic_search_enabled {
+            return Err("Enable semantic search in Settings to search images.".into());
+        }
+        let _generation = state.generation.require_active()?;
+        let representation = state
+            .provider
+            .image_representation()
+            .ok_or("Image search is unavailable.")?;
+        let vector = if let Some(bytes) = image {
+            state.provider.embed_image_query(bytes, text)?
+        } else {
+            state
+                .provider
+                .embed_texts(
+                    &[text.ok_or("Search query is empty.")?.to_string()],
+                    EmbeddingInputKind::Query,
+                )?
+                .into_iter()
+                .next()
+                .ok_or("No query embedding.")?
+        };
+        if state.provider.image_representation().as_deref() != Some(&representation) {
+            return Err("Image detail changed. Search again.".into());
+        }
+        let images = images::search(
+            &state.image_ann,
+            &open_database(&state.db_path)?,
+            root,
+            &representation,
+            &vector,
+            allowed,
+            state.provider.minimum_image_score(image.is_some()),
+            12,
+        )?;
+        let paths = allowed.map(|paths| paths.iter().cloned().collect::<Vec<_>>());
+        let passages = state.matches_for_vector(
+            &vector,
+            None,
+            12,
+            paths.as_deref(),
+            None,
+            if image.is_some() {
+                state.provider.minimum_image_to_text_score()
+            } else {
+                state.provider.minimum_text_score()
+            },
+        )?;
+        Ok((images, passages))
+    }
+
     pub(crate) fn current_index_revision(&self) -> u64 {
         match &self.inner {
             SemanticStateInner::Active(state) => state.index_revision.load(Ordering::Acquire),
@@ -982,6 +1168,8 @@ impl SemanticState {
     ) -> Result<Vec<SemanticChunkMatch>, String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
+                let _work = state.work_queue.admit_work()?;
+                let _generation = state.generation.require_active()?;
                 state.semantic_matches_for_text(text, exclude_note_path, limit)
             }
             SemanticStateInner::Disabled(_) => Ok(Vec::new()),
@@ -997,13 +1185,17 @@ impl SemanticState {
         document_kind: Option<crate::note::DocumentKind>,
     ) -> Result<Vec<SemanticChunkMatch>, String> {
         match &self.inner {
-            SemanticStateInner::Active(state) => state.semantic_matches_for_text_scoped(
-                text,
-                exclude_note_path,
-                limit,
-                allowed_paths,
-                document_kind,
-            ),
+            SemanticStateInner::Active(state) => {
+                let _work = state.work_queue.admit_work()?;
+                let _generation = state.generation.require_active()?;
+                state.semantic_matches_for_text_scoped(
+                    text,
+                    exclude_note_path,
+                    limit,
+                    allowed_paths,
+                    document_kind,
+                )
+            }
             SemanticStateInner::Disabled(_) => Ok(Vec::new()),
         }
     }
@@ -1019,6 +1211,7 @@ impl SemanticState {
         match &self.inner {
             SemanticStateInner::Active(state) => {
                 let _work = state.work_queue.admit_work()?;
+                let _generation = state.generation.require_active()?;
                 state.related_notes(
                     current_path,
                     current_title,
@@ -1074,6 +1267,7 @@ impl SemanticState {
         match &self.inner {
             SemanticStateInner::Active(state) => {
                 let _work = state.work_queue.admit_work()?;
+                let _generation = state.generation.require_active()?;
                 state.search_vault_atlas(generation_key, query, activity_by_note_id, notes_dir)
             }
             SemanticStateInner::Disabled(state) => Ok(AtlasSearchResponse {
@@ -1191,6 +1385,31 @@ impl ActiveSemanticState {
             .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
 
         Ok(SemanticStatus {
+            text_ready: model.ready && self.generation.is_active(),
+            image_capability: self.provider.image_capability().into(),
+            migration_state: if self.generation.is_active() {
+                "active"
+            } else if runtime.retry_exhausted {
+                "failed"
+            } else {
+                "staging"
+            }
+            .into(),
+            previous_generation_available: self
+                .db_path
+                .parent()
+                .is_some_and(|p| p.join("semantic.sqlite3").is_file()),
+            next_provider: generation::next_provider(
+                self.db_path
+                    .parent()
+                    .ok_or("Semantic vault data unavailable")?,
+            )?,
+            image_coverage: self
+                .provider
+                .image_representation()
+                .map(|r| images::coverage(&connection, &r))
+                .transpose()?
+                .unwrap_or_default(),
             settings,
             model_available: model.available,
             model: model.clone(),
@@ -1224,7 +1443,7 @@ impl ActiveSemanticState {
             } else {
                 runtime.health.legacy_recovery_state().to_string()
             },
-            index_usable: ann_status.loaded,
+            index_usable: ann_status.loaded && self.generation.is_active(),
             retry_attempt: runtime.retry_attempt,
             retry_max_attempts: SEMANTIC_RETRY_MAX_ATTEMPTS,
             retry_exhausted: runtime.retry_exhausted,
@@ -1254,7 +1473,6 @@ impl ActiveSemanticState {
         if allowed_paths.is_some_and(|paths| paths.is_empty()) {
             return Ok(Vec::new());
         }
-        let started_at = Instant::now();
         let settings = self.get_settings()?;
         if !settings.semantic_search_enabled {
             return Ok(Vec::new());
@@ -1277,6 +1495,26 @@ impl ActiveSemanticState {
             .into_iter()
             .next()
             .ok_or_else(|| "Unable to embed semantic query".to_string())?;
+        self.matches_for_vector(
+            &query_embedding,
+            exclude_note_path,
+            limit,
+            allowed_paths,
+            document_kind,
+            self.provider.minimum_text_score(),
+        )
+    }
+
+    fn matches_for_vector(
+        &self,
+        query_embedding: &[f32],
+        exclude_note_path: Option<&str>,
+        limit: usize,
+        allowed_paths: Option<&[String]>,
+        document_kind: Option<crate::note::DocumentKind>,
+        minimum_score: f32,
+    ) -> Result<Vec<SemanticChunkMatch>, String> {
+        let started_at = Instant::now();
         let connection = open_database(&self.db_path)?;
         ensure_schema(&connection)?;
         // Admit the requested document kind before any candidate limit. Filtering
@@ -1325,14 +1563,31 @@ impl ActiveSemanticState {
         for labels in candidate_labels.chunks(400) {
             chunks.extend(load_chunks_by_ann_labels(&connection, labels)?);
         }
+        let mut current_paths = std::collections::HashSet::new();
+        for chunk in &chunks {
+            if current_paths.contains(&chunk.note_path) {
+                continue;
+            }
+            if load_note_record(&connection, &chunk.note_path)?.is_some_and(|record| {
+                if record.document_kind.is_chat_projection() {
+                    return true;
+                }
+                fs::read_to_string(&chunk.note_path).is_ok_and(|markdown| {
+                    crate::note::semantic_recall_eligible(&markdown)
+                        && content_hash(&markdown) == record.content_hash
+                })
+            }) {
+                current_paths.insert(chunk.note_path.clone());
+            }
+        }
         let reranked_count = candidate_labels.len();
         let mut matches = chunks
             .into_iter()
-            .filter(|chunk| Path::new(&chunk.note_path).is_file())
+            .filter(|chunk| current_paths.contains(&chunk.note_path))
             .filter(|chunk| exclude_note_path != Some(chunk.note_path.as_str()))
             .filter_map(|chunk| {
                 let score = cosine_similarity(&query_embedding, &chunk.embedding);
-                if score < MIN_SEMANTIC_MATCH_SCORE {
+                if score < minimum_score {
                     return None;
                 }
 
@@ -1381,6 +1636,12 @@ impl DisabledSemanticState {
             .map(|settings| settings.clone())
             .map_err(|_| "Semantic settings lock poisoned".to_string())?;
         Ok(SemanticStatus {
+            text_ready: false,
+            image_capability: "unsupported".into(),
+            migration_state: "unavailable".into(),
+            previous_generation_available: false,
+            next_provider: generation::NextProvider::Gemma,
+            image_coverage: images::ImageCoverage::default(),
             settings,
             model: ModelInfo {
                 id: "semantic-disabled".to_string(),
@@ -1570,6 +1831,10 @@ mod health_tests {
         let (work_queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
         let state = SemanticState {
             inner: SemanticStateInner::Active(ActiveSemanticState {
+                image_ann: Arc::new(super::image_ann::ImageAnnIndex::new(
+                    temp.path().join("images"),
+                )),
+                generation: Arc::new(super::generation::SemanticGeneration::ready_for_test()),
                 db_path,
                 atlas_cache_dir: temp.path().join("atlas"),
                 settings: Arc::new(Mutex::new(SemanticSettings::default())),
@@ -1625,7 +1890,7 @@ mod health_tests {
                 &path,
                 name,
                 1,
-                name,
+                &content_hash(name),
                 "",
                 "",
                 kind,
@@ -1689,6 +1954,153 @@ mod health_tests {
     }
 
     #[test]
+    #[ignore = "requires pinned local Gemma/Jina models and native GPU/runtime"]
+    fn native_generation_migration_and_jina_recovery() {
+        let _environment = crate::test_support::lock_test_env();
+        let temp = crate::test_support::TestDir::new("native-generation-recovery");
+        let app_data = temp.path().join("app");
+        let root = temp.path().join("vault");
+        fs::create_dir_all(root.join("assets")).unwrap();
+        crate::state::initialize_app_data_dir(app_data.clone()).unwrap();
+        crate::state::set_notes_root_override(Some(root.clone())).unwrap();
+        let fixture = PathBuf::from(std::env::var("GNEAUXGHTS_LITERT_FIXTURE").unwrap());
+        super::litert_install::tests::install_fixture(
+            &app_data,
+            &fixture.join("litert_lm_api-0.18.0-py3-none-macosx_12_0_arm64.whl"),
+        );
+        let models = app_data.join("semantic/models");
+        fs::create_dir_all(&models).unwrap();
+        fs::copy(
+            fixture.join(super::litert_install::MODEL_FILE),
+            models.join(super::litert_install::MODEL_FILE),
+        )
+        .unwrap();
+        fs::copy(
+            std::env::var("GNEAUXGHTS_JINA_MODEL").unwrap(),
+            models.join("jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf"),
+        )
+        .unwrap();
+        fs::copy(
+            fixture.join("visual-fixtures/privacy.png"),
+            root.join("assets/privacy.png"),
+        )
+        .unwrap();
+        let note = root.join("Privacy.md");
+        fs::write(&note,"# Privacy
+
+An application settings screenshot with Privacy and Sharing, public sharing and allow analytics toggles.
+
+![[privacy.png]]").unwrap();
+        let running = crate::state::RunningVault::resolve(app_data.clone()).unwrap();
+        let vault_data = running.data_dir().to_path_buf();
+        let legacy = vault_data.join("semantic.sqlite3");
+        drop(crate::semantic::test_support::database(&legacy));
+        let retained = fs::read(&legacy).unwrap();
+        let compose = |running: crate::state::RunningVault| {
+            let semantic = SemanticState::new_with_runtime(
+                app_data.clone(),
+                vault_data.clone(),
+                root.clone(),
+                Some(PathBuf::from("/opt/homebrew/bin/llama-server")),
+            )
+            .unwrap();
+            crate::index::AppState::new_with_running_vault(
+                running,
+                semantic,
+                crate::app::EventBus::disabled(),
+            )
+            .unwrap()
+        };
+        let wait = |state: &crate::index::AppState| {
+            let deadline = Instant::now() + std::time::Duration::from_secs(90);
+            loop {
+                let status = state.semantic.get_status().unwrap();
+                if status.migration_state == "active" {
+                    break;
+                }
+                assert!(!status.retry_exhausted, "{:?}", status.last_error);
+                assert!(
+                    Instant::now() < deadline,
+                    "migration timed out: {:?}",
+                    status
+                );
+                std::thread::sleep(std::time::Duration::from_millis(50));
+            }
+        };
+        let state = compose(running);
+        assert_eq!(
+            state.semantic.get_status().unwrap().migration_state,
+            "staging"
+        );
+        assert!(state
+            .semantic
+            .semantic_matches_for_text("Privacy settings", None, 3)
+            .is_err());
+        state.semantic.finish_startup_reconciliation().unwrap();
+        wait(&state);
+        let (images, passages) = state
+            .semantic
+            .media_matches(
+                Some("Privacy and Sharing settings with public sharing and analytics"),
+                None,
+                None,
+                &root,
+            )
+            .unwrap();
+        assert_eq!(images.len(), 1);
+        assert!(!passages.is_empty());
+        assert_eq!(fs::read(&legacy).unwrap(), retained);
+        state.semantic.stage_next_provider(true).unwrap();
+        state.semantic.finish_restart_shutdown().unwrap();
+        drop(state);
+        let recovered = compose(crate::state::RunningVault::resolve(app_data.clone()).unwrap());
+        assert_eq!(
+            recovered.semantic.get_status().unwrap().model.id,
+            "jinaai/jina-embeddings-v5-text-nano-retrieval"
+        );
+        assert_eq!(
+            recovered.semantic.get_status().unwrap().image_capability,
+            "unsupported"
+        );
+        recovered.semantic.finish_startup_reconciliation().unwrap();
+        wait(&recovered);
+        assert!(!recovered
+            .semantic
+            .semantic_matches_for_text("Privacy and sharing settings", None, 3)
+            .unwrap()
+            .is_empty());
+        recovered.semantic.finish_restart_shutdown().unwrap();
+    }
+
+    #[test]
+    fn image_budget_defaults_persists_and_only_queues_image_work() {
+        let (state, _signals, _temp) = active_status_state(RuntimeState::default());
+        assert_eq!(state.get_settings().unwrap().image_tokens, 70);
+        let mut settings = state.get_settings().unwrap();
+        settings.image_tokens = 140;
+        state.set_settings(settings.clone()).unwrap();
+        let SemanticStateInner::Active(active) = &state.inner else {
+            panic!()
+        };
+        let saved = load_semantic_settings(&open_database(&active.db_path).unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(saved.image_tokens, 140);
+        active
+            .work_queue
+            .stage(|pending| {
+                assert!(pending.image_scan_requested);
+                assert!(!pending.full_scan_requested);
+                assert!(!pending.rebuild_requested);
+                assert!(pending.atlas_requests.is_empty());
+            })
+            .unwrap();
+        assert_eq!(active.index_revision.load(Ordering::Acquire), 0);
+        settings.image_tokens = 280;
+        assert!(state.set_settings(settings).is_err());
+        assert_eq!(state.get_settings().unwrap().image_tokens, 140);
+    }
+    #[test]
     fn legacy_local_only_setting_is_ignored_when_loading_saved_settings() {
         let settings: SemanticSettings = serde_json::from_value(serde_json::json!({
             "semanticSearchEnabled": true,
@@ -1698,6 +2110,7 @@ mod health_tests {
         }))
         .expect("legacy semantic settings should still load");
 
+        assert_eq!(settings.image_tokens, 70);
         let saved = serde_json::to_value(settings).expect("semantic settings should serialize");
         assert!(saved.get("localOnlyMode").is_none());
     }

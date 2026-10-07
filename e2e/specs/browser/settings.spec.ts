@@ -111,6 +111,45 @@ describe('searchable settings workspace', () => {
     expect(await model.getValue()).toBe('unsaved-model');
   });
 
+  it('saves the higher image budget and keeps it selected after a refresh', async () => {
+    const contract = JSON.parse(readFileSync('src-tauri/test-fixtures/contracts/app-events.json', 'utf8'));
+    const status = contract.events.find((event: { channel: string }) => event.channel === 'semantic-status-changed').payload as SemanticStatus;
+    status.imageCapability = 'available';
+    status.textReady = true;
+    status.migrationState = 'active';
+    await browser.execute(async (status) => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<Record<string, unknown>> };
+      const view = await native.invoke('get_settings_view');
+      Object.assign(window.__GNEAUXGHTS_E2E_COMMANDS__!, {
+        get_settings_view: () => ({ ...view, semanticStatus: status, semanticSettings: status.settings }),
+        get_semantic_status: () => status,
+        stage_semantic_provider: (args: { usePrevious: boolean }) => { status.nextProvider = args.usePrevious ? 'jina' : 'gemma'; return null; },
+        set_semantic_settings: (args: Record<string, unknown>) => {
+          status.settings = args.settings as typeof status.settings;
+          return status.settings;
+        }
+      });
+    }, status);
+    await category('search').click();
+    await $('button[aria-label="Refresh semantic search"]').click();
+    const detail = await $('#semantic-image-detail');
+    await detail.waitForDisplayed();
+    expect(await detail.getValue()).toBe('70');
+    await detail.selectByAttribute('value', '140');
+    await browser.waitUntil(async () => browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.some(entry =>
+      entry.command === 'set_semantic_settings' && (entry.args.settings as { imageTokens: number }).imageTokens === 140)));
+    await $('button[aria-label="Refresh semantic search"]').waitForEnabled();
+    await $('button[aria-label="Refresh semantic search"]').click();
+    expect(await detail.getValue()).toBe('140');
+    const rebuilds = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(entry =>
+      ['rebuild_semantic_index', 'clear_atlas_cache'].includes(entry.command)));
+    expect(rebuilds).toHaveLength(0);
+    await $('button=Use previous search next launch').click();
+    await $('button=Use Gemma next launch').waitForDisplayed();
+    const staged = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.find(entry => entry.command === 'stage_semantic_provider'));
+    expect(staged?.args.usePrevious).toBe(true);
+  });
+
   it('sets up a missing runtime and model without leaving Settings', async () => {
     const contract = JSON.parse(readFileSync('src-tauri/test-fixtures/contracts/app-events.json', 'utf8'));
     const status = contract.events.find((event: { channel: string }) => event.channel === 'semantic-status-changed').payload as SemanticStatus;

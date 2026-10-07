@@ -279,6 +279,7 @@ describe('SettingsStore actions', () => {
     const { createSettingsStore } = await import('./store.svelte');
     const store = createSettingsStore(appStoreMock);
     store.semanticSettings = {
+      imageTokens: 70,
       semanticSearchEnabled: true,
       lexicalWeight: 0.4,
       semanticWeight: 0.6
@@ -293,6 +294,7 @@ describe('SettingsStore actions', () => {
     await vi.waitFor(() => {
       expect(invokeMock).toHaveBeenCalledWith('set_semantic_settings', {
         settings: {
+          imageTokens: 70,
           semanticSearchEnabled: false,
           lexicalWeight: 0.4,
           semanticWeight: 0.6
@@ -546,7 +548,7 @@ describe('SettingsStore asynchronous admission', () => {
     expect(invokeMock).toHaveBeenLastCalledWith('set_semantic_settings', {
       settings: expect.objectContaining({ lexicalWeight: 0.2, semanticWeight: 0.8 })
     });
-    const saved = { semanticSearchEnabled: true, lexicalWeight: 0.2, semanticWeight: 0.8 };
+    const saved = { imageTokens: 70 as const, semanticSearchEnabled: true, lexicalWeight: 0.2, semanticWeight: 0.8 };
     responses.get_settings_view = { ...settingsViewFixture(), semanticSettings: saved };
     second.resolve(saved);
     await vi.waitFor(() => expect(store.isSaving).toBe(false));

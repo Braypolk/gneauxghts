@@ -1,0 +1,14 @@
+{
+  "ann_rerank_p50_ms": 16.806583,
+  "ann_rerank_p95_ms": 17.318707999999997,
+  "build": "debug",
+  "build_ms": 38599.036833,
+  "candidate_budget": 128,
+  "corpus": "deterministic synthetic unit vectors",
+  "count": 3000,
+  "dimensions": 768,
+  "exact_p50_ms": 112.245375,
+  "exact_p95_ms": 113.543916,
+  "queries": 20,
+  "recall_at_10": 0.995
+}
