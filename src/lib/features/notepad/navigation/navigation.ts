@@ -2,6 +2,7 @@ import { tick } from 'svelte';
 import { EditorView } from '@codemirror/view';
 import type { Text } from '@codemirror/state';
 import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
+import { editorScrollEffect } from '$lib/features/notepad/editor/editorScroll';
 
 export function focusInputAtEnd(input: HTMLInputElement | null) {
   if (!input) return;
@@ -20,7 +21,7 @@ export function focusEditorAtDocumentLine(editorRoot: HTMLElement | null, lineNu
   const info = view.state.doc.line(line);
   const anchor = Math.min(info.from, view.state.doc.length);
 
-  view.dispatch({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) });
+  view.dispatch({ selection: { anchor }, effects: editorScrollEffect(view, anchor) });
   view.focus();
   return true;
 }
@@ -36,7 +37,7 @@ export async function focusEditorAtEnd(editorRoot: HTMLElement | null) {
 
   const anchor = view.state.doc.length;
   // CodeMirror owns the end position so virtualized content need not be in DOM.
-  view.dispatch(view.state.update({ selection: { anchor }, effects: EditorView.scrollIntoView(anchor, { y: 'center' }) }));
+  view.dispatch(view.state.update({ selection: { anchor }, effects: editorScrollEffect(view, anchor) }));
   view.focus();
 }
 
@@ -108,7 +109,7 @@ export function revealEditorTextTarget(
   if (anchor === null) return false;
   view.dispatch({
     ...(focus ? { selection: { anchor } } : {}),
-    effects: EditorView.scrollIntoView(anchor, { y: 'center' })
+    effects: editorScrollEffect(view, anchor)
   });
   if (focus) view.focus();
   return true;

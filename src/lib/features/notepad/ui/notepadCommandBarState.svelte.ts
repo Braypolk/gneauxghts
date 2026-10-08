@@ -12,6 +12,7 @@ import {
 } from '$lib/ui/listSelection';
 import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
 import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
+import type { SearchMode } from '$lib/features/notepad/search/search';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }
@@ -34,8 +35,11 @@ export interface NotepadCommandBarState {
 
 interface NotepadCommandBarStateDeps {
   getSearchQuery: () => string;
+  getSearchMode: () => SearchMode;
   getSearchResults: () => SearchItem[];
   getSearchNavigationResults?: () => SearchItem[];
+  /** Maps an occurrence to its row when current-note results are grouped. */
+  getSearchResultRowIndex?: (result: SearchItem) => number;
   getPinnedNotes: () => SearchItem[];
   getRecentLocations: () => LocationHistoryEntry[];
   getVisibleItems: () => NotepadCommandBarVisibleItem[];
@@ -117,6 +121,7 @@ class NotepadCommandBarController {
 
   #deps: NotepadCommandBarStateDeps;
   #searchResultsViewport: HTMLDivElement | null = null;
+  #searchNavigationIndex: number | null = null;
   #forgetHoldStartedAt = 0;
   #forgetHoldFrame: number | null = null;
   #forgetHoldTimeout: number | null = null;
@@ -134,6 +139,7 @@ class NotepadCommandBarController {
   resetActiveIndex = () => {
     this.activeIndex = 0;
     this.searchNavigationMode = 'pointer';
+    this.#searchNavigationIndex = null;
   };
 
   #closeSearchPanel = () => {
@@ -184,20 +190,42 @@ class NotepadCommandBarController {
     return false;
   };
 
-  navigateSearchResult = (delta: 1 | -1) => {
+  #previewSearchResult = (delta: 1 | -1, previewActive = false) => {
     const results = this.#deps.getSearchNavigationResults?.() ?? this.#deps.getSearchResults();
     if (this.#deps.getSearchQuery().trim() === '' || results.length === 0) {
       return;
     }
 
-    const nextSelection = moveListSelection(
-      { activeIndex: this.activeIndex, navigationMode: this.searchNavigationMode },
-      delta,
-      { optionCount: results.length }
-    );
-    this.activeIndex = nextSelection.activeIndex;
-    this.searchNavigationMode = nextSelection.navigationMode;
-    void this.#deps.onSearchNavigate?.(results[nextSelection.activeIndex]);
+    const activeRow = this.#deps.getSearchResults()[this.activeIndex];
+    const initialIndex = Math.max(0, results.indexOf(activeRow));
+    // Enter previews the active row first. Later presses and the next/previous
+    // buttons move through occurrences independently of grouped result rows.
+    const index = previewActive && this.#searchNavigationIndex === null
+      ? initialIndex
+      : moveListSelection(
+          { activeIndex: this.#searchNavigationIndex ?? initialIndex, navigationMode: this.searchNavigationMode },
+          delta,
+          { optionCount: results.length }
+        ).activeIndex;
+    this.#searchNavigationIndex = index;
+    const result = results[index];
+    this.activeIndex = Math.max(0, this.#deps.getSearchResultRowIndex?.(result)
+      ?? this.#deps.getSearchResults().indexOf(result));
+    this.searchNavigationMode = 'keyboard';
+    void this.#deps.onSearchNavigate?.(result);
+  };
+
+  navigateSearchResult = (delta: 1 | -1) => this.#previewSearchResult(delta);
+
+  #previewActiveSearchRow = () => {
+    if (this.#deps.getSearchMode() !== 'current' || this.#deps.getSearchQuery().trim() === '') return;
+    const item = this.#deps.getVisibleItems()[this.activeIndex];
+    if (item?.kind !== 'search') return;
+    const results = this.#deps.getSearchNavigationResults?.() ?? this.#deps.getSearchResults();
+    const index = results.indexOf(item.item);
+    if (index < 0) return;
+    this.#searchNavigationIndex = index;
+    void this.#deps.onSearchNavigate?.(item.item);
   };
 
   handleSearchKeydown = (event: KeyboardEvent) => {
@@ -239,32 +267,26 @@ class NotepadCommandBarController {
       return;
     }
 
-    if (event.key === 'ArrowDown') {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
       event.preventDefault();
       const nextSelection = moveListSelection(
         { activeIndex: this.activeIndex, navigationMode: this.searchNavigationMode },
-        1,
+        event.key === 'ArrowDown' ? 1 : -1,
         { optionCount: items.length }
       );
       this.activeIndex = nextSelection.activeIndex;
       this.searchNavigationMode = nextSelection.navigationMode;
-      return;
-    }
-
-    if (event.key === 'ArrowUp') {
-      event.preventDefault();
-      const nextSelection = moveListSelection(
-        { activeIndex: this.activeIndex, navigationMode: this.searchNavigationMode },
-        -1,
-        { optionCount: items.length }
-      );
-      this.activeIndex = nextSelection.activeIndex;
-      this.searchNavigationMode = nextSelection.navigationMode;
+      this.#searchNavigationIndex = null;
+      this.#previewActiveSearchRow();
       return;
     }
 
     if (event.key === 'Enter') {
       event.preventDefault();
+      if (this.#deps.getSearchMode() === 'current' && this.#deps.getSearchQuery().trim() !== '') {
+        this.#previewSearchResult(event.shiftKey ? -1 : 1, !event.shiftKey);
+        return;
+      }
       this.selectItem(items[this.activeIndex] ?? items[0]);
     }
   };
@@ -290,6 +312,8 @@ class NotepadCommandBarController {
 
     this.activeIndex = nextSelection.activeIndex;
     this.searchNavigationMode = nextSelection.navigationMode;
+    this.#searchNavigationIndex = null;
+    this.#previewActiveSearchRow();
   };
 
   #clearForgetHoldFrame = () => {

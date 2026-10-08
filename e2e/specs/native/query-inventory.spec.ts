@@ -64,7 +64,7 @@ live('Composable evidence capabilities', function() {
    const start=Date.now();
    if(smoke || (scenario.id==='inventory_current' && repetition===0)){
     const open=await $('button[aria-label="Open thought partner in this pane"]');await open.waitForExist();await browser.execute((el:HTMLElement)=>el.click(),open);
-    const composer=await $('[data-testid="workspace-pane"][data-pane-kind="chat"] textarea');await composer.waitForEnabled({timeout:30_000});await composer.setValue(content);await $('button[aria-label="Send message"]').click();
+    const composer=await $('[data-notepad-command-bar] textarea');await composer.waitForEnabled({timeout:30_000});await composer.setValue(content);await $('button[aria-label="Send message"]').click();
     let found:Conversation|undefined;
     await browser.waitUntil(async()=>{for(const s of await invoke<{id:string}[]>('chat_list_conversations')){const c=await invoke<Conversation>('chat_get_conversation',{conversationId:s.id});if(c.messages.some(m=>m.role==='user'&&m.content===content)){found=c;return true;}}return false;},{timeout:30_000,interval:500});assert(found);conversation=found;
    }else{

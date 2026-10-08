@@ -5,11 +5,12 @@
     getEffectiveKeyboardShortcutBinding
   } from '$lib/keyboardShortcuts.svelte';
   import { DropdownMenu } from 'bits-ui';
+  import PaneHeader from '$lib/ui/PaneHeader.svelte';
   import ScrollingNoteTags from './ui/ScrollingNoteTags.svelte';
   import { appSettings } from '$lib/appSettings.svelte';
   import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
   import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
-  import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
+  import ChatPanel, { type ComposerDock } from '$lib/features/chat/ChatPanel.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import { editorChromeInset } from '$lib/features/notepad/editor/editorChromeInset';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
@@ -30,12 +31,14 @@
     viewModel: PaneViewModel;
     actions: PaneWorkspaceActions;
     paneCommandFocusRoot?: HTMLElement | null;
+    composerDock?: ComposerDock;
   }
 
   let {
     pane,
     viewModel,
     actions,
+    composerDock,
     paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
   }: Props = $props();
 
@@ -99,7 +102,7 @@
     {@const label = splitPaneActionLabels[action]}
     <button
       type="button"
-      class="mobile-touch-target mobile-pane-top-action inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80"
+      class="mobile-touch-target pane-header-action"
       onclick={() => void runSplitPaneTopAction(action)}
       aria-label={label}
       title={label}
@@ -107,6 +110,26 @@
       <ActionIcon class="h-4 w-4" />
     </button>
   {/each}
+{/snippet}
+
+{#snippet paneButtons()}
+  {#if viewModel.showCloseButton}
+    {@render splitPaneButtons()}
+  {:else}
+    <SplitPaneButton paneKind={viewModel.paneKind} onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+    <div class="mobile-pane-switch sm:hidden">
+      <button
+        type="button"
+        class="mobile-touch-target pane-header-action"
+        onmousedown={(event) => event.preventDefault()}
+        onclick={() => void actions.onOpenPaneChoice(viewModel.paneKind === 'editor' ? 'thoughtPartner' : 'previous')}
+        aria-label={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
+        title={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
+      >
+        {#if viewModel.paneKind === 'editor'}<MessagesSquare class="h-4 w-4" />{:else}<CornerUpLeft class="h-4 w-4" />{/if}
+      </button>
+    </div>
+  {/if}
 {/snippet}
 
 <div
@@ -125,132 +148,92 @@
   {/if}
   <div class={viewModel.frameClass} data-pane-frame>
     {#if viewModel.paneKind === 'editor'}
-      <div class="notepad-editor-top-overlay absolute inset-x-0 top-0 z-20" class:has-split-actions={viewModel.showCloseButton}>
-        <div class="pointer-events-none absolute inset-0 bg-card/58 backdrop-blur-sm" style="mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to top, transparent 0%, black 40%, black 100%);"></div>
-        <div class="notepad-editor-top-row relative z-10 flex items-center justify-between gap-2 px-3 pt-3 pb-2 sm:gap-3 sm:px-4 sm:pt-4 sm:pb-3">
-          <DropdownMenu.Root onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
-            <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring sm:h-9 sm:w-9" aria-label="Note options" title="Note options">
-              <Ellipsis class="h-4 w-4" />
-            </DropdownMenu.Trigger>
-            <DropdownMenu.Portal>
-              <DropdownMenu.Content onCloseAutoFocus={(event) => {
-                if (historyRequested) {
-                  event.preventDefault();
-                  historyRequested = false;
-                  optionsButton?.focus();
-                  void actions.onOpenHistory(viewModel.paneId);
-                }
-              }} align="start" sideOffset={6} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
-                <DropdownMenu.Item aria-label="Open note history" disabled={!viewModel.canPin} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { historyRequested = true; }}>
-                  <History class="h-4 w-4" /> Note history <span class="ml-auto pl-3 text-xs text-muted-foreground">{historyShortcutLabel}</span>
-                </DropdownMenu.Item>
-                <DropdownMenu.Item aria-label="Open file location" disabled={!viewModel.canOpenFileLocation} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { void actions.onOpenFileLocation(viewModel.paneId); }}>
-                  <FolderOpen class="h-4 w-4" /> Open file location
-                </DropdownMenu.Item>
-                <DropdownMenu.Item class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent" onSelect={() => { appSettings.setTagsVisible(!appSettings.tagsVisible); }}>
-                  <Tags class="h-4 w-4" /> {appSettings.tagsVisible ? 'Hide tags' : 'Show tags'}
-                </DropdownMenu.Item>
-              </DropdownMenu.Content>
-            </DropdownMenu.Portal>
-          </DropdownMenu.Root>
-          <div class="notepad-editor-title-wrap pointer-events-none absolute inset-x-14 top-3 flex justify-center sm:inset-x-16 sm:top-4">
-            <div
-              bind:this={pane.refs.titleShell}
-              class="pointer-events-auto relative grid w-fit min-w-[4rem] max-w-[min(24rem,calc(100%-2.75rem))]"
-            >
-              <button
-                type="button"
-                disabled={!viewModel.canPin}
-                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
-                aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
-                aria-pressed={viewModel.isPinned}
-                title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
-                onmousedown={(event) => event.preventDefault()}
-                onclick={() => void actions.onTogglePin(viewModel.paneId)}
-              >
-                <Pin
-                  class={`h-4 w-4 transition-[rotate,fill] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${viewModel.isPinned ? '-rotate-45' : 'rotate-0'}`}
-                  fill={viewModel.isPinned ? 'currentColor' : 'none'}
-                />
-              </button>
-              <span
-                aria-hidden="true"
-                class="invisible col-start-1 row-start-1 overflow-hidden whitespace-pre text-lg font-semibold tracking-tight sm:text-2xl"
-              ><span data-testid="note-title-measure">{displayedTitle || viewModel.titlePlaceholder}</span></span>
-              <input
-                bind:this={pane.refs.titleInput}
-                type="text"
-                size="1"
-                data-testid="note-title"
-                class={`${viewModel.titleClass} col-start-1 row-start-1 min-w-0`}
-                placeholder={viewModel.titlePlaceholder}
-                value={displayedTitle}
-                readonly={viewModel.titleReadonly}
-                onfocus={() => {
-                  titleDraft = viewModel.titleValue;
-                  titleDraftDocument = viewModel.titleDocument;
-                  actions.onTitleFocus(viewModel.paneId);
-                }}
-                oninput={(event) => {
-                  titleDraft = (event.currentTarget as HTMLInputElement).value;
-                  titleDraftDocument = viewModel.titleDocument;
-                  actions.onTitleInput(viewModel.paneId);
-                }}
-                onblur={() => {
-                  const shouldCommit = titleDraftDocument === viewModel.titleDocument;
-                  const rawTitle = titleDraft ?? viewModel.titleValue;
-                  titleDraft = null;
-                  if (shouldCommit) {
-                    actions.onTitleBlur(viewModel.paneId, rawTitle);
+      <div class="notepad-editor-top-overlay pane-header-host absolute inset-x-0 top-0 z-20">
+        <PaneHeader
+          titleText={displayedTitle}
+          titlePlaceholder={viewModel.titlePlaceholder}
+          titleMeasureTestId="note-title-measure"
+          bind:titleShell={pane.refs.titleShell}
+          workspace
+          split={viewModel.showCloseButton}
+          right={paneButtons}
+        >
+          {#snippet left()}
+            <DropdownMenu.Root onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
+              <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target pane-header-action" aria-label="Note options" title="Note options">
+                <Ellipsis class="h-4 w-4" />
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal>
+                <DropdownMenu.Content onCloseAutoFocus={(event) => {
+                  if (historyRequested) {
+                    event.preventDefault();
+                    historyRequested = false;
+                    optionsButton?.focus();
+                    void actions.onOpenHistory(viewModel.paneId);
                   }
-                }}
-                onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
-              />
-            </div>
-          </div>
-          {#if viewModel.showCloseButton}
-            <div class="flex items-center gap-2">
-              {@render splitPaneButtons()}
-            </div>
-          {:else}
-            <SplitPaneButton paneKind="editor" onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
+                }} align="start" sideOffset={6} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
+                  <DropdownMenu.Item aria-label="Open note history" disabled={!viewModel.canPin} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { historyRequested = true; }}>
+                    <History class="h-4 w-4" /> Note history <span class="ml-auto pl-3 text-xs text-muted-foreground">{historyShortcutLabel}</span>
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item aria-label="Open file location" disabled={!viewModel.canOpenFileLocation} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { void actions.onOpenFileLocation(viewModel.paneId); }}>
+                    <FolderOpen class="h-4 w-4" /> Open file location
+                  </DropdownMenu.Item>
+                  <DropdownMenu.Item class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent" onSelect={() => { appSettings.setTagsVisible(!appSettings.tagsVisible); }}>
+                    <Tags class="h-4 w-4" /> {appSettings.tagsVisible ? 'Hide tags' : 'Show tags'}
+                  </DropdownMenu.Item>
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          {/snippet}
+          {#snippet titleLeading()}
             <button
               type="button"
-              class="mobile-touch-target mobile-pane-top-action mobile-thought-partner-button inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:hidden"
+              disabled={!viewModel.canPin}
+              class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
+              aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
+              aria-pressed={viewModel.isPinned}
+              title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
               onmousedown={(event) => event.preventDefault()}
-              onclick={() => void actions.onOpenPaneChoice('thoughtPartner')}
-              aria-label="Open thought partner"
-              title="Open thought partner"
+              onclick={() => void actions.onTogglePin(viewModel.paneId)}
             >
-              <MessagesSquare class="h-[1.1rem] w-[1.1rem]" />
+              <Pin
+                class={`h-4 w-4 transition-[rotate,fill] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${viewModel.isPinned ? '-rotate-45' : 'rotate-0'}`}
+                fill={viewModel.isPinned ? 'currentColor' : 'none'}
+              />
             </button>
-          {/if}
-        </div>
-      </div>
-    {:else}
-      <div class="notepad-chat-top-actions absolute right-4 top-3 z-30 flex items-center gap-2 sm:top-4">
-        {#if viewModel.showCloseButton}
-          {@render splitPaneButtons()}
-        {:else}
-          <div class="chat-pane-split-slot relative hidden h-9 shrink-0 sm:block">
-            <SplitPaneButton
-              paneKind="chat"
-              onSplit={actions.onSplit}
-              onOpenCurrent={actions.onOpenPaneChoice}
+          {/snippet}
+          {#snippet title()}
+            <input
+              bind:this={pane.refs.titleInput}
+              type="text"
+              size="1"
+              data-testid="note-title"
+              class={viewModel.titleClass}
+              placeholder={viewModel.titlePlaceholder}
+              value={displayedTitle}
+              readonly={viewModel.titleReadonly}
+              onfocus={() => {
+                titleDraft = viewModel.titleValue;
+                titleDraftDocument = viewModel.titleDocument;
+                actions.onTitleFocus(viewModel.paneId);
+              }}
+              oninput={(event) => {
+                titleDraft = (event.currentTarget as HTMLInputElement).value;
+                titleDraftDocument = viewModel.titleDocument;
+                actions.onTitleInput(viewModel.paneId);
+              }}
+              onblur={() => {
+                const shouldCommit = titleDraftDocument === viewModel.titleDocument;
+                const rawTitle = titleDraft ?? viewModel.titleValue;
+                titleDraft = null;
+                if (shouldCommit) {
+                  actions.onTitleBlur(viewModel.paneId, rawTitle);
+                }
+              }}
+              onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
             />
-          </div>
-          <div class="sm:hidden">
-            <button
-              type="button"
-              class="mobile-touch-target mobile-pane-top-action inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-muted/72 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80"
-              onclick={() => void actions.onOpenPaneChoice('previous')}
-              aria-label="Open previous location"
-              title="Open previous location"
-            >
-              <CornerUpLeft class="h-4 w-4" />
-            </button>
-          </div>
-        {/if}
+          {/snippet}
+        </PaneHeader>
       </div>
     {/if}
 
@@ -324,7 +307,7 @@
         </div>
       </div>
     {:else}
-      <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden pb-(--command-bar-clearance)">
+      <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
         {#if viewModel.chat.session.controller}
           <ChatPanel
             controller={viewModel.chat.session.controller}
@@ -334,6 +317,9 @@
             getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
             targetAnchor={viewModel.chat.session.targetAnchor}
             variant="pane"
+            {composerDock}
+            headerActions={paneButtons}
+            headerSplit={viewModel.showCloseButton}
             selectionActions={viewModel.chat.context.selectionActions}
             onConversationChange={viewModel.chat.session.onConversationChange}
             onOpenCitation={viewModel.chat.context.onOpenCitation}
@@ -398,70 +384,10 @@
     );
   }
 
-  /* SplitPaneButton fans its quick actions left from a w-9 anchor. */
-  .chat-pane-split-slot {
-    width: 11.75rem;
-  }
 
-  .chat-pane-split-slot :global(.split-pane-control) {
-    position: absolute;
-    top: 0;
-    right: 0;
-  }
-
-  @media (max-width: 639px) {
-    .notepad-editor-top-row {
-      padding-top: calc(3.5rem + env(safe-area-inset-top, 0px));
-    }
-
-    .notepad-editor-title-wrap {
-      top: calc(3.5rem + env(safe-area-inset-top, 0px));
-      right: 4rem;
-      left: 4rem;
-    }
-
-    .has-split-actions .notepad-editor-title-wrap {
-      right: 10rem;
-    }
-
-    .notepad-editor-top-row .mobile-pane-top-action {
-      margin-right: 0;
-    }
-
-    .mobile-pane-top-action {
-      margin-right: 4.25rem;
-    }
-
-    .notepad-chat-top-actions {
-      right: 5rem;
-    }
-
-    .notepad-chat-top-actions .mobile-pane-top-action {
-      margin-right: 0;
-    }
-  }
-
-  /* Landscape phones can satisfy width-based desktop breakpoints while still
-     having very little vertical room. Keep their pane chrome mobile-sized. */
+  /* Short landscape windows use the same compact workspace controls. */
   @media (max-height: 559px) and (min-width: 640px) {
-    .notepad-editor-top-row {
-      gap: 0.5rem;
-      padding: 0.75rem 0.75rem 0.5rem;
-    }
-
-    .notepad-editor-title-wrap {
-      top: 0.75rem;
-      right: 3.5rem;
-      left: 3.5rem;
-    }
-
-    .mobile-thought-partner-button {
-      display: inline-flex !important;
-    }
-
-    .chat-pane-split-slot,
-    :global(.split-pane-control) {
-      display: none !important;
-    }
+    .mobile-pane-switch { display: inline-flex !important; }
+    :global(.split-pane-control) { display: none !important; }
   }
 </style>

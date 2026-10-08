@@ -1,4 +1,4 @@
-import { EditorState, RangeSetBuilder } from '@codemirror/state';
+import { EditorSelection, EditorState, RangeSetBuilder } from '@codemirror/state';
 import {
   Decoration,
   EditorView,
@@ -15,6 +15,7 @@ import type {
   EditorController,
   SearchHighlightOptions
 } from './types';
+import { editorScrollEffect } from './editorScroll';
 
 const emptySearchHighlightOptions: SearchHighlightOptions = {
   query: '',
@@ -166,15 +167,17 @@ export function setEditorCurrentSearchHighlightQuery(
 }
 
 export interface FocusEditorSelectionOptions {
+  /** When false, preview the range while keeping focus in the search field. */
+  focus?: boolean;
   /** When false, keep the current viewport (used when dismissing search). */
   scrollIntoView?: boolean;
 }
 
-/** Moves the selection to a document range and takes focus. */
+/** Moves the selection to a document range, optionally taking focus. */
 export function focusEditorSelection(
   controller: EditorController | null,
   selection: { anchor: number; head: number } | null | undefined,
-  { scrollIntoView = true }: FocusEditorSelectionOptions = {}
+  { scrollIntoView = true, focus = true }: FocusEditorSelectionOptions = {}
 ) {
   if (!controller || !selection) {
     return false;
@@ -184,8 +187,8 @@ export function focusEditorSelection(
   const head = clampPos(controller.view.state.doc, selection.head);
   controller.view.dispatch({
     selection: { anchor, head },
-    ...(scrollIntoView ? { scrollIntoView: true } : {})
+    ...(scrollIntoView ? { effects: editorScrollEffect(controller.view, EditorSelection.range(anchor, head)) } : {})
   });
-  controller.view.focus();
+  if (focus) controller.view.focus();
   return true;
 }

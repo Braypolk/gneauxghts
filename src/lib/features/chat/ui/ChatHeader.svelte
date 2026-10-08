@@ -1,4 +1,6 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
+  import PaneHeader from '$lib/ui/PaneHeader.svelte';
   import { Check, FileText, History } from '@lucide/svelte';
   import type {
     ChatController,
@@ -6,12 +8,15 @@
   } from '../controller.svelte';
   import { chatConversationContextKey } from './chatPanelHelpers';
 
-  type ChatMenu = 'history' | 'vault' | 'provider' | 'model' | 'reasoning';
+  type ChatMenu = 'history' | 'vault' | 'model' | 'reasoning';
 
   interface Props {
     controller: ChatController;
     snapshot: ChatControllerState;
     showConversationPicker?: boolean;
+    right?: Snippet;
+    split?: boolean;
+    workspace?: boolean;
     titleDraft?: string;
     /** Note this chat reasons about, shown so the binding is never ambiguous. */
     contextNoteTitle?: string | null;
@@ -24,6 +29,9 @@
     controller,
     snapshot,
     showConversationPicker = true,
+    right,
+    split = false,
+    workspace = false,
     titleDraft = $bindable(''),
     contextNoteTitle = null,
     openMenu,
@@ -101,17 +109,30 @@
   }
 </script>
 
-<header
-  class="chat-panel-header relative flex shrink-0 items-center gap-1 px-4 pt-4 pb-1 sm:px-5"
-  class:chat-panel-header--with-context={Boolean(contextNoteTitle)}
+{#snippet contextSubtitle()}
+  <p
+    class="flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground"
+    title={`Chat context: ${contextNoteTitle}`}
+  >
+    <FileText class="h-3 w-3 shrink-0" aria-hidden="true" />
+    <span class="truncate">{contextNoteTitle}</span>
+  </p>
+{/snippet}
+
+<PaneHeader
+  titleText={titleDraft}
+  titlePlaceholder="New chat"
+  {right}
+  {split}
+  {workspace}
+  subtitle={contextNoteTitle ? contextSubtitle : undefined}
 >
-  <div class="flex min-w-0 items-center gap-0.5">
+  {#snippet left()}
     {#if showConversationPicker}
       <div class="relative" data-chat-menu>
         <button
           type="button"
-          class="chat-icon-button"
-          class:chat-icon-button--active={openMenu === 'history'}
+          class="mobile-touch-target pane-header-action"
           aria-label="Conversations"
           aria-expanded={openMenu === 'history'}
           aria-haspopup="menu"
@@ -146,30 +167,18 @@
         {/if}
       </div>
     {/if}
-  </div>
-
-  <div class="pointer-events-none absolute inset-x-14 top-3 flex flex-col items-center sm:inset-x-16 sm:top-4">
-    <div class="pointer-events-auto w-full max-w-[24rem] min-w-0">
-      <input
-        bind:this={titleInput}
-        bind:value={titleDraft}
-        type="text"
-        class="w-full bg-transparent text-center text-lg font-semibold tracking-tight outline-none placeholder:text-muted-foreground/55 sm:text-2xl"
-        placeholder="New chat"
-        aria-label="Chat title"
-        onfocus={() => (titleFocused = true)}
-        onblur={() => void commitConversationTitle()}
-        onkeydown={onTitleKeydown}
-      />
-    </div>
-    {#if contextNoteTitle}
-      <p
-        class="flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground"
-        title={`Chat context: ${contextNoteTitle}`}
-      >
-        <FileText class="h-3 w-3 shrink-0" aria-hidden="true" />
-        <span class="truncate">{contextNoteTitle}</span>
-      </p>
-    {/if}
-  </div>
-</header>
+  {/snippet}
+  {#snippet title()}
+    <input
+      bind:this={titleInput}
+      bind:value={titleDraft}
+      type="text"
+      size="1"
+      placeholder="New chat"
+      aria-label="Chat title"
+      onfocus={() => (titleFocused = true)}
+      onblur={() => void commitConversationTitle()}
+      onkeydown={onTitleKeydown}
+    />
+  {/snippet}
+</PaneHeader>

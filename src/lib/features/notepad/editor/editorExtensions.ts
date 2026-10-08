@@ -35,6 +35,7 @@ import { createBlockHandleExtension } from './blockHandleExtension';
 import { createViewStateTrackingExtension } from './viewStateTrackingExtension';
 import { createTaskDateExtension } from './taskDateExtension';
 import { createCursorExtension } from './cursorExtension';
+import { editorScrollExtension } from './editorScroll';
 
 const unavailableImagesConfig: ImagesConfig = {
   assetRootPath: null,
@@ -93,6 +94,7 @@ export function createPaneExtensions(
     createTaskDateExtension(),
     dropCursor(),
     createOverlayScrollMargins(editorRoot),
+    editorScrollExtension,
     placeholder('Start typing here.'),
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),

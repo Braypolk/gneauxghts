@@ -20,7 +20,8 @@ export interface NavigationSelectionControllerDeps<
   activatePane: (paneId: TPaneId) => void;
   focusSearchRange: (
     paneId: TPaneId,
-    range: { from: number; to: number }
+    range: { from: number; to: number },
+    options?: { focus?: boolean }
   ) => void;
   saveCursorPosition: () => void;
   getOpenContext: () => OpenContext;
@@ -112,7 +113,8 @@ export function createNavigationSelectionController<
     // position would destroy the cursor the user wants to return to on Escape.
     deps.focusSearchRange(
       paneId,
-      result.currentMatchRange
+      result.currentMatchRange,
+      { focus: false }
     );
   }
 

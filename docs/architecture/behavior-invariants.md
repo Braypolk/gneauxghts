@@ -90,6 +90,23 @@ it reuses the active retained-context pane and reveals its editor. Navigation
 always passes through the editor lifecycle before content synchronization is
 considered complete.
 
+App-directed editor destinations, including current-note and all-notes search,
+share one minimal-scroll policy: leave an in-band result still, otherwise reveal
+it at the nearest edge of the 20–60% height band, subject to chrome and document
+limits. Short wrapped matches fit as a whole; oversized passages reveal their
+start. Measure rendered geometry and retain that boundary while virtualized
+line heights settle. Newer cursor/edit actions supersede queued destinations;
+native typing and saved scroll-offset restoration keep their existing behavior.
+
+In this-note search, Enter previews the active occurrence and subsequent Enter
+presses advance; Shift+Enter moves backward. Both directions wrap through every
+occurrence, including matches sharing a result row. Previews retain search-input
+focus and the original saved cursor. Hovering a result row or moving to it with
+Up/Down previews and scrolls to its first occurrence using the same policy.
+Enter continues from that preview. The current occurrence is yellow; other
+matches use a muted secondary highlight. Clicking a result commits it and takes
+editor focus; Enter in all-notes search still commits the active result.
+
 ### Pane changes retain a usable document route
 
 Changing an editor pane to chat retains its document as chat context and as the
@@ -806,6 +823,65 @@ choices affect only the current conversation or draft.
 Provider and model remain separate choices, supported reasoning effort is
 validated for the selected model, and a model cannot change during an active
 response. Backend-resolved settings are the source of default model identity.
+
+### Search and chat share a dock without replacing their drafts
+
+When a chat pane is open, search and the selected chat composer share the bottom
+dock. Expanding one collapses the other to an icon. Explicit mode selection
+survives clicks in the same conversation or its neighboring note; selecting a
+different chat expands that pane's composer. Switching modes keeps the mounted
+search and composer, preserving the search query, unsent text, attachments, and
+configuration without creating or sending a conversation. Search shortcuts can
+expand hidden search, and returning focus to chat expands its composer.
+The presentation machine has three settled states: editor search, chat search,
+and chat input. Both inputs remain mounted while one main bar morphs between
+them. Chat/search exchange keeps that bar's width constant: the composer compresses
+with its contents hidden, controls fade, the magnifier enters the bar,
+and send becomes the detached chat circle. The reverse uses the same geometry.
+Opening chat splits the magnifier from editor search and finishes with chat input
+expanded. Closing the last chat absorbs the remaining circle and contracts to
+the ordinary editor search width. Each mounted input retains its own text;
+placeholders are shown only for empty inputs.
+Returning to editor search keeps scope-label widths consistent with its focus
+and query state throughout the handoff; idle labels never briefly expand.
+Opening chat retains the outgoing scope-label widths until search has faded
+away, so the icons do not jump sideways as the handoff starts.
+Bar, circles, and controls share one correlated frame clock through
+compression, exchange, and settling. A separate material layer joins the shapes;
+its filter never applies to text or controls. Entry begins at the visible editor
+geometry even when the Related drawer changes the available space. Those
+layout changes also project the adjacent actions on that clock so the dock never
+passes through Forget or New Chat/New Idea. Mounted input contents fade out
+over 100ms as motion starts and stay hidden through the exchange. At 90% geometry
+progress, the selected surface begins a 280ms fade-in that continues after the
+bar settles without restarting. Another morph fades from the displayed opacity;
+reduced motion reveals the selected surface immediately. Glyphs hand off
+sequentially; editor transitions never detour through a chat glyph.
+Circle exchange finishes at compact bar height before the composer unfolds.
+The same background/outline renderer remains mounted in settled and moving
+states. The shared results panel reveals upward from its existing base over
+350ms and collapses over 275ms without moving or rewrapping its text. Its reveal
+waits for dock geometry to settle; its collapse retains the displayed position
+while the dock switches back to chat. Input text fades do not hide the results
+animation. Action-label handoffs do not change the action's current pane semantics. Rapid
+reversals begin at the current pose, obsolete frames are ignored, and resize or
+reduced motion settles the current target immediately. Programmatic input focus
+does not scroll the workspace, and the dock's bottom baseline stays anchored.
+During search/chat exchange the main bar and foreground glyph paths are monotonic;
+both background circle shells stay full-size and opaque. Editor/chat paths use
+measured endpoints rather than recomputing against the moving flex width, so the
+first painted frame retains the displayed origin and width-cap changes do not hitch.
+Editor/chat edges use a shared cubic Bézier easing for the pane and dock: gentle
+departure and arrival with a faster middle. Input switching retains its pinch
+pacing, and the selected curve follows the remaining clock when interrupted.
+Content scrolls beneath the shared dock fade. With a chat open, end padding
+reserves the measured expanded composer height in both chat input and search.
+Switching between those modes preserves message positions throughout the morph
+and after settling, including at the bottom and when reading older messages.
+Draft growth and shrinkage update that clearance; a growing draft keeps the
+latest message visible when the chat is following without pulling a user away
+from older messages. Editor/chat morphs hold maximum reading clearance until
+settling instead of moving the scrollbar every frame.
 
 ## Proposals
 

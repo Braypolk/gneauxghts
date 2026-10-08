@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from '@tauri-apps/api/core';
   import type { ImageSearchItem } from '$lib/types/semantic';
@@ -161,6 +162,36 @@
   let paneOrder = $derived(workspaceStore.paneOrder);
   let activePaneId = $derived(workspaceStore.activePaneId);
   let collapsingPaneId = $derived(workspaceStore.collapsingPaneId);
+
+  // The dock owns presentation only; each mounted chat keeps its composer state.
+  let dockMode = $state<'search' | 'chat'>('search');
+  let chatDockSlot = $state<HTMLDivElement | null>(null);
+  let preferredDockChatPaneId = $state<PaneId | null>(null);
+  const dockChatPaneIds = $derived(paneOrder.filter(id =>
+    id !== collapsingPaneId && getPaneKind(id) === 'chat'));
+  const dockChatPaneId = $derived(
+    preferredDockChatPaneId && dockChatPaneIds.includes(preferredDockChatPaneId)
+      ? preferredDockChatPaneId : dockChatPaneIds[0] ?? null
+  );
+  $effect.pre(() => {
+    const available = dockChatPaneIds;
+    const activeChat = available.includes(activePaneId) ? activePaneId : null;
+    untrack(() => {
+      if (activeChat && activeChat !== preferredDockChatPaneId) {
+        preferredDockChatPaneId = activeChat;
+        dockMode = 'chat';
+      } else if (available.length === 0) {
+        preferredDockChatPaneId = null;
+        dockMode = 'search';
+      }
+    });
+  });
+  function expandDockChat(paneId: PaneId) {
+    if (!workspaceStore.hasPane(paneId) || getPaneKind(paneId) !== 'chat') return;
+    preferredDockChatPaneId = paneId;
+    dockMode = 'chat';
+    commands.activatePane(paneId);
+  }
 
   // Pane runtimes own pane-local state (refs, editor controller, readiness, slash menu, wikilink)
   const initialPaneId = workspaceStore.activePaneId;
@@ -839,7 +870,8 @@
   });
 
   $effect.pre(() => {
-    const target = paneOrder.filter(id => id !== collapsingPaneId).join(",");
+    const target = paneOrder.filter(id => id !== collapsingPaneId)
+      .map(id => `${id}:${getPaneKind(id)}`).join(",");
     const ready = notepadRuntimeState.hasLoadedInitialSession;
     untrack(() => paneLayoutMotion.update(target, ready));
   });
@@ -1162,8 +1194,8 @@
       resetPaneCommand: workspaceStore.resetPaneCommand,
       getNavigationPaneId,
       activatePane: activatePaneSession,
-      focusSearchRange: (paneId, range) => {
-        editorCapabilities.get(paneId)?.focusSearchRange(range);
+      focusSearchRange: (paneId, range, options) => {
+        editorCapabilities.get(paneId)?.focusSearchRange(range, options);
       },
       saveCursorPosition: documents.saveCursorPositionForDocument,
       getOpenContext,
@@ -1512,6 +1544,11 @@
             pane={getPaneRuntime(paneId)}
             viewModel={getPaneViewModel(paneId)}
             actions={paneActions}
+            composerDock={{
+              slot: paneId === dockChatPaneId ? chatDockSlot : null,
+              expanded: paneId === dockChatPaneId && dockMode === 'chat',
+              onExpand: () => expandDockChat(paneId),
+            }}
             bind:paneCommandFocusRoot={paneCommandFocusEl}
           />
         {/each}
@@ -1519,8 +1556,16 @@
 
       <div
         class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height)"
+        use:workspaceDockInset
       >
         <NotepadCommandBar
+          chatAvailable={dockChatPaneId !== null}
+          {dockMode}
+          bind:chatSlot={chatDockSlot}
+          onDockModeChange={(mode) => (dockMode = mode)}
+          onExpandChat={() => {
+            if (dockChatPaneId) chatCoordinator.focusComposer(dockChatPaneId);
+          }}
           forget={{
             canUnforget,
             canForget: canForgetActiveItem,
@@ -1734,7 +1779,7 @@
     --editor-top-breathing-room: 1.1rem;
     /* Vertical room the bottom command bar occupies over a pane. */
     --command-bar-clearance: calc(
-      5rem + env(safe-area-inset-bottom, 0px) +
+      var(--workspace-dock-height, 5rem) +
         var(--keyboard-inset-height, 0px)
     );
     --editor-chrome-clearance: calc(var(--command-bar-clearance) + 2rem);
@@ -1746,8 +1791,7 @@
     --related-drawer-gap: 0.5rem;
     --related-drawer-peek-width: 1.75rem;
     --related-bottom-offset: calc(
-      6.1rem + env(safe-area-inset-bottom, 0px) +
-        var(--keyboard-inset-height, 0px)
+      var(--command-bar-clearance) + 1.1rem
     );
     --crepe-color-background: var(--card);
     --crepe-color-on-background: var(--foreground);
@@ -1808,7 +1852,7 @@
       --editor-overlay-inset: 4rem;
       --editor-top-breathing-room: 1.3rem;
       --command-bar-clearance: calc(
-        6rem + env(safe-area-inset-bottom, 0px) +
+        var(--workspace-dock-height, 6rem) +
           var(--keyboard-inset-height, 0px)
       );
     }

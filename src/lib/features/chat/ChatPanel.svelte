@@ -1,5 +1,13 @@
+<script module lang="ts">
+  export interface ComposerDock {
+    slot: HTMLElement | null;
+    expanded: boolean;
+    onExpand: () => void;
+  }
+</script>
+
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, type Snippet } from 'svelte';
   import type {
     ChatController,
     ChatControllerState
@@ -21,6 +29,8 @@
   import ChatMessageList from './ui/ChatMessageList.svelte';
   import ChatProposalRegion from './ui/ChatProposalRegion.svelte';
   import './ui/chatPanel.css';
+  import { mountInSlot } from '$lib/ui/mountInSlot';
+
 
   interface Props {
     controller: ChatController;
@@ -28,6 +38,9 @@
     autoInitialize?: boolean;
     variant?: 'pane' | 'focused' | 'inline';
     showConversationPicker?: boolean;
+    headerActions?: Snippet;
+    headerSplit?: boolean;
+    composerDock?: ComposerDock;
     selectionActions?: ChatSelectionActions;
     onConversationChange?: (conversationId: string | null) => void;
     onSurfaceHandleChange?: (handle: ChatSurfaceHandle | null) => void;
@@ -62,6 +75,9 @@
     autoInitialize = true,
     variant = 'pane',
     showConversationPicker = true,
+    headerActions,
+    headerSplit = false,
+    composerDock,
     selectionActions = {},
     onConversationChange,
     onSurfaceHandleChange,
@@ -88,7 +104,7 @@
   let previewAttachment = $state<ChatAttachmentInput | null>(null);
   let composerElement = $state<HTMLTextAreaElement | null>(null);
   let reportedConversationId: string | null | undefined;
-  let openMenu = $state<'history' | 'vault' | 'provider' | 'model' | 'reasoning' | null>(null);
+  let openMenu = $state<'history' | 'vault' | 'model' | 'reasoning' | null>(null);
 
   const configurationReady = $derived(
     snapshot.isInitialized &&
@@ -107,6 +123,15 @@
   );
 
   $effect(() => {
+    if (composerDock && !composerDock.expanded && openMenu !== 'history') openMenu = null;
+  });
+
+  function focusChatComposer() {
+    composerDock?.onExpand();
+    requestAnimationFrame(() => composerElement?.focus({ preventScroll: true }));
+  }
+
+  $effect(() => {
     const notify = onSurfaceHandleChange;
     const element = composerElement;
     if (!notify) return;
@@ -116,7 +141,7 @@
     }
     const handle: ChatSurfaceHandle = {
       focusComposer() {
-        element.focus({ preventScroll: true });
+        focusChatComposer();
         return true;
       }
     };
@@ -173,18 +198,22 @@
 </script>
 
 <section
-  class={`chat-panel chat-panel--${variant} flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden`}
+  class={`chat-panel pane-header-host chat-panel--${variant} relative flex h-full min-h-0 min-w-0 w-full max-w-full flex-col overflow-hidden`}
+  class:chat-panel--docked={Boolean(composerDock)}
   aria-label="Thought partner chat"
 >
   <ChatHeader
     {controller}
     {snapshot}
     {showConversationPicker}
+    right={headerActions}
+    split={headerSplit}
+    workspace={variant === 'pane'}
     bind:titleDraft
     contextNoteTitle={contextNote?.noteTitle ?? null}
     {openMenu}
     onOpenMenu={(menu) => (openMenu = menu)}
-    onFocusComposer={() => composerElement?.focus()}
+    onFocusComposer={focusChatComposer}
   />
 
   <ChatMessageList
@@ -220,24 +249,35 @@
       {onReviewAgentProposal}
     />
 
-    <ChatComposer
-      {controller}
-      {snapshot}
-      {variant}
-      {placeholder}
-      {titleDraft}
-      {draftSlot}
-      {contextNote}
-      {getActiveNoteSnapshot}
-      {configurationReady}
-      {openMenu}
-      {actionError}
-      bind:composerElement
-      onOpenMenu={(menu) => (openMenu = menu)}
-      onActionError={(message) => (actionError = message)}
-      onDismissError={dismissError}
-      onPreviewAttachment={(attachment) => (previewAttachment = attachment)}
-    />
+    <div
+      class="chat-composer-slot"
+      class:chat-composer-slot--docked={Boolean(composerDock)}
+      hidden={Boolean(composerDock && !composerDock.slot)}
+      use:mountInSlot={composerDock?.slot}
+      onpointerdown={() => composerDock?.onExpand()}
+      onfocusin={() => composerDock?.onExpand()}
+      role="group"
+      aria-label="Chat input"
+    >
+      <ChatComposer
+        {controller}
+        {snapshot}
+        {variant}
+        {placeholder}
+        {titleDraft}
+        {draftSlot}
+        {contextNote}
+        {getActiveNoteSnapshot}
+        {configurationReady}
+        {openMenu}
+        {actionError}
+        bind:composerElement
+        onOpenMenu={(menu) => (openMenu = menu)}
+        onActionError={(message) => (actionError = message)}
+        onDismissError={dismissError}
+        onPreviewAttachment={(attachment) => (previewAttachment = attachment)}
+      />
+    </div>
   </div>
 </section>
 

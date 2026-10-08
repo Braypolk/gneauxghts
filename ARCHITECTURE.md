@@ -556,6 +556,38 @@ controller owns first-send draft creation and exposes its promotion identity;
 the composer retains text, attachments, draft persistence, and the editor save
 barrier without coordinating create-then-send timing.
 
+The notepad's shared input dock owns only the expanded search/chat mode and
+which pane supplies its chat slot. Search stays mounted in its existing owner;
+`mountInSlot` places the selected pane's mounted composer in the dock without
+copying its text, attachments, configuration, or draft persistence into workspace
+state. `workspaceDockMachine` owns the presentation transition between editor
+search, chat search, and chat input. One correlated frame clock drives the bar,
+circles, joining material, and controls; input contents reveal near settling and
+finish fading after motion completes. The dock adapter measures mounted
+inputs and blends coordinate spaces, including the adjacent actions, when
+Related layout changes during a morph. Pane layout changes accompanying an
+editor/chat edge sample the dock's remaining clock, including its shared
+`cubic-bezier(0.65, 0, 0.35, 1)` easing, and publish the dock's final
+flex bounds in a correlated presentation event after installing their effects.
+The dock interpolates its displayed origin to that endpoint directly, avoiding
+temporary destination measurements and width-cap discontinuities, and balances
+Related against the displayed margins. Search/chat exchange anchors full-size
+opaque background circles while the foreground send control morphs independently.
+One SVG group draws the joined background and outline, avoiding separate filtered
+HTML backing layers. Ordinary editor expansion moves the absorbed circles with
+that rectangle on the same duration.
+Pane kind changes participate alongside membership changes. Interrupted requests start from the
+current pose. Mounted input contents fade out over 100ms as a morph starts.
+The selected surface begins its 280ms reveal at 90% geometry progress, keeping
+the exchange clear and finishing after the bar settles. Another morph fades
+from the currently displayed opacity; reduced motion skips the fades. Glyphs
+hand off sequentially; editor transitions skip the chat-search glyph.
+The dock reserves the measured expanded composer height in both chat input and
+chat search, so switching modes preserves the reading surface's scroll extent.
+Draft growth and shrinkage update that clearance; editor/chat morphs reserve
+their maximum clearance until settling.
+The reading surfaces extend behind its shared fade rather than clipping above it.
+
 ## Agent runtime
 
 `agent_run_coordinator.rs` is the chat-to-runtime handoff.

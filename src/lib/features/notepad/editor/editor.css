@@ -198,22 +198,31 @@
 
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch {
   border-radius: 0.28rem;
+  background: color-mix(in oklab, var(--muted-foreground) 18%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in oklab, var(--muted-foreground) 16%, transparent);
+  padding-inline: 1px;
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch-selected {
   background: color-mix(in oklab, oklch(0.86 0.16 84) 68%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, oklch(0.58 0.16 70) 34%, transparent),
     0 0 0 1px color-mix(in oklab, oklch(0.82 0.18 82) 18%, transparent);
-  padding-inline: 1px;
 }
 
-.dark .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch {
+.dark .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch-selected {
   background: color-mix(in oklab, oklch(0.78 0.18 76) 62%, transparent);
   box-shadow:
     inset 0 0 0 1px color-mix(in oklab, oklch(0.93 0.14 91) 28%, transparent),
     0 0 0 1px color-mix(in oklab, oklch(0.88 0.18 84) 18%, transparent);
 }
 
-.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .cm-searchMatch.cm-gn-selection-overlap {
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn.cm-focused .cm-searchMatch.cm-gn-selection-overlap {
   background: transparent;
+  box-shadow: inset 0 -2px 0 color-mix(in oklab, var(--muted-foreground) 40%, transparent);
+}
+
+.notepad-editor-shell .gn-editor-root .cm-editor.cm-gn.cm-focused .cm-searchMatch-selected.cm-gn-selection-overlap {
   box-shadow: inset 0 -2px 0 color-mix(in oklab, oklch(0.72 0.16 80) 74%, transparent);
 }
 

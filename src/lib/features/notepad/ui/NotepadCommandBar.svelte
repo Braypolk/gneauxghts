@@ -1,4 +1,7 @@
 <script lang="ts">
+  import WorkspaceInputDock from './WorkspaceInputDock.svelte';
+  import { searchResultsReveal } from './searchResultsReveal';
+  import { dockRamp, type DockActionPresentation } from './workspaceDockMachine';
   import { onDestroy, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { rankMediaResults } from '../search/mediaRanking';
@@ -11,7 +14,6 @@
     MessagesSquare,
     Pin,
     PinOff,
-    ImagePlus,
   } from '@lucide/svelte';
   import {
     appSettings,
@@ -40,12 +42,22 @@
     forget: NotepadCommandBarForgetProps;
     remember: NotepadCommandBarRememberProps;
     search: NotepadCommandBarSearchProps;
+    chatAvailable?: boolean;
+    dockMode?: 'search' | 'chat';
+    chatSlot?: HTMLDivElement | null;
+    onDockModeChange?: (mode: 'search' | 'chat') => void;
+    onExpandChat?: () => void;
   }
 
   let {
     forget,
     remember,
-    search
+    search,
+    chatAvailable = false,
+    dockMode = 'search',
+    chatSlot = $bindable(null),
+    onDockModeChange,
+    onExpandChat
   }: Props = $props();
 
   const canUnforget = $derived(forget.canUnforget);
@@ -63,7 +75,6 @@
   const searchMode = $derived(search.searchMode);
   const imageResults = $derived(search.imageResults ?? []);
   const imageQueryUrl = $derived(search.imageQueryUrl ?? null);
-  let queryImageInput = $state<HTMLInputElement | null>(null);
   const thumbnails = createImageAssetLoader(key => {
     const [fileName, assetHash] = JSON.parse(key) as [string, string];
     return invoke<string>('read_image_search_thumbnail', { fileName, assetHash });
@@ -81,6 +92,7 @@
   const recentLocations = $derived(search.recentLocations);
   const isSearching = $derived(search.isSearching);
   const onSearchInput = $derived(search.onSearchInput);
+  const onSearchClear = $derived(search.onSearchClear);
   const onSearchModeChange = $derived(search.onSearchModeChange);
   const onMatchCaseChange = $derived(search.onMatchCaseChange);
   const onMatchWholeWordChange = $derived(search.onMatchWholeWordChange);
@@ -103,7 +115,6 @@
     {
       id: 'current',
       label: 'This note',
-      shortcutId: 'searchCurrent',
       ariaLabel: 'Search this note only',
       title: 'Search this note only'
     },
@@ -111,7 +122,6 @@
       id: 'all',
       label: 'All notes',
       shortLabel: 'All notes',
-      shortcutId: 'searchAll',
       ariaLabel: 'Search all notes',
       title: 'Search all notes',
       tone: 'all'
@@ -119,6 +129,25 @@
   ] satisfies SearchChoice[];
 
   let searchBar = $state<SearchBarHandle | null>(null);
+  let actionPresentation = $state<DockActionPresentation>({ running: false, progress: 1 });
+  let previousRememberLabel = $state(untrack(() => rememberLabel));
+  const outgoingRememberLabel = $derived(previousRememberLabel !== rememberLabel ? previousRememberLabel : null);
+  const rememberLabelPrefix = $derived(rememberLabel.startsWith('New ')
+    && (!outgoingRememberLabel || outgoingRememberLabel.startsWith('New ')) ? 'New ' : '');
+  $effect(() => {
+    const running = actionPresentation.running;
+    untrack(() => {
+      if (!running) previousRememberLabel = rememberLabel;
+    });
+  });
+  $effect(() => {
+    const label = rememberLabel;
+    // A pane-owner change can update the label without requesting a morph.
+    // Wait for this render's dock request before accepting it as settled.
+    void tick().then(() => {
+      if (!actionPresentation.running) previousRememberLabel = label;
+    });
+  });
   let searchResultsViewport = $state<HTMLDivElement | null>(null);
   let forgetButton = $state<HTMLButtonElement | null>(null);
   let forgetCancelButton = $state<HTMLButtonElement | null>(null);
@@ -144,8 +173,13 @@
 
   const commandBarState = createNotepadCommandBarState({
     getSearchQuery: () => imageQueryUrl ? "image query" : searchQuery,
+    getSearchMode: () => searchMode,
     getSearchResults: () => visibleSearchResults,
     getSearchNavigationResults: () => (searchMode === 'current' ? searchResults : visibleSearchResults),
+    getSearchResultRowIndex: (result) => visibleSearchResults.findIndex(item =>
+      searchMode === 'current'
+        ? getCurrentSearchResultKey(item) === getCurrentSearchResultKey(result)
+        : item === result),
     getPinnedNotes: () => pinnedNotes,
     getRecentLocations: () => recentLocations,
     getVisibleItems: () => visibleItems,
@@ -182,8 +216,15 @@
         : [entry.kind, entry.item.notePath, entry.item.sectionLabel, entry.item.matchText]))
   );
 
+  const currentSearchRangesFingerprint = $derived(searchMode === 'current'
+    ? JSON.stringify(searchResults.map(item => item.currentMatchRange)) : '');
+
   $effect(() => {
     visibleItemsFingerprint;
+    searchMode;
+    searchQuery;
+    // Occurrences may change while the grouped row text stays the same.
+    currentSearchRangesFingerprint;
     commandBarState.resetActiveIndex();
   });
 
@@ -230,7 +271,12 @@
     commandBarState.bindSearchResultsViewport(searchResultsViewport);
   });
 
+  $effect(() => {
+    if (chatAvailable && dockMode === 'chat') searchBar?.closeSearch();
+  });
+
   function handleSharedSearchOpen() {
+    onDockModeChange?.('search');
     commandBarState.resetActiveIndex();
     onSearchOpen();
   }
@@ -266,11 +312,11 @@
   }
 
   function getSearchResultTitleClass() {
-    return 'text-sm font-semibold text-popover-foreground';
+    return 'block truncate text-sm font-semibold text-popover-foreground';
   }
 
   function getSearchResultHeaderClass() {
-    return 'flex items-start justify-between gap-3';
+    return 'flex w-full min-w-0 items-start justify-between gap-3';
   }
 
   function getExcerptClass() {
@@ -341,14 +387,18 @@
   function dedupeCurrentSearchResults(results: SearchItem[]) {
     const seen = new Set<string>();
     return results.filter((item) => {
-      const [previewText] = getCurrentSearchPreviewCrop(item);
-      const key = `${item.sectionLabel}|${previewText}`;
+      const key = getCurrentSearchResultKey(item);
       if (seen.has(key)) {
         return false;
       }
       seen.add(key);
       return true;
     });
+  }
+
+  function getCurrentSearchResultKey(item: SearchItem) {
+    const [previewText] = getCurrentSearchPreviewCrop(item);
+    return `${item.sectionLabel}|${previewText}`;
   }
 
   function getCurrentSearchPreviewCrop(item: SearchItem) {
@@ -439,7 +489,8 @@
     class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
   ></div>
-  <div class="search-dock-row notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 sm:gap-4 sm:px-6">
+  <div class="search-dock-row notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 sm:gap-4 sm:px-6"
+    class:notepad-command-bar-content--chat={chatAvailable}>
     {#if canUnforget}
       <button
         type="button"
@@ -540,174 +591,177 @@
     {/if}
 
     {#snippet searchPanel()}
-      <div
-        class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
-        data-search-navigation-mode={commandBarState.searchNavigationMode}
-      >
-        {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
-        {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
-          <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
-        {:else if imageQueryUrl && visibleItems.length === 0}
-          {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">No matching images or text passages yet.</p>{/if}
-        {:else if !hasVisibleSearchContent}
-          <div class="px-4 py-3 text-sm text-muted-foreground">
-            {#if searchQuery.trim() === ''}
-              Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
-            {:else}
-              No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
-            {/if}
-          </div>
-        {:else if searchQuery.trim() === '' && !imageQueryUrl}
-          <div
-            bind:this={searchResultsViewport}
-            class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
-          >
-            {#if pinnedNotes.length > 0}
-              <section
-                class={`min-w-0 flex-1 lg:order-2 ${
-                  recentLocations.length > 0
-                    ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
-                    : ''
-                }`}
-              >
-                <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Pinned
-                </div>
-                <div class={getRecentNotesViewportClass()}>
-                  {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
-                    <div class="group flex items-center gap-1">
-                      <button
-                        type="button"
-                        data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
-                        class={getRecentNoteItemClass()}
-                        class:bg-accent={index === commandBarState.activeIndex}
-                        aria-label={`Open pinned note: ${item.fileName}`}
-                        title={item.fileName}
-                        onmousedown={(event) => event.preventDefault()}
-                        onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                        onclick={() => commandBarState.selectItem({ kind: 'pinned', item })}
-                      >
-                        <Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
-                      </button>
-                      <button
-                        type="button"
-                        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-70 transition hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-                        aria-label={`Unpin ${item.fileName}`}
-                        title={`Unpin ${item.fileName}`}
-                        data-search-focus-independent
-                        onmousedown={(event) => event.preventDefault()}
-                        onclick={() => item.noteId && void onSetNotePinned(item.noteId, false)}
-                      >
-                        <PinOff class="h-3.5 w-3.5" />
-                      </button>
-                    </div>
-                    {/each}
-                </div>
-              </section>
-            {/if}
-
-            {#if recentLocations.length > 0}
-              <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
-                <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                  Recent
-                </div>
-                <div class={getRecentNotesViewportClass()}>
-                  {#each recentLocations as item, index (locationHistoryKey(item, index))}
-                    {@const globalIndex = pinnedNotes.length + index}
-                    <button
-                      type="button"
-                      data-search-result-active={globalIndex === commandBarState.activeIndex ? 'true' : 'false'}
-                      class={getRecentNoteItemClass()}
-                      class:bg-accent={globalIndex === commandBarState.activeIndex}
-                      aria-label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
-                      title={item.label}
-                      onmousedown={(event) => event.preventDefault()}
-                      onpointerenter={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
-                      onclick={() => commandBarState.selectItem({ kind: 'location', item })}
-                    >
-                      {#if item.location.kind === 'chat'}
-                        <MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      {/if}
-                      <span class="truncate text-sm font-semibold text-popover-foreground">{item.label}</span>
-                    </button>
-                  {/each}
-                </div>
-              </section>
-            {/if}
-          </div>
-        {:else}
-          <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
-            {#each visibleItems as entry, index (index)}
-              {#if entry.kind === 'image'}
-                <ImageSearchResult item={entry.item} load={loadThumbnail}
-                  active={index === commandBarState.activeIndex}
-                  onPointerEnter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                  onSelect={() => commandBarState.selectItem(entry)} />
-              {:else if entry.kind === 'search'}
-              {@const item = entry.item}
-              <button
-                type="button"
-                data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
-                class={getSearchResultItemClass(searchMode)}
-                class:bg-accent={index === commandBarState.activeIndex}
-                aria-label={`Open search result: ${searchMode !== 'current' ? item.fileName : item.sectionLabel}`}
-                title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
-                onmousedown={(event) => event.preventDefault()}
-                onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                onclick={() => commandBarState.selectItem({ kind: 'search', item })}
-              >
-                {#if searchMode === 'current'}
-                  <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
-                    {#each getCurrentSearchPreviewSegments(item) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
-                      {#if segment.highlighted}
-                        <mark class="rounded-[0.3rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
-                      {:else}
-                        <span>{segment.text}</span>
-                      {/if}
-                    {/each}
-                  </p>
-                  <span class="min-w-0 max-w-36 truncate text-right text-xs font-semibold text-popover-foreground">
-                    {getCurrentSearchLocationLabel(item)}
-                  </span>
-                {:else}
-                  <div class={getSearchResultHeaderClass()}>
-                    <div class="min-w-0">
-                      <span class={getSearchResultTitleClass()}>
-                        {item.fileName}
-                      </span>
-                      {#if item.reasonLabels && item.reasonLabels.length > 0}
-                        <div class="mt-1 flex flex-wrap gap-1.5">
-                          {#each item.reasonLabels as label, labelIndex (`${label}-${labelIndex}`)}
-                            <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                              {label}
-                            </span>
-                          {/each}
-                        </div>
-                      {/if}
-                    </div>
-                    {#if item.sectionLabel !== 'Title'}
-                      <span class="shrink-0 text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
-                        {item.sectionLabel}
-                      </span>
-                    {/if}
-                  </div>
-                  <p class={getExcerptClass()}>
-                    {#each buildHighlightedSegments(item.excerpt, item.highlightRanges) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
-                      {#if segment.highlighted}
-                        <mark class="rounded-[0.35rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
-                      {:else}
-                        <span>{segment.text}</span>
-                      {/if}
-                    {/each}
-                  </p>
-                {/if}
-              </button>
+      {#key isSearching}
+        <div
+          class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
+          data-search-navigation-mode={commandBarState.searchNavigationMode}
+          transition:searchResultsReveal|global
+        >
+          {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
+          {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
+            <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
+          {:else if imageQueryUrl && visibleItems.length === 0}
+            {#if !isSearching}<p class="px-3 py-2 text-sm text-muted-foreground">No matching images or text passages yet.</p>{/if}
+          {:else if !hasVisibleSearchContent}
+            <div class="px-4 py-3 text-sm text-muted-foreground">
+              {#if searchQuery.trim() === ''}
+                Start typing to search {searchMode === 'current' ? 'this note' : 'all notes'}.
+              {:else}
+                No matches in {searchMode === 'current' ? 'this note' : 'all notes'}. Try {searchMode === 'current' ? 'All notes' : 'This note'}.
               {/if}
-            {/each}
-          </div>
-        {/if}
-      </div>
+            </div>
+          {:else if searchQuery.trim() === '' && !imageQueryUrl}
+            <div
+              bind:this={searchResultsViewport}
+              class="flex flex-col gap-3 lg:flex-row lg:items-stretch lg:gap-0"
+            >
+              {#if pinnedNotes.length > 0}
+                <section
+                  class={`min-w-0 flex-1 lg:order-2 ${
+                    recentLocations.length > 0
+                      ? 'border-b border-border/70 pb-2 lg:border-b-0 lg:border-l lg:border-border/70 lg:pb-0 lg:pl-3'
+                      : ''
+                  }`}
+                >
+                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    Pinned
+                  </div>
+                  <div class={getRecentNotesViewportClass()}>
+                    {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
+                      <div class="group flex items-center gap-1">
+                        <button
+                          type="button"
+                          data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
+                          class={getRecentNoteItemClass()}
+                          class:bg-accent={index === commandBarState.activeIndex}
+                          aria-label={`Open pinned note: ${item.fileName}`}
+                          title={item.fileName}
+                          onmousedown={(event) => event.preventDefault()}
+                          onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
+                          onclick={() => commandBarState.selectItem({ kind: 'pinned', item })}
+                        >
+                          <Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
+                        </button>
+                        <button
+                          type="button"
+                          class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-70 transition hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+                          aria-label={`Unpin ${item.fileName}`}
+                          title={`Unpin ${item.fileName}`}
+                          data-search-focus-independent
+                          onmousedown={(event) => event.preventDefault()}
+                          onclick={() => item.noteId && void onSetNotePinned(item.noteId, false)}
+                        >
+                          <PinOff class="h-3.5 w-3.5" />
+                        </button>
+                      </div>
+                      {/each}
+                  </div>
+                </section>
+              {/if}
+
+              {#if recentLocations.length > 0}
+                <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
+                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+                    Recent
+                  </div>
+                  <div class={getRecentNotesViewportClass()}>
+                    {#each recentLocations as item, index (locationHistoryKey(item, index))}
+                      {@const globalIndex = pinnedNotes.length + index}
+                      <button
+                        type="button"
+                        data-search-result-active={globalIndex === commandBarState.activeIndex ? 'true' : 'false'}
+                        class={getRecentNoteItemClass()}
+                        class:bg-accent={globalIndex === commandBarState.activeIndex}
+                        aria-label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
+                        title={item.label}
+                        onmousedown={(event) => event.preventDefault()}
+                        onpointerenter={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
+                        onclick={() => commandBarState.selectItem({ kind: 'location', item })}
+                      >
+                        {#if item.location.kind === 'chat'}
+                          <MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        {/if}
+                        <span class="truncate text-sm font-semibold text-popover-foreground">{item.label}</span>
+                      </button>
+                    {/each}
+                  </div>
+                </section>
+              {/if}
+            </div>
+          {:else}
+            <div bind:this={searchResultsViewport} class="max-h-80 overflow-y-auto">
+              {#each visibleItems as entry, index (index)}
+                {#if entry.kind === 'image'}
+                  <ImageSearchResult item={entry.item} load={loadThumbnail}
+                    active={index === commandBarState.activeIndex}
+                    onPointerEnter={() => commandBarState.handleSearchItemPointerEnter(index)}
+                    onSelect={() => commandBarState.selectItem(entry)} />
+                {:else if entry.kind === 'search'}
+                {@const item = entry.item}
+                <button
+                  type="button"
+                  data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
+                  class={getSearchResultItemClass(searchMode)}
+                  class:bg-accent={index === commandBarState.activeIndex}
+                  aria-label={`Open search result: ${searchMode !== 'current' ? item.fileName : item.sectionLabel}`}
+                  title={searchMode !== 'current' ? item.fileName : item.sectionLabel}
+                  onmousedown={(event) => event.preventDefault()}
+                  onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
+                  onclick={() => commandBarState.selectItem({ kind: 'search', item })}
+                >
+                  {#if searchMode === 'current'}
+                    <p class="min-w-0 truncate text-sm leading-5 text-muted-foreground">
+                      {#each getCurrentSearchPreviewSegments(item) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
+                        {#if segment.highlighted}
+                          <mark class="rounded-[0.3rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
+                        {:else}
+                          <span>{segment.text}</span>
+                        {/if}
+                      {/each}
+                    </p>
+                    <span class="min-w-0 max-w-36 truncate text-right text-xs font-semibold text-popover-foreground">
+                      {getCurrentSearchLocationLabel(item)}
+                    </span>
+                  {:else}
+                    <div class={getSearchResultHeaderClass()}>
+                      <div class="min-w-0 flex-1">
+                        <span class={getSearchResultTitleClass()}>
+                          {item.fileName}
+                        </span>
+                        {#if item.reasonLabels && item.reasonLabels.length > 0}
+                          <div class="mt-1 flex flex-wrap gap-1.5">
+                            {#each item.reasonLabels as label, labelIndex (`${label}-${labelIndex}`)}
+                              <span class="rounded-full bg-muted px-2 py-0.5 text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">
+                                {label}
+                              </span>
+                            {/each}
+                          </div>
+                        {/if}
+                      </div>
+                      {#if item.sectionLabel !== 'Title'}
+                        <span class="min-w-0 max-w-[45%] truncate text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground" title={item.sectionLabel}>
+                          {item.sectionLabel}
+                        </span>
+                      {/if}
+                    </div>
+                    <p class={getExcerptClass()}>
+                      {#each buildHighlightedSegments(item.excerpt, item.highlightRanges) as segment, segmentIndex (`${segment.text}-${segment.highlighted}-${segmentIndex}`)}
+                        {#if segment.highlighted}
+                          <mark class="rounded-[0.35rem] bg-accent px-[0.1rem] text-foreground">{segment.text}</mark>
+                        {:else}
+                          <span>{segment.text}</span>
+                        {/if}
+                      {/each}
+                    </p>
+                  {/if}
+                </button>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
+      {/key}
     {/snippet}
 
     {#snippet imageQueryPreview()}
@@ -715,44 +769,50 @@
         class="h-8 w-10 shrink-0 rounded-md border border-border/60 bg-card object-cover" />
     {/snippet}
 
-    <SearchBar
-      class="notepad-search-bar"
-      bind:this={searchBar}
-      value={searchQuery}
-      hasQuery={imageQueryUrl !== null}
-      placeholder={imageQueryUrl ? 'Add text to refine this image' : searchMode === 'current' ? 'Search this note' : 'Search all notes'}
-      ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
-      testId="note-search-input"
-      matchCase={matchCase}
-      matchWholeWord={matchWholeWord}
-      showMatchOptions={true}
-      scopeId={searchMode}
-      scopeOptions={searchScopeOptions}
-      canNavigatePrevious={searchMode === 'current' && canNavigateCurrentSearchResults}
-      canNavigateNext={searchMode === 'current' && canNavigateCurrentSearchResults}
-      blurOnEscape={false}
-      shortcut={{ enabled: true, defaultScopeId: 'current', allScopeId: 'all' }}
-      onValueChange={onSearchInput}
-      onClear={search.onSearchClear}
-      onOpen={handleSharedSearchOpen}
-      onScopeChange={handleSharedSearchModeChange}
-      onMatchCaseChange={onMatchCaseChange}
-      onMatchWholeWordChange={onMatchWholeWordChange}
-      onNavigate={(delta) => commandBarState.navigateSearchResult(delta)}
-      onInputKeydown={commandBarState.handleSearchKeydown}
-      onImageFile={searchMode === 'all' ? chooseImage : undefined}
-      queryPreview={imageQueryUrl ? imageQueryPreview : undefined}
-      panel={searchPanel}
+    <WorkspaceInputDock
+      hasChat={chatAvailable}
+      mode={dockMode}
+      bind:chatSlot
+      bind:actionPresentation
+      onSearch={() => searchBar?.focusSearch()}
+      onChat={() => onExpandChat?.()}
     >
-      {#snippet children()}
-        {#if searchMode === 'all' && search.onQueryImage}
-          <input bind:this={queryImageInput} type="file" accept="image/png,image/jpeg,image/webp" hidden
-            onchange={(event) => { const file = event.currentTarget.files?.[0]; if (file) chooseImage(file); event.currentTarget.value = ''; }} />
-          <button type="button" aria-label="Search with an image" title="Choose, paste, or drop an image to search"
-            class="inline-flex h-8 w-8 items-center justify-center rounded-full hover:bg-accent" onclick={() => queryImageInput?.click()}><ImagePlus size={16} /></button>
-        {/if}
+      {#snippet search(presentation)}
+        <SearchBar
+          class="notepad-search-bar"
+          bind:this={searchBar}
+          value={searchQuery}
+          expanded={chatAvailable ? dockMode === 'search' : undefined}
+          presentationActive={presentation.active}
+          presentationExpanded={presentation.expanded}
+          hasQuery={imageQueryUrl !== null}
+          placeholder={imageQueryUrl ? 'Add text to refine this image' : searchMode === 'current' ? 'Search this note' : 'Search all notes'}
+          ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
+          testId="note-search-input"
+          matchCase={matchCase}
+          matchWholeWord={matchWholeWord}
+          showMatchOptions={true}
+          scopeId={searchMode}
+          scopeOptions={searchScopeOptions}
+          canNavigatePrevious={searchMode === 'current' && canNavigateCurrentSearchResults}
+          canNavigateNext={searchMode === 'current' && canNavigateCurrentSearchResults}
+          blurOnEscape={false}
+          shortcut={{ enabled: true, defaultScopeId: 'current', allScopeId: 'all' }}
+          onValueChange={onSearchInput}
+          onClear={onSearchClear}
+          onOpen={handleSharedSearchOpen}
+          onScopeChange={handleSharedSearchModeChange}
+          onMatchCaseChange={onMatchCaseChange}
+          onMatchWholeWordChange={onMatchWholeWordChange}
+          onNavigate={(delta) => commandBarState.navigateSearchResult(delta)}
+          onInputKeydown={commandBarState.handleSearchKeydown}
+          onImageFile={searchMode === 'all' ? chooseImage : undefined}
+          queryPreview={imageQueryUrl ? imageQueryPreview : undefined}
+          panel={searchPanel}
+        />
       {/snippet}
-    </SearchBar>
+    </WorkspaceInputDock>
+
 
     <div
       class="inline-flex shrink-0 items-center rounded-full border border-border bg-background p-1 text-muted-foreground shadow-sm"
@@ -761,10 +821,19 @@
         class="notepad-command-action mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent hover:text-accent-foreground active:bg-accent/80 sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
         type="button"
         onclick={handleRemember}
+        disabled={actionPresentation.running && outgoingRememberLabel !== null && actionPresentation.progress < 0.45}
         aria-label={rememberAriaLabel}
         title={rememberLabel}
       >
-        <span class="notepad-command-action-label hidden sm:inline">{rememberLabel}</span>
+        <span class="notepad-command-action-label remember-action-label hidden sm:inline">
+          <span>{rememberLabelPrefix}</span><span class="remember-action-name">
+            {#if rememberLabelPrefix}<span class="remember-action-size" aria-hidden="true">Chat</span>{/if}
+            <span class="remember-action-current" style:opacity={actionPresentation.running && outgoingRememberLabel ? dockRamp(0.45, 0.8, actionPresentation.progress) : 1}>{rememberLabel.slice(rememberLabelPrefix.length)}</span>
+            {#if actionPresentation.running && outgoingRememberLabel}
+              <span class="remember-action-outgoing" aria-hidden="true" style:opacity={1 - dockRamp(0.1, 0.35, actionPresentation.progress)}>{outgoingRememberLabel.slice(rememberLabelPrefix.length)}</span>
+            {/if}
+          </span>
+        </span>
         <SquarePen class="h-5 w-5 sm:hidden" />
       </button>
     </div>
@@ -774,6 +843,22 @@
 <style>
   [data-notepad-command-bar] {
     container: note-toolbar / inline-size;
+  }
+
+  .notepad-command-bar-content {
+    --workspace-dock-action-height: 3.375rem;
+    --workspace-dock-circle-inset: calc((var(--workspace-dock-action-height) - var(--search-bar-height)) / 2);
+    align-items: flex-end;
+  }
+  .notepad-command-bar-content > :global(:first-child) { transform: translateX(var(--dock-action-0-shift, 0px)); }
+  .notepad-command-bar-content > :global(:last-child) { transform: translateX(var(--dock-action-1-shift, 0px)); }
+  .remember-action-label { position: relative; }
+  .remember-action-name { position: relative; display: inline-grid; }
+  .remember-action-current, .remember-action-size { grid-area: 1 / 1; }
+  .remember-action-size { visibility: hidden; }
+  .remember-action-outgoing { position: absolute; inset: 0; white-space: nowrap; }
+  .notepad-command-bar-content .notepad-command-action--restore {
+    margin-bottom: calc((var(--workspace-dock-action-height) - 2.75rem) / 2);
   }
 
   @container note-toolbar (max-width: 56rem) {
@@ -796,19 +881,19 @@
     }
   }
 
-  .notepad-command-bar-content :global(.notepad-search-bar) {
+  .notepad-command-bar-content :global(.workspace-input-dock) {
     /* The card reserves unequal space for Related. Balance that difference
      * inside the toolbar so search stays centered in the full workspace.
      * Margins participate in flex sizing, keeping expanded search clear of
      * the buttons even when the Related drawer narrows the card. */
-    margin-left: max(0px, calc(var(--related-balance-width, 0px) - var(--related-reserved-width, 0px)));
-    margin-right: max(0px, calc(var(--related-reserved-width, 0px) - var(--related-balance-width, 0px)));
+    margin-left: max(0px, calc(var(--dock-layout-balance, var(--related-balance-width, 0px)) - var(--dock-layout-reserved, var(--related-reserved-width, 0px))));
+    margin-right: max(0px, calc(var(--dock-layout-reserved, var(--related-reserved-width, 0px)) - var(--dock-layout-balance, var(--related-balance-width, 0px))));
     --search-layout-duration: var(--related-transition-duration);
     --search-layout-ease: var(--related-transition-ease);
   }
 
-  :global([data-window-resizing]) .notepad-command-bar-content :global(.notepad-search-bar),
-  :global([data-pane-motion]) .notepad-command-bar-content :global(.notepad-search-bar) {
+  :global([data-window-resizing]) .notepad-command-bar-content :global(.workspace-input-dock),
+  :global([data-pane-motion]) .notepad-command-bar-content :global(.workspace-input-dock) {
     --search-layout-duration: 0ms;
   }
 
@@ -831,6 +916,12 @@
   }
 
   .search-results-panel {
+    /* The dock publishes its destination width before its visible bar expands.
+       Reveal a fixed layout from the existing base rather than resizing text. */
+    width: var(--dock-search-results-width, 100%);
+    left: 50%;
+    right: auto;
+    transform: translateX(-50%);
     background: var(--search-scope-results-bg);
     border-color: var(--search-scope-results-border);
     transition:

@@ -112,7 +112,7 @@ live('Activity follow-ups through the real chat runtime', function() {
         const open = await $('button[aria-label="Open thought partner in this pane"]');
         await open.waitForExist();
         await browser.execute((el: HTMLElement) => el.click(), open);
-        const composer = await $('[data-testid="workspace-pane"][data-pane-kind="chat"] textarea');
+        const composer = await $('[data-notepad-command-bar] textarea');
         await composer.waitForEnabled({ timeout: 30_000 });
         await composer.setValue(question);
         assert.equal(await $('button[aria-label="Source-first preview"]').isExisting(), false);

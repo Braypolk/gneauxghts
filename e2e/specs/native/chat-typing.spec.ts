@@ -30,7 +30,7 @@ slowSearch('native chat typing with slow related-note suggestions', function () 
     const open = await $('button[aria-label="Open thought partner in this pane"]');
     await open.waitForExist();
     await browser.execute((el: HTMLElement) => el.click(), open);
-    const composer = await $('[data-pane-kind="chat"] textarea');
+    const composer = await $('[data-notepad-command-bar] textarea');
     await composer.waitForEnabled();
     await invoke('plugin:window|show', { label: 'main' });
     await invoke('plugin:window|set_focus', { label: 'main' });
@@ -44,7 +44,7 @@ slowSearch('native chat typing with slow related-note suggestions', function () 
       let finished = false;
       let unlisten: (() => void) | undefined;
       const pending = new Set<() => void>();
-      const textarea = document.querySelector<HTMLTextAreaElement>('[data-pane-kind="chat"] textarea');
+      const textarea = document.querySelector<HTMLTextAreaElement>('[data-notepad-command-bar] textarea');
       const finish = (error?: string) => {
         if (finished) return;
         finished = true;

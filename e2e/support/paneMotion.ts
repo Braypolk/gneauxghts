@@ -46,8 +46,9 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
         id: pane.dataset.paneId!, left: pane.getBoundingClientRect().left, width: pane.getBoundingClientRect().width,
         opacity: Number(getComputedStyle(pane).opacity),
         layout: Object.fromEntries([
-          '.notepad-editor-top-row', '.notepad-editor-title-wrap', '[data-pane-command]',
-          '.chat-panel-header', '.chat-panel-bottom'
+          // The composer now lives in the workspace dock. Its former pane
+          // wrapper follows the dock's height and has no controls to measure.
+          '.pane-header', '.pane-header-title-wrap', '[data-pane-command]'
         ].flatMap(selector => {
           const element = pane.querySelector<HTMLElement>(selector);
           if (!element) return [];
@@ -59,7 +60,7 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
           }]];
         })),
         controlsOpacity: [...pane.querySelectorAll<HTMLElement>(
-          '.notepad-editor-top-overlay, .notepad-chat-top-actions, .chat-panel-header, .chat-panel-bottom, [data-pane-command]'
+          '.notepad-editor-top-overlay, .pane-header, .chat-panel-bottom, [data-pane-command]'
         )].map(control => {
           let opacity = 1;
           for (let element: HTMLElement | null = control; element; element = element.parentElement) {

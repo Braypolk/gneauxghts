@@ -56,6 +56,7 @@ describe('createNotepadCommandBarState', () => {
   ) {
     return createNotepadCommandBarState({
       getSearchQuery: () => '',
+      getSearchMode: () => 'all',
       getSearchResults: () => [],
       getPinnedNotes: () => [],
       getRecentLocations: () => [],
@@ -157,6 +158,124 @@ describe('createNotepadCommandBarState', () => {
     state.navigateSearchResult(1);
 
     expect(navigated.map((item) => item.matchText)).toEqual(['second instance', 'first instance']);
+  });
+
+  it('previews each current-note occurrence with Enter and wraps in both directions', () => {
+    const first = searchItem({ currentMatchRange: { from: 0, to: 5 } });
+    const second = searchItem({ currentMatchRange: { from: 6, to: 11 } });
+    const third = searchItem({ currentMatchRange: { from: 20, to: 25 } });
+    const onSearchNavigate = vi.fn();
+    const onSearchSelect = vi.fn();
+    const onSearchCommit = vi.fn();
+    const closeSearch = vi.fn();
+    const state = createState({
+      getSearchMode: () => 'current',
+      getSearchQuery: () => 'found',
+      getSearchResults: () => [first, third],
+      getSearchNavigationResults: () => [first, second, third],
+      getSearchResultRowIndex: (result) => result === third ? 1 : 0,
+      getVisibleItems: () => [first, third].map(item => ({ kind: 'search', item })),
+      onSearchNavigate, onSearchSelect, onSearchCommit, closeSearch
+    });
+    const enter = (shiftKey = false) => state.handleSearchKeydown({
+      key: 'Enter', shiftKey, preventDefault: vi.fn()
+    } as unknown as KeyboardEvent);
+
+    enter();
+    enter();
+    expect(state.activeIndex).toBe(0); // Both occurrences share a result row.
+    enter();
+    expect(state.activeIndex).toBe(1);
+    enter();
+    enter(true);
+    enter(true);
+    expect(onSearchNavigate.mock.calls.map(([result]) => result)).toEqual([
+      first, second, third, first, third, second
+    ]);
+    expect(onSearchSelect).not.toHaveBeenCalled();
+    expect(onSearchCommit).not.toHaveBeenCalled();
+    expect(closeSearch).not.toHaveBeenCalled();
+
+    state.resetActiveIndex();
+    enter();
+    expect(onSearchNavigate).toHaveBeenLastCalledWith(first);
+    state.handleSearchItemPointerEnter(1);
+    expect(onSearchNavigate).toHaveBeenLastCalledWith(third);
+    enter();
+    expect(onSearchNavigate).toHaveBeenLastCalledWith(first);
+  });
+
+  it('previews hovered rows and arrow-key destinations without committing current-note search', () => {
+    const first = searchItem({ currentMatchRange: { from: 0, to: 5 } });
+    const second = searchItem({ currentMatchRange: { from: 6, to: 11 } });
+    const third = searchItem({ currentMatchRange: { from: 20, to: 25 } });
+    const onSearchNavigate = vi.fn();
+    const onSearchSelect = vi.fn();
+    const closeSearch = vi.fn();
+    const state = createState({
+      getSearchMode: () => 'current',
+      getSearchQuery: () => 'found',
+      getSearchResults: () => [first, third],
+      getSearchNavigationResults: () => [first, second, third],
+      getSearchResultRowIndex: (result) => result === third ? 1 : 0,
+      getVisibleItems: () => [first, third].map(item => ({ kind: 'search', item })),
+      onSearchNavigate, onSearchSelect, closeSearch
+    });
+    const key = (key: string) => state.handleSearchKeydown({ key, preventDefault: vi.fn() } as unknown as KeyboardEvent);
+    state.handleSearchItemPointerEnter(0);
+    expect(state.searchNavigationMode).toBe('pointer');
+    key('Enter'); // Continue from the occurrence previewed by hovering.
+    key('ArrowDown'); // Arrows move through visible rows, including grouped rows.
+    expect(state.activeIndex).toBe(1);
+    expect(state.searchNavigationMode).toBe('keyboard');
+    key('ArrowDown'); // Wrap to the first row.
+    key('ArrowUp');
+    state.handleSearchItemPointerEnter(-1);
+    expect(onSearchNavigate.mock.calls.map(([result]) => result)).toEqual([
+      first, second, third, first, third
+    ]);
+    expect(onSearchSelect).not.toHaveBeenCalled();
+    expect(closeSearch).not.toHaveBeenCalled();
+  });
+
+  it('keeps hovering and arrows as list navigation for all-note results and empty-query recent items', () => {
+    for (const mode of ['all', 'current'] as const) {
+      const results = [searchItem(), searchItem()];
+      const onSearchNavigate = vi.fn();
+      const state = createState({
+        getSearchMode: () => mode,
+        getSearchQuery: () => mode === 'all' ? 'found' : '',
+        getSearchResults: () => results,
+        getPinnedNotes: () => results,
+        getVisibleItems: () => results.map(item => ({ kind: mode === 'all' ? 'search' : 'pinned', item })),
+        onSearchNavigate
+      });
+      state.handleSearchItemPointerEnter(1);
+      state.handleSearchKeydown({ key: 'ArrowDown', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+      expect(state.activeIndex).toBe(0);
+      expect(onSearchNavigate).not.toHaveBeenCalled();
+    }
+  });
+
+  it('still commits all-note results and empty-query recent items with Enter', () => {
+    for (const mode of ['all', 'current'] as const) {
+      const item = searchItem();
+      const onSearchSelect = vi.fn();
+      const onPinnedNoteSelect = vi.fn();
+      const onSearchNavigate = vi.fn();
+      const closeSearch = vi.fn();
+      const state = createState({
+        getSearchMode: () => mode,
+        getSearchQuery: () => mode === 'all' ? 'found' : '',
+        getPinnedNotes: () => [item],
+        getVisibleItems: () => [{ kind: mode === 'all' ? 'search' : 'pinned', item }],
+        onSearchSelect, onPinnedNoteSelect, onSearchNavigate, closeSearch
+      });
+      state.handleSearchKeydown({ key: 'Enter', preventDefault: vi.fn() } as unknown as KeyboardEvent);
+      expect(mode === 'all' ? onSearchSelect : onPinnedNoteSelect).toHaveBeenCalledWith(item);
+      expect(onSearchNavigate).not.toHaveBeenCalled();
+      expect(closeSearch).toHaveBeenCalledOnce();
+    }
   });
 
   it('closes search on Escape when the query is empty', () => {

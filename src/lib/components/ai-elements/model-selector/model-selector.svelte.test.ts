@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import ModelSelector from './model-selector.svelte';
 
 describe('ModelSelector', () => {
-  it('separates the provider picker from its provider-scoped model picker', () => {
+  it('combines provider and model choices in the model picker', () => {
     const body = render(ModelSelector, {
       props: {
         options: [
@@ -24,13 +24,10 @@ describe('ModelSelector', () => {
         model: 'hosted-default',
         reasoningEffort: 'medium',
         reasoningOptions: [{ value: 'medium', label: 'Medium' }],
-        providerOpen: true,
         modelOpen: true,
         reasoningOpen: true,
-        onProviderOpenChange: () => undefined,
         onModelOpenChange: () => undefined,
         onReasoningOpenChange: () => undefined,
-        onSelectProvider: () => undefined,
         onSelectModel: () => undefined,
         onSelectReasoning: () => undefined,
         onDiscoverLocal: () => undefined
@@ -59,13 +56,10 @@ describe('ModelSelector', () => {
         model: 'qwen3-8b',
         reasoningEffort: 'medium',
         reasoningOptions: [],
-        providerOpen: false,
         modelOpen: true,
         reasoningOpen: false,
-        onProviderOpenChange: () => undefined,
         onModelOpenChange: () => undefined,
         onReasoningOpenChange: () => undefined,
-        onSelectProvider: () => undefined,
         onSelectModel: () => undefined,
         onSelectReasoning: () => undefined,
         onDiscoverLocal: () => undefined

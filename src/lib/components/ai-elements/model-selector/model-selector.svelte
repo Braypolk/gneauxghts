@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { Brain, Check, ChevronDown, Cpu, LoaderCircle, RefreshCw, Sparkles } from '@lucide/svelte';
+  import { Check, ChevronDown, LoaderCircle, RefreshCw } from '@lucide/svelte';
   import type { ChatProvider, ChatReasoningEffort } from '$lib/features/chat/types';
   import type { ChatModelChoice, ChatReasoningChoice } from '$lib/features/chat/chatConfiguration';
 
@@ -17,13 +17,10 @@
     disabled = false,
     isDiscoveringLocal = false,
     isDiscoveringOpenAi = false,
-    providerOpen,
     modelOpen,
     reasoningOpen,
-    onProviderOpenChange,
     onModelOpenChange,
     onReasoningOpenChange,
-    onSelectProvider,
     onSelectModel,
     onSelectReasoning,
     onDiscoverLocal,
@@ -37,13 +34,10 @@
     disabled?: boolean;
     isDiscoveringLocal?: boolean;
     isDiscoveringOpenAi?: boolean;
-    providerOpen: boolean;
     modelOpen: boolean;
     reasoningOpen: boolean;
-    onProviderOpenChange: (open: boolean) => void;
     onModelOpenChange: (open: boolean) => void;
     onReasoningOpenChange: (open: boolean) => void;
-    onSelectProvider: (provider: ChatProvider) => void | Promise<void>;
     onSelectModel: (option: ChatModelChoice) => void | Promise<void>;
     onSelectReasoning: (effort: ChatReasoningEffort) => void | Promise<void>;
     onDiscoverLocal?: () => void | Promise<void>;
@@ -51,12 +45,27 @@
   } = $props();
 
   let customModel = $state('');
+  let browsingProvider = $state<ChatProvider | null>(null);
+
+  $effect(() => {
+    if (!modelOpen) browsingProvider = null;
+  });
+
+  const menuProvider = $derived(browsingProvider ?? provider);
+  let previewReasoningEffort = $state<ChatReasoningEffort | null>(null);
+
+  $effect(() => {
+    model;
+    reasoningEffort;
+    reasoningOpen;
+    previewReasoningEffort = null;
+  });
 
   const providerLabel = $derived(
-    providers.find((option) => option.value === provider)?.label ?? provider
+    providers.find((option) => option.value === menuProvider)?.label ?? menuProvider
   );
   const providerModels = $derived(
-    options.filter((option) => option.provider === provider)
+    options.filter((option) => option.provider === menuProvider)
   );
 
   function useCustomModel(event: SubmitEvent) {
@@ -64,7 +73,7 @@
     const selectedModel = customModel.trim();
     if (!selectedModel || disabled) return;
     void onSelectModel({
-      provider,
+      provider: menuProvider,
       model: selectedModel,
       displayName: selectedModel,
       description: 'Custom'
@@ -73,56 +82,26 @@
   }
 
   const selectedModelLabel = $derived(
-    providerModels.find((option) => option.model === model)?.displayName ?? model
+    options.find((option) => option.provider === provider && option.model === model)?.displayName ?? model
   );
   const selectedReasoningLabel = $derived(
-    reasoningOptions.find((option) => option.value === reasoningEffort)?.label ?? reasoningEffort
+    reasoningOptions.find((option) => option.value === (previewReasoningEffort ?? reasoningEffort))?.label ?? reasoningEffort
+  );
+  const selectedReasoningIndex = $derived(
+    Math.max(0, reasoningOptions.findIndex((option) => option.value === (previewReasoningEffort ?? reasoningEffort)))
   );
 </script>
 
-<div class="contents" data-slot="model-selector">
-  <div class="relative" data-chat-menu>
-    <button
-      type="button"
-      class="chat-composer-chip"
-      {disabled}
-      aria-label="AI provider"
-      aria-expanded={providerOpen}
-      aria-haspopup="menu"
-      onclick={() => !disabled && onProviderOpenChange(!providerOpen)}
-    >
-      {#if provider === 'local'}<Cpu class="h-3.5 w-3.5" />{:else}<Sparkles class="h-3.5 w-3.5" />{/if}
-      <span>{providerLabel}</span>
-      <ChevronDown class="h-3 w-3 opacity-60" />
-    </button>
-
-    {#if providerOpen}
-      <div class="chat-menu chat-menu--up" role="menu" aria-label="AI provider picker">
-        {#each providers as option (option.value)}
-          <button
-            type="button"
-            class="chat-menu-item w-full"
-            class:chat-menu-item--active={option.value === provider}
-            role="menuitem"
-            onclick={() => void onSelectProvider(option.value)}
-          >
-            {#if option.value === 'local'}<Cpu class="h-3.5 w-3.5 shrink-0" />{:else}<Sparkles class="h-3.5 w-3.5 shrink-0" />{/if}
-            <span class="min-w-0 flex-1">{option.label}</span>
-            {#if option.value === provider}<Check class="h-3.5 w-3.5 shrink-0" />{/if}
-          </button>
-        {/each}
-      </div>
-    {/if}
-  </div>
-
+<div class="chat-model-selector" data-slot="model-selector">
   <div class="relative min-w-0" data-chat-menu>
     <button
       type="button"
-      class="chat-composer-chip"
+      class="chat-model-control chat-model-name"
       {disabled}
       aria-label="AI model"
+      title={`${provider === 'local' ? 'Local' : 'ChatGPT'} · ${selectedModelLabel || 'Choose model'}`}
       aria-expanded={modelOpen}
-      aria-haspopup="menu"
+      aria-haspopup="dialog"
       onclick={() => !disabled && onModelOpenChange(!modelOpen)}
     >
       <span class="max-w-28 truncate">{selectedModelLabel || 'Choose model'}</span>
@@ -130,13 +109,27 @@
     </button>
 
     {#if modelOpen}
-      <div class="chat-menu chat-menu--up min-w-72" aria-label="AI model picker">
+      <div class="chat-menu chat-menu--up chat-menu--right chat-model-menu" role="dialog" aria-label="AI model picker">
+        <div class="chat-model-provider-picker" role="group" aria-label="AI provider picker">
+          {#each providers as option (option.value)}
+            <button
+              type="button"
+              class="chat-model-provider-option"
+              aria-pressed={option.value === menuProvider}
+              {disabled}
+              onclick={() => {
+                browsingProvider = option.value;
+                customModel = '';
+              }}
+            >{option.label}</button>
+          {/each}
+        </div>
         <div role="menu" aria-label={`${providerLabel} models`}>
           {#each providerModels as option (option.model)}
             <button
               type="button"
               class="chat-menu-item w-full"
-              class:chat-menu-item--active={option.model === model}
+              class:chat-menu-item--active={option.provider === provider && option.model === model}
               role="menuitem"
               onclick={() => void onSelectModel(option)}
             >
@@ -146,7 +139,7 @@
                   {option.description || option.model}
                 </span>
               </span>
-              {#if option.model === model}<Check class="h-3.5 w-3.5 shrink-0" />{/if}
+              {#if option.provider === provider && option.model === model}<Check class="h-3.5 w-3.5 shrink-0" />{/if}
             </button>
           {/each}
 
@@ -156,7 +149,7 @@
             </div>
           {/if}
 
-          {#if provider === 'local' && onDiscoverLocal}
+          {#if menuProvider === 'local' && onDiscoverLocal}
             <button
               type="button"
               class="chat-menu-item w-full text-muted-foreground"
@@ -173,7 +166,7 @@
               {/if}
             </button>
           {/if}
-          {#if provider === 'openai' && onDiscoverOpenAi}
+          {#if menuProvider === 'openai' && onDiscoverOpenAi}
             <button
               type="button"
               class="chat-menu-item w-full text-muted-foreground"
@@ -219,31 +212,56 @@
     <div class="relative" data-chat-menu>
       <button
         type="button"
-        class="chat-composer-chip"
+        class="chat-model-control chat-model-effort"
         {disabled}
         aria-label="Reasoning effort"
         aria-expanded={reasoningOpen}
-        aria-haspopup="menu"
+        aria-haspopup="dialog"
         onclick={() => !disabled && onReasoningOpenChange(!reasoningOpen)}
       >
-        <Brain class="h-3.5 w-3.5" />
-        <span>{selectedReasoningLabel}</span>
+        <span class="chat-model-effort-label">{selectedReasoningLabel}</span>
         <ChevronDown class="h-3 w-3 opacity-60" />
       </button>
       {#if reasoningOpen}
-        <div class="chat-menu chat-menu--up" role="menu" aria-label="Reasoning effort picker">
-          {#each reasoningOptions as option (option.value)}
-            <button
-              type="button"
-              class="chat-menu-item w-full"
-              class:chat-menu-item--active={option.value === reasoningEffort}
-              role="menuitem"
-              onclick={() => void onSelectReasoning(option.value)}
-            >
-              <span class="min-w-0 flex-1">{option.label}</span>
-              {#if option.value === reasoningEffort}<Check class="h-3.5 w-3.5 shrink-0" />{/if}
-            </button>
-          {/each}
+        <div class="chat-menu chat-menu--up chat-menu--right chat-effort-menu" role="dialog" aria-label="Reasoning effort picker">
+          <div class="chat-effort-heading">
+            <span>{selectedReasoningLabel}</span>
+          </div>
+          <p class="chat-effort-model">{selectedModelLabel}</p>
+          {#if reasoningOptions.length > 1}
+            <input
+              class="chat-effort-slider"
+              type="range"
+              min="0"
+              max={reasoningOptions.length - 1}
+              step="1"
+              value={selectedReasoningIndex}
+              style={`--effort-progress: ${selectedReasoningIndex / (reasoningOptions.length - 1) * 100}%`}
+              aria-label="Reasoning effort level"
+              aria-valuetext={selectedReasoningLabel}
+              {disabled}
+              oninput={(event) => {
+                previewReasoningEffort = reasoningOptions[Number(event.currentTarget.value)]?.value ?? null;
+              }}
+              onchange={(event) => {
+                const option = reasoningOptions[Number(event.currentTarget.value)];
+                if (option && !disabled) void onSelectReasoning(option.value);
+              }}
+            />
+          {/if}
+          <div class="chat-effort-options" role="menu" aria-label="Reasoning effort choices">
+            {#each reasoningOptions as option (option.value)}
+              <button
+                type="button"
+                class="chat-effort-option"
+                class:chat-effort-option--active={option.value === (previewReasoningEffort ?? reasoningEffort)}
+                role="menuitem"
+                onclick={() => void onSelectReasoning(option.value)}
+              >
+                <span>{option.label}</span>
+              </button>
+            {/each}
+          </div>
         </div>
       {/if}
     </div>

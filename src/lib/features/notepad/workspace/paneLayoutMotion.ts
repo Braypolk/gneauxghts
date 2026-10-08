@@ -1,4 +1,5 @@
 import { tick } from 'svelte';
+import { dockClockProgress, type DockMotionEasing } from '../ui/workspaceDockMachine';
 
 const PANE = '.notepad-pane';
 const CARD = '.notepad-workspace-card';
@@ -101,14 +102,22 @@ export function createPaneLayoutMotion(deps: {
       await tick();
       if (active !== operation) return;
       const style = getComputedStyle(shell);
+      const dock = shell.querySelector<HTMLElement>('[data-dock-started-at]');
+      const dockStartedAt = Number(dock?.dataset.dockStartedAt);
+      const dockDuration = Number(dock?.dataset.dockDuration);
+      const coordinatedDock = !!dock && Number.isFinite(dockStartedAt) && dockDuration > 0 && !reducedMotion.matches;
+      const capturedAt = performance.now();
+      const elapsed = coordinatedDock ? Math.min(1, Math.max(0, (capturedAt - dockStartedAt) / dockDuration)) : 0;
+      const dockEasing: DockMotionEasing = dock?.dataset.dockEasing === 'editor' ? 'editor' : 'pinch';
+      const originProgress = dockClockProgress(elapsed, dockEasing);
       const durationToken = style.getPropertyValue('--pane-transition-duration').trim();
-      const duration = reducedMotion.matches ? 0 : parseFloat(durationToken) * (
+      const duration = reducedMotion.matches ? 0 : coordinatedDock ? dockDuration * (1 - elapsed) : parseFloat(durationToken) * (
         durationToken.endsWith('ms') ? 1 : 1000
       );
       if (!Number.isFinite(duration) || duration <= 0 || !shell.animate) return;
       const options: KeyframeAnimationOptions = {
         duration,
-        easing: style.getPropertyValue('--pane-transition-ease').trim(),
+        easing: coordinatedDock ? 'linear' : style.getPropertyValue('--pane-transition-ease').trim(),
         fill: 'both'
       };
       const panes = [...shell.querySelectorAll<HTMLElement>(PANE)];
@@ -116,6 +125,16 @@ export function createPaneLayoutMotion(deps: {
       const participants = [outer, area, card, ...panes, ...(drawer ? [drawer] : [])];
       // Read all destination geometry before installing any animation effects.
       const after = new Map(participants.map(element => [element, geometry(element)]));
+      // Measure the dock's final flex space without its temporary displayed
+      // Related margins. Publish this endpoint after installing the pane effects.
+      const row = dock?.parentElement;
+      const reservation = row?.style.getPropertyValue('--dock-layout-reserved') ?? '';
+      const balance = row?.style.getPropertyValue('--dock-layout-balance') ?? '';
+      row?.style.removeProperty('--dock-layout-reserved');
+      row?.style.removeProperty('--dock-layout-balance');
+      const dockDestination = dock?.getBoundingClientRect();
+      if (reservation) row?.style.setProperty('--dock-layout-reserved', reservation);
+      if (balance) row?.style.setProperty('--dock-layout-balance', balance);
       // New panes reveal one settled layout, including titles, choices and
       // chat controls. Existing panes keep their fluid chrome and stable text.
       const contentByPane = new Map(panes.map(pane => [
@@ -127,7 +146,29 @@ export function createPaneLayoutMotion(deps: {
           .map(element => [element, element.getBoundingClientRect().width])
       );
       const add = (element: HTMLElement, from: Keyframe, to: Keyframe) => {
-        animations.push(element.animate([from, to], options));
+        // Sampling the dock's clock into linear WAAPI keyframes lets the card,
+        // pane bounds and Related reservation follow the same selected curve.
+        // Otherwise their earlier completion clips the still-moving actions.
+        const keyframes = !coordinatedDock ? [from, to] : Array.from({ length: 81 }, (_, index) => {
+          const offset = index / 80;
+          // A retarget begins at the displayed bounds and consumes only the
+          // remaining clock, rather than sampling the old progress twice.
+          const progress = offset === 0 || offset === 1 ? offset :
+            (dockClockProgress(elapsed + (1 - elapsed) * offset, dockEasing) - originProgress) / (1 - originProgress);
+          const frame: Keyframe = { offset };
+          for (const key of Object.keys(from)) {
+            const start = from[key], end = to[key];
+            if (start === end) frame[key] = start;
+            else {
+              const a = parseFloat(String(start)), b = parseFloat(String(end));
+              const unit = String(end).replace(/^[+-]?(?:\d+\.?\d*|\.\d+)/, '');
+              frame[key] = Number.isFinite(a) && Number.isFinite(b)
+                ? `${a + (b - a) * progress}${unit}` : progress < 0.5 ? start : end;
+            }
+          }
+          return frame;
+        });
+        animations.push(element.animate(keyframes, options));
       };
       for (const element of [outer, area]) {
         add(element, { maxWidth: `${before.get(element)!.width}px` }, {
@@ -174,6 +215,12 @@ export function createPaneLayoutMotion(deps: {
       // All effects share a start time, including on slower editor mounts.
       const start = document.timeline.currentTime;
       if (start !== null) for (const animation of animations) animation.startTime = start;
+      if (start !== null && coordinatedDock) for (const animation of animations) {
+        animation.startTime = Number(start) - (performance.now() - capturedAt);
+      }
+      shell.dispatchEvent(new CustomEvent('workspace-pane-layout-ready', { detail: dockDestination ? {
+        id: Number(dock?.dataset.dockMotion), left: dockDestination.left, width: dockDestination.width
+      } : null }));
       timeout = setTimeout(operation.finish, duration + 100);
       await Promise.allSettled(animations.map(animation => animation.finished));
     };

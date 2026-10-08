@@ -6,8 +6,9 @@
     ChevronDown,
     FileInput,
     Globe,
-    Paperclip,
-    Send,
+    Plus,
+    ArrowUp,
+    ShieldCheck,
     Square,
     X
   } from '@lucide/svelte';
@@ -25,7 +26,6 @@
     ChatActiveNoteSnapshot,
     ChatAttachmentInput,
     ChatContextNote,
-    ChatProvider,
     ChatReasoningEffort,
     LocalModel,
     VaultAccess
@@ -38,12 +38,11 @@
   import {
     chatModelChoices,
     type ChatModelChoice,
-    chatReasoningChoices,
-    configuredChatModel
+    chatReasoningChoices
   } from '../chatConfiguration';
   import ModelSelector from '$lib/components/ai-elements/model-selector/model-selector.svelte';
 
-  type ChatMenu = 'history' | 'vault' | 'provider' | 'model' | 'reasoning';
+  type ChatMenu = 'history' | 'vault' | 'model' | 'reasoning';
 
   interface Props {
     controller: ChatController;
@@ -232,6 +231,31 @@
     draftPersistence.record(draft);
   });
 
+  function resizeComposer(element: HTMLTextAreaElement) {
+    element.style.height = 'auto';
+    element.style.height = `${element.scrollHeight}px`;
+  }
+
+  $effect(() => {
+    draft;
+    if (composerElement) resizeComposer(composerElement);
+  });
+
+  $effect(() => {
+    const element = composerElement;
+    if (!element) return;
+    let previousWidth = element.clientWidth;
+    const observer = new ResizeObserver(() => {
+      // Only width changes require remeasuring wrapped text. Height changes
+      // caused by our own measurement must not schedule another resize.
+      if (element.clientWidth === previousWidth) return;
+      previousWidth = element.clientWidth;
+      resizeComposer(element);
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  });
+
   async function submit() {
     const content = draft.trim();
     if ((!content && attachments.length === 0) || snapshot.isSending) return;
@@ -344,23 +368,6 @@
     if (option.provider === 'local') forceWebSearch = false;
   }
 
-  async function updateProvider(provider: ChatProvider) {
-    onOpenMenu(null);
-    if (provider === effectiveProvider) return;
-    const model =
-      configuredChatModel(snapshot.settings, provider) ||
-      modelOptions.find((option) => option.provider === provider)?.model ||
-      '';
-    if (!model) {
-      const label = provider === 'openai' ? 'ChatGPT' : 'Local';
-      onActionError(`Configure a default model for ${label} first.`);
-      return;
-    }
-    onActionError(null);
-    await controller.setProvider(provider, model);
-    if (provider === 'local') forceWebSearch = false;
-  }
-
   async function discoverLocalModels() {
     if (isDiscoveringLocalModels) return;
     isDiscoveringLocalModels = true;
@@ -449,7 +456,7 @@
   }
 </script>
 
-<footer class="pb-3 pt-2 sm:pb-4">
+<footer class="chat-composer-footer pb-3 pt-2 sm:pb-4">
   {#if snapshot.error || actionError}
     <div class="chat-content-lane mb-2">
       <div
@@ -467,7 +474,8 @@
 
   <div class="chat-content-lane">
     <div
-      class="rounded-[1.1rem] border border-border/80 bg-background/80 p-2 shadow-sm focus-within:border-foreground/25 focus-within:ring-2 focus-within:ring-ring/10"
+      class="chat-composer-surface"
+      class:chat-composer-surface--inline={variant === 'inline'}
     >
     {#if attachments.length > 0}
       <div class="flex flex-wrap gap-2 px-2 pb-2" aria-label="Pending attachments">
@@ -507,8 +515,9 @@
     <textarea
       bind:this={composerElement}
       bind:value={draft}
-      rows={variant === 'inline' ? 2 : 3}
-      class="block max-h-40 min-h-12 w-full resize-none bg-transparent px-2.5 py-1.5 text-sm leading-6 text-foreground outline-none placeholder:text-muted-foreground"
+      rows={1}
+      aria-label="Message"
+      class="chat-composer-input"
       {placeholder}
       disabled={!configurationReady ||
         conversation?.status === 'projectionConflict'}
@@ -516,7 +525,7 @@
       onpaste={onComposerPaste}
     ></textarea>
 
-    <div class="flex flex-wrap items-center gap-1.5 px-1 pt-1">
+    <div class="chat-composer-toolbar">
       {#if configurationReady}
           <input
             bind:this={attachmentInput}
@@ -529,40 +538,19 @@
           />
           <button
             type="button"
-            class="chat-composer-chip"
+            class="chat-icon-button chat-composer-add"
             onclick={chooseAttachments}
             aria-label="Add files or images"
             title={attachmentButtonTitle}
           >
-            <Paperclip class="h-3.5 w-3.5" />
+            <Plus class="h-4 w-4" />
           </button>
-
-        <ModelSelector
-          options={modelOptions}
-          provider={effectiveProvider}
-          model={effectiveModel}
-          reasoningEffort={effectiveReasoningEffort}
-          {reasoningOptions}
-          disabled={snapshot.isSending || snapshot.isLoadingConversation}
-          isDiscoveringLocal={isDiscoveringLocalModels}
-          isDiscoveringOpenAi={isDiscoveringOpenAiModels}
-          providerOpen={openMenu === 'provider'}
-          modelOpen={openMenu === 'model'}
-          reasoningOpen={openMenu === 'reasoning'}
-          onProviderOpenChange={(open) => onOpenMenu(open ? 'provider' : null)}
-          onModelOpenChange={(open) => onOpenMenu(open ? 'model' : null)}
-          onReasoningOpenChange={(open) => onOpenMenu(open ? 'reasoning' : null)}
-          onSelectProvider={updateProvider}
-          onSelectModel={updateModel}
-          onSelectReasoning={updateReasoningEffort}
-          onDiscoverLocal={discoverLocalModels}
-          onDiscoverOpenAi={discoverOpenAiModels}
-        />
 
         <div class="relative" data-chat-menu>
           <button
             type="button"
-            class="chat-composer-chip"
+            class="chat-composer-chip chat-composer-access"
+            title={vaultLabel}
             class:chat-composer-chip--emphasis={effectiveVaultAccess ===
               'approved' &&
               contextNote &&
@@ -572,7 +560,8 @@
             aria-haspopup="menu"
             onclick={() => onOpenMenu(openMenu === 'vault' ? null : 'vault')}
           >
-            <span class="max-w-[7.5rem] truncate">{vaultLabel}</span>
+            <ShieldCheck class="h-3.5 w-3.5 shrink-0" />
+            <span class="chat-composer-access-label">{vaultLabel}</span>
             <ChevronDown class="h-3 w-3 opacity-60" />
           </button>
           {#if openMenu === 'vault'}
@@ -688,7 +677,8 @@
         {#if effectiveProvider === 'openai'}
           <button
             type="button"
-            class="chat-composer-chip"
+            class="chat-composer-chip chat-composer-web"
+            aria-label="Require web search"
             class:chat-composer-chip--on={forceWebSearch}
             aria-pressed={forceWebSearch}
             title={forceWebSearch
@@ -697,7 +687,6 @@
             onclick={() => (forceWebSearch = !forceWebSearch)}
           >
             <Globe class="h-3.5 w-3.5" />
-            <span class="hidden sm:inline">Web</span>
           </button>
         {/if}
       {:else}
@@ -707,7 +696,27 @@
         ></span>
       {/if}
 
-      <div class="ml-auto flex items-center">
+      <div class="chat-composer-primary">
+        {#if configurationReady}
+          <ModelSelector
+            options={modelOptions}
+            provider={effectiveProvider}
+            model={effectiveModel}
+            reasoningEffort={effectiveReasoningEffort}
+            {reasoningOptions}
+            disabled={snapshot.isSending || snapshot.isLoadingConversation}
+            isDiscoveringLocal={isDiscoveringLocalModels}
+            isDiscoveringOpenAi={isDiscoveringOpenAiModels}
+            modelOpen={openMenu === 'model'}
+            reasoningOpen={openMenu === 'reasoning'}
+            onModelOpenChange={(open) => onOpenMenu(open ? 'model' : null)}
+            onReasoningOpenChange={(open) => onOpenMenu(open ? 'reasoning' : null)}
+            onSelectModel={updateModel}
+            onSelectReasoning={updateReasoningEffort}
+            onDiscoverLocal={discoverLocalModels}
+            onDiscoverOpenAi={discoverOpenAiModels}
+          />
+        {/if}
         {#if snapshot.isSending}
           <button
             type="button"
@@ -716,7 +725,7 @@
             aria-label="Stop response"
             title="Stop response"
           >
-            <Square class="h-3.5 w-3.5 fill-current" />
+            <Square class="h-3 w-3 fill-current" />
           </button>
         {:else}
           <button
@@ -728,7 +737,7 @@
             aria-label="Send message"
             title="Send message"
           >
-            <Send class="h-4 w-4" />
+            <ArrowUp class="h-4 w-4" />
           </button>
         {/if}
       </div>

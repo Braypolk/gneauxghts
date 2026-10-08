@@ -4,7 +4,7 @@ import { browser } from '@wdio/globals';
 export async function waitForWorkspaceAnimationSettled() {
   await browser.waitUntil(async () => browser.execute(() => {
     const shell = document.querySelector('.notepad-shell');
-    return !!shell && !document.querySelector('[data-pane-motion]') &&
+    return !!shell && !document.querySelector('[data-pane-motion], [data-dock-motion]') &&
       !shell.getAnimations({ subtree: true }).some(animation =>
         (animation.playState === 'running' || animation.pending) &&
         animation.effect?.getTiming().iterations !== Infinity);

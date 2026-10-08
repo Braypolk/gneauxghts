@@ -33,8 +33,8 @@
       <AtlasMap response={atlas.response} query={atlas.searchQuery} selectedNodeId={atlas.selectedNodeId} selectNode={(node) => atlas.selectNode(node)} {matchingIds} {readSource} {openNode} renameCloud={(id, name) => atlas.renameCloud(id, name)}>
         {#snippet search(fitMap)}
           <SearchDock pageInset class="atlas-search-dock">
-            <SearchBar class="atlas-search-bar" value={atlas.searchQuery} placeholder="Find notes" ariaLabel="Search map notes"
-              showPlaceholderWhenIdle={true} shortcut={{enabled:true}}
+            <SearchBar class="atlas-search-bar" value={atlas.searchQuery} placeholder="" ariaLabel="Search map notes"
+              shortcut={{enabled:true}}
               onValueChange={(value) => atlas.setSearchQuery(value)}>
               <div class="atlas-map-tools flex shrink-0 items-center gap-0.5 rounded-full border border-border/80 bg-card/88 p-1 text-muted-foreground shadow-lg backdrop-blur-md sm:contents" data-search-focus-independent>
                 <button type="button" class="shared-search-control mobile-dense-touch-target" onclick={fitMap} aria-label="Fit map to view" title="Fit view"><Focus class="h-4 w-4" /></button>

@@ -136,7 +136,8 @@ describe('navigation selection controller', () => {
 
     expect(harness.focusSearchRange).toHaveBeenCalledWith(
       paneId,
-      { from: 4, to: 9 }
+      { from: 4, to: 9 },
+      { focus: false }
     );
     expect(harness.saveCursorPosition).not.toHaveBeenCalled();
   });

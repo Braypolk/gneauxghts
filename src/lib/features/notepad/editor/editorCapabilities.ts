@@ -12,6 +12,7 @@ import { slashMenuHideFromUi } from './slashMenu';
 import { selectionMenuHideFromUi } from './selectionMenu';
 import { Transaction } from '@codemirror/state';
 import { openImageViewerAt } from '../images/imageEmbeds';
+import { editorScrollEffect } from './editorScroll';
 
 export interface EditorSelectionCapabilitySnapshot {
   anchor: number;
@@ -68,7 +69,8 @@ export interface EditorCapabilityAdapter {
     query: SearchHighlightOptions | string | null
   ) => boolean;
   focusSearchRange: (
-    range: { from: number; to: number } | null | undefined
+    range: { from: number; to: number } | null | undefined,
+    options?: { focus?: boolean }
   ) => boolean;
   /** Restores an arbitrary saved selection and takes focus. */
   focusSelection: (
@@ -139,7 +141,7 @@ export function createEditorCapabilityAdapter(
       controller.view.dispatch(
         controller.view.state.update({
           selection: { anchor },
-          scrollIntoView: true
+          effects: editorScrollEffect(controller.view, anchor)
         })
       );
       controller.view.focus();
@@ -183,10 +185,11 @@ export function createEditorCapabilityAdapter(
       insertEditorMarkdown(getController(), markdown, options),
     setSearchHighlight: (query) =>
       setEditorCurrentSearchHighlightQuery(getController(), query),
-    focusSearchRange: (range) =>
+    focusSearchRange: (range, options) =>
       focusEditorSelection(
         getController(),
-        range ? { anchor: range.from, head: range.to } : range
+        range ? { anchor: range.from, head: range.to } : range,
+        options
       ),
     focusSelection: (selection, options) =>
       focusEditorSelection(getController(), selection, options),
