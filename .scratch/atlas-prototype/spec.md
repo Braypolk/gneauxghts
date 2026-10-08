@@ -1,4 +1,4 @@
-# Atlas visualization lab — eight comparisons and V3 fusion
+# Atlas map — current implementation and experiment history
 
 ## Current production map — 2026-10-03
 
@@ -17,8 +17,10 @@ retains the accepted pre-promotion version. See
 [Atlas behavior](../../docs/features/atlas.md) for the current product contract.
 
 The status sections below describe earlier stages, not the current routing.
+The [cleanup audit and resume notes](issues/18-atlas-cleanup-audit.md) capture
+the 2026-10-04 stopping point, current ownership and routing limits.
 
-## Current direction — 2026-10-03 cleanup
+## Archived direction — 2026-10-03 prototype cleanup
 
 The user selected the fusion view for further work and requested one clean full-screen preview. Only AtlasFusion is active at /map/prototype; legacy variant parameters no longer switch renderers. Earlier A–H components and the comparison switcher are removed. Their complete source and earlier spec are recoverable on codex/atlas-prototypes-before-cleanup (8c4856d31d31d81cbbd286b7503c3da9d8b0fb4a).
 

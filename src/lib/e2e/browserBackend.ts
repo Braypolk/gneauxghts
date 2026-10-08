@@ -507,6 +507,7 @@ function historicalDiff(
   const callbacks = new Map<number, TauriCallback>();
   const invocations: InvokeRecord[] = [];
   let atlasOverride: VaultAtlasResponse | null = null;
+  const atlasAutomaticNames = new Map<string, string | null>();
   let callbackId = 0;
   let createdNoteCount = 0;
   const listeners = new Map<number, { event: string; handler: number }>();
@@ -545,6 +546,18 @@ function historicalDiff(
       return { fileName, filePath: `/browser-vault/assets/${fileName}` };
     }
 
+    if (command === 'rename_atlas_cloud') {
+      const cloud = atlasOverride?.clouds.find(cloud => cloud.id === args.cloudId);
+      if (!cloud || !atlasOverride) throw new Error('This cloud is no longer present');
+      const name = typeof args.name === 'string' ? args.name.trim() || null : null;
+      if (name && ([...name].length > 80 || /[\r\n]/.test(name))) throw new Error('Use a single-line cloud name of at most 80 characters.');
+      if (!cloud.userName) atlasAutomaticNames.set(cloud.id, cloud.label);
+      cloud.userName = name;
+      cloud.label = name ?? atlasAutomaticNames.get(cloud.id) ?? null;
+      cloud.labelSource = name ? 'user' : 'topic';
+      atlasOverride.nameRevision = (atlasOverride.nameRevision ?? 0)+1;
+      return {cloudId: cloud.id, userName: name, label: cloud.label, nameRevision: atlasOverride.nameRevision};
+    }
     if (command === 'get_vault_atlas') {
       if (atlasOverride) return atlasOverride;
       return {

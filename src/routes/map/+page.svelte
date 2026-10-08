@@ -13,7 +13,7 @@
   import { Focus } from '@lucide/svelte';
 
   const atlas = atlasStore;
-  const matchingIds = $derived(new Set(atlas.visibleNodes.filter(node => atlas.nodeHasSearchHit(node)).sort((a, b) => (atlas.searchMatchForNode(b)?.score ?? 0) - (atlas.searchMatchForNode(a)?.score ?? 0)).map(node => node.id)));
+  const matchingIds = $derived(new Set((atlas.response?.nodes ?? []).filter(node => atlas.nodeHasSearchHit(node)).sort((a, b) => (atlas.searchMatchForNode(b)?.score ?? 0) - (atlas.searchMatchForNode(a)?.score ?? 0)).map(node => node.id)));
   const searchReady = $derived(atlas.searchResponse?.query === atlas.searchQuery.trim() && atlas.searchResponse.status === 'ready' && !atlas.isSearching);
   async function readSource(node: AtlasNode): Promise<string> {
     return (await invoke<NoteSession>('read_note', { noteId: node.noteId, path: node.notePath })).markdown;
@@ -30,7 +30,7 @@
 
   <main class="atlas-surface">
     {#if atlas.response?.nodes.length}
-      <AtlasMap response={atlas.response} query={atlas.searchQuery} selectedNodeId={atlas.selectedNodeId} selectNode={(node) => atlas.selectNode(node)} {matchingIds} {readSource} {openNode}>
+      <AtlasMap response={atlas.response} query={atlas.searchQuery} selectedNodeId={atlas.selectedNodeId} selectNode={(node) => atlas.selectNode(node)} {matchingIds} {readSource} {openNode} renameCloud={(id, name) => atlas.renameCloud(id, name)}>
         {#snippet search(fitMap)}
           <SearchDock pageInset class="atlas-search-dock">
             <SearchBar class="atlas-search-bar" value={atlas.searchQuery} placeholder="Find notes" ariaLabel="Search map notes"

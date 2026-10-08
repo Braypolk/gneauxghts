@@ -1,23 +1,24 @@
 import type { AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
-export type Point = { x: number; y: number };
+import { polygonProximity, type Point } from './atlasGeometry';
+export type { Point } from './atlasGeometry';
 export const labelWorldSize = 6.5;
+export function nodeConnectedness(node: Pick<AtlasNode, 'centrality'>) {
+  return Number.isFinite(node.centrality) ? Math.max(0, Math.min(1, node.centrality)) : 0;
+}
+export function nodeWorldRadius(node: Pick<AtlasNode, 'centrality'>) {
+  return 3.25 + 3.25 * nodeConnectedness(node);
+}
 export function noteTitle(node: AtlasNode) {
   const name = (node.fileName || node.title).replace(/\.md$/i, '');
-  return name.length > 60 ? `${name.slice(0, 59).trimEnd()}…` : name;
+  const letters = [...name];
+  return letters.length > 60 ? `${letters.slice(0, 59).join('').trimEnd()}…` : name;
 }
 const nodeSpacing = 42;
 export function titleWidth(title: string, size: number) {
   return [...title].reduce((sum, char) => sum + ('ilI.,:;!| '.includes(char) ? 0.3 : 'MW@%'.includes(char) ? 0.85 : 0.56), 0) * size;
 }
 export function insideWithMargin(point: Point, polygon: Point[], margin: number) {
-  let inside = false, distance = Infinity;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const a = polygon[i], b = polygon[j];
-    if ((a.y > point.y) !== (b.y > point.y) && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x) inside = !inside;
-    const dx = b.x - a.x, dy = b.y - a.y;
-    const t = Math.max(0, Math.min(1, ((point.x - a.x) * dx + (point.y - a.y) * dy) / Math.max(0.001, dx * dx + dy * dy)));
-    distance = Math.min(distance, Math.hypot(point.x - a.x - dx * t, point.y - a.y - dy * t));
-  }
+  const { inside, distance } = polygonProximity(point, polygon);
   return inside && distance >= margin;
 }
 function fitCloud(points: Point[], members: Point[]) {
@@ -29,6 +30,23 @@ function fitCloud(points: Point[], members: Point[]) {
 }
 
 function packAtlas(response: VaultAtlasResponse) {
+  if (response.worldLayout) {
+    const cloudsById = new Map(response.clouds.map(cloud => [cloud.id, cloud]));
+    return {
+      nodes: response.nodes.map(node => {
+        const cloud = cloudsById.get(node.childCloudId ?? node.cloudId ?? '');
+        return {node, x: node.x, y: node.y, rootId: node.cloudId ?? node.parentCloudId,
+          color: cloud ? `rgb(${cloud.color.slice(0, 3).join(' ')})` : '#959da6'};
+      }),
+      clouds: response.clouds.map(cloud => ({cloud, color: `rgb(${cloud.color.slice(0, 3).join(' ')})`,
+        points: cloud.hull.map(([x,y]) => ({x,y})), center: {x: cloud.centroid[0], y: cloud.centroid[1]}}))
+    };
+  }
+  // Only pre-migration cached generations lack accepted readable world geometry.
+  return packLegacyAtlas(response);
+}
+
+function packLegacyAtlas(response: VaultAtlasResponse) {
   const coordinates = [...response.nodes.map((node) => [node.x, node.y]), ...response.clouds.flatMap((cloud) => cloud.hull)]
     .filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
   const minX = coordinates.length ? Math.min(...coordinates.map(([x]) => x)) : 0;
@@ -180,11 +198,12 @@ export function createAtlasLayout() {
   let captions: ReturnType<typeof captionCloud>[] = [];
   return (response: VaultAtlasResponse) => {
     const nextKey = JSON.stringify([
+      response.worldLayout,
       response.nodes.map(node => [node.id, node.x, node.y, noteTitle(node), node.cloudId, node.parentCloudId, node.childCloudId]),
       response.clouds.map(cloud => [cloud.id, cloud.parentId, cloud.centroid, cloud.hull, cloud.memberNodeIds, cloud.color])
     ]);
     if (!cached || key !== nextKey) { cached = packAtlas(response); key = nextKey; captionKey = ''; }
-    const nextCaptionKey = JSON.stringify(response.clouds.filter(cloud => !cloud.parentId).map(cloud => [cloud.id, cloud.label]));
+    const nextCaptionKey = JSON.stringify(response.clouds.map(cloud => [cloud.id, cloud.label]));
     if (captionKey !== nextCaptionKey) {
       const byId = new Map(response.clouds.map(cloud => [cloud.id, cloud]));
       captions = cached.clouds.map(item => captionCloud({ ...item, cloud: byId.get(item.cloud.id)! }, cached!.nodes));

@@ -50,3 +50,18 @@ describe('Atlas spaced layout', () => {
     expect(noteTitle({...atlas.nodes[0], fileName:'Actual file.md', title:'Different heading'})).toBe('Actual file');
   });
 });
+
+it('renders accepted world positions exactly through distant additions and remounts', () => {
+  const atlas = createDemoAtlas();
+  atlas.worldLayout = true;
+  const initial = createAtlasLayout()(atlas);
+  const next = {...atlas, nodes: [...atlas.nodes, {...atlas.nodes[0],id:'distant',noteId:'distant',cloudId:null,parentCloudId:null,x:100000,y:100000}]};
+  const after = createAtlasLayout()(next);
+  expect(positions(after).slice(0, atlas.nodes.length)).toEqual(positions(initial));
+  expect(initial.nodes.map(n=>[n.x,n.y])).toEqual(atlas.nodes.map(n=>[n.x,n.y]));
+  const legacy = createAtlasLayout()({...atlas,worldLayout:false});
+  const legacyAfter = createAtlasLayout()({...next,worldLayout:false});
+  const displacement = Math.max(...legacy.nodes.map((n,i)=>Math.hypot(n.x-legacyAfter.nodes[i].x,n.y-legacyAfter.nodes[i].y)));
+  expect(displacement).toBeGreaterThan(0);
+  console.info('Atlas distant-addition rendered displacement: legacy=%s world-units, accepted=0', displacement.toFixed(2));
+});

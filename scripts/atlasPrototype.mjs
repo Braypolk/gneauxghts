@@ -83,8 +83,12 @@ const server = await createServer({
   plugins: [{
     name:'throwaway-atlas-comparison',
     enforce:'pre',
-    transformIndexHtml() {
-      return [{tag:'script',injectTo:'head-prepend',children:`let atlasPrototypeSource='vault';window.__GNEAUXGHTS_E2E_COMMANDS__=Object.fromEntries(['get_vault_atlas','search_vault_atlas','read_note','open_note'].map(command=>[command,async args=>{if(command==='get_vault_atlas')atlasPrototypeSource=new URLSearchParams(window.location.search).get('atlasPrototypeSource')||'vault';const result=await fetch('/__atlas-prototype/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,args,source:atlasPrototypeSource})});if(!result.ok)throw new Error('Atlas comparison source unavailable');return result.json();}]));`}];
+    transform(code, id) {
+      if (!id.split('?')[0].endsWith('/src/lib/e2e/browserBackend.ts')) return;
+      // SvelteKit serves its own app template; Vite's index.html hook is not run.
+      // Prepend the explicit fixture adapter before the backend is installed.
+      // Browser previews apply their DOM theme without a native-window theme call.
+      return {map:null,code:`let atlasPrototypeSource='vault';window.__GNEAUXGHTS_E2E_COMMANDS__=Object.fromEntries(['get_vault_atlas','search_vault_atlas','read_note','open_note'].map(command=>[command,async args=>{if(command==='get_vault_atlas')atlasPrototypeSource=new URLSearchParams(window.location.search).get('atlasPrototypeSource')||'vault';const result=await fetch('/__atlas-prototype/command',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({command,args,source:atlasPrototypeSource})});if(!result.ok)throw new Error('Atlas comparison source unavailable');return result.json();}]));window.__GNEAUXGHTS_E2E_COMMANDS__['plugin:app|set_app_theme']=async()=>null;` + '\n' + code};
     },
     configureServer(vite) {
       vite.middlewares.use('/__atlas-prototype', async (req, res) => {
@@ -128,6 +132,5 @@ demo = (await server.ssrLoadModule('/scripts/fixtures/atlasDemo.ts')).createDemo
 await server.listen();
 console.log(`Atlas lab: ${source}, ${snapshot?.nodes.length ?? (demoMode ? demo.nodes.length : 0)} notes. Read-only offline snapshot; text/tag search only.`);
 console.log('Open http://127.0.0.1:1422/map');
-console.log('Original Atlas comparison: http://127.0.0.1:1422/map');
 const close=async()=>{await server.close();process.exit(0);};
 process.on('SIGINT',close);process.on('SIGTERM',close);

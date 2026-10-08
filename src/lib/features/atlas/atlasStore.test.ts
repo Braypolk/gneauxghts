@@ -1,18 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-  atlasLabelRenderKey,
-  AtlasStore,
-  getNodeRadiusZoomMultiplier,
-  getNodePosition,
-  getZoomTier,
-  isAtlasResponsePending,
-  isAtlasSearchHit,
-  isHighConfidenceLink,
-  linkEndpoints,
-  strongestLinksPerNode
-} from './atlasStore.svelte';
+import { AtlasStore, isAtlasResponsePending, isAtlasSearchHit } from './atlasStore.svelte';
 import type {
-  AtlasLink,
   AtlasNode,
   AtlasSearchMatch,
   VaultAtlasResponse
@@ -107,21 +95,6 @@ describe('atlas view helpers', () => {
     };
   }
 
-  it('maps zoom values to semantic focus tiers', () => {
-    expect(getZoomTier(0.25)).toBe('far');
-    expect(getZoomTier(0.6)).toBe('mid');
-    expect(getZoomTier(1.1)).toBe('near');
-    expect(getZoomTier(2)).toBe('close');
-  });
-
-  it('shrinks node radii with zoom while keeping the default size when zoomed in', () => {
-    expect(getNodeRadiusZoomMultiplier(0.25)).toBe(0.25);
-    expect(getNodeRadiusZoomMultiplier(0.6)).toBe(0.6);
-    expect(getNodeRadiusZoomMultiplier(1)).toBe(1);
-    expect(getNodeRadiusZoomMultiplier(2)).toBe(1);
-    expect(getNodeRadiusZoomMultiplier(0)).toBe(0.08);
-  });
-
   it('does not treat weak recency-only atlas matches as colored search hits', () => {
     expect(isAtlasSearchHit(null)).toBe(false);
     expect(isAtlasSearchHit(searchMatch({ score: 0.1 }))).toBe(false);
@@ -130,63 +103,7 @@ describe('atlas view helpers', () => {
     expect(isAtlasSearchHit(searchMatch({ lexicalScore: 0.7 }))).toBe(true);
   });
 
-  it('uses stable atlas positions without mutating nodes', () => {
-    const item = node('a', 1, 2);
 
-    expect(getNodePosition(item)).toEqual([1, 2]);
-    expect(item.x).toBe(1);
-  });
-
-  it('resolves link endpoints from visible nodes', () => {
-    const first = node('a', 1, 2);
-    const second = node('b', 3, 4);
-    const byId = new Map([
-      [first.id, first],
-      [second.id, second]
-    ]);
-
-    expect(
-      linkEndpoints(
-        { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.5, strength: 0.5 },
-        byId
-      )
-    ).toEqual([
-      [1, 2],
-      [3, 4]
-    ]);
-  });
-
-  it('caps displayed links per node while preferring wikilinks and strong semantic edges', () => {
-    const links: AtlasLink[] = [
-      { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.9, strength: 0.9 },
-      { id: 'a:c', sourceId: 'a', targetId: 'c', kind: 'semantic', score: 0.8, strength: 0.8 },
-      { id: 'a:d', sourceId: 'a', targetId: 'd', kind: 'semantic', score: 0.7, strength: 0.7 },
-      { id: 'a:e', sourceId: 'a', targetId: 'e', kind: 'wikilink', score: 1, strength: 0.82 }
-    ];
-
-    expect(strongestLinksPerNode(links, 2).map((link) => link.id)).toEqual(['a:e', 'a:b']);
-  });
-
-  it('keeps weak semantic links out of high-confidence link displays', () => {
-    expect(
-      isHighConfidenceLink(
-        { id: 'a:b', sourceId: 'a', targetId: 'b', kind: 'semantic', score: 0.7, strength: 0.69 },
-        0.7
-      )
-    ).toBe(false);
-    expect(
-      isHighConfidenceLink(
-        { id: 'a:c', sourceId: 'a', targetId: 'c', kind: 'semantic', score: 0.82, strength: 0.82 },
-        0.7
-      )
-    ).toBe(true);
-    expect(
-      isHighConfidenceLink(
-        { id: 'a:d', sourceId: 'a', targetId: 'd', kind: 'wikilink', score: 1, strength: 0.82 },
-        0.95
-      )
-    ).toBe(true);
-  });
 });
 
 describe('AtlasStore stale-while-revalidate', () => {
@@ -251,17 +168,6 @@ describe('AtlasStore stale-while-revalidate', () => {
 
   it('treats missing cloud labels as pending even without a stale flag', () => {
     expect(isAtlasResponsePending(pendingCloudLabels)).toBe(true);
-  });
-
-  it('changes the renderer label key when generated cloud labels arrive', () => {
-    const labelled = {
-      ...pendingCloudLabels,
-      labelGeneration: 'keybert-1',
-      clouds: pendingCloudLabels.clouds.map((cloud) => ({ ...cloud, label: 'Machine learning' }))
-    };
-
-    expect(atlasLabelRenderKey(labelled)).not.toBe(atlasLabelRenderKey(pendingCloudLabels));
-    expect(atlasLabelRenderKey(labelled)).toContain('Machine learning');
   });
 
   it('continues capped-delay polling beyond the former attempt ceiling', async () => {
@@ -492,6 +398,25 @@ describe('Atlas activation freshness', () => {
     callback({ ...vaultFixture, selectedPath: '/other', requiresRestart: true });
     expect(store.response?.revision).toBe(1);
     expect(store.selectedNodeId).toBe('note-1');
+    store.dispose();
+  });
+});
+
+describe('Atlas cloud naming admission', () => {
+  it('keeps a committed name when an older refresh finishes afterward', async () => {
+    const {createDemoAtlas} = await import('../../../../scripts/fixtures/atlasDemo');
+    const initial = createDemoAtlas();
+    const pending = deferred<VaultAtlasResponse>();
+    const store = new AtlasStore(() => pending.promise);
+    store.response = initial;
+    const id = initial.clouds[0].id;
+    const refresh = store.refresh();
+    invokeMock.mockImplementationOnce(async () => ({cloudId:id,userName:'My garden',label:'My garden',nameRevision:2} as never));
+    await store.renameCloud(id,'My garden');
+    pending.resolve({...initial,nameRevision:1,clouds:initial.clouds.map(cloud=>({...cloud,label:'Old auto name'}))});
+    await refresh;
+    expect(store.response?.clouds.find(cloud=>cloud.id===id)?.label).toBe('My garden');
+    expect(store.response?.nameRevision).toBe(2);
     store.dispose();
   });
 });

@@ -1,10 +1,9 @@
 import { invoke } from '@tauri-apps/api/core';
-import { SvelteMap, SvelteSet } from 'svelte/reactivity';
+import { SvelteMap } from 'svelte/reactivity';
 import { appStore } from '$lib/app/appStore.svelte';
 import { chatApi } from '$lib/features/chat/api';
 import type {
-  AtlasCloud,
-  AtlasLink,
+  AtlasCloudName,
   AtlasNode,
   AtlasSearchMatch,
   AtlasSearchResponse,
@@ -12,20 +11,6 @@ import type {
 } from '$lib/types/atlas';
 import type { AtlasChatVisibility } from '$lib/features/chat/types';
 
-export type AtlasZoomTier = 'far' | 'mid' | 'near' | 'close';
-export type AtlasLinkedNote = {
-  node: AtlasNode;
-  link: AtlasLink;
-};
-
-const LINK_CONFIDENCE_FLOORS: Record<AtlasZoomTier, number> = {
-  far: 0.92,
-  mid: 0.86,
-  near: 0.8,
-  close: 0.76
-};
-const FOCUSED_LINK_CONFIDENCE_FLOOR = 0.7;
-const SELECTED_CLOUD_LINK_CONFIDENCE_FLOOR = 0.74;
 const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
 const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;
 const ATLAS_SEARCH_HIT_MIN_LEXICAL = 0.65;
@@ -46,15 +31,8 @@ export class AtlasStore {
   searchResponse = $state<AtlasSearchResponse | null>(null);
   isSearching = $state(false);
   selectedNodeId = $state<string | null>(null);
-  selectedCloudId = $state<string | null>(null);
-  hoveredCloudId = $state<string | null>(null);
-  hoveredNodeId = $state<string | null>(null);
   searchQuery = $state('');
-  matchCase = $state(false);
-  matchWholeWord = $state(false);
-  showLinks = $state(true);
   chatVisibility = $state<AtlasChatVisibility>('hidden');
-  zoom = $state(1);
 
   #refreshTimer: ReturnType<typeof setTimeout> | null = null;
   #pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -96,46 +74,6 @@ export class AtlasStore {
     Boolean(this.response) && (this.isLoading || this.isStale || isAtlasResponsePending(this.response))
   );
 
-  selectedNode = $derived.by(() =>
-    this.response?.nodes.find((node) => node.id === this.selectedNodeId) ?? null
-  );
-
-  selectedCloud = $derived.by(() =>
-    this.response?.clouds.find((cloud) => cloud.id === this.selectedCloudId) ?? null
-  );
-
-  hoveredCloud = $derived.by(() =>
-    this.response?.clouds.find((cloud) => cloud.id === this.hoveredCloudId) ?? null
-  );
-
-  selectedNodeLinkedNotes = $derived.by(() => {
-    const selectedNodeId = this.selectedNodeId;
-    const response = this.response;
-    if (!selectedNodeId || !response) {
-      return { wikilinks: [] as AtlasLinkedNote[], semantic: [] as AtlasLinkedNote[] };
-    }
-    const nodesById = new SvelteMap(response.nodes.map((node) => [node.id, node]));
-    const linked = response.links
-      .filter((link) => link.sourceId === selectedNodeId || link.targetId === selectedNodeId)
-      .filter((link) => isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR))
-      .map((link) => {
-        const otherId = link.sourceId === selectedNodeId ? link.targetId : link.sourceId;
-        const node = nodesById.get(otherId);
-        return node ? { node, link } : null;
-      })
-      .filter((item): item is AtlasLinkedNote => item !== null)
-      .sort((left, right) => {
-        const kindBoost = (right.link.kind === 'wikilink' ? 1 : 0) - (left.link.kind === 'wikilink' ? 1 : 0);
-        return kindBoost || right.link.strength - left.link.strength || left.node.title.localeCompare(right.node.title);
-      });
-    return {
-      wikilinks: linked.filter((item) => item.link.kind === 'wikilink'),
-      semantic: linked.filter((item) => item.link.kind === 'semantic')
-    };
-  });
-
-  zoomTier = $derived.by((): AtlasZoomTier => getZoomTier(this.zoom));
-
   searchMatchesByPath = $derived.by(() => {
     const matches = this.searchResponse?.matches ?? [];
     return new SvelteMap(matches.map((match) => [match.notePath, match]));
@@ -151,74 +89,6 @@ export class AtlasStore {
           return match ? ([node.id, match] as const) : null;
         })
         .filter((item): item is readonly [string, AtlasSearchMatch] => item !== null)
-    );
-  });
-
-  visibleNodes = $derived.by(() => {
-    return this.response?.nodes ?? [];
-  });
-
-  visibleNodeIds = $derived.by(() => new SvelteSet(this.visibleNodes.map((node) => node.id)));
-
-  visibleLinks = $derived.by(() => {
-    if (!this.showLinks) return [];
-    const ids = this.visibleNodeIds;
-    const tier = this.zoomTier;
-    const selectedNodeId = this.selectedNodeId;
-    const selectedCloudId = this.selectedCloudId;
-    const hoveredNodeId = this.hoveredNodeId;
-    if (!selectedNodeId && !selectedCloudId && !hoveredNodeId && (tier === 'far' || tier === 'mid')) {
-      return [];
-    }
-    const nodesById = new SvelteMap((this.response?.nodes ?? []).map((node) => [node.id, node]));
-    const candidates = (this.response?.links ?? []).filter((link) => {
-      if (!ids.has(link.sourceId) || !ids.has(link.targetId)) return false;
-      const touchesSelection = selectedNodeId
-        ? link.sourceId === selectedNodeId || link.targetId === selectedNodeId
-        : false;
-      if (selectedNodeId) return touchesSelection && isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
-      const touchesHover = hoveredNodeId
-        ? link.sourceId === hoveredNodeId || link.targetId === hoveredNodeId
-        : false;
-      if (touchesHover) return isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
-      if (touchesSelection) return isHighConfidenceLink(link, FOCUSED_LINK_CONFIDENCE_FLOOR);
-      if (tier === 'far') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.far);
-      if (tier === 'mid') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.mid);
-      if (tier === 'near') return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.near);
-      if (selectedCloudId) {
-        const sourceCloudId = nodesById.get(link.sourceId)?.cloudId ?? null;
-        const targetCloudId = nodesById.get(link.targetId)?.cloudId ?? null;
-        const insideSelectedCloud = sourceCloudId === selectedCloudId && targetCloudId === selectedCloudId;
-        return insideSelectedCloud && isHighConfidenceLink(link, SELECTED_CLOUD_LINK_CONFIDENCE_FLOOR);
-      }
-      return isHighConfidenceLink(link, LINK_CONFIDENCE_FLOORS.close);
-    });
-    if (selectedNodeId || hoveredNodeId) return strongestLinksPerNode(candidates, 4);
-    return strongestLinksPerNode(candidates, tier === 'close' ? 2 : tier === 'near' ? 2 : 1);
-  });
-
-  visibleClouds = $derived.by(() => {
-    const clouds = this.response?.clouds ?? [];
-    const topLevelClouds = clouds.filter((cloud) => cloud.level === 0 || cloud.parentId === null);
-    const selectedNode = this.selectedNode;
-    const focusedCloud = this.hoveredCloud ?? this.selectedCloud;
-    const focusedParentCloudId =
-      focusedCloud?.level === 0
-        ? focusedCloud.id
-        : focusedCloud?.parentId ?? selectedNode?.cloudId ?? null;
-    if (this.zoomTier === 'far' || this.zoomTier === 'mid') {
-      if (!focusedParentCloudId) return this.filterSearchClouds(topLevelClouds);
-      return this.filterSearchClouds(
-        clouds.filter((cloud) => cloud.parentId === null || cloud.parentId === focusedParentCloudId)
-      );
-    }
-    const selectedParentCloudId =
-      focusedCloud?.level === 0
-        ? focusedCloud.id
-        : focusedCloud?.parentId ?? selectedNode?.cloudId ?? null;
-    if (!selectedParentCloudId) return this.filterSearchClouds(topLevelClouds);
-    return this.filterSearchClouds(
-      clouds.filter((cloud) => cloud.parentId === null || cloud.parentId === selectedParentCloudId)
     );
   });
 
@@ -264,8 +134,6 @@ export class AtlasStore {
         this.searchResponse = null;
         this.response = null;
         this.selectedNodeId = null;
-        this.selectedCloudId = null;
-        this.hoveredCloudId = null;
         this.scheduleRefresh(80);
       }),
       appStore.subscribeSemanticStatusChanged((status) => {
@@ -323,6 +191,17 @@ export class AtlasStore {
     }, delay);
   }
 
+  async renameCloud(cloudId: string, name: string | null) {
+    const visibility = this.chatVisibility;
+    const lifetime = this.#lifetime;
+    const result = await invoke<AtlasCloudName>('rename_atlas_cloud', {cloudId, name, chatVisibility: visibility});
+    if (visibility !== this.chatVisibility || lifetime !== this.#lifetime || !this.response) return;
+    if (result.nameRevision < (this.response.nameRevision ?? 0)) { await this.refresh(); return; }
+    this.response = {...this.response, nameRevision: result.nameRevision, clouds: this.response.clouds.map(cloud =>
+      cloud.id === result.cloudId ? {...cloud, userName: result.userName, label: result.label,
+        labelSource: result.userName === null ? 'topic' : 'user'} : cloud)};
+  }
+
   /** Drop the in-memory atlas payload so the next open/refetch hits the backend. */
   async clearCache() {
     await invoke('clear_atlas_cache');
@@ -357,23 +236,21 @@ export class AtlasStore {
     try {
       const response = await this.#loadAtlas(requestVisibility);
       if (sequence !== this.#refreshSequence || requestVisibility !== this.chatVisibility) return;
+      const prior = this.response;
+      if (prior && (prior.nameRevision ?? 0) > (response.nameRevision ?? 0)) {
+        const names = new Map(prior.clouds.map(cloud => [cloud.id, cloud]));
+        response.clouds = response.clouds.map(cloud => {
+          const saved = names.get(cloud.id);
+          return saved ? {...cloud, userName: saved.userName, label: saved.label, labelSource: saved.labelSource} : cloud;
+        });
+        response.nameRevision = prior.nameRevision;
+      }
       this.response = response;
       this.isStale = isAtlasResponsePending(response);
       this.scheduleSearch(80);
       if (this.selectedNodeId && !response.nodes.some((node) => node.id === this.selectedNodeId)) {
-        this.selectedNodeId = null;
-      }
-      if (
-        this.selectedCloudId &&
-        !response.clouds.some((cloud) => cloud.id === this.selectedCloudId)
-      ) {
-        this.selectedCloudId = null;
-      }
-      if (
-        this.hoveredCloudId &&
-        !response.clouds.some((cloud) => cloud.id === this.hoveredCloudId)
-      ) {
-        this.hoveredCloudId = null;
+        const identity = prior?.nodes.find(node => node.id === this.selectedNodeId)?.noteId;
+        this.selectedNodeId = identity ? response.nodes.find(node => node.noteId === identity)?.id ?? null : null;
       }
       if (isAtlasResponsePending(response)) {
         this.#schedulePoll();
@@ -420,31 +297,6 @@ export class AtlasStore {
 
   selectNode(node: AtlasNode | null) {
     this.selectedNodeId = node?.id ?? null;
-    if (node) {
-      this.selectedCloudId = node.cloudId;
-    }
-  }
-
-  hoverNode(node: AtlasNode | null) {
-    this.hoveredNodeId = node?.id ?? null;
-  }
-
-  hoverCloud(cloud: AtlasCloud | null) {
-    this.hoveredCloudId = cloud?.id ?? null;
-  }
-
-  selectCloud(cloud: AtlasCloud | null) {
-    this.selectedCloudId = cloud?.id ?? null;
-    this.selectedNodeId = null;
-  }
-
-  clearSelection() {
-    this.selectedNodeId = null;
-    this.selectedCloudId = null;
-  }
-
-  setZoom(zoom: number) {
-    this.zoom = Math.max(0.08, Math.min(8, zoom));
   }
 
   #invalidateSearch() {
@@ -525,9 +377,6 @@ export class AtlasStore {
     this.#invalidateSearch();
     this.chatVisibility = visibility;
     this.selectedNodeId = null;
-    this.selectedCloudId = null;
-    this.hoveredCloudId = null;
-    this.hoveredNodeId = null;
     this.#refreshSequence += 1;
     this.response = null;
     this.searchResponse = null;
@@ -547,46 +396,6 @@ export class AtlasStore {
     if (!this.searchQuery.trim()) return true;
     return isAtlasSearchHit(this.searchMatchForNode(node));
   }
-
-  nodeSearchOpacity(node: AtlasNode): number {
-    if (!this.searchQuery.trim()) return 1;
-    const match = this.searchMatchForNode(node);
-    if (!match) return 0.08;
-    return Math.max(0.22, Math.min(1, 0.28 + match.score * 0.82));
-  }
-
-  nodeSearchRadiusMultiplier(node: AtlasNode): number {
-    if (!this.searchQuery.trim()) return 1;
-    const match = this.searchMatchForNode(node);
-    if (!match) return 0.7;
-    return 0.95 + Math.min(0.75, match.score * 0.85);
-  }
-
-  cloudSearchOpacity(cloud: AtlasCloud): number {
-    if (!this.searchQuery.trim()) return 1;
-    const ids = new SvelteSet(cloud.memberNodeIds);
-    const scores = [...this.searchMatchesByNodeId.entries()]
-      .filter(([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match))
-      .map(([, match]) => match.score);
-    if (scores.length === 0) return 0.16;
-    return Math.max(0.28, Math.min(1, 0.35 + Math.max(...scores) * 0.75));
-  }
-
-  cloudHasSearchHit(cloud: AtlasCloud): boolean {
-    if (!this.searchQuery.trim()) return true;
-    const ids = new SvelteSet(cloud.memberNodeIds);
-    return [...this.searchMatchesByNodeId.entries()].some(
-      ([nodeId, match]) => ids.has(nodeId) && isAtlasSearchHit(match)
-    );
-  }
-
-  filterSearchClouds(clouds: AtlasCloud[]): AtlasCloud[] {
-    return clouds;
-  }
-
-  toggleLinks() {
-    this.showLinks = !this.showLinks;
-  }
 }
 
 export const atlasStore = new AtlasStore();
@@ -599,28 +408,6 @@ export function isAtlasResponsePending(response: VaultAtlasResponse | null): boo
   return response.stale || labelsPending;
 }
 
-export function atlasLabelRenderKey(response: VaultAtlasResponse | null): string {
-  if (!response) return '';
-  return `${response.labelGeneration ?? 'pending'}:${response.clouds
-    .map((cloud) => `${cloud.id}=${cloud.labelSource ?? 'pending'}:${cloud.label ?? ''}`)
-    .join('|')}`;
-}
-
-export function getZoomTier(zoom: number): AtlasZoomTier {
-  if (zoom < 0.4) return 'far';
-  if (zoom < 0.85) return 'mid';
-  if (zoom < 1.6) return 'near';
-  return 'close';
-}
-
-export function getNodeRadiusZoomMultiplier(zoom: number): number {
-  return Math.max(0.08, Math.min(1, zoom));
-}
-
-export function isHighConfidenceLink(link: AtlasLink, minimumStrength: number): boolean {
-  return link.kind === 'wikilink' || link.strength >= minimumStrength;
-}
-
 export function isAtlasSearchHit(match: AtlasSearchMatch | null): boolean {
   if (!match) return false;
   return (
@@ -629,41 +416,4 @@ export function isAtlasSearchHit(match: AtlasSearchMatch | null): boolean {
     match.lexicalScore >= ATLAS_SEARCH_HIT_MIN_LEXICAL ||
     match.structuralScore >= ATLAS_SEARCH_HIT_MIN_STRUCTURAL
   );
-}
-
-export function strongestLinksPerNode(links: AtlasLink[], maxPerNode: number): AtlasLink[] {
-  const counts = new SvelteMap<string, number>();
-  return [...links]
-    .sort((left, right) => {
-      const leftKindBoost = left.kind === 'wikilink' ? 1 : 0;
-      const rightKindBoost = right.kind === 'wikilink' ? 1 : 0;
-      return (
-        rightKindBoost - leftKindBoost ||
-        right.strength - left.strength ||
-        right.score - left.score ||
-        left.id.localeCompare(right.id)
-      );
-    })
-    .filter((link) => {
-      const sourceCount = counts.get(link.sourceId) ?? 0;
-      const targetCount = counts.get(link.targetId) ?? 0;
-      if (sourceCount >= maxPerNode || targetCount >= maxPerNode) return false;
-      counts.set(link.sourceId, sourceCount + 1);
-      counts.set(link.targetId, targetCount + 1);
-      return true;
-    });
-}
-
-export function getNodePosition(node: AtlasNode): [number, number] {
-  return [node.x, node.y];
-}
-
-export function linkEndpoints(
-  link: AtlasLink,
-  nodeById: Map<string, AtlasNode>
-): [number, number][] {
-  const source = nodeById.get(link.sourceId);
-  const target = nodeById.get(link.targetId);
-  if (!source || !target) return [];
-  return [getNodePosition(source), getNodePosition(target)];
 }
