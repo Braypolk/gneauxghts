@@ -18,6 +18,7 @@ mod litert;
 mod litert_ffi;
 mod litert_install;
 pub(crate) mod note_ann;
+pub(crate) mod owned_process;
 pub(crate) mod related;
 mod runtime_install;
 pub(crate) mod similarity;
@@ -941,6 +942,15 @@ impl SemanticState {
         Ok(())
     }
 
+    /// Native macOS termination can deliver Exit without ExitRequested. The
+    /// event loop is already ending, so only release the local process here;
+    /// joining async app work could deadlock the terminating event loop.
+    pub(crate) fn stop_runtime_for_exit(&self) {
+        if let SemanticStateInner::Active(state) = &self.inner {
+            state.provider.shutdown();
+        }
+    }
+
     pub(crate) fn warmup_model_in_background(&self) {
         if let SemanticStateInner::Active(state) = &self.inner {
             state.warmup_model_in_background(WarmupScheduling::WakeImmediately);
@@ -1855,6 +1865,67 @@ mod health_tests {
             }),
         };
         (state, signals, temp)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn native_exit_without_exit_requested_stops_the_local_runtime() {
+        use std::process::{Child, Command};
+        use tauri::Manager;
+
+        // Substitute the model HTTP API, but retain a real child process and
+        // the production Tauri event -> AppState -> semantic shutdown path.
+        struct ProcessProvider(Mutex<Child>);
+        impl EmbeddingProvider for ProcessProvider {
+            fn embed_texts(
+                &self,
+                texts: &[String],
+                kind: EmbeddingInputKind,
+            ) -> Result<Vec<Vec<f32>>, String> {
+                StatusEmbeddingProvider.embed_texts(texts, kind)
+            }
+            fn prepare(&self) -> Result<(), String> {
+                Ok(())
+            }
+            fn model_info(&self) -> ModelInfo {
+                StatusEmbeddingProvider.model_info()
+            }
+            fn shutdown(&self) {
+                let mut child = self.0.lock().unwrap();
+                let _ = child.kill();
+                child.wait().unwrap();
+            }
+        }
+        impl Drop for ProcessProvider {
+            fn drop(&mut self) {
+                self.shutdown();
+            }
+        }
+
+        let _vault = crate::test_support::TestVault::new("native-exit-runtime");
+        let (mut semantic, _signals, _temp) = active_status_state(RuntimeState::default());
+        let provider = Arc::new(ProcessProvider(Mutex::new(
+            Command::new("/bin/sleep").arg("60").spawn().unwrap(),
+        )));
+        let SemanticStateInner::Active(active) = &mut semantic.inner else {
+            unreachable!()
+        };
+        active.provider = provider.clone();
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        app.manage(
+            crate::index::AppState::new(semantic, crate::app::EventBus::disabled()).unwrap(),
+        );
+        assert!(provider.0.lock().unwrap().try_wait().unwrap().is_none());
+
+        crate::handle_run_event(app.handle(), tauri::RunEvent::Exit);
+
+        let exited = provider.0.lock().unwrap().try_wait().unwrap().is_some();
+        app.state::<crate::index::AppState>()
+            .stop_rebuildable_projection_work()
+            .unwrap();
+        assert!(exited, "native Exit left the local runtime running");
     }
 
     #[test]

@@ -44,6 +44,13 @@ portable ready state remains closed and Retry Restart retries only relaunch.
 Ordinary process exit uses the same backend settlement operation off the event
 loop, but it does not imply unsent browser drafts were saved.
 
+Closing the main desktop window requests ordinary process exit. The local
+embedding runtime is tied to an app-owned pipe: its headless supervisor kills
+and reaps the runtime when that pipe closes, including after abrupt app death
+or development-process termination. Native macOS termination may bypass the
+exit-request callback; its final exit event releases the runtime without
+claiming a portable vault close or saved frontend drafts.
+
 ### Bootstrap admits one coherent backend snapshot
 
 The bundled application bootstrap is the only initial-session retrieval path.

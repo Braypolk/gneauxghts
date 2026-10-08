@@ -84,6 +84,9 @@ fn startup_path_overrides() -> Result<StartupPathOverrides, String> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(code) = semantic::owned_process::run_if_requested() {
+        std::process::exit(code);
+    }
     let context = tauri::generate_context!();
     #[cfg(desktop)]
     let context = {
@@ -410,31 +413,54 @@ pub fn run() {
         .build(context)
         .expect("error while building tauri application");
 
-    app.run(|app_handle, event| {
-        // Persist while the window still exists. This also covers the macOS
-        // close-window path, which does not necessarily terminate the app.
-        #[cfg(desktop)]
-        if matches!(
-            &event,
-            RunEvent::WindowEvent {
-                event: tauri::WindowEvent::CloseRequested { .. },
-                ..
-            } | RunEvent::ExitRequested { .. }
-        ) {
-            if let Err(error) = app_handle.save_window_state(window_state_flags()) {
-                eprintln!("window-state save failed: {error}");
-            }
-        }
+    app.run(handle_run_event);
+}
 
-        if let RunEvent::ExitRequested { api, .. } = &event {
-            if let Some(lifecycle) = app_handle.try_state::<AppLifecycle>() {
-                if !lifecycle.is_ready() {
-                    // Never block Tauri's event loop: chat cancellation and
-                    // async agent work may need it in order to settle.
-                    api.prevent_exit();
-                    let _ = app_handle.emit("app://restart-preparing", ());
-                    let close_app = app_handle.clone();
-                    let _ = thread::Builder::new()
+fn handle_run_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, event: RunEvent) {
+    // Persist while the window still exists. This also covers the macOS
+    // close-window path, which does not necessarily terminate the app.
+    #[cfg(desktop)]
+    if matches!(
+        &event,
+        RunEvent::WindowEvent {
+            event: tauri::WindowEvent::CloseRequested { .. },
+            ..
+        } | RunEvent::ExitRequested { .. }
+    ) {
+        if let Err(error) = app_handle.save_window_state(window_state_flags()) {
+            eprintln!("window-state save failed: {error}");
+        }
+    }
+
+    if let RunEvent::WindowEvent {
+        label,
+        event: tauri::WindowEvent::CloseRequested { api, .. },
+        ..
+    } = &event
+    {
+        if label == "main" {
+            // Keep the window available while the existing exit lifecycle
+            // settles backend work or presents a close failure.
+            api.prevent_close();
+            app_handle.exit(0);
+        }
+    }
+
+    if let RunEvent::Exit = &event {
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            state.semantic.stop_runtime_for_exit();
+        }
+    }
+
+    if let RunEvent::ExitRequested { api, .. } = &event {
+        if let Some(lifecycle) = app_handle.try_state::<AppLifecycle>() {
+            if !lifecycle.is_ready() {
+                // Never block Tauri's event loop: chat cancellation and
+                // async agent work may need it in order to settle.
+                api.prevent_exit();
+                let _ = app_handle.emit("app://restart-preparing", ());
+                let close_app = app_handle.clone();
+                let _ = thread::Builder::new()
                         .name("ordinary-exit-settlement".to_string())
                         .spawn(move || {
                             let receipt = close_app
@@ -465,10 +491,9 @@ pub fn run() {
                                     .show(|_| {});
                             }
                         });
-                }
             }
         }
-    });
+    }
 }
 
 fn bundled_llama_server_path(app: &tauri::AppHandle) -> Option<PathBuf> {

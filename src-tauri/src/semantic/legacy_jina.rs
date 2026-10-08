@@ -1,6 +1,7 @@
 //! Retained Jina/llama.cpp provider for next-launch recovery and regression controls.
 use super::debug::SemanticDebugState;
 use super::embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, SemanticModelDownloadResult};
+use super::owned_process::OwnedProcess;
 use super::runtime_install::RuntimeInstaller;
 use reqwest::blocking::Client;
 use serde::Deserialize;
@@ -9,7 +10,7 @@ use std::{
     io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Write},
     net::TcpListener,
     path::{Path, PathBuf},
-    process::{Child, Command, ExitStatus, Stdio},
+    process::{Command, ExitStatus},
     sync::{Arc, Mutex},
     thread,
     time::{Duration, Instant},
@@ -60,7 +61,7 @@ pub(crate) struct JinaLlamaEmbeddingProvider {
 
 #[derive(Default)]
 struct ProviderRuntimeState {
-    server: Option<Child>,
+    server: Option<OwnedProcess>,
     port: Option<u16>,
     last_error: Option<String>,
     status: String,
@@ -198,7 +199,7 @@ impl JinaLlamaEmbeddingProvider {
             "[embed] spawning llama-server threads={thread_count} parallel_slots={parallel_slots}"
         );
         command.arg("-m").arg(model_path);
-        let mut child = command
+        command
             .arg("--embeddings")
             .arg("--pooling")
             .arg("last")
@@ -225,20 +226,18 @@ impl JinaLlamaEmbeddingProvider {
             // `srv update:` prompt-cache dumps that otherwise dominate the log).
             // Warnings, errors and the request log are still emitted.
             .arg("--log-verbosity")
-            .arg("0")
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|err| startup_error(err.to_string()))?;
+            .arg("0");
+        let mut child =
+            OwnedProcess::spawn(&command).map_err(|err| startup_error(err.to_string()))?;
 
         // Drain the child's stdout/stderr through size-capped rotating sinks so
         // the logs stay useful for debugging without growing without bound. The
         // reader threads exit on their own when the child is terminated and its
         // pipes close (EOF), so there is nothing extra to track for shutdown.
-        if let Some(out) = child.stdout.take() {
+        if let Some(out) = child.take_stdout() {
             spawn_rotating_log_drain(out, stdout_path.clone());
         }
-        if let Some(err) = child.stderr.take() {
+        if let Some(err) = child.take_stderr() {
             spawn_rotating_log_drain(err, stderr_path.clone());
         }
 
@@ -1121,18 +1120,8 @@ fn find_model_file(directory: &Path, file_names: &[&str], depth: usize) -> Optio
     None
 }
 
-fn terminate_child(child: &mut Option<Child>) {
-    let Some(mut child) = child.take() else {
-        return;
-    };
-
-    match child.try_wait() {
-        Ok(Some(_)) => {}
-        Ok(None) | Err(_) => {
-            let _ = child.kill();
-            let _ = child.wait();
-        }
-    }
+fn terminate_child(child: &mut Option<OwnedProcess>) {
+    drop(child.take());
 }
 
 fn bundled_backend_plugin_path(runtime_binary: &Path) -> Option<PathBuf> {
