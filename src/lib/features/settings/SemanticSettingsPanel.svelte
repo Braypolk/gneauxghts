@@ -20,6 +20,7 @@
     semanticLayerMessage,
     isSaving,
     isRunningAction,
+    isSettingUpLocalSearch = false,
     loadSemanticState,
     updateSetting,
     runAction,
@@ -38,6 +39,7 @@
     semanticLayerMessage: string | null;
     isSaving: boolean;
     isRunningAction: boolean;
+    isSettingUpLocalSearch?: boolean;
     loadSemanticState: () => Promise<void>;
     updateSetting: <Key extends keyof SemanticSettings>(
       key: Key,
@@ -55,8 +57,16 @@
   let isRefreshing = $state(false);
   let refreshError = $state<string | null>(null);
   let confirmingRebuild = $state<'status' | 'maintenance' | null>(null);
-  const busy = $derived(isSaving || isRunningAction || isRefreshing);
-  const readiness = $derived(semanticStatus && semanticSettings ? searchReadiness(semanticStatus, semanticSettings) : null);
+  const setup = $derived(semanticStatus?.setupProgress);
+  const setupActive = $derived(isSettingUpLocalSearch || Boolean(setup && !['complete', 'failed'].includes(setup.phase)));
+  const setupFailed = $derived(!setupActive && setup?.phase === 'failed');
+  const busy = $derived(isSaving || isRunningAction || isRefreshing || setupActive);
+  const readiness = $derived(semanticStatus && semanticSettings ? searchReadiness(semanticStatus, semanticSettings, isSettingUpLocalSearch) : null);
+  const downloadPercent = $derived(setup?.totalBytes ? Math.min(100, Math.floor(setup.downloadedBytes / setup.totalBytes * 100)) : null);
+
+  function formatBytes(bytes: number) {
+    return `${(bytes / 1_000_000).toLocaleString(undefined, { maximumFractionDigits: 1 })} MB`;
+  }
 
   function resolveAction() {
     if (readiness?.action === 'download') void downloadEmbeddingModel();
@@ -135,6 +145,7 @@
       <p role="status">Images: {semanticStatus.imageCoverage.indexed} indexed · {semanticStatus.imageCoverage.unsupported} unsupported · {semanticStatus.imageCoverage.failed} failed</p>
     {/if}
 
+    {#if !setupActive && !setupFailed}
     <p class="semantic-notice" role="status">
       Text search: {semanticStatus.textReady ? 'ready' : 'preparing'}.
       {#if semanticStatus.imageCapability === 'failed'}Vision could not initialize. Text search is available; retry local search setup to retry vision.{/if}
@@ -142,6 +153,7 @@
       {#if semanticStatus.migrationState === 'staging'}Building a compatible search generation. Keyword search is available.{/if}
       {#if semanticStatus.migrationState === 'failed'}Migration needs a retry. The previous generation is preserved.{/if}
     </p>
+    {/if}
     {#if semanticStatus.previousGenerationAvailable}
       <div class="semantic-row">
         <div class="semantic-row-copy">
@@ -158,7 +170,7 @@
     {#if semanticLayerError || refreshError}
       <p class="semantic-notice error" role="alert">{semanticLayerError ?? refreshError}</p>
     {/if}
-    {#if semanticLayerMessage}
+    {#if semanticLayerMessage && !setupActive}
       <p class="semantic-notice" role="status">{semanticLayerMessage}</p>
     {/if}
 
@@ -187,7 +199,7 @@
           <div class="semantic-actions">
             {@render action(readiness.actionLabel!, resolveAction, true)}
           </div>
-        {:else if readiness.state === 'working'}
+        {:else if readiness.state === 'working' && !setupActive}
           <div class="semantic-actions">
             {@render action('Pause indexing', () => void runAction('pause_semantic_indexing'))}
           </div>
@@ -196,22 +208,47 @@
       {#if confirmingRebuild === 'status'}
         {@render rebuildConfirmation()}
       {/if}
-      {#if readiness.state === 'working' && semanticStatus.progressTotal > 0}
+      {#if setupActive || setupFailed}
+        <div class="semantic-setup-progress">
+          {#if setup && setup.phase !== 'complete' && (setup.phase !== 'failed' || setupFailed)}
+            <p><strong>File {setup.fileIndex} of {setup.fileCount}</strong> · {setup.fileLabel}</p>
+            <p class="semantic-setup-filename">{setup.fileName}</p>
+            {#if setup.phase === 'downloading' || (setupFailed && ['downloading', 'verifying', 'installing'].includes(setup.failedPhase ?? 'downloading'))}
+              <p>{`${formatBytes(setup.downloadedBytes)}${setup.totalBytes ? ` of ${formatBytes(setup.totalBytes)} · ${downloadPercent}%` : ' downloaded · total size unavailable'}`}</p>
+            {/if}
+            {#if setup.phase === 'downloading' && setup.totalBytes}
+              <progress class="semantic-progress" aria-label={`Download progress for ${setup.fileLabel}`} value={setup.downloadedBytes} max={setup.totalBytes}></progress>
+            {:else if setupActive}
+              <progress class="semantic-progress" aria-label={readiness.title}></progress>
+            {/if}
+          {:else}
+            <progress class="semantic-progress" aria-label={readiness.title}></progress>
+          {/if}
+          <p>Already verified files are reused. After setup, your notes are indexed on this device.</p>
+        </div>
+      {:else if readiness.action === 'download' && semanticStatus.model.label.includes('Gemma')}
+        <div class="semantic-setup-progress">
+          <p><strong>LiteRT 0.18.0 runtime</strong> runs the search model on your device.</p>
+          <p><strong>EmbeddingGemma 2 model · 387.7 MB</strong> enables search by meaning across text and images.</p>
+          <p>Only missing or damaged files are downloaded. Your notes stay on this device.</p>
+        </div>
+      {/if}
+      {#if !setupActive && readiness.state === 'working' && semanticStatus.progressTotal > 0}
         <progress class="semantic-progress" aria-label="Indexing progress" value={semanticStatus.progressCurrent} max={semanticStatus.progressTotal}></progress>
       {/if}
       <div class="semantic-index-footer">
         <span><strong>{semanticStatus.indexedNotes.toLocaleString()}</strong> notes indexed</span>
         <span>{semanticStatus.lastIndexedAtMillis ? `Last indexed ${formatTimestamp(semanticStatus.lastIndexedAtMillis)}` : 'No notes indexed yet'}</span>
-        {#if busy}<span role="status">Updating…</span>{/if}
+        {#if busy && !setupActive}<span role="status">Updating…</span>{/if}
       </div>
-      {#if semanticStatus.retryAttempt > 0}
+      {#if semanticStatus.retryAttempt > 0 && !setupActive && !setupFailed}
         <p class="semantic-index-detail">Retry {semanticStatus.retryAttempt}/{semanticStatus.retryMaxAttempts}{semanticStatus.retryExhausted ? ' · retries exhausted' : ''}</p>
       {/if}
-      {#if semanticStatus.rebuildReason}<p class="semantic-index-detail">{semanticStatus.rebuildReason}</p>{/if}
+      {#if semanticStatus.rebuildReason && !setupActive && !setupFailed}<p class="semantic-index-detail">{semanticStatus.rebuildReason}</p>{/if}
     </section>
 
-    {#if semanticStatus.lastError || semanticStatus.model.error || semanticStatus.latestJob?.errorText}
-      <p class="semantic-notice error" role="alert">{semanticStatus.lastError ?? semanticStatus.model.error ?? semanticStatus.latestJob?.errorText}</p>
+    {#if !setupActive && !semanticLayerError && (setupFailed ? setup?.error : semanticStatus.lastError || semanticStatus.model.error || semanticStatus.latestJob?.errorText)}
+      <p class="semantic-notice error" role="alert">{setupFailed ? setup?.error : semanticStatus.lastError ?? semanticStatus.model.error ?? semanticStatus.latestJob?.errorText}</p>
     {/if}
 
     <section class="semantic-model semantic-row" data-settings-anchor="semantic-model" aria-label="Embedding model">
@@ -219,7 +256,7 @@
         <h3>Embedding model</h3>
         <p class="semantic-model-name">{semanticStatus.model.label}</p>
         {#if !semanticStatus.modelAvailable}
-        <p>{!semanticStatus.platformSupported ? 'Unavailable on this device.' : semanticStatus.model.error ? 'Needs attention · see the message above.' : semanticSettings.semanticSearchEnabled ? 'Setup incomplete · see the step above.' : 'Not installed. Use Set up local search in Maintenance when needed.'}</p>
+        <p>{setupActive ? 'Setup in progress · see progress above.' : !semanticStatus.platformSupported ? 'Unavailable on this device.' : semanticStatus.model.error ? 'Needs attention · see the message above.' : semanticSettings.semanticSearchEnabled ? 'Setup incomplete · see the step above.' : 'Not installed. Use Set up local search in Maintenance when needed.'}</p>
         {/if}
       </div>
       {#if semanticStatus.modelAvailable}
@@ -441,6 +478,10 @@
   .semantic-index-footer strong { color: var(--foreground); font-weight: 550; }
   .semantic-panel .semantic-index-detail { margin: 0 0 12px; }
   .semantic-progress { display: block; width: 100%; height: 4px; margin-top: 20px; accent-color: var(--foreground); }
+  .semantic-setup-progress { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 13px; color: var(--muted-foreground); }
+  .semantic-setup-progress p { margin: 6px 0; }
+  .semantic-setup-progress strong { color: var(--foreground); }
+  .semantic-setup-filename { overflow-wrap: anywhere; font-size: 12px; }
   .semantic-row { display: flex; align-items: center; justify-content: space-between; gap: 24px; padding: 20px 0; }
   .semantic-row-copy { min-width: 0; max-width: 390px; }
   .semantic-model { padding-block: 20px; }

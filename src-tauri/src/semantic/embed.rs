@@ -44,7 +44,37 @@ pub(crate) struct SemanticModelDownloadResult {
     pub(crate) path: String,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) enum SetupPhase {
+    Checking,
+    Downloading,
+    Verifying,
+    Installing,
+    Starting,
+    Complete,
+    Failed,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct SemanticSetupProgress {
+    pub(crate) phase: SetupPhase,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) failed_phase: Option<SetupPhase>,
+    pub(crate) file_label: String,
+    pub(crate) file_name: String,
+    pub(crate) file_index: u8,
+    pub(crate) file_count: u8,
+    pub(crate) downloaded_bytes: u64,
+    pub(crate) total_bytes: Option<u64>,
+    pub(crate) error: Option<String>,
+}
+
 pub(crate) trait EmbeddingProvider {
+    fn setup_progress(&self) -> Option<SemanticSetupProgress> {
+        None
+    }
     fn minimum_edge_score(&self) -> f32 {
         0.42
     }

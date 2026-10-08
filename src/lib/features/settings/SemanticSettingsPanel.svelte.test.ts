@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { render } from 'svelte/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { SemanticStatus } from '$lib/types/semantic';
+import type { SemanticStatus, SemanticSetupProgress } from '$lib/types/semantic';
 import { searchReadiness } from './semanticStatus';
 import SemanticSettingsPanel from './SemanticSettingsPanel.svelte';
 
@@ -19,7 +19,7 @@ const freshStatus = fixture.events.find(
   ({ channel }) => channel === 'semantic-status-changed'
 )!.payload;
 
-function renderPanel(semanticStatus: SemanticStatus) {
+function renderPanel(semanticStatus: SemanticStatus, isSettingUpLocalSearch = false) {
   return render(SemanticSettingsPanel, {
     props: {
       embedded: true,
@@ -30,6 +30,7 @@ function renderPanel(semanticStatus: SemanticStatus) {
       semanticLayerMessage: null,
       isSaving: false,
       isRunningAction: false,
+      isSettingUpLocalSearch,
       loadSemanticState: vi.fn(),
       updateSetting: vi.fn(),
       runAction: vi.fn(),
@@ -68,6 +69,78 @@ describe('SemanticSettingsPanel health actions', () => {
     expect(html).not.toMatch(/<button[^>]*>Prepare local model<\/button>/);
   });
 
+});
+
+describe('local search setup progress', () => {
+  const progress: SemanticSetupProgress = {
+    phase: 'downloading', fileLabel: 'EmbeddingGemma 2 text and image model',
+    fileName: 'embeddinggemma-2-text-vision-440m.litertlm', fileIndex: 2, fileCount: 2,
+    downloadedBytes: 193_855_488, totalBytes: 387_710_976, error: null
+  };
+  const status: SemanticStatus = {
+    ...freshStatus, modelAvailable: false, retryAttempt: 3, retryExhausted: true,
+    lastError: 'Old indexing failure', model: { ...freshStatus.model, runtimeBinaryPath: null, error: 'Old model failure' },
+    setupProgress: progress
+  };
+
+  it('shows actual file and byte progress while suppressing previous failures and indexing actions', () => {
+    const html = renderPanel(status).split('<details')[0];
+    expect(html).toContain('Downloading EmbeddingGemma 2');
+    expect(html).toContain('File 2 of 2');
+    expect(html).toContain(progress.fileName);
+    expect(html).toContain('193.9 MB of 387.7 MB · 50%');
+    expect(html).toMatch(/<progress[^>]*value="193855488"[^>]*max="387710976"/);
+    expect(html).not.toContain('Old indexing failure');
+    expect(html).not.toContain('Old model failure');
+    expect(html).not.toContain('retries exhausted');
+    expect(html).not.toContain('Pause indexing');
+    expect(html).not.toContain('Setup required');
+  });
+
+  it('uses an indeterminate indicator when the server provides no file size', () => {
+    const html = renderPanel({ ...status, setupProgress: { ...progress, fileIndex: 1, fileLabel: 'LiteRT runtime', totalBytes: null } });
+    expect(html).toContain('193.9 MB downloaded · total size unavailable');
+    expect(html).not.toContain('50%');
+    expect(html).toMatch(/<progress[^>]*aria-label="Downloading LiteRT runtime"[^>]*><\/progress>/);
+  });
+
+  it.each(['checking', 'verifying', 'installing', 'starting'] as const)('distinguishes %s from byte transfer', phase => {
+    const html = renderPanel({ ...status, setupProgress: { ...progress, phase } }).split('<details')[0];
+    expect(html).toContain('Local search setup');
+    expect(html).not.toContain('50%');
+    expect(html).not.toMatch(/<progress[^>]*value=/);
+    if (phase === 'starting') expect(html).toContain('first load can take a few minutes');
+  });
+
+  it('shows an interrupted download with the last byte count and a setup retry', () => {
+    const html = renderPanel({ ...status, setupProgress: { ...progress, phase: 'failed', failedPhase: 'downloading', error: 'Connection lost' } }).split('<details')[0];
+    expect(html).toContain('Setup interrupted');
+    expect(html).toContain('193.9 MB of 387.7 MB · 50%');
+    expect(html).toContain('Retry local search setup');
+    expect(html).toContain('Connection lost');
+    expect(html).not.toContain('retries exhausted');
+    expect(html).not.toContain('<progress');
+  });
+
+  it('distinguishes a startup failure from a download failure', () => {
+    const html = renderPanel({ ...status, setupProgress: { ...progress, phase: 'failed', failedPhase: 'starting', error: 'Model could not start' } }).split('<details')[0];
+    expect(html).toContain('files are installed, but local search could not start');
+    expect(html).not.toContain('50%');
+  });
+
+  it('shows setup as soon as the action starts, before the backend snapshot arrives', () => {
+    const html = renderPanel({ ...status, setupProgress: undefined }, true).split('<details')[0];
+    expect(html).toContain('Checking local search files');
+    expect(html).not.toContain('Setup required');
+    expect(html).not.toContain('Old indexing failure');
+  });
+
+  it('explains the Gemma downloads before setup starts and returns to index status after setup', () => {
+    const missing = { ...freshStatus, modelAvailable: false, model: { ...freshStatus.model, label: 'EmbeddingGemma 2', runtimeBinaryPath: null } };
+    expect(renderPanel(missing)).toContain('EmbeddingGemma 2 model · 387.7 MB');
+    expect(renderPanel(missing)).toContain('LiteRT 0.18.0 runtime');
+    expect(renderPanel({ ...freshStatus, setupProgress: { ...progress, phase: 'complete' } })).toContain('Ready to use');
+  });
 });
 
 describe('semantic search readiness', () => {

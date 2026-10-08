@@ -9,10 +9,29 @@ type SearchReadiness = {
   actionLabel?: string;
 };
 
-export function searchReadiness(status: SemanticStatus, settings: SemanticSettings): SearchReadiness {
+export function searchReadiness(status: SemanticStatus, settings: SemanticSettings, isSettingUp = false): SearchReadiness {
   if (!status.platformSupported) return {
     state: 'unavailable', guidance: 'Unavailable on this device', title: 'Keyword search is available',
     description: status.disabledReason ?? 'Semantic search is not supported on this device.'
+  };
+  const setup = status.setupProgress;
+  if (setup && setup.phase !== 'complete' && setup.phase !== 'failed') return {
+    state: 'working', guidance: 'Local search setup',
+    title: `${{ checking: 'Checking', downloading: 'Downloading', verifying: 'Verifying', installing: 'Installing', starting: 'Starting' }[setup.phase]} ${setup.phase === 'starting' ? 'local search' : setup.fileLabel}`,
+    description: setup.phase === 'starting'
+      ? 'Loading the model on your device. The first load can take a few minutes. Keyword search is available.'
+      : 'These files enable private search on your device. Your notes stay on this device, and keyword search remains available.'
+  };
+  if (isSettingUp) return {
+    state: 'working', guidance: 'Local search setup', title: setup?.phase === 'complete' ? 'Starting local search' : 'Checking local search files',
+    description: 'Installing any missing search runtime and model files, then loading the model. You can keep using the app.'
+  };
+  if (setup?.phase === 'failed') return {
+    state: 'attention', guidance: 'Setup interrupted', title: 'Local search setup could not finish',
+    description: setup.failedPhase === 'starting'
+      ? 'The files are installed, but local search could not start. Retry setup to load the model again. Keyword search is available.'
+      : `Setup stopped while processing ${setup.fileLabel}. Try setup again; verified files will be reused. Keyword search is available.`,
+    action: 'download', actionLabel: 'Retry local search setup'
   };
   if (!settings.semanticSearchEnabled) return {
     state: 'off', guidance: 'Your preference', title: 'Semantic search is off',

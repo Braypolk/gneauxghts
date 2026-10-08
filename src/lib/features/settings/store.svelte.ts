@@ -85,10 +85,12 @@ export class SettingsStore {
   missingActionError = $state<string | null>(null);
   isSaving = $state(false);
   isRunningAction = $state(false);
+  isSettingUpLocalSearch = $state(false);
   semanticLayerError = $state<string | null>(null);
   semanticLayerMessage = $state<string | null>(null);
 
   #semanticPollTimer: number | null = null;
+  #semanticPollInterval = 0;
   #vaultChangeRefreshTimer: number | null = null;
   #semanticStatusRequest: Promise<void> | null = null;
   #semanticStateRequest: Promise<void> | null = null;
@@ -266,7 +268,8 @@ export class SettingsStore {
 
   #shouldPollSemanticState() {
     return Boolean(
-      this.semanticStatus?.indexingInProgress || this.isRunningAction || this.isSaving
+      this.semanticStatus?.indexingInProgress || this.isRunningAction || this.isSaving ||
+      (this.semanticStatus?.setupProgress && !['complete', 'failed'].includes(this.semanticStatus.setupProgress.phase))
     );
   }
 
@@ -282,13 +285,15 @@ export class SettingsStore {
       return;
     }
 
-    if (this.#semanticPollTimer) {
-      return;
-    }
+    const setup = this.semanticStatus?.setupProgress;
+    const interval = this.isSettingUpLocalSearch || (setup && !['complete', 'failed'].includes(setup.phase)) ? 1000 : 5000;
+    if (this.#semanticPollTimer && this.#semanticPollInterval === interval) return;
+    this.#stopSemanticPolling();
+    this.#semanticPollInterval = interval;
 
     this.#semanticPollTimer = window.setInterval(() => {
       void this.loadSemanticStatus();
-    }, 5000);
+    }, interval);
   }
 
   async loadVaultInfo() {
@@ -693,15 +698,19 @@ export class SettingsStore {
     const lifetime = this.#lifetime;
     if (this.isRunningAction) return;
     this.isRunningAction = true;
+    this.isSettingUpLocalSearch = true;
+    this.#syncSemanticPolling();
     this.semanticLayerError = null;
     this.semanticLayerMessage = null;
     try {
-      this.semanticLayerMessage = 'Setting up local search… Downloading any missing files. You can keep using the app.';
+      this.semanticLayerMessage = 'Checking local search files… Setup progress appears below. You can keep using the app.';
       await invoke<SemanticModelDownloadResult>(
         'download_semantic_embedding_model'
       );
-      if (lifetime === this.#lifetime) this.semanticLayerMessage = 'Starting local search… The first load can take a few minutes.';
+      if (lifetime !== this.#lifetime) return;
+      this.semanticLayerMessage = 'Starting local search… The first load can take a few minutes.';
       await invoke('prepare_semantic_model');
+      if (lifetime !== this.#lifetime) return;
       await invoke<void>('retry_semantic_index');
       if (lifetime !== this.#lifetime) return;
       this.semanticLayerMessage = 'Local search is set up. Your notes will now be indexed.';
@@ -712,9 +721,12 @@ export class SettingsStore {
       console.error('Failed to download embedding model:', error);
       this.semanticLayerError = String(error);
       this.semanticLayerMessage = null;
+      await this.loadSemanticStatus();
     } finally {
       if (lifetime !== this.#lifetime) return;
       this.isRunningAction = false;
+      this.isSettingUpLocalSearch = false;
+      this.#syncSemanticPolling();
     }
   };
 
@@ -854,6 +866,7 @@ export class SettingsStore {
     this.isSaving = false;
     this.isSavingVault = false;
     this.isRunningAction = false;
+    this.isSettingUpLocalSearch = false;
     this.isPickingVault = false;
     this.isLoadingVaultFolders = false;
     this.isCreatingVaultFolder = false;

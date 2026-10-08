@@ -1,4 +1,5 @@
 //! Explicit Settings setup installs the pinned native library, not Python.
+use super::embed::SetupPhase;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
 use std::{
@@ -12,6 +13,9 @@ pub(super) const MODEL_REPO: &str = "litert-community/embeddinggemma-2-text-visi
 pub(super) const MODEL_REV: &str = "e301f74d5551b0c2641bd5cb4652a76239d5c5f8";
 pub(super) const MODEL_SHA: &str =
     "92dcbea108899e5d6e30d919b0744f90d9967e80c67a4ab5503ac16d54f62eb0";
+pub(super) const MODEL_BYTES: u64 = 387_710_976;
+
+type ProgressCallback<'a> = dyn FnMut(SetupPhase, u64, Option<u64>) + 'a;
 
 pub(super) struct Installer {
     root: PathBuf,
@@ -67,19 +71,46 @@ impl Installer {
         }
         Ok(path)
     }
-    pub(super) fn install(&self, client: &Client) -> Result<PathBuf, String> {
+    pub(super) fn package_name() -> String {
+        Artifact::current()
+            .map(|a| {
+                a.url
+                    .rsplit('/')
+                    .next()
+                    .unwrap_or("LiteRT package")
+                    .to_string()
+            })
+            .unwrap_or_else(|_| "LiteRT package".into())
+    }
+    pub(super) fn install(
+        &self,
+        client: &Client,
+        progress: &mut ProgressCallback<'_>,
+    ) -> Result<PathBuf, String> {
+        progress(SetupPhase::Checking, 0, None);
         if let Ok(path) = self.verified_library() {
             return Ok(path);
         }
         let artifact = Artifact::current()?;
+        progress(SetupPhase::Downloading, 0, None);
         let response = client
             .get(artifact.url)
             .send()
             .and_then(|r| r.error_for_status())
             .map_err(|e| e.to_string())?;
-        self.install_from(response)
+        let total = response.content_length();
+        self.install_from_with_progress(response, total, progress)
     }
+    #[cfg(test)]
     fn install_from(&self, input: impl Read) -> Result<PathBuf, String> {
+        self.install_from_with_progress(input, None, &mut |_, _, _| {})
+    }
+    fn install_from_with_progress(
+        &self,
+        input: impl Read,
+        total: Option<u64>,
+        progress: &mut ProgressCallback<'_>,
+    ) -> Result<PathBuf, String> {
         let artifact = Artifact::current()?;
         fs::create_dir_all(&self.root).map_err(|e| e.to_string())?;
         let mut nonce = [0u8; 8];
@@ -90,7 +121,15 @@ impl Installer {
         fs::create_dir(&stage).map_err(|e| e.to_string())?;
         let result = (|| {
             let archive = stage.join("runtime.whl");
-            save_verified(input, &archive, artifact.sha, 512 * 1024 * 1024)?;
+            let bytes = save_verified_with_progress(
+                input,
+                &archive,
+                artifact.sha,
+                512 * 1024 * 1024,
+                total,
+                progress,
+            )?;
+            progress(SetupPhase::Installing, bytes, total);
             let extracted = stage.join("native");
             let mut zip =
                 zip::ZipArchive::new(fs::File::open(&archive).map_err(|e| e.to_string())?)
@@ -138,17 +177,30 @@ fn find_library(root: &Path, name: &str) -> Option<PathBuf> {
     None
 }
 
+#[cfg(test)]
 pub(super) fn save_verified(
-    mut input: impl Read,
+    input: impl Read,
     path: &Path,
     sha: &str,
     limit: u64,
 ) -> Result<(), String> {
+    save_verified_with_progress(input, path, sha, limit, None, &mut |_, _, _| {}).map(|_| ())
+}
+
+pub(super) fn save_verified_with_progress(
+    mut input: impl Read,
+    path: &Path,
+    sha: &str,
+    limit: u64,
+    total: Option<u64>,
+    progress: &mut ProgressCallback<'_>,
+) -> Result<u64, String> {
     let result = (|| {
         let mut file = fs::File::create(path).map_err(|e| e.to_string())?;
         let mut hash = Sha256::new();
         let mut bytes = 0u64;
         let mut buffer = [0; 64 * 1024];
+        progress(SetupPhase::Downloading, 0, total);
         loop {
             let count = input.read(&mut buffer).map_err(|e| e.to_string())?;
             if count == 0 {
@@ -161,13 +213,16 @@ pub(super) fn save_verified(
             hash.update(&buffer[..count]);
             file.write_all(&buffer[..count])
                 .map_err(|e| e.to_string())?;
+            progress(SetupPhase::Downloading, bytes, total);
         }
+        progress(SetupPhase::Verifying, bytes, total);
         if format!("{:x}", hash.finalize()) != sha {
             return Err(
                 "Local search download failed checksum verification. Try setup again.".into(),
             );
         }
-        file.sync_all().map_err(|e| e.to_string())
+        file.sync_all().map_err(|e| e.to_string())?;
+        Ok(bytes)
     })();
     if result.is_err() {
         let _ = fs::remove_file(path);
@@ -196,6 +251,58 @@ pub(super) fn matches_checksum(path: &Path, sha: &str) -> Result<bool, String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn progress_reports_transferred_bytes_before_verification_and_cleans_up_interruptions() {
+        struct Interrupted {
+            sent: bool,
+        }
+        impl Read for Interrupted {
+            fn read(&mut self, buffer: &mut [u8]) -> std::io::Result<usize> {
+                if self.sent {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::ConnectionReset,
+                        "connection lost",
+                    ));
+                }
+                self.sent = true;
+                buffer[..3].copy_from_slice(b"abc");
+                Ok(3)
+            }
+        }
+        let temp = crate::test_support::TestDir::new("litert-progress");
+        let path = temp.path().join("partial");
+        let sha = format!("{:x}", Sha256::digest(b"abc"));
+        let mut events = Vec::new();
+        save_verified_with_progress(
+            &b"abc"[..],
+            &path,
+            &sha,
+            10,
+            Some(3),
+            &mut |phase, bytes, total| events.push((phase, bytes, total)),
+        )
+        .unwrap();
+        assert_eq!(
+            events,
+            vec![
+                (SetupPhase::Downloading, 0, Some(3)),
+                (SetupPhase::Downloading, 3, Some(3)),
+                (SetupPhase::Verifying, 3, Some(3)),
+            ]
+        );
+        events.clear();
+        let result = save_verified_with_progress(
+            Interrupted { sent: false },
+            &path,
+            &sha,
+            10,
+            None,
+            &mut |phase, bytes, total| events.push((phase, bytes, total)),
+        );
+        assert!(result.unwrap_err().contains("connection lost"));
+        assert_eq!(events.last(), Some(&(SetupPhase::Downloading, 3, None)));
+        assert!(!path.exists());
+    }
     #[test]
     fn failed_downloads_leave_no_partial_artifact() {
         let temp = crate::test_support::TestDir::new("litert-setup");

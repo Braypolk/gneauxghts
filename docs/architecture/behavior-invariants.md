@@ -490,6 +490,11 @@ indexing. Ordinary embedding requests never download executable code. Runtime
 downloads are pinned and checksum-verified; extraction and executable startup
 must succeed before the complete runtime directory becomes discoverable.
 Interrupted setup remains retryable, and keyword search stays available.
+The provider owns setup progress independently of its inference lock. Settings
+shows the current runtime/model artifact, transferred bytes and a percentage
+only when the file size is known; checking, verification, installation and model
+startup remain distinct phases. Active setup supersedes prior indexing errors
+in the overview, and failed setup retains its artifact and byte count for retry.
 
 A semantic provider change uses a separate representation namespace and one
 resident model. Semantic queries hold a generation read lease; activation waits

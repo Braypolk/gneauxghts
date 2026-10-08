@@ -156,17 +156,26 @@ describe('searchable settings workspace', () => {
     status.modelAvailable = false;
     status.model.runtimeBinaryPath = null;
     status.model.error = null;
+    status.model.label = 'EmbeddingGemma 2 · LiteRT · text + images';
     await browser.execute(async (initial) => {
       const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<Record<string, unknown>> };
       const view = await native.invoke('get_settings_view');
+      let finishDownload: (() => void) | null = null;
       Object.assign(window.__GNEAUXGHTS_E2E_COMMANDS__!, {
         get_settings_view: () => ({ ...view, semanticStatus: initial, semanticSettings: initial.settings }),
         get_semantic_status: () => initial,
         download_semantic_embedding_model: async () => {
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          initial.model.runtimeBinaryPath = '/app/semantic/runtime/llama-server';
-          return { alreadyPresent: false, path: '/app/model.gguf' };
+          initial.setupProgress = {
+            phase: 'downloading', fileLabel: 'EmbeddingGemma 2 text and image model',
+            fileName: 'embeddinggemma-2-text-vision-440m.litertlm', fileIndex: 2, fileCount: 2,
+            downloadedBytes: 193_855_488, totalBytes: 387_710_976, error: null
+          };
+          await new Promise<void>(resolve => { finishDownload = resolve; });
+          initial.setupProgress.phase = 'complete';
+          initial.model.runtimeBinaryPath = '/app/semantic/litert-0.18.0/installed/liblitert-lm.dylib';
+          return { alreadyPresent: false, path: '/app/model.litertlm' };
         },
+        finish_search_setup_fixture: () => { finishDownload?.(); return null; },
         prepare_semantic_model: () => {
           initial.modelAvailable = true;
           initial.model.available = true;
@@ -181,9 +190,16 @@ describe('searchable settings workspace', () => {
     await $('button[aria-label="Refresh semantic search"]').click();
     const setup = await $('.semantic-index').$('button=Set up local search');
     await setup.waitForDisplayed();
+    await expect($('.semantic-setup-progress')).toHaveText(expect.stringContaining('387.7 MB'));
     await setup.click();
-    await $('p*=Downloading any missing files').waitForDisplayed();
-    expect(await setup.isEnabled()).toBe(false);
+    await $('h3*=Downloading EmbeddingGemma 2').waitForDisplayed();
+    await expect($('.semantic-setup-progress')).toHaveText(expect.stringContaining('193.9 MB of 387.7 MB · 50%'));
+    expect(await $('progress[aria-label^="Download progress"]').getAttribute('value')).toBe('193855488');
+    expect(await $('.semantic-index').$('button=Pause indexing').isExisting()).toBe(false);
+    await browser.execute(async () => {
+      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<unknown> };
+      await native.invoke('finish_search_setup_fixture');
+    });
     await $('p=Local search is set up. Your notes will now be indexed.').waitForDisplayed();
     await $('h3=Ready to use').waitForDisplayed();
     expect(await browser.getUrl()).toContain('/settings');

@@ -49,7 +49,7 @@ state references, independently of Tauri dispatch.
 | One active proposal review | `ProposalReviewSession.workflow` owns admission/commit; the retained document runtime owns editable body and hunk state |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
-| Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; its private installer verifies pinned native LiteRT/model bytes, and explicit Settings setup uses semantic work admission |
+| Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; its private installer verifies pinned native LiteRT/model bytes, explicit Settings setup uses semantic work admission, and shared semantic snapshots expose setup phases and byte progress independently of inference |
 | Compatible semantic generation and query admission | `SemanticGeneration` gates the vault-lifetime provider/database/ANN bundle; the semantic worker publishes after source/recall reconciliation through NoteTimeline source admission |
 | Next-launch semantic recovery | Vault-local `semantic-provider.json` stages Gemma or retained Jina; composition selects one provider on launch |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |

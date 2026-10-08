@@ -578,6 +578,7 @@
         semanticLayerMessage={settings.semanticLayerMessage}
         isSaving={settings.isSaving}
         isRunningAction={settings.isRunningAction}
+        isSettingUpLocalSearch={settings.isSettingUpLocalSearch}
         loadSemanticState={settings.loadSemanticState}
         updateSetting={settings.updateSetting}
         runAction={settings.runAction}

@@ -123,6 +123,8 @@ impl SemanticHealth {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct SemanticStatus {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) setup_progress: Option<embed::SemanticSetupProgress>,
     pub(crate) image_coverage: images::ImageCoverage,
     pub(crate) text_ready: bool,
     pub(crate) image_capability: String,
@@ -1385,6 +1387,7 @@ impl ActiveSemanticState {
             .map_err(|_| "Semantic runtime lock poisoned".to_string())?;
 
         Ok(SemanticStatus {
+            setup_progress: self.provider.setup_progress(),
             text_ready: model.ready && self.generation.is_active(),
             image_capability: self.provider.image_capability().into(),
             migration_state: if self.generation.is_active() {
@@ -1636,6 +1639,7 @@ impl DisabledSemanticState {
             .map(|settings| settings.clone())
             .map_err(|_| "Semantic settings lock poisoned".to_string())?;
         Ok(SemanticStatus {
+            setup_progress: None,
             text_ready: false,
             image_capability: "unsupported".into(),
             migration_state: "unavailable".into(),

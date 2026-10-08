@@ -80,7 +80,8 @@ describe('SettingsStore actions', () => {
 
     const setup = store.downloadEmbeddingModel();
     expect(store.isRunningAction).toBe(true);
-    expect(store.semanticLayerMessage).toContain('Downloading any missing files');
+    expect(store.isSettingUpLocalSearch).toBe(true);
+    expect(store.semanticLayerMessage).toContain('Checking local search files');
     await store.downloadEmbeddingModel();
     expect(invokeMock).toHaveBeenCalledOnce();
     download.resolve({ alreadyPresent: true, path: '/app/model.gguf' });
@@ -92,6 +93,7 @@ describe('SettingsStore actions', () => {
     expect(store.semanticLayerMessage).toBe('Local search is set up. Your notes will now be indexed.');
     expect(store.semanticLayerError).toBeNull();
     expect(store.isRunningAction).toBe(false);
+    expect(store.isSettingUpLocalSearch).toBe(false);
     expect(invokeMock.mock.calls.filter(([command]) => command === 'get_settings_view')).toHaveLength(1);
   });
 
@@ -104,6 +106,45 @@ describe('SettingsStore actions', () => {
     expect(store.semanticLayerError).toBe('Download interrupted. Try setup again.');
     expect(store.semanticLayerMessage).toBeNull();
     expect(store.isRunningAction).toBe(false);
+    expect(store.isSettingUpLocalSearch).toBe(false);
+    expect(appStoreMock.refreshSemanticStatus).toHaveBeenCalledOnce();
+  });
+
+  it('polls setup immediately and stops after failure', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('document', { visibilityState: 'visible' });
+    vi.stubGlobal('window', { setInterval, clearInterval });
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const download = deferred<never>();
+    responses.download_semantic_embedding_model = download.promise;
+    try {
+      const settingUp = store.downloadEmbeddingModel();
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(appStoreMock.refreshSemanticStatus).toHaveBeenCalledOnce();
+      download.reject('Download interrupted');
+      await settingUp;
+      expect(appStoreMock.refreshSemanticStatus).toHaveBeenCalledTimes(2);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(appStoreMock.refreshSemanticStatus).toHaveBeenCalledTimes(2);
+    } finally {
+      store.dispose();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('does not submit more setup commands after Settings is disposed', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const store = createSettingsStore(appStoreMock);
+    const download = deferred<{ alreadyPresent: boolean; path: string }>();
+    responses.download_semantic_embedding_model = download.promise;
+    const settingUp = store.downloadEmbeddingModel();
+    store.dispose();
+    download.resolve({ alreadyPresent: false, path: '/app/model.litertlm' });
+    await settingUp;
+    expect(invokeMock).toHaveBeenCalledOnce();
+    expect(store.isSettingUpLocalSearch).toBe(false);
   });
 
   it('surfaces committed recovery warnings in settings', async () => {

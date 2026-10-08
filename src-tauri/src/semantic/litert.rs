@@ -1,7 +1,10 @@
 //! One serialized, device-local Gemma engine. Setup alone downloads artifacts.
 use super::{
     debug::SemanticDebugState,
-    embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, SemanticModelDownloadResult},
+    embed::{
+        EmbeddingInputKind, EmbeddingProvider, ModelInfo, SemanticModelDownloadResult,
+        SemanticSetupProgress, SetupPhase,
+    },
     litert_ffi::Engine,
     litert_install::{self, Installer, MODEL_FILE, MODEL_REPO, MODEL_REV, MODEL_SHA},
     SemanticSettings,
@@ -36,6 +39,7 @@ pub(crate) struct GemmaLiteRtEmbeddingProvider {
     settings: Arc<Mutex<SemanticSettings>>,
     runtime: Mutex<Runtime>,
     setup: Mutex<()>,
+    setup_progress: Mutex<Option<SemanticSetupProgress>>,
     debug: Arc<SemanticDebugState>,
     vision_disabled: AtomicBool,
 }
@@ -60,6 +64,7 @@ impl GemmaLiteRtEmbeddingProvider {
             settings,
             runtime: Mutex::new(Runtime::default()),
             setup: Mutex::new(()),
+            setup_progress: Mutex::new(None),
             debug,
             vision_disabled: AtomicBool::new(false),
         }
@@ -73,7 +78,7 @@ impl GemmaLiteRtEmbeddingProvider {
     fn available(&self) -> bool {
         self.model_path()
             .metadata()
-            .is_ok_and(|m| m.len() == 387_710_976)
+            .is_ok_and(|m| m.len() == litert_install::MODEL_BYTES)
             && self.installer.library().is_some()
     }
     fn tokens(&self) -> Result<u16, String> {
@@ -81,6 +86,107 @@ impl GemmaLiteRtEmbeddingProvider {
             .lock()
             .map(|s| s.image_tokens)
             .map_err(|_| "Semantic settings lock poisoned".into())
+    }
+    fn report_setup(&self, file_index: u8, phase: SetupPhase, bytes: u64, total: Option<u64>) {
+        if let Ok(mut progress) = self.setup_progress.lock() {
+            *progress = Some(SemanticSetupProgress {
+                phase,
+                failed_phase: None,
+                file_label: if file_index == 1 {
+                    "LiteRT 0.18.0 search runtime"
+                } else {
+                    "EmbeddingGemma 2 text and image model"
+                }
+                .into(),
+                file_name: if file_index == 1 {
+                    Installer::package_name()
+                } else {
+                    MODEL_FILE.into()
+                },
+                file_index,
+                file_count: 2,
+                downloaded_bytes: bytes,
+                total_bytes: total,
+                error: None,
+            });
+        }
+    }
+
+    fn install_search_files(&self) -> Result<SemanticModelDownloadResult, String> {
+        let client = Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .timeout(Duration::from_secs(7200))
+            .build()
+            .map_err(|e| e.to_string())?;
+        // Release the engine before replacing damaged files (including on Windows).
+        {
+            let mut runtime = self
+                .runtime
+                .lock()
+                .map_err(|_| "Gemma runtime lock poisoned")?;
+            runtime.engine.take();
+            runtime.backend = None;
+            runtime.verified = false;
+            self.vision_disabled.store(false, Ordering::Release);
+        }
+        self.report_setup(1, SetupPhase::Checking, 0, None);
+        let runtime_present = self.installer.verified_library().is_ok();
+        self.installer
+            .install(&client, &mut |phase, bytes, total| {
+                self.report_setup(1, phase, bytes, total);
+            })?;
+        self.report_setup(
+            2,
+            SetupPhase::Checking,
+            0,
+            Some(litert_install::MODEL_BYTES),
+        );
+        let model_present = litert_install::matches_checksum(&self.model_path(), MODEL_SHA)?;
+        let already_present = model_present && runtime_present;
+        if !model_present {
+            fs::create_dir_all(&self.model_dir).map_err(|e| e.to_string())?;
+            let partial = self.model_dir.join(format!("{MODEL_FILE}.partial"));
+            self.report_setup(
+                2,
+                SetupPhase::Downloading,
+                0,
+                Some(litert_install::MODEL_BYTES),
+            );
+            let response = client
+                .get(format!(
+                    "https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REV}/{MODEL_FILE}"
+                ))
+                .send()
+                .and_then(|r| r.error_for_status())
+                .map_err(|e| e.to_string())?;
+            litert_install::save_verified_with_progress(
+                response,
+                &partial,
+                MODEL_SHA,
+                400 * 1024 * 1024,
+                Some(litert_install::MODEL_BYTES),
+                &mut |phase, bytes, total| {
+                    self.report_setup(2, phase, bytes, total);
+                },
+            )?;
+            self.report_setup(
+                2,
+                SetupPhase::Installing,
+                litert_install::MODEL_BYTES,
+                Some(litert_install::MODEL_BYTES),
+            );
+            if self.model_path().exists() {
+                fs::remove_file(self.model_path()).map_err(|e| e.to_string())?;
+            }
+            fs::rename(&partial, self.model_path()).map_err(|e| e.to_string())?;
+        }
+        self.report_setup(2, SetupPhase::Starting, 0, None);
+        self.prepare()?;
+        self.report_setup(2, SetupPhase::Complete, 0, None);
+        Ok(SemanticModelDownloadResult {
+            already_present,
+            path: self.model_path().to_string_lossy().into_owned(),
+        })
     }
     fn ensure_engine(&self, runtime: &mut Runtime, tokens: u16) -> Result<(), String> {
         if runtime.engine.is_some() && runtime.tokens == tokens {
@@ -349,49 +455,23 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
             runtime.backend = None;
         }
     }
+    fn setup_progress(&self) -> Option<SemanticSetupProgress> {
+        self.setup_progress.lock().ok().and_then(|p| p.clone())
+    }
     fn download_model_if_needed(&self) -> Result<SemanticModelDownloadResult, String> {
         let _setup = self.setup.lock().map_err(|_| "Gemma setup lock poisoned")?;
-        let client = Client::builder()
-            .connect_timeout(Duration::from_secs(30))
-            .timeout(Duration::from_secs(7200))
-            .build()
-            .map_err(|e| e.to_string())?;
-        // Setup verifies existing bytes too, and releases the engine before
-        // replacing a damaged runtime/model (important on Windows).
-        {
-            let mut runtime = self
-                .runtime
-                .lock()
-                .map_err(|_| "Gemma runtime lock poisoned")?;
-            runtime.engine.take();
-            runtime.backend = None;
-            runtime.verified = false;
-            self.vision_disabled.store(false, Ordering::Release);
-        }
-        let already_present = litert_install::matches_checksum(&self.model_path(), MODEL_SHA)?
-            && self.installer.verified_library().is_ok();
-        self.installer.install(&client)?;
-        if !litert_install::matches_checksum(&self.model_path(), MODEL_SHA)? {
-            fs::create_dir_all(&self.model_dir).map_err(|e| e.to_string())?;
-            let partial = self.model_dir.join(format!("{MODEL_FILE}.partial"));
-            let response = client
-                .get(format!(
-                    "https://huggingface.co/{MODEL_REPO}/resolve/{MODEL_REV}/{MODEL_FILE}"
-                ))
-                .send()
-                .and_then(|r| r.error_for_status())
-                .map_err(|e| e.to_string())?;
-            litert_install::save_verified(response, &partial, MODEL_SHA, 400 * 1024 * 1024)?;
-            if self.model_path().exists() {
-                fs::remove_file(self.model_path()).map_err(|e| e.to_string())?;
+        self.report_setup(1, SetupPhase::Checking, 0, None);
+        let result = self.install_search_files();
+        if let Err(error) = &result {
+            if let Ok(mut progress) = self.setup_progress.lock() {
+                if let Some(progress) = progress.as_mut() {
+                    progress.failed_phase = Some(progress.phase);
+                    progress.phase = SetupPhase::Failed;
+                    progress.error = Some(error.clone());
+                }
             }
-            fs::rename(&partial, self.model_path()).map_err(|e| e.to_string())?;
         }
-        self.prepare()?;
-        Ok(SemanticModelDownloadResult {
-            already_present,
-            path: self.model_path().to_string_lossy().into_owned(),
-        })
+        result
     }
 }
 
@@ -444,6 +524,19 @@ mod tests {
         );
         let _busy = provider.runtime.lock().unwrap();
         assert!(provider.model_info().loading);
+        provider.report_setup(
+            2,
+            SetupPhase::Downloading,
+            42,
+            Some(litert_install::MODEL_BYTES),
+        );
+        let progress = provider.setup_progress().unwrap();
+        assert_eq!(progress.downloaded_bytes, 42);
+        let wire = serde_json::to_value(progress).unwrap();
+        assert_eq!(wire["phase"], "downloading");
+        assert_eq!(wire["fileName"], MODEL_FILE);
+        assert_eq!(wire["downloadedBytes"], 42);
+        assert_eq!(wire["totalBytes"], litert_install::MODEL_BYTES);
     }
     #[test]
     fn gpu_success_does_not_allocate_cpu_and_failure_falls_back_once() {

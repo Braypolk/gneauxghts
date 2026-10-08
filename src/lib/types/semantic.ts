@@ -35,6 +35,7 @@ export interface SemanticIndexJob {
 }
 
 export interface SemanticStatus {
+  setupProgress?: SemanticSetupProgress;
   imageCoverage: { indexed: number; failed: number; unsupported: number };
   textReady: boolean;
   imageCapability: 'available' | 'unsupported' | 'failed';
@@ -73,6 +74,18 @@ export interface SemanticStatus {
   progressCurrent: number;
   progressTotal: number;
   rebuildReason: string | null;
+}
+
+export interface SemanticSetupProgress {
+  phase: 'checking' | 'downloading' | 'verifying' | 'installing' | 'starting' | 'complete' | 'failed';
+  failedPhase?: SemanticSetupProgress['phase'];
+  fileLabel: string;
+  fileName: string;
+  fileIndex: number;
+  fileCount: number;
+  downloadedBytes: number;
+  totalBytes: number | null;
+  error: string | null;
 }
 
 export interface ImageSearchItem {
