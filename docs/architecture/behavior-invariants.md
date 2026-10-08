@@ -198,6 +198,15 @@ restored state without the previous undo root. Every open-document Version
 Restore starts one fresh shared undo root across sibling panes while their
 selection and scroll remain pane-owned.
 
+### Task reads distinguish invalidation from an empty list
+
+The master task list, recent tasks, and per-note task refreshes wait briefly for
+active current-content mutations and retry a projection invalidated during its
+query. Retry and waiting are bounded; persistent contention returns a failure,
+never a successful empty list or missing group. Stable results still enforce
+current-note eligibility and the selected task filters. Only repeatable reads
+use this protocol; canonical mutation commands are never retried by it.
+
 ### Task mutations respect dirty documents
 
 A task mutation targeting a dirty open note changes the open document and then

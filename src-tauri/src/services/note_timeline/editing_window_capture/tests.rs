@@ -112,6 +112,113 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn task_read_retries_a_save_that_overlaps_the_projection_query() {
+    struct Item {
+        note_id: String,
+        note_path: String,
+        text: String,
+    }
+    impl CurrentContentItem for Item {
+        fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
+            CurrentContentIdentity::Note {
+                note_id: Some(&self.note_id),
+                note_path: Some(&self.note_path),
+            }
+        }
+    }
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    f.save("- [ ] Existing task");
+    let timeline = f.state.note_timeline();
+    let access = timeline.current_content(AllowedScope::vault());
+    let mut changed = false;
+    let tasks = access
+        .read_refreshable(|| {
+            let records =
+                crate::state::task_projection::list_recent_open_tasks(10, &HashSet::new())?;
+            if !changed {
+                changed = true;
+                f.save("- [ ] Updated task");
+            }
+            Ok(records
+                .into_iter()
+                .map(|record| Item {
+                    note_id: record.note_id,
+                    note_path: record.note_path,
+                    text: record.text,
+                })
+                .collect::<Vec<_>>())
+        })
+        .unwrap();
+    assert_eq!(
+        tasks.len(),
+        1,
+        "an overlapping save must not erase the task list"
+    );
+    assert_eq!(tasks[0].text, "Updated task");
+}
+
+#[test]
+fn task_read_waits_for_active_mutations_to_settle() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    let timeline = f.state.note_timeline();
+    let mutation = timeline.begin_current_content_mutation().unwrap();
+    let (started, ready) = std::sync::mpsc::channel();
+    let (finished, result) = std::sync::mpsc::channel();
+    std::thread::scope(|scope| {
+        let state = &f.state;
+        scope.spawn(move || {
+            started.send(()).unwrap();
+            let read = state
+                .note_timeline()
+                .current_content(AllowedScope::vault())
+                .read_refreshable(|| Ok(Vec::<crate::commands::TaskListGroup>::new()));
+            finished.send(read).unwrap();
+        });
+        ready
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        assert!(matches!(
+            result.recv_timeout(std::time::Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        drop(mutation);
+        assert!(result
+            .recv_timeout(std::time::Duration::from_secs(1))
+            .unwrap()
+            .unwrap()
+            .is_empty());
+    });
+}
+
+#[test]
+fn task_read_reports_repeated_invalidation_instead_of_an_empty_list() {
+    let _guard = crate::test_support::lock_test_env();
+    let f = Fixture::new();
+    let timeline = f.state.note_timeline();
+    let access = timeline.current_content(AllowedScope::vault());
+    let mut queries = 0;
+    let result = access.read_refreshable(|| {
+        queries += 1;
+        let _mutation = timeline.begin_current_content_mutation()?;
+        Ok(Vec::<crate::commands::TaskListGroup>::new())
+    });
+    assert!(
+        result.is_err(),
+        "invalidated reads must not claim the vault is empty"
+    );
+    assert!(queries <= 3, "retries must stay bounded");
+    assert!(
+        access
+            .read_refreshable(|| Ok(Vec::<crate::commands::TaskListGroup>::new()))
+            .unwrap()
+            .is_empty(),
+        "a stable, genuinely empty list is still valid"
+    );
+}
+
+#[test]
 fn unchanged_metadata_and_self_observation_do_not_advance_window_evidence() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();

@@ -67,7 +67,7 @@ pub(super) fn list_recent_tasks(
     state
         .note_timeline()
         .current_content(AllowedScope::vault())
-        .read(|| {
+        .read_refreshable(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
 
             let persisted_state = read_state(&notes_dir)?;
@@ -99,7 +99,7 @@ pub(super) fn list_tasks(
     state
         .note_timeline()
         .current_content(AllowedScope::vault())
-        .read(|| {
+        .read_refreshable(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
             let persisted_state = read_state(&notes_dir)?;
 
@@ -137,10 +137,10 @@ pub(super) fn get_task_group(
     state
         .note_timeline()
         .current_content(AllowedScope::vault())
-        .read(|| {
+        .read_refreshable(|| {
             let notes_dir = prepare_notes_dir(&state, false)?;
             state.ensure_interactive_index(&notes_dir, "get_task_group")?;
-            build_task_group_patch(&state, &note_id, filter, show_hidden)
+            build_task_group_patch(&state, &note_id, filter.clone(), show_hidden)
         })
 }
 
@@ -453,6 +453,63 @@ pub(crate) fn prepare_task_document_mutation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tauri::Manager;
+
+    #[test]
+    fn list_tasks_keeps_tasks_when_refreshing_a_dirty_note() {
+        let _guard = crate::test_support::lock_test_env();
+        let app_data = crate::test_support::TestDir::new("task-list-data");
+        let notes = crate::test_support::TestDir::new("task-list-notes");
+        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("disabled"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+            &state,
+            "Tasks".into(),
+            "- [ ] Existing task".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let path = std::path::PathBuf::from(saved.path.unwrap());
+        let app = tauri::test::mock_builder()
+            .manage(state)
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        assert_eq!(
+            list_tasks(app.state(), TaskFilter::All, false)
+                .unwrap()
+                .len(),
+            1
+        );
+        let markdown = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(&path, markdown.replace("Existing task", "Updated task")).unwrap();
+        app.state::<AppState>()
+            .mark_notes_index_dirty(&path, "task-list-test")
+            .unwrap();
+        let groups = list_tasks(app.state(), TaskFilter::All, false).unwrap();
+        assert_eq!(
+            groups.len(),
+            1,
+            "an index refresh must not look like an empty vault"
+        );
+        assert_eq!(groups[0].display_tasks[0].text, "Updated task");
+        assert!(list_tasks(app.state(), TaskFilter::Completed, false)
+            .unwrap()
+            .is_empty());
+        assert_eq!(list_recent_tasks(app.state(), 10).unwrap().len(), 1);
+        let patch =
+            get_task_group(app.state(), saved.note_id.unwrap(), TaskFilter::All, false).unwrap();
+        assert_eq!(patch.group.unwrap().display_tasks[0].text, "Updated task");
+        app.state::<AppState>()
+            .stop_rebuildable_projection_work()
+            .unwrap();
+        crate::state::set_notes_root_override(None).unwrap();
+    }
 
     fn record(
         note_id: &str,

@@ -34,6 +34,7 @@ struct CurrentContentState {
 #[derive(Default)]
 struct CurrentContentCoordinator {
     state: Mutex<CurrentContentState>,
+    settled: Condvar,
 }
 
 #[derive(Clone, Copy)]
@@ -76,6 +77,9 @@ impl Drop for CurrentContentMutationGuard {
         if let Ok(mut state) = self.coordinator.state.lock() {
             state.active_mutations = state.active_mutations.saturating_sub(1);
             state.generation = state.generation.wrapping_add(1);
+            if state.active_mutations == 0 {
+                self.coordinator.settled.notify_all();
+            }
         }
     }
 }
@@ -218,6 +222,27 @@ impl NoteTimelineRuntime {
                 generation: state.generation,
             })
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?)
+    }
+
+    pub(super) fn await_current_content_settled(&self) -> Result<(), HistoryError> {
+        let state = self
+            .current_content
+            .state
+            .lock()
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
+        let (state, _) = self
+            .current_content
+            .settled
+            .wait_timeout_while(state, std::time::Duration::from_secs(2), |state| {
+                state.active_mutations != 0
+            })
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
+        if state.active_mutations != 0 {
+            return Err(HistoryError::Stale(
+                "Current notes are still updating; retry the read".into(),
+            ));
+        }
+        Ok(())
     }
 
     pub(super) fn current_content_is_current(

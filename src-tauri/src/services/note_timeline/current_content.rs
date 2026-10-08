@@ -222,6 +222,30 @@ impl CurrentContentAccess<'_> {
         self.finish_read(version, projection).map_err(Into::into)
     }
 
+    /// Only repeatable projection queries belong here. Mutating commands must
+    /// keep their single-execution read path. An invalidated projection is not
+    /// evidence that the vault has no items.
+    pub(crate) fn read_refreshable<T: CurrentContentProjection>(
+        &self,
+        mut query: impl FnMut() -> Result<T, String>,
+    ) -> Result<T, String> {
+        for _ in 0..3 {
+            self.runtime.await_current_content_settled()?;
+            let (_operation, version) = self.prepare_read()?;
+            let mut projection = query()?;
+            let eligibility = self.eligibility()?;
+            if !self.runtime.current_content_is_current(version)? {
+                continue;
+            }
+            projection.retain_current(&mut |item| eligibility.retains(item));
+            return Ok(projection);
+        }
+        Err(
+            HistoryError::Stale("Current notes changed during the read; retry the read".into())
+                .into(),
+        )
+    }
+
     pub(crate) async fn read_async<T, F>(&self, query: F) -> Result<T, String>
     where
         T: CurrentContentProjection,
