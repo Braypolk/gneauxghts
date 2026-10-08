@@ -1,5 +1,6 @@
 use crate::note;
 use blake3::hash;
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 const MAX_CHUNK_CHARS: usize = 480;
 const PARAGRAPH_OVERLAP: usize = 1;
@@ -75,11 +76,51 @@ fn parse_sections(lines: &[&str], body_start_index: usize) -> Vec<Section> {
     let mut current_paragraph_end = 0usize;
     let mut current_section_paragraphs = Vec::new();
 
+    // Use the same Markdown grammar as the editor: hashtags are text, and
+    // heading/divider syntax inside code blocks remains searchable content.
+    let markdown = lines.join("\n");
+    let line_starts = std::iter::once(0)
+        .chain(markdown.match_indices('\n').map(|(offset, _)| offset + 1))
+        .collect::<Vec<_>>();
+    let line_at = |offset| line_starts.partition_point(|start| *start <= offset) - 1;
+    let mut headings = vec![None; lines.len()];
+    let mut syntax_lines = vec![false; lines.len()];
+    let mut heading: Option<(std::ops::Range<usize>, String)> = None;
+    for (event, range) in Parser::new(&markdown).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Heading { .. }) => heading = Some((range, String::new())),
+            Event::Text(text) | Event::Code(text) => {
+                if let Some((_, label)) = &mut heading {
+                    label.push_str(&text);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some((_, label)) = &mut heading {
+                    label.push(' ');
+                }
+            }
+            Event::End(TagEnd::Heading(_)) => {
+                if let Some((range, label)) = heading.take() {
+                    let first = line_at(range.start);
+                    let last = line_at(range.end.saturating_sub(1));
+                    syntax_lines[first..=last].fill(true);
+                    headings[first] = Some(collapse_whitespace(&label));
+                }
+            }
+            Event::Rule => {
+                let first = line_at(range.start);
+                let last = line_at(range.end.saturating_sub(1));
+                syntax_lines[first..=last].fill(true);
+            }
+            _ => {}
+        }
+    }
+
     for (index, line) in lines.iter().enumerate().skip(body_start_index) {
         let trimmed = line.trim();
         let line_number = index + 1;
 
-        if let Some(heading) = parse_heading(trimmed) {
+        if let Some(heading) = &headings[index] {
             flush_paragraph(
                 &mut current_section_paragraphs,
                 &mut current_paragraph_lines,
@@ -92,11 +133,13 @@ fn parse_sections(lines: &[&str], body_start_index: usize) -> Vec<Section> {
                     paragraphs: std::mem::take(&mut current_section_paragraphs),
                 });
             }
-            current_label = heading;
+            if !heading.is_empty() {
+                current_label = heading.clone();
+            }
             continue;
         }
 
-        if trimmed.is_empty() {
+        if trimmed.is_empty() || syntax_lines[index] {
             flush_paragraph(
                 &mut current_section_paragraphs,
                 &mut current_paragraph_lines,
@@ -263,25 +306,49 @@ fn hash_string(value: &str) -> String {
     hash(value.as_bytes()).to_hex().to_string()
 }
 
-fn parse_heading(line: &str) -> Option<String> {
-    let heading = line.trim_start_matches('#');
-    if heading.len() == line.len() || !line.starts_with('#') {
-        return None;
-    }
-
-    let heading = heading.trim();
-    if heading.is_empty() {
-        return None;
-    }
-
-    Some(heading.to_string())
-}
-
 #[cfg(test)]
 mod tests {
     use super::chunk_markdown;
     use crate::test_support::{load_fixture, load_json_fixture};
     use serde_json::json;
+
+    #[test]
+    fn tag_lines_are_content_and_dividers_are_not_search_passages() {
+        let chunked = chunk_markdown(
+            "# Astrophotography\n\n#code #astrophotography #image-processing #siril #lightroom\n\n---\n\n## Capture\nStack exposures to reduce noise.",
+            "Astrophotography",
+        );
+        assert_eq!(chunked.chunks.len(), 3);
+        assert_eq!(chunked.chunks[1].section_label, "Overview");
+        assert_eq!(
+            chunked.chunks[1].text,
+            "#code #astrophotography #image-processing #siril #lightroom"
+        );
+        assert_eq!(chunked.chunks[2].section_label, "Capture");
+        assert_eq!(chunked.chunks[2].text, "Stack exposures to reduce noise.");
+        assert!(!chunked.chunks.iter().any(|chunk| chunk.text == "---"));
+    }
+
+    #[test]
+    fn code_content_does_not_change_sections_or_lose_divider_text() {
+        let chunked = chunk_markdown(
+            "## Examples\n```markdown\n# literal heading\n\n---\n```\n\nUseful explanation.",
+            "Note",
+        );
+        assert!(chunked
+            .chunks
+            .iter()
+            .skip(1)
+            .all(|chunk| chunk.section_label == "Examples"));
+        let text = chunked
+            .chunks
+            .iter()
+            .map(|chunk| chunk.text.as_str())
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains("# literal heading"));
+        assert!(text.contains("---"));
+    }
 
     #[test]
     fn chunk_markdown_matches_project_atlas_fixture() {

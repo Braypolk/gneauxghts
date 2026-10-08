@@ -2945,6 +2945,112 @@ mod tests {
     }
 
     #[test]
+    fn startup_scan_replaces_old_tag_heading_and_divider_chunks_without_source_edits() {
+        let temp = TestDir::new("indexer-tag-divider-refresh");
+        let notes_dir = temp.path().join("notes");
+        let semantic_dir = temp.path().join("semantic");
+        fs::create_dir_all(&notes_dir).unwrap();
+        let path = notes_dir.join("Astrophotography.md");
+        let markdown = "#code #astrophotography\n\n---";
+        fs::write(&path, markdown).unwrap();
+        let path_string = path.to_string_lossy().into_owned();
+        let modified = super::read_modified_millis(&path).unwrap();
+        let mut connection =
+            crate::semantic::test_support::database(&semantic_dir.join("index.sqlite3"));
+        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
+        let debug = Arc::new(SemanticDebugState::new());
+        let ann = Arc::new(AnnIndexState::new(semantic_dir.clone(), 3, debug.clone()).unwrap());
+        let note_ann = test_note_ann(&semantic_dir);
+        // Persist exactly the former extraction: a hashtag row became a
+        // section heading, whose only passage was the Markdown divider.
+        let old_chunks = [
+            ("Title", "Astrophotography", 1),
+            ("code #astrophotography", "---", 3),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(ordinal, (label, text, line))| SemanticChunk {
+            ordinal,
+            section_label: label.into(),
+            text: text.into(),
+            text_hash: crate::semantic::db::content_hash(text),
+            start_line: line,
+            end_line: line,
+            block_anchor: None,
+        })
+        .collect::<Vec<_>>();
+        let old_note = crate::semantic::chunking::ChunkedNote {
+            title: "Astrophotography".into(),
+            content_hash: crate::semantic::db::content_hash(markdown),
+            chunks: old_chunks,
+        };
+        let metadata = super::note_semantic_metadata(
+            &path_string,
+            &old_note,
+            &note::parse_note(markdown),
+            modified,
+        );
+        upsert_note_chunks(
+            &mut connection,
+            &path_string,
+            &old_note.title,
+            modified,
+            &crate::semantic::db::content_hash(markdown),
+            "",
+            "",
+            crate::note::DocumentKind::Note,
+            &metadata,
+            &old_note.chunks,
+            &[vec![1.0, 0.0, 0.0], vec![0.0, 1.0, 0.0]],
+        )
+        .unwrap();
+        let refreshed = process_full_scan(
+            &mut connection,
+            &notes_dir,
+            &provider,
+            &ann,
+            &note_ann,
+            false,
+            &debug,
+        )
+        .unwrap();
+        assert_eq!(refreshed.scanned_count, 1);
+        assert_eq!(
+            refreshed.embedded_count, 1,
+            "reuse the unchanged title vector"
+        );
+        let chunks = connection
+            .prepare("SELECT section_label, text FROM chunks ORDER BY ordinal")
+            .unwrap()
+            .query_map([], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert_eq!(
+            chunks,
+            vec![
+                ("Title".into(), "Astrophotography".into()),
+                ("Overview".into(), "#code #astrophotography".into())
+            ]
+        );
+        let settled = process_full_scan(
+            &mut connection,
+            &notes_dir,
+            &provider,
+            &ann,
+            &note_ann,
+            false,
+            &debug,
+        )
+        .unwrap();
+        assert_eq!(settled.scanned_count, 0);
+        assert_eq!(settled.embedded_count, 0);
+        assert_eq!(fs::read_to_string(path).unwrap(), markdown);
+    }
+
+    #[test]
     fn full_scan_indexes_nested_notes() {
         let temp = TestDir::new("indexer-nested");
         let semantic_dir = temp.path().join("semantic");
