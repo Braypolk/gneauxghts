@@ -75,12 +75,24 @@ describe('image interactions', () => {
     await $('dialog.gn-image-viewer').waitForExist({ reverse: true });
     expect(await body()).toBe(markdown);
   });
-  it('selects, sizes, reveals source with preview, deletes and undoes a Markdown embed', async () => {
+  it('selects, sizes with controls and shortcuts, reveals source, deletes and undoes a Markdown embed', async () => {
     const markdown = 'Before\n\n![Citrus|200](a%20b.png "Title")\n\nAfter';
     await insertMarkdown(markdown);
     await $('.gn-image-embed img').waitForDisplayed();
-    await selectImage();
+    await $('.gn-image-embed img').click();
     expect(await $('.selection-panel').isExisting()).toBe(false);
+    const controlsLeft = await $('.gn-image-toolbar').getLocation('x');
+    await $('.gn-image-embed button[aria-label="Increase image size"]').click();
+    await browser.waitUntil(async () => (await body()) === markdown.replace('|200', '|250'));
+    await $('.gn-image-embed button[aria-label="Increase image size"]').click();
+    await browser.waitUntil(async () => (await body()) === markdown.replace('|200', '|300'));
+    expect(await $('.gn-image-toolbar').getLocation('x')).toBe(controlsLeft);
+    await browser.keys(['Meta', 'z', '\uE000']);
+    await browser.waitUntil(async () => (await body()) === markdown.replace('|200', '|250'));
+    await $('.gn-image-embed button[aria-label="Decrease image size"]').click();
+    await browser.waitUntil(async () => (await body()) === markdown);
+    expect(await $('.gn-image-embed[data-selected="true"]').isExisting()).toBe(true);
+    expect(await $('dialog.gn-image-viewer').isExisting()).toBe(false);
     await browser.keys('=');
     await browser.waitUntil(async () => (await body()).includes('Citrus|250'));
     await browser.keys('Enter');

@@ -44,6 +44,13 @@ export function resizeRenderedImage(view: EditorView, image: ImageEmbedMatch, wi
   view.dispatch({ changes, selection: EditorSelection.range(from, to),
     annotations: keyboard ? [Transaction.userEvent.of('input.type.image.resize')] : [Transaction.userEvent.of('input.image.resize'), isolateHistory.of('full')] });
 }
+function stepRenderedImageSize(view: EditorView, image: ImageEmbedMatch, direction: -1 | 1, keyboard = false) {
+  const widget = [...view.dom.querySelectorAll<HTMLElement>('.gn-image-embed')].find(el =>
+    el.dataset.selected === 'true');
+  const width = image.target.width ?? widget?.getBoundingClientRect().width ?? 320;
+  const maximum = widget ? availableImageWidth(view, widget) : Math.max(48, view.contentDOM.clientWidth - 24);
+  resizeRenderedImage(view, image, Math.max(48, Math.min(maximum, width + direction * 50)), keyboard);
+}
 function removeImage(view: EditorView, image: ImageEmbedMatch, userEvent: string) {
   view.dispatch({ changes: { from: image.from, to: image.to }, selection: { anchor: image.from },
     annotations: [Transaction.userEvent.of(userEvent), isolateHistory.of('full')] });
@@ -62,7 +69,7 @@ export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (vie
   const viewListeners = new Set<(update: import('@codemirror/view').ViewUpdate | null) => void>();
   const invalidate = () => { for (const listener of [...listeners]) listener(); };
   const actions: ImageWidgetActions = {
-    select: selectRenderedImage, source: editImageSource, resize: resizeRenderedImage,
+    select: selectRenderedImage, source: editImageSource, resize: resizeRenderedImage, resizeStep: stepRenderedImageSize,
     load: config.loadImage ?? fallbackLoader!.load,
     listen(cancel) { listeners.add(cancel); return () => listeners.delete(cancel); },
     open(view, image) {
@@ -161,11 +168,8 @@ export function createImageEmbedsExtension(config: ImagesConfig, callbacks: (vie
           if (['-', '=', '+', '0', 'Backspace', 'Delete'].includes(event.key)) {
             if (view.state.readOnly) return false;
             if (event.key === 'Backspace' || event.key === 'Delete') removeImage(view, selected, 'delete.image');
-            else {
-              const widget = [...view.dom.querySelectorAll<HTMLElement>('.gn-image-embed')].find(el => el.dataset.selected === 'true');
-              const width = selected.target.width ?? widget?.getBoundingClientRect().width ?? 320;
-              resizeRenderedImage(view, selected, event.key === '0' ? null : Math.max(48, Math.min(widget ? availableImageWidth(view, widget) : Math.max(48, view.contentDOM.clientWidth - 24), width + (event.key === '-' ? -50 : 50))), event.key !== '0');
-            }
+            else if (event.key === '0') resizeRenderedImage(view, selected, null);
+            else stepRenderedImageSize(view, selected, event.key === '-' ? -1 : 1, true);
             return true;
           }
           if (event.key.startsWith('Arrow')) {

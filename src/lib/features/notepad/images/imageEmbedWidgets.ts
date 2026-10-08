@@ -16,6 +16,7 @@ export interface ImageWidgetActions {
   select(view: EditorView, image: ImageEmbedMatch): void;
   source(view: EditorView, image: ImageEmbedMatch, size?: boolean): void;
   resize(view: EditorView, image: ImageEmbedMatch, width: number): void;
+  resizeStep(view: EditorView, image: ImageEmbedMatch, direction: -1 | 1): void;
   open(view: EditorView, image: ImageEmbedMatch): void;
   load(name: string, refresh?: boolean): Promise<string>;
   listen(cancel: () => void): () => void;
@@ -75,6 +76,16 @@ export class ImageEmbedWidget extends WidgetType {
     };
     toolbar.append(button('Zoom image', 'Zoom', () => this.actions.open(view, data.ref)),
       button('Edit image source', '</>', () => this.actions.source(view, data.ref)));
+    for (const [label, text, direction] of [
+      ['Decrease image size', '−', -1], ['Increase image size', '+', 1]
+    ] as const) {
+      const control = button(label, text, () => {
+        this.actions.resizeStep(view, data.ref, direction);
+        view.focus();
+      });
+      control.className = 'gn-image-size-step';
+      toolbar.append(control);
+    }
     container.append(image, status, toolbar);
     const isSelected = () => {
       const selected = selectedImage(view.state);
@@ -150,6 +161,7 @@ export class ImageEmbedWidget extends WidgetType {
     data.ref = this.ref;
     dom.dataset.selected = String(this.selected); dom.dataset.fileName = this.ref.target.fileName;
     dom.dataset.readonly = String(this.readOnly);
+    for (const control of dom.querySelectorAll<HTMLButtonElement>('.gn-image-size-step')) control.disabled = this.readOnly;
     if (!data.cancel) {
       dom.style.width = this.ref.target.width ? `${this.ref.target.width}px` : '';
       data.image.style.height = this.ref.target.height ? `${this.ref.target.height}px` : 'auto';
