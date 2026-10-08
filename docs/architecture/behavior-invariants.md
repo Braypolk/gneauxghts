@@ -96,6 +96,15 @@ Changing an editor pane to chat retains its document as chat context and as the
 return target. Changing it back restores that document. Any pane may close
 while another remains, including in a chat-only workspace.
 
+Each chat pane retains a reading position per conversation for its open lifetime,
+including while the pane displays a note. Returning restores that position after
+history rendering settles. Explicit message links take precedence; unseen chats
+and chats that were following the latest message open at the bottom. Loading and
+partial history rendering cannot overwrite a retained reading position.
+
+Retiring an editor closes its pane-owned transient menus before disconnecting
+its view bridges, so its formatting popup cannot remain over chat content.
+
 After the active pane closes, the pane immediately to its right becomes active
 when present; otherwise the pane immediately to its left becomes active.
 

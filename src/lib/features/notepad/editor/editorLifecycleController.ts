@@ -85,6 +85,7 @@ export function createEditorLifecycleController({
   async function destroyEditor() {
     const controller = getController();
     if (controller) {
+      closeTransientUi();
       unbindSlashMenuView(controller.view);
       unbindSelectionMenuView(controller.view);
     }

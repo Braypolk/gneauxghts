@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  chatScrollPositionsFor,
   createChatScrollScheduler,
   followLatestChatContent,
   isNearLatestChatContent,
@@ -26,6 +27,38 @@ describe('initial chat scroll positioning', () => {
       block: 'center'
     });
     expect(root.scrollTop).toBe(0);
+  });
+
+  it('restores an older reading position, including the very top', () => {
+    for (const scrollTop of [0, 240]) {
+      const root = { scrollTop: 600, scrollHeight: 840 };
+      positionInitialChatScroll(root, null, { scrollTop, followingLatest: false });
+      expect(root.scrollTop).toBe(scrollTop);
+    }
+  });
+
+  it('follows new content when the saved viewport was following the latest message', () => {
+    const root = { scrollTop: 0, scrollHeight: 1200 };
+    positionInitialChatScroll(root, null, { scrollTop: 840, followingLatest: true });
+    expect(root.scrollTop).toBe(1200);
+  });
+
+  it('gives explicit message navigation priority over a saved reading position', () => {
+    const root = { scrollTop: 0, scrollHeight: 840 };
+    const target = { scrollIntoView: vi.fn() };
+    positionInitialChatScroll(root, target, { scrollTop: 240, followingLatest: false });
+    expect(target.scrollIntoView).toHaveBeenCalledOnce();
+    expect(root.scrollTop).toBe(0);
+  });
+
+  it('retains separate conversation positions across remounts without sharing pane viewports', () => {
+    const surface = {};
+    const positions = chatScrollPositionsFor(surface);
+    positions.set('chat-a', { scrollTop: 240, followingLatest: false });
+    positions.set('chat-b', { scrollTop: 840, followingLatest: true });
+    expect(chatScrollPositionsFor(surface).get('chat-a')?.scrollTop).toBe(240);
+    expect(chatScrollPositionsFor(surface).get('chat-b')?.followingLatest).toBe(true);
+    expect(chatScrollPositionsFor({}).size).toBe(0);
   });
 });
 

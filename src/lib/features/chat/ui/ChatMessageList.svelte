@@ -15,10 +15,12 @@
   import ChatMessage from './ChatMessage.svelte';
   import { resolveTargetMessageId } from './chatPanelHelpers';
   import {
+    chatScrollPositionsFor,
     createChatScrollScheduler,
     followLatestChatContent,
     isNearLatestChatContent,
-    positionInitialChatScroll
+    positionInitialChatScroll,
+    type ChatScrollPosition
   } from './chatMessageScroll';
   import { chatSelectionToMarkdown } from './chatSelectionMarkdown';
 
@@ -69,12 +71,23 @@
   const scrollConversationId = $derived(conversation?.id ?? null);
 
   $effect.pre(() => {
-    scrollConversationId;
-    messagesElement;
-    isInitializing;
-    isLoadingConversation;
+    const id = scrollConversationId;
+    const root = messagesElement;
+    const loading = isInitializing || isLoadingConversation;
+    const positions = chatScrollPositionsFor(controller);
     // Cancel pending work before a root/conversation change and on teardown.
-    return scroll.cancel;
+    return () => {
+      // Capture before loading or the next conversation changes the DOM extent.
+      // A removed root has already lost its layout and reports scrollTop = 0;
+      // keep the last scroll event's position when the chat unmounts for a note.
+      if (id && root?.isConnected && !loading && positionedConversationId === id) {
+        positions.set(id, {
+          scrollTop: root.scrollTop,
+          followingLatest: untrack(() => isFollowingLatest)
+        });
+      }
+      scroll.cancel();
+    };
   });
 
   // Mount restored history in bounded batches so parsing Markdown and creating
@@ -127,7 +140,8 @@
 
   function positionInitialConversation(
     root: HTMLElement,
-    current: ChatConversation
+    current: ChatConversation,
+    savedPosition: ChatScrollPosition | undefined
   ) {
     const messageId = resolveTargetMessageId(targetAnchor, current);
     const anchor = targetAnchor?.replace(/^\^/, '') ?? null;
@@ -143,7 +157,7 @@
     }
     // Initial conversation positioning is intentionally immediate. Scheduling
     // a smooth scroll here paints the thread at the top before animating down.
-    positionInitialChatScroll(root, null);
+    positionInitialChatScroll(root, null, savedPosition);
   }
 
   $effect(() => {
@@ -162,7 +176,8 @@
       positionedConversationId === current.id
     ) return;
 
-    positionInitialConversation(root, current);
+    const savedPosition = chatScrollPositionsFor(controller).get(current.id);
+    positionInitialConversation(root, current, savedPosition);
     positionedConversationId = current.id;
     previousScrollKey = scrollKeyFor(current);
     isFollowingLatest = isNearLatestChatContent(root);
@@ -175,7 +190,8 @@
         controller.getSnapshot().conversation?.id === current.id &&
         positionedConversationId === current.id
       ) {
-        positionInitialConversation(root, current);
+        positionInitialConversation(root, current, savedPosition);
+        isFollowingLatest = isNearLatestChatContent(root);
       }
     });
   });
@@ -236,11 +252,33 @@
   });
 
   function updateScrollFollowing(event: Event) {
-    if (isRenderingHistory) return;
-    isFollowingLatest = isNearLatestChatContent(
-      event.currentTarget as HTMLElement
-    );
+    const id = scrollConversationId;
+    if (isInitializing || isLoadingConversation || isRenderingHistory ||
+      !id || positionedConversationId !== id) return;
+    const root = event.currentTarget as HTMLElement;
+    isFollowingLatest = isNearLatestChatContent(root);
+    chatScrollPositionsFor(controller).set(id, {
+      scrollTop: root.scrollTop,
+      followingLatest: isFollowingLatest
+    });
   }
+
+  $effect(() => {
+    const root = messagesElement;
+    if (!root) return;
+    // The dock can change the scroll padding without changing the viewport's
+    // outer height. Observe the content box so a growing draft keeps the last
+    // response above the input when this list is already following it.
+    const observer = new ResizeObserver(() => {
+      if (!isFollowingLatest || isRenderingHistory || !scrollConversationId ||
+        positionedConversationId !== scrollConversationId) return;
+      scroll.schedule('follow', () => {
+        if (messagesElement === root && isFollowingLatest) followLatestChatContent(root);
+      });
+    });
+    observer.observe(root);
+    return () => observer.disconnect();
+  });
 
   function captureSelection(event: Event) {
     const root = event.currentTarget as HTMLElement;

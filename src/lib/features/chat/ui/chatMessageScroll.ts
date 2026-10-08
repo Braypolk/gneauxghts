@@ -5,6 +5,24 @@ type MeasurableScrollRoot = Pick<
 >;
 type ScrollTarget = Pick<HTMLElement, 'scrollIntoView'>;
 
+export interface ChatScrollPosition {
+  scrollTop: number;
+  followingLatest: boolean;
+}
+
+// The pane's controller outlives its rendered chat while a note is displayed.
+// Weak ownership releases these UI-only positions when that pane is retired.
+const positionsBySurface = new WeakMap<object, Map<string, ChatScrollPosition>>();
+
+export function chatScrollPositionsFor(surface: object) {
+  let positions = positionsBySurface.get(surface);
+  if (!positions) {
+    positions = new Map();
+    positionsBySurface.set(surface, positions);
+  }
+  return positions;
+}
+
 export const CHAT_FOLLOW_THRESHOLD_PX = 48;
 
 /**
@@ -32,10 +50,15 @@ export function followLatestChatContent(root: ScrollRoot) {
  */
 export function positionInitialChatScroll(
   root: ScrollRoot,
-  target: ScrollTarget | null
+  target: ScrollTarget | null,
+  savedPosition?: ChatScrollPosition
 ) {
   if (target) {
     target.scrollIntoView({ behavior: 'auto', block: 'center' });
+    return;
+  }
+  if (savedPosition && !savedPosition.followingLatest) {
+    root.scrollTop = savedPosition.scrollTop;
     return;
   }
   followLatestChatContent(root);
