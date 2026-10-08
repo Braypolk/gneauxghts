@@ -255,14 +255,98 @@
 .chat-message--user {
   align-self: flex-end;
   width: fit-content;
-  max-width: 100%;
-  border-radius: 1.1rem;
+  max-width: 85%;
+}
+.chat-message--user .chat-message-body {
+  border-radius: 1.2rem;
   background: color-mix(in oklab, var(--muted) 78%, transparent);
-  padding: 0.7rem 1rem;
+  padding: 0.6rem 0.9rem;
 }
 .chat-user-text {
+  font-size: 0.875rem;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
+}
+.chat-message-footer {
+  display: flex;
+  min-height: 1.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--muted-foreground);
+  font-size: 0.65rem;
+}
+.chat-message--user .chat-message-footer {
+  justify-content: flex-end;
+  padding-right: 0.25rem;
+}
+.chat-message-action {
+  display: inline-flex;
+  height: 1.5rem;
+  width: 1.5rem;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border-radius: 0.4rem;
+  color: var(--muted-foreground);
+}
+.chat-message-action:hover {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.chat-message-action:focus-visible,
+.chat-context-trigger:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.chat-message-branch {
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms ease;
+}
+.chat-message:hover .chat-message-branch,
+.chat-message:focus-within .chat-message-branch {
+  opacity: 1;
+  pointer-events: auto;
+}
+.chat-context-trigger {
+  cursor: pointer;
+  border-radius: 0.4rem;
+  padding: 0.25rem 0.4rem;
+}
+.chat-context-trigger:hover,
+.chat-context-trigger[data-state="open"] {
+  background: var(--muted);
+  color: var(--foreground);
+}
+.chat-context-details {
+  z-index: 40;
+  width: min(17rem, calc(100vw - 2rem));
+  border: 1px solid var(--border);
+  border-radius: 1rem;
+  background: var(--popover, var(--card));
+  padding: 0.85rem;
+  font-size: 0.75rem;
+  box-shadow: 0 4px 16px rgb(0 0 0 / 0.15);
+}
+.chat-context-meter {
+  height: 0.25rem;
+  overflow: hidden;
+  border-radius: 9999px;
+  background: var(--muted);
+  margin-top: 0.5rem;
+}
+.chat-context-meter > span {
+  display: block;
+  height: 100%;
+  background: var(--foreground);
+}
+@media (hover: none) {
+  .chat-message-branch {
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 .chat-citation {

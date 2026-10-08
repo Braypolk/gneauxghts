@@ -28,6 +28,34 @@ function envelope(
 }
 
 describe('agent event reducer', () => {
+  it('uses the latest parent input as context occupancy instead of accumulated run spending', () => {
+    const usage = { inputTokens: 8000, outputTokens: 400, totalTokens: 8400, cachedInputTokens: 0, cacheCreationInputTokens: 0, toolUsePromptTokens: 0, reasoningTokens: 0 };
+    const state = replayAgentEvents('', [
+      envelope(1, { type: 'stepUpdated', index: 0, status: 'completed', usage }),
+      envelope(2, { type: 'stepUpdated', index: 1, status: 'completed', usage: { ...usage, inputTokens: 9500 } }),
+      envelope(3, { type: 'usageUpdated', callIndex: 1, aggregate: { ...usage, inputTokens: 17500, totalTokens: 18300 } })
+    ]);
+    expect(state.parts.find((part) => part.type === 'contextUsage')).toMatchObject({ inputTokens: 9500, capacityTokens: null });
+    expect(state.parts.find((part) => part.type === 'usage')).toMatchObject({ usage: { totalTokens: 18300 } });
+    const unknown = reduceAgentEvent(state, envelope(4, { type: 'stepUpdated', index: 2, status: 'completed' }));
+    expect(unknown.parts.some((part) => part.type === 'contextUsage')).toBe(false);
+  });
+
+  it('uses reported parent capacity while ignoring worker measurements and text estimates', () => {
+    const state = reduceAgentEvent(initialAgentEventState(), envelope(1, {
+      type: 'contextMeasured', details: { phase: 'usage', worker: false, loadedContextTokens: 32000, reportedUsage: { inputTokens: 8000 } }
+    }));
+    expect(state.parts.find((part) => part.type === 'contextUsage')).toMatchObject({ inputTokens: 8000, capacityTokens: 32000 });
+    const worker = reduceAgentEvent(state, envelope(2, {
+      type: 'contextMeasured', details: { phase: 'usage', worker: true, loadedContextTokens: 64000, reportedUsage: { inputTokens: 1000 } }
+    }));
+    expect(worker.parts).toEqual(state.parts);
+    const estimate = reduceAgentEvent(worker, envelope(3, {
+      type: 'contextMeasured', details: { phase: 'request', worker: false, loadedContextTokens: 32000, estimatedInputTokens: 9000 }
+    }));
+    expect(estimate.parts).toEqual(state.parts);
+  });
+
   it('retains context diagnostics without displaying them as answer content', () => {
     const before = initialAgentEventState('Answer');
     const after = reduceAgentEvent(before, envelope(1, {

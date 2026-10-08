@@ -131,6 +131,12 @@ export type ChatPart =
   | { id: 'plan'; type: 'plan'; entries: AgentPlanEntry[] }
   | { id: 'usage'; type: 'usage'; callIndex: number; usage: AgentUsage }
   | {
+      id: 'context-usage';
+      type: 'contextUsage';
+      inputTokens: number;
+      capacityTokens: number | null;
+    }
+  | {
       id: 'retry';
       type: 'status';
       status: 'retrying';

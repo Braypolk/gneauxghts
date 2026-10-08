@@ -494,7 +494,7 @@ export class TauriChatApi implements ChatApi {
           id: `pending-${raw.userMessageId}-${index}`
         }))
       ),
-      assistantMessage: this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now + 1)
+      assistantMessage: { ...this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now + 1), requestId: raw.requestId }
     };
   }
   async cancelRequest(requestId: string) { await invoke(CHAT_COMMANDS.cancelRequest, { requestId }); }
@@ -511,6 +511,7 @@ export class TauriChatApi implements ChatApi {
     }));
     const now = Date.now();
     const assistantMessage = this.#placeholderMessage(raw.assistantMessageId, raw.conversationId, 'assistant', '', 'streaming', now);
+    assistantMessage.requestId = raw.requestId;
     this.#messageConversations.set(raw.assistantMessageId, raw.conversationId);
     return {
       requestId: raw.requestId,
@@ -607,10 +608,12 @@ export class TauriChatApi implements ChatApi {
       }
       const stream = payload as RawStreamEvent;
       if (event === 'chat://started') {
+        const message = this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', '', 'streaming', Date.now());
+        message.requestId = stream.requestId;
         handler({
           ...stream,
           conversation: stream.conversation ? normalizeSummary(stream.conversation) : null,
-          message: this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', '', 'streaming', Date.now())
+          message
         } as ChatEventMap[K]);
       } else if (event === 'chat://text-delta') {
         handler({ ...stream, delta: stream.delta ?? '' } as ChatEventMap[K]);
@@ -621,6 +624,7 @@ export class TauriChatApi implements ChatApi {
         for (const terminalIds of this.#pendingReceiptTerminals) terminalIds.add(stream.requestId);
         const status = event === 'chat://completed' ? 'completed' : event === 'chat://cancelled' ? 'cancelled' : 'error';
         const message = this.#placeholderMessage(stream.messageId, stream.conversationId, 'assistant', stream.content ?? '', status, Date.now());
+        message.requestId = stream.requestId;
         message.errorMessage = stream.error ?? null;
         if (event === 'chat://failed') {
           handler({ ...stream, message, error: stream.error ?? 'The response failed.', retryable: true } as ChatEventMap[K]);

@@ -12,6 +12,18 @@ describe('TauriChatApi', () => {
     listenMock.mockReset();
   });
 
+  it.each(['chat://started', 'chat://completed', 'chat://cancelled', 'chat://failed'] as const)('preserves message request correlation for %s', async (event) => {
+    let deliver: (event: { payload: unknown }) => void = () => undefined;
+    listenMock.mockImplementation(async (_event, callback) => { deliver = callback; return () => undefined; });
+    const { TauriChatApi } = await import('./api');
+    const handler = vi.fn();
+    await new TauriChatApi().on(event, handler);
+    deliver({ payload: { requestId: 'request-1', conversationId: 'chat-1', messageId: 'assistant-1', content: 'Answer' } });
+    expect(handler).toHaveBeenCalledWith(expect.objectContaining({
+      requestId: 'request-1', message: expect.objectContaining({ requestId: 'request-1' })
+    }));
+  });
+
   it('supplies current editor date conventions on new messages and retries', async () => {
     invokeMock.mockResolvedValue({
       requestId: 'request-date', conversationId: 'chat-date',

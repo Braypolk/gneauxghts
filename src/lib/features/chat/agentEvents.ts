@@ -86,9 +86,21 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       next[index] = tool;
       return next;
     }
-    case 'stepUpdated':
-      // Model turns are durable runtime diagnostics, not user-facing parts.
-      return parts;
+    case 'stepUpdated': {
+      // Context occupancy belongs to the latest parent request, not aggregate
+      // run spending (which includes repeated inputs and research workers).
+      if (event.status !== 'completed') return parts;
+      if (!event.usage || !Number.isFinite(event.usage.inputTokens) || event.usage.inputTokens <= 0)
+        return parts.filter((part) => part.type !== 'contextUsage');
+      const previous = parts.find((part) => part.type === 'contextUsage');
+      return upsertPart(parts, {
+        id: 'context-usage',
+        type: 'contextUsage',
+        inputTokens: event.usage.inputTokens,
+        capacityTokens: previous?.type === 'contextUsage' && previous.inputTokens === event.usage.inputTokens
+          ? previous.capacityTokens : null
+      });
+    }
     case 'runGuardTriggered':
       return upsertPart(parts, {
         id: 'run-guard',
@@ -133,8 +145,21 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
       next[index] = usage;
       return next;
     }
+    case 'contextMeasured': {
+      const details = event.details;
+      // Optional measurements can supply loaded capacity. Never display byte
+      // estimates or a worker's separate context as the conversation's usage.
+      const usage = details.reportedUsage;
+      if (details.worker !== false || details.phase !== 'usage' || !usage || typeof usage !== 'object') return parts;
+      const input = (usage as Record<string, unknown>).inputTokens;
+      if (typeof input !== 'number' || !Number.isFinite(input) || input <= 0) return parts;
+      const capacity = details.loadedContextTokens;
+      return upsertPart(parts, {
+        id: 'context-usage', type: 'contextUsage', inputTokens: input,
+        capacityTokens: typeof capacity === 'number' && Number.isFinite(capacity) && capacity > 0 ? capacity : null
+      });
+    }
     case 'researchCompleted':
-    case 'contextMeasured':
     case 'queryResolved':
       return parts; // Durable query metadata is available for follow-ups and diagnostics.
     case 'modelTurnRetried':
