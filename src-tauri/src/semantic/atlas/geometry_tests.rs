@@ -86,6 +86,7 @@ fn umap_iterations_scale_with_note_count() {
 
 fn test_node(id: &str, title: &str, x: f32, y: f32) -> WorkingNode {
     WorkingNode {
+        has_semantic_content: true,
         id: id.to_string(),
         note_id: Some(id.to_string()),
         note_path: format!("/vault/{id}.md"),

@@ -370,6 +370,7 @@ impl SemanticWorkQueue {
 }
 
 pub(crate) struct IndexingWorkerContext {
+    pub(crate) atlas_map: Arc<super::atlas::AtlasMapStore>,
     pub(crate) db_path: PathBuf,
     pub(crate) notes_dir: PathBuf,
     pub(crate) provider: Arc<dyn EmbeddingProvider + Send + Sync>,
@@ -829,6 +830,7 @@ fn process_pending_jobs_with_wait(
             }
             SelectedJob::Atlas(_) | SelectedJob::AtlasLabels(_) => {
                 let builder = AtlasWorkerContext {
+                    map_store: context.atlas_map.clone(),
                     db_path: db_path.to_path_buf(),
                     cache_dir: cache_dir.clone(),
                     dimensions: provider.model_info().dimensions,
@@ -2294,6 +2296,9 @@ mod tests {
     ) -> IndexingWorkerContext {
         let (queue, _) = SemanticWorkQueue::new(initial);
         IndexingWorkerContext {
+            atlas_map: Arc::new(super::super::atlas::AtlasMapStore::new(
+                db_path.parent().unwrap(),
+            )),
             image_ann: Arc::new(super::super::image_ann::ImageAnnIndex::new(
                 db_path.parent().unwrap().join("images"),
             )),
@@ -2379,6 +2384,9 @@ mod tests {
         let (queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
         let gate = Arc::new(BackgroundWorkGate::new());
         let context = IndexingWorkerContext {
+            atlas_map: Arc::new(super::super::atlas::AtlasMapStore::new(
+                db_path.parent().unwrap(),
+            )),
             image_ann: Arc::new(super::super::image_ann::ImageAnnIndex::new(
                 db_path.parent().unwrap().join("images"),
             )),

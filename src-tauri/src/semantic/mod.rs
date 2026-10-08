@@ -274,6 +274,7 @@ enum SemanticStateInner {
 }
 
 struct ActiveSemanticState {
+    atlas_map: Arc<atlas::AtlasMapStore>,
     db_path: PathBuf,
     atlas_cache_dir: PathBuf,
     settings: Arc<Mutex<SemanticSettings>>,
@@ -307,6 +308,7 @@ struct AnnStartupContext {
 }
 
 struct DisabledSemanticState {
+    atlas_map: Option<Arc<atlas::AtlasMapStore>>,
     settings: Mutex<SemanticSettings>,
     debug: Arc<SemanticDebugState>,
     reason: String,
@@ -324,7 +326,11 @@ impl SemanticState {
             || (!GemmaLiteRtEmbeddingProvider::supported()
                 && vault_data_dir.join("semantic.sqlite3").is_file());
         if !legacy && !GemmaLiteRtEmbeddingProvider::supported() {
-            return Ok(Self::new_disabled("Gemma local search is unavailable on this device architecture. Keyword search remains available."));
+            let mut disabled = Self::new_disabled("Gemma local search is unavailable on this device architecture. Keyword search remains available.");
+            if let SemanticStateInner::Disabled(state) = &mut disabled.inner {
+                state.atlas_map = Some(Arc::new(atlas::AtlasMapStore::new(&vault_data_dir)));
+            }
+            return Ok(disabled);
         }
         fs::create_dir_all(&notes_dir).map_err(|err| err.to_string())?;
         // Derived databases and sidecars are vault-local and separated by
@@ -422,8 +428,10 @@ impl SemanticState {
         };
         let (work_queue, signal_rx) = SemanticWorkQueue::new(initial_pending);
         let index_revision = Arc::new(AtomicU64::new(0));
+        let atlas_map = Arc::new(atlas::AtlasMapStore::new(&vault_data_dir));
         let worker = spawn_indexing_worker(
             IndexingWorkerContext {
+                atlas_map: atlas_map.clone(),
                 db_path: db_path.clone(),
                 notes_dir: notes_dir.clone(),
                 provider: provider.clone(),
@@ -441,6 +449,7 @@ impl SemanticState {
         )?;
 
         let state = ActiveSemanticState {
+            atlas_map,
             db_path: db_path.clone(),
             atlas_cache_dir: semantic_dir.clone(),
             settings,
@@ -523,6 +532,7 @@ impl SemanticState {
         );
         Self {
             inner: SemanticStateInner::Disabled(DisabledSemanticState {
+                atlas_map: None,
                 settings: Mutex::new(disabled_settings(SemanticSettings::default())),
                 debug,
                 reason,
@@ -980,9 +990,31 @@ impl SemanticState {
         self.debug_state().clear()
     }
 
+    pub(crate) fn rename_atlas_cloud(
+        &self,
+        key: atlas::AtlasGenerationKey,
+        cloud_id: &str,
+        name: Option<String>,
+    ) -> Result<atlas::AtlasCloudName, String> {
+        match &self.inner {
+            SemanticStateInner::Active(state) => state.atlas_map.rename(key, cloud_id, name),
+            SemanticStateInner::Disabled(state) => state
+                .atlas_map
+                .as_ref()
+                .ok_or("Atlas map memory is unavailable")?
+                .rename(key, cloud_id, name),
+        }
+    }
+
     pub(crate) fn clear_atlas_cache(&self) -> Result<(), String> {
         match &self.inner {
             SemanticStateInner::Active(state) => {
+                let _guard = state
+                    .atlas_map
+                    .admission
+                    .lock()
+                    .map_err(|_| "Atlas admission unavailable")?;
+                state.atlas_map.invalidate_jobs();
                 let connection = open_database(&state.db_path)?;
                 ensure_schema(&connection)?;
                 clear_atlas_cache(&connection)?;
@@ -1253,6 +1285,8 @@ impl SemanticState {
                 self.current_index_revision(),
             ),
             SemanticStateInner::Disabled(state) => Ok(VaultAtlasResponse {
+                world_layout: true,
+                name_revision: 0,
                 status: "unavailable".to_string(),
                 reason: Some(state.reason.clone()),
                 revision: 0,
@@ -1821,7 +1855,7 @@ mod health_tests {
         fn shutdown(&self) {}
     }
 
-    fn active_status_state(
+    pub(super) fn active_status_state(
         runtime: RuntimeState,
     ) -> (
         SemanticState,
@@ -1845,6 +1879,7 @@ mod health_tests {
         let (work_queue, signals) = SemanticWorkQueue::new(PendingIndexState::default());
         let state = SemanticState {
             inner: SemanticStateInner::Active(ActiveSemanticState {
+                atlas_map: Arc::new(atlas::AtlasMapStore::new(temp.path())),
                 image_ann: Arc::new(super::image_ann::ImageAnnIndex::new(
                     temp.path().join("images"),
                 )),

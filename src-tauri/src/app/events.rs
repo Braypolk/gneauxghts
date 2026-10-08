@@ -247,6 +247,7 @@ mod tests {
                 deleted: false,
             },
             AppEvent::SemanticStatusChanged(Box::new(SemanticStatus {
+                setup_progress: None,
                 settings: SemanticSettings::default(),
                 image_coverage: crate::semantic::images::ImageCoverage::default(),
                 text_ready: true,

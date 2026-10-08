@@ -486,6 +486,22 @@ Reopening Atlas revalidates its retained display against the backend even when
 its previous response was ready. Chat-default changes and Atlas visibility changes
 persist independently; an older snapshot in either screen cannot revert the other.
 
+Atlas continuity advances only with an admitted durable generation. Failed,
+superseded or cache-invalidated calculations cannot advance cloud identity,
+branch evidence or geography. User cloud names survive semantic cache clearing
+and provider changes; compatible names and accepted world placements survive
+restart. The previous valid metadata generation remains available for recovery.
+Unrecoverable authored map metadata is preserved and reported.
+
+Stationary inputs, polling, naming, activity, search and camera changes do not
+move map geometry or manufacture semantic evidence. Supported subgroups become
+visible before promotion; the bounded presentation interval may admit already
+strong evidence without another content edit. Provider changes reset incompatible
+candidate evidence. Navigation-only vectors do not establish a semantic theme.
+Each note has one primary cloud or remains isolated. Excluded, missing and
+forgotten content leaves the rendered inventory even while rebuilding; stable
+geography cannot override current-content admission.
+
 A transient indexing failure keeps the last good result visible as stale.
 Automatic retries are bounded and cannot overwrite newer queued work. The UI
 distinguishes fresh, stale, rebuilding, and degraded states and offers an

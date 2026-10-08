@@ -538,6 +538,17 @@ worker retains its existing supersession checkpoints between calculation stages
 and before pointer publication. These private modules introduce no second owner
 or public facade, and numerical policies remain explicit in `semantic/similarity.rs`.
 
+Atlas's private `map_store.rs` owns durable vault-local cloud identity, names,
+lineage and accepted world placements separately from rebuildable semantic data.
+`continuity.rs` reconciles current communities and candidate evidence with that
+memory; `stable_layout.rs` reserves readable filename space and adjusts affected
+regions. Structural publication, labels, naming and cache clearing share its
+admission lock. The durable head commits a generation; derived ready pointers
+are repairable. The existing queue remains the only calculation scheduler.
+See [ADR 0010](docs/adr/0010-retain-atlas-geography-outside-derived-caches.md).
+The renderer consumes world coordinates directly and interpolates admitted
+endpoints without persisting or repacking another layout.
+
 Chat's frontend transition admits selection/request events and their conversation
 projection together, then notifies the existing Readable boundary once. Effects
 cannot separately patch selected conversation data after rejected admission. The

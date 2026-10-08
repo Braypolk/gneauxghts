@@ -130,7 +130,7 @@ fn label_pointer_requires_current_algorithm_and_model() {
         "members-1",
         "model-1"
     ));
-    pointer.algorithm_version = "old-algorithm".to_string();
+    pointer.algorithm_version = "chunk-keybert-atlas-v7".to_string();
     assert!(!label_pointer_is_compatible(
         &pointer,
         "structure-1",
@@ -411,4 +411,196 @@ fn atlas_visibility_filters_hidden_chat_rows_and_adds_navigation_only_chats() {
     assert!(chat
         .semantic_input_hash
         .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX));
+}
+
+#[test]
+fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_cache_loss() {
+    use crate::semantic::chunking::SemanticChunk;
+    use crate::semantic::db::{
+        rebuild_edges_with_provenance, upsert_note_chunks, SemanticNoteMetadata,
+    };
+    use crate::semantic::{health_tests::active_status_state, RuntimeState, SemanticStateInner};
+    let (state, _signals, temp) = active_status_state(RuntimeState::default());
+    let SemanticStateInner::Active(active) = &state.inner else {
+        unreachable!()
+    };
+    let mut db = open_database(&active.db_path).unwrap();
+    let seed = |db: &mut rusqlite::Connection, i: usize| {
+        let path = temp.path().join(format!("garden-{i}.md"));
+        fs::write(&path, format!("# Garden {i}\nVegetables and garden soil")).unwrap();
+        let hash = format!("garden-{i}");
+        upsert_note_chunks(
+            db,
+            &path.to_string_lossy(),
+            &hash,
+            1,
+            &hash,
+            "",
+            "",
+            DocumentKind::Note,
+            &SemanticNoteMetadata {
+                note_id: hash.clone(),
+                semantic_input_hash: hash.clone(),
+                presentation_hash: hash.clone(),
+                ..Default::default()
+            },
+            &[SemanticChunk {
+                ordinal: 0,
+                section_label: "Garden".into(),
+                text: "Vegetables and garden soil".into(),
+                text_hash: hash.clone(),
+                start_line: 1,
+                end_line: 2,
+                block_anchor: None,
+            }],
+            &[vec![1.0, 0.0, 0.0]],
+        )
+        .unwrap();
+    };
+    for i in 0..8 {
+        seed(&mut db, i);
+    }
+    let prepare = |db: &mut rusqlite::Connection| {
+        active.note_ann.rebuild_from_connection(db).unwrap();
+        rebuild_edges_with_provenance(
+            db,
+            8,
+            0.3,
+            &active.note_ann.generation_id().unwrap(),
+            "status-test",
+            |_, _| {},
+        )
+        .unwrap();
+    };
+    prepare(&mut db);
+    let key = AtlasGenerationKey::default();
+    let pending = Arc::new(Mutex::new(PendingIndexState::default()));
+    let mut worker = AtlasWorkerContext {
+        map_store: active.atlas_map.clone(),
+        db_path: active.db_path.clone(),
+        cache_dir: active.atlas_cache_dir.clone(),
+        dimensions: 3,
+        provider: active.provider.clone(),
+        debug: active.debug.clone(),
+        note_ann: active.note_ann.clone(),
+        pending: pending.clone(),
+    };
+    let first = worker.build_and_publish(key, 0).unwrap();
+    assert!(!first.clouds.is_empty());
+    assert!(first.world_layout);
+    let id = first
+        .clouds
+        .iter()
+        .find(|c| c.parent_id.is_none())
+        .unwrap()
+        .id
+        .clone();
+    worker
+        .map_store
+        .rename(key, &id, Some("Kitchen garden".into()))
+        .unwrap();
+    let label_request = pending.lock().unwrap().atlas_label_requests[&key].clone();
+    worker
+        .build_and_publish_labels(key, &label_request)
+        .unwrap();
+    assert_eq!(
+        worker
+            .map_store
+            .load(key)
+            .unwrap()
+            .unwrap()
+            .clouds
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .user_name
+            .as_deref(),
+        Some("Kitchen garden")
+    );
+    // A new owner reopens durable map memory; rebuildable positions have never been saved.
+    worker.map_store = Arc::new(AtlasMapStore::new(temp.path()));
+    let restarted = worker.build_and_publish(key, 0).unwrap();
+    assert_eq!(
+        restarted
+            .clouds
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("Kitchen garden")
+    );
+    for node in &first.nodes {
+        let next = restarted
+            .nodes
+            .iter()
+            .find(|n| n.note_id == node.note_id)
+            .unwrap();
+        assert_eq!((node.x, node.y), (next.x, next.y));
+    }
+    seed(&mut db, 8);
+    prepare(&mut db);
+    let added = worker.build_and_publish(key, 1).unwrap();
+    assert_eq!(added.nodes.len(), 9);
+    assert!(added.clouds.iter().any(|c| c.id == id));
+    let head = worker.map_store.load(key).unwrap().unwrap();
+    // Crash after durable admission but before its derived ready pointer: reads repair it.
+    fs::remove_file(ready_pointer_path(&worker.cache_dir, key)).unwrap();
+    let repaired = active.vault_atlas(key, HashMap::new(), 1).unwrap();
+    assert_eq!(repaired.structural_generation, head.generation);
+    assert!(ready_pointer_path(&worker.cache_dir, key).exists());
+    // Corrupt structural artifacts enqueue a rebuild, while names remain available.
+    fs::write(&head.artifact_path, b"broken").unwrap();
+    let corrupt = active.vault_atlas(key, HashMap::new(), 1).unwrap();
+    assert_ne!(corrupt.status, "ready");
+    assert!(active
+        .work_queue
+        .stage(|p| p.atlas_requests.contains_key(&key))
+        .unwrap());
+    state.clear_atlas_cache().unwrap();
+    let recovered = worker.build_and_publish(key, 1).unwrap();
+    assert_eq!(
+        recovered
+            .clouds
+            .iter()
+            .find(|c| c.id == id)
+            .unwrap()
+            .user_name
+            .as_deref(),
+        Some("Kitchen garden")
+    );
+    // Visibility filtering removes existing files from the served inventory immediately.
+    let mut eligible = persisted_atlas_inputs(&db, key).unwrap().metadata;
+    let excluded_path = recovered.nodes[0].note_path.clone();
+    let excluded_id = recovered.nodes[0].id.clone();
+    eligible.remove(&excluded_path);
+    let mut filtered = recovered.clone();
+    suppress_missing_atlas_nodes(&mut filtered, &eligible);
+    assert!(!filtered.nodes.iter().any(|n| n.id == excluded_id));
+    assert!(!filtered
+        .links
+        .iter()
+        .any(|l| l.source_id == excluded_id || l.target_id == excluded_id));
+    assert!(!filtered
+        .clouds
+        .iter()
+        .any(|c| c.member_node_ids.contains(&excluded_id)));
+    // Newer queued content may not advance durable evidence with an older result.
+    let admitted = worker.map_store.load(key).unwrap().unwrap().generation;
+    pending.lock().unwrap().atlas_requests.insert(key, 99);
+    assert_eq!(
+        worker.build_and_publish(key, 1).unwrap_err(),
+        ATLAS_SUPERSEDED
+    );
+    assert_eq!(
+        worker.map_store.load(key).unwrap().unwrap().generation,
+        admitted
+    );
+    pending.lock().unwrap().atlas_requests.clear();
+    for n in &recovered.nodes {
+        fs::remove_file(&n.note_path).unwrap();
+    }
+    let empty = worker.build_and_publish(key, 2).unwrap();
+    assert!(empty.nodes.is_empty());
+    assert!(empty.clouds.is_empty());
 }

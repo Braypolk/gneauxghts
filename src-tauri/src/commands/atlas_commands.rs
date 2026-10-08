@@ -149,6 +149,25 @@ pub(crate) async fn search_vault_atlas(
         .await
 }
 
+#[tauri::command]
+pub(crate) async fn rename_atlas_cloud(
+    app: tauri::AppHandle,
+    cloud_id: String,
+    name: Option<String>,
+    chat_visibility: Option<AtlasChatVisibility>,
+) -> Result<crate::semantic::atlas::AtlasCloudName, String> {
+    super::on_app_worker(app, move |state| {
+        state.semantic.rename_atlas_cloud(
+            AtlasGenerationKey {
+                chat_visibility: chat_visibility.unwrap_or_default(),
+            },
+            &cloud_id,
+            name,
+        )
+    })
+    .await?
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

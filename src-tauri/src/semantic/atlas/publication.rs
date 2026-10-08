@@ -65,6 +65,7 @@ fn default_medoid_label_source() -> String {
     "medoid".to_string()
 }
 
+use super::map_store::{identity, opaque_id, MapCloud, MapNote, MapState};
 use super::*;
 
 // Opening history is mutable device-local metadata, never a geometry input.
@@ -102,7 +103,7 @@ fn label_ready_pointer_path(cache_dir: &Path, key: AtlasGenerationKey) -> PathBu
     ))
 }
 
-fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
+pub(super) fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "Atlas publication path has no parent".to_string())?;
@@ -124,9 +125,13 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> 
         .map_err(|err| err.to_string())
 }
 
+#[cfg(test)]
 fn gc_unreferenced_generations(cache_dir: &Path) -> Result<(), String> {
+    collect_generations(cache_dir, HashSet::new())
+}
+
+fn collect_generations(cache_dir: &Path, mut referenced: HashSet<String>) -> Result<(), String> {
     let root = atlas_root(cache_dir);
-    let mut referenced = HashSet::new();
     for visibility in [
         AtlasChatVisibilityKey::Hidden,
         AtlasChatVisibilityKey::Remembered,
@@ -223,8 +228,18 @@ impl AtlasWorkerContext {
             None,
             |metrics| metrics.atlas_request_count += 1,
         );
+        let cache_epoch = self.map_store.epoch();
+        let mut previous = {
+            let _guard = self
+                .map_store
+                .admission
+                .lock()
+                .map_err(|_| "Atlas admission unavailable")?;
+            self.map_store.load(generation_key)?.unwrap_or_default()
+        };
+        let base_generation = previous.generation.clone();
         let load_started = Instant::now();
-        let mut connection = open_database(&self.db_path)?;
+        let connection = open_database(&self.db_path)?;
         crate::semantic::ensure_schema(&connection)?;
         let PersistedAtlasInputs {
             metadata,
@@ -245,12 +260,6 @@ impl AtlasWorkerContext {
         .into_iter()
         .filter(|note| Path::new(&note.note_path).is_file())
         .collect::<Vec<_>>();
-        if indexed_notes.is_empty() {
-            record_atlas_phase(&self.debug, "load", load_started);
-            let response = empty_atlas("empty", "No indexed notes are available yet.", revision)?;
-            record_atlas_total(&self.debug, request_started, false);
-            return Ok(response);
-        }
 
         let layout_pull = DEFAULT_LAYOUT_PULL;
         let positions = load_atlas_positions(&connection)?
@@ -281,6 +290,9 @@ impl AtlasWorkerContext {
                 let updated_at_millis = crate::note::parse_rfc3339_millis(&note.updated_at)
                     .unwrap_or(note.modified_millis);
                 WorkingNode {
+                    has_semantic_content: !note
+                        .semantic_input_hash
+                        .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX),
                     id: note.note_path.clone(),
                     note_id,
                     note_path: note.note_path.clone(),
@@ -309,6 +321,15 @@ impl AtlasWorkerContext {
             })
             .collect::<Vec<_>>();
 
+        if previous.generation.is_empty() {
+            previous =
+                import_legacy_map(&self.cache_dir, generation_key, &nodes)?.unwrap_or(previous);
+        }
+        continuity::reset_model_evidence(
+            &mut previous,
+            &self.provider.model_info().fingerprint(),
+            current_time_millis()?,
+        );
         let graph_started = Instant::now();
         let knn_rows = build_hnsw_knn_rows(&nodes);
         self.check_superseded(generation_key, revision)?;
@@ -321,17 +342,20 @@ impl AtlasWorkerContext {
         let layout_edges = build_layout_graph(&nodes, &links);
         record_atlas_phase(&self.debug, "graph", graph_started);
         let cloud_started = Instant::now();
-        let mut cloud_specs = assign_clouds(&mut nodes, &layout_edges);
+        let (mut cloud_specs, cloud_memory) =
+            continuity::reconcile(&mut nodes, &layout_edges, &previous, current_time_millis()?)?;
         self.check_superseded(generation_key, revision)?;
         record_atlas_phase(&self.debug, "cloud", cloud_started);
         let layout_started = Instant::now();
-        let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
-        if umap_applied {
-            separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
-        } else {
-            place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+        if previous.nodes.is_empty() {
+            let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
+            if umap_applied {
+                separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+            } else {
+                place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
+            }
         }
-        refresh_cloud_geometry(&mut cloud_specs, &nodes);
+        stable_layout::place(&mut nodes, &mut cloud_specs, &cloud_memory, &previous);
         self.check_superseded(generation_key, revision)?;
         record_atlas_phase(&self.debug, "layout", layout_started);
         let cloud_finalize_started = Instant::now();
@@ -348,19 +372,8 @@ impl AtlasWorkerContext {
         });
         record_atlas_phase(&self.debug, "cloud", cloud_finalize_started);
 
+        stable_layout::finish(&mut clouds, &cloud_memory);
         let persist_started = Instant::now();
-        save_atlas_positions(
-            &mut connection,
-            &nodes
-                .iter()
-                .map(|node| StoredAtlasPosition {
-                    note_path: node.note_path.clone(),
-                    x: node.x,
-                    y: node.y,
-                })
-                .collect::<Vec<_>>(),
-        )?;
-
         let response_nodes = nodes
             .iter()
             .map(|node| AtlasNode {
@@ -421,8 +434,15 @@ impl AtlasWorkerContext {
             )
             .to_hex()[..16]
         );
-        let response = VaultAtlasResponse {
-            status: "ready".to_string(),
+        let mut response = VaultAtlasResponse {
+            world_layout: true,
+            name_revision: previous.name_revision,
+            status: if response_nodes.is_empty() {
+                "empty"
+            } else {
+                "ready"
+            }
+            .to_string(),
             reason: None,
             revision,
             generated_at_millis: published_at_millis,
@@ -440,6 +460,46 @@ impl AtlasWorkerContext {
         if current_inputs.dependencies != dependencies {
             return Err(ATLAS_SUPERSEDED.to_string());
         }
+        let _admission = self
+            .map_store
+            .admission
+            .lock()
+            .map_err(|_| "Atlas admission unavailable")?;
+        let latest = self.map_store.load(generation_key)?;
+        if self.map_store.epoch() != cache_epoch
+            || latest.as_ref().map_or("", |s| s.generation.as_str()) != base_generation
+        {
+            return Err(ATLAS_SUPERSEDED.into());
+        }
+        self.check_superseded(generation_key, revision)?;
+        let mut map = MapState {
+            format_version: 1,
+            generation: structural_generation.clone(),
+            model: self.provider.model_info().fingerprint(),
+            dependencies: Some(dependencies.clone()),
+            target_epoch: revision,
+            published_at_millis,
+            clouds: cloud_memory,
+            name_revision: latest
+                .as_ref()
+                .map_or(previous.name_revision, |s| s.name_revision),
+            ..MapState::default()
+        };
+        if let Some(latest) = &latest {
+            for cloud in &mut map.clouds {
+                if let Some(current) = latest.clouds.iter().find(|c| c.id == cloud.id) {
+                    cloud.user_name = current.user_name.clone();
+                    cloud.auto_name = current.auto_name.clone();
+                    if latest.model == map.model {
+                        cloud.name_prototype = current.name_prototype.clone();
+                    } else {
+                        cloud.name_prototype.clear();
+                    }
+                }
+            }
+        }
+        continuity::capture(&mut map, &nodes, &response.clouds);
+        AtlasMapStore::overlay(&map, &mut response);
         let root = atlas_root(&self.cache_dir);
         fs::create_dir_all(&root).map_err(|err| err.to_string())?;
         let artifact_file = format!(
@@ -453,7 +513,13 @@ impl AtlasWorkerContext {
                 response: response.clone(),
             },
         )?;
-        self.check_superseded(generation_key, revision)?;
+        let mut pending = self.pending.lock().map_err(|_| "Atlas queue unavailable")?;
+        if request_is_superseded(&pending, generation_key, revision) {
+            return Err(ATLAS_SUPERSEDED.into());
+        }
+        if persisted_atlas_inputs(&connection, generation_key)?.dependencies != dependencies {
+            return Err(ATLAS_SUPERSEDED.into());
+        }
         let pointer = AtlasReadyPointer {
             format_version: ATLAS_GENERATION_FORMAT_VERSION,
             structural_generation,
@@ -462,13 +528,16 @@ impl AtlasWorkerContext {
             artifact_file: artifact_file.clone(),
             dependencies,
         };
-        atomic_write_json(
+        map.artifact_path = root.join(&artifact_file);
+        self.map_store.save(generation_key, &map)?;
+        // The durable head is committed. A failed derived pointer is repaired on read.
+        let _ = atomic_write_json(
             &ready_pointer_path(&self.cache_dir, generation_key),
             &pointer,
-        )?;
+        );
         let membership_fingerprint =
             cloud_membership_fingerprint(&response.structural_generation, &response.clouds);
-        if let Ok(mut pending) = self.pending.lock() {
+        {
             pending.atlas_label_requests.insert(
                 generation_key,
                 AtlasLabelRequest {
@@ -477,7 +546,11 @@ impl AtlasWorkerContext {
                 },
             );
         }
-        gc_unreferenced_generations(&self.cache_dir)?;
+        drop(pending);
+        if let Ok(referenced) = self.map_store.referenced_artifacts(&root) {
+            let _ = collect_generations(&self.cache_dir, referenced);
+        }
+        drop(_admission);
         record_atlas_total(&self.debug, request_started, false);
         Ok(response)
     }
@@ -489,6 +562,7 @@ impl AtlasWorkerContext {
     ) -> Result<(), String> {
         ensure_rayon_uses_all_cores();
         let started = Instant::now();
+        let cache_epoch = self.map_store.epoch();
         let pointer_path = ready_pointer_path(&self.cache_dir, generation_key);
         let structural_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
         if structural_pointer.structural_generation != request.structural_generation {
@@ -555,20 +629,27 @@ impl AtlasWorkerContext {
                 },
             )
         };
-        write_artifact(&HashMap::new(), false)?;
-        atomic_write_json(
-            &label_ready_pointer_path(&self.cache_dir, generation_key),
-            &AtlasLabelReadyPointer {
-                format_version: ATLAS_GENERATION_FORMAT_VERSION,
-                structural_generation: request.structural_generation.clone(),
-                membership_fingerprint: request.membership_fingerprint.clone(),
-                algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
-                model_fingerprint: model_fingerprint.clone(),
-                label_generation: label_generation.clone(),
-                artifact_file: artifact_file.clone(),
-            },
-        )?;
-
+        {
+            let _guard = self
+                .map_store
+                .admission
+                .lock()
+                .map_err(|_| "Atlas admission unavailable")?;
+            self.current_label_map(generation_key, request, cache_epoch)?;
+            write_artifact(&HashMap::new(), false)?;
+            atomic_write_json(
+                &label_ready_pointer_path(&self.cache_dir, generation_key),
+                &AtlasLabelReadyPointer {
+                    format_version: ATLAS_GENERATION_FORMAT_VERSION,
+                    structural_generation: request.structural_generation.clone(),
+                    membership_fingerprint: request.membership_fingerprint.clone(),
+                    algorithm_version: LABEL_ALGORITHM_VERSION.to_string(),
+                    model_fingerprint: model_fingerprint.clone(),
+                    label_generation: label_generation.clone(),
+                    artifact_file: artifact_file.clone(),
+                },
+            )?;
+        }
         let metrics = {
             let (_, metrics) = generate_labels_progressive(
                 &mut connection,
@@ -577,6 +658,12 @@ impl AtlasWorkerContext {
                 &structural.response.nodes,
                 &note_embeddings,
                 |cloud_id, assignment| {
+                    let _guard = self
+                        .map_store
+                        .admission
+                        .lock()
+                        .map_err(|_| "Atlas admission unavailable")?;
+                    self.current_label_map(generation_key, request, cache_epoch)?;
                     let latest_pointer = read_json::<AtlasReadyPointer>(&pointer_path)?;
                     if latest_pointer.structural_generation != request.structural_generation {
                         let _ = fs::remove_file(&artifact_path);
@@ -608,13 +695,40 @@ impl AtlasWorkerContext {
         let final_labels = published
             .into_inner()
             .map_err(|_| "Atlas label publish lock poisoned".to_string())?;
+        let _admission = self
+            .map_store
+            .admission
+            .lock()
+            .map_err(|_| "Atlas admission unavailable")?;
+        let mut map = self.current_label_map(generation_key, request, cache_epoch)?;
+        for cloud in map.clouds.iter_mut().filter(|c| c.active) {
+            if let Some(label) = final_labels.get(&cloud.id) {
+                let similarity: f32 = cloud
+                    .prototype
+                    .iter()
+                    .zip(&cloud.name_prototype)
+                    .map(|(a, b)| a * b)
+                    .sum();
+                if cloud.auto_name.is_none()
+                    || cloud.name_prototype.len() != cloud.prototype.len()
+                    || similarity < 0.94
+                {
+                    cloud.auto_name = Some(label.label.clone());
+                    cloud.name_prototype = cloud.prototype.clone();
+                }
+            }
+        }
+        self.map_store.save(generation_key, &map)?;
         write_artifact(&final_labels, true)?;
-        gc_unreferenced_generations(&self.cache_dir)?;
+        if let Ok(referenced) = self.map_store.referenced_artifacts(&root) {
+            let _ = collect_generations(&self.cache_dir, referenced);
+        }
+        drop(_admission);
         self.debug.record_timing(
             "atlas_labels",
             "published",
             Some(format!(
-                "clouds={} candidates={} unique={} chunks={} selected={} cache_hits={} provider_texts={} batches={} keybert={} medoid_fallbacks={}",
+                "clouds={} candidates={} unique={} chunks={} selected={} cache_hits={} provider_texts={} batches={} topics={}",
                 metrics.cloud_count,
                 metrics.candidate_count,
                 metrics.unique_candidate_count,
@@ -623,8 +737,7 @@ impl AtlasWorkerContext {
                 metrics.cache_hit_count,
                 metrics.provider_text_count,
                 metrics.provider_batch_count,
-                metrics.keybert_label_count,
-                metrics.medoid_fallback_count
+                metrics.topic_label_count
             )),
             started.elapsed().as_millis().min(u128::from(u64::MAX)) as u64,
             |debug_metrics| {
@@ -635,6 +748,29 @@ impl AtlasWorkerContext {
             },
         );
         Ok(())
+    }
+
+    // Called only while holding the same admission lock as structural publication/cache clear.
+    fn current_label_map(
+        &self,
+        key: AtlasGenerationKey,
+        request: &AtlasLabelRequest,
+        epoch: u64,
+    ) -> Result<MapState, String> {
+        let map = self.map_store.load(key)?.ok_or(ATLAS_SUPERSEDED)?;
+        if self.map_store.epoch() != epoch
+            || map.generation != request.structural_generation
+            || map.model != self.provider.model_info().fingerprint()
+        {
+            return Err(ATLAS_SUPERSEDED.into());
+        }
+        let connection = open_database(&self.db_path)?;
+        if map.dependencies.as_ref()
+            != Some(&persisted_atlas_inputs(&connection, key)?.dependencies)
+        {
+            return Err(ATLAS_SUPERSEDED.into());
+        }
+        Ok(map)
     }
 
     fn check_superseded(
@@ -664,9 +800,61 @@ impl ActiveSemanticState {
     ) -> Result<VaultAtlasResponse, String> {
         let connection = open_database(&self.db_path)?;
         crate::semantic::ensure_schema(&connection)?;
-        let dependencies = persisted_atlas_inputs(&connection, generation_key)?.dependencies;
+        let current_inputs = persisted_atlas_inputs(&connection, generation_key)?;
+        let dependencies = current_inputs.dependencies;
         let pointer_path = ready_pointer_path(&self.atlas_cache_dir, generation_key);
-        let pointer = read_json::<AtlasReadyPointer>(&pointer_path).ok();
+        let map = {
+            let _guard = self
+                .atlas_map
+                .admission
+                .lock()
+                .map_err(|_| "Atlas admission unavailable")?;
+            self.atlas_map.load(generation_key)?
+        };
+        let pointer = if let Some(map) = &map {
+            map.dependencies
+                .clone()
+                .map(|dependencies| AtlasReadyPointer {
+                    format_version: ATLAS_GENERATION_FORMAT_VERSION,
+                    structural_generation: map.generation.clone(),
+                    target_epoch: map.target_epoch,
+                    published_at_millis: map.published_at_millis,
+                    artifact_file: map
+                        .artifact_path
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned(),
+                    dependencies,
+                })
+                .filter(|_| {
+                    map.artifact_path.parent() == Some(atlas_root(&self.atlas_cache_dir).as_path())
+                        && map.artifact_path.is_file()
+                })
+        } else {
+            read_json::<AtlasReadyPointer>(&pointer_path).ok()
+        };
+        if let Some(pointer) = &pointer {
+            if read_json::<AtlasReadyPointer>(&pointer_path)
+                .ok()
+                .is_none_or(|p| p.structural_generation != pointer.structural_generation)
+            {
+                let _guard = self
+                    .atlas_map
+                    .admission
+                    .lock()
+                    .map_err(|_| "Atlas admission unavailable")?;
+                if self
+                    .atlas_map
+                    .load(generation_key)?
+                    .as_ref()
+                    .map(|s| &s.generation)
+                    == map.as_ref().map(|s| &s.generation)
+                {
+                    atomic_write_json(&pointer_path, pointer)?;
+                }
+            }
+        }
         let mut published = pointer.as_ref().and_then(|pointer| {
             if pointer.format_version != ATLAS_GENERATION_FORMAT_VERSION {
                 return None;
@@ -675,17 +863,24 @@ impl ActiveSemanticState {
                 &atlas_root(&self.atlas_cache_dir).join(&pointer.artifact_file),
             )
             .ok()
+            .filter(|artifact| {
+                artifact.response.structural_generation == pointer.structural_generation
+            })
             .map(|artifact| artifact.response)
         });
-        let compatible = pointer
-            .as_ref()
-            .is_some_and(|pointer| pointer_is_compatible(pointer, &dependencies, revision));
+        let compatible = published.is_some()
+            && pointer
+                .as_ref()
+                .is_some_and(|pointer| pointer_is_compatible(pointer, &dependencies, revision))
+            && !map
+                .as_ref()
+                .is_some_and(|m| continuity::promotion_due(m, current_time_millis().unwrap_or(0)));
         let mut label_compatible = false;
         let mut label_complete = false;
         let mut label_request = None;
         let expected_label_model = self.provider.model_info().fingerprint();
         if let Some(response) = &mut published {
-            suppress_missing_atlas_nodes(response);
+            suppress_missing_atlas_nodes(response, &current_inputs.metadata);
             let membership =
                 cloud_membership_fingerprint(&response.structural_generation, &response.clouds);
             label_request = Some(AtlasLabelRequest {
@@ -723,6 +918,9 @@ impl ActiveSemanticState {
                     }
                 }
             }
+        }
+        if let (Some(map), Some(response)) = (&map, &mut published) {
+            AtlasMapStore::overlay(map, response);
         }
         let (building, label_building, queued, label_queued, enqueued) =
             self.work_queue.stage(|pending| {
@@ -762,9 +960,18 @@ impl ActiveSemanticState {
         if let Some(mut response) = published.take() {
             let now = current_time_millis()?;
             apply_opening_activity(&mut response.nodes, &activity_by_note_id, now);
-            response.status = "ready".to_string();
+            response.status = if response.nodes.is_empty() {
+                "empty"
+            } else {
+                "ready"
+            }
+            .to_string();
             response.stale = !compatible;
-            response.publish_in_progress = building || queued || label_building || label_queued;
+            response.publish_in_progress = building
+                || queued
+                || label_building
+                || label_queued
+                || map.as_ref().is_some_and(continuity::promotion_pending);
             return Ok(response);
         }
         let mut response =
@@ -777,3 +984,73 @@ impl ActiveSemanticState {
 #[cfg(test)]
 #[path = "publication_tests.rs"]
 mod tests;
+
+fn import_legacy_map(
+    cache: &Path,
+    key: AtlasGenerationKey,
+    nodes: &[WorkingNode],
+) -> Result<Option<MapState>, String> {
+    let Ok(pointer) = read_json::<AtlasReadyPointer>(&ready_pointer_path(cache, key)) else {
+        return Ok(None);
+    };
+    let Ok(artifact) =
+        read_json::<AtlasGenerationArtifact>(&atlas_root(cache).join(pointer.artifact_file))
+    else {
+        return Ok(None);
+    };
+    let mut ids = HashMap::new();
+    for cloud in &artifact.response.clouds {
+        ids.insert(cloud.id.clone(), format!("cloud-{}", opaque_id()?));
+    }
+    let by_path = nodes
+        .iter()
+        .map(|n| (n.id.as_str(), continuity::note_identity(n)))
+        .collect::<HashMap<_, _>>();
+    let mut state = MapState::default();
+    state.nodes = artifact
+        .response
+        .nodes
+        .iter()
+        .map(|n| MapNote {
+            identity: identity(n.note_id.as_deref(), &n.note_path),
+            path: n.note_path.clone(),
+            position: [n.x, n.y],
+            cloud: n.cloud_id.as_ref().and_then(|id| ids.get(id).cloned()),
+            title: n.file_name.clone(),
+        })
+        .collect();
+    state.clouds = artifact
+        .response
+        .clouds
+        .iter()
+        .map(|c| MapCloud {
+            id: ids[&c.id].clone(),
+            parent: c.parent_id.as_ref().and_then(|id| ids.get(id).cloned()),
+            family: None,
+            members: c
+                .member_node_ids
+                .iter()
+                .filter_map(|id| by_path.get(id.as_str()).cloned())
+                .collect(),
+            prototype: Vec::new(),
+            theme_prototype: Vec::new(),
+            position: c.centroid,
+            color: c.color,
+            hull: c.hull.clone(),
+            radius: c.radius,
+            user_name: None,
+            auto_name: c.label.clone(),
+            name_prototype: Vec::new(),
+            active: true,
+            evidence: String::new(),
+            observations: 0,
+            visible_since: current_time_millis().unwrap_or(0),
+            promoted_at: None,
+            promotion_ready: false,
+            merge_target: None,
+            merge_observations: 0,
+            merge_evidence: String::new(),
+        })
+        .collect();
+    Ok(Some(state))
+}

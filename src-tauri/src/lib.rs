@@ -358,6 +358,7 @@ pub fn run() {
             commands::atlas_commands::get_vault_atlas,
             commands::atlas_commands::search_vault_atlas,
             commands::atlas_commands::clear_atlas_cache,
+            commands::atlas_commands::rename_atlas_cloud,
             commands::chat_commands::chat_get_settings,
             commands::chat_commands::chat_set_defaults,
             commands::chat_commands::chat_set_atlas_visibility,

@@ -2,6 +2,8 @@ export type VaultAtlasStatus = 'ready' | 'empty' | 'building' | 'unavailable';
 export type AtlasLinkKind = 'semantic' | 'wikilink';
 
 export interface VaultAtlasResponse {
+  worldLayout?: boolean;
+  nameRevision?: number;
   status: VaultAtlasStatus;
   reason: string | null;
   revision: number;
@@ -53,12 +55,15 @@ export interface AtlasLink {
 }
 
 export interface AtlasCloud {
+  userName?: string | null;
+  familyId?: string | null;
+  familyName?: string | null;
   id: string;
   parentId: string | null;
   level: number;
   label: string | null;
-  /** pending = structural placeholder, keybert = content label, medoid = title/filename fallback */
-  labelSource: 'pending' | 'keybert' | 'medoid';
+  /** pending = structural placeholder, topic = embedding topic; other sources are legacy artifacts */
+  labelSource: 'pending' | 'topic' | 'keybert' | 'medoid' | 'user';
   noteCount: number;
   density: number;
   color: [number, number, number, number];
@@ -89,4 +94,11 @@ export interface AtlasSearchMatch {
   lexicalScore: number;
   structuralScore: number;
   reasonLabels: string[];
+}
+
+export interface AtlasCloudName {
+  cloudId: string;
+  userName: string | null;
+  label: string | null;
+  nameRevision: number;
 }

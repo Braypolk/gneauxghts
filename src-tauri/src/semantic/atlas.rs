@@ -1,11 +1,14 @@
+mod continuity;
 mod geometry;
+mod map_store;
+mod stable_layout;
+pub(crate) use map_store::{AtlasCloudName, AtlasMapStore};
 mod publication;
 mod query;
 use geometry::{
-    apply_centrality, apply_umap_layout, assign_clouds, boost_links, build_cloud,
-    build_hnsw_knn_rows, build_layout_graph, collect_links, finalize_cloud_cores,
-    normalized_embedding, place_cloud_first_layout, place_uncached_nodes_from_neighbors,
-    refresh_cloud_geometry, separate_umap_clouds,
+    apply_centrality, apply_umap_layout, boost_links, build_cloud, build_hnsw_knn_rows,
+    build_layout_graph, collect_links, finalize_cloud_cores, normalized_embedding,
+    place_cloud_first_layout, place_uncached_nodes_from_neighbors, separate_umap_clouds,
 };
 pub(crate) use query::{frequency_score, recency_score};
 
@@ -16,8 +19,7 @@ use super::{
     },
     db::{
         load_atlas_note_embeddings, load_atlas_note_metadata, load_atlas_positions,
-        load_edge_generation, open_database, save_atlas_positions, StoredAtlasNoteEmbedding,
-        StoredAtlasNoteMetadata, StoredAtlasPosition,
+        load_edge_generation, open_database, StoredAtlasNoteEmbedding, StoredAtlasNoteMetadata,
     },
     debug::SemanticDebugState,
     embed::EmbeddingProvider,
@@ -63,10 +65,10 @@ const UMAP_ITERATIONS_MAX: usize = 140;
 const UMAP_ITERATIONS_BASE: usize = 40;
 const UMAP_ITERATIONS_SQRT_SCALE: f32 = 3.0;
 /// Bumped when layout/clustering parallelism or iteration budgets change.
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 16;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 17;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
-const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 1;
+const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 2;
 const ATLAS_GENERATION_FORMAT_VERSION: u32 = 1;
 const ATLAS_SUPERSEDED: &str = "atlas generation superseded";
 pub(crate) const ATLAS_DEPENDENCIES_NOT_READY: &str = "Atlas dependencies are not ready";
@@ -181,6 +183,10 @@ fn navigation_only_embedding(path: &str, dimensions: usize) -> Vec<f32> {
 pub(crate) struct VaultAtlasResponse {
     pub(crate) status: String,
     pub(crate) reason: Option<String>,
+    #[serde(default)]
+    pub(crate) world_layout: bool,
+    #[serde(default)]
+    pub(crate) name_revision: u64,
     pub(crate) revision: u64,
     pub(crate) generated_at_millis: u64,
     pub(crate) structural_generation: String,
@@ -259,12 +265,18 @@ pub(crate) struct AtlasLink {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct AtlasCloud {
+    #[serde(default)]
+    pub(crate) user_name: Option<String>,
+    #[serde(default)]
+    pub(crate) family_id: Option<String>,
+    #[serde(default)]
+    pub(crate) family_name: Option<String>,
     pub(crate) id: String,
     pub(crate) parent_id: Option<String>,
     pub(crate) level: usize,
     pub(crate) label: Option<String>,
-    /// `pending` while waiting for KeyBERT, `keybert` for content labels,
-    /// `medoid` when falling back to a representative note title/filename.
+    /// `pending` for a structural placeholder, `topic` for an embedding topic name.
+    /// Historical artifacts can contain `keybert` or `medoid`.
     #[serde(default = "default_pending_label_source")]
     pub(crate) label_source: String,
     pub(crate) note_count: usize,
@@ -284,11 +296,16 @@ fn default_pending_label_source() -> String {
     "pending".to_string()
 }
 
-fn suppress_missing_atlas_nodes(response: &mut VaultAtlasResponse) {
+fn suppress_missing_atlas_nodes(
+    response: &mut VaultAtlasResponse,
+    eligible: &HashMap<String, AtlasNoteMetadata>,
+) {
     let retained_node_ids = response
         .nodes
         .iter()
-        .filter(|node| Path::new(&node.note_path).is_file())
+        .filter(|node| {
+            eligible.contains_key(&node.note_path) && Path::new(&node.note_path).is_file()
+        })
         .map(|node| node.id.clone())
         .collect::<HashSet<_>>();
     if retained_node_ids.len() == response.nodes.len() {
@@ -332,6 +349,7 @@ fn suppress_missing_atlas_nodes(response: &mut VaultAtlasResponse) {
 
 #[derive(Clone)]
 struct WorkingNode {
+    has_semantic_content: bool,
     id: String,
     note_id: Option<String>,
     note_path: String,
@@ -403,6 +421,7 @@ struct AtlasDependencies {
 }
 
 pub(crate) struct AtlasWorkerContext {
+    pub(crate) map_store: Arc<AtlasMapStore>,
     pub(crate) db_path: PathBuf,
     pub(crate) cache_dir: PathBuf,
     pub(crate) dimensions: usize,
@@ -693,6 +712,8 @@ fn record_atlas_total(debug: &super::debug::SemanticDebugState, started: Instant
 
 fn empty_atlas(status: &str, reason: &str, revision: u64) -> Result<VaultAtlasResponse, String> {
     Ok(VaultAtlasResponse {
+        world_layout: true,
+        name_revision: 0,
         status: status.to_string(),
         reason: Some(reason.to_string()),
         revision,

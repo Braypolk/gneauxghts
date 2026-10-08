@@ -465,7 +465,20 @@ fn connected_components(nodes: &[WorkingNode], edges: &[LayoutEdge]) -> Vec<Vec<
     components
 }
 
+#[cfg(test)]
 pub(super) fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSpec> {
+    assign_clouds_with_promotion(nodes, edges, true)
+}
+
+pub(super) fn candidate_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> Vec<CloudSpec> {
+    assign_clouds_with_promotion(nodes, edges, false)
+}
+
+fn assign_clouds_with_promotion(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    promote: bool,
+) -> Vec<CloudSpec> {
     let adjacency = build_edge_adjacency(edges);
     let components = connected_components(nodes, edges);
     let mut top_groups = components
@@ -478,7 +491,17 @@ pub(super) fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> 
         })
         .collect::<Vec<_>>();
     top_groups = merge_high_affinity_groups(top_groups, nodes, edges, &adjacency);
-    let mut top_groups = promote_mature_subclouds(top_groups, nodes, edges, &adjacency, 1);
+    let mut top_groups = if promote {
+        promote_mature_subclouds(top_groups, nodes, edges, &adjacency, 1)
+    } else {
+        top_groups
+            .into_iter()
+            .map(|members| TopGroupPartition {
+                members,
+                precomputed_children: None,
+            })
+            .collect()
+    };
     top_groups.sort_by(|left, right| {
         group_centrality(&right.members, nodes)
             .total_cmp(&group_centrality(&left.members, nodes))
@@ -486,6 +509,26 @@ pub(super) fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> 
             .then_with(|| left.members[0].cmp(&right.members[0]))
     });
 
+    cloud_specs_for_groups(
+        nodes,
+        edges,
+        top_groups.into_iter().map(|g| g.members).collect(),
+    )
+}
+
+pub(super) fn cloud_specs_for_groups(
+    nodes: &mut [WorkingNode],
+    edges: &[LayoutEdge],
+    groups: Vec<Vec<String>>,
+) -> Vec<CloudSpec> {
+    let adjacency = build_edge_adjacency(edges);
+    let top_groups = groups
+        .into_iter()
+        .map(|members| TopGroupPartition {
+            members,
+            precomputed_children: None,
+        })
+        .collect::<Vec<_>>();
     let node_index = nodes
         .iter()
         .enumerate()
@@ -569,13 +612,28 @@ pub(super) fn assign_clouds(nodes: &mut [WorkingNode], edges: &[LayoutEdge]) -> 
     specs
 }
 
+fn homogeneous_theme(group: &[String], nodes: &[WorkingNode]) -> bool {
+    let by_id = nodes
+        .iter()
+        .map(|n| (n.id.as_str(), n))
+        .collect::<HashMap<_, _>>();
+    let center = embedding_centroid(group, &by_id);
+    !center.is_empty()
+        && group.iter().all(|id| {
+            by_id.get(id.as_str()).is_some_and(|n| {
+                n.has_semantic_content
+                    && crate::semantic::similarity::cosine_similarity(&n.embedding, &center) >= 0.96
+            })
+        })
+}
+
 fn partition_by_content(
     group: &[String],
     nodes: &[WorkingNode],
     edges: &[LayoutEdge],
     adjacency: &EdgeAdjacency,
 ) -> Vec<Vec<String>> {
-    if group.len() < CLOUD_MIN_NOTES * 2 {
+    if group.len() < CLOUD_MIN_NOTES * 2 || homogeneous_theme(group, nodes) {
         return vec![group.to_vec()];
     }
     let resolution = structure_based_resolution(group, edges, adjacency);
@@ -1206,7 +1264,7 @@ fn detect_child_communities(
     edges: &[LayoutEdge],
     adjacency: &EdgeAdjacency,
 ) -> Vec<Vec<String>> {
-    if parent_group.len() < CHILD_CLOUD_MIN_NOTES * 2 {
+    if parent_group.len() < CHILD_CLOUD_MIN_NOTES * 2 || homogeneous_theme(parent_group, nodes) {
         return Vec::new();
     }
     let target_size = CHILD_TARGET_MAX_NOTES
@@ -2456,6 +2514,9 @@ pub(super) fn build_cloud(
     };
 
     AtlasCloud {
+        user_name: None,
+        family_id: None,
+        family_name: None,
         id: spec.id.clone(),
         parent_id: spec.parent_id.clone(),
         level: spec.level,

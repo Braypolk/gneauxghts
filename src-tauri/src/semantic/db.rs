@@ -38,7 +38,6 @@ pub(crate) struct StoredChunkRow {
 /// Chunk payload used by Atlas content-based cloud labeling.
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasLabelChunk {
-    pub(crate) note_path: String,
     pub(crate) ordinal: usize,
     pub(crate) section_label: String,
     pub(crate) text: String,
@@ -987,7 +986,6 @@ pub(crate) fn load_chunks_for_note_paths(
         while let Some(row) = rows.next().map_err(|err| err.to_string())? {
             let note_path = row.get::<_, String>(0).map_err(|err| err.to_string())?;
             let chunk = AtlasLabelChunk {
-                note_path: note_path.clone(),
                 ordinal: row.get::<_, usize>(1).map_err(|err| err.to_string())?,
                 section_label: row.get::<_, String>(2).map_err(|err| err.to_string())?,
                 text: row.get::<_, String>(3).map_err(|err| err.to_string())?,
@@ -1584,6 +1582,7 @@ pub(crate) fn load_atlas_positions(
     Ok(positions)
 }
 
+#[cfg(test)]
 pub(crate) fn save_atlas_positions(
     connection: &mut Connection,
     positions: &[StoredAtlasPosition],
