@@ -22,7 +22,6 @@ Treat these as established intent. Clarify ambiguous consequences, but do not ma
 - Gneauxghts remains a local-first notes workspace. AI should be powerful but ambient, not the product's visual or conceptual foreground.
 - Chat is currently an add-on with note integration. The goal is a deeper system in which interactive chat, durable work, and background assistance share foundations.
 - An Inbox-like surface remains part of the longer-term vision: it may eventually collect meaningful chat updates, running or completed jobs, review requests, failures, and selectively surfaced background findings. Its product design and implementation are explicitly deferred as a large follow-on phase.
-- Existing `work-1`, `work-2`, and `work-3` pages are exploratory mockups of what this future surface might entail. Treat them as reference material, not accepted behavior, canonical vocabulary, or scope for the next implementation plan.
 - Chat should support both quick answers and deep research, with a refined path for turning useful generated material into durable note knowledge. Useful work should not disappear into an abandoned conversation.
 - Future jobs may be scheduled or event-driven. Future background agents may surface items when appropriate, but user trust, low noise, and control matter.
 - Future skills should be able to package reusable workflows. Structured note capabilities and a sandboxed execution environment are both candidate foundations.
@@ -79,18 +78,9 @@ The user should be able to ignore these capabilities and continue using Gneauxgh
 
 The durable records produced by this phase should be usable by a future Inbox projection without requiring that surface now. Do not invent Inbox-specific state or generalize the runtime solely for hypothetical UI needs; preserve a clean consumer seam and defer the product semantics.
 
-## Deferred Inbox reference
+## Deferred Inbox scope
 
 The Inbox is a future integration constraint, not an implementation deliverable for the next phase. Astra should establish only the minimum compatibility boundary needed to avoid obvious rework, then record the rest as deferred work rather than turning it into ready-for-agent tickets.
-
-The current exploratory Work-page mockups are:
-
-- `src/routes/work-1/+page.svelte` — slide-over variant.
-- `src/routes/work-2/+page.svelte` — working-dock variant.
-- `src/routes/work-3/+page.svelte` — context-edge variant.
-- `src/lib/features/workMock/FocusWorkspace.svelte` — shared mock implementation with focus items, tasks, jobs, reviews, source-note context, review/discuss actions, and resolution flows.
-
-Inspect these only to understand possible future consumers of durable run, result, review, and status data. The layouts, labels, object kinds, prioritization, actions, and lifecycle shown there are not decisions. Do not productionize these routes, derive canonical domain terms from them, or create Inbox UI/state/backend tickets in the initial issue set. At most, the spec may identify a small independently valuable seam that lets a later Inbox observe durable work without coupling it to chat.
 
 ## Candidate architecture hypothesis to attack
 
@@ -195,7 +185,7 @@ Do not fully design or implement the Inbox in this planning effort. Resolve only
 - What minimal stable identifiers, status facts, evidence links, and review references have independent value now and could support a future Inbox?
 - Can that future-facing seam remain a read model or projection boundary rather than introducing `InboxItem` as durable truth now?
 - Which Inbox questions are explicitly deferred, including prioritization, deduplication, grouping, replacement, read/unread, expiry, snooze, archive, notification policy, and learning from dismissal?
-- Do the Work-page mockups reveal any data dependency that would be expensive to recover later? Preserve only substantiated data needs; do not adopt their interaction model or terminology by default.
+- Does the current foundation reveal any data dependency a future Inbox would need that would be expensive to recover later? Preserve only substantiated data needs; defer its interaction model and terminology.
 
 ### 9. Skills and extension points
 
@@ -266,7 +256,7 @@ Each implementation ticket must contain:
 
 Prefer vertical tickets that prove a complete behavior through the deep module seam. Avoid schema-only, backend-only, and UI-only ticket chains that leave no usable or testable product outcome until the entire effort lands. If a foundational ticket cannot be vertical, state exactly which later ticket proves it and why the split is necessary.
 
-The initial spec and issue set must name Inbox implementation as an explicit non-goal. Capture it as a large deferred phase with its open product questions and mockup references. Do not create ready-for-agent Inbox implementation tickets. A ticket may introduce an enabling seam only when that seam has a concrete use in the current phase and remains valuable even if the future Inbox design changes completely.
+The initial spec and issue set must name Inbox implementation as an explicit non-goal. Capture it as a large deferred phase with its open product questions. Do not create ready-for-agent Inbox implementation tickets. A ticket may introduce an enabling seam only when that seam has a concrete use in the current phase and remains valuable even if the future Inbox design changes completely.
 
 Candidate decomposition axes to test, not a required ticket list:
 
@@ -290,7 +280,7 @@ This planning task is complete only when:
 - The user confirms that the design-tree frontier is empty and the shared understanding is accurate.
 - Every ambiguous working term has either a canonical definition or has been removed.
 - The spec states what the first release does and deliberately defers later autonomy.
-- The spec explicitly defers Inbox product design and implementation, identifies the Work-page mockups as non-authoritative reference material, and limits current work to independently valuable foundations.
+- The spec explicitly defers Inbox product design and implementation, and limits current work to independently valuable foundations.
 - History access, canonical mutation, permission, background execution, and closed-app behavior are explicit rather than inferred.
 - Every accepted ADR is preserved or deliberately reopened with the user's decision recorded.
 - Tickets form a dependency-valid sequence with no hidden product decisions.
