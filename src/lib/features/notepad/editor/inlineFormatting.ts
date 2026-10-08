@@ -293,7 +293,11 @@ function findEnclosingLinkNode(
 function applyLink(view: EditorView) {
   const selection = view.state.selection.main;
   if (selection.empty) {
-    return false;
+    return applySpec(
+      view,
+      { from: selection.from, to: selection.to, insert: '[]()' },
+      { anchor: selection.from + 1 }
+    );
   }
 
   const { from, to } = selection;

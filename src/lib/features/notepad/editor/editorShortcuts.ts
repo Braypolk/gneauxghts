@@ -30,6 +30,7 @@ import {
 } from './structuralIndentation';
 import { createMarkdownExtensions } from '$lib/features/notepad/markdown/markdownExtensions';
 import { applyInlineFormat } from './inlineFormatting';
+import { moveThroughLink } from './linkNavigation';
 import {
   keyboardShortcutMatchesEvent,
   usesNativeCutShortcut
@@ -75,8 +76,8 @@ export function createMarkdownBaseExtensions(): Extension[] {
       keymap.of([
         {
           key: 'Tab',
-          run: indentEditorSelection,
-          shift: outdentEditorSelection
+          run: (view) => moveThroughLink(view) || indentEditorSelection(view),
+          shift: (view) => moveThroughLink(view, 'backward') || outdentEditorSelection(view)
         }
       ])
     )

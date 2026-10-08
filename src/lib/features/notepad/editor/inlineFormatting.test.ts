@@ -98,11 +98,20 @@ describe('link formatting command', () => {
     ).toMatchObject({ handled: true, doc: 'label', from: 1, to: 4 });
   });
 
-  it('uses the existing no-op convention for an empty selection', () => {
-    expect(runFormat('hello', 2, 2, 'link')).toMatchObject({
-      handled: false,
-      doc: 'hello'
-    });
+  it('inserts an empty link and places the caret in the label without a selection', () => {
+    for (const [source, position, expected] of [
+      ['', 0, '[]()'],
+      ['hello', 0, '[]()hello'],
+      ['hello', 2, 'he[]()llo'],
+      ['hello', 5, 'hello[]()']
+    ] as const) {
+      expect(runFormat(source, position, position, 'link')).toMatchObject({
+        handled: true,
+        doc: expected,
+        anchor: position + 1,
+        head: position + 1
+      });
+    }
   });
 
   it('is a single undoable editor transaction', () => {
@@ -112,6 +121,22 @@ describe('link formatting command', () => {
     expect(view.state.doc.toString()).toBe('[hello]()');
     expect(undo(view)).toBe(true);
     expect(view.state.doc.toString()).toBe('hello');
+  });
+
+  it('restores the original caret when undoing an empty link insertion', () => {
+    const { view, transactions } = createCommandView({
+      doc: 'hello',
+      selection: { anchor: 2 },
+      extensions: [history(), createMarkdownLanguage()]
+    });
+
+    expect(applyInlineFormat(view, 'link')).toBe(true);
+    expect(transactions).toHaveLength(1);
+    expect(view.state.doc.toString()).toBe('he[]()llo');
+    expect(view.state.selection.main.head).toBe(3);
+    expect(undo(view)).toBe(true);
+    expect(view.state.doc.toString()).toBe('hello');
+    expect(view.state.selection.main.head).toBe(2);
   });
 });
 
