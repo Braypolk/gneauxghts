@@ -1,5 +1,5 @@
 import type { AtlasLink, AtlasNode } from '$lib/types/atlas';
-import { pointSegmentDistance, polygonProximity } from './atlasGeometry';
+import { pointSegmentDistance, polygonProximity, preparePolygonCoverage } from './atlasGeometry';
 import { labelWorldSize, nodeWorldRadius, noteTitle, titleWidth, type Point } from './atlasLayout';
 
 type Mark = Point & { rootId: string | null; node: AtlasNode };
@@ -7,7 +7,8 @@ type Cloud = { cloud: { id: string; label: string | null; parentId?: string | nu
 type Geometry = { nodes: Mark[]; clouds: Cloud[] };
 export type RoutedConnection = { path: string; branch: string; trunkId: string | null };
 export type RoutedConnections = { paths: Map<string, RoutedConnection>; trunks: { id: string; path: string; kind: AtlasLink['kind']; linkIds: string[] }[] };
-type Highway = { id: string; point: Point; tangent: Point; path: string; segment: string; parentId: string | null };
+type SmoothPath = { path: string; length: number; clear: boolean };
+type Highway = { length: number; id: string; point: Point; tangent: Point; path: string; segment: string; parentId: string | null };
 const distance = (a: Point, b: Point) => Math.hypot(a.x - b.x, a.y - b.y);
 const mix = (a: Point, b: Point, t: number): Point => ({ x: a.x + (b.x - a.x) * t, y: a.y + (b.y - a.y) * t });
 const nodeGap = 6;
@@ -116,10 +117,10 @@ class Router {
     });
   }
   private raster(polygon: Point[], margin: number, visit: (cell: number) => void) {
+    const covers = preparePolygonCoverage(polygon, margin);
     this.eachCell(Math.min(...polygon.map(p => p.x)) - margin, Math.min(...polygon.map(p => p.y)) - margin,
       Math.max(...polygon.map(p => p.x)) + margin, Math.max(...polygon.map(p => p.y)) + margin, (cell, p) => {
-        const { inside, distance: nearest } = polygonProximity(p, polygon);
-        if (inside || nearest <= margin) visit(cell);
+        if (covers(p)) visit(cell);
       });
   }
   private notePenalty(cell: number, endpoints: Set<number>): number {
@@ -187,13 +188,25 @@ class Router {
     const start = this.cell(a), end = this.cell(b);
     if (start < 0 || end < 0) return null;
     const stamp = ++this.generation, length = distance(a, b);
+    // Exact free-space cost on this eight-direction grid. Euclidean distance
+    // leaves a large search band on long diagonals and can exhaust the budget
+    // before finding a simple nearby detour.
+    const remaining = (cell: number) => {
+      const dx = Math.abs(cell % this.columns - end % this.columns);
+      const dy = Math.abs(Math.floor(cell / this.columns) - Math.floor(end / this.columns));
+      return Math.max(dx, dy) + (Math.SQRT2 - 1) * Math.min(dx, dy);
+    };
     const ray = { x: (b.x - a.x) / length, y: (b.y - a.y) / length };
     const progress = (cell: number) => { const p = this.point(cell); return (p.x - a.x) * ray.x + (p.y - a.y) * ray.y; };
     const free = (cell: number) => this.nodeFree(cell, endpoints) && (!this.cloudMask[cell] || allowed.has(this.cloudMask[cell]) || relaxed);
-    const heap: { cell: number; cost: number }[] = [];
+    const heap: { cell: number; cost: number; remaining: number }[] = [];
+    // Equal-cost diagonal grid paths form a wide plateau. Prefer progress to
+    // the goal, rather than spending the bounded search on every equivalent path.
+    const compare = (a: typeof heap[number], b: typeof heap[number]) =>
+      Math.round(a.cost * 1e7) - Math.round(b.cost * 1e7) || a.remaining - b.remaining;
     const push = (entry: typeof heap[number]) => {
       let i = heap.length; heap.push(entry);
-      while (i > 0) { const parent = (i - 1) >> 1; if (heap[parent].cost <= entry.cost) break; heap[i] = heap[parent]; i = parent; }
+      while (i > 0) { const parent = (i - 1) >> 1; if (compare(heap[parent], entry) <= 0) break; heap[i] = heap[parent]; i = parent; }
       heap[i] = entry;
     };
     const pop = () => {
@@ -202,8 +215,8 @@ class Router {
         let i = 0;
         while (i * 2 + 1 < heap.length) {
           let child = i * 2 + 1;
-          if (child + 1 < heap.length && heap[child + 1].cost < heap[child].cost) child++;
-          if (heap[child].cost >= last.cost) break;
+          if (child + 1 < heap.length && compare(heap[child + 1], heap[child]) < 0) child++;
+          if (compare(heap[child], last) >= 0) break;
           heap[i] = heap[child]; i = child;
         }
         heap[i] = last;
@@ -211,7 +224,7 @@ class Router {
       return first.cell;
     };
     this.seen[start] = stamp; this.costs[start] = 0; this.parents[start] = -1;
-    push({ cell: start, cost: length / this.step });
+    push({ cell: start, cost: remaining(start), remaining: remaining(start) });
     let expanded = 0;
     while (heap.length && expanded++ < 30_000) {
       const cell = pop();
@@ -237,7 +250,7 @@ class Router {
         const cost = this.costs[cell] + (dx && dy ? Math.SQRT2 : 1) + this.notePenalty(next, endpoints) * 0.5 + (foreign ? 12 : 0);
         if (this.seen[next] === stamp && this.costs[next] <= cost) continue;
         this.seen[next] = stamp; this.costs[next] = cost; this.parents[next] = cell;
-        push({ cell: next, cost: cost + distance(this.point(next), b) / this.step });
+        push({ cell: next, cost: cost + remaining(next), remaining: remaining(next) });
       }
     }
     return null;
@@ -415,8 +428,8 @@ class Router {
     }
     return { path, samples };
   }
-  private smooth(a: Point, b: Point, allowed: Set<number>, endpoints: Set<number>, startRadius = 0, endRadius = 0, startTangent?: Point, endTangent?: Point, retry = true): string {
-    if (distance(a, b) < 0.001) return '';
+  private smooth(a: Point, b: Point, allowed: Set<number>, endpoints: Set<number>, startRadius = 0, endRadius = 0, startTangent?: Point, endTangent?: Point, retry = true): SmoothPath | null {
+    if (distance(a, b) < 0.001) return null;
     const routed = this.routePoints(a, b, allowed, endpoints);
     const length = distance(a, b), normal = { x: -(b.y - a.y) / length, y: (b.x - a.x) / length };
     const candidates = routed.length === 2 ? [0, 12, -12, 32, -32, 60, -60].map(offset => {
@@ -424,7 +437,7 @@ class Router {
       const mid = mix(a, b, 0.5);
       return bend ? [a, { x: mid.x + normal.x * bend, y: mid.y + normal.y * bend }, b] : [a, b];
     }) : [routed];
-    let best = '', bestCost = Infinity;
+    let best: SmoothPath | null = null, bestCost = Infinity;
     for (const candidate of candidates) {
       const points = [...candidate];
       const end = points.length - 1;
@@ -450,22 +463,26 @@ class Router {
         }
         const cost = curve.samples.reduce((sum, p) => sum + this.notePenalty(this.cell(p), endpoints), 0) / curve.samples.length +
           travelled / length * 0.45 + bending * length * 0.08;
-        if (cost < bestCost) { best = curve.path; bestCost = cost; }
+        if (cost < bestCost) { best = { path: curve.path, length: travelled, clear: true }; bestCost = cost; }
         break;
       }
     }
     if (best) return best;
     // Cloud avoidance can yield to dot clearance. Recompute a smooth route with
     // cloud crossings allowed, rather than silently falling back through a dot.
-    if (retry) return this.smooth(a, b, new Set(this.geometry.clouds.map((_, i) => i + 1)), endpoints,
-      startRadius, endRadius, startTangent, endTangent, false);
+    if (retry) {
+      const relaxed = this.smooth(a, b, new Set(this.geometry.clouds.map((_, i) => i + 1)), endpoints,
+        startRadius, endRadius, startTangent, endTangent, false);
+      return relaxed ? { ...relaxed, clear: false } : null;
+    }
     // Both arrivals and departures must match direction AND curvature at a
     // shared junction. Let the caller try another junction or an independent
     // route rather than squeezing a tight bend into an older cubic fallback.
-    if (startTangent || endTangent) return '';
+    if (startTangent || endTangent) return null;
     // A monotone smooth fallback keeps explicit links even for overlapping or
     // unrouteable geometry. It cannot acquire the previous router's U-turns.
-    return this.spline([mix(a, b, Math.min(0.3, startRadius / length)), mix(b, a, Math.min(0.3, endRadius / length))], 0.35, startTangent, endTangent).path;
+    const fallback = this.spline([mix(a, b, Math.min(0.3, startRadius / length)), mix(b, a, Math.min(0.3, endRadius / length))], 0.35);
+    return { path: fallback.path, clear: false, length: fallback.samples.slice(1).reduce((sum, p, i) => sum + distance(p, fallback.samples[i]), 0) };
   }
   private allowedRegions(source: number, target: number) {
     const roots = new Set([this.geometry.nodes[source].rootId, this.geometry.nodes[target].rootId]);
@@ -517,12 +534,22 @@ class Router {
     // Prefer another clear approach over relaxing unrelated cloud avoidance.
     // Geometry alone determines this choice, so link order cannot move a trunk.
     for (const obstacles of [allowed, new Set(this.geometry.clouds.map((_, i) => i + 1))]) {
+      let best: Highway | null = null, bestTravel = Infinity;
       for (const { point, tangent } of approaches) {
         const path = this.smooth(a, point, obstacles, new Set([source]), nodeWorldRadius(a.node), 0, undefined, tangent, false);
         if (!path) continue;
-        const highway = { id, point, tangent, path, segment: path, parentId: null };
-        this.highways.set(id, highway);
-        return eligible(highway) ? highway : null;
+        // Feasibility alone is insufficient: a sideways entry can produce a
+        // very long spline. Compare the actual smoothed trip across gateways.
+        // The cloud center keeps this choice independent of visible link order.
+        const travel = path.length + distance(point, center);
+        if (travel < bestTravel) {
+          bestTravel = travel;
+          best = { id, point, tangent, path: path.path, length: path.length, segment: path.path, parentId: null };
+        }
+      }
+      if (best) {
+        this.highways.set(id, best);
+        return eligible(best) ? best : null;
       }
     }
     this.unavailableHighways.add(id);
@@ -584,8 +611,8 @@ class Router {
       })) continue;
       const segment = this.smooth(parent.point, point, allowed, new Set([source]), 0, 0, parent.tangent, tangent);
       if (!segment) continue;
-      const highway = { id, point, tangent, segment, parentId: parent.id,
-        path: parent.path + segment.slice(segment.indexOf('C')) };
+      const highway = { id, point, tangent, length: parent.length + segment.length, segment: segment.path, parentId: parent.id,
+        path: parent.path + segment.path.slice(segment.path.indexOf('C')) };
       this.highways.set(id, highway);
       return highway;
     }
@@ -612,7 +639,19 @@ class Router {
       highway = null;
       branch = this.smooth(a, b, allowed, endpoints, nodeWorldRadius(a.node), nodeWorldRadius(b.node));
     }
-    const result = { path: highway ? highway.path + branch.slice(branch.indexOf('C')) : branch, branch, trunkId: highway?.id ?? null };
+    // Sharing may buy visual clarity at a modest travel cost, but an entry
+    // tangent must not force a map-sized detour. Compare feasible full routes,
+    // so unavoidable obstacle detours do not disable an otherwise good trunk.
+    const sharedTravelBudget = 1.35;
+    if (highway && branch && highway.length + branch.length > distance(a, b) * sharedTravelBudget) {
+      const independent = this.smooth(a, b, allowed, endpoints, nodeWorldRadius(a.node), nodeWorldRadius(b.node));
+      if (independent?.clear && highway.length + branch.length > independent.length * sharedTravelBudget) {
+        highway = null;
+        branch = independent;
+      }
+    }
+    const branchPath = branch?.path ?? '';
+    const result = { path: highway ? highway.path + branchPath.slice(branchPath.indexOf('C')) : branchPath, branch: branchPath, trunkId: highway?.id ?? null };
     this.routes.set(key, result);
     return result;
   }

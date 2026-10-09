@@ -5,6 +5,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub(super) struct MapState {
     pub format_version: u32,
+    /// Revision of accepted placement policy, independent of visible hull styling.
+    #[serde(default)]
+    pub placement_version: u32,
     pub generation: String,
     pub model: String,
     pub artifact_path: PathBuf,

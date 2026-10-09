@@ -6,8 +6,8 @@ pub(crate) use map_store::{AtlasCloudName, AtlasMapStore};
 mod publication;
 mod query;
 use geometry::{
-    apply_centrality, apply_umap_layout, boost_links, build_cloud, build_hnsw_knn_rows,
-    build_layout_graph, collect_links, finalize_cloud_cores, normalized_embedding,
+    apply_centrality, apply_umap_layout, boost_links, build_hnsw_knn_rows, build_layout_graph,
+    cloud_metadata, collect_links, finalize_cloud_cores, normalized_embedding,
     place_cloud_first_layout, place_uncached_nodes_from_neighbors, separate_umap_clouds,
 };
 pub(crate) use query::{frequency_score, recency_score};
@@ -18,8 +18,9 @@ use super::{
         AtlasLabelNote, LABEL_ALGORITHM_VERSION,
     },
     db::{
-        load_atlas_note_embeddings, load_atlas_note_metadata, load_atlas_positions,
-        load_edge_generation, open_database, StoredAtlasNoteEmbedding, StoredAtlasNoteMetadata,
+        load_atlas_note_dependencies, load_atlas_note_embeddings, load_atlas_note_metadata,
+        load_atlas_positions, load_edge_generation, open_database, StoredAtlasNoteEmbedding,
+        StoredAtlasNoteMetadata,
     },
     debug::SemanticDebugState,
     embed::EmbeddingProvider,
@@ -65,7 +66,7 @@ const UMAP_ITERATIONS_MAX: usize = 140;
 const UMAP_ITERATIONS_BASE: usize = 40;
 const UMAP_ITERATIONS_SQRT_SCALE: f32 = 3.0;
 /// Bumped when layout/clustering parallelism or iteration budgets change.
-const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 17;
+const ATLAS_LAYOUT_ALGORITHM_VERSION: u32 = 29;
 const DISC_LAYOUT_FULL_PAIR_MAX: usize = 80;
 const DISC_LAYOUT_REPULSION_NEIGHBORS: usize = 16;
 const ATLAS_CLOUD_ALGORITHM_VERSION: u32 = 2;
@@ -158,7 +159,6 @@ fn visible_atlas_notes(
                 "{NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX}{}",
                 meta.note_path
             ),
-            structure_hash: format!("navigation-only:{}", meta.note_path),
             created_at: String::new(),
             updated_at: String::new(),
             embedding: navigation_only_embedding(&meta.note_path, dimensions),
@@ -470,7 +470,7 @@ fn persisted_atlas_inputs(
         })
         .collect::<HashMap<_, _>>();
     let hard_links = persisted_hard_links(&rows, &metadata);
-    let embeddings = load_atlas_note_embeddings(connection)?;
+    let embeddings = load_atlas_note_dependencies(connection)?;
     let mut source_hasher = blake3::Hasher::new();
     source_hasher.update(key.chat_visibility.signature_value().as_bytes());
     let mut input_hasher = blake3::Hasher::new();

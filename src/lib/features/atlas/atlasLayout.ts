@@ -1,5 +1,5 @@
 import type { AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
-import { polygonProximity, type Point } from './atlasGeometry';
+import { polygonProximity, preparePolygonContainment, type Point } from './atlasGeometry';
 export type { Point } from './atlasGeometry';
 export const labelWorldSize = 6.5;
 export function nodeConnectedness(node: Pick<AtlasNode, 'centrality'>) {
@@ -159,6 +159,7 @@ function packLegacyAtlas(response: VaultAtlasResponse) {
 
 type Layout = ReturnType<typeof packAtlas>;
 function captionCloud(item: Layout['clouds'][number], nodes: Layout['nodes']) {
+  const containsCaptionCorner = preparePolygonContainment(item.points, 4);
   const text = (item.cloud.label || 'Unlabelled region').slice(0, 32);
   const top = Math.min(...item.points.map((point) => point.y));
   const bottom = Math.max(...item.points.map((point) => point.y));
@@ -178,11 +179,14 @@ function captionCloud(item: Layout['clouds'][number], nodes: Layout['nodes']) {
     candidates.sort((a, b) => Math.abs(a - item.center.x) - Math.abs(b - item.center.x));
     for (let y = top + size + 8; y <= bottom - 8; y += 6) {
       for (const x of candidates) {
+        const overlapsNote = occupied.some((box) => x - halfWidth < box.right && x + halfWidth > box.left && y - size < box.bottom && y + 4 > box.top);
+        // Once a fallback exists, occupied candidates cannot improve it.
+        if (fallback && overlapsNote) continue;
         const corners = [{ x: x - halfWidth, y: y - size }, { x: x + halfWidth, y: y - size }, { x: x - halfWidth, y: y + 4 }, { x: x + halfWidth, y: y + 4 }];
-        if (!corners.every((point) => insideWithMargin(point, item.points, 4))) continue;
+        if (!corners.every(containsCaptionCorner)) continue;
         const placement = { labelPoint: { x, y }, labelFontSize: size };
         fallback ??= placement;
-        if (!occupied.some((box) => x - halfWidth < box.right && x + halfWidth > box.left && y - size < box.bottom && y + 4 > box.top)) return { ...item, ...placement };
+        if (!overlapsNote) return { ...item, ...placement };
       }
     }
   }

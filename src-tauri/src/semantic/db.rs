@@ -92,13 +92,18 @@ pub(crate) struct EdgeRepairStats {
     pub(crate) comparisons: u64,
 }
 
+pub(crate) struct AtlasNoteDependency {
+    pub(crate) note_path: String,
+    pub(crate) semantic_input_hash: String,
+    pub(crate) structure_hash: String,
+}
+
 #[derive(Clone)]
 pub(crate) struct StoredAtlasNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) note_title: String,
     pub(crate) modified_millis: u64,
     pub(crate) semantic_input_hash: String,
-    pub(crate) structure_hash: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) embedding: Vec<f32>,
@@ -1490,6 +1495,31 @@ pub(crate) fn load_note_ann_embedding_by_label(
         .map_err(|err| err.to_string())
 }
 
+/// Lightweight freshness inventory, ordered identically to the structural input.
+/// Cached-map reads must not fetch or decode vector payloads.
+pub(crate) fn load_atlas_note_dependencies(
+    connection: &Connection,
+) -> Result<Vec<AtlasNoteDependency>, String> {
+    let mut statement = connection
+        .prepare(
+            "SELECT n.path, n.semantic_input_hash, n.structure_hash
+         FROM note_embeddings e INNER JOIN notes n ON n.path = e.note_path
+         ORDER BY n.title ASC, n.path ASC",
+        )
+        .map_err(|err| err.to_string())?;
+    let rows = statement
+        .query_map([], |row| {
+            Ok(AtlasNoteDependency {
+                note_path: row.get(0)?,
+                semantic_input_hash: row.get(1)?,
+                structure_hash: row.get(2)?,
+            })
+        })
+        .map_err(|err| err.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|err| err.to_string())
+}
+
 pub(crate) fn load_atlas_note_embeddings(
     connection: &Connection,
 ) -> Result<Vec<StoredAtlasNoteEmbedding>, String> {
@@ -1497,7 +1527,7 @@ pub(crate) fn load_atlas_note_embeddings(
         .prepare(
             "
             SELECT n.path, n.title, n.modified_millis, n.semantic_input_hash,
-                   n.structure_hash, n.created_at, n.updated_at, e.embedding_blob
+                   n.created_at, n.updated_at, e.embedding_blob
             FROM note_embeddings e
             INNER JOIN notes n ON n.path = e.note_path
             ORDER BY n.title ASC, n.path ASC
@@ -1513,11 +1543,10 @@ pub(crate) fn load_atlas_note_embeddings(
             note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
             modified_millis: row.get::<_, u64>(2).map_err(|err| err.to_string())?,
             semantic_input_hash: row.get::<_, String>(3).map_err(|err| err.to_string())?,
-            structure_hash: row.get::<_, String>(4).map_err(|err| err.to_string())?,
-            created_at: row.get::<_, String>(5).map_err(|err| err.to_string())?,
-            updated_at: row.get::<_, String>(6).map_err(|err| err.to_string())?,
+            created_at: row.get::<_, String>(4).map_err(|err| err.to_string())?,
+            updated_at: row.get::<_, String>(5).map_err(|err| err.to_string())?,
             embedding: deserialize_embedding(
-                &row.get::<_, Vec<u8>>(7).map_err(|err| err.to_string())?,
+                &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
             ),
         });
     }
@@ -2594,6 +2623,54 @@ mod tests {
     use blake3::hash;
     use rusqlite::Connection;
     use std::path::PathBuf;
+
+    #[test]
+    fn atlas_dependency_inventory_matches_vector_input_order_without_loading_payloads() {
+        let temp = TestDb::new("atlas-dependency-inventory");
+        let mut connection = temp.connection();
+        for path in ["z.md", "a.md", "missing.md"] {
+            seed_note(&mut connection, path, &[1.0, 0.0]);
+        }
+        connection
+            .execute(
+                "UPDATE notes SET title = CASE path WHEN 'z.md' THEN 'A' ELSE 'Z' END",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "DELETE FROM note_embeddings WHERE note_path='missing.md'",
+                [],
+            )
+            .unwrap();
+        let expected = super::load_atlas_note_embeddings(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|n| {
+                let structure = format!("structure-{}", n.note_path);
+                (n.note_path, n.semantic_input_hash, structure)
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            expected.iter().map(|n| n.0.as_str()).collect::<Vec<_>>(),
+            vec!["z.md", "a.md"]
+        );
+        // An unreadable vector payload proves this query does not select/decode
+        // it. Structural loading still validates its own separate input.
+        connection
+            .execute(
+                "UPDATE note_embeddings SET embedding_blob='not a vector blob'",
+                [],
+            )
+            .unwrap();
+        assert!(super::load_atlas_note_embeddings(&connection).is_err());
+        let actual = super::load_atlas_note_dependencies(&connection)
+            .unwrap()
+            .into_iter()
+            .map(|n| (n.note_path, n.semantic_input_hash, n.structure_hash))
+            .collect::<Vec<_>>();
+        assert_eq!(actual, expected);
+    }
 
     #[test]
     fn ann_labels_change_when_note_identity_or_ordinal_changes() {

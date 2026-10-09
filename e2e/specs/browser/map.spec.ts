@@ -401,6 +401,7 @@ describe('Atlas map', () => {
 
   it('renders and navigates a larger vault without dropping notes', async () => {
     const atlas = await atlasSnapshot();
+    atlas.worldLayout = true;
     const sample = atlas.nodes[0];
     atlas.nodes = Array.from({ length: 2000 }, (_, i) => {
       const root = i % 18;
@@ -420,8 +421,11 @@ describe('Atlas map', () => {
       const members = atlas.nodes.filter(node => node.cloudId === `root-${root}`).map(node => node.id);
       return {
         id: `root-${root}`, parentId: null, level: 0, label: `Region ${root}`, labelSource: 'keybert',
-        noteCount: members.length, density: 1, color: [100, 150, 180, 255], centroid: [x, y], radius: 110,
-        hull: [[x - 110, y - 100], [x + 110, y - 100], [x + 110, y + 100], [x - 110, y + 100]],
+        noteCount: members.length, density: 1, color: [100, 150, 180, 255], centroid: [x, y], radius: 175,
+        hull: Array.from({ length: 384 }, (_, i) => {
+          const angle = i / 384 * Math.PI * 2;
+          return [x + 175 * Math.cos(angle), y + 175 * Math.sin(angle)];
+        }),
         memberNodeIds: members, coreNodeIds: members, outlierNodeIds: [], childCloudIds: [], representativeNodeIds: members.slice(0, 3)
       };
     });
@@ -435,6 +439,21 @@ describe('Atlas map', () => {
     expect(await transform()).not.toEqual(before);
     await $('[aria-label="Fit map to view"]').click();
     expect(await browser.execute(() => document.querySelectorAll('[data-node-id]').length)).toBe(2000);
+    // A route remount creates a fresh layout instance; refresh-only tests miss
+    // expensive caption searches over the production-sized smooth outlines.
+    await $('a[href="/"]').click();
+    await expect($('.map-world')).not.toExist();
+    const reopeningMillis = await browser.execute(async () => {
+      const started = performance.now();
+      document.querySelector<HTMLAnchorElement>('a[aria-label="Map"]')!.click();
+      while (document.querySelectorAll('[data-node-id]').length !== 2000) {
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      }
+      await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+      return performance.now() - started;
+    });
+    console.info('Atlas 2,000-note smooth-cloud route re-entry: %s ms', reopeningMillis.toFixed(1));
+    expect(reopeningMillis).toBeLessThan(1000);
   });
 
   it('keeps hover from moving the map while fit, zoom and region focus work', async () => {

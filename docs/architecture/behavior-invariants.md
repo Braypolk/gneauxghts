@@ -527,6 +527,42 @@ candidate evidence. Navigation-only vectors do not establish a semantic theme.
 Each note has one primary cloud or remains isolated. Excluded, missing and
 forgotten content leaves the rendered inventory even while rebuilding; stable
 geography cannot override current-content admission.
+Deletion and same-footprint renaming cannot repack accepted notes or push
+anchored regions away. Subgroup repartitioning and promotion may repair affected
+territories to keep distinct concepts readable. Enlarged filenames and new
+notes resolve actual footprint collisions across all notes, including isolated
+notes; unchanged accepted placements are fixed obstacles. New clouds receive
+deterministic local seeds and newly isolated notes leave their former region.
+Reassignment starts from accepted positions rather than legacy cache hints. Repair of runaway legacy geometry is
+limited to affected clouds, preserves identities and names, and is recorded in
+the admitted placement revision so reopening cannot repeatedly compact the map.
+Excessive legacy inter-region gaps receive one rigid neighborhood translation
+migration: nearby roots, internal note spacing, identities and names stay together;
+the largest retained neighborhood stays anchored. Initial maps use the same
+spacing policy. Placement revision 3 permits one bounded relationship-based
+translation of whole roots using strong graph affinities, normalized for cloud
+size and endpoint degree. It preserves internal geometry, names and identities,
+prevents new footprint collisions, and penalizes displacement. Newly born regions
+use the same aggregate affinities for seeding. Accepted maps do not gradually
+attract regions together on edits; admitting the revision prevents repeat work.
+Placement revision 4 corrects interpenetrating sibling and root cloud territories
+once using conservative envelopes of their rendered contours. Siblings translate
+as units before enclosing parent outlines are rebuilt; whole roots then separate
+with isolated notes fixed. Region attraction obeys the same territory clearance.
+Revision-3 maps receive separation without repeated attraction. Core/outlier
+classification, child centroids, radii and outlines are finalized from the accepted
+coordinates so restart cannot change geometry or interpretation. Revision 5 adds
+leaf density constraints and checks changed memberships/footprints after ordinary
+updates. Excessively sparse leaves contract around their member center with
+filename clearance; sibling separation then root separation protect final
+territories. Unchanged siblings are fixed within their parent during sibling repair; an
+affected parent may translate rigidly to clear another root. Unrelated roots
+remain fixed during incremental repair. Deletion and same-footprint renaming do not trigger reflow.
+Accepted unchanged layouts remain exact on replay; attraction remains migration-only.
+Revision 6 closes excessive internal footprint gaps before evaluating overall leaf
+density. Nearby notes translate together, anchored by the largest neighborhood;
+long horizontal titles cannot mask vertical empty space. This geometric repair
+does not create subclouds or change theme membership.
 
 A transient indexing failure keeps the last good result visible as stale.
 Automatic retries are bounded and cannot overwrite newer queued work. The UI

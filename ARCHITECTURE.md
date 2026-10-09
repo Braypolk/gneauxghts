@@ -541,13 +541,47 @@ or public facade, and numerical policies remain explicit in `semantic/similarity
 Atlas's private `map_store.rs` owns durable vault-local cloud identity, names,
 lineage and accepted world placements separately from rebuildable semantic data.
 `continuity.rs` reconciles current communities and candidate evidence with that
-memory; `stable_layout.rs` reserves readable filename space and adjusts affected
-regions. Structural publication, labels, naming and cache clearing share its
-admission lock. The durable head commits a generation; derived ready pointers
+memory; `stable_layout::calculate` owns the complete accepted-layout calculation
+used by publication and sequence tests. It restores accepted positions, resolves
+new or enlarged footprints against fixed notes in one map-wide index, and derives
+cloud bounds and contours. Private initial-placement, legacy-recovery and outline
+modules keep bulk separation and drawing out of ordinary incremental placement.
+The private affinity calculation aggregates corrected connection weights for
+one-time region placement revisions and new-region seeds; no second scheduler
+or persisted layout owner is introduced. Placement revisions constrain affinity
+with rendered sibling/root territories, then finalize semantic geometry metadata
+and contours from the accepted coordinates. Leaf density and sibling/root
+territory constraints run during initialization,
+an admitted placement migration, or changed membership/footprints. Only affected
+clouds and their ancestors can move on ordinary updates; unrelated roots stay
+fixed. Unchanged siblings retain their placement within the parent, which may
+translate rigidly to clear another root. Compact leaf footprints are preserved;
+excessive empty space is
+contracted around the member center before territory clearance. Large internal
+footprint gaps close first by rigidly translating disconnected note neighborhoods;
+this shares the existing inter-region gap calculation and creates no semantic groups.
+Canonical centroid/radius derivation is shared by placement and repairs. Contour
+smoothing visits only intersecting arc segments; intermediate child repair
+rebuilds only moved clouds and their ancestors. Freshness checks read dependency
+fields without decoding embedding vectors. SQLite placement hints are loaded only
+at bootstrap; accepted-map builds restore durable geometry and seed arrivals
+through the same backend layout owner.
+Entirely new regions receive deterministic local seeds; newly isolated notes are
+placed outside accepted regions. Structural publication, labels, naming and cache
+clearing share the map store admission lock. The durable head commits a generation; derived ready pointers
 are repairable. The existing queue remains the only calculation scheduler.
 See [ADR 0010](docs/adr/0010-retain-atlas-geography-outside-derived-caches.md).
 The renderer consumes world coordinates directly and interpolates admitted
 endpoints without persisting or repacking another layout.
+Deletion and same-footprint renaming preserve accepted note positions;
+subgroup changes repair only affected territories; root-circle overlap cannot translate established regions.
+Larger filenames and isolated notes use the same local collision policy.
+A placement-policy revision in the same durable state records one-time repair of
+legacy repulsion-expanded clouds and overlapping imported footprints through
+normal admission. Revision 2 closes excessive inter-region gaps by translating
+connected neighborhoods rigidly around the largest retained neighborhood. The
+same footprint-envelope spacing policy runs during initialization, never during
+ordinary updates to an accepted revision-2 map.
 
 Chat's frontend transition admits selection/request events and their conversation
 projection together, then notifies the existing Readable boundary once. Effects

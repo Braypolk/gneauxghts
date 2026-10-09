@@ -568,6 +568,7 @@ pub(super) fn apply_membership(nodes: &mut [WorkingNode], specs: &[CloudSpec]) {
 }
 
 pub(super) fn capture(state: &mut MapState, nodes: &[WorkingNode], clouds: &[AtlasCloud]) {
+    state.placement_version = stable_layout::PLACEMENT_VERSION;
     state.nodes = nodes
         .iter()
         .map(|n| MapNote {

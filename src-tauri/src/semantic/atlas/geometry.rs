@@ -39,6 +39,25 @@ pub(super) fn collect_links(
         .iter()
         .map(|node| node.id.clone())
         .collect::<HashSet<_>>();
+    // Local score contrast is computed once from each note's semantic neighbors.
+    // Mean distance from the best match adapts to the embedding distribution;
+    // a small floor prevents near-identical scores amplifying numerical noise.
+    let neighborhoods = knn_rows
+        .iter()
+        .map(|row| {
+            let mut scores = row
+                .iter()
+                .filter(|n| n.similarity.is_finite() && n.similarity >= SEMANTIC_MIN_SCORE)
+                .map(|n| n.similarity)
+                .collect::<Vec<_>>();
+            scores.sort_by(f32::total_cmp);
+            let best = scores.iter().copied().fold(SEMANTIC_MIN_SCORE, f32::max);
+            let scale = (scores.iter().map(|score| best - score).sum::<f32>()
+                / scores.len().max(1) as f32)
+                .max(0.01);
+            (best, scale)
+        })
+        .collect::<Vec<_>>();
     let mut merged: HashMap<(String, String, String), WorkingLink> = HashMap::new();
     for (source_index, neighbors) in knn_rows.iter().enumerate() {
         let Some(source) = nodes.get(source_index) else {
@@ -48,12 +67,23 @@ pub(super) fn collect_links(
             let Some(target) = nodes.get(neighbor.index) else {
                 continue;
             };
-            if source.id == target.id || neighbor.similarity < SEMANTIC_MIN_SCORE {
+            if source.id == target.id
+                || !neighbor.similarity.is_finite()
+                || neighbor.similarity < SEMANTIC_MIN_SCORE
+            {
                 continue;
             }
             let (source_id, target_id) = ordered_pair(source.id.clone(), target.id.clone());
             let key = (source_id.clone(), target_id.clone(), "semantic".to_string());
-            let strength = normalize_edge_strength(neighbor.similarity);
+            let affinity = |index: usize| {
+                let (best, scale) = neighborhoods
+                    .get(index)
+                    .copied()
+                    .unwrap_or((neighbor.similarity, 1.0));
+                (-(best - neighbor.similarity).max(0.0) / scale).exp()
+            };
+            let strength = normalize_edge_strength(neighbor.similarity)
+                * (affinity(source_index) * affinity(neighbor.index)).sqrt();
             merged
                 .entry(key)
                 .and_modify(|existing| {
@@ -268,7 +298,7 @@ pub(super) fn boost_links(links: &mut [WorkingLink], nodes: &[WorkingNode]) {
             return;
         };
         if parent_folder(&source.note_path) == parent_folder(&target.note_path) {
-            link.strength += FOLDER_BOOST;
+            link.strength += FOLDER_BOOST * (1.0 - link.strength);
         }
         link.strength = link.strength.clamp(0.0, 1.0);
     });
@@ -315,9 +345,9 @@ pub(super) fn build_layout_graph(nodes: &[WorkingNode], links: &[WorkingLink]) -
     let mut ranks = HashMap::<(String, String), (usize, usize)>::new();
     for (node_id, incident_links) in &mut by_node {
         incident_links.sort_by(|left, right| {
-            right
-                .strength
-                .total_cmp(&left.strength)
+            (right.kind == "wikilink")
+                .cmp(&(left.kind == "wikilink"))
+                .then_with(|| right.strength.total_cmp(&left.strength))
                 .then_with(|| left.source_id.cmp(&right.source_id))
                 .then_with(|| left.target_id.cmp(&right.target_id))
         });
@@ -363,7 +393,12 @@ pub(super) fn build_layout_graph(nodes: &[WorkingNode], links: &[WorkingLink]) -
     for link in candidates {
         let source_degree = degrees.get(&link.source_id).copied().unwrap_or(0);
         let target_degree = degrees.get(&link.target_id).copied().unwrap_or(0);
-        if source_degree >= LAYOUT_MAX_DEGREE || target_degree >= LAYOUT_MAX_DEGREE {
+        if selected.contains_key(&(link.source_id.clone(), link.target_id.clone())) {
+            continue;
+        }
+        if link.kind != "wikilink"
+            && (source_degree >= LAYOUT_MAX_DEGREE || target_degree >= LAYOUT_MAX_DEGREE)
+        {
             continue;
         }
         let weight = layout_link_weight(link);
@@ -2461,7 +2496,8 @@ fn robust_distance_threshold(distances: &[(String, f32)]) -> f32 {
     q3 + iqr * 1.35
 }
 
-pub(super) fn build_cloud(
+/// Assemble semantic metadata; accepted-layout contour construction supplies the hull.
+pub(super) fn cloud_metadata(
     spec: &CloudSpec,
     nodes: &[WorkingNode],
     links: &[WorkingLink],
@@ -2527,7 +2563,7 @@ pub(super) fn build_cloud(
         color: cloud_color(&spec.id, spec.level),
         centroid: spec.centroid,
         radius: spec.radius,
-        hull: blob_hull(&spec.id, &label_members, spec.centroid, spec.radius),
+        hull: Vec::new(),
         member_node_ids: spec.member_node_ids.clone(),
         core_node_ids: spec.core_node_ids.clone(),
         outlier_node_ids: spec.outlier_node_ids.clone(),
@@ -2671,50 +2707,6 @@ fn centroid(nodes: &[&WorkingNode]) -> [f32; 2] {
     [x / nodes.len() as f32, y / nodes.len() as f32]
 }
 
-fn blob_hull(
-    seed: &str,
-    nodes: &[&WorkingNode],
-    centroid: [f32; 2],
-    max_radius: f32,
-) -> Vec<[f32; 2]> {
-    const POINTS: usize = 48;
-    let base_radius = nodes
-        .iter()
-        .map(|node| {
-            let dx = node.x - centroid[0];
-            let dy = node.y - centroid[1];
-            (dx * dx + dy * dy).sqrt()
-        })
-        .fold(76.0_f32, f32::max);
-    let padding = 52.0 + (nodes.len() as f32).sqrt() * 4.0;
-    let seed_phase = (stable_hash(seed) % 10_000) as f32 / 10_000.0 * std::f32::consts::TAU;
-
-    (0..POINTS)
-        .map(|index| {
-            let angle = index as f32 / POINTS as f32 * std::f32::consts::TAU;
-            let directional_extent = nodes
-                .iter()
-                .map(|node| {
-                    let dx = node.x - centroid[0];
-                    let dy = node.y - centroid[1];
-                    let projection = dx * angle.cos() + dy * angle.sin();
-                    projection.max(0.0)
-                })
-                .fold(base_radius * 0.58, f32::max);
-            let wobble = 1.0
-                + 0.1 * (angle * 2.0 + seed_phase).sin()
-                + 0.07 * (angle * 3.0 + seed_phase * 0.7).cos()
-                + 0.04 * (angle * 5.0 + seed_phase * 1.3).sin();
-            let radius = ((directional_extent + padding) * wobble.clamp(0.86, 1.18))
-                .min(max_radius.max(80.0));
-            [
-                centroid[0] + angle.cos() * radius,
-                centroid[1] + angle.sin() * radius,
-            ]
-        })
-        .collect()
-}
-
 fn cloud_density(links: &[WorkingLink], member_ids: &HashSet<String>, note_count: usize) -> f32 {
     if note_count < 2 {
         return 0.0;
@@ -2728,7 +2720,7 @@ fn cloud_density(links: &[WorkingLink], member_ids: &HashSet<String>, note_count
 }
 
 fn normalize_edge_strength(score: f32) -> f32 {
-    ((score - SEMANTIC_MIN_SCORE) / (0.82 - SEMANTIC_MIN_SCORE)).clamp(0.15, 0.9)
+    ((score - SEMANTIC_MIN_SCORE) / (1.0 - SEMANTIC_MIN_SCORE)).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]

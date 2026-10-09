@@ -178,7 +178,7 @@ fn activity_does_not_change_structural_link_strength() {
     boost_links(&mut stale_links, &stale_nodes);
 
     assert_eq!(recent_links[0].strength, stale_links[0].strength);
-    assert_eq!(recent_links[0].strength, 0.5 + FOLDER_BOOST);
+    assert_eq!(recent_links[0].strength, 0.5 + FOLDER_BOOST * 0.5);
 }
 
 #[test]
@@ -591,4 +591,116 @@ fn highest_centrality_cloud_starts_at_origin() {
     for spec in specs.iter().filter(|spec| spec.id != "high") {
         assert!(distance(spec.centroid, [0.0, 0.0]) > 1.0);
     }
+}
+
+#[test]
+fn semantic_weights_preserve_dense_score_contrast_through_layout_selection() {
+    let nodes = (0..32)
+        .map(|i| test_node(&format!("n{i:02}"), "Note", 0.0, 0.0))
+        .collect::<Vec<_>>();
+    let rows = (0..nodes.len())
+        .map(|a| {
+            let mut row = (0..nodes.len())
+                .filter(|b| *b != a)
+                .map(|b| {
+                    let similarity = if a / 2 == b / 2 {
+                        0.94
+                    } else {
+                        0.81 + ((a + b) % 10) as f32 * 0.004
+                    };
+                    KnnNeighbor {
+                        index: b,
+                        similarity,
+                        distance: 1.0 - similarity,
+                    }
+                })
+                .collect::<Vec<_>>();
+            row.sort_by(|a, b| b.similarity.total_cmp(&a.similarity));
+            row.truncate(KNN_GRAPH_K);
+            row
+        })
+        .collect::<Vec<_>>();
+    let mut links = collect_links(&nodes, &rows, vec![]);
+    boost_links(&mut links, &nodes);
+    let strong = links
+        .iter()
+        .filter(|l| l.strength >= 0.7)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        strong.len(),
+        16,
+        "weak dense background should not look as strong as paired themes"
+    );
+    assert!(links
+        .iter()
+        .all(|l| l.strength.is_finite() && (0.0..=1.0).contains(&l.strength)));
+    let distinct = links
+        .iter()
+        .map(|l| (l.strength * 10000.0) as u32)
+        .collect::<HashSet<_>>();
+    assert!(
+        distinct.len() > 5,
+        "raw cosine differences must survive normalization"
+    );
+    let graph = build_layout_graph(&nodes, &links);
+    for link in strong {
+        assert!(graph.iter().any(|e| e.source_id == link.source_id
+            && e.target_id == link.target_id
+            && e.weight == link.strength));
+    }
+    let mut reversed = rows.clone();
+    for row in &mut reversed {
+        row.reverse();
+    }
+    let mut replay = collect_links(&nodes, &reversed, vec![]);
+    boost_links(&mut replay, &nodes);
+    for link in &links {
+        let other = replay
+            .iter()
+            .find(|l| l.source_id == link.source_id && l.target_id == link.target_id)
+            .unwrap();
+        assert!((link.strength - other.strength).abs() < 1e-6);
+    }
+}
+
+#[test]
+fn semantic_weights_do_not_promote_weak_or_flat_neighborhoods_to_certainty() {
+    for score in [0.31, 0.6, 0.83, 0.9, 0.99] {
+        let nodes = [test_node("a", "A", 0.0, 0.0), test_node("b", "B", 0.0, 0.0)];
+        let rows = vec![
+            vec![KnnNeighbor {
+                index: 1,
+                similarity: score,
+                distance: 1.0 - score,
+            }],
+            vec![KnnNeighbor {
+                index: 0,
+                similarity: score,
+                distance: 1.0 - score,
+            }],
+        ];
+        let mut links = collect_links(&nodes, &rows, vec![]);
+        boost_links(&mut links, &nodes);
+        assert!(links[0].strength < score);
+        if score < 0.6 {
+            assert!(links[0].strength < 0.7);
+        }
+    }
+}
+
+#[test]
+fn layout_keeps_authored_links_above_degree_limit_and_semantic_duplicates() {
+    let nodes = (0..24)
+        .map(|i| test_node(&format!("n{i}"), "Note", 0.0, 0.0))
+        .collect::<Vec<_>>();
+    let mut links = Vec::new();
+    for node in &nodes[1..] {
+        links.push(test_working_link("n0", &node.id, 0.8));
+        let mut authored = test_working_link("n0", &node.id, 1.0);
+        authored.kind = "wikilink".into();
+        links.push(authored);
+    }
+    let graph = build_layout_graph(&nodes, &links);
+    assert_eq!(graph.len(), 23);
+    assert!(graph.iter().all(|e| e.weight == 1.0));
 }

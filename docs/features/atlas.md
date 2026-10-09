@@ -1,7 +1,21 @@
 # Atlas map
 
 `/map` displays all published Atlas notes as topic-colored dots inside semantic
-regions. Stable spacing reserves room for filenames. Names omit `.md`, truncate
+regions. Cloud outlines follow the accepted note and filename footprints, including
+visible child outlines, with a small fixed border rather than padding proportional
+to cloud size. Smooth, identity-seeded waves give the contours organic bulges and
+dips; inward bends respect member footprints and parent clouds use smaller outward
+variation. The same cloud keeps its contour character across updates and renames.
+Parent contours narrow through empty gaps between subgroups while keeping a
+connected waist and enclosing their children. Their fill and outline are quieter;
+faint child boundaries remain visible at overview zoom, with child captions
+appearing when zoomed in or when inspecting the child.
+Conservative collision radii reserve clearance during initial placement only.
+Deletion and same-width renames preserve accepted note positions. New or larger
+filename footprints resolve collisions locally against all notes, including
+isolated notes. Changed subgroup membership may adjust the affected family to
+maintain distinct territories; unrelated roots stay anchored.
+Stable spacing reserves room for filenames. Names omit `.md`, truncate
 at 60 characters, fade together at reading zoom, and scale with the map. Region
 captions stay inside their clouds. Dot size expresses connectedness; baseline
 opacity expresses recent opening activity using the existing backend-decayed
@@ -22,11 +36,23 @@ change of theme can move a note; an unrelated replacement retires the former
 cloud identity and preserves its name in retired metadata. Path changes retain
 ordinary-note placement by Note Identity.
 
-Layout begins at accepted note positions and adjusts local filename collisions,
-cloud envelopes and necessary neighboring clearance. It does not renormalize the
-map when a distant note appears. Search, naming and opening activity do not
-repack it. The first map still uses the global initializer; legacy responses keep
-a temporary rendering fallback while migrating to accepted world geometry.
+Layout begins at accepted note positions. New memberships or larger footprints
+can adjust the affected cloud and its enclosing family; unrelated roots stay
+fixed. Excessively sparse leaves contract around their notes. Large internal
+footprint gaps close by translating nearby groups together, preserving their
+internal spacing. Long titles reserve horizontal room without masking vertical
+gaps. Sibling clouds have separate territories within their parent; whole-root
+clearance preserves families and keeps isolated notes fixed. These geometric
+constraints do not create semantic groups or change theme membership.
+
+First-time layout uses a global initializer, then local readability constraints.
+Placement-policy revisions repair older maps once through normal durable admission.
+Aggregate strong relationships guide initial placement and new-region seeds;
+affinity does not continuously pull accepted regions together. Search, naming,
+activity, ordinary reopening and unchanged inputs do not move accepted geometry.
+Legacy responses retain a temporary rendering fallback while the backend migrates
+them to accepted world geometry. Migration details are recorded in the Atlas
+continuity issues; the current layout has one backend owner.
 
 Growing clouds reveal child regions before they branch nearby. Strongly
 separated children can promote after a 30-second presentation interval;
@@ -73,6 +99,12 @@ notes. An explicit selection survives matching and zero-result searches.
 
 Selecting a note reveals its connections and related filenames in place and
 opens a floating reader. All authored links are shown without a count limit.
+Semantic strength retains the absolute cosine score and discounts connections
+that are weak relative to either endpoint's nearest neighbors. The local scale
+uses each note's mean score gap from its best neighbor with a small noise floor;
+flat neighborhoods do not become certain matches. Folder affinity fills a small
+fraction of remaining strength headroom, avoiding high-score saturation. Raw
+cosine remains separate from this relative relationship weight.
 Semantic suggestions qualify when their published strength is at least 0.7
 and at least 90% of this note's strongest semantic connection. These are ranking
 weights, not probabilities. Every qualifying connection and equal-strength tie
@@ -99,7 +131,8 @@ At shared junctions, the branches match both the trunk's approach direction and
 zero endpoint curvature. The incoming trunk must also meet this requirement;
 the older cubic fallback is restricted to independent routes. If an intervening
 cloud leaves too little room for a smooth arrival, routing tries nearby approaches
-around the destination silhouette before relaxing cloud avoidance. These choices
+around the destination silhouette before relaxing cloud avoidance. Feasible
+gateways are compared by actual smoothed travel distance. These choices
 depend on geometry, keeping the junction stable through filtering and link order.
 A broad departure profile carries that direction into
 the branch, so the bend does not concentrate at its first knot. If the
@@ -109,7 +142,9 @@ constraints tries the earlier shared junction, then an independent route,
 instead of using a sharper fork. No random perturbations are used.
 
 Connections from the selected note to the same destination cloud share a
-highway, drawn once, then branch to individual notes. Nearby destinations can
+highway, drawn once, then branch to individual notes when sharing has modest
+travel cost. A fully clear independent route replaces a shared detour if sharing
+adds more than 35% travel. Nearby destinations can
 share a second approach inside that cloud, delaying their split. Groups are
 planned from fixed note geometry: every pair must be close relative to the
 remaining journey, preventing a chain of neighbors from bundling divergent
@@ -123,7 +158,9 @@ A shared trunk containing an authored link is solid; individual branches retain
 their authored/semantic styling. The floating panel's “Route connections around
 clouds” checkbox allows comparison with straight lines.
 
-Routing uses a bounded world-coordinate grid and cached paths; zoom/pan and
+Routing uses a bounded world-coordinate grid with an eight-direction distance
+estimate and goal-progress tie breaking, avoiding exhaustive exploration of
+equivalent long diagonal paths. It caches paths; zoom/pan and
 strength changes do not recompute existing full routes. Shared trunks appear
 only when at least two visible connections use them. Each shared section is drawn
 once. A singleton continuation is drawn from its last shared ancestor; with one

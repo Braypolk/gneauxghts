@@ -1,6 +1,5 @@
 //! Private Atlas publication implementation; one semantic owner remains authoritative.
 use crate::state::effective_open_count;
-use rayon::prelude::*;
 use std::{
     fs::{self, File},
     io::{BufWriter, Write},
@@ -261,11 +260,16 @@ impl AtlasWorkerContext {
         .filter(|note| Path::new(&note.note_path).is_file())
         .collect::<Vec<_>>();
 
-        let layout_pull = DEFAULT_LAYOUT_PULL;
-        let positions = load_atlas_positions(&connection)?
-            .into_iter()
-            .map(|position| (position.note_path, (position.x, position.y)))
-            .collect::<HashMap<_, _>>();
+        // SQLite placements are bootstrap hints only. Accepted geography and
+        // arrival seeds are owned by stable_layout once durable notes exist.
+        let positions = if previous.nodes.is_empty() {
+            load_atlas_positions(&connection)?
+                .into_iter()
+                .map(|position| (position.note_path, (position.x, position.y)))
+                .collect::<HashMap<_, _>>()
+        } else {
+            HashMap::new()
+        };
         let has_all_cached_positions = indexed_notes
             .iter()
             .all(|note| positions.contains_key(&note.note_path));
@@ -333,7 +337,7 @@ impl AtlasWorkerContext {
         let graph_started = Instant::now();
         let knn_rows = build_hnsw_knn_rows(&nodes);
         self.check_superseded(generation_key, revision)?;
-        if !has_all_cached_positions {
+        if previous.nodes.is_empty() && !has_all_cached_positions {
             place_uncached_nodes_from_neighbors(&mut nodes, &positions, &knn_rows);
         }
         let mut links = collect_links(&nodes, &knn_rows, hard_links);
@@ -347,32 +351,17 @@ impl AtlasWorkerContext {
         self.check_superseded(generation_key, revision)?;
         record_atlas_phase(&self.debug, "cloud", cloud_started);
         let layout_started = Instant::now();
-        if previous.nodes.is_empty() {
-            let umap_applied = apply_umap_layout(&mut nodes, &knn_rows);
-            if umap_applied {
-                separate_umap_clouds(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
-            } else {
-                place_cloud_first_layout(&mut nodes, &layout_edges, &mut cloud_specs, layout_pull);
-            }
-        }
-        stable_layout::place(&mut nodes, &mut cloud_specs, &cloud_memory, &previous);
+        let clouds = stable_layout::calculate(
+            &mut nodes,
+            &mut cloud_specs,
+            &cloud_memory,
+            &previous,
+            &layout_edges,
+            &links,
+            &knn_rows,
+        );
         self.check_superseded(generation_key, revision)?;
         record_atlas_phase(&self.debug, "layout", layout_started);
-        let cloud_finalize_started = Instant::now();
-        finalize_cloud_cores(&nodes, &layout_edges, &mut cloud_specs);
-        let mut clouds = cloud_specs
-            .par_iter()
-            .map(|spec| build_cloud(spec, &nodes, &links))
-            .collect::<Vec<_>>();
-        clouds.sort_by(|left, right| {
-            left.level
-                .cmp(&right.level)
-                .then_with(|| right.note_count.cmp(&left.note_count))
-                .then_with(|| left.id.cmp(&right.id))
-        });
-        record_atlas_phase(&self.debug, "cloud", cloud_finalize_started);
-
-        stable_layout::finish(&mut clouds, &cloud_memory);
         let persist_started = Instant::now();
         let response_nodes = nodes
             .iter()

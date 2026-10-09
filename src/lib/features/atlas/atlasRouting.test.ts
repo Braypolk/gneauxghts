@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import sidewaysGateway from './fixtures/sidewaysGateway.json';
 import type { AtlasLink } from '$lib/types/atlas';
 import { createDemoAtlas } from '../../../../scripts/fixtures/atlasDemo';
 import { createAtlasRouting } from './atlasRouting';
@@ -77,30 +78,25 @@ describe('Atlas obstacle-aware connections', () => {
     expect(route({ ...geometry, nodes: geometry.nodes.map(node => node.node.id === 'b' ? { ...node, x: 250 } : node) }, [link()]).paths.get('a-b')!.path).not.toBe(first);
   });
 
-  it('shares one smooth highway, branches to each note, and keeps full paths stable through filtering', () => {
+  it('uses shorter clear routes when sharing adds excessive travel and stays stable through filtering', () => {
     const geometry = { nodes: [mark('a', -220, 0, 'source'), mark('b', 220, 0, 'target'), mark('c', 220, 70, 'target')],
       clouds: [cloud('source', -220, 0, 50, 90), cloud('obstacle', 0, 80, 70, 160), cloud('target', 220, 35, 50, 100)] };
     const route = createAtlasRouting();
     const result = route(geometry, [link(), link('c', 'a')], 'a');
-    expect(result.trunks).toHaveLength(1);
-    const trunk = result.trunks[0];
+    // The old shared trunk travelled 812/873 units; independent clear routes
+    // need about 502/552. Sharing must not force that avoidable excursion.
+    expect(result.trunks).toHaveLength(0);
     const first = result.paths.get('a-b')!, second = result.paths.get('c-a')!;
-    expect(first.trunkId).toBe(second.trunkId);
-    expect(first.path.startsWith(trunk.path)).toBe(true);
-    expect(second.path.startsWith(trunk.path)).toBe(true);
-    expect(first.branch).not.toBe(second.branch);
-    for (const connection of [first, second]) {
+    for (const [i, connection] of [first, second].entries()) {
       const points = samplePath(connection.path);
       expect(points.every(p => !(Math.abs(p.x) < 78 && p.y > -88 && p.y < 248))).toBe(true);
-      const join = samplePath(connection.branch)[0], trunkPoints = samplePath(trunk.path);
-      const incoming = { x: join.x - trunkPoints.at(-2)!.x, y: join.y - trunkPoints.at(-2)!.y };
-      const outgoing = { x: samplePath(connection.branch)[1].x - join.x, y: samplePath(connection.branch)[1].y - join.y };
-      expect((incoming.x * outgoing.x + incoming.y * outgoing.y) / Math.hypot(incoming.x, incoming.y) / Math.hypot(outgoing.x, outgoing.y)).toBeGreaterThan(0.99);
+      const travel = points.slice(1).reduce((sum, p, j) => sum + distanceFrom(points[j], p), 0);
+      expect(travel).toBeLessThan(distanceFrom(geometry.nodes[0], geometry.nodes[i + 1]) * 1.3);
     }
-    const single = route(geometry, [link()], 'a');
-    expect(single.trunks).toHaveLength(0);
-    expect(single.paths.get('a-b')!.branch).toBe(first.path);
-    expect(route(geometry, [link('c', 'a'), link()], 'a').trunks[0].path).toBe(trunk.path);
+    expect(route(geometry, [link()], 'a').paths.get('a-b')!.path).toBe(first.path);
+    const reordered = route(geometry, [link('c', 'a'), link()], 'a');
+    expect(reordered.paths.get('a-b')!.path).toBe(first.path);
+    expect(reordered.paths.get('c-a')!.path).toBe(second.path);
   });
 
   it('spreads the bend across a branch with continuous curvature and modest travel distance', () => {
@@ -237,3 +233,16 @@ describe('Atlas obstacle-aware connections', () => {
     expect(Math.abs(points.at(-1)!.x - 100)).toBeLessThan(7);
   });
 });
+
+  it('chooses a short shared approach instead of a feasible sideways gateway with a huge loop', () => {
+    // An irregular destination plus a dot near the source makes the first
+    // feasible gateway require a long sideways excursion to match its tangent.
+    const geometry = { ...sidewaysGateway,
+      nodes: sidewaysGateway.nodes.map(n => ({ ...n, node: { ...sample, ...n.node } })) };
+    const points = samplePath(createAtlasRouting()(geometry, [link()], 'a').paths.get('a-b')!.path);
+    const chord = distanceFrom(geometry.nodes[0], geometry.nodes[1]);
+    const travel = points.slice(1).reduce((sum, p, i) => sum + distanceFrom(points[i], p), 0);
+    expect(travel / chord).toBeLessThan(1.5);
+    expectForward(points, geometry.nodes[0], geometry.nodes[1]);
+    expect(points.every(p => distanceFrom(p, geometry.nodes[2]) >= nodeWorldRadius(geometry.nodes[2].node) + 6)).toBe(true);
+  });

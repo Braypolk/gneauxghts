@@ -97,7 +97,8 @@
   let routed = $derived(curvedConnections && !isMorphing ? routeConnections(targetGeometry, links, focusId) : { paths: new Map(), trunks: [] });
   // Spaced geography stays fixed; camera and label visibility never repack it.
 
-  let graphClouds = $derived(geometry.clouds.filter(item => item.points.length && (!item.cloud.parentId || zoom >= labelZoom || item.cloud.id === inspectedRegionId)));
+  let graphClouds = $derived(geometry.clouds.filter(item => item.points.length).toSorted((a, b) => a.cloud.level - b.cloud.level));
+  let captionClouds = $derived(graphClouds.filter(item => !item.cloud.parentId || zoom >= labelZoom || item.cloud.id === inspectedRegionId));
   let familyRegions = $derived.by(() => {
     const families = new Map<string, typeof geometry.clouds>();
     for (const cloud of geometry.clouds) {
@@ -394,8 +395,10 @@
             <text x={family.x} y={family.top-8} text-anchor="middle" font-size="18" fill="var(--color-muted-foreground)">{family.name}</text>
           {/each}</g>{/if}
           {#each graphClouds as item (item.cloud.id)}
+            {@const parent = item.cloud.childCloudIds.length > 0}
+            {@const quietChild = !!item.cloud.parentId && zoom < labelZoom && item.cloud.id !== inspectedRegionId}
             <g class="cloud-shape" class:region-highlighted={item.cloud.id === previewRegionId} role="button" tabindex="0" data-region-id={item.cloud.id} aria-label={`Explore region ${regionName(item.cloud.label)}`} onclick={() => clickRegion(item.cloud.id)} onkeydown={(event) => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); event.stopPropagation(); inspectRegion(item.cloud.id); } }}>
-              <polygon data-cloud-id={item.cloud.id} points={item.points.map((point) => `${point.x},${point.y}`).join(' ')} fill={item.color} fill-opacity="0.1" stroke={item.color} stroke-opacity="0.5" stroke-width="1.5"/>
+              <polygon data-cloud-id={item.cloud.id} points={item.points.map((point) => `${point.x},${point.y}`).join(' ')} fill={item.color} fill-opacity={parent ? 0.05 : quietChild ? 0.04 : 0.1} stroke={item.color} stroke-opacity={parent ? 0.32 : quietChild ? 0.36 : 0.5} stroke-width={parent || quietChild ? 1.2 : 1.5}/>
             </g>
           {/each}
           <g class="tile-highways" pointer-events="none" aria-hidden="true">{#each routed.trunks as trunk (trunk.id)}
@@ -416,7 +419,7 @@
               </g>
             {/each}
           </g>
-          {#each graphClouds as item (item.cloud.id)}
+          {#each captionClouds as item (item.cloud.id)}
             <g class="region-caption" class:region-highlighted={item.cloud.id === previewRegionId} pointer-events="none" aria-hidden="true">
               <text x={item.labelPoint.x} y={item.labelPoint.y} text-anchor="middle" font-size={item.labelFontSize} font-weight="550" fill="var(--color-muted-foreground)">{regionName(item.cloud.label).slice(0, 32)}</text>
             </g>
