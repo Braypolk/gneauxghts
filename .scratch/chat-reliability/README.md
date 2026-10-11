@@ -1,8 +1,8 @@
 # Chat work index
 
-The earlier implemented milestones are complete. Editor date integration is complete; see its
-[validation](../chat-date-context/validation.md) for the latest date/deadline
-checks. Start with
+The earlier implemented milestones are complete. Editor date integration is complete;
+its [historical record](../archive/completed-work.md#chat-date-context) retains the
+outcome and verification limits. Start with
 [worker validation](worker-validation.md) for the latest live results and
 [pre-commit cleanup](cleanup.md) for the final review and targeted correction.
 The earlier [native chat validation](validation.md) establishes composer,
@@ -21,14 +21,14 @@ and proposed steps are retained with their answers as implementation history.
 
 ## Earlier completed milestones
 
-| Milestone | Spec | Validation |
-| --- | --- | --- |
-| Composable capabilities | [Spec](../composable-agent-capabilities/spec.md) | [Historical validation](../composable-agent-capabilities/validation.md) |
-| Scoped history and read contracts | [Spec](../evidence-contracts/spec.md) | [Historical validation](../evidence-contracts/validation.md) |
-| Evidence displayed with answers | [Spec](../answer-evidence/spec.md) | [Validation](../answer-evidence/validation.md) |
-| Tool feedback and useful activity | [Spec](../chat-tool-failures/spec.md) | [Validation](../chat-tool-failures/validation.md) |
-| Reliability and bounded research | [Spec](spec.md) | [Worker validation](worker-validation.md) |
-| Editor date conventions and deadlines | [Spec](../chat-date-context/spec.md) | [Validation](../chat-date-context/validation.md) |
+| Milestone | Record |
+| --- | --- |
+| Composable capabilities | [Historical outcome](../archive/completed-work.md#composable-agent-capabilities) |
+| Scoped history and read contracts | [Historical outcome](../archive/completed-work.md#evidence-contracts) |
+| Evidence displayed with answers | [Historical outcome](../archive/completed-work.md#answer-evidence) |
+| Tool feedback and useful activity | [Historical outcome](../archive/completed-work.md#chat-tool-failures) |
+| Reliability and bounded research | [Spec](spec.md), [worker validation](worker-validation.md) |
+| Editor date conventions and deadlines | [Historical outcome](../archive/completed-work.md#chat-date-context) |
 
 ## Local artifacts
 

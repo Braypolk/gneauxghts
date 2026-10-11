@@ -1,8 +1,10 @@
 # Behavior invariants
 
-These are the non-obvious product outcomes that refactors must preserve. Tests
-are the executable authority; this document explains the intent that should
-guide new cases. Details not stated here remain open.
+These are the non-obvious product outcomes that refactors must preserve.
+Verify their implementation against current production owners and focused tests;
+this document records intended constraints rather than proving every path enforces
+them. Known implementation gaps are identified explicitly. Details not stated
+here remain open.
 
 ## Workspace and navigation
 
@@ -44,10 +46,11 @@ portable ready state remains closed and Retry Restart retries only relaunch.
 Ordinary process exit uses the same backend settlement operation off the event
 loop, but it does not imply unsent browser drafts were saved.
 
-Closing the main desktop window requests ordinary process exit. The local
-embedding runtime is tied to an app-owned pipe: its headless supervisor kills
-and reaps the runtime when that pipe closes, including after abrupt app death
-or development-process termination. Native macOS termination may bypass the
+Closing the main desktop window requests ordinary process exit. The retained
+Jina provider's embedding subprocess is tied to an app-owned pipe: its headless
+supervisor kills and reaps that subprocess when the pipe closes, including after
+abrupt app death or development-process termination. Gemma LiteRT runs in-process,
+with its native engine owned by the application. Native macOS termination may bypass the
 exit-request callback; its final exit event releases the runtime without
 claiming a portable vault close or saved frontend drafts.
 
@@ -72,18 +75,23 @@ disposed work cannot reveal a document.
 Already formatted, stable viewports need no repeated frame waits. The loading
 label appears only after 150 ms; its absence is not an editor readiness signal.
 
-### Remember changes only the invoking pane
+### New Idea changes only the invoking pane
 
-Remember persists one canonical document and rebinds only the invoking pane to
-a fresh draft. Other panes displaying that document retain its saved identity
-and content.
+Starting a New Idea leaves a nonempty document through the existing save/departure
+boundary and rebinds only the invoking pane to a fresh draft. Pending proposal
+reviews retain their protected working copy. Other panes retain the existing
+document. Starting from an empty draft reuses it.
 
 ### Chat context and note navigation agree with visible content
 
 A chat beside an editor follows the nearest editor's current note. Without a
 visible editor, it uses its own retained note, which is also its route back to
 editing. The note body, path, and selection sent with a message come from that
-same resolved context.
+same resolved context. The model receives the allowed canonical note identity and
+validated selection as a relevance hint; the conversation is not bound to that
+note, and its body is retrieved only when relevant. The title header does not
+present a current-note binding. Privacy scope and explicit access grants remain
+separate from relevance selection.
 
 Generic note navigation targets the nearest editor when one exists. Otherwise
 it reuses the active retained-context pane and reveals its editor. Navigation
@@ -383,8 +391,8 @@ revision's committed time is issued by the app into the durable intent
 immediately before publication, so immediate finalization and restart recovery
 use the same app-owned time and later filesystem metadata cannot rewrite
 history. Known write failures and
-conflicts abandon their prepared intents immediately; recoverable pending
-state is reserved for uncertain post-publication finalization.
+conflicts abandon their prepared intents immediately; indeterminate publication,
+rollback, or post-publication capture outcomes retain recovery evidence.
 Pending-intent recovery must succeed once per application state before its
 first history read or prepared write. It is not rerun after success by
 concurrent history reads or commits, which must never classify a live prepared
@@ -459,8 +467,9 @@ callbacks to it. The observing installation may
 recover its own open store and WAL after interruption, while a new installation
 rejects an open main-file-only copy. Store-instance changes, same-generation
 watermark rollback, and manifest/store/app-observation mismatches require
-explicit recovery. Only freshly created current-schema stores are supported;
-older schemas and existing files without complete metadata are rejected before
+explicit recovery. Compatible existing current-schema stores reopen after
+identity, generation, and portability validation; incompatible schemas and
+existing files without complete metadata are rejected before
 schema writes. Confirmed Settings reset advances the generation and rebuilds
 current Markdown without migrating old history. Ordinary Editor revisions
 require Editing Window evidence; explicit creation and rename/move publication
@@ -539,9 +548,13 @@ is missing or damaged retains its catalog identity without rewriting the file
 during observation; repair is included in the original atomic publication of
 the next app-owned commit. Every canonical writer obtains those prepared bytes
 through `NoteTimeline`; identity repair is not duplicated in writer-specific
-code. Identity at an unrelated path is insufficient to
-reattach a Missing Note unless the watcher correlated that path change as a
-move or rename.
+code. Reconciliation can establish relocation continuity for an embedded
+identity when its former path is absent. That continuity alone does not clear an
+already-recorded Missing Note: automatic reattachment still requires the retained
+missing path; explicit Missing Note recovery can publish a `Recovered` Lifecycle
+Event at an available destination. Copy detection and missing-record transitions
+belong to `services/note_timeline/observation.rs` and
+`history_store.rs::synchronize_missing_record`.
 
 An observed file whose embedded identity is already owned by another path is
 a distinct copy. The existing owner keeps the identity and the copy receives a
@@ -632,8 +645,10 @@ explicit retry.
 Local search setup stays inside Settings. Its explicit setup action installs
 any missing device-local runtime and model, starts the model, and schedules
 indexing. Ordinary embedding requests never download executable code. Runtime
-downloads are pinned and checksum-verified; extraction and executable startup
-must succeed before the complete runtime directory becomes discoverable.
+downloads are pinned and checksum-verified. For Gemma LiteRT, extraction and
+native-library loading/symbol verification succeed before the runtime directory
+is published; model installation and initialization complete before setup reports
+success. These stages belong to `semantic/litert_install.rs` and `semantic/litert.rs`.
 Interrupted setup remains retryable, and keyword search stays available.
 The provider owns setup progress independently of its inference lock. Settings
 shows the current runtime/model artifact, transferred bytes and a percentage
@@ -738,8 +753,10 @@ instead of inventing a new completion. A later real status change supersedes the
 restore. Windows crossing a requested period boundary remain uncertain. These
 facts describe recorded checkbox status, not independent proof of real-world work.
 Model citation references bind only to exact sources delivered to the originating
-answer. The app constructs durable destinations; unknown references are unavailable
-and never resolved by title or fuzzy matching. Worker references are remapped on
+answer. `chat/citations.rs` constructs durable destinations; recognized but unissued
+`[S#]` references and invalid passage destinations become unavailable. Other
+malformed model citation text is not automatically recognized. References are
+never resolved by title or fuzzy matching. Worker references are remapped on
 parent admission. Unvalidated streaming markers remain inert.
 Source and quotation requests use ordinary chat capabilities, context and streaming.
 Show evidence expands delivered source excerpts on the answer without another model
@@ -754,6 +771,20 @@ response contract. Ordinary chat can discover activity, read provenance, search
 other current content, plan, research and propose changes in one run.
 Capability restrictions only remove authority; child execution never restores
 capabilities absent from its parent. Evidence inspection does not change retrieval authority.
+Access, canonical identity, freshness, and citation destinations are backend
+checks. Claim support, attribution, completion, and date interpretation are model
+instructions owned by `chat/assistant_instructions.txt` and
+`services/evidence/guidance.rs`; a valid citation does not verify those conclusions.
+The five model-facing tools group operations without merging their authority.
+read_notes purpose=answer returns canonical evidence; purpose=edit returns the
+current working copy for proposals. The schema exposes only granted purposes and
+the handler rejects unavailable branches. An evidence-only child cannot access
+working content or proposals through a combined tool. propose_note_change keeps
+edit/replace/create validation, exact current hashes, full current read coverage
+for replacements, existing stored proposal formats and explicit Keep before writes.
+Adjacent-editor identity and selection come from the hint; content comes from
+ordinary reads, with no separate active-note tool.
+
 
 Search, activity listing and research accept explicit half-open start/end ranges
 as ISO dates or offset-bearing RFC3339 timestamps, with an optional named timezone.
@@ -774,7 +805,7 @@ Canonical current body evidence may carry task deadline metadata for complete
 delivered checkbox lines only, with exact line text and canonical coordinates.
 The existing parser determines valid annotations,
 first-valid precedence and completion; children never inherit dates. Metadata is
-bounded to sixteen entries, reports omitted/clipped lines, and consumes the same
+bounded by `services/task_dates.rs`, reports omitted/clipped lines, and consumes the same
 payload allowance under existing access/freshness checks. Historical reads cannot
 establish current task deadlines. Deadline comparisons use the reference's local
 calendar day, exclude completed tasks from actionable overdue work, and never
@@ -793,6 +824,9 @@ is invalidated by scope, content or provenance changes. Query metadata can carry
 explicit configuration into a follow-up, never old result facts. Legacy events
 retain their date role during conversion; event/deadline dates are never re-used
 as text-activity bounds. All follow-ups retrieve fresh evidence.
+Lexical matches preserve their typed title/body location through discovery and
+validate against that canonical location; display section labels do not choose
+coordinates. Invalid or ambiguous body matches remain withheld.
 Current-passage citations validate stable identity, content hash and exact
 current range before opening and highlighting the current note. Renames resolve
 to the current location; stale or ambiguous passages are unavailable. Search
@@ -802,8 +836,9 @@ exact revision, change kind, coordinates and text and open their content revisio
 Legacy Revision Citations retain exact Note and Revision Identity and open that revision
 in global History Mode without navigating the invoking pane.
 Citation navigation seeks bounded surrounding context directly, independent of
-how many newer records exist. Newer/older context pages replace at most 31
-rows while preserving the selected diff. Clear or restore may leave anchored
+how many newer records exist. Newer/older context pages replace a bounded viewport
+while preserving the selected diff; the bound belongs to
+`history_store.rs::bounded_revision_context`. Clear or restore may leave anchored
 context but never transfer the target to the invoking pane's note. Obsolete
 entry work stops at asynchronous boundaries, and failed-entry or exit workspace
 restoration settles before a newer entry captures that workspace. Cleared, purged,
@@ -811,10 +846,64 @@ missing, forgotten, excluded, or no-longer-current citation evidence is withheld
 when results or conversations are delivered, including branches. Explicit source
 access uses the originating run grants with current exclusions. Earlier note-based
 answers remain visible in their transcript but are omitted from later model
-context and compaction; source-free dialogue is preserved. Chat must obtain fresh
-current evidence. Automatic note context uses canonical bytes, never a pending
-proposal snapshot. Revalidation before each model call and final delivery stops
+context and compaction; source-free dialogue is preserved. Bounded note references
+may remain as navigation hints associated with earlier turns, including compacted
+turns. Fresh app-issued metadata stays separate from old assistant prose. Note
+fields contain only currently permitted canonical Note Identity and title. Each
+group also carries its answer ordinal, a bounded preceding user request as historical
+intent, and whether it belongs to the latest completed answer. Old assistant claims,
+excerpts and citation authority never accompany them. Rebuild hints
+against current policy on each request, and recheck admitted identity/location
+before inference and delivery, including requests without executable tools.
+References rejected by the history byte allowance do not bind validation. Chat
+must obtain fresh current evidence. The
+automatic editor hint appears in separate app context before conversation history.
+The assembled user prompt places the authored request after other turn-local app
+context.
+Automatic note context uses canonical bytes, never a pending proposal snapshot.
+An automatic editor hint does not admit primary evidence or
+satisfy full-read requirements for proposals. Its freshness binding alone does
+not mark ordinary dialogue for history omission. Delivered note evidence retains
+its durable omission marker even if sources are hidden before completion. Failure
+to save that marker withholds the content and does not grant proposal read coverage.
+Structurally relevant evidence
+interpretation contracts are delivered once per independent runtime context,
+count against the complete read envelope, and remain in that runtime's history.
+Failed delivery must preserve undelivered interpretation guidance for retry.
+**Implementation gap:** `services/evidence/reads.rs::deliver_read` reserves bytes
+and records guidance before the tool adapter's cancellation, policy, durable
+evidence-marker, and citation-admission checks. A later failure returns no payload
+without rolling back that accounting or guidance state. This path does not yet
+enforce the retry requirement; see `agent_tools/evidence.rs` and the research
+handoff in `agent_tools/research.rs`.
+Research workers receive their own contracts under the shared allowance.
+Revalidation before each model call and final delivery stops
 an answer if admitted bytes or scoped search versions change.
+
+Read coverage identifies canonical-note versus selected-passage scope and carries
+that scope through continuations. Completeness applies to the selected read across
+its pages, not exhaustive work or retained history; earlier unavailable passages
+remain incomplete. `wholeNoteComplete` requires a complete canonical-note read
+across its pages; selected-passage completeness cannot satisfy it. Safe `nextReads`
+selectors suggest canonical reads for untimed current passages or continue the
+exact canonical cursor. They are sized in the envelope before admission and grant
+no access or automatic reads. Search delivery identifies previews while retrieval coverage
+retains its truthful limits. Explicit linked bodies and selected excerpts report
+clipping with a safe canonical-read selector.
+Already-read metadata describes exact delivered text overlap in the same runtime,
+under the same canonical version/location or historical proof. Discovery previews,
+editor hints and working-copy proposal reads do not count. Independent workers
+start without the parent's delivered text, and only actual parent handoff counts
+there. Reuse grants no citations, proves no provenance completeness, and never
+bypasses current validation, exclusions or read budgets.
+
+Compact evidence selectors are exact mappings owned by each tool context. They
+never replace durable passage identity or grant citation authority. Independent
+workers and later runs reject each other's references; worker hints alone cannot
+be selected as read evidence. Resolving references preserves existing candidate,
+canonical freshness, exclusion, scope and budget validation. Duplicate aliases
+and canonical selectors deliver one passage, while the raw argument limit still
+applies. Parent handoff revalidates durable IDs and uses its own references.
 
 A research worker receives only its focused question, validated tool-facing scope
 and explicit range, compact eligible discovery hints and evidence discovery/read
@@ -827,7 +916,8 @@ It shares parent budgets and
 cancellation, cannot delegate or mutate notes, and cannot change provider routing.
 Only backend-validated selected passages and gap codes return to the parent.
 Research may be invoked repeatedly within shared run budgets, with at most one
-active worker. Each invocation has its own twelve-call and 90-second limits. Its
+active worker. Each invocation has its own tool-call and timeout limits in
+`agent_tools/research.rs`. Its
 lease releases on every exit, including failure/cancellation, and all invocations
 contribute to cumulative usage without double-counting streaming usage updates.
 A standalone JSON fence may be removed before strict selection validation;
@@ -851,6 +941,31 @@ continuations retain their original read options. Research-delivered items are
 already-read primary evidence. Completing a partial handoff requires only the
 remaining selected IDs, not repeated reads of the delivered items.
 
+### Runtime context admission and diagnostics
+
+Opt-in context measurements observe the assembled completion request without
+mutating it or changing admission limits. Diagnostic events carry counters and
+operational identities, never prompt, note, credential, tool-result or reasoning
+text. Approximate counts cannot authorize admission; absent provider usage and
+loaded capacity remain unknown. Every observed attempt closes with either usage
+or an explicit unreported outcome, including cancelled research workers.
+
+
+Each runtime instance uses its own reported input-token baseline for context
+headroom; parent/worker aggregate spending is not context occupancy. Capacity
+must come from a fresh loaded-model observation; unavailable metadata may defer
+retries briefly but cannot reuse an earlier positive capacity. New retained messages receive a
+conservative allowance; changed instructions/tools/model/history invalidate the
+baseline. Unknown usage or capacity retains existing limits. Near capacity,
+pending tools are skipped and at most one final model request retains evidence,
+citation identities and tool-call/result pairs with executable tools disabled and bounded
+output. Recent user and source-free assistant messages are not individually
+clipped to fit; existing recent-message and compaction rules still apply. The app
+never drops history silently to make a request fit. Cancellation,
+permissions, scope and final evidence-currentness checks remain authoritative.
+An existing non-executable structured result formatter may remain callable on the
+final request; no evidence retrieval or other application action remains callable.
+
 ### Tool failures preserve safe recovery instructions
 
 Recoverable application errors reach the model with actionable feedback through
@@ -862,8 +977,9 @@ from model feedback. Activity summaries retain safe error feedback and count
 delivered note identities; partial delivery must not appear as a complete read.
 
 Read pages prepare and serialize their complete envelope before reserving the
-shared evidence allowance or admitting citations. An undeliverable page consumes
-no evidence allowance. A failed selection cannot discard independent deliverable
+shared evidence allowance or admitting citations. An envelope that cannot fit
+consumes no evidence allowance; later adapter failures have the accounting gap
+described above. A failed selection cannot discard independent deliverable
 passages; per-item failures and bounded continuations preserve explicit gaps and
 progress. Page-level meaning is shared rather than repeated for each small
 passage. Ordinary reads default to compact proofs; expanded per-range lineage is opt-in and its requested/delivered coverage is explicit. Compact delivery preserves canonical validation, retained historical identity/timing and activitySupport. Canonical validation occurs during preparation and again at model/final
@@ -883,21 +999,25 @@ retry is available. If storage is unavailable, startup recovery settles the run.
 
 ### Interrupted runs preserve partial output
 
-A crash or interruption keeps the partial assistant message, marks it
-incomplete, and makes retry available after restart. Retry creates a traceable
+After a crash, the last durable partial assistant checkpoint survives and becomes
+retryable after restart. `chat/runtime.rs` currently ignores checkpoint write
+errors while continuing UI delta delivery, so visible text can lead that durable
+checkpoint. Retry creates a traceable
 continuation without erasing the interrupted output. Its original user message
 and context come from the same durable run, including repeated retries after
 newer turns. Checkpoint branches remap that lineage to copied messages; transcript
 proximity cannot replace missing run identity.
 
-### Related context is explicit and repeatable
+### Explicit context references are repeatable
 
-Related notes may be suggested but do not enter model context until selected.
-At send time the backend resolves stable note identity, reapplies exclusion
-policy, rereads canonical content, bounds the excerpt, and stores its hash for
-that run. Global exclusion always wins.
+When a send request supplies selected-note references, the backend resolves
+stable note identity, reapplies exclusion policy, rereads canonical content,
+bounds the excerpt, and stores its hash for that run. Global exclusion always
+wins. The current composer has no suggestion picker; this is the selected-context
+API contract in `commands/chat_commands.rs`.
 
-Retry reuses the stored context rather than running retrieval again. Context
+Retry reuses the original run's stored selection, then validates its excerpts
+against current canonical content; it does not rerun suggestions. Context
 use and compaction are observable through provider-safe activity; raw model
 reasoning and tool arguments are not exposed.
 
@@ -1028,29 +1148,12 @@ focusing, or repurposing a pane. If its target is already open and clean, review
 content may appear there without changing the active pane. Navigation begins
 only when the user explicitly chooses to review the target in an editor.
 
-Opt-in context measurements observe the assembled completion request without
-mutating it or changing admission limits. Diagnostic events carry counters and
-operational identities, never prompt, note, credential, tool-result or reasoning
-text. Approximate counts cannot authorize admission; absent provider usage and
-loaded capacity remain unknown. Every observed attempt closes with either usage
-or an explicit unreported outcome, including cancelled research workers.
-
-
-Each runtime instance uses its own reported input-token baseline for context
-headroom; parent/worker aggregate spending is not context occupancy. Capacity
-must come from a fresh loaded-model observation; unavailable metadata may defer
-retries briefly but cannot reuse an earlier positive capacity. New retained messages receive a
-conservative allowance; changed instructions/tools/model/history invalidate the
-baseline. Unknown usage or capacity retains existing limits. Near capacity,
-pending tools are skipped and at most one final model request retains evidence,
-citation identities and tool-call/result pairs with executable tools disabled and bounded
-output. Recent user and source-free assistant messages are not individually
-clipped to fit; existing recent-message and compaction rules still apply. The app
-never drops history silently to make a request fit. Cancellation,
-permissions, scope and final evidence-currentness checks remain authoritative.
-An existing non-executable structured result formatter may remain callable on the
-final request; no evidence retrieval or other application action remains callable.
-
+**Implementation gap:** passive admission in
+`src/lib/features/proposals/proposalOrchestration.ts` compares only Markdown with
+the saved baseline. Canonical cleanliness in
+`src/lib/features/notepad/document/documentState.ts::documentHasCleanBuffer` also
+includes title, tags, and identity, so the clean-document requirement is not fully checked at
+this boundary. This source-level gap has not been reproduced in a running UI.
 
 ## Image interactions
 

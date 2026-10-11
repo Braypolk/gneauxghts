@@ -1,5 +1,11 @@
 # EmbeddingGemma 2 runtime gate and before/after comparison
 
+> Historical pre-implementation experiment. The approved LiteRT implementation
+> supersedes the deployment/adoption statements below. Measurements apply to
+> the runtime and fixtures tested at that checkpoint. See the
+> [implementation](implementation.md) and [selected plan](spec.md) for subsequent
+> implementation and release-validation limits.
+
 Updated: 2026-10-06
 Decision: retain Jina; full feature implementation and production adoption deferred.
 

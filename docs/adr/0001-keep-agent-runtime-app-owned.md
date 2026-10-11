@@ -5,9 +5,10 @@ status: accepted
 # Keep the agent runtime app-owned
 
 Gneauxghts owns the durable chat run lifecycle, context assembly, event
-protocol, guardrails, proposal policy, and permission policy. Rig is an
-implementation dependency behind `agent_runtime.rs`; Rig types do not enter the
-persisted model or frontend interface. This preserves local-first product
+protocol, guardrails, proposal policy, and permission policy. Provider client/model
+construction belongs to `agent_runtime.rs`. Rig messages and usage types cross
+the internal chat/runtime interface, but do not enter the persisted model or
+frontend interface. This preserves local-first product
 control and allows a provider or runtime-library replacement without rewriting
 chat history or UI state.
 

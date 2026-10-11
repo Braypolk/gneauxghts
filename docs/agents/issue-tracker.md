@@ -10,6 +10,14 @@ Issues and specs for this repo live as Markdown files in `.scratch/`.
 - Triage state is recorded as a `Status:` line near the top of each issue file (see `triage-labels.md` for the role strings)
 - Comments and conversation history append to the bottom of the file under a `## Comments` heading
 
+## Retention
+
+- Use `.scratch/README.md` to distinguish active investigations, deferred plans and completed work.
+- On completion, reconcile issue progress with the final acceptance. Consolidate the outcome and material validation limits under `.scratch/archive/`; historical records are outside the executable backlog.
+- Retain raw evidence while it supports an open failure or a necessary comparison. Prune superseded generated output after recording the conclusion; keep selected fixtures needed to reproduce unresolved behavior.
+- Promote architectural claims only after verifying them against the current code, behavior invariants and applicable ADRs. Update the existing authoritative document and cite the current owner; resolved tickets and old passing tests alone do not establish current behavior.
+- Keep rejected designs and old measurements explicitly historical when their rationale still matters. Recover redundant committed records from Git instead of retaining parallel instructions.
+
 ## When a skill says "publish to the issue tracker"
 
 Create a new file under `.scratch/<feature-slug>/` (creating the directory if needed).

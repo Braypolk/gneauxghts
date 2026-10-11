@@ -8,7 +8,7 @@ Session requirements, and the current format rejects old-store compatibility.
 
 ## Publication and retained state
 
-The one-second debounced Markdown autosave remains. Every app-owned publication
+Debounced Markdown autosave remains. Every app-owned ordinary-note publication
 requires durable preparation before any Markdown write. Preparation binds the
 opaque publication token to Note Identity, store instance/generation, exact
 intended authored bytes/hash, source, and capture disposition. A disposition is
@@ -63,13 +63,16 @@ observation, clear, and lifecycle work through the existing mutation barrier;
 a callback also carries store generation and window identity so old work cannot
 finalize a replacement window or recreate deleted history.
 
-After interruption, finish deletion recovery and prepared-publication recovery
-in their existing order, then verify each surviving window's anchor, hash, Note
-Identity, eligibility, and canonical continuity before finalizing it once, even
-if five minutes have not elapsed. If newer external bytes are present, preserve
-the recovered successful editor endpoint first and observe the external state
-separately; never overwrite either with current disk bytes. Unresolved publication
-or continuity evidence stays retryable and blocks admission. Never reopen a
+After interruption, settle prepared publications and deletions through the
+timeline's existing recovery ordering. Prepared publications require exact disk
+payload/hash and managed Note Identity agreement before capture; known absence
+or disagreement abandons that preparation, while unresolved failures stay
+retryable. Then verify each surviving window's retained anchor, endpoint hash,
+note/receipt scope, and generation before finalizing it once, even if five minutes
+have not elapsed. The already captured endpoint survives a missing or reused path;
+preserve it first and observe newer external state separately. Current eligibility
+and canonical-byte checks govern evidence delivery, not whether that durable
+endpoint may be sealed. Never reopen a
 surviving window with a guessed deadline; new work starts a new window. Health
 polling must not repeat successful startup recovery or close live windows.
 
@@ -77,11 +80,11 @@ polling must not repeat successful startup recovery or close live windows.
 | --- | --- |
 | Last editor pane leaves a note | Flush that shared document, then finalize it before departure. Leaving one of several editor panes does not finalize; chat references are not editing panes. |
 | Enter History Mode | Flush workspace saves, then finalize the inspected note’s eligible pending window before delivering history. A failed save/finalization refuses entry. |
-| Name current content | Flush the target note, finalize, and name the resulting revision (the anchor for a net no-op). Naming an existing immutable revision is metadata-only and does not finalize unrelated work. |
+| Name a selected revision | Label the selected immutable revision without finalizing unrelated work. History Mode entry has already settled the inspected note. Naming current saved content requires obtaining a finalized revision first; there is no standalone name-current command. |
 | Explicit provenance/citation or temporal activity request | Finalize only eligible notes selected for immutable evidence, after pending publication recovery. Cite canonical saved content; this does not silently save unsaved editor buffers. Temporal activity requests first select bounded candidate notes and finalize only windows required for their evidence; revalidate ordering, cursors, overlap, bytes, eligibility, and generations afterward. Ordinary chat initialization and background conversation loading do not finalize. |
 | Task Action, Accepted Chat Proposal, Version Restore, external observation | Finalize preceding editor work before the distinct action/observation. Preserve source even when a task action passes through a dirty document's save route. Unchanged action bytes do not invent a revision. |
 | Rename/move, forget/recovery, Missing/reattachment | Finalize prior editor work before the separate Lifecycle Event or eligibility change; preserve existing missing/external observation evidence ordering. |
-| Clean close / vault switch | Stop admission, settle live publications, finalize windows, complete deletion/recovery and the existing WAL/portability barrier. Failure never reports a portable close. |
+| Quit/restart releases the Running Vault | Stop admission, settle live publications, finalize windows, complete deletion/recovery and the existing WAL/portability barrier. Failure never reports a portable close. Staging a Next-launch Vault Selection does not release the Running Vault. |
 | Clear/reset/purge | Atomically delete affected pending work with retained history and invalidate its tokens/callbacks. Do not append a window just to delete it. Keep existing active-note scope and fresh-baseline rules. |
 
 App blur, focus/cursor changes, health polling, and routine chat loading are not
@@ -174,14 +177,16 @@ Producers and consumers share these regression fixtures:
   retry tests, pending recovery, anchor reconstruction, and integrity attestation.
 - `note_timeline.rs` mutation conformance and warning tests;
   `note_timeline/runtime.rs` barrier/generation tests; document save/departure,
-  multi-pane navigation, History Mode entry, naming-current, close/switch,
+  multi-pane navigation, History Mode entry, revision naming, clean close,
   observation/reconciliation, task-dirty-document attribution, and deletion tests.
 - `RevisionTimeEvidence`, History Mode time DTOs, current-content
   evidence and activity filtering, chat citation persistence/delivery, shared
-  `src/lib/contracts/timelineContractFixtures.test.ts` (versioned point and interval evidence), `ipcFixtures.test.ts`, and their Rust/JSON fixtures. Add interval,
-  clock-discontinuous, no-op, mixed action/window, stale-citation and count cases.
-- `historyTimeline.test.ts`, `HistoryEditingSession.svelte.test.ts`,
-  History Mode/session/component fixtures: new windows are one selectable entry
+  `src/lib/contracts/timelineContractFixtures.test.ts` (versioned point and interval evidence), `ipcFixtures.test.ts`, and their Rust/JSON fixtures. Regression
+  coverage must preserve interval, clock-discontinuous, no-op, mixed action/window,
+  stale-citation and count cases.
+- `src/lib/features/history/historyTimeline.test.ts`,
+  `src/lib/features/history/historyModeSession.test.ts`, and
+  `src/lib/features/history/HistoryMode.svelte.test.ts`: new windows are one selectable entry
   and combined diff; point revisions and lifecycle events remain standalone.
 - Release coverage uses a current-schema window fixture with 300 saves/window and twelve
   windows, bounded receipts, byte/WAL/I/O/latency/cold-recovery measurements.
@@ -190,9 +195,10 @@ Producers and consumers share these regression fixtures:
 
 ## Supported store boundary
 
-Only freshly created schema 14 stores are supported. Existing schema 13 and all
-older stores, future schemas, and files without complete metadata fail before
-schema writes. No migration, old-store trust command, or per-save Editor policy
+Existing compatible current-schema stores reopen after identity, generation,
+and portability admission. Older/future schemas and files without complete
+metadata fail before schema writes; the current schema belongs to
+`services/note_timeline/history_store.rs`. No migration, old-store trust command, or per-save Editor policy
 switch remains. Settings offers the existing confirmed history reset: it advances
 the generation and rebuilds exact current Markdown as Baseline Revisions without
 rewriting the files. Historical prose, names, and citations are not migrated.

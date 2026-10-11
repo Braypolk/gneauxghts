@@ -1,5 +1,9 @@
 # EmbeddingGemma 2 replacement evaluation
 
+> Historical model comparison. Its description of the then-current Jina provider
+> predates the approved LiteRT implementation. See the
+> [selected plan](../embeddinggemma-2/spec.md) for the later decision and limits.
+
 Evaluated: 2026-10-06. Research only; no implementation or installed model changes.
 
 ## Recommendation

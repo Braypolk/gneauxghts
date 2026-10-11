@@ -27,9 +27,11 @@ accepted state; structural publication preserves the latest names. Cache clear
 invalidates in-flight jobs and removes only derived artifacts. Model changes
 retain places and names but reset incompatible semantic candidate evidence.
 
-The backend owns final readable world geometry. The frontend consumes it directly
-and owns only camera, captions, selection and bounded transitions between
-accepted endpoints. No second durable layout owner is introduced. Deleted or
+The backend owns final readable world geometry. For current world-layout
+generations, the frontend consumes it directly and owns camera, captions,
+selection and bounded transitions between accepted endpoints. `atlasLayout.ts`
+retains a compatibility layout for legacy responses without the world-layout
+flag. No second durable layout owner is introduced. Deleted or
 visibility-excluded content is removed before serving a cached response, and
 canonical note admission continues through NoteTimeline.
 

@@ -1,13 +1,13 @@
 # Gneauxghts
 
-Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and Rust. It stores plain Markdown files in your `Documents` folder, keeps a live master task list from Markdown checkboxes, and layers semantic search on top without moving your notes into a proprietary database.
+Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and Rust. It stores plain Markdown files in a vault (by default in your `Documents` folder), keeps a live master task list from Markdown checkboxes, and layers semantic search on top without moving your notes into a proprietary database.
 
 ## What It Does
 
-- Edit notes in a focused single-note workspace with autosave.
+- Edit notes with autosave and split panes for notes and chats.
 - Save notes as regular Markdown files named from the note title.
 - Search the current note or all notes from the bottom command bar.
-- Surface recent notes and recent tasks directly from the search UI.
+- Surface pinned notes and recent note/chat locations directly from the search UI.
 - Build a master task list from Markdown checkboxes like `- [ ]` and `- [x]`.
 - Toggle task completion from the list view and jump back to the source note.
 - Insert fixed local date/time text with slash commands, edit date/time chips,
@@ -21,11 +21,11 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 
 ## How Notes Are Stored
 
-- Notes live in `~/Documents/Gneauxghts`
+- The default vault is `~/Documents/Gneauxghts`; choose another in Settings.
 - Notes are plain `.md` files
-- File names are derived from the first Markdown heading or first non-empty line
+- File names use the explicit note title, falling back to the first non-empty body line.
 - Vault-local durable state and caches live in a portable `.gneauxghts`
-  directory inside the vault, so a vault folder is self-contained and movable:
+  directory inside the vault. A representative layout is:
 
   ```
   MyVault/
@@ -34,29 +34,33 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
     assets/pasted-image.png
     .forgotten/old-note.md
     .gneauxghts/
-      vault.json            # vault id + schema/version + timestamps
-      app-state.sqlite3     # recents, hidden/order/collapsed, forgotten meta
-      semantic.sqlite3      # semantic index store
-      ai.sqlite3            # AI jobs / proposals / history + provider config
-      cache/                # rebuildable caches
-        hnsw.snapshot       # ANN graph snapshot (+ hnsw.vectors / manifest)
-        lexical/            # reserved for the lexical index
+      vault.json            # vault identity, schema/version, timestamps
+      app-state.sqlite3     # recents, task view state, forgotten-note metadata
+      history.sqlite3       # note identities, revisions, Editing Windows, recovery
+      ai.sqlite3            # chats, proposals, access policy, provider configuration
+      atlas-map/            # durable Atlas identities, names, accepted geometry
+      cache/                # derived search and Atlas caches
   ```
 
-- Secrets (provider API keys) are **never** written into the portable vault.
-  They live in a machine-global secret store (`secrets.sqlite3`) under the OS
-  app-data directory, so moving or sharing a vault cannot leak credentials.
-- Large, device-specific model files stay global under app data as well.
+- Semantic SQLite stores and caches also live under `.gneauxghts`, with names
+  scoped to the active embedding representation and platform. Older vaults may
+  retain a legacy `semantic.sqlite3`. The current path selection is in
+  [the semantic owner](src-tauri/src/semantic/mod.rs).
+- Provider API keys live in the operating system credential store outside the
+  vault (macOS Keychain on macOS).
+- Device-specific model and runtime files stay global under app data.
 - Chat history, provider/model metadata, note access policies, and unresolved
   proposals live in the vault-local `ai.sqlite3`. Provider reasoning and
   historical tool payloads are not stored.
-- Each vault starts fresh: opening a vault scaffolds a new `.gneauxghts`
-  layout in place. There is no import from older global app-data databases.
+- Opening a vault creates missing `.gneauxghts` scaffolding and reopens existing
+  compatible stores. There is no import from older global app-data databases.
 - Switching the vault directory takes effect on the next launch; the newly
   selected vault's `.gneauxghts` layout is scaffolded immediately.
 
-This means your notes stay easy to back up or edit outside the app, and the
-whole vault (notes + index + state) travels as one folder.
+Notes can be edited outside the app. To copy or move the complete vault, close
+the app cleanly first and include `.gneauxghts`, assets, and `.forgotten`. Copying
+live SQLite main files alone is not a supported backup. Credentials and local
+model/runtime installations remain device-local.
 
 ## Thought Partner and Vault Privacy
 
@@ -65,14 +69,17 @@ You can switch a conversation to approved-notes-only or no-vault access, and
 exclude individual notes by stable note ID. Exclusions override every
 conversation scope and survive note renames.
 
-Before each message, Gneauxghts saves the adjacent active note and gives the
-agent its current snapshot when policy permits. Explicit wikilinks are resolved
-locally. Search, note reads, citations, and proposed changes all pass through
-the same backend policy checks.
+Before sending, the chat UI flushes pending autosave for an existing adjacent
+note; protected proposal reviews remain uncommitted. When policy permits, the
+agent receives the active note's identity/title and a validated selection hint,
+rather than its whole body automatically. Explicit wikilinks can supply bounded
+reads of allowed notes. Search, note reads, citations, and proposed changes pass
+through backend access checks. See the [evidence and context contract](docs/architecture/behavior-invariants.md)
+for the read-admission boundary and its current implementation limits.
 
 The agent may search and read allowed notes, but it cannot write them directly.
 Updates and new notes are durable proposals that require Keep; Undo dismisses
-them. Hosted OpenAI requests go only to OpenAI. Local requests go only to the
+them. Hosted chat inference uses OpenAI. Local chat inference uses the
 configured OpenAI-compatible endpoint, and local conversations never fall back
 to hosted OpenAI. LM Studio's default endpoint is
 `http://localhost:1234/v1`.
@@ -97,10 +104,11 @@ Ordinary searches also match tag names, with a small relevance contribution.
 Tags ignore case and support letters, numbers, hyphens, underscores, and `/`.
 Body hashtags remain ordinary text rather than adding frontmatter tags.
 
-Atlas keeps its semantic layout. Tag searches highlight matching notes in place;
-click a tag in a selected note’s details to highlight its peers.
+Atlas keeps its semantic layout. Tag searches highlight matching notes in place.
 
 ## Keyboard Shortcuts
+
+These are the default macOS bindings; shortcuts can be customized in Settings.
 
 - `Cmd+1` opens Map
 - `Cmd+2` opens the main note view
@@ -202,43 +210,37 @@ source changes.
 The semantic layer is local-first and optional.
 
 - Notes are still stored as Markdown files.
-- Semantic indexing metadata is stored in the app data directory, not inside your note files.
+- Semantic indexes and derived caches are vault-local under `.gneauxghts`.
 - Search can blend lexical and semantic results.
 
 ### In-app setup
 
-Open **Settings → Search → Set up local search**. Gneauxghts installs any
-missing runtime and embedding model in its device-local app data folder, starts
-the model, and schedules indexing. Setup stays in the app; no terminal, package
-manager, or administrator access is needed. Keyword search remains available
-during setup. Interrupted downloads can be retried with the same button.
+Open **Settings → Search → Set up local search**. On supported platforms, the
+current default embeds text and images with EmbeddingGemma 2 through a native
+LiteRT runtime loaded in-process. Setup installs missing runtime/model artifacts
+in device-local app data, prepares the engine, and schedules indexing. Keyword
+search remains available during setup, and interrupted downloads can be retried.
+Downloads use pinned artifacts and checksum verification; setup needs no Python
+installation or terminal commands.
 
-Runtime downloads use pinned official llama.cpp release assets with SHA-256
-verification. The complete runtime directory (including shared libraries) is
-published only after its executable starts successfully. The current pin is
-[`b11312`](https://github.com/ggml-org/llama.cpp/releases/tag/b11312), with assets
-for macOS, Windows CPU, and Ubuntu CPU on arm64 and x64.
+Read [the native installer](src-tauri/src/semantic/litert_install.rs) for current
+platform support, artifact sources, and pins, and
+[the Gemma provider](src-tauri/src/semantic/litert.rs) for engine preparation.
+Unsupported platforms without an existing legacy index retain keyword search.
 
-### Development runtime overrides
+### Legacy recovery
 
-Developers can also supply a local `llama-server` runtime.
+Jina through `llama-server` remains available for explicitly staged next-launch
+recovery, and for unsupported Gemma platforms with an existing legacy index.
+`GNEAUXGHTS_LLAMA_SERVER_BIN` and Jina GGUF cache overrides belong to that legacy
+provider; they do not configure the default Gemma engine. Consult
+[provider selection](src-tauri/src/semantic/mod.rs),
+[the retained Jina provider](src-tauri/src/semantic/legacy_jina.rs), and
+[the legacy runtime installer](src-tauri/src/semantic/runtime_install.rs) before
+using those paths.
 
-Gneauxghts will look for `llama-server` in this order:
-
-1. A bundled runtime in packaged builds
-2. The runtime installed by in-app setup
-3. `GNEAUXGHTS_LLAMA_SERVER_BIN`
-4. `llama-server` on `PATH`
-5. `/opt/homebrew/bin/llama-server`
-6. `/usr/local/bin/llama-server`
-
-Semantic indexing does not download files automatically. Use Set up local search
-in Settings, or place the GGUF model in the app's semantic model cache. The current implementation is wired for:
-
-- Model repo: `jinaai/jina-embeddings-v5-text-nano-retrieval`
-- Expected file: `jina-embeddings-v5-text-nano-retrieval-Q6_K.gguf`
-
-The Settings screen shows the active runtime path, model path, index status, and recent semantic diagnostics.
+Settings shows the active provider's runtime/model state, index status, and
+recent semantic diagnostics.
 
 ## Project Structure
 
@@ -246,8 +248,8 @@ The Settings screen shows the active runtime path, model path, index status, and
 src/               Svelte UI, routes, and editor components
 src-tauri/         Rust backend, commands, indexing, semantic layer
 scripts/tauri.mjs  Wrapper for Tauri CLI build/dev commands
-SEMANTIC_BENCHMARK.md
-                   Notes on semantic indexing performance work
+docs/features/     Current Atlas and date/deadline behavior
+docs/adr/          Architecture decisions and their current scope
 ```
 
 ## Current Screens
@@ -255,11 +257,18 @@ SEMANTIC_BENCHMARK.md
 - `/` main note editor
 - `/list` master task list
 - `/map` note atlas
-- `/settings` theme, forget button, and semantic controls
+- `/settings` appearance, shortcuts, vault/recovery, chat, and search controls
 
 ## Notes On Behavior
 
 - Autosave writes the current note after short idle periods.
-- "Forget" deletes the current saved note either immediately or after a configurable hold-to-confirm interaction.
-- "unForget" restores the most recently forgotten note from in-memory state.
-- "Remember" saves the current note and clears the editor so you can start another one.
+- **Forget** moves a saved note into `.forgotten` with durable recovery metadata
+  and retained history. Depending on Settings, it uses a confirmation popup,
+  hold-to-skip confirmation, or immediate action. Retention and recovery controls
+  are in Settings.
+- **unForget** restores the latest forgotten note during the current session;
+  saved forgotten notes also remain recoverable through Settings across restarts
+  until purged or expired.
+- **New Idea** starts or reuses an empty draft in the invoking pane. Ordinary
+  edits are saved before departure; protected proposal reviews await Keep or
+  Undo. Other panes keep their current note or chat.

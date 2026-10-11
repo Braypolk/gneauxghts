@@ -1,7 +1,8 @@
 # Atlas map
 
-`/map` displays all published Atlas notes as topic-colored dots inside semantic
-regions. Cloud outlines follow the accepted note and filename footprints, including
+`/map` displays published Atlas notes as dots. Thematic groups sit inside
+colored semantic regions; ungrouped notes use neutral gray.
+Cloud outlines follow the accepted note and filename footprints, including
 visible child outlines, with a small fixed border rather than padding proportional
 to cloud size. Smooth, identity-seeded waves give the contours organic bulges and
 dips; inward bends respect member footprints and parent clouds use smaller outward
@@ -17,7 +18,9 @@ isolated notes. Changed subgroup membership may adjust the affected family to
 maintain distinct territories; unrelated roots stay anchored.
 Stable spacing reserves room for filenames. Names omit `.md`, truncate
 at 60 characters, fade together at reading zoom, and scale with the map. Region
-captions stay inside their clouds. Dot size expresses connectedness; baseline
+captions use containment-aware placement; when no fitting placement is found,
+the renderer falls back to a small centered caption without a containment guarantee.
+Dot size expresses connectedness; baseline
 opacity expresses recent opening activity using the existing backend-decayed
 opening count and last-viewed timestamp. Unknown activity remains visible.
 
@@ -51,8 +54,9 @@ Aggregate strong relationships guide initial placement and new-region seeds;
 affinity does not continuously pull accepted regions together. Search, naming,
 activity, ordinary reopening and unchanged inputs do not move accepted geometry.
 Legacy responses retain a temporary rendering fallback while the backend migrates
-them to accepted world geometry. Migration details are recorded in the Atlas
-continuity issues; the current layout has one backend owner.
+them to accepted world geometry. Current placement and legacy import are owned
+by [stable layout](../../src-tauri/src/semantic/atlas/stable_layout.rs) and
+[publication](../../src-tauri/src/semantic/atlas/publication.rs).
 
 Growing clouds reveal child regions before they branch nearby. Strongly
 separated children can promote after a 30-second presentation interval;
@@ -92,13 +96,17 @@ text; text inside the floating reader remains selectable.
 Wheel zoom listens on the full HTML map surface with a non-passive listener;
 an invisible SVG background supplies a hit target between clouds in WebKit.
 
-Search uses AtlasStore's indexed retrieval, including body text and authored tag
-filters (`tag:name` / `#name`). It highlights existing positions without
+Search uses AtlasStore's indexed retrieval: note embeddings carry body meaning,
+while lexical scoring uses title, filename, path, tags, and a bounded preview.
+Authored tag filters use `tag:name` / `#name`. Search highlights existing positions without
 selecting a note, opening/closing the reader, moving the camera or regrouping
 notes. An explicit selection survives matching and zero-result searches.
 
 Selecting a note reveals its connections and related filenames in place and
-opens a floating reader. All authored links are shown without a count limit.
+opens a floating reader. All published wikilink relationships are shown without
+a presentation count limit. These authored edges come from resolved `[[...]]`
+links between mapped notes; ordinary Markdown links, unresolved targets, and
+self-links do not produce them.
 Semantic strength retains the absolute cosine score and discounts connections
 that are weak relative to either endpoint's nearest neighbors. The local scale
 uses each note's mean score gap from its best neighbor with a small noise floor;
@@ -213,4 +221,5 @@ arrow keys there retain native scrolling rather than changing the active note.
 `/atlas` and old `/map/prototype` bookmarks redirect to `/map`. The development
 command `pnpm atlas:lab` uses read-only cached vault data on port 1422; it offers
 text/tag matching rather than native semantic retrieval. Fictional data requires
-`--demo`. Production does not import the demo fixture or depend on this launcher.
+explicit demo opt-in via `--demo` or the `atlasPrototypeSource=demo` URL query.
+Production does not import the demo fixture or depend on this launcher.

@@ -19,8 +19,16 @@ vite.config.ts.timestamp-*
 .scratch/chat-reliability/artifacts/
 .scratch/chat-date-context/artifacts/
 
-# Local recovery archive for retired worktrees.
-.scratch/worktree-recovery/
+# Generated local investigation evidence; concise reports stay in Git.
+.scratch/**/evidence/
+.scratch/**/*.png
+.scratch/**/*.log
+.scratch/chat-context-selection/*-baseline/
+.scratch/chat-context-selection/*.patch
+.scratch/chat-context-selection/*.json
+!.scratch/chat-context-selection/summary.json
+!.scratch/chat-context-selection/*-summary.json
+.scratch/chat-context-selection/native-validation/
 
 # Rust
 target/

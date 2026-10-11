@@ -21,13 +21,12 @@ Markdown vault + SQLite metadata/indexes
 
 The Tauri command and event contracts are seams. Frontend modules should not
 reimplement backend persistence policy, and backend modules should not infer
-interactive workspace state that is owned by the frontend. One private command
-worker owns AppState lookup and blocking dispatch; named commands retain their
-typed arguments and domain errors. Chat related-note suggestions enter this worker;
-composer typing never runs retrieval on the IPC dispatch thread. Each composer
-keeps at most one suggestion request in flight and coalesces pending edits to
-the latest query. Substantial domain operations receive concrete
-state references, independently of Tauri dispatch.
+interactive workspace state that is owned by the frontend. Blocking domain
+commands routed through `commands.rs::on_app_worker` perform AppState lookup and
+work in per-invocation blocking tasks; named commands retain their typed arguments
+and domain errors. Other command paths have their own dispatch, so this helper is
+not a serialized application worker. Substantial domain operations receive
+concrete state references, independently of Tauri dispatch.
 
 ## Canonical ownership
 
@@ -146,7 +145,9 @@ explicitly instead of repeating an exhaustive scan on entry just to display
 storage statistics. Restore and clear still refresh diagnostics after mutation.
 
 Revision Citation entry seeks a Note/immutable Revision pair directly through
-History Mode and returns at most 31 surrounding predecessor-ordered records.
+History Mode and returns bounded surrounding predecessor-ordered records; the
+context limit belongs to `history_store.rs::bounded_revision_context` inside
+`services/note_timeline`.
 Private rebuildable successor indexes avoid walking newer history. Scoped
 context cursors carry positions relative to the immutable anchor; nearby pages
 replace the viewport and never merge with absolute newest-page coordinates.
@@ -166,9 +167,10 @@ Note Identity follows the logical note rather than its current file path or
 authored-content length. The catalog preserves a known identity through empty
 content and damaged managed metadata, and reserves that association across
 rename, move, disappearance, and safe reattachment even when path refreshes
-arrive in either order. Reattachment requires the same missing path or an
-operation-correlated move; identity alone at an unrelated path is a copy, not
-continuity proof. External observation never repairs Markdown. The next
+arrive in either order. Continuity can be established by same-path reattachment,
+an operation-correlated move, or reconciliation of an embedded identity at a new
+path when its former owner is absent. External observation never repairs
+Markdown. The next
 app-owned commit restores missing or damaged embedded identity metadata in its
 original atomic publication. If an observed copy repeats an identity already
 owned by another path, the original mapping wins and the copy receives a new
@@ -216,9 +218,10 @@ after restart, so recovery completes history without replaying the file write.
 History finalization likewise reads authoritative Markdown from disk and never
 substitutes caller fallback bytes when that read fails.
 Known publication failures and proposal conflicts explicitly abandon their
-prepared intent; only an indeterminate post-publication capture failure
-keeps its publication intent pending for restart recovery. Successfully captured
-Editing Windows are separate durable state, not unresolved publication intents.
+prepared intent; indeterminate publication outcomes, including failed rename
+rollback and post-publication capture failure, retain recovery evidence.
+Successfully captured Editing Windows are separate durable state, not unresolved
+publication intents.
 Pending canonical heads and immutable finalized heads serve different hash
 checks; private pending identities cannot become citation or naming targets.
 Receipt retirement uses scoped tokens and a durable retirement watermark, as
@@ -265,8 +268,9 @@ payload, hash, head, lifecycle, and window lineage in one consistent read
 transaction. A foreground request claims an unstarted target directly or joins
 only that target's check. One private worker verifies other histories and whole-store
 structure, with cancellation between notes, within long note loops, and during
-SQL execution. No readiness lock or canonical file mutation owner is held by the
-verifier. Background baseline initialization similarly verifies before acquiring
+SQL execution. Ordinary publication preflight and background verification run
+outside the canonical file mutation owner; clean-close settlement can verify
+while holding it. Background baseline initialization verifies before acquiring
 the file owner and holds bounded operation leases rather than a vault-long lease.
 
 Trusted mutations extend a note's proof without rescanning retained payloads on
@@ -334,17 +338,17 @@ history read or prepared write. Ordinary reads and later preparations do not
 rerun successful startup recovery, so they cannot abandon another live
 in-process publication intent; a transient recovery failure remains retryable.
 History-facing Tauri commands translate private storage, reconstruction, and
-coordination failures into a closed product contract: unavailable, corrupt,
-stale, ineligible, missing, or invalid request, each paired with a stable
-message and recovery action. Diagnostic causes remain in backend logs and do
-not cross the command seam. Storage and reconstruction boundaries preserve typed
+coordination failures into the closed `HistoryCommandErrorState` contract in
+`commands/history_commands.rs`, paired with stable messages and recovery actions.
+Diagnostic causes remain in backend logs and do not cross the command seam.
+Storage and reconstruction boundaries preserve typed
 failures through recovery and role-limited reads; translating a failure never
 performs a diagnostic rescan. Corruption detected during reads or capture is
 latched by the runtime before later canonical publications can be admitted.
 
 The vault manifest selects the active history format and monotonic store
 generation. The SQLite metadata repeats the vault identity, format, and
-generation; disagreement fails open explicitly instead of accepting replaced
+generation; disagreement rejects store admission instead of accepting replaced
 or copied history. The SQLite implementation owns its initial format selection;
 general vault configuration only persists the supplied selector. An app-local
 observation record remembers the greatest generation opened for each Vault
@@ -352,8 +356,9 @@ Identity, so rolling back the manifest and store together is also rejected. A
 stable store-instance identity and monotonic clean-close watermark extend that
 check within one generation. `NoteTimeline.clean_close` stops new operations,
 waits for admitted work, settles prepared intent and deletion recovery,
-finalizes surviving Editing Windows,
-checkpoints and truncates the WAL, and only then marks the store portable.
+finalizes surviving Editing Windows, and reports a successful portable close
+only after WAL checkpointing and observation-watermark recording complete.
+The storage implementation owns the transaction and failure-recovery ordering.
 Explicit Restart and application exit cross this seam before releasing the running vault.
 The observing installation may recover its own open store and WAL after an
 interrupted run, while store replacement, watermark rollback, and a live
@@ -384,8 +389,10 @@ Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
 SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
 its remaining byte budget, then bounds incremental vacuum work with that
 remainder.
-Only freshly created schema 14 stores are admitted. Older schemas and existing
-files without complete metadata fail before schema writes; confirmed Settings
+Existing compatible stores reopen after identity, generation, schema, and
+portability checks. Incompatible schemas and existing files without complete
+metadata fail before schema writes; the current schema is defined in
+`services/note_timeline/history_store.rs`. Confirmed Settings
 reset advances the generation and rebuilds current Markdown as baselines.
 Granular Editor history migration, trust authorization, and Editing Session
 grouping have been removed.
@@ -542,7 +549,10 @@ pointers, compatibility and garbage collection. `geometry.rs` contains the coupl
 graph, community and layout calculations; `query.rs` owns search scoring. The
 worker retains its existing supersession checkpoints between calculation stages
 and before pointer publication. These private modules introduce no second owner
-or public facade, and numerical policies remain explicit in `semantic/similarity.rs`.
+or public facade. `semantic/similarity.rs` owns cosine calculations and the legacy
+Jina floor; provider-specific retrieval floors belong to `EmbeddingProvider` in
+`semantic/embed.rs` and its implementations. Atlas graph and layout policies live
+in `semantic/atlas.rs` and its private layout modules.
 
 Atlas's private `map_store.rs` owns durable vault-local cloud identity, names,
 lineage and accepted world placements separately from rebuildable semantic data.
@@ -577,17 +587,17 @@ placed outside accepted regions. Structural publication, labels, naming and cach
 clearing share the map store admission lock. The durable head commits a generation; derived ready pointers
 are repairable. The existing queue remains the only calculation scheduler.
 See [ADR 0010](docs/adr/0010-retain-atlas-geography-outside-derived-caches.md).
-The renderer consumes world coordinates directly and interpolates admitted
-endpoints without persisting or repacking another layout.
+For current world-layout generations, the renderer consumes backend coordinates
+directly and interpolates admitted endpoints without persisting or repacking
+another layout. `atlasLayout.ts` retains a compatibility layout for legacy
+responses without the world-layout flag.
 Deletion and same-footprint renaming preserve accepted note positions;
 subgroup changes repair only affected territories; root-circle overlap cannot translate established regions.
 Larger filenames and isolated notes use the same local collision policy.
-A placement-policy revision in the same durable state records one-time repair of
-legacy repulsion-expanded clouds and overlapping imported footprints through
-normal admission. Revision 2 closes excessive inter-region gaps by translating
-connected neighborhoods rigidly around the largest retained neighborhood. The
-same footprint-envelope spacing policy runs during initialization, never during
-ordinary updates to an accepted revision-2 map.
+The durable map records its placement-policy version. Initialization and admitted
+policy migrations may repair accepted geometry; ordinary updates restrict repairs
+to affected clouds and their ancestors. The current version and migration policy
+live in `semantic/atlas/stable_layout.rs` and its private modules.
 
 Chat's frontend transition admits selection/request events and their conversation
 projection together, then notifies the existing Readable boundary once. Effects
@@ -606,9 +616,9 @@ circles, joining material, and controls; input contents reveal near settling and
 finish fading after motion completes. The dock adapter measures mounted
 inputs and blends coordinate spaces, including the adjacent actions, when
 Related layout changes during a morph. Pane layout changes accompanying an
-editor/chat edge sample the dock's remaining clock, including its shared
-`cubic-bezier(0.65, 0, 0.35, 1)` easing, and publish the dock's final
-flex bounds in a correlated presentation event after installing their effects.
+editor/chat edge sample the dock's remaining clock and shared easing, and publish
+the dock's final flex bounds in a correlated presentation event after installing
+their effects.
 The dock interpolates its displayed origin to that endpoint directly, avoiding
 temporary destination measurements and width-cap discontinuities, and balances
 Related against the displayed margins. Search/chat exchange anchors full-size
@@ -617,9 +627,10 @@ One SVG group draws the joined background and outline, avoiding separate filtere
 HTML backing layers. Ordinary editor expansion moves the absorbed circles with
 that rectangle on the same duration.
 Pane kind changes participate alongside membership changes. Interrupted requests start from the
-current pose. Mounted input contents fade out over 100ms as a morph starts.
-The selected surface begins its 280ms reveal at 90% geometry progress, keeping
-the exchange clear and finishing after the bar settles. Another morph fades
+current pose. Mounted input contents fade out as a morph starts; the selected
+surface begins revealing near settling and finishes after the bar settles.
+Timing and easing belong to `workspaceDockMachine.ts` and
+`ui/workspaceDockMotion.css`. Another morph fades
 from the currently displayed opacity; reduced motion skips the fades. Glyphs
 hand off sequentially; editor transitions skip the chat-search glyph.
 The dock reserves the measured expanded composer height in both chat input and
@@ -631,18 +642,22 @@ The reading surfaces extend behind its shared fade rather than clipping above it
 ## Agent runtime
 
 `agent_run_coordinator.rs` is the chat-to-runtime handoff.
-`agent_runtime.rs` adapts the selected provider to an app-owned request and
-event protocol. `ChatService` retains durable run lifecycle and context
+`agent_runtime.rs` adapts the selected provider behind an app-owned runtime entry
+point and event protocol. `ChatService` retains durable run lifecycle and context
 assembly. Private `chat/admission.rs` commits the user message, attachments,
 assistant placeholder, run, and context in one transaction. Private `chat/store.rs`
 owns connection policy and atomic terminal message/source/run persistence; all
 connections enforce foreign keys. `chat/runtime.rs` reports successful completion
-only after that transaction commits. Each streamed delta retains its independent
-commit through one connection per response. `chat/projection.rs` serializes managed
+only after that transaction commits. Streaming checkpoints use one connection
+per response; checkpoint errors do not prevent UI delta delivery, so streamed
+text can lead its durable checkpoint. `chat/projection.rs` serializes managed
 transcript publication (filesystem bytes and SQLite hash receipts) with conflict
 classification; a projection failure after admission cannot reject an already
 accepted request. The watcher rechecks current
-projection bytes after publication; queued own-write events cannot detach chats. Provider and runtime-library types do not cross those seams.
+projection bytes after publication; queued own-write events cannot detach chats.
+Provider client/model construction belongs to `agent_runtime.rs`. The internal
+chat/runtime request still uses Rig messages and usage types; persisted chat and
+frontend contracts use app-owned types.
 
 At startup, `ChatService` recovers missing conversation identities from surviving
 managed Markdown in `Chats` through its private transcript recovery module.
@@ -653,7 +668,7 @@ provenance; recovered chats start with no vault access and conservative assistan
 history evidence markers. SQLite remains authoritative after recovery.
 
 `services/evidence.rs` owns current evidence search, ranking, scoped/versioned
-cursors, passage reads and canonical citation validation. `search_evidence` uses
+cursors, passage reads and canonical citation validation. `find_notes` uses
 the existing Tantivy paragraphs and reciprocal-rank fusion with local semantic
 candidates; literal/regex modes inspect exact canonical Markdown. Semantic
 availability and approximate coverage are explicit. Interactive note selection
@@ -681,8 +696,10 @@ canonical history formats do not change.
 issue these only for delivered passage sources; selected research results receive
 parent references independently of the worker's registry. ChatService constructs
 canonical passage links before terminal persistence/delivery, intersecting the
-registry with currently valid sources. Unknown references become explicit inert
-unavailable text. The UI never guesses a model reference from a note title.
+registry with currently valid sources. Recognized but unissued `[S#]` references
+and invalid passage destinations become inert unavailable text; other malformed
+model citation text is not automatically recognized. The UI never guesses a
+model reference from a note title.
 Transcripts and branches persist durable destinations, never depend on the
 run-local registry, and continue to revalidate on navigation. Link integrity
 is distinct from whether a claim is supported by its cited passage.
@@ -699,13 +716,91 @@ message text remains ordinary user content when retried; saved answers/citations
 are unchanged. Model-written quotations remain distinct from the exact excerpts
 in the evidence panel; citation identity does not validate semantic entailment.
 
-`agent_tools/capabilities.rs` owns shared composition instructions and the
-application-owned capability sets: evidence,
+`chat/assistant_instructions.txt` owns the shared assistant core. Tool mechanics
+are owned by registered descriptions and schemas, and `chat/date_time.rs` supplies
+compact date interpretation beside the run reference. Disabled-tool requests omit
+tool descriptions and receive an explicit unavailable-capability statement.
+Web citation guidance is included only when web access is enabled.
+`agent_tools/capabilities.rs` owns the application-owned capability sets: evidence,
 working-note reads, proposals, research, and planning. Capability restrictions
 intersect the parent's grants; worker identity and response presentation do not
-choose tools inside the runtime. Ordinary chat exposes the complete set. The
+choose tools inside the runtime. Ordinary chat grants the complete set when
+executable tools are enabled; local model capability settings can disable them. The
 agent chooses and sequences available tools to fulfill the user's objective;
 retrieval never chooses a final response format or terminates a successful run.
+
+The model-facing interface exposes five tools: `find_notes`, `read_notes`,
+`propose_note_change`, `research_notes`, and `update_plan`. The private interface
+adapter groups operations without moving evidence or proposal ownership.
+`read_notes` requires `purpose=answer` for canonical evidence or `purpose=edit`
+for the current working copy. Schemas expose only granted branches, and handlers
+recheck capability grants; an evidence-only research worker cannot regain edit
+reads through the shared tool name. `propose_note_change` requires an explicit
+edit, replace or create operation and retains existing stored proposal formats,
+full-read replacement requirements, current hashes and Keep before publication.
+There is no separate active-note tool; the editor hint supplies identity and
+selection, and ordinary reads obtain the needed content.
+
+Automatic adjacent-editor context carries only an allowed canonical note identity,
+bounded title and validated selection as a relevance hint. It does not deliver the
+body, admit primary evidence or satisfy rewrite read coverage. It retains canonical
+hash/access revalidation without marking a hint-only response as note evidence.
+The automatic editor hint is an app context message before conversation history,
+separate from the authored user message. Other turn-local app context precedes
+an explicitly labeled authored request, keeping the user's question last.
+Delivered note content keeps a durable history marker even when its sources are
+later hidden, so ordinary dialogue remains usable while note-based answers require
+fresh evidence. Working-copy content is read through `read_notes` with `purpose=edit` when relevant.
+
+Lexical evidence matches retain a typed title/body location through retrieval.
+The evidence owner validates coordinates against that canonical location rather
+than inferring it from a display label or locating every match in body text.
+
+EvidenceSession separately tracks actual delivered text for run-local reuse;
+discovery freshness proofs, editor hints and working-copy reads grant no answer
+reuse. Exact same-note/version/location overlaps report none, partial or full,
+keeping historical proofs separate. Independent workers reset this tracking and
+only selected evidence delivered back to the parent enters its context.
+Canonical-note and selected-passage coverage follow each read's continuation;
+an earlier unavailable passage prevents a false complete result on the final page.
+`wholeNoteComplete` is true only for a complete canonical-note read across its
+pages. Selected passages never establish this flag. Normal untimed selected reads
+supply canonical `nextReads` selectors; incomplete canonical pages supply their
+exact cursor. These suggestions grant no new access or automatic retrieval.
+Search coverage describes retrieval, and delivery identifies previews. Explicit
+linked bodies and attachments disclose their own completeness, with a canonical
+read selector when clipped. These signals neither suppress evidence nor choose
+when the model must stop.
+
+The tool boundary's `evidence_references.rs` issues compact, context-local evidence
+selectors for discovery and reads, resolving them exactly to canonical IDs before
+ordinary evidence admission. Clones share one registry; independent workers and
+later runs have distinct namespaces. Worker hints use the worker's references,
+and only references backed by actual worker reads may be selected for handoff.
+Parent delivery revalidates canonical identities and issues parent references.
+The registry translates selectors only: durable passage IDs and read-only `[S#]`
+citation authority remain separate. Unknown references are rejected without
+fuzzy matching; legacy canonical selectors retain their normal validation.
+
+`services/evidence/guidance.rs` owns app-authored interpretation contracts for
+source scope, prose, checkbox status facts and current task deadline metadata.
+Named notes are starting points for factual discovery; named-record omissions
+require complete canonical content. The first read
+with each corresponding structure includes its contract in the tool envelope.
+If guidance crowds out an otherwise deliverable passage, a bounded bootstrap
+returns that guidance with a continuation (or research remaining IDs), without
+admitting the pending source. Both the bootstrap and conservative followup
+envelopes must fit the shared allowance.
+The entire normal/research envelope, including pending guidance, is sized before
+charging or admitting anything. The service records guidance during admission,
+before the tool adapter's remaining fallible checks. Failed outer delivery does
+not roll that state back; the intended retry guarantee and current gap are
+recorded in [behavior invariants](docs/architecture/behavior-invariants.md).
+Each independent EvidenceSession tracks delivered contracts. Worker forks reset
+that state while sharing the evidence allowance. Tool history is retained throughout
+a runtime; between-turn compaction starts a new session, so it cannot discard a
+contract while retaining the session's delivery marker. No question classifier or
+new authority crosses the runtime seam.
 
 Search, activity listing and research accept the same explicit `activity_range`:
 start inclusive and end exclusive, each an ISO date or RFC3339 timestamp, with
@@ -729,29 +824,32 @@ semantics; reviewed-edit guidance stays in the parent.
 Current body reads optionally include bounded `taskDates` metadata from the same
 Markdown checkbox and portable `@due` parsers used by tasks. Entries cover only
 complete delivered marker lines with exact text and canonical UTF-8 coordinates; clipping or
-more than sixteen entries marks the metadata incomplete. They consume the same
+exceeding the entry bound marks the metadata incomplete. The bound belongs to
+`services/task_dates.rs`. They consume the same
 read/evidence budgets and inherit permission, hash and citation checks. Historical
 reads do not claim current deadlines. The agent composes current reads and local
 calendar comparisons for deadline questions, and working-note reads plus reviewed
 proposals for edits.
 
-`list_note_activity` returns bounded intermediate data grouped by Note Identity,
+`find_notes` with `result=notes` returns bounded intermediate data grouped by Note Identity,
 with one representative evidence ID, preview and recorded change per note. This
 is discovery only; search with the same scope/range retrieves the other changed
 passages, preserving different revisions at overlapping offsets.
-`search_evidence` discovers passages; `read_evidence` accepts selected IDs or a
+`find_notes` defaults to passage discovery; `read_notes` with `purpose=answer` accepts selected IDs or a
 known note ID and delivers canonical current content or labeled historical changes,
-with compact validated citations and interval support. Expanded per-range provenance is opt-in; historical identity and timing remain present without expansion. `read_working_note`
+with compact validated citations and interval support. Expanded per-range provenance is opt-in; historical identity and timing remain present without expansion. `read_notes` with `purpose=edit`
 is reserved for proposal preparation. Read continuations preserve remaining IDs,
 provenance position, and options. Search continuations preserve scope/range/configuration;
-model callers pass cursor only. Delivery completeness is separate from retrieval coverage.
+model callers pass cursor only to find_notes (including retained result kind),
+and purpose=answer plus cursor to read_notes. Delivery completeness is separate from retrieval coverage.
 Passing an activity range to a read returns backend-checked `activitySupport`:
 supported, uncertain, or not_established. Broad current reads and baseline dates
 do not establish whole-passage activity. This check does not validate semantic entailment. Activity results can
 be followed by reads, unrelated searches, planning, research and proposals.
-The private inventory collection keeps a conservative 256,000-byte storage-proof
-allowance; model-facing pages contain at most 20 bounded previews (8 by default)
-and consume the same 24,000-byte evidence allowance as other tools. Counts are
+The private inventory collection has a bounded storage-proof allowance;
+model-facing pages contain bounded previews and consume the same evidence-byte
+allowance as other tools. Limits belong to `services/evidence/inventory.rs` and
+`services/evidence.rs`. Counts are
 per page and coverage/uncertainty remain explicit. Cursors bind range, scope,
 canonical versions and provenance. Model references are issued only on reads.
 
@@ -765,10 +863,24 @@ and cannot be repeated. No terminal inventory path or question-specific router
 exists.
 
 
-Automatic active/selected/link context uses current canonical bytes. Editing
+The automatic editor hint is metadata and a validated selection; selected and
+explicit-link excerpts are checked against current canonical bytes. Editing
 reads retain the reviewed proposal working-copy contract. A durable evidence-use
 marker omits note-based answers from subsequent model history and compaction;
-source-free dialogue remains available. Recent user and source-free assistant
+source-free dialogue remains available. Later model history retains bounded,
+currently permitted cited note references in a fresh app-issued context message,
+separate from earlier assistant prose. The bounds and history assembly belong to
+`chat.rs::normalized_rig_history`. Each group links current
+canonical note identities and titles to its answer ordinal and a bounded copy of
+the preceding user request, and marks the latest completed answer. That historical
+user wording preserves conversational intent; it does not establish note facts.
+These navigation hints carry no old excerpts, assistant claims or citation authority. Compacted references
+are rebuilt from stored sources on every request rather than persisted in summaries.
+Access, identity and location are rechecked before inference and delivery; body
+changes alone do not invalidate these metadata hints. Only references admitted
+to the rendered history retain validation bindings. Runtime observers carry an
+independent evidence context so disabling executable tools cannot disable the
+pre-inference checks. Recent user and source-free assistant
 messages retain their full text, subject to the existing recent-message window
 and explicit compaction. Oversized assembled requests fail through context
 admission instead of clipping each message. Old unversioned compactions are ignored.
@@ -789,10 +901,11 @@ instant; hints are unread metadata, and internal normalized bounds/default queri
 are not model inputs. It retains the parent's provider/model routing, shares the
 run guard and evidence-byte budget, and returns selected issued/read IDs and gap
 codes. The backend resolves passages; worker prose and intermediate transcripts
-never enter parent context. One worker may run at a time, with twelve tool calls and a
-90-second timeout per invocation, under shared parent call/token/time and evidence
-limits. The agent may invoke research again for another question or scope; a
-lease is released on every exit, and cumulative usage includes all invocations. Period-scoped workers
+never enter parent context. One worker may run at a time, with invocation-specific
+tool-call and timeout limits owned by `agent_tools/research.rs`, under shared
+parent call/token/time and evidence limits. The agent may invoke research again
+for another question or scope; a lease is released on every exit, and cumulative
+usage includes all invocations. Period-scoped workers
 must obtain their own temporal candidates; direct canonical reads for current-status checks remain with the parent. Provider failure remains explicit;
 there is no local-to-hosted fallback.
 Worker reads inherit the invocation's explicit range when omitted, reject a wider
@@ -827,13 +940,14 @@ delivered evidence. Empty selection preserves a supplied closed gap code; absent
 one it reports unavailable rather than asserting no matching evidence. Events never contain worker text, identifiers, scope
 values or raw provider errors, and do not add user-visible answer parts.
 
-Initial evidence limits are byte-based estimates: 24,000 admitted bytes per run,
-6,000 per read, 480 per preview, and 8 candidates per page (20 maximum).
+Evidence limits are byte-based allowances owned by `services/evidence.rs` and
+its read implementation; they are not token counts or quality guarantees.
 Model-facing search and read cursors retain their configuration inside the evidence
 session; internal provenance offsets are not model inputs. Historical proofs are
 persisted additively in passage JSON and navigation opens their content revision.
-The legacy prompt/history hook has a 128,000-byte admission ceiling; shared measured
-usage has a 400,000-token ceiling and 96 tool calls within fifteen minutes.
+`agent_guardrails.rs::AgentRunLimits` owns shared context-byte, aggregate-token,
+tool-call and elapsed-time ceilings; `agent_runtime.rs` owns model-call and retry
+limits.
 Opt-in `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` wraps the completion model inside the
 runtime seam and observes assembled instructions, messages, tools, documents,
 output schema and provider parameters. ContextMeasured events contain counters
@@ -852,20 +966,18 @@ retained text is projected (serialized UTF-8 bytes plus message framing), and
 configuration changes, replaced history, media or absent usage invalidate the
 baseline. Each local runtime reuses one metadata HTTP client. Successful loaded
 capacity observations are refreshed on every request, so server reloads can
-change the allowance. Unavailable metadata backs off for 30 seconds for the same
-model; a different model probes immediately. No positive capacity is cached.
-Unknown capacity keeps existing fallback limits. The guard reserves
-4,096 answer/reasoning tokens, a 1,024-token margin, and an 8,192-token allowance
-for another gathering step. Near capacity it skips pending tools, preserves
-history/evidence and sends at most one final request with tools disabled and an
+change the allowance. Unavailable metadata uses the model-specific retry backoff
+in `agent_runtime/context_measurement.rs`; a different model probes immediately.
+No positive capacity is cached. Unknown capacity keeps existing fallback limits.
+`agent_runtime/usage_context.rs` owns the answer/reasoning reserve, safety margin,
+and allowance for another gathering step. Near capacity it skips pending tools,
+preserves history/evidence and sends at most one final request with tools disabled and an
 explicit output cap. If the final reserve cannot fit it stops explicitly. This
 is conservative prevention, not exact tokenization or automatic history trimming.
 Counter-only ContextMeasured finishing events are emitted even with optional
 request diagnostics off; worker events retain their worker identity.
 
 These bounds are implementation defaults, not measured quality guarantees.
-Fixture measurements and unmeasured live-provider questions are recorded in
-[the evaluation report](.scratch/current-evidence/evaluation.md).
 
 Application tools register through `agent_tools/feedback.rs`. It preserves exact,
 known application validation/recovery messages across Rig's error normalization;

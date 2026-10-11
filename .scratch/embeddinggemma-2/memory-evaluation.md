@@ -1,5 +1,11 @@
 # EmbeddingGemma 2 memory reduction experiment
 
+> Historical pre-implementation experiment. The approved LiteRT implementation
+> supersedes the deployment/adoption statements below. Measurements apply to
+> the runtime and fixtures tested at that checkpoint. See the
+> [implementation](implementation.md) and [selected plan](spec.md) for subsequent
+> implementation and release-validation limits.
+
 Updated: 2026-10-06. Experimental only; the app still uses Jina.
 
 The Q8 projector plus disabling unused audio loading reduced sampled peak RSS

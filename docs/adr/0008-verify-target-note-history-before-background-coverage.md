@@ -16,4 +16,6 @@ After essential current-store admission and interrupted-work recovery, verify th
 - Structural checks remain whole-store work and run in background or explicit diagnostics. Unavailable storage, cancellation, and I/O contention remain retryable; only proven corruption latches the global block. Coverage and completion are observable without launching a diagnostic scan.
 - [ADR 0004](0004-treat-sqlite-as-the-first-note-timeline-store.md)'s clean-close portability boundary remains: stop new work, cancel background checks, drain admitted operations, settle durable work, checkpoint, and record the watermark. Portability does not require rereading every historical payload on each close. [ADR 0005](0005-remember-observed-history-generations-outside-the-vault.md)'s selected-store and rollback checks remain mandatory.
 
-Adopted by explicit user choice. Workspace bootstrap and save-readiness presentation, followed by large-history and native acceptance validation, complete the rollout.
+The verification owner is `services/note_timeline/runtime/verification.rs`.
+Current release acceptance belongs to focused tests and release workflows;
+historical rollout plans do not establish that acceptance.
