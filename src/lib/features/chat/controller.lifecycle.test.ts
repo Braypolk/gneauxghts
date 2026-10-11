@@ -18,14 +18,14 @@ describe('chat listener ownership', () => {
     const controller = createChatController(fake.api);
     const first = controller.initialize();
     const second = controller.initialize();
-    expect(fake.api.on).toHaveBeenCalledTimes(11);
+    expect(fake.api.on).toHaveBeenCalledTimes(12);
     const unlisten = vi.fn();
     attachment.resolve(unlisten);
     await Promise.all([first, second]);
     expect(fake.api.getSettings).toHaveBeenCalledOnce();
     controller.dispose();
     controller.dispose();
-    expect(unlisten).toHaveBeenCalledTimes(11);
+    expect(unlisten).toHaveBeenCalledTimes(12);
   });
 
   it('releases partial attachments at failure and late attachments after failure before retry', async () => {
@@ -36,15 +36,15 @@ describe('chat listener ownership', () => {
     const controller = createChatController(fake.api);
     await controller.initialize();
     expect(controller.getSnapshot().error).toContain('offline');
-    expect(release).toHaveBeenCalledTimes(9);
+    expect(release).toHaveBeenCalledTimes(10);
     await controller.initialize();
-    expect(fake.api.on).toHaveBeenCalledTimes(22);
+    expect(fake.api.on).toHaveBeenCalledTimes(24);
     const lateRelease = vi.fn();
     late.resolve(lateRelease);
     await vi.waitFor(() => expect(lateRelease).toHaveBeenCalledOnce());
     expect(controller.getSnapshot().isInitialized).toBe(true);
     controller.dispose();
-    expect(release).toHaveBeenCalledTimes(20);
+    expect(release).toHaveBeenCalledTimes(22);
   });
 
   it('cleans subscriptions acquired after disposal and does not load chat data', async () => {
@@ -53,7 +53,7 @@ describe('chat listener ownership', () => {
     fake.api.on.mockReturnValueOnce(late.promise);
     const controller = createChatController(fake.api);
     const initializing = controller.initialize();
-    await vi.waitFor(() => expect(fake.handlers.size).toBe(10));
+    await vi.waitFor(() => expect(fake.handlers.size).toBe(11));
     controller.dispose();
     expect(fake.handlers.size).toBe(0);
     const release = vi.fn(); late.resolve(release);
@@ -64,6 +64,26 @@ describe('chat listener ownership', () => {
 });
 
 describe('chat receipt admission', () => {
+  it.each(['send', 'retry'] as const)('preserves a structured draft arriving before the %s receipt', async (operation) => {
+    const fake = fakeApi();
+    const receipt = deferred<ChatSendReceipt>();
+    fake.api.sendMessage.mockReturnValue(receipt.promise);
+    fake.api.retryMessage.mockReturnValue(receipt.promise);
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const sending = operation === 'send' ? controller.send({ content: 'Hello' }) : controller.retry('message-1');
+    await vi.waitFor(() => expect(operation === 'send' ? fake.api.sendMessage : fake.api.retryMessage).toHaveBeenCalledOnce());
+    const identity = { requestId: 'request-1', conversationId: 'conversation-1', messageId: 'message-1' };
+    fake.emit('chat://started', { ...identity, message: message() });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 1, sequence: 1, content: 'Literal draft' });
+    receipt.resolve({ requestId: 'request-1', conversationId: 'conversation-1', userMessage: message({ id: 'user-1', role: 'user', content: 'Hello', status: 'completed' }), assistantMessage: message() });
+    await sending;
+    const assistant = controller.getSnapshot().conversation?.messages.find(item => item.id === 'message-1');
+    expect(assistant?.answerDraft?.text).toBe('Literal draft');
+    expect(assistant?.content).toBe('');
+    expect(controller.getSnapshot().isSending).toBe(true);
+    controller.dispose();
+  });
   it.each([['send', 'streaming'], ['send', 'completed'], ['retry', 'streaming'], ['retry', 'completed']] as const)('keeps %s %s events received before the receipt', async (operation, status) => {
     const fake = fakeApi();
     const receipt = deferred<ChatSendReceipt>();

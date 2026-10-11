@@ -1,0 +1,125 @@
+{
+  "method": "Earlier ten-tool run vs current five-tool run; same questions/fixture candidates and provider settings, not repeated randomized trials. Earlier semantic/formatting grader false negatives were corrected offline.",
+  "cases": [
+    {
+      "case": "greeting",
+      "beforeFirstInput": 2491,
+      "afterFirstInput": 2180,
+      "beforeAggregateInput": 2491,
+      "afterAggregateInput": 2180,
+      "beforeModelCalls": 1,
+      "afterModelCalls": 1,
+      "beforeToolCalls": 0,
+      "afterToolCalls": 0
+    },
+    {
+      "case": "selection",
+      "beforeFirstInput": 2497,
+      "afterFirstInput": 2186,
+      "beforeAggregateInput": 5796,
+      "afterAggregateInput": 5172,
+      "beforeModelCalls": 2,
+      "afterModelCalls": 2,
+      "beforeToolCalls": 1,
+      "afterToolCalls": 1
+    },
+    {
+      "case": "different_note",
+      "beforeFirstInput": 2493,
+      "afterFirstInput": 2183,
+      "beforeAggregateInput": 9357,
+      "afterAggregateInput": 8179,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "followup",
+      "beforeFirstInput": 2501,
+      "afterFirstInput": 2194,
+      "beforeAggregateInput": 9143,
+      "afterAggregateInput": 8230,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "deadlines",
+      "beforeFirstInput": 2501,
+      "afterFirstInput": 2191,
+      "beforeAggregateInput": 9466,
+      "afterAggregateInput": 8535,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "reviewed_edit",
+      "beforeFirstInput": 2511,
+      "afterFirstInput": 2197,
+      "beforeAggregateInput": 8085,
+      "afterAggregateInput": 7111,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "semantic_status",
+      "beforeFirstInput": 2531,
+      "afterFirstInput": 2218,
+      "beforeAggregateInput": 9256,
+      "afterAggregateInput": 12865,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 4,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 4
+    },
+    {
+      "case": "reviewed_rewrite",
+      "beforeFirstInput": 2510,
+      "afterFirstInput": 2199,
+      "beforeAggregateInput": 8112,
+      "afterAggregateInput": 7227,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    }
+  ],
+  "before8": {
+    "inputTokens": 61706,
+    "cachedInputTokens": 50273,
+    "outputTokens": 1058,
+    "modelCalls": 21,
+    "toolCalls": 13,
+    "estimatedUSD": 0.0021750299999999997
+  },
+  "after8": {
+    "inputTokens": 59499,
+    "cachedInputTokens": 47716,
+    "outputTokens": 1302,
+    "modelCalls": 22,
+    "toolCalls": 15,
+    "estimatedUSD": 0.00230646
+  },
+  "beforeOriginal6": {
+    "inputTokens": 44338,
+    "cachedInputTokens": 35188,
+    "outputTokens": 643,
+    "modelCalls": 15,
+    "toolCalls": 9,
+    "estimatedUSD": 0.0015883800000000001
+  },
+  "afterOriginal6": {
+    "inputTokens": 39407,
+    "cachedInputTokens": 30699,
+    "outputTokens": 657,
+    "modelCalls": 15,
+    "toolCalls": 9,
+    "estimatedUSD": 0.00150629
+  }
+}

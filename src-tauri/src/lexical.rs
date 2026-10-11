@@ -27,6 +27,7 @@ struct LexicalFields {
     section_label: Field,
     body: Field,
     paragraph_index: Field,
+    location: Field,
     document_kind: Field,
 }
 
@@ -42,6 +43,28 @@ pub(crate) struct LexicalIndex {
     inner: Mutex<LexicalIndexInner>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) enum LexicalLocation {
+    Title,
+    Body,
+}
+impl LexicalLocation {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Body => "body",
+        }
+    }
+}
+
+pub(crate) struct LexicalEvidenceMatch {
+    pub(crate) note_id: String,
+    pub(crate) text: String,
+    pub(crate) section_label: String,
+    pub(crate) score: f32,
+    pub(crate) location: LexicalLocation,
+}
+
 impl LexicalIndex {
     pub(crate) fn new() -> Result<Self, String> {
         let mut schema_builder = Schema::builder();
@@ -53,6 +76,7 @@ impl LexicalIndex {
             section_label: schema_builder.add_text_field("section_label", TEXT | STORED),
             body: schema_builder.add_text_field("body", TEXT | STORED),
             paragraph_index: schema_builder.add_u64_field("paragraph_index", STORED),
+            location: schema_builder.add_text_field("location", STRING | STORED),
             document_kind: schema_builder.add_text_field("document_kind", STRING | STORED),
         };
         let schema = schema_builder.build();
@@ -199,14 +223,14 @@ impl LexicalIndex {
     }
 
     /// Scope is part of the Tantivy query, before the bounded collector runs.
-    /// Return paragraph bodies rather than UI snippets; the evidence owner validates
-    /// their exact correspondence against canonical current Markdown.
+    /// Return indexed text with its source location rather than UI snippets;
+    /// the evidence owner validates against the corresponding canonical title/body.
     pub(crate) fn evidence_matches(
         &self,
         query_text: &str,
         allowed_ids: &HashSet<String>,
         limit: usize,
-    ) -> Result<(Vec<(String, String, String, f32)>, usize), String> {
+    ) -> Result<(Vec<LexicalEvidenceMatch>, usize), String> {
         if allowed_ids.is_empty() {
             return Ok((Vec::new(), 0));
         }
@@ -236,12 +260,18 @@ impl LexicalIndex {
             let doc = searcher
                 .doc::<TantivyDocument>(address)
                 .map_err(|e| e.to_string())?;
-            results.push((
-                string_value(&doc, self.fields.note_id)?,
-                string_value(&doc, self.fields.body)?,
-                string_value(&doc, self.fields.section_label)?,
+            let location = match string_value(&doc, self.fields.location)?.as_str() {
+                "title" => LexicalLocation::Title,
+                "body" => LexicalLocation::Body,
+                _ => return Err("Invalid lexical evidence location".into()),
+            };
+            results.push(LexicalEvidenceMatch {
+                note_id: string_value(&doc, self.fields.note_id)?,
+                text: string_value(&doc, self.fields.body)?,
+                section_label: string_value(&doc, self.fields.section_label)?,
                 score,
-            ));
+                location,
+            });
         }
         Ok((results, count))
     }
@@ -426,6 +456,11 @@ fn replace_note_locked(
 ) -> Result<(), String> {
     delete_note_locked(inner, fields, note_path);
     for paragraph in &note.paragraphs {
+        let location = if paragraph.paragraph_index.is_none() {
+            LexicalLocation::Title
+        } else {
+            LexicalLocation::Body
+        };
         inner
             .writer
             .add_document(doc!(
@@ -436,6 +471,7 @@ fn replace_note_locked(
                 fields.section_label => paragraph.section_label.clone(),
                 fields.body => paragraph.text.clone(),
                 fields.paragraph_index => paragraph.paragraph_index.unwrap_or(0) as u64,
+                fields.location => location.as_str(),
                 fields.document_kind => note.document_kind.as_frontmatter_value(),
             ))
             .map_err(|err| err.to_string())?;
@@ -605,7 +641,7 @@ mod tests {
         assert!(available > 160);
         assert_eq!(evidence.len(), 3);
         assert!(
-            evidence.iter().all(|(id, _, _, _)| id == &chat_id),
+            evidence.iter().all(|hit| hit.note_id == chat_id),
             "evidence remains independently scoped across document kinds"
         );
     }

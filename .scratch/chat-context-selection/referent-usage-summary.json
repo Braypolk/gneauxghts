@@ -1,0 +1,1433 @@
+{
+  "method": "Final cumulative aggregate per recorded answer; never sum cumulative usage snapshots. Cache tokens are a subset of input. Context byte counts are pre-provider assembly measurements, not token counts.",
+  "limitations": [
+    "Recorded chat usage excludes separate automatic title-generation calls, whose observer discards usage events. This is not total provider spend.",
+    "Variants and stochastic runs differ; no general savings or reliability rate is inferred.",
+    "All unsuccessful paid attempts are retained. No dollar estimate is made."
+  ],
+  "attempts": [
+    {
+      "trace": "referent-native-1.json",
+      "sha256": "9832734d234547d972bb45e2f2e532fbbe24eb384a7b4b21d1484234e100369c",
+      "variant": "Fresh identities appended to old assistant messages",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6805,
+            "inputTokens": 8431,
+            "outputTokens": 154,
+            "reasoningTokens": 17,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8585
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1337,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "9nv8BEO5B2Xk7OALEeotK",
+              "title": "Search notes for \u201cgreen light launch production rehearsal\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "nVVTTn40pVBe8MOx0FRXN",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7348,
+            "inputTokens": 9154,
+            "outputTokens": 174,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9328
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1851,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "9yg1zd2XiM3AwITP3z3_8",
+              "title": "Search notes for \u201crecovery token\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "owmCjERDhIDevm2IW3XpR",
+              "title": "Search notes for \u201cproduction launch\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "HIgKMCtubmIxyOmJMTzg_",
+              "title": "Read selected passages",
+              "output": "Read 1 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4374,
+            "inputTokens": 5725,
+            "outputTokens": 223,
+            "reasoningTokens": 138,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5948
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2301,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "Mv0yP2EBwLG72eTlidlD3",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7507,
+            "inputTokens": 9306,
+            "outputTokens": 108,
+            "reasoningTokens": 13,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9414
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2739,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "rZohKow1oGKuO9_gJebBt",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "Ehz3u_6uMDpw6asS19JGE",
+              "title": "Read selected passages",
+              "output": "Read 1 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 10472,
+            "inputTokens": 12350,
+            "outputTokens": 136,
+            "reasoningTokens": 25,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 12486
+          },
+          "modelCalls": 4,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 3122,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "SlfSbMz__4hK_cU2JmXXa",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 0 candidate passages"
+            },
+            {
+              "name": "find_notes",
+              "callId": "xokbVeg9JNfoDXbbofiML",
+              "title": "Search notes for \u201cbring\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "6NbyiF1I5bvkHxWRyk6aX",
+              "title": "Read selected passages",
+              "output": "Read 1 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 44966,
+        "outputTokens": 795,
+        "cachedInputTokens": 36506,
+        "reasoningTokens": 193
+      },
+      "modelCalls": 15
+    },
+    {
+      "trace": "referent-native-2.json",
+      "sha256": "7046d0d2e25367318183d898be7662bc7f94231ebc7d07882a2e00f3a1371182",
+      "variant": "Fresh app System reference context",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7337,
+            "inputTokens": 9495,
+            "outputTokens": 206,
+            "reasoningTokens": 13,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9701
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1337,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "jzjm5odmOfnyebyJekqm1",
+              "title": "Search notes for \u201claunch green light production rehearsal\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "ZkZMC9EE17iWVMrCeko4h",
+              "title": "Search notes for \u201cgreen light\u201d",
+              "output": "Matched 0 candidate passages"
+            },
+            {
+              "name": "find_notes",
+              "callId": "aCOscq3eppiFoxAWpPqhL",
+              "title": "Search notes for \u201crehearsal\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "ZQj7mem2hlRR8vrr3hjUV",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4318,
+            "inputTokens": 6126,
+            "outputTokens": 267,
+            "reasoningTokens": 114,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6393
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1598,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3636,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "CB3JPqQdiFMA2CnzajDpM",
+              "title": "Search notes for \u201crecovery token\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "vzG6DX0uzPpMfAIAwdRJn",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7749,
+            "inputTokens": 9785,
+            "outputTokens": 145,
+            "reasoningTokens": 21,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9930
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1873,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3805,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "bU9tXgD87omQIoT6y5j2H",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            },
+            {
+              "name": "read_notes",
+              "callId": "8oaPR8fatM91MOy4gYtah",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7633,
+            "inputTokens": 9699,
+            "outputTokens": 114,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9813
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2136,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4058,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "DP-Yw1gj3pHrqKgnSv2Tt",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "Wukkpjex7qtt6zU_08L_4",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 35105,
+        "outputTokens": 732,
+        "cachedInputTokens": 27037,
+        "reasoningTokens": 148
+      },
+      "modelCalls": 11
+    },
+    {
+      "trace": "referent-native-3.json",
+      "sha256": "ee0d7730a7a3f2cb48ac425f05b170bff9774e68b77971e17696c696ccdec3b7",
+      "variant": "Unchanged confirmation of variant 2",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6803,
+            "inputTokens": 8404,
+            "outputTokens": 144,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8548
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1337,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "9GkVamnGpUV_csboywLHA",
+              "title": "Search notes for \u201claunch green light production rehearsal\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "wmPglB7hYk7os-p4R0RFB",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4318,
+            "inputTokens": 5619,
+            "outputTokens": 63,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5682
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1598,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3636,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "Mas-GFIu-BBN9kt_gmhjB",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 14023,
+        "outputTokens": 207,
+        "cachedInputTokens": 11121,
+        "reasoningTokens": 0
+      },
+      "modelCalls": 5
+    },
+    {
+      "trace": "referent-native-4.json",
+      "sha256": "6b0900441f75d10461597e799c920ad271128686d041254e7bb9bd722dc75740",
+      "variant": "Fresh context plus explicit citation guidance; raw deltas captured",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6804,
+            "inputTokens": 9221,
+            "outputTokens": 227,
+            "reasoningTokens": 53,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9448
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1337,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "KrIWviZHzXerxwu8ZGxAm",
+              "title": "Search notes for \u201cgreen light launch production rehearsal\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "Sw0P4VlhLJOt_zYImKoxA",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            },
+            {
+              "name": "find_notes",
+              "callId": "YfWKZq-GnDy9iGQZXLy6B",
+              "title": "Search notes for \u201cMeridian launch\u201d",
+              "output": "Matched 6 candidate passages"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4333,
+            "inputTokens": 5645,
+            "outputTokens": 66,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5711
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1598,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3720,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "Q6ozFD1EUCtw17zw4uuT9",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4424,
+            "inputTokens": 5839,
+            "outputTokens": 82,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5921
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1873,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3889,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "0D2vnkkIKX-QWWCnouzAo",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7607,
+            "inputTokens": 9842,
+            "outputTokens": 129,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9971
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2136,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4064,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "sadogPlGMShylDxkijBzF",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "ut0NFVBjDBQcbiHM-fb4f",
+              "title": "Read selected passages",
+              "output": "Read 3 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4593,
+            "inputTokens": 6216,
+            "outputTokens": 98,
+            "reasoningTokens": 38,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6314
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2354,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4229,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "dN0v-Gxe42MqrzdEsm-EP",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 36763,
+        "outputTokens": 602,
+        "cachedInputTokens": 27761,
+        "reasoningTokens": 103
+      },
+      "modelCalls": 12
+    },
+    {
+      "trace": "referent-native-5.json",
+      "sha256": "83bc031af3b466cd0307d3a07321e48068d2c9bbde1bbdc0520cc1a11066019e",
+      "variant": "Authored request placed after app metadata",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 10162,
+            "inputTokens": 12784,
+            "outputTokens": 253,
+            "reasoningTokens": 36,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 13037
+          },
+          "modelCalls": 4,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1356,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "4pSsNAiOzxSdHT-I5GWKa",
+              "title": "Search notes for \u201c\"green light\" launch\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "KeFVanPSsf3V3dk3smyIX",
+              "title": "Search notes for \u201cproduction launch\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "83NkoBg5XSj9TlNzze9bI",
+              "title": "Search notes for \u201crehearsal sign off Iris\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "pOxe1jG8zGIEnXdtqLnnZ",
+              "title": "Read selected passages",
+              "output": "Read 3 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4338,
+            "inputTokens": 6333,
+            "outputTokens": 176,
+            "reasoningTokens": 55,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6509
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1617,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3720,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "Mi9R01dOTc3DBCjHRNRS0",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            },
+            {
+              "name": "read_notes",
+              "callId": "WI8LA5S1vzvMDbuB523EY",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4458,
+            "inputTokens": 6514,
+            "outputTokens": 129,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6643
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1892,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3973,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "OkeE5fJbN6QQB_CXj3cx1",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            },
+            {
+              "name": "read_notes",
+              "callId": "f5zk035Caly2EOPEJzdoX",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7749,
+            "inputTokens": 10096,
+            "outputTokens": 206,
+            "reasoningTokens": 76,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 10302
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2155,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4226,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "dI6Ud65gnZWxVtWo9iTQ-",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "chDAam7lRQArL7wqKRZP1",
+              "title": "Read selected passages",
+              "output": "Read 3 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4656,
+            "inputTokens": 6429,
+            "outputTokens": 175,
+            "reasoningTokens": 113,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6604
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2373,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4391,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "sg2Er1HLNZynAiLVzbkOa",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 42156,
+        "outputTokens": 939,
+        "cachedInputTokens": 31363,
+        "reasoningTokens": 280
+      },
+      "modelCalls": 13
+    },
+    {
+      "trace": "referent-native-6.json",
+      "sha256": "a579a04c72c7acda96e0f889566ba77bcc6473bbc819e407b4dfcbb7ae94da90",
+      "variant": "Unchanged confirmation of variant 5",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 10242,
+            "inputTokens": 12872,
+            "outputTokens": 357,
+            "reasoningTokens": 114,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 13229
+          },
+          "modelCalls": 4,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1356,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "CmsWujqiq0Y-NnYNPFdW8",
+              "title": "Search notes for \u201cgreen light launch\u201d",
+              "output": "Matched 0 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "i8zUYlSBs89JCveP1hw7D",
+              "title": "Search notes for \u201claunch production rehearsal approval approved go ahead greenlight\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "W37SXCY6Cz1LuDtoUBGDG",
+              "title": "Search notes for \u201crehearsal\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "9s-RIiMIzW8B7aJpttuGk",
+              "title": "Search notes for \u201cproduction launch\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "JvU96gD_Ic0r-XeMj_i-8",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4340,
+            "inputTokens": 5671,
+            "outputTokens": 160,
+            "reasoningTokens": 76,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5831
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1617,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3720,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "BtI1b3Dr60IP2XF6UTL3u",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4434,
+            "inputTokens": 5861,
+            "outputTokens": 89,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5950
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1892,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3895,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "BvYdj1aubTS_qEx8_xWlX",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7648,
+            "inputTokens": 9728,
+            "outputTokens": 131,
+            "reasoningTokens": 19,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 9859
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2155,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4070,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "KKWtCm_K5VQmNHqnMTECC",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "ZXMU_tDKV6cvCHDBQdkv2",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4608,
+            "inputTokens": 6317,
+            "outputTokens": 151,
+            "reasoningTokens": 87,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6468
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2373,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4235,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "rNQibGBo5z1pzkUvm7fIU",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 40449,
+        "outputTokens": 888,
+        "cachedInputTokens": 31272,
+        "reasoningTokens": 296
+      },
+      "modelCalls": 13
+    },
+    {
+      "trace": "referent-native-7.json",
+      "sha256": "c6b6a0a76f6af6189f101a52d24eafa0ad6f295262bd229e914efb5573f8e306",
+      "variant": "Editor hint moved to leading app System; reference groups linked to prior user request",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 10263,
+            "inputTokens": 12964,
+            "outputTokens": 411,
+            "reasoningTokens": 152,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 13375
+          },
+          "modelCalls": 4,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1356,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "vBs-XMFD7RM-oU5mC_amF",
+              "title": "Search notes for \u201cgreen light launch\u201d",
+              "output": "Matched 0 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "H9nw-iBtJU_9XFn2T_P6p",
+              "title": "Search notes for \u201cproduction\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "kwSeUlT7F0ETOqd8lAaiO",
+              "title": "Search notes for \u201crehearsal\u201d",
+              "output": "Matched 1 candidate passages; coverage is partial"
+            },
+            {
+              "name": "find_notes",
+              "callId": "KM7w_6qYAtUmFbXa275WQ",
+              "title": "Search notes for \u201claunch approval\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "rWBF9CJ2UuAMpHlYyCJ2L",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 2 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2437,
+            "inputTokens": 5802,
+            "outputTokens": 221,
+            "reasoningTokens": 150,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6023
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1381,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4223,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "X_isgsksOEAI_0lr89DDD",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4544,
+            "inputTokens": 5959,
+            "outputTokens": 77,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6036
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1656,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4446,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "7z1JaIdEAMBeXSlZ_mt-S",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7823,
+            "inputTokens": 9896,
+            "outputTokens": 134,
+            "reasoningTokens": 23,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 10030
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1919,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4694,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "_YVOrGAonqhbdi3-KOrkv",
+              "title": "Search notes for \u201cCedar afternoon\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "zqoLARvYPhr13GWzDn-7Q",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4743,
+            "inputTokens": 6396,
+            "outputTokens": 94,
+            "reasoningTokens": 34,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6490
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2137,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4926,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "k7QZKi59EZro3uhfCdEyK",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 41017,
+        "outputTokens": 937,
+        "cachedInputTokens": 29810,
+        "reasoningTokens": 359
+      },
+      "modelCalls": 13
+    },
+    {
+      "trace": "referent-native-8.json",
+      "sha256": "69b504e0ce102d7edd7c1645acb9cb3649e8e72eb6ceed75de0e66a754c853d1",
+      "variant": "Same context layout plus admitted-only bindings and independent pre-inference validation",
+      "model": "gpt-6-luna",
+      "turns": [
+        {
+          "turn": 1,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6826,
+            "inputTokens": 8673,
+            "outputTokens": 172,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8845
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1356,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 3200,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "kkxS0UA3RlJX2ES-yvwuV",
+              "title": "Search notes for \u201claunch\u201d",
+              "output": "Matched 2 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "t1mT4oqu-jUsszBAlibeo",
+              "title": "Read selected passages",
+              "output": "Read 1 passages from 1 notes"
+            },
+            {
+              "name": "read_notes",
+              "callId": "DSs5K2tKSf6WH1lej54W-",
+              "title": "Read selected passages",
+              "output": "Read 1 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 2,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2435,
+            "inputTokens": 6362,
+            "outputTokens": 196,
+            "reasoningTokens": 62,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6558
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1381,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4223,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "NVvWrcEbdjA0n71ksKyCu",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            },
+            {
+              "name": "read_notes",
+              "callId": "yesivY6mSc903RdHD83fw",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 3,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4570,
+            "inputTokens": 6017,
+            "outputTokens": 72,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6089
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1656,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4530,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "1_cgz4LlkmEDK8hCLh-ps",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 4,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 7861,
+            "inputTokens": 9935,
+            "outputTokens": 109,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 10044
+          },
+          "modelCalls": 3,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 1919,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 4778,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "find_notes",
+              "callId": "BcK1O-seqXUAUb2KREMMI",
+              "title": "Search notes for \u201cCedar afternoon meeting\u201d",
+              "output": "Matched 3 candidate passages; coverage is partial"
+            },
+            {
+              "name": "read_notes",
+              "callId": "rAcLtmwwV8UMicN6AgIni",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        },
+        {
+          "turn": 5,
+          "recordedAggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4770,
+            "inputTokens": 6445,
+            "outputTokens": 75,
+            "reasoningTokens": 21,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6520
+          },
+          "modelCalls": 2,
+          "initialComponentBytes": {
+            "additional_params": 0,
+            "conversationMessages": 2137,
+            "documents": 2,
+            "output_schema": 0,
+            "preamble": 0,
+            "systemMessages": 5010,
+            "tools": 8628
+          },
+          "successfulTools": [
+            {
+              "name": "read_notes",
+              "callId": "BfqftFBG0nI9Mj-_Bxm7v",
+              "title": "Read selected passages",
+              "output": "Read 2 passages from 1 notes"
+            }
+          ]
+        }
+      ],
+      "recordedChatTotals": {
+        "inputTokens": 37432,
+        "outputTokens": 624,
+        "cachedInputTokens": 26462,
+        "reasoningTokens": 83
+      },
+      "modelCalls": 12
+    }
+  ],
+  "recordedChatTotals": {
+    "inputTokens": 291911,
+    "outputTokens": 5724,
+    "cachedInputTokens": 221332,
+    "reasoningTokens": 1462
+  },
+  "modelCalls": 94
+}

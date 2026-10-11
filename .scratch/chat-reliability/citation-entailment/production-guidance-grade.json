@@ -1,0 +1,342 @@
+{
+  "method": "Human claim judgments over fixed evidence; not automatic semantic grading",
+  "reviewSha256": "d46e35e712dcc96aaa224b33ea5c1b7466c4fbbd078c893930159fb4d9e7b7cc",
+  "summary": {
+    "reviewedSamples": 4,
+    "pendingSamples": 0,
+    "passingReviewedSamples": 3,
+    "annotatedClaims": 13,
+    "noteClaims": 12,
+    "noteClaimsWithCitation": 8,
+    "noteClaimsWithAllCitationsInSuppliedSources": 8,
+    "noteClaimsWithReadAuthority": 8,
+    "semanticVerdicts": {
+      "unassessable": 4,
+      "supported": 9
+    },
+    "failureTags": {
+      "missing_citation": 4,
+      "list_citation_scope": 4
+    }
+  },
+  "results": [
+    {
+      "case": "deadline_inventory",
+      "metadata": {
+        "variant": "current-existing-reference-guidance",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1312,
+          "output_tokens": 220,
+          "reasoning_tokens": 80,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1532
+        },
+        "origin": {
+          "path": "production-guidance-runtime.json",
+          "resultIndex": 0
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "list_citation_scope"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "list_citation_scope"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "list_citation_scope"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-4",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "list_citation_scope"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-5",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "parent",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "child",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "examples",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "completed",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "partial_read_absence",
+      "metadata": {
+        "variant": "current-existing-reference-guidance",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 947,
+          "output_tokens": 106,
+          "reasoning_tokens": 59,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1053
+        },
+        "origin": {
+          "path": "production-guidance-runtime.json",
+          "resultIndex": 1
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": true,
+        "claimInventory": "full",
+        "wholeAnswerPass": true,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": null,
+            "citationMembership": null,
+            "readAuthority": null,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "scope",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "heldout_project_bullets",
+      "metadata": {
+        "variant": "current-existing-reference-guidance",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1045,
+          "output_tokens": 129,
+          "reasoning_tokens": 46,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1174
+        },
+        "origin": {
+          "path": "production-guidance-runtime.json",
+          "resultIndex": 2
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": true,
+        "claimInventory": "full",
+        "wholeAnswerPass": true,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "ember",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "harbor",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "ridge",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "plans",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "heldout_task_table",
+      "metadata": {
+        "variant": "current-existing-reference-guidance",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1264,
+          "output_tokens": 181,
+          "reasoning_tokens": 68,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1445
+        },
+        "origin": {
+          "path": "production-guidance-runtime.json",
+          "resultIndex": 3
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": true,
+        "claimInventory": "full",
+        "wholeAnswerPass": true,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "outline",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "budget",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "review",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "table",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    }
+  ]
+}

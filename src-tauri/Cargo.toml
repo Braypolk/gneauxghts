@@ -4,6 +4,7 @@ version = "0.1.0"
 description = "A Tauri App"
 authors = ["you"]
 edition = "2021"
+rust-version = "1.95"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -61,8 +62,8 @@ similar = { version = "3.2", default-features = false, features = ["bytes", "std
 pulldown-cmark = { version = "0.13.4", default-features = false }
 zstd = "0.13"
 notify = "6.1"
-rig-core = { version = "=0.41.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
-rig-agent = { version = "=0.41.0", default-features = false }
+rig-core = { version = "=0.44.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
+rig-agent = { version = "=0.44.0", default-features = false }
 thiserror = "2"
 url = "2"
 percent-encoding = "2"
@@ -83,8 +84,8 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-rig-core = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
-rig-agent = { version = "=0.41.0", default-features = false, features = ["test-utils"] }
+rig-core = { version = "=0.44.0", default-features = false, features = ["test-utils"] }
+rig-agent = { version = "=0.44.0", default-features = false, features = ["test-utils"] }
 tauri = { version = "2.11", features = ["test"] }
 
 [patch.crates-io]

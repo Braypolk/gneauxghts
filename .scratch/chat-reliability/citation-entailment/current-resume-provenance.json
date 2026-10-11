@@ -1,0 +1,13 @@
+{
+  "recordedAt": "2026-10-11T04:11:40.148469+00:00",
+  "selectedCases": [
+    "related_note_attribution",
+    "preview_is_not_read",
+    "partial_read_absence"
+  ],
+  "settings": "Unchanged saved gpt-6-luna/medium/Flex configuration; same corpus, preamble and input construction",
+  "files": {
+    "src-tauri/src/chat/citation_evaluation.rs": "f1937aec1af9f9a9ec2949756ff7b1cef623ddb74a7609ccfc15ffc5dbd0ff78",
+    ".scratch/chat-reliability/citation-entailment/run_live.py": "c86e6ac06ca0d2e6ef74c870d0b3dc63ea43bd9d65c520f5895077942fca2fb0"
+  }
+}

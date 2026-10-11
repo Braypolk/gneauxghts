@@ -1,0 +1,41 @@
+{
+  "markdown": {
+    "answers": 6,
+    "modelCalls": 6,
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 2303,
+      "input_tokens": 7363,
+      "output_tokens": 1447,
+      "reasoning_tokens": 890,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 8810
+    },
+    "medianLatencyMillis": 4444.0,
+    "textDeltaAnswers": 6,
+    "manualCitationCoveragePasses": 5,
+    "manualFactAndScopePasses": 6,
+    "preambleBytes": 3396
+  },
+  "structured": {
+    "answers": 6,
+    "modelCalls": 6,
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 8641,
+      "output_tokens": 1519,
+      "reasoning_tokens": 845,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 10160
+    },
+    "medianLatencyMillis": 4044.0,
+    "textDeltaAnswers": 0,
+    "manualCitationCoveragePasses": 6,
+    "manualFactAndScopePasses": 6,
+    "preambleBytes": 3729
+  },
+  "totalReportedTokens": 18970,
+  "totalTokenIncreasePercent": 15.323496027241767,
+  "method": "Six reused fixed-evidence cases, one sample per arm; manual answer-level review, not automated entailment or native/E2E evaluation."
+}

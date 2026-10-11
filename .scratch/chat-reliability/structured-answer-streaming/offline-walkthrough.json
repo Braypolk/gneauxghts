@@ -1,0 +1,17 @@
+{
+  "method": "Offline disposable walkthrough of portable demo reducer plus JavaScript syntax check; no browser rendering, requests or production test files.",
+  "checks": [
+    "actual recorded stream validates with three source buttons",
+    "no buttons before final validation",
+    "authored key-order and escaped Unicode result decodes",
+    "unissued source rejected and draft cleared",
+    "cancellation clears and ignores late completion",
+    "new attempt ignores tagged stale events",
+    "new attempt can complete",
+    "withdrawn source rejected before final validation",
+    "source withdrawal after validation clears answer and all links",
+    "connection failure clears and ignores completion",
+    "trailing garbage rejected"
+  ],
+  "passed": true
+}

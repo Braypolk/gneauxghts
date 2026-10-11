@@ -13,6 +13,9 @@ vite.config.ts.timestamp-*
 .pnpm-store/
 .pnpm-store-v11/
 
+# Generated Python bytecode from local evaluation tools.
+__pycache__/
+
 # Local live-chat diagnostic reports; keep the issue/spec Markdown files.
 .scratch/chat-reliability/*.json
 .scratch/chat-reliability/*.png
@@ -25,6 +28,7 @@ vite.config.ts.timestamp-*
 .scratch/**/*.log
 .scratch/chat-context-selection/*-baseline/
 .scratch/chat-context-selection/*.patch
+.scratch/chat-context-reduction/*.patch
 .scratch/chat-context-selection/*.json
 !.scratch/chat-context-selection/summary.json
 !.scratch/chat-context-selection/*-summary.json

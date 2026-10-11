@@ -1,12 +1,14 @@
 mod capabilities;
 mod feedback;
-pub(crate) use capabilities::instructions as capability_instructions;
+mod interface;
 use capabilities::{Capabilities, Capability};
 use feedback::ModelTool;
+use interface::{ProposeNoteChangeTool, ReadNotesTool};
 mod research;
 use research::{ResearchNotesTool, ResearchRuntime};
 mod evidence;
-use evidence::{ListNoteActivityTool, ReadEvidenceTool, SearchEvidenceTool};
+mod evidence_references;
+use evidence::{FindNotesTool, ReadEvidenceTool};
 mod current_history;
 pub(crate) use current_history::filter_revision_sources;
 
@@ -25,7 +27,6 @@ use rig_agent::{
     agent::{Agent, AgentBuilder, NoToolConfig},
     tool::{Tool, ToolContext},
 };
-use rig_core::completion::CompletionModel;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
@@ -173,7 +174,9 @@ pub(crate) struct AgentToolContext {
     sources: Arc<Mutex<Vec<ChatSource>>>,
     evidence: Arc<Mutex<crate::services::evidence::EvidenceSession>>,
     passage_references: Arc<Mutex<crate::chat::citations::PassageReferences>>,
+    evidence_references: Arc<Mutex<evidence_references::EvidenceReferences>>,
     context_versions: Arc<Mutex<HashMap<String, String>>>,
+    note_reference_versions: Arc<Mutex<HashMap<String, (PathBuf, String)>>>,
     proposal_lock: Arc<Mutex<()>>,
     research_runtime: Arc<Mutex<Option<ResearchRuntime>>>,
     cancellation: Arc<Mutex<Option<tokio_util::sync::CancellationToken>>>,
@@ -264,7 +267,9 @@ impl AgentToolContext {
             sources: Arc::new(Mutex::new(Vec::new())),
             evidence: Arc::new(Mutex::new(evidence)),
             passage_references: Arc::new(Mutex::new(Default::default())),
+            evidence_references: Arc::new(Mutex::new(Default::default())),
             context_versions: Arc::new(Mutex::new(HashMap::new())),
+            note_reference_versions: Arc::new(Mutex::new(HashMap::new())),
             proposal_lock: Arc::new(Mutex::new(())),
             research_runtime: Arc::new(Mutex::new(None)),
             cancellation: Arc::new(Mutex::new(None)),
@@ -283,24 +288,20 @@ impl AgentToolContext {
         }
     }
 
-    pub(crate) fn build_agent<M>(&self, builder: AgentBuilder<M, NoToolConfig>) -> Agent<M>
-    where
-        M: CompletionModel,
-    {
+    pub(crate) fn build_agent(&self, builder: AgentBuilder<NoToolConfig>) -> Agent {
         let mut builder = builder.dynamic_tools(Vec::new());
         for capability in self.capabilities.iter() {
             builder = match capability {
                 Capability::Evidence => builder
-                    .tool(ModelTool(SearchEvidenceTool(self.clone())))
-                    .tool(ModelTool(ListNoteActivityTool(self.clone())))
-                    .tool(ModelTool(ReadEvidenceTool(self.clone()))),
-                Capability::WorkingNotes => builder
-                    .tool(ModelTool(GetActiveNoteTool(self.clone())))
-                    .tool(ModelTool(ReadNoteTool(self.clone()))),
-                Capability::Proposals => builder
-                    .tool(ModelTool(ProposeNoteEditsTool(self.clone())))
-                    .tool(ModelTool(ProposeNoteRewriteTool(self.clone())))
-                    .tool(ModelTool(ProposeCreateNoteTool(self.clone()))),
+                    .tool(ModelTool(FindNotesTool(self.clone())))
+                    .tool(ModelTool(ReadNotesTool(self.clone()))),
+                Capability::WorkingNotes if !self.capabilities.contains(Capability::Evidence) => {
+                    builder.tool(ModelTool(ReadNotesTool(self.clone())))
+                }
+                Capability::WorkingNotes => builder,
+                Capability::Proposals => {
+                    builder.tool(ModelTool(ProposeNoteChangeTool(self.clone())))
+                }
                 Capability::Research => builder.tool(ModelTool(ResearchNotesTool(self.clone()))),
                 Capability::Planning => builder.tool(ModelTool(UpdatePlanTool(self.clone()))),
             };
@@ -365,7 +366,7 @@ impl AgentToolContext {
     pub(crate) fn selected_context_prompt(
         &self,
         items: &[crate::chat::ChatRunContextItem],
-    ) -> String {
+    ) -> Result<String, String> {
         let mut attached = Vec::new();
         for item in items {
             if !self.run_grants.contains(&item.note_id)
@@ -385,6 +386,9 @@ impl AgentToolContext {
             let Ok(excerpt) = self.admit_context(&item.excerpt, 2400) else {
                 break;
             };
+            let coverage = self
+                .context_coverage(&item.note_id, "selected_excerpt", excerpt == item.excerpt)
+                .map_err(|e| e.to_string())?;
             self.surface(&item.note_id);
             let path = current_path;
             self.add_source(
@@ -396,13 +400,15 @@ impl AgentToolContext {
                 item.block_anchor
                     .clone()
                     .or_else(|| item.section_label.clone()),
-            );
+            )?;
+            self.record_body_context(&item.note_id, &raw, &excerpt, None)
+                .map_err(|e| e.to_string())?;
             attached.push(format!(
-                "[[{}]] (noteId: {}, contentHash: {}, reason: {})\n{}",
-                item.title, item.note_id, item.content_hash, item.reason, excerpt
+                "[[{}]] (noteId: {}, contentHash: {}, reason: {})\n{}{}",
+                item.title, item.note_id, item.content_hash, item.reason, coverage, excerpt
             ));
         }
-        attached.join("\n\n")
+        Ok(attached.join("\n\n"))
     }
 
     pub(crate) fn explicit_wikilink_context(&self, message: &str) -> Result<String, String> {
@@ -438,7 +444,13 @@ impl AgentToolContext {
             let excerpt = self
                 .admit_context(&working.body, 2400)
                 .map_err(|e| e.to_string())?;
+            let coverage = self
+                .context_coverage(&indexed.note_id, "body", excerpt == working.body)
+                .map_err(|e| e.to_string())?;
             self.surface(&indexed.note_id);
+            self.add_source(&indexed.note_id, path, &indexed.title, &excerpt, &raw, None)?;
+            self.record_body_context(&indexed.note_id, &raw, &excerpt, Some(0))
+                .map_err(|e| e.to_string())?;
             if excerpt == working.body {
                 self.record_read(
                     &indexed.note_id,
@@ -448,93 +460,51 @@ impl AgentToolContext {
                     working.body.lines().count(),
                 );
             }
-            self.add_source(&indexed.note_id, path, &indexed.title, &excerpt, &raw, None);
             attached.push(format!(
-                "[[{}]] (noteId: {}, contentHash: {}, pendingChanges: {})\n{}",
+                "[[{}]] (noteId: {}, contentHash: {}, pendingChanges: {})\n{}{}",
                 indexed.title,
                 indexed.note_id,
                 working.content_hash,
                 working.pending_changes,
+                coverage,
                 excerpt
             ));
         }
         Ok(attached.join("\n\n"))
     }
 
+    /// Automatic context identifies the adjacent editor without selecting the
+    /// conversation's subject or spending evidence allowance on an unread body.
     pub(crate) fn active_note_context(&self) -> Result<String, String> {
-        let payload = self
-            .active_note_payload()
-            .map_err(|error| error.to_string())?;
-        if payload.get("status").and_then(Value::as_str) != Some("ready") {
+        let Some(snapshot) = &self.active_note else {
             return Ok(String::new());
-        }
-        serde_json::to_string_pretty(&payload)
-            .map(|json| format!("Allowed active note adjacent to Chat:\n{json}"))
-            .map_err(|error| error.to_string())
-    }
-
-    fn active_note_payload(&self) -> Result<Value, AgentToolError> {
-        let Some(snapshot) = self.active_note.as_ref() else {
-            return Ok(
-                json!({"status":"unavailable","reason":"No saved active note was attached."}),
-            );
         };
         let Some(note_id) = snapshot.note_id.as_deref() else {
-            return Ok(
-                json!({"status":"unavailable","reason":"Save the active note before using it with the agent."}),
-            );
+            return Ok(String::new());
         };
-        if !self.allowed(note_id)? {
-            return Ok(
-                json!({"status":"unavailable","reason":"The active note is not allowed by the current vault policy."}),
-            );
+        if !self.allowed(note_id).map_err(|e| e.to_string())? {
+            return Ok(String::new());
         }
-        let (path, title, _) = self.resolve_note(note_id)?;
-        let raw = fs::read_to_string(&path).map_err(|error| {
-            AgentToolError::internal(format!("Unable to read active note: {error}"))
-        })?;
-        let working = canonical_working_note(&raw);
-        let authoritative = ActiveNoteSnapshot {
-            note_id: Some(note_id.to_string()),
-            title,
-            path: Some(relative_path(self.service.notes_root(), &path)),
-            body: working.body.clone(),
-            body_hash: working.content_hash,
-            selection: snapshot
-                .selection
-                .as_ref()
-                .filter(|selection| working.body.contains(selection.as_str()))
-                .map(|s| crate::services::evidence::bounded(s, 480)),
-        };
-        let (body, mut truncated) = truncate_active_body(&authoritative);
-        let admitted = self.admit_context(&body, 2400)?;
-        truncated |= admitted.len() < body.len();
-        let body = admitted;
+        let (path, title, _) = self.resolve_note(note_id).map_err(|e| e.to_string())?;
+        let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
+        let body = note::strip_frontmatter(&raw);
+        let selection = snapshot
+            .selection
+            .as_ref()
+            .filter(|selection| !selection.is_empty() && body.contains(selection.as_str()))
+            .map(|selection| crate::services::evidence::bounded(selection, 480));
+        let hint = json!({"noteId":note_id,
+            "title":crate::services::evidence::bounded(&title, 256),"selection":selection,
+            "meaning":"Adjacent editor context is a relevance hint, not a fixed subject or read evidence."}).to_string();
+        let admitted = self
+            .admit_context(&hint, hint.len())
+            .map_err(|e| e.to_string())?;
+        if admitted.len() != hint.len() {
+            return Err("Insufficient note context allowance".into());
+        }
+        self.bind_context_version(note_id, &raw);
         self.surface(note_id);
-        if !truncated {
-            let total_lines = authoritative.body.lines().count();
-            self.record_read(
-                note_id,
-                &authoritative.body_hash,
-                1,
-                total_lines,
-                total_lines,
-            );
-        }
-        self.add_source(note_id, &path, &authoritative.title, &body, &raw, None);
-        Ok(json!({
-            "status":"ready",
-            "noteId":note_id,
-            "title":authoritative.title,
-            "path":authoritative.path,
-            "body":body,
-            "contentHash":authoritative.body_hash,
-            "selection":authoritative.selection,
-            "truncated":truncated,
-            "pendingChanges":working.pending_changes,
-            "sourceKind":"working_note",
-            "evidenceMeaning":"For proposal preparation; use read_evidence for authoritative answers"
-        }))
+        Ok(format!("Allowed adjacent editor hint:\n{hint}"))
     }
 
     fn activity(&self, status: &str) {
@@ -610,6 +580,16 @@ impl AgentToolContext {
             .unwrap_or(false)
     }
 
+    fn bind_context_version(&self, note_id: &str, canonical_raw: &str) {
+        // Bind admission to the exact bytes that produced the context. A later
+        // read must never certify an earlier excerpt after a concurrent edit.
+        if let Ok(mut versions) = self.context_versions.lock() {
+            versions
+                .entry(note_id.into())
+                .or_insert_with(|| blake3::hash(canonical_raw.as_bytes()).to_hex().to_string());
+        }
+    }
+
     fn add_source(
         &self,
         note_id: &str,
@@ -618,17 +598,10 @@ impl AgentToolContext {
         excerpt: &str,
         canonical_raw: &str,
         anchor: Option<String>,
-    ) {
-        // Bind admission to the exact bytes that produced the context. A later
-        // read must never certify an earlier excerpt after a concurrent edit.
-        if let Ok(mut versions) = self.context_versions.lock() {
-            versions
-                .entry(note_id.into())
-                .or_insert_with(|| blake3::hash(canonical_raw.as_bytes()).to_hex().to_string());
-        }
-        let _ = self
-            .service
-            .mark_current_history_use(&self.assistant_message_id, &self.run_id);
+    ) -> Result<(), String> {
+        self.bind_context_version(note_id, canonical_raw);
+        self.service
+            .mark_current_history_use(&self.assistant_message_id, &self.run_id)?;
         let relative = path
             .strip_prefix(self.service.notes_root())
             .unwrap_or(path)
@@ -639,7 +612,7 @@ impl AgentToolContext {
                 .iter()
                 .any(|source| source.note_id.as_deref() == Some(note_id) && source.anchor == anchor)
             {
-                return;
+                return Ok(());
             }
             sources.push(ChatSource {
                 kind: "note".to_string(),
@@ -653,6 +626,7 @@ impl AgentToolContext {
                 passage: None,
             });
         }
+        Ok(())
     }
 
     fn resolve_note(&self, note_id: &str) -> Result<(PathBuf, String, u64), AgentToolError> {
@@ -763,53 +737,6 @@ impl AgentToolContext {
 
 pub(crate) use crate::services::tool_outcome::ToolError as AgentToolError;
 
-#[derive(Clone)]
-struct GetActiveNoteTool(AgentToolContext);
-
-#[derive(Deserialize)]
-struct EmptyArgs {}
-
-impl Tool for GetActiveNoteTool {
-    const NAME: &'static str = "get_active_note";
-    type Error = AgentToolError;
-    type Args = EmptyArgs;
-    type Output = Value;
-
-    fn description(&self) -> String {
-        "Return the note adjacent to Chat, including its stable ID, body, selection, and content hash. Use this when the user says 'this note' or asks to change what they are viewing.".to_string()
-    }
-
-    fn parameters(&self) -> Value {
-        json!({"type":"object","properties":{},"additionalProperties":false})
-    }
-
-    async fn call(
-        &self,
-        _context: &mut ToolContext,
-        _args: Self::Args,
-    ) -> Result<Self::Output, Self::Error> {
-        let tool = self.clone();
-        run_blocking_tool(move || {
-            tool.0.check_cancelled()?;
-            tool.execute(_args)
-        })
-        .await
-    }
-}
-
-impl GetActiveNoteTool {
-    fn execute(&self, _args: EmptyArgs) -> Result<Value, AgentToolError> {
-        self.0.activity("Reading active note");
-        self.0.active_note_payload()
-    }
-}
-
-fn truncate_active_body(note: &ActiveNoteSnapshot) -> (String, bool) {
-    let body = crate::services::evidence::bounded(&note.body, 2400);
-    let truncated = body.len() < note.body.len();
-    (body, truncated)
-}
-
 async fn run_blocking_tool<T, F>(operation: F) -> Result<T, AgentToolError>
 where
     T: Send + 'static,
@@ -838,7 +765,7 @@ impl Tool for ReadNoteTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Read an allowed note by stable ID in bounded pages. For preparing reviewed edits. When pendingChanges is true, content is the unapproved working copy, not evidence for ordinary answers. Use search_evidence/read_evidence for recall. Line numbers are 1-based.".to_string()
+        "Read bounded working-copy pages for reviewed edits; lines are 1-based. pendingChanges means unapproved content, not answer evidence. For recall use read_evidence.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -905,20 +832,22 @@ impl ReadNoteTool {
             return Err(AgentToolError::evidence_budget());
         }
         self.0.surface(&args.note_id);
+        self.0
+            .add_source(
+                &args.note_id,
+                &path,
+                &title,
+                &content,
+                &raw,
+                Some(format!("lines {start_line}-{end_line}")),
+            )
+            .map_err(AgentToolError::internal)?;
         self.0.record_read(
             &args.note_id,
             &working.content_hash,
             start_line,
             end_line,
             lines.len(),
-        );
-        self.0.add_source(
-            &args.note_id,
-            &path,
-            &title,
-            &content,
-            &raw,
-            Some(format!("lines {start_line}-{end_line}")),
         );
         Ok(json!({
             "status":"ready",
@@ -931,7 +860,7 @@ impl ReadNoteTool {
             "contentHash":working.content_hash,
             "pendingChanges":working.pending_changes,
             "sourceKind":"working_note",
-            "evidenceMeaning":"For proposal preparation; use read_evidence for authoritative answers"
+            "evidenceMeaning":"For proposal preparation; use read_notes with purpose=answer for authoritative answers"
         }))
     }
 }
@@ -953,7 +882,7 @@ impl Tool for ProposeNoteEditsTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Prepare a reviewed, no-write update for a note surfaced during this run. Use append or prepend for changes at the document boundaries; use insert only between exact, unique contextBefore/contextAfter anchors; use replace with exact non-empty oldText. Include any needed Markdown separators or newlines in newText. If the latest content has pendingChanges, edits are folded into that unapproved proposal. The user must explicitly Keep the combined preview before disk is changed.".to_string()
+        "Stage edits to a surfaced note; pendingChanges are folded into the combined preview. The user must Keep before disk changes. Submit through this tool. Deadlines: @due(YYYY-MM-DD), Gregorian years 0001-9999, on the exact checkbox line. Preserve unrelated/child text; when changing/removing a deadline consolidate only supported valid annotations on that line. No stored slash commands, due times or reminders.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -970,23 +899,23 @@ impl Tool for ProposeNoteEditsTool {
                             "kind":{
                                 "type":"string",
                                 "enum":["replace","insert","append","prepend"],
-                                "description":"Use append/prepend at document boundaries, replace for existing text, and insert only between exact anchors."
+                                "description":"append/prepend: document boundaries. replace: exact oldText. insert: exact, unique contextBefore/contextAfter anchors."
                             },
                             "oldText":{
                                 "type":["string","null"],
-                                "description":"Required and non-empty for replace; omit for insert, append, and prepend."
+                                "description":"Exact nonempty text for replace; otherwise omit."
                             },
                             "newText":{
                                 "type":"string",
-                                "description":"Exact replacement or inserted Markdown, including any required leading/trailing newlines."
+                                "description":"Exact Markdown, including needed separators/newlines."
                             },
                             "contextBefore":{
                                 "type":["string","null"],
-                                "description":"For insert/replace, exact text immediately before the target. Do not use for append/prepend."
+                                "description":"Exact preceding anchor for insert/replace; omit for append/prepend."
                             },
                             "contextAfter":{
                                 "type":["string","null"],
-                                "description":"For insert/replace, exact text immediately after the target. Do not use for append/prepend."
+                                "description":"Exact following anchor for insert/replace; omit for append/prepend."
                             }
                         },
                         "required":["kind","newText"],
@@ -1112,7 +1041,7 @@ impl Tool for ProposeNoteRewriteTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Prepare a reviewed, no-write complete rewrite of a note fully read during this run. Use this for whole-note cleanup, restructuring, translation, or tone changes; use propose_note_edits for localized changes. Read every page of the current note first. markdown must contain the complete replacement body, including every part that should be retained, and must omit managed frontmatter. If pendingChanges is true, rewrite the complete current unapproved working copy. The user must explicitly Keep the preview before disk is changed.".to_string()
+        "Stage a whole-note cleanup, restructure, translation or tone change; use propose_note_edits for local changes. First read every working-copy page in this run, including pendingChanges. The user must Keep before disk changes. Submit through this tool. Deadlines: @due(YYYY-MM-DD), Gregorian years 0001-9999, on the exact checkbox line. Preserve unrelated/child text; when changing/removing a deadline consolidate only supported valid annotations on that line. No stored slash commands, due times or reminders.".to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -1124,7 +1053,7 @@ impl Tool for ProposeNoteRewriteTool {
                 "markdown":{
                     "type":"string",
                     "minLength":1,
-                    "description":"Complete replacement Markdown body. Include all content to retain; omit managed frontmatter."
+                    "description":"Complete replacement body including all retained content; no managed frontmatter."
                 }
             },
             "required":["note_id","expected_content_hash","markdown"],
@@ -1165,7 +1094,7 @@ impl ProposeNoteRewriteTool {
         let working = self.0.working_note(&args.note_id, &raw)?;
         if !self.0.was_fully_read(&args.note_id, &working.content_hash) {
             return Ok(
-                json!({"status":"error","retryable":true,"code":"note_not_fully_read","message":"Read the complete current note with read_working_note, paging from line 1 until hasMore is false, before proposing a complete rewrite."}),
+                json!({"status":"error","retryable":true,"code":"note_not_fully_read","message":"Read the complete current note with read_notes purpose=edit, paging from line 1 until hasMore is false, before proposing a complete rewrite."}),
             );
         }
         if let Some(error) =
@@ -1239,7 +1168,8 @@ impl Tool for ProposeCreateNoteTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Prepare a reviewed, no-write new Markdown note. The user must explicitly Keep the preview before a uniquely named file is created.".to_string()
+        "Stage a new Markdown note. The user must Keep before a uniquely named file is created."
+            .to_string()
     }
 
     fn parameters(&self) -> Value {
@@ -1447,3 +1377,12 @@ fn wikilink_titles(message: &str) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+impl AgentToolContext {
+    pub(crate) fn test_fixture() -> (crate::test_support::TestVault, Self, String, ChatService) {
+        let (vault, tools, id) = tests::fixture();
+        let service = tools.service.clone();
+        (vault, tools, id, service)
+    }
+}

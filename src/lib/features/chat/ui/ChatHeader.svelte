@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import PaneHeader from '$lib/ui/PaneHeader.svelte';
-  import { Check, FileText, History } from '@lucide/svelte';
+  import { Check, History } from '@lucide/svelte';
   import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
   import type {
     ChatController,
@@ -19,8 +19,6 @@
     split?: boolean;
     workspace?: boolean;
     titleDraft?: string;
-    /** Note this chat reasons about, shown so the binding is never ambiguous. */
-    contextNoteTitle?: string | null;
     openMenu: ChatMenu | null;
     onOpenMenu: (menu: ChatMenu | null) => void;
     onFocusComposer: () => void;
@@ -34,7 +32,6 @@
     split = false,
     workspace = false,
     titleDraft = $bindable(''),
-    contextNoteTitle = null,
     openMenu,
     onOpenMenu,
     onFocusComposer
@@ -118,23 +115,12 @@
   }
 </script>
 
-{#snippet contextSubtitle()}
-  <p
-    class="flex min-w-0 max-w-full items-center gap-1 text-xs text-muted-foreground"
-    title={`Chat context: ${contextNoteTitle}`}
-  >
-    <FileText class="h-3 w-3 shrink-0" aria-hidden="true" />
-    <span class="truncate">{contextNoteTitle}</span>
-  </p>
-{/snippet}
-
 <PaneHeader
   titleText={titleDraft}
   titlePlaceholder="New chat"
   {right}
   {split}
   {workspace}
-  subtitle={contextNoteTitle ? contextSubtitle : undefined}
 >
   {#snippet left()}
     {#if showConversationPicker}

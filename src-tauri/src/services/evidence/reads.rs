@@ -15,6 +15,14 @@ pub(super) struct ReadContinuation {
     pending: Vec<(String, usize)>,
     provenance: bool,
     range: Option<query::ResolvedPeriod>,
+    scope: ReadScope,
+    failed: bool,
+}
+
+#[derive(Clone)]
+enum ReadScope {
+    CanonicalNote(String),
+    SelectedPassages,
 }
 
 impl EvidenceSession {
@@ -29,6 +37,12 @@ impl EvidenceSession {
             self.search_continuations
                 .insert(cursor.into(), (request, distinct));
         }
+    }
+    pub(crate) fn search_is_distinct(&self, cursor: &str) -> Result<bool, ToolError> {
+        self.search_continuations
+            .get(cursor)
+            .map(|(_, distinct)| *distinct)
+            .ok_or_else(|| ToolError::stale("Continuation expired; start a fresh search"))
     }
     pub(crate) fn resume_search(
         &self,
@@ -74,6 +88,12 @@ impl EvidenceSession {
                 .cloned()
                 .ok_or_else(|| ToolError::stale("Read continuation expired; read again"))?
         } else {
+            let scope = args
+                .note_id
+                .as_ref()
+                .map_or(ReadScope::SelectedPassages, |id| {
+                    ReadScope::CanonicalNote(id.clone())
+                });
             let range = args
                 .activity_range
                 .as_ref()
@@ -132,6 +152,8 @@ impl EvidenceSession {
                 pending: ids.into_iter().map(|id| (id, 0)).collect(),
                 provenance: args.include_provenance.unwrap_or(false),
                 range,
+                scope,
+                failed: false,
             }
         };
         self.deliver_read(
@@ -153,6 +175,7 @@ impl EvidenceSession {
     ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), ToolError> {
         let capacity = READ_BYTES.min(EVIDENCE_BYTES.saturating_sub(self.used()));
         let mut items = Vec::new();
+        let mut guidance_items = Vec::new();
         let mut sources = Vec::new();
         let mut failures = Vec::new();
         let mut reason = None;
@@ -201,6 +224,8 @@ impl EvidenceSession {
                                 Some(&cursor),
                                 true,
                                 Some("read_capacity"),
+                                &self.delivered_guidance.pending(&items),
+                                &continuation,
                             )
                             .to_string()
                             .len()
@@ -210,6 +235,7 @@ impl EvidenceSession {
                         break;
                     }
                     failures = proposed;
+                    continuation.failed = true;
                     first_error.get_or_insert(error);
                     continuation.pending.remove(0);
                     continue;
@@ -228,6 +254,8 @@ impl EvidenceSession {
                 more.then_some(cursor.as_str()),
                 more,
                 Some("read_capacity"),
+                &self.delivered_guidance.pending(&proposed),
+                &continuation,
             );
             // Durable citation destinations are replaced with shorter run references after admission.
             if proposed_page.to_string().len() > capacity {
@@ -236,6 +264,46 @@ impl EvidenceSession {
                 } else {
                     "read_capacity"
                 });
+                // Bootstrap interpretation separately when its overhead is the
+                // only obstacle. Keep the passage pending and admit no source for
+                // it until a later page fits. Both complete envelopes must fit the
+                // shared allowance, so bootstrap cannot strand the pending read.
+                let pending_guidance = self.delivered_guidance.pending(&proposed);
+                if !pending_guidance.is_empty() {
+                    let bootstrap = presentation
+                        .payload(
+                            &items,
+                            &failures,
+                            Some(&cursor),
+                            true,
+                            Some("guidance"),
+                            &pending_guidance,
+                            &continuation,
+                        )
+                        .to_string()
+                        .len();
+                    let following_cursor = format!("read:{}", usize::MAX);
+                    let following = presentation
+                        .payload(
+                            std::slice::from_ref(&item),
+                            &[],
+                            Some(&following_cursor),
+                            true,
+                            Some("read_capacity"),
+                            &[],
+                            &continuation,
+                        )
+                        .to_string()
+                        .len();
+                    if bootstrap <= capacity
+                        && following <= READ_BYTES
+                        && bootstrap + following <= EVIDENCE_BYTES.saturating_sub(self.used())
+                    {
+                        guidance_items = proposed;
+                        reason = Some("guidance");
+                        break;
+                    }
+                }
                 if !items.is_empty() {
                     break;
                 }
@@ -250,6 +318,7 @@ impl EvidenceSession {
                 let mut failure = error.payload();
                 failure["evidenceId"] = json!(id);
                 failures.push(failure);
+                continuation.failed = true;
                 first_error.get_or_insert(error);
                 continuation.pending.remove(0);
                 continue;
@@ -262,23 +331,32 @@ impl EvidenceSession {
                 break;
             }
         }
-        let more = !continuation.pending.is_empty() && !items.is_empty();
-        if items.is_empty() {
+        let more =
+            !continuation.pending.is_empty() && (!items.is_empty() || !guidance_items.is_empty());
+        if items.is_empty() && guidance_items.is_empty() {
             if let Some(error) = first_error {
                 return Err(error);
             }
         }
+        let guidance_items = if guidance_items.is_empty() {
+            &items
+        } else {
+            &guidance_items
+        };
         let mut payload = presentation.payload(
             &items,
             &failures,
             more.then_some(cursor.as_str()),
             more,
             reason,
+            &self.delivered_guidance.pending(guidance_items),
+            &continuation,
         );
         let charge = payload.to_string().len();
         if charge > capacity || !self.reserve(charge) {
             return Err(ToolError::evidence_budget());
         }
+        self.delivered_guidance.record(guidance_items);
         for (citation, _, _) in &sources {
             self.admit(citation.clone());
         }
@@ -355,6 +433,8 @@ impl ReadContinuation {
             pending: ids.iter().cloned().map(|id| (id, offset)).collect(),
             provenance,
             range: None,
+            scope: ReadScope::SelectedPassages,
+            failed: false,
         }
     }
 }
@@ -374,7 +454,6 @@ fn read_payload(
         "items":items,"failures":failures,"nextCursor":cursor,"truncated":more,"truncationReason":reason,
         "notesRead":notes,"delivery":{"complete":!more && failures.is_empty(),"hasMore":more},
         "provenance":{"hasMore":items.iter().any(|i| !i["nextProvenanceOffset"].is_null())},
-        "coverage":{"meaning":"Selected passages or one canonical note; does not claim all work or retained history"},
         "supportingContextMeaning":"Current context does not establish activity during the requested period",
         "statusMeaning":"Recorded status is not independent proof of real-world completion. Historical text requires a current-status check; an unchanged proposal is not an outstanding commitment",
         "remainingEvidenceBytes":24000})
@@ -396,8 +475,54 @@ impl ReadPresentation {
         cursor: Option<&str>,
         more: bool,
         reason: Option<&str>,
+        guidance: &[&str],
+        continuation: &ReadContinuation,
     ) -> Value {
         let mut page = read_payload(items, failures, cursor, more, reason);
+        let complete = !more && failures.is_empty() && !continuation.failed;
+        page["delivery"]["complete"] = json!(complete);
+        page["coverage"] = match &continuation.scope {
+            ReadScope::CanonicalNote(id) => {
+                json!({"scope":"canonical_note","noteId":id,"complete":complete,
+                "meaning":"Current title, properties and body across this read; not retained history or a complete real-world record"})
+            }
+            ReadScope::SelectedPassages => json!({"scope":"selected_passages","complete":complete,
+                "meaning":"Only selected passages across this read; not the whole note or a complete real-world record"}),
+        };
+        // This read's delivery can be complete without establishing a whole note.
+        // Recovery selectors are suggestions, never extra retrieval authority.
+        let whole_note_complete =
+            matches!(continuation.scope, ReadScope::CanonicalNote(_)) && complete;
+        page["coverage"]["wholeNoteComplete"] = json!(whole_note_complete);
+        let mut next_reads = Vec::new();
+        if matches!(self, Self::Normal) {
+            match &continuation.scope {
+                ReadScope::CanonicalNote(_) if more => {
+                    if let Some(cursor) = cursor {
+                        next_reads.push(json!({"purpose":"answer","cursor":cursor}));
+                    }
+                }
+                ReadScope::SelectedPassages if continuation.range.is_none() => {
+                    let mut seen = HashSet::new();
+                    for item in items
+                        .iter()
+                        .filter(|item| item["sourceKind"] == "current_note")
+                    {
+                        if let Some(id) = item["noteId"].as_str().filter(|id| seen.insert(*id)) {
+                            next_reads.push(json!({"purpose":"answer","note_id":id}));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        page["coverage"]["nextReads"] = json!(next_reads);
+        if !guidance.is_empty() {
+            page["interpretationGuidance"] = json!(guidance);
+            if items.is_empty() {
+                page["status"] = json!("partial");
+            }
+        }
         if let Self::Research { selected, gaps } = self {
             let delivered: HashSet<_> = items
                 .iter()

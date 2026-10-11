@@ -1,0 +1,12 @@
+{
+  "method": "SHA-256 of inputs and runtime/harness source at launch; full per-case prompt and preamble retained in current-runtime.json",
+  "files": {
+    "src-tauri/src/chat/assistant_instructions.txt": "64bd25993dcc5cf80ce253833efd08d8ae171a8478349186d83082a54435a414",
+    "src-tauri/src/services/evidence/guidance.rs": "0e91a6b74f46035d05dfd2f0bf536878d0cc28c7a63bfd8cbcd05da6a751c3fe",
+    "src-tauri/src/chat/citation_evaluation.rs": "605ca68c1ea4c125043bc19291d04a99dc9e311d33519ddee6be068d028d46d7",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/openai_model.rs": "b3c34c6e24956edaa3030889dbffc86aa3eb2ba150adc9e013e87c50831bb291",
+    "src-tauri/src/agent_guardrails.rs": "73ff4129e0c7864b77c44601e45370abef62d732a9b38bf2ca6ed40fd487f533",
+    ".scratch/chat-reliability/citation-entailment/fixtures.json": "e3b6765c7942049fca10d017edd090a8edf089a304504f507d454867ae52471a"
+  }
+}

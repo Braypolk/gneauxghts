@@ -1,0 +1,66 @@
+[
+  {
+    "caseId": "deadline_inventory",
+    "variant": "current-production-references",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "As of September 30:\n\n- **Parent:** Open, due **October 1**—upcoming. The first valid due-date annotation applies; the later date is ignored.\n- **Child:** Open and **undated**. It does not inherit the parent’s deadline.\n- **Other examples:** The completed task was due September 29, but it is completed, so it is not actionable overdue work. The invalid date gives no supported deadline. The checkbox inside the fenced code block is only an example, not a task. [Source 1](passage:tasks)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1297,
+      "output_tokens": 211,
+      "reasoning_tokens": 94,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1508
+    }
+  },
+  {
+    "caseId": "partial_read_absence",
+    "variant": "current-production-references",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The available passage says only, “Deployment approval was discussed.” It does not name an approver, but I can’t determine whether the full note names one because its complete content isn’t available. [Source 1](passage:partial)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 932,
+      "output_tokens": 88,
+      "reasoning_tokens": 39,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1020
+    }
+  },
+  {
+    "caseId": "deadline_inventory",
+    "variant": "current-production-references",
+    "repeat": 2,
+    "model": "gpt-6-luna",
+    "answer": "- **Parent:** Open and due **October 1**, so it is upcoming as of September 30. The later October 7 annotation does not change the supported deadline. [Source 1](passage:tasks)\n- **Child:** Open, with **no supported deadline**; it does not inherit the parent’s date. [Source 1](passage:tasks)\n- **Examples:** The invalid-date task has no supported deadline. The fenced-code example is not an actual task, so it has no actionable deadline. [Source 1](passage:tasks)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 1294,
+      "input_tokens": 1297,
+      "output_tokens": 254,
+      "reasoning_tokens": 149,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1551
+    }
+  },
+  {
+    "caseId": "partial_read_absence",
+    "variant": "current-production-references",
+    "repeat": 2,
+    "model": "gpt-6-luna",
+    "answer": "The supplied passage says, “Deployment approval was discussed,” but does not name an approver. I can’t determine whether the rest of *Meridian retrospective* names one because the complete note wasn’t provided.",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 932,
+      "output_tokens": 96,
+      "reasoning_tokens": 48,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1028
+    }
+  }
+]

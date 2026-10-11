@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::evidence::{EvidenceSession, SearchMode, SearchRequest};
+use crate::services::evidence::{EvidenceSession, ReadRequest, SearchMode, SearchRequest};
 use serde_json::{json, Value};
 
 fn millis(date: &str) -> u64 {
@@ -20,30 +20,19 @@ fn read_all(f: &Fixture, session: &mut EvidenceSession, mut request: SearchReque
             .iter()
             .map(|i| i["evidenceId"].as_str().unwrap().into())
             .collect();
-        let mut consumed = 0;
-        while consumed < ids.len() {
-            let (read, citations) = session
-                .read(
-                    &f.state,
-                    None,
-                    &HashSet::new(),
-                    &ids[consumed..(consumed + 8).min(ids.len())],
-                    false,
-                )
-                .unwrap();
-            let returned = read["items"].as_array().unwrap();
-            assert!(!returned.is_empty(), "fixture exceeded read budget: {read}");
-            for (citation, _, _) in citations {
-                assert!(crate::services::evidence::validate_citation(
-                    &f.state,
-                    &citation,
-                    None,
-                    &HashSet::new()
-                )
-                .is_some());
-            }
-            consumed += returned.len();
-            items.extend(returned.iter().cloned());
+        for selection in ids.chunks(8) {
+            let pages = f.read_evidence_pages(
+                session,
+                ReadRequest {
+                    evidence_ids: selection.to_vec(),
+                    ..Default::default()
+                },
+            );
+            items.extend(
+                pages
+                    .into_iter()
+                    .flat_map(|page| page["items"].as_array().unwrap().clone()),
+            );
         }
         match page["nextCursor"].as_str() {
             Some(cursor) => request.cursor = Some(cursor.into()),
@@ -143,11 +132,63 @@ fn prose_activity_preserves_range_dates_and_late_reports_need_content_search() {
             millis("2026-09-09T12:00:00-06:00")
         );
     }
-    // A current-content search must recover the late report without requesting
-    // removed historical prose or mislabeling its edit time as event time.
+    // Exhaustively inspecting every word's lineage above is a fixture operation.
+    // In a fresh bounded run, select the two action excerpts before searching
+    // for late reports. Both capabilities must fit the same shared allowance.
+    let mut focused = EvidenceSession::default();
+    let mut request = SearchRequest {
+        query: "sent|resolved".into(),
+        mode: SearchMode::Regex,
+        after: Some(after),
+        before: Some(before),
+        ..Default::default()
+    };
+    let mut selected: Vec<String> = Vec::new();
+    loop {
+        let found = focused
+            .search(&f.state, None, &HashSet::new(), request.clone())
+            .unwrap();
+        selected.extend(
+            found["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|item| {
+                    item["preview"]
+                        .as_str()
+                        .is_some_and(|text| text.contains("sent") || text.contains("resolved"))
+                })
+                .map(|item| item["evidenceId"].as_str().unwrap().to_owned()),
+        );
+        match found["nextCursor"].as_str() {
+            Some(cursor) => request.cursor = Some(cursor.into()),
+            None => break,
+        }
+    }
+    assert_eq!(
+        selected.len(),
+        2,
+        "Select supported actions, not every unchanged word"
+    );
+    let action_pages = f.read_evidence_pages(
+        &mut focused,
+        ReadRequest {
+            evidence_ids: selected,
+            ..Default::default()
+        },
+    );
+    assert_eq!(
+        action_pages
+            .iter()
+            .map(|page| page["items"].as_array().unwrap().len())
+            .sum::<usize>(),
+        2
+    );
+    // Current-content retrieval supplies the late authored event date without
+    // requesting removed prose or treating the recording date as the event date.
     let late = read_all(
         &f,
-        &mut session,
+        &mut focused,
         SearchRequest {
             query: "expense report".into(),
             mode: SearchMode::Literal,

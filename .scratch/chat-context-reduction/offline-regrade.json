@@ -1,0 +1,45 @@
+{
+  "cases": [
+    {
+      "name": "greeting",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "selection",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "different_note",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "followup",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "deadlines",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "reviewed_edit",
+      "originalPassed": true,
+      "replayedPassed": true
+    },
+    {
+      "name": "semantic_status",
+      "originalPassed": false,
+      "replayedPassed": true
+    },
+    {
+      "name": "reviewed_rewrite",
+      "originalPassed": false,
+      "replayedPassed": true
+    }
+  ],
+  "method": "offline rubric replay, no API calls; semantic inspection still required"
+}

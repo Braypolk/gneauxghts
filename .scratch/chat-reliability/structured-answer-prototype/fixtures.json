@@ -1,0 +1,310 @@
+{
+  "method": "Frozen six-case fixed-evidence paired pilot; full-note evidence remains supplied in selection-only case to expose scope errors. Not native retrieval. No held-out claim for reused cases.",
+  "cases": [
+    {
+      "id": "deadline_inventory",
+      "category": "dates",
+      "question": "In Meridian deadlines, as of September 30, 2026, classify every checkbox item (including the completed one) by recorded status and supported deadline. Explain whether each would be actionable overdue on that date, and whether the fenced-code example is a task.",
+      "context": {
+        "localToday": "2026-09-30"
+      },
+      "sources": [
+        {
+          "id": "tasks",
+          "title": "tasks",
+          "location": "body",
+          "text": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "taskDates": {
+              "complete": true,
+              "entries": [
+                {
+                  "text": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)",
+                  "status": "open",
+                  "dueDate": "2026-10-01"
+                },
+                {
+                  "text": "  - [ ] Undated child",
+                  "status": "open",
+                  "dueDate": null
+                },
+                {
+                  "text": "- [x] Completed @due(2026-09-29)",
+                  "status": "completed",
+                  "dueDate": "2026-09-29"
+                },
+                {
+                  "text": "- [ ] Invalid @due(2026-02-30)",
+                  "status": "open",
+                  "dueDate": null
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "parent": "Parent open, due October 1 (first valid annotation), upcoming/not overdue as of September 30, 2026.",
+        "child": "Child open, independently undated; overdue classification unknown.",
+        "completed": "Completed due September 29; not actionable overdue.",
+        "invalid": "Invalid date yields open undated task; overdue classification unknown.",
+        "fence": "Fenced checkbox example is not an actual task.",
+        "inventory": "All four actual checkboxes classified."
+      },
+      "rubric": [
+        "Metadata must match the actual checkbox text.",
+        "Distinguish an inline-code annotation on a real task from an entire fenced-code example."
+      ]
+    },
+    {
+      "id": "partial-selected",
+      "question": "Using only the selected excerpt, can you tell whether Meridian retrospective names an approver anywhere?",
+      "context": {
+        "selectedExcerpt": "Deployment approval was discussed."
+      },
+      "sources": [
+        {
+          "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+          "title": "Meridian retrospective",
+          "location": "title",
+          "text": "Meridian retrospective",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        },
+        {
+          "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "bounded_scope": "Use only the selected excerpt; do not attribute Jordan to this excerpt.",
+        "uncertainty": "Excerpt does not name an approver; whole-note presence cannot be determined from that excerpt alone."
+      }
+    },
+    {
+      "id": "partial-unrestricted",
+      "question": "Does Meridian retrospective name an approver anywhere?",
+      "context": {
+        "selectedExcerpt": "Deployment approval was discussed."
+      },
+      "sources": [
+        {
+          "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+          "title": "Meridian retrospective",
+          "location": "title",
+          "text": "Meridian retrospective",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        },
+        {
+          "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "approver": "Read beyond selected excerpt as needed and identify Jordan with supporting canonical body evidence."
+      }
+    },
+    {
+      "id": "heldout_project_bullets",
+      "category": "citation_scope",
+      "question": "List the next recorded action, owner and deadline for Ember, Harbor and Ridge. Use one bullet per project.",
+      "context": {},
+      "sources": [
+        {
+          "id": "ember",
+          "title": "Ember",
+          "location": "body",
+          "text": "Nora is to draft the Ember outline by October 4, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "harbor",
+          "title": "Harbor",
+          "location": "body",
+          "text": "Tomas is to send Harbor\u2019s budget by October 7, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "ridge",
+          "title": "Ridge",
+          "location": "body",
+          "text": "Mira is to schedule the Ridge review. No deadline is recorded.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "ember": "Ember: Nora is to draft the outline by October 4, 2026.",
+        "harbor": "Harbor: Tomas is to send the budget by October 7, 2026.",
+        "ridge": "Ridge: Mira is to schedule the review; no deadline is recorded.",
+        "plans": "Report planned next actions, not completed work; one bullet per project."
+      },
+      "rubric": [
+        "Each project claim needs the appropriate source; a final-bullet citation does not establish preceding bullet scope."
+      ]
+    },
+    {
+      "id": "heldout_task_table",
+      "category": "status",
+      "question": "Show every task in Workshop checklist in a table with recorded status, deadline, and whether it is actionable overdue work as of October 2, 2026. Include completed tasks.",
+      "context": {
+        "localToday": "2026-10-02"
+      },
+      "sources": [
+        {
+          "id": "workshop",
+          "title": "Workshop checklist",
+          "location": "body",
+          "text": "- [ ] Draft outline @due(2026-10-01)\n- [x] Send budget @due(2026-09-30)\n- [ ] Book review",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "taskDates": {
+              "complete": true,
+              "entries": [
+                {
+                  "text": "- [ ] Draft outline @due(2026-10-01)",
+                  "status": "open",
+                  "dueDate": "2026-10-01"
+                },
+                {
+                  "text": "- [x] Send budget @due(2026-09-30)",
+                  "status": "completed",
+                  "dueDate": "2026-09-30"
+                },
+                {
+                  "text": "- [ ] Book review",
+                  "status": "open",
+                  "dueDate": null
+                }
+              ]
+            },
+            "coverage": {
+              "scope": "canonical_note",
+              "complete": true,
+              "wholeNoteComplete": true
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "outline": "Draft outline: open, due October 1, actionable overdue.",
+        "budget": "Send budget: completed, due September 30, not actionable overdue.",
+        "review": "Book review: open, no supported deadline, overdue status unestablished.",
+        "table": "Present every task in a table without inventing a deadline or omitting completed work."
+      },
+      "rubric": [
+        "Each row must have a supporting reference or an explicit whole-table source association."
+      ]
+    },
+    {
+      "id": "superseded_approval",
+      "category": "status",
+      "question": "As of September 10, is Harbor cleared to launch?",
+      "context": {
+        "asOf": "2026-09-10"
+      },
+      "sources": [
+        {
+          "id": "old",
+          "title": "old",
+          "location": "body",
+          "text": "September 1: approve September 12 release with route A.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "hold",
+          "title": "hold",
+          "location": "body",
+          "text": "September 8 supersedes the September 1 decision. Hold release. Resume only after route B passes a witnessed drill; no completion is recorded here.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "plan",
+          "title": "plan",
+          "location": "body",
+          "text": "September 9 plan: schedule the drill for September 11.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "decision": "Use the explicit superseding hold.",
+        "condition": "The supplied record does not establish whether the recovery condition has been met."
+      },
+      "rubric": [
+        "An older approval and a planned drill do not override an explicit superseding hold.",
+        "Do not assert that the drill definitely never happened merely because it was scheduled later."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,1456 @@
+{
+  "schemaVersion": 1,
+  "sampling": "Purposive selected historical failures and positive controls, including recent context replays. Different models, prompts and dates; not a random sample, paired comparison or current-model success rate. Each full answer is retained for context, but only the explicitly annotated claims are graded.",
+  "reviewer": "Codex manual claim review against exact captured sources and question/heading context",
+  "observations": [
+    {
+      "id": "recorded-title-cannot-date-insertion",
+      "category": "citation_scope",
+      "origin": {
+        "path": ".scratch/chat-reliability/artifacts/native-citation-mismatch.json",
+        "sha256": "968d6953b92bfe7cb72975df2ccd5219ddf6d3c024cc55a034f0d0361ae56a95",
+        "answerPointer": "/results/0/answer",
+        "questionPointer": "/results/0/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "2e40f886146aa405c9e4b0e57f321be42606f8b98fe061e0605ee8daa589d455",
+      "question": "From what I worked on between 2026-09-30T04:34:50.460Z (inclusive) and 2026-09-30T04:34:50.524Z (exclusive), what are things I need to do now? Explain what changed and use the latest status.",
+      "answer": "Here's what happened in that window and what's left to do.\n\n**What you added** (all three lines were inserted into **Meridian** in a single edit):\n\n1. \"Prepare an onboarding plan.\" [Source 1](passage:11ba1e62a0bbaf84bda076b7b4933af01e4df0b48fbd61be29989fdedb3dbbe3)\n2. \"Send Larissa the report\" (as an open checkbox) [Source 2](passage:86c30cd1e26ddf22ab0765e959567b8dce9fd9657041a69ffddc6d29133e347f)\n3. \"Experimental pilot idea.\" [Source 3](passage:2cafd3767b68ea32819063a20db59f90089feb3230c012b03df6252c11d4be43)\n\n**What changed since then** (a follow-up edit landed just after your window):\n\n| Item | Then | Now |\n|---|---|---|\n| Onboarding plan | \"Prepare an onboarding plan.\" | **Superseded** → \"arrange a vendor review instead\" [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n| Send Larissa the report | ☐ open | ☑ **checked off – done** [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n| Experimental pilot | \"Experimental pilot idea.\" | **Canceled** [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n\n**What you still need to do**\n\nFrom the work you captured in that window, the one remaining action is:\n\n- **Arrange a vendor review** — the onboarding plan you were preparing was explicitly superseded by this, so it's the live follow-up [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a).\n\nEverything else from that batch is either complete (Larissa's report) or closed (the pilot).\n\n> The note also carries a pre-existing open item — \"Ancient untouched backlog: redesign the logo\" [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) — but that predates your window and wasn't part of this work session.",
+      "sources": [
+        {
+          "id": "11ba1e62a0bbaf84bda076b7b4933af01e4df0b48fbd61be29989fdedb3dbbe3",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "Prepare an onboarding plan.\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790742890473,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790742890473,
+                "maxWallMillis": 1790742890473,
+                "minWallMillis": 1790742890473,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790742890473,
+                "currentExcerpt": "Prepare an onboarding plan.\n",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890473,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890473,
+                  "maxWallMillis": 1790742890473,
+                  "minWallMillis": 1790742890473,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "86c30cd1e26ddf22ab0765e959567b8dce9fd9657041a69ffddc6d29133e347f",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "- [ ] Send Larissa the report\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790742890473,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790742890473,
+                "maxWallMillis": 1790742890473,
+                "minWallMillis": 1790742890473,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790742890473,
+                "currentExcerpt": "- [ ] Send Larissa the report\n",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890473,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890473,
+                  "maxWallMillis": 1790742890473,
+                  "minWallMillis": 1790742890473,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "2cafd3767b68ea32819063a20db59f90089feb3230c012b03df6252c11d4be43",
+          "title": "Meridian activity regression",
+          "location": "title",
+          "text": "Meridian activity regression",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "The list item inherits the preceding What you added / inserted-in-a-single-edit heading; other list items and status claims are not graded here.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "\"Experimental pilot idea.\"",
+          "proposition": "The pilot-idea text was inserted into Meridian during the requested interval.",
+          "citationIds": [
+            "2cafd3767b68ea32819063a20db59f90089feb3230c012b03df6252c11d4be43"
+          ],
+          "requiresCitation": true,
+          "verdict": "unsupported",
+          "reason": "The associated Source 3 is a title passage. It contains neither the idea text nor retained addition timing.",
+          "failureTags": [
+            "title_for_content"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-valid-added-text",
+      "category": "history",
+      "origin": {
+        "path": ".scratch/chat-reliability/artifacts/native-citation-mismatch.json",
+        "sha256": "968d6953b92bfe7cb72975df2ccd5219ddf6d3c024cc55a034f0d0361ae56a95",
+        "answerPointer": "/results/0/answer",
+        "questionPointer": "/results/0/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "2e40f886146aa405c9e4b0e57f321be42606f8b98fe061e0605ee8daa589d455",
+      "question": "From what I worked on between 2026-09-30T04:34:50.460Z (inclusive) and 2026-09-30T04:34:50.524Z (exclusive), what are things I need to do now? Explain what changed and use the latest status.",
+      "answer": "Here's what happened in that window and what's left to do.\n\n**What you added** (all three lines were inserted into **Meridian** in a single edit):\n\n1. \"Prepare an onboarding plan.\" [Source 1](passage:11ba1e62a0bbaf84bda076b7b4933af01e4df0b48fbd61be29989fdedb3dbbe3)\n2. \"Send Larissa the report\" (as an open checkbox) [Source 2](passage:86c30cd1e26ddf22ab0765e959567b8dce9fd9657041a69ffddc6d29133e347f)\n3. \"Experimental pilot idea.\" [Source 3](passage:2cafd3767b68ea32819063a20db59f90089feb3230c012b03df6252c11d4be43)\n\n**What changed since then** (a follow-up edit landed just after your window):\n\n| Item | Then | Now |\n|---|---|---|\n| Onboarding plan | \"Prepare an onboarding plan.\" | **Superseded** → \"arrange a vendor review instead\" [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n| Send Larissa the report | ☐ open | ☑ **checked off – done** [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n| Experimental pilot | \"Experimental pilot idea.\" | **Canceled** [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) |\n\n**What you still need to do**\n\nFrom the work you captured in that window, the one remaining action is:\n\n- **Arrange a vendor review** — the onboarding plan you were preparing was explicitly superseded by this, so it's the live follow-up [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a).\n\nEverything else from that batch is either complete (Larissa's report) or closed (the pilot).\n\n> The note also carries a pre-existing open item — \"Ancient untouched backlog: redesign the logo\" [Source 4](passage:4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a) — but that predates your window and wasn't part of this work session.",
+      "sources": [
+        {
+          "id": "11ba1e62a0bbaf84bda076b7b4933af01e4df0b48fbd61be29989fdedb3dbbe3",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "Prepare an onboarding plan.\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790742890473,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790742890473,
+                "maxWallMillis": 1790742890473,
+                "minWallMillis": 1790742890473,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790742890473,
+                "currentExcerpt": "Prepare an onboarding plan.\n",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890473,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890473,
+                  "maxWallMillis": 1790742890473,
+                  "minWallMillis": 1790742890473,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "86c30cd1e26ddf22ab0765e959567b8dce9fd9657041a69ffddc6d29133e347f",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "- [ ] Send Larissa the report\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790742890473,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790742890473,
+                "maxWallMillis": 1790742890473,
+                "minWallMillis": 1790742890473,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790742890473,
+                "currentExcerpt": "- [ ] Send Larissa the report\n",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1ZX5G1A40D4WK4SRQ0D",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890473,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890473,
+                  "maxWallMillis": 1790742890473,
+                  "minWallMillis": 1790742890473,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "2cafd3767b68ea32819063a20db59f90089feb3230c012b03df6252c11d4be43",
+          "title": "Meridian activity regression",
+          "location": "title",
+          "text": "Meridian activity regression",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "4d4b2a12b02980d9aa8f2d6c6835dfa12a39e361d2f69c73018e475568cf490a",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890393,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G1WS6KKQ8B7E4QWSBJCR",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790742890393,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790742890530,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9G1WEV6Y8PV4HCP88JP3M",
+                "revisionId": "01M3R9G222FXKV7JEGB8135MQ5",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790742890530,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790742890530,
+                  "maxWallMillis": 1790742890530,
+                  "minWallMillis": 1790742890530,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Positive control from the same answer as the title mismatch; this does not grade the whole answer.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "\"Prepare an onboarding plan.\"",
+          "proposition": "The onboarding-plan text was recorded as added during the requested interval.",
+          "citationIds": [
+            "11ba1e62a0bbaf84bda076b7b4933af01e4df0b48fbd61be29989fdedb3dbbe3"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The cited historical body contains the exact line and added-change timing inside the requested window.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-pilot-running-invention",
+      "category": "history",
+      "origin": {
+        "path": ".scratch/chat-reliability/artifacts/native-discovery-only-research.json",
+        "sha256": "b37e0837792234d492d01eb2493efeb8ebe2e0407d8f44128559dcf0d815deac",
+        "answerPointer": "/results/1/answer",
+        "questionPointer": "/results/1/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "87279efca011dd6c1387600927c7d2baba08331678cc75963a5b1cea3f6e0a32",
+      "question": "Check the latest Meridian vendor status in related notes. What follow-ups remain now? Distinguish recorded commitments from suggestions.",
+      "answer": "Here's the current picture across your two Meridian notes:\n\n## What's settled (no action needed)\n\n- **Vendor review** — \"Vendor review is now recorded complete.\" [Source 2](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e). The earlier \"onboarding plan\" was explicitly superseded by this review (\"Onboarding plan superseded: arrange a vendor review instead.\" [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)), and that review is now done.\n- **Send Larissa the report** — marked done (`- [x]`) [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03).\n- **Experimental pilot** — recorded as canceled [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03). No follow-up implied.\n\n## Open recorded commitments\n\n- **Send Rhea the final contract** — still an unchecked box in the vendor status note [Source 2](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e). This is the one concrete follow-up that remains outstanding on the Meridian vendor thread.\n\n## Open but explicitly deprioritized\n\n- **Redesign the logo** — unchecked, but labeled \"Ancient untouched backlog\" [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03). It's recorded, not a suggestion, yet the wording signals you've long since deprioritised it. No urgency is implied by the note itself.\n\n## Recorded proposal (not a commitment)\n\n- **\"Initial proposal: weekly exports.\"** [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03) — This is a statement of an idea, not a task, checkbox, or explicit action item. Nothing in either note records a decision to adopt or reject it, so it's a suggestion you could act on or let go, not a recorded obligation.\n\n## What changed between the two notes\n\nThe activity-regression note [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03) shows the earlier state: onboarding was the plan, the pilot was running, and Larissa's report was pending. The vendor-status note [Source 2](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e) reflects the latest status: the onboarding plan was replaced by a vendor review, that review is complete, and the remaining concrete step is the contract to Rhea.\n\n---\n\n**Bottom line:** The only firm, still-open commitment tied to Meridian is **sending Rhea the final contract** [Source 2](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e). Everything else is either done, canceled, superseded, or a low-priority backlog item. The \"weekly exports\" line is a proposal you can still weigh [Source 4](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03).",
+      "sources": [
+        {
+          "id": "94ccf828348d3e148fa5b2f9c9eaeb30dafb6a0bde0db104d3337da7f3489c6f",
+          "title": "Meridian vendor status 0",
+          "location": "title",
+          "text": "Meridian vendor status 0",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e",
+          "title": "Meridian vendor status 0",
+          "location": "body",
+          "text": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "b43e4cbbc9d1c175c8ca930f9290f6395f95759e0644c9e2b53d6acf9d136c29",
+          "title": "Meridian activity regression",
+          "location": "title",
+          "text": "Meridian activity regression",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "The selected narrative is in What changed between the two notes and refers to Source 4 in that paragraph. Cancellation itself is not the failing claim.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "the pilot was running",
+          "proposition": "The earlier pilot state was active execution.",
+          "citationIds": [
+            "2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03"
+          ],
+          "requiresCitation": true,
+          "verdict": "unsupported",
+          "reason": "Source 4 records current cancellation. It does not establish that the earlier pilot ran; the retained earlier wording described an idea.",
+          "failureTags": [
+            "idea_as_execution"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-unread-historical-discovery",
+      "category": "read_authority",
+      "origin": {
+        "path": ".scratch/chat-reliability/artifacts/native-discovery-only-research.json",
+        "sha256": "b37e0837792234d492d01eb2493efeb8ebe2e0407d8f44128559dcf0d815deac",
+        "answerPointer": "/results/2/answer",
+        "questionPointer": "/results/2/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "e0147d1ad52fe18468150eb70826bba087b5e867b780afb5030838158d492b96",
+      "question": "Use research_notes to gather the specific Meridian passages changed between 2026-09-30T04:40:51.166Z and 2026-09-30T04:40:51.224Z, then independently read current related notes and tell me what remains to do. Use direct evidence if research cannot finish.",
+      "answer": "Here's what I found across both Meridian notes.\n\n## Passages changed in that window (2026‑09‑29 ~22:40:51 local, a 58 ms slice)\nThe only edits in that instant were **three lines added to [[Meridian activity regression]]** (recorded as added during the window):\n- \"Prepare an onboarding plan.\"\n- \"- [ ] Send Larissa the report\" (added as an open task)\n- \"Experimental pilot idea.\"\n\nAll three have since been edited, so that snapshot no longer reflects the note's current state:\n\n- The onboarding plan is now superseded — \"Onboarding plan superseded: arrange a vendor review instead.\" [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n- \"Send Larissa the report\" is now checked off [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n- \"The experimental pilot was canceled.\" [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n\n## What remains to do (current state)\n**Still open:**\n- **Redesign the logo** — listed as \"Ancient untouched backlog\" and unchecked [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n- **Send Rhea the final contract** — unchecked in [[Meridian vendor status]] [Source 4](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e)\n\n**No longer outstanding:**\n- Send Larissa the report — marked complete [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n- Vendor review (the onboarding plan's replacement) — \"recorded complete\" [Source 4](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e), so the \"arrange a vendor review\" direction in [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03) appears addressed\n- Experimental pilot — canceled [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)\n\n**Bottom line:** two concrete items remain — **redesign the logo** and **send Rhea the final contract** [Source 2](passage:2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03)[Source 4](passage:fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e). Everything the window added is already resolved or superseded.\n\nOne caveat: the open items are plain checkboxes with no recorded task metadata, so I'm reading them as open based on their unchecked markers and current wording rather than backend completion tracking.",
+      "sources": [
+        {
+          "id": "b43e4cbbc9d1c175c8ca930f9290f6395f95759e0644c9e2b53d6acf9d136c29",
+          "title": "Meridian activity regression",
+          "location": "title",
+          "text": "Meridian activity regression",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "2e673c8a5a2537a2290280b6f2ec616fe351b2b1e5ad37f90861f00ccf1bdd03",
+          "title": "Meridian activity regression",
+          "location": "body",
+          "text": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251101,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V24XA3XMB8RWVAS6PGA8",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743251101,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              },
+              {
+                "atMillis": 1790743251232,
+                "currentExcerpt": "# Meridian\n\n- [ ] Ancient untouched backlog: redesign the logo\n\nInitial proposal: weekly exports.\n\n- [x] Send Larissa the report\n\nOnboarding plan superseded: arrange a vendor review instead.\n\nThe experimental pilot was canceled.",
+                "noteId": "01M3R9V24GJXY2JKEP47KXBWNX",
+                "revisionId": "01M3R9V2AW9E2Q8TY3F4ZFNGYB",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790743251232,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790743251232,
+                  "maxWallMillis": 1790743251232,
+                  "minWallMillis": 1790743251232,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "94ccf828348d3e148fa5b2f9c9eaeb30dafb6a0bde0db104d3337da7f3489c6f",
+          "title": "Meridian vendor status 0",
+          "location": "title",
+          "text": "Meridian vendor status 0",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "fcbbf274ea34d0165b4c1b9a7d785390de2e51110464cf357a4bfd128406a13e",
+          "title": "Meridian vendor status 0",
+          "location": "body",
+          "text": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": [
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              },
+              {
+                "atMillis": 1790743428802,
+                "currentExcerpt": "# Meridian vendor status\n\nVendor review is now recorded complete.\n\n- [ ] Send Rhea the final contract.",
+                "noteId": "01M3RA0FNSP5NGH550ZBRATM3A",
+                "revisionId": "01M3RA0FP2EX4BY136SPN6KDCE",
+                "source": "noteCreation",
+                "timeEvidence": {
+                  "committedAtMillis": 1790743428802,
+                  "kind": "committed"
+                }
+              }
+            ]
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Only the historical-change section is graded. Current-status sections have their own citations and are not counted as failures here.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "three lines added to [[Meridian activity regression]]",
+          "proposition": "The three listed old lines were added during the requested historical interval.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The section lists historical additions without an inline historical citation; the admitted sources contain only current/title passages. Discovery previews cannot replace an admitted retained-change read.",
+          "failureTags": [
+            "missing_citation",
+            "preview_as_evidence"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-worker-date-rendering",
+      "category": "dates",
+      "origin": {
+        "path": ".scratch/chat-reliability/artifacts/worker-structured-final.json",
+        "sha256": "a3efbddf431f13f97128b0787138f0afecb94e2d3d8dc0030c8afc3e5b577ccf",
+        "answerPointer": "/results/4/answer",
+        "questionPointer": "/results/4/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "3f7371d93d710d4e2a11b3149a82b2e10f6b917e6039963fae7f68d708dedabd",
+      "question": "Use research_notes to gather the specific Meridian passages changed between 2026-09-30T15:08:58.497Z and 2026-09-30T15:08:58.564Z, then independently read current related notes and tell me what remains to do. Use direct evidence if research cannot finish.",
+      "answer": "Here's what I found across the Meridian notes.\n\n---\n\n## What changed in the 67 ms window (Wed 9 Sep 2026, 09:08:58.497–.564 MDT)\n\nA single editor action in **Meridian** added three lines [Source 1](passage:3311c9caa1b045027bc17ef8a83b50559cde04683b3234debbc7f8d5d9eac5e3)[Source 2](passage:9baad9afb31ca600174f5b8bd185187f797643cdbd234537c0db3419cf522a1a)[Source 3](passage:65c0375766cf4c9b54c9c97fabb81769359e4caa0b02b857f024903cb1d77427):\n\n1. `- [ ] Send Larissa the report.` — an open checkbox task\n2. `Prepare an onboarding plan.` — plain-text note\n3. `Experimental pilot idea.` — plain-text note\n\nAll three were **added** (not removed) at the same revision, in the same sub-100 ms editing window.\n\n## What the current note looks like\n\nReading the live note now [Source 5](passage:119f0d7f3a91c2e0f7e71f9aeeede1adb839a2d1d992312dcbcb7c401540ff1e) shows a different picture — the note has been further edited since that window:\n\n> `# Meridian`\n>\n> Unchanged background.\n>\n> `- [x] Send Larissa the report.`\n>\n> `- [ ] Send Rhea the final contract.`\n\nSo compared to the window snapshot:\n\n| Line added in the window | Status now |\n|---|---|\n| Send Larissa the report | **Completed** (checkbox now `[x]`) |\n| Prepare an onboarding plan | **Removed** from the note — no record of whether it was done or dropped |\n| Experimental pilot idea | **Removed** from the note — no record of whether it was done or dropped |\n| *(not in the window)* Send Rhea the final contract | **Still open** `[ ]` |\n\n## What remains to do\n\nThe single confirmed open item across the Meridian notes is:\n\n- **Send Rhea the final contract** — unchecked in the current note [Source 5](passage:119f0d7f3a91c2e0f7e71f9aeeede1adb839a2d1d992312dcbcb7c401540ff1e).\n\n\"Send Larissa the report\" is recorded complete [Source 5](passage:119f0d7f3a91c2e0f7e71f9aeeede1adb839a2d1d992312dcbcb7c401540ff1e). The onboarding-plan and pilot-idea lines are gone from the note; without task facts or a removal timestamp I can't say whether they were finished or simply deleted.\n\n### Coverage gap\n\nA second note, **Meridian vendor status**, also surfaced in search. Its visible excerpt says *\"Vendor review is now recorded complete,\"* but the shared evidence budget was exhausted before I could read the full note [citation unavailable]. If that note carries additional open items, they aren't visible in what I could retrieve. I'd recommend opening it directly to confirm nothing else is pending.",
+      "sources": [
+        {
+          "id": "3311c9caa1b045027bc17ef8a83b50559cde04683b3234debbc7f8d5d9eac5e3",
+          "title": "Meridian research fixture",
+          "location": "body",
+          "text": "- [ ] Send Larissa the report.\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790780938504,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790780938504,
+                "maxWallMillis": 1790780938504,
+                "minWallMillis": 1790780938504,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790780938504,
+                "currentExcerpt": "- [ ] Send Larissa the report.\n",
+                "noteId": "01M3SDS65RXZEXRKBVN1V5WM6E",
+                "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790780938504,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790780938504,
+                  "maxWallMillis": 1790780938504,
+                  "minWallMillis": 1790780938504,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "9baad9afb31ca600174f5b8bd185187f797643cdbd234537c0db3419cf522a1a",
+          "title": "Meridian research fixture",
+          "location": "body",
+          "text": "Prepare an onboarding plan.\n",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790780938504,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790780938504,
+                "maxWallMillis": 1790780938504,
+                "minWallMillis": 1790780938504,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790780938504,
+                "currentExcerpt": "Prepare an onboarding plan.\n",
+                "noteId": "01M3SDS65RXZEXRKBVN1V5WM6E",
+                "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790780938504,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790780938504,
+                  "maxWallMillis": 1790780938504,
+                  "minWallMillis": 1790780938504,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "65c0375766cf4c9b54c9c97fabb81769359e4caa0b02b857f024903cb1d77427",
+          "title": "Meridian research fixture",
+          "location": "body",
+          "text": "Experimental pilot idea.",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "historical": {
+              "changeKind": "added",
+              "contentRevisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+              "source": "editor",
+              "timeEvidence": {
+                "clockDiscontinuity": false,
+                "firstWallMillis": 1790780938504,
+                "kind": "editingWindow",
+                "lastWallMillis": 1790780938504,
+                "maxWallMillis": 1790780938504,
+                "minWallMillis": 1790780938504,
+                "version": 1
+              }
+            },
+            "revisions": [
+              {
+                "atMillis": 1790780938504,
+                "currentExcerpt": "Experimental pilot idea.",
+                "noteId": "01M3SDS65RXZEXRKBVN1V5WM6E",
+                "revisionId": "01M3SDS699EF07K70A98ZEN5QX",
+                "source": "editor",
+                "timeEvidence": {
+                  "clockDiscontinuity": false,
+                  "firstWallMillis": 1790780938504,
+                  "kind": "editingWindow",
+                  "lastWallMillis": 1790780938504,
+                  "maxWallMillis": 1790780938504,
+                  "minWallMillis": 1790780938504,
+                  "version": 1
+                }
+              }
+            ]
+          }
+        },
+        {
+          "id": "1e7f21bb0f40b2780da69a455a7adef7ce671177e92ab09f7be2d0c1613b0bb7",
+          "title": "Meridian research fixture",
+          "location": "title",
+          "text": "Meridian research fixture",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "119f0d7f3a91c2e0f7e71f9aeeede1adb839a2d1d992312dcbcb7c401540ff1e",
+          "title": "Meridian research fixture",
+          "location": "body",
+          "text": "# Meridian\n\nUnchanged background.\n\n- [x] Send Larissa the report.\n\n- [ ] Send Rhea the final contract.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Only the incorrect calendar heading, including the following historical section and its citations, is selected. The explicitly qualified unread-preview quotation is a separate policy-boundary observation, not graded here as an unqualified current completion claim. Other answer claims remain ungraded.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "Wed 9 Sep 2026",
+          "proposition": "The requested retained-change window fell on September 9, 2026.",
+          "citationIds": [
+            "3311c9caa1b045027bc17ef8a83b50559cde04683b3234debbc7f8d5d9eac5e3",
+            "9baad9afb31ca600174f5b8bd185187f797643cdbd234537c0db3419cf522a1a",
+            "65c0375766cf4c9b54c9c97fabb81769359e4caa0b02b857f024903cb1d77427"
+          ],
+          "requiresCitation": true,
+          "verdict": "contradicted",
+          "reason": "The question interval and the three cited retained changes establish September 30, 2026, not September 9. The heading qualifies the following citation-bearing historical section.",
+          "failureTags": [
+            "date_rendering"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-fenced-example-as-open",
+      "category": "dates",
+      "origin": {
+        "path": ".scratch/chat-date-context/artifacts/native-repeat.json",
+        "sha256": "062675d5385e365d6e26bd61ecec4fe0d032a557bc4b015e54a51ac52b4bd581",
+        "answerPointer": "/results/0/answer",
+        "questionPointer": "/results/0/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "61bf12339f4131de92192454ed2d50c4899af42905358c28946796fc0f5cebf2",
+      "question": "Read Meridian dates and explain which open tasks are overdue, due today, due tomorrow or have no supported explicit deadline. Give the dates and preserve each child's own status. Distinguish ordinary date/time text and invalid/code examples from deadlines. Cite current body evidence.",
+      "answer": "## Open tasks in [[Meridian dates]] — status as of Wednesday 30 September 2026\n\nAll facts below come from the current note body [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). \"Today\" is 30 Sept 2026 (America/Denver).\n\n### Overdue (open, due before today)\n\n| Task | Deadline | Note |\n|---|---|---|\n| Child deadline | **29 September 2026** | Open child under the parent. Its own `@due(2026-09-29)` is one day in the past → overdue [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n\n### Due today\n\n| Task | Deadline | Note |\n|---|---|---|\n| Today deadline | **30 September 2026** | Open, `@due(2026-09-30)` matches today [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n\n### Due tomorrow\n\n| Task | Deadline | Note |\n|---|---|---|\n| Parent deadline | **1 October 2026** | Open. Two annotations appear (`@due(2026-10-01)`, `@due(2026-10-07)`); the first valid one wins, so the effective deadline is 1 Oct 2026 → due tomorrow [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n\n### No supported explicit deadline\n\n| Task | Why |\n|---|---|\n| Undated child | Open, no `@due()` annotation at all [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n| Plain date 01/02/2027 21:32 | Open. The date \"01/02/2027 21:32\" is ordinary prose text, not a `@due()` annotation, so it carries no deadline [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n| Invalid deadline @due(2026-02-30) | Open. 30 February does not exist in the Gregorian calendar, making the annotation invalid; it is therefore not a supported deadline [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n| Code example `@due(2027-03-01)` | Open. The annotation sits inside inline code back-ticks, so it is a code example, not an active deadline [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n| Fenced example @due(2027-04-01) | Open. The line is inside a fenced ```markdown code block, so it is a code example, not an active deadline [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e). |\n\n### Completed (not actionable)\n\n- **Completed deadline @due(2026-09-29)** — checked `[x]`; its 29 Sept deadline is no longer actionable [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e).\n\n### Key distinctions preserved\n\n- **Children keep their own status.** The child deadline (overdue) and the undated child (no deadline) are independent of the parent's 1 Oct deadline; children do not inherit the parent's date [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e).\n- **Ordinary date/time text ≠ deadline.** \"01/02/2027 21:32\" is written as a plain date and time in the note's prose and carries no scheduling meaning [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e).\n- **Invalid / code annotations ≠ deadlines.** `@due(2026-02-30)` fails calendar validation; the inline-code and fenced-block examples are illustrative, not operative [Source 1](passage:750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e).",
+      "sources": [
+        {
+          "id": "750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e",
+          "title": "Meridian dates",
+          "location": "body",
+          "text": "# Meridian dates\n\n- [ ] Parent deadline @due(2026-10-01) @due(2026-10-07)\n  - [ ] Child deadline @due(2026-09-29)\n  - [ ] Undated child\n- [ ] Today deadline @due(2026-09-30)\n- [x] Completed deadline @due(2026-09-29)\n- [ ] Plain date 01/02/2027 21:32\n- [ ] Invalid deadline @due(2026-02-30)\n- [ ] Code example `@due(2027-03-01)`\n\n```markdown\n- [ ] Fenced example @due(2027-04-01)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "The Open classification in the table is evaluated with its heading and the complete fenced body context, not as a detached token.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "| Fenced example @due(2027-04-01) | Open.",
+          "proposition": "The fenced-code example is an open task with no supported deadline.",
+          "citationIds": [
+            "750af927f61d0f7ee92841f48e331a332b44cec76429e8b0943fc5ee71b7b42e"
+          ],
+          "requiresCitation": true,
+          "verdict": "contradicted",
+          "reason": "The cited body includes the surrounding markdown fence. A literal unchecked marker inside that fence is an example, not an open task; later caveats do not repair this table classification.",
+          "failureTags": [
+            "fenced_as_task",
+            "answer_inconsistency"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-fenced-and-completed-correct",
+      "category": "dates",
+      "origin": {
+        "path": ".scratch/chat-date-context/artifacts/native-final.json",
+        "sha256": "e0cd6522a2f67122496c67fa7368bcaa8317a9305d2a91e43927bc147f31a3fd",
+        "answerPointer": "/results/0/answer",
+        "questionPointer": "/results/0/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "5e37e4fb30ed9460f81649915183cd753fe20cc928115b5023de5b3997084600",
+      "question": "Read Meridian dates and explain which open tasks are overdue, due today, due tomorrow or have no supported explicit deadline. Give the dates and preserve each child's own status. Distinguish ordinary date/time text and invalid/code examples from deadlines. Cite current body evidence.",
+      "answer": "## Meridian dates — task deadline analysis\n\nReference date: **Wednesday 30 September 2026** (America/Denver).\n\n### Open tasks with a supported explicit deadline\n\n| Task | Deadline | Classification |\n|------|----------|----------------|\n| `Child deadline` (child of \"Parent deadline\") | **29 September 2026** | **Overdue** (yesterday) |\n| `Today deadline` | **30 September 2026** | **Due today** |\n| `Parent deadline` | **1 October 2026** | **Due tomorrow** |\n\n**Parent deadline detail:** The line reads `@due(2026-10-01) @due(2026-10-07)`. Per the deadline rules, the *first valid* annotation wins, so the effective date is 1 Oct 2026 (tomorrow); the second `@due(2026-10-07)` is ignored [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4).\n\n### Open tasks with **no** supported explicit deadline\n\n| Task | Why no deadline applies |\n|------|------------------------|\n| `Undated child` | No `@due` annotation at all [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4). |\n| `Plain date 01/02/2027 21:32` | Ordinary date/time text; not a `@due(…)` annotation [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4). |\n| `Invalid deadline @due(2026-02-30)` | 30 February 2026 is not a real calendar date (Feb 2026 has 28 days), so the annotation is **invalid** and does not establish a deadline [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4). |\n| `Code example `@due(2027-03-01)`` | The `@due` sits inside inline backticks, making it a **code example**, not a live annotation [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4). |\n\nThe fenced block in the note also contains `- [ ] Fenced example @due(2027-04-01)` inside a ` ```markdown ` code fence. Fenced code is illustrative text, not a real checkbox task, so it is excluded entirely [Source 2](passage:e1931ed2b401c9941116b638813d97c4a3d50fc57e64f1a1385a40f4fb0c32ed).\n\n### Completed task (not actionable)\n\n- `Completed deadline @due(2026-09-29)` — marked `[x]`, so it is **not** an open overdue item [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4).\n\n### Summary\n\n- **Overdue:** 1 open child task (29 Sep)\n- **Due today:** 1 open task (30 Sep)\n- **Due tomorrow:** 1 open parent task (1 Oct)\n- **No deadline / invalid / code:** 4 open lines + 1 fenced example carry no actionable deadline\n\nEach child task's own checkbox status is preserved independently of its parent: the \"Child deadline\" is open, the \"Undated child\" is open, and the parent's own `[ ]` marker is also open [Source 1](passage:0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4).",
+      "sources": [
+        {
+          "id": "0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4",
+          "title": "Meridian dates",
+          "location": "body",
+          "text": "- [ ] Parent deadline @due(2026-10-01) @due(2026-10-07)\n  - [ ] Child deadline @due(2026-09-29)\n  - [ ] Undated child\n- [ ] Today deadline @due(2026-09-30)\n- [x] Completed deadline @due(2026-09-29)\n- [ ] Plain date 01/02/2027 21:32\n- [ ] Invalid deadline @due(2026-02-30)\n- [ ] Code example `@due(2027-03-01)`",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "e1931ed2b401c9941116b638813d97c4a3d50fc57e64f1a1385a40f4fb0c32ed",
+          "title": "Meridian dates",
+          "location": "body",
+          "text": "```markdown\n- [ ] Fenced example @due(2027-04-01)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Two explicit classifications are selected. This does not grade the remaining inventory, date facts or whole-answer consistency.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "Fenced code is illustrative text, not a real checkbox task, so it is excluded entirely",
+          "proposition": "The fenced example is excluded from the task inventory.",
+          "citationIds": [
+            "e1931ed2b401c9941116b638813d97c4a3d50fc57e64f1a1385a40f4fb0c32ed"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The dedicated cited passage preserves the complete fence around the example.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "so it is **not** an open overdue item",
+          "proposition": "The checked Completed deadline is not actionable open overdue work.",
+          "citationIds": [
+            "0c090aa5e9603b7d61ae4505390d2d227bf885833653946d29f9449bcb35f0c4"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Source 1 contains the exact checked line and its past deadline. The claim concerns recorded checkbox status.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-correct-child-deadline",
+      "category": "dates",
+      "origin": {
+        "path": ".scratch/chat-date-context/artifacts/native-final.json",
+        "sha256": "e0cd6522a2f67122496c67fa7368bcaa8317a9305d2a91e43927bc147f31a3fd",
+        "answerPointer": "/results/1/answer",
+        "questionPointer": "/results/1/question",
+        "model": "qwen/qwen3.8-27b"
+      },
+      "snapshotSha256": "d6a8ac8a3ad980649ea6556cb3c49394b03aaa61c63e66e17ec6431b94fd0c68",
+      "question": "Use research_notes to gather current explicit task deadlines from note_ids [\"01M3SRR2CD61RTPJ2Y1P1SW18S\"], then Read Meridian dates and explain which open tasks are overdue, due today, due tomorrow or have no supported explicit deadline. Give the dates and preserve each child's own status. Distinguish ordinary date/time text and invalid/code examples from deadlines. Cite current body evidence.",
+      "answer": "## Task deadlines in \"Meridian dates\"\n\nAll tasks below come from the current body of the note [Source 1](passage:be0cbde68e382923a39a98045aa0a1b8ba18c1c2ac5d7dfe67ecb1d5e75b2e91). The reference instant is **Wednesday 30 Sep 2026**, local 12:21 (America/Denver), so today is 30 Sep, tomorrow is 1 Oct, and anything due 29 Sep or earlier is overdue.\n\n### Open tasks with a valid deadline\n\n| Task | Due | Status | Category |\n|---|---|---|---|\n| `Child deadline` (child of Parent) | **29 Sep 2026** | open | **Overdue** – due yesterday |\n| `Today deadline` | **30 Sep 2026** | open | **Due today** |\n| `Parent deadline` | **1 Oct 2026** (first valid `@due` wins; the second `@due(2026-10-07)` is ignored) | open | **Due tomorrow** |\n\n### Open tasks with **no** supported explicit deadline\n\n| Task | Why no deadline |\n|---|---|\n| `Undated child` (child of Parent) | No `@due` annotation at all. |\n| `Plain date 01/02/2027 21:32` | The date is ordinary prose text, not a valid `@due(…)` annotation. |\n| `Invalid deadline @due(2026-02-30)` | 2026-02-30 is not a valid Gregorian date (February has at most 29 days), so the annotation is invalid and carries no deadline. |\n| `Code example \\`@due(2027-03-01)\\`` | The `@due` is wrapped in inline backticks, making it code text rather than a live annotation. |\n\n### Completed task (not actionable)\n\n| Task | Due | Status |\n|---|---|---|\n| `Completed deadline` | 29 Sep 2026 | **completed** (`[x]`) – no longer overdue work |\n\n### Fenced-code example (not a task)\n\nThe line `- [ ] Fenced example @due(2027-04-01)` sits inside a ` ```markdown … ``` ` code fence. Per the rules it is an example, not a real checkbox task, and is excluded from the inventory above.\n\n### Summary\n\n- **1 overdue** open task: the child \"Child deadline\" (due 29 Sep).\n- **1 due today**: \"Today deadline\" (due 30 Sep).\n- **1 due tomorrow**: \"Parent deadline\" (due 1 Oct; the first valid annotation `2026-10-01` governs).\n- **4 open items with no valid deadline**: Undated child, Plain date, Invalid deadline, Code example.\n- **1 completed** item: \"Completed deadline.\"\n- **1 fenced-code example** excluded from the task count.\n\nEach child retains its own status: both children of the Parent task are open; the Parent itself is also open. The completed item is reported separately and not counted as actionable. [Source 1](passage:be0cbde68e382923a39a98045aa0a1b8ba18c1c2ac5d7dfe67ecb1d5e75b2e91)",
+      "sources": [
+        {
+          "id": "be0cbde68e382923a39a98045aa0a1b8ba18c1c2ac5d7dfe67ecb1d5e75b2e91",
+          "title": "Meridian dates",
+          "location": "body",
+          "text": "# Meridian dates\n\n- [ ] Parent deadline @due(2026-10-01) @due(2026-10-07)\n  - [ ] Child deadline @due(2026-09-29)\n  - [ ] Undated child\n- [ ] Today deadline @due(2026-09-30)\n- [x] Completed deadline @due(2026-09-29)\n- [ ] Plain date 01/02/2027 21:32\n- [ ] Invalid deadline @due(2026-02-30)\n- [ ] Code example `@due(2027-03-01)`\n\n```markdown\n- [ ] Fenced example @due(2027-04-01)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Citation scope is the explicit All tasks below introduction and final reference, not an automatically inferred nearest link. Only the child deadline row is graded.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Overdue** – due yesterday",
+          "proposition": "The open Child deadline due September 29 is overdue relative to September 30.",
+          "citationIds": [
+            "be0cbde68e382923a39a98045aa0a1b8ba18c1c2ac5d7dfe67ecb1d5e75b2e91"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The answer explicitly scopes its table to Source 1. That body contains the open child line with @due(2026-09-29); the recorded reference day is September 30.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-wrong-production-source",
+      "category": "citation_scope",
+      "origin": {
+        "path": ".scratch/chat-context-selection/referent-native-6.json",
+        "sha256": "a579a04c72c7acda96e0f889566ba77bcc6473bbc819e407b4dfcbb7ae94da90",
+        "answerPointer": "/results/2/answer",
+        "questionPointer": "/results/2/question",
+        "model": "gpt-6-luna"
+      },
+      "snapshotSha256": "4850d41893665282fb3d08ada5e285a93c0d0a357ce5937b78a5b27297438506",
+      "question": "I updated the production note. Read it again: what is the recovery token now?",
+      "answer": "The recovery token in the updated production note is **AMBER-119**. The note describes an experimental sandbox and says Iris signed off on the rehearsal; it doesn’t identify a production launch sign-off.[Source 2](passage:68c65289e46fdf82ba8c2458bb6c3338cb83255f302aa80130e18e7737406a3a)",
+      "sources": [
+        {
+          "id": "aa7580f38faf6fc87b415800eaa3aba2e5e20a2c3f1a51349eb9003a9eaf5bea",
+          "title": "Meridian operations draft",
+          "location": "title",
+          "text": "Meridian operations draft",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "68c65289e46fdf82ba8c2458bb6c3338cb83255f302aa80130e18e7737406a3a",
+          "title": "Meridian operations draft",
+          "location": "body",
+          "text": "Experimental sandbox only. Iris signed off on the rehearsal.\n\nRecovery token: AMBER-119.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "The contradictory rehearsal caveat is retained in the full answer; it does not establish the preceding production claim.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The recovery token in the updated production note is **AMBER-119**.",
+          "proposition": "The updated production note records AMBER-119.",
+          "citationIds": [
+            "68c65289e46fdf82ba8c2458bb6c3338cb83255f302aa80130e18e7737406a3a"
+          ],
+          "requiresCitation": true,
+          "verdict": "unsupported",
+          "reason": "The cited source is Meridian operations draft and explicitly describes a sandbox rehearsal. It supports that draft token, not the asserted production-note token.",
+          "failureTags": [
+            "wrong_note_attribution"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-fresh-production-token",
+      "category": "citation_scope",
+      "origin": {
+        "path": ".scratch/chat-context-selection/referent-native-8.json",
+        "sha256": "69b504e0ce102d7edd7c1645acb9cb3649e8e72eb6ceed75de0e66a754c853d1",
+        "answerPointer": "/results/2/answer",
+        "questionPointer": "/results/2/question",
+        "model": "gpt-6-luna"
+      },
+      "snapshotSha256": "1ce42874d5e76ad95715c35f743072e1e9ba67e70d173ebf11db608ae1085e6e",
+      "question": "I updated the production note. Read it again: what is the recovery token now?",
+      "answer": "The current production note lists the recovery token as **TOPAZ-642** and says it supersedes the previous token. [Source 2](passage:b5aed8c108238b671710cbe38ab5c6c49f39a5481796245876622cf96a0c8cfd)",
+      "sources": [
+        {
+          "id": "d047181b4d676718e0eb5d5991db99599e6b68cdc998bdfd87789d47365f2fd8",
+          "title": "Meridian operations",
+          "location": "title",
+          "text": "Meridian operations",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "b5aed8c108238b671710cbe38ab5c6c49f39a5481796245876622cf96a0c8cfd",
+          "title": "Meridian operations",
+          "location": "body",
+          "text": "Mateo signed off on the production rollout.\n\nRecovery token: TOPAZ-642. This supersedes the previous token.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Recent positive control from the final context layout; this is one selected answer rather than a broad production benchmark.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The current production note lists the recovery token as **TOPAZ-642** and says it supersedes the previous token.",
+          "proposition": "The current production token is TOPAZ-642 and supersedes the prior token.",
+          "citationIds": [
+            "b5aed8c108238b671710cbe38ab5c6c49f39a5481796245876622cf96a0c8cfd"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The cited fresh Meridian operations body explicitly records both the token and supersession.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    },
+    {
+      "id": "recorded-correct-fact-without-citation",
+      "category": "citation_presence",
+      "origin": {
+        "path": ".scratch/chat-context-selection/referent-native-2.json",
+        "sha256": "7046d0d2e25367318183d898be7662bc7f94231ebc7d07882a2e00f3a1371182",
+        "answerPointer": "/results/3/answer",
+        "questionPointer": "/results/3/question",
+        "model": "gpt-6-luna"
+      },
+      "snapshotSha256": "2f814ee4810560f05423a0ecefccc8bdd1b7725b3e198b0495fbbd46f71b9075",
+      "question": "Switch topics: in Cedar afternoon, where and when are we meeting?",
+      "answer": "According to **Cedar afternoon**, you’re meeting beside the lake at **13:30**. The note doesn’t specify a date or timezone.",
+      "sources": [
+        {
+          "id": "2834211b2c96c739c75db1440c229f2d5db1668c5ab881620a06acdd636ee629",
+          "title": "Cedar afternoon",
+          "location": "body",
+          "text": "Outdoor meal: meet beside the lake at 13:30.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        },
+        {
+          "id": "e4b20ed016e45dd8a52b7704f1f7f9cc903c2b5c3dd270d3f0ae5db3b43e80c4",
+          "title": "Cedar afternoon",
+          "location": "body",
+          "text": "Bring nectarines.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "revisions": []
+          }
+        }
+      ],
+      "claimInventory": "focused",
+      "reviewBoundary": "Only the meeting fact is graded; the additional no-date/timezone statement is outside this focused review.",
+      "requirements": {
+        "focus": "Review only the explicitly selected claim(s), including relevant heading/section context."
+      },
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "you’re meeting beside the lake at **13:30**",
+          "proposition": "Cedar afternoon records meeting beside the lake at 13:30.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "Acquired Cedar passages contain the requested facts, but the delivered answer supplies no inline citation. Correct underlying facts do not create a supporting citation.",
+          "failureTags": [
+            "missing_citation"
+          ]
+        }
+      ],
+      "coverage": [
+        {
+          "id": "focus",
+          "status": "covered",
+          "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,322 @@
+{
+  "corpusSha256": "30265df5ff365d57ce08a644c1932bae2f1a15646afe74e1f57ca1dabdaec532",
+  "instruction": "Annotate every note-based claim, exact quote, citation scope, semantic verdict/reason and required coverage. Empty or pending reviews cannot pass.",
+  "results": [
+    {
+      "caseId": "deadline_inventory",
+      "answer": "As of September 30:\n\n- **Parent:** Open, due **October 1**—upcoming. The first valid due-date annotation applies; the later date is ignored.\n- **Child:** Open and **undated**. It does not inherit the parent’s deadline.\n- **Other examples:** The completed task was due September 29, but it is completed, so it is not actionable overdue work. The invalid date gives no supported deadline. The checkbox inside the fenced code block is only an example, not a task. [Source 1](passage:tasks)",
+      "answerSha256": "6516fcb1eae2c06606216e26530bf721b338580196a724eb4ab5c4e189bbc4c6",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Parent:** Open, due **October 1**—upcoming. The first valid due-date annotation applies; the later date is ignored.",
+          "proposition": "**Parent:** Open, due **October 1**—upcoming. The first valid due-date annotation applies; the later date is ignored.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The fact matches excerpt/parsed deadline, but the final Other examples bullet citation does not explicitly scope this preceding bullet.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "**Child:** Open and **undated**. It does not inherit the parent’s deadline.",
+          "proposition": "**Child:** Open and **undated**. It does not inherit the parent’s deadline.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The child details match the evidence but this preceding bullet is uncited.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-3",
+          "quote": "The completed task was due September 29, but it is completed, so it is not actionable overdue work.",
+          "proposition": "The completed task was due September 29, but it is completed, so it is not actionable overdue work.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The checked task and dueDate establish completed/not-actionable status; the same Other examples bullet has a trailing citation.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-4",
+          "quote": "The invalid date gives no supported deadline.",
+          "proposition": "The invalid date gives no supported deadline.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The invalid annotation has null parsed dueDate.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-5",
+          "quote": "The checkbox inside the fenced code block is only an example, not a task.",
+          "proposition": "The checkbox inside the fenced code block is only an example, not a task.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The fenced excerpt and actual task inventory establish exclusion.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "examples",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "completed",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current-production-references",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1297,
+          "output_tokens": 211,
+          "reasoning_tokens": 94,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1508
+        },
+        "origin": {
+          "path": "production-reference-runtime.json",
+          "resultIndex": 0
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial_read_absence",
+      "answer": "The available passage says only, “Deployment approval was discussed.” It does not name an approver, but I can’t determine whether the full note names one because its complete content isn’t available. [Source 1](passage:partial)",
+      "answerSha256": "f16b6eb9e4ad901d1d0f374ca1ed7b67358c195f06df444ddca218802627187e",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The available passage says only, “Deployment approval was discussed.” It does not name an approver",
+          "proposition": "The available passage says only, “Deployment approval was discussed.” It does not name an approver",
+          "citationIds": [
+            "partial"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The admitted selected excerpt supports the quote and bounded absence, with an explicit trailing reference in the same paragraph.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "I can’t determine whether the full note names one because its complete content isn’t available.",
+          "proposition": "I can’t determine whether the full note names one because its complete content isn’t available.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural evidence-boundary qualification matches wholeNoteComplete=false; no claim of whole-note absence.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "scope",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current-production-references",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 932,
+          "output_tokens": 88,
+          "reasoning_tokens": 39,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1020
+        },
+        "origin": {
+          "path": "production-reference-runtime.json",
+          "resultIndex": 1
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "deadline_inventory",
+      "answer": "- **Parent:** Open and due **October 1**, so it is upcoming as of September 30. The later October 7 annotation does not change the supported deadline. [Source 1](passage:tasks)\n- **Child:** Open, with **no supported deadline**; it does not inherit the parent’s date. [Source 1](passage:tasks)\n- **Examples:** The invalid-date task has no supported deadline. The fenced-code example is not an actual task, so it has no actionable deadline. [Source 1](passage:tasks)",
+      "answerSha256": "ba9b9e206458bafdd1df7f7d9df3feeae490c5ac1e016be274585f0c404bdf20",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Parent:** Open and due **October 1**, so it is upcoming as of September 30. The later October 7 annotation does not change the supported deadline.",
+          "proposition": "**Parent:** Open and due **October 1**, so it is upcoming as of September 30. The later October 7 annotation does not change the supported deadline.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "First-valid parsed dueDate and reference calendar support current classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "**Child:** Open, with **no supported deadline**; it does not inherit the parent’s date.",
+          "proposition": "**Child:** Open, with **no supported deadline**; it does not inherit the parent’s date.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Open child/null dueDate plus guidance support noninheritance.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "The invalid-date task has no supported deadline.",
+          "proposition": "The invalid-date task has no supported deadline.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Null parsed dueDate matches invalid February 30 annotation.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-4",
+          "quote": "The fenced-code example is not an actual task, so it has no actionable deadline.",
+          "proposition": "The fenced-code example is not an actual task, so it has no actionable deadline.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Fenced code is excluded from actual checkbox inventory.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "examples",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "completed",
+          "status": "missing",
+          "reason": "The answer omits the completed-task example and its non-actionable overdue classification."
+        }
+      ],
+      "metadata": {
+        "variant": "current-production-references",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 1294,
+          "input_tokens": 1297,
+          "output_tokens": 254,
+          "reasoning_tokens": 149,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1551
+        },
+        "origin": {
+          "path": "production-reference-runtime.json",
+          "resultIndex": 2
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial_read_absence",
+      "answer": "The supplied passage says, “Deployment approval was discussed,” but does not name an approver. I can’t determine whether the rest of *Meridian retrospective* names one because the complete note wasn’t provided.",
+      "answerSha256": "3063f8f2f607a3f38209771763540dc28d25575e53d6d47315a86cde420628f2",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The supplied passage says, “Deployment approval was discussed,” but does not name an approver.",
+          "proposition": "The supplied passage says, “Deployment approval was discussed,” but does not name an approver.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "Exact bounded fact is supported in the supplied input, but the raw answer has no reference; rendering does not add one.",
+          "failureTags": [
+            "missing_citation"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "I can’t determine whether the rest of *Meridian retrospective* names one because the complete note wasn’t provided.",
+          "proposition": "I can’t determine whether the rest of *Meridian retrospective* names one because the complete note wasn’t provided.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural limit of selected-passage context correctly preserves whole-note uncertainty.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "scope",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current-production-references",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 932,
+          "output_tokens": 96,
+          "reasoning_tokens": 48,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1028
+        },
+        "origin": {
+          "path": "production-reference-runtime.json",
+          "resultIndex": 3
+        }
+      },
+      "claimInventory": "full"
+    }
+  ]
+}

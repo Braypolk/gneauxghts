@@ -1,0 +1,312 @@
+{
+  "rigVersion": "0.44.0",
+  "model": "gpt-6-luna",
+  "reasoningEffort": "medium",
+  "serviceTier": "flex",
+  "cases": [
+    {
+      "structured": false,
+      "answer": "READY",
+      "passed": true,
+      "usage": {
+        "inputTokens": 26,
+        "outputTokens": 5,
+        "totalTokens": 31,
+        "cachedInputTokens": 0,
+        "cacheCreationInputTokens": 0,
+        "toolUsePromptTokens": 0,
+        "reasoningTokens": 0
+      },
+      "runtimeFailed": false,
+      "requestBytes": [
+        337
+      ],
+      "events": [
+        {
+          "type": "stepUpdated",
+          "index": 0,
+          "status": "running"
+        },
+        {
+          "type": "textDelta",
+          "delta": "READY"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 0,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 26,
+            "outputTokens": 5,
+            "totalTokens": 31,
+            "cachedInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 0,
+          "aggregate": {
+            "inputTokens": 26,
+            "outputTokens": 5,
+            "totalTokens": 31,
+            "cachedInputTokens": 0,
+            "cacheCreationInputTokens": 0,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        }
+      ]
+    },
+    {
+      "structured": true,
+      "answer": "{\"value\":\"Priya\"}",
+      "passed": true,
+      "usage": {
+        "inputTokens": 11516,
+        "outputTokens": 138,
+        "totalTokens": 11654,
+        "cachedInputTokens": 8438,
+        "cacheCreationInputTokens": 3063,
+        "toolUsePromptTokens": 0,
+        "reasoningTokens": 13
+      },
+      "runtimeFailed": false,
+      "requestBytes": [
+        9609,
+        11119,
+        15126,
+        19520,
+        20231
+      ],
+      "events": [
+        {
+          "type": "stepUpdated",
+          "index": 0,
+          "status": "running"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 0,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 1533,
+            "outputTokens": 23,
+            "totalTokens": 1556,
+            "cachedInputTokens": 0,
+            "cacheCreationInputTokens": 1530,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 0,
+          "aggregate": {
+            "inputTokens": 1533,
+            "outputTokens": 23,
+            "totalTokens": 1556,
+            "cachedInputTokens": 0,
+            "cacheCreationInputTokens": 1530,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_enTCL4cjTt5jZQNF5UoHte15",
+          "name": "find_notes",
+          "title": "Search notes for “Launch plan”",
+          "status": "running",
+          "step_index": 0
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_enTCL4cjTt5jZQNF5UoHte15",
+          "name": "find_notes",
+          "title": "Search notes for “Launch plan”",
+          "status": "success",
+          "step_index": 0,
+          "output_summary": "Matched 0 candidate passages",
+          "duration_millis": 8
+        },
+        {
+          "type": "stepUpdated",
+          "index": 1,
+          "status": "running"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 1,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 1731,
+            "outputTokens": 43,
+            "totalTokens": 1774,
+            "cachedInputTokens": 1530,
+            "cacheCreationInputTokens": 198,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 13
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 1,
+          "aggregate": {
+            "inputTokens": 3264,
+            "outputTokens": 66,
+            "totalTokens": 3330,
+            "cachedInputTokens": 1530,
+            "cacheCreationInputTokens": 1728,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 13
+          }
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_B2dsjsVS9Nlnp05n6UfaMx9Z",
+          "name": "find_notes",
+          "title": "Search notes for “Launch plan”",
+          "status": "running",
+          "step_index": 1,
+          "input_summary": "Up to 20 results"
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_B2dsjsVS9Nlnp05n6UfaMx9Z",
+          "name": "find_notes",
+          "title": "Search notes for “Launch plan”",
+          "status": "success",
+          "step_index": 1,
+          "input_summary": "Up to 20 results",
+          "output_summary": "Matched 2 candidate passages; coverage is partial",
+          "duration_millis": 8
+        },
+        {
+          "type": "stepUpdated",
+          "index": 2,
+          "status": "running"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 2,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 2157,
+            "outputTokens": 47,
+            "totalTokens": 2204,
+            "cachedInputTokens": 1728,
+            "cacheCreationInputTokens": 426,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 2,
+          "aggregate": {
+            "inputTokens": 5421,
+            "outputTokens": 113,
+            "totalTokens": 5534,
+            "cachedInputTokens": 3258,
+            "cacheCreationInputTokens": 2154,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 13
+          }
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_nNmZW3Ww6TeI67vFiBqZzULv",
+          "name": "read_notes",
+          "title": "Read selected passages",
+          "status": "running",
+          "step_index": 2
+        },
+        {
+          "type": "toolCallUpdated",
+          "call_id": "call_nNmZW3Ww6TeI67vFiBqZzULv",
+          "name": "read_notes",
+          "title": "Read selected passages",
+          "status": "success",
+          "step_index": 2,
+          "output_summary": "Read 2 passages from 1 notes",
+          "duration_millis": 6
+        },
+        {
+          "type": "stepUpdated",
+          "index": 3,
+          "status": "running"
+        },
+        {
+          "type": "textDelta",
+          "delta": "Pri"
+        },
+        {
+          "type": "textDelta",
+          "delta": "ya"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 3,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 3029,
+            "outputTokens": 6,
+            "totalTokens": 3035,
+            "cachedInputTokens": 2154,
+            "cacheCreationInputTokens": 872,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 3,
+          "aggregate": {
+            "inputTokens": 8450,
+            "outputTokens": 119,
+            "totalTokens": 8569,
+            "cachedInputTokens": 5412,
+            "cacheCreationInputTokens": 3026,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 13
+          }
+        },
+        {
+          "type": "stepUpdated",
+          "index": 4,
+          "status": "running"
+        },
+        {
+          "type": "stepUpdated",
+          "index": 4,
+          "status": "completed",
+          "usage": {
+            "inputTokens": 3066,
+            "outputTokens": 19,
+            "totalTokens": 3085,
+            "cachedInputTokens": 3026,
+            "cacheCreationInputTokens": 37,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 0
+          }
+        },
+        {
+          "type": "usageUpdated",
+          "call_index": 4,
+          "aggregate": {
+            "inputTokens": 11516,
+            "outputTokens": 138,
+            "totalTokens": 11654,
+            "cachedInputTokens": 8438,
+            "cacheCreationInputTokens": 3063,
+            "toolUsePromptTokens": 0,
+            "reasoningTokens": 13
+          }
+        }
+      ]
+    }
+  ]
+}

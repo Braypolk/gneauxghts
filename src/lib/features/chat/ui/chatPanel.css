@@ -681,6 +681,12 @@
   cursor: default;
   opacity: 0.4;
 }
+@media (max-width: 639px) {
+  .chat-send-button {
+    width: 2.75rem;
+    height: 2.75rem;
+  }
+}
 
 .chat-panel--inline {
   border-radius: 1.1rem;

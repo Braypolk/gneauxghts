@@ -1,0 +1,231 @@
+{
+  "method": "Manual answer-level source-coverage and factual/request-scope review. Observations are exact answer spans with explicit reasoning, not automatic entailment scores. No claim-count success metric is inferred.",
+  "cases": {
+    "deadline_inventory": {
+      "summary": "All classifications are correct in both arms. Markdown leaves the task table without an explicit source association; structured assigns the body source to each classified item.",
+      "markdown": {
+        "rawAnswerSha256": "1dc3695a84dc3009604c31b4472135eaac16bbd5e3f860a135835cfd3ca41792",
+        "citationCoveragePass": false,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "October 1, 2026 | **No**",
+            "reason": "Parent is correctly classified, but the table has no associated reference."
+          },
+          {
+            "quote": "Unknown** — without a supported deadline",
+            "reason": "Child uncertainty is preserved; the table is uncited."
+          },
+          {
+            "quote": "completed items are not actionable overdue work",
+            "reason": "Completion is correctly distinguished; the table is uncited."
+          },
+          {
+            "quote": "The fenced-code example is **not a task**",
+            "reason": "The separate fenced-example paragraph has a supporting body citation."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "f014b944bb6549ef7d61faf272665f23cfadd9d16e2f41c6212abe223ce7004b",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "the supported deadline is **October 1, 2026**",
+            "reason": "The first annotation is used and the segment cites S1."
+          },
+          {
+            "quote": "Whether it is overdue on September 30 is **unknown**.",
+            "reason": "Both undated task segments preserve uncertainty and cite S1."
+          },
+          {
+            "quote": "not actionable overdue work",
+            "reason": "Completed status is distinguished and cites S1."
+          },
+          {
+            "quote": "example, not a task",
+            "reason": "Fence exclusion is correct and cites S1."
+          }
+        ]
+      }
+    },
+    "partial-selected": {
+      "summary": "Both stay within the selected excerpt despite full-note evidence naming Jordan. Structured states whole-note uncertainty explicitly. Both cite the broader body passage, so precise selection citation remains unresolved.",
+      "markdown": {
+        "rawAnswerSha256": "3a13579e351a17aedbef2790dd8b07ba45191ac7f40fdfbb992688af565cdcf7",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "No. The selected excerpt says",
+            "reason": "Read No as the answer to can you tell, not a whole-note absence assertion. The rest of the sentence explicitly restricts the claim to the excerpt."
+          },
+          {
+            "quote": "but doesn’t name an approver.",
+            "reason": "The selected excerpt does not name anyone. S2 contains that excerpt, but also names Jordan outside it. The quoted sentence is punctuation-normalized, not byte-exact."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "358f8bdc01765274eaa7fee0f32cc48f48c1894005faefdf69b3801d434fad0e",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "Using only that excerpt, I can’t tell whether the note names one elsewhere.",
+            "reason": "Explicitly preserves uncertainty; S2 is a full-body link containing the selected excerpt. No inference that native selection enforcement is fixed."
+          }
+        ]
+      }
+    },
+    "partial-unrestricted": {
+      "summary": "Both correctly identify Jordan from the full body and cite S2. Selection context does not lock an unrestricted question to the excerpt.",
+      "markdown": {
+        "rawAnswerSha256": "ac15f8f152764b8fc6ad613f8a75e8856d5428721f11c9be57b58dbeacf51176",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "Jordan approved the deployment.",
+            "reason": "Full-body S2 supports the named approver; note title is attributed."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "b48513c5b0408556f794615a618e8e8f1fe553e752c672f65f8bdca3cbae567d",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "Jordan approved the deployment",
+            "reason": "Full-body S2 supports the named approver; note title is attributed."
+          }
+        ]
+      }
+    },
+    "heldout_project_bullets": {
+      "summary": "Both supply all three project actions, owners and deadlines with the correct per-project sources. These are previously used fixtures, not held-out evidence for this experiment.",
+      "markdown": {
+        "rawAnswerSha256": "eb5d301a1a9bdfd995ede625e09f68c946f3a7054ce195f063cb065f5cb479cc",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "Draft the outline — Nora; due October 4, 2026.",
+            "reason": "S1 supports Ember plan, owner and date."
+          },
+          {
+            "quote": "Send the budget — Tomas; due October 7, 2026.",
+            "reason": "S2 supports Harbor plan, owner and date."
+          },
+          {
+            "quote": "Schedule the review — Mira; no deadline recorded.",
+            "reason": "S3 supports Ridge plan, owner and absent recorded deadline."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "708d4c2069ebff583d35651ed6e0fa68cd5d4b48a4e5f2765e33eb98127945ee",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "Nora is to draft the outline; deadline: October 4, 2026.",
+            "reason": "S1 supports Ember plan, owner and date."
+          },
+          {
+            "quote": "Tomas is to send the budget; deadline: October 7, 2026.",
+            "reason": "S2 supports Harbor plan, owner and date."
+          },
+          {
+            "quote": "Mira is to schedule the review; no deadline is recorded.",
+            "reason": "S3 supports Ridge plan, owner and absent recorded deadline."
+          }
+        ]
+      }
+    },
+    "heldout_task_table": {
+      "summary": "Both cover all three tasks and explicitly associate the table with its body source. Markdown uses a qualified No for the undated task; its explanation preserves lack of evidence, while structured says Cannot determine directly.",
+      "markdown": {
+        "rawAnswerSha256": "e843373225b4afd7b5eb854afeffc738522be8d1c3c30a12225ebf82af70a15e",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "October 1, 2026 | Yes",
+            "reason": "Open outline is overdue as of October 2; table source S1 supports it."
+          },
+          {
+            "quote": "No — completed tasks are not actionable overdue work",
+            "reason": "Completed budget is not actionable; table source S1 supports it."
+          },
+          {
+            "quote": "No — without a recorded deadline, it cannot be identified as overdue",
+            "reason": "Accepted with the explicit qualification: cannot establish overdue, rather than proven not overdue. Bare No would fail uncertainty review."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "6c8e5a71303d454ff6014edb9ce7f5641608fb56a718128b5ce35a3cd3a28333",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "October 1, 2026 | Yes",
+            "reason": "Open outline is overdue as of October 2; segment source S1 supports it."
+          },
+          {
+            "quote": "No — completed tasks are not actionable overdue work",
+            "reason": "Completed budget is not actionable; segment source S1 supports it."
+          },
+          {
+            "quote": "Cannot determine; no deadline is recorded",
+            "reason": "Undated review remains unknown; segment source S1 supports it."
+          }
+        ]
+      }
+    },
+    "superseded_approval": {
+      "summary": "Both use the superseding hold, distinguish the scheduled drill from completion, and preserve the missing completion evidence. Structured uses one segment with all three sources; valid but less granular than Markdown’s individual references.",
+      "markdown": {
+        "rawAnswerSha256": "597b4fa21734a62faa934821764860198df5a982016c80cbf1445f8e7d96eb2f",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "supersedes the September 1 approval",
+            "reason": "S2 supports the superseding hold and release condition."
+          },
+          {
+            "quote": "it records no such completion.",
+            "reason": "This is bounded to the supplied record, not a claim the drill definitely never occurred."
+          },
+          {
+            "quote": "The drill was only planned for September 11",
+            "reason": "S3 supports the planned drill and its date."
+          }
+        ]
+      },
+      "structured": {
+        "rawAnswerSha256": "fe587f100846057430169df2612e77b1a61b770c3f28d9f5620d399ffd161cbe",
+        "citationCoveragePass": true,
+        "factAndScopePass": true,
+        "observations": [
+          {
+            "quote": "No—Harbor is not cleared to launch as of September 10.",
+            "reason": "Current hold S2 supports lack of recorded clearance; S1 supplies the older approval."
+          },
+          {
+            "quote": "release can resume only after route B passes a witnessed drill",
+            "reason": "S2 supplies the release condition."
+          },
+          {
+            "quote": "the available notes do not record a successful drill.",
+            "reason": "S2 and S3 support the bounded missing completion evidence; no real-world absence asserted."
+          }
+        ]
+      }
+    }
+  }
+}

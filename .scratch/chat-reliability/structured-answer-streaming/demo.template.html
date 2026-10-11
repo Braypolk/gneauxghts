@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Provisional answer streaming · throwaway prototype</title>
+<style>
+*{box-sizing:border-box}body{margin:36px auto;padding:0 22px;max-width:1100px;font:16px/1.5 system-ui;color:#202c34;background:#f5f7f8}h1{font-size:28px;margin-bottom:8px}h2{font-size:19px;margin:0 0 12px}p{max-width:900px}section{background:white;border:1px solid #dce2e5;border-radius:12px;padding:22px;margin:18px 0}button,select{font:inherit;border:1px solid #c7d0d5;background:white;border-radius:6px;padding:8px 12px;cursor:pointer;margin:3px}button:focus-visible{outline:3px solid #11847d}button.active{background:#116c67;color:white}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:14px/1.55 ui-monospace,monospace;background:#f7f9fa;padding:14px;border-radius:6px;max-height:300px;overflow:auto}.grid{display:grid;grid-template-columns:1fr 1fr;gap:22px}.fields{display:grid;grid-template-columns:150px 1fr;gap:6px}.muted{color:#63717b;font-size:14px}.badge{color:#116c67;font-weight:600}#links button{color:#116c67}#draft{min-height:100px}nav{margin-top:12px}details{margin-top:14px}summary{cursor:pointer}@media(max-width:720px){.grid{grid-template-columns:1fr}}
+</style>
+<h1>Read while the answer arrives</h1>
+<p>Can we show decoded answer text progressively, while keeping source links unavailable until the complete answer validates? This disposable prototype replays one real formatter stream and lets you explore cancellation, retries and rejected sources. Text stays literal and provisional while streaming.</p>
+<p id="verdict" class="muted"></p>
+<section>
+<h2>Current answer</h2>
+<div class="fields"><span>State</span><strong id="phase"></strong><span>Attempt</span><span id="attempt"></span><span>Recorded time</span><span id="time"></span><span>Replay progress</span><span id="progress"></span><span>Sources withheld</span><span id="withdrawn"></span><span>Last action</span><span id="action"></span><span>Ignored late events</span><span id="ignored"></span></div>
+<p id="notice" class="badge"></p><pre id="draft"></pre><div id="links"></div>
+<div class="grid"><details><summary>Formatter arguments received</summary><pre id="raw"></pre></details><details><summary>Exact supplied passage</summary><pre id="source"></pre></details></div>
+</section>
+<section><h2>Free play</h2><p class="muted">These controls change only in-memory demo state. There are no API requests, note writes or active external links. The complete answer remains plain text here so incomplete Markdown cannot create links.</p>
+<button id="next">Next stream event</button><button id="first">Advance to first text</button><button id="finish">Receive remaining answer</button><button id="cancel">Cancel answer</button><button id="fail">Connection fails</button><button id="retry">Start new attempt</button><button id="late">Deliver old-attempt text</button><button id="withdraw">Withdraw S1</button><button id="reset">Reset</button>
+</section>
+<section><h2>Guided walkthroughs</h2><nav id="tabs"></nav><p id="description"></p><div id="steps"></div></section>
+<section><h2>What this establishes</h2><p id="method"></p><details><summary>Captured output and review</summary><pre id="review"></pre></details></section>
+<script id="portable-logic">
+// Pure state transitions. Actual JSON-prefix decoding is in adapter.rs; draftText
+// actions below replay that Rust decoder's recorded output, not a second parser.
+const StreamDemo = (() => {
+ const initial = () => ({phase:'waiting',attempt:0,raw:'',draft:'',links:[],segments:[],withdrawn:[],millis:0,last:'Reset',ignored:0,error:''});
+ const validate = (raw,sources,withdrawn) => {
+  const object=JSON.parse(raw);
+  if(!object||Array.isArray(object)||Object.keys(object).length!==1||!Array.isArray(object.segments)||object.segments.length<1||object.segments.length>24)throw Error('Invalid result shape');
+  return object.segments.map(segment=>{
+   if(!segment||Array.isArray(segment)||Object.keys(segment).length!==2||typeof segment.text!=='string'||!segment.text.trim()||!Array.isArray(segment.sources))throw Error('Invalid segment');
+   if(new Set(segment.sources).size!==segment.sources.length)throw Error('Repeated source');
+   for(const id of segment.sources)if(typeof id!=='string'||!Object.hasOwn(sources,id)||withdrawn.includes(id))throw Error('Source is unissued or withdrawn: '+id);
+   return {text:segment.text,sources:[...segment.sources]};
+  });
+ };
+ const reduce=(previous,action,sources)=>{
+  const s={...previous,links:[...previous.links],withdrawn:[...previous.withdrawn]};
+  s.last=action.type;
+  if(action.type==='reset')return initial();
+  if(action.type==='withdraw'){
+   s.withdrawn=[...new Set([...s.withdrawn,action.id])];
+   if(s.phase==='validated'&&s.links.includes(action.id))return {...s,phase:'rejected',draft:'',links:[],segments:[],error:'A cited source was withdrawn; validated answer cleared'};
+   return s;
+  }
+  if(action.type==='retry'||action.type==='attemptReset')return {...initial(),attempt:s.attempt+1,withdrawn:s.withdrawn,millis:action.millis??s.millis,last:'New attempt',phase:'streaming'};
+  if(action.attempt!==undefined&&action.attempt!==s.attempt)return {...s,ignored:s.ignored+1,last:'Ignored old-attempt event'};
+  if(['cancelled','failed','rejected','validated'].includes(s.phase))return {...s,ignored:s.ignored+1,last:'Ignored event after terminal state'};
+  s.millis=action.millis??s.millis;
+  if(action.type==='cancel'||action.type==='fail'||action.type==='draftRejected')return {...s,phase:action.type==='cancel'?'cancelled':action.type==='fail'?'failed':'rejected',draft:'',links:[],segments:[],error:'Draft cleared; no validated answer'};
+  if(action.type==='formatterDelta')return {...s,phase:'streaming',raw:s.raw+action.delta};
+  if(action.type==='draftText')return {...s,phase:'streaming',draft:action.text,links:[]};
+  if(['validatedFinal','replaceDraft','finish'].includes(action.type)){
+   try{const segments=validate(s.raw,sources,s.withdrawn);return {...s,phase:'validated',draft:segments.map(x=>x.text).join('\n\n'),segments,links:[...new Set(segments.flatMap(x=>x.sources))]};}
+   catch(error){return {...s,phase:'rejected',draft:'',segments:[],links:[],error:error.message};}
+  }
+  if(['failed','rejectedFinal'].includes(action.type))return {...s,phase:'failed',draft:'',links:[],error:'Provider or final validation failed'};
+  return s;
+ };
+ return {initial,validate,reduce};
+})();
+</script>
+<script>
+const DATA=/*DATA*/;
+const row=DATA.runtime.results.find(x=>x.status==='complete');
+const supplied=Object.fromEntries(row.input.evidence.items.filter(x=>x.citation).map(x=>[x.citation.slice(1,-1),x]));
+const actual=[...row.stream.events,row.stream.terminal];
+const authored=(bad=false)=>{
+ const text='Quotes: "x"; line\nslash\\; unicode é and 🚀.';
+ const raw='{"segments":[{"sources":["'+(bad?'S99':'S1')+'"],"text":"Quotes: \\"x\\"; line\\nslash\\\\; unicode \\u00e9 and \\ud83d\\ude80."}]}';
+ // Authored fragments/drafts are labelled separately from measured model data.
+ return [{type:'attemptReset',millis:0},{type:'formatterDelta',delta:raw.slice(0,raw.indexOf('Quotes')),millis:1},
+ {type:'formatterDelta',delta:raw.slice(raw.indexOf('Quotes')),millis:2},{type:'draftText',text,millis:2},{type:'finish',millis:3}];
+};
+const scenarios=[
+ {name:'Real stream',description:'Actual gpt-6-luna formatter events. The adapter sees source IDs first, but publishes only decoded answer text. Source buttons appear after the complete result validates.',events:actual,steps:[['Receive first text','first'],['Finish and validate','finish']]},
+ {name:'Escapes and key order',description:'Authored walkthrough: sources precede text; quotes, newlines, backslashes and Unicode are decoded. The Rust offline walkthrough checks every character boundary, including split surrogate pairs. This page replays decoded events.',events:authored(),steps:[['Receive decoded text','first'],['Validate the complete JSON','finish']]},
+ {name:'Cancel and retry',description:'Authored actions over the real captured stream. Cancel clears the draft. A fresh attempt starts empty; a late event carrying the previous attempt ID is ignored.',events:actual,steps:[['Receive first text','first'],['Cancel answer','cancel'],['Start a fresh attempt','retry'],['Deliver late old text','late'],['Finish new attempt','finish']]},
+ {name:'Withdrawn source',description:'Authored action over the real captured stream. Withdraw S1 after draft text arrives. The final result must fail instead of publishing links to a removed source.',events:actual,steps:[['Receive first text','first'],['Withdraw S1','withdraw'],['Validate and reject','finish']]},
+ {name:'Invalid source',description:'Authored malformed result uses S99, which was never issued. Draft text can be visible, but final validation clears it and produces no source buttons. ID validation still does not prove semantic claim support.',events:authored(true),steps:[['Receive provisional text','first'],['Reject unissued ID','finish']]},
+];
+let state=StreamDemo.initial(),cursor=0,scenario=0,step=0;
+const el=id=>document.getElementById(id);
+function send(action){state=StreamDemo.reduce(state,action,supplied);render();}
+function next(){const events=scenarios[scenario].events;if(cursor<events.length)send(events[cursor++]);}
+function run(name){
+ if(name==='next')next();
+ else if(name==='first'){while(cursor<scenarios[scenario].events.length&&!state.draft)next();}
+ else if(name==='finish'){while(cursor<scenarios[scenario].events.length)next();}
+ else if(name==='reset'){cursor=0;step=0;send({type:'reset'});}
+ else if(name==='retry'){cursor=scenarios[scenario].events[0]?.type==='attemptReset'?1:0;send({type:'retry'});}
+ else if(name==='late')send({type:'draftText',attempt:state.attempt-1,text:'OLD ATTEMPT TEXT'});
+ else if(name==='withdraw')send({type:'withdraw',id:'S1'});
+ else send({type:name});
+}
+function render(){
+ el('phase').textContent=state.phase;el('attempt').textContent=state.attempt;el('time').textContent=state.millis+' ms';el('progress').textContent=cursor+' / '+scenarios[scenario].events.length+' events';el('withdrawn').textContent=state.withdrawn.join(', ')||'None';el('action').textContent=state.last;el('ignored').textContent=state.ignored;
+ el('notice').textContent=state.phase==='validated'?'Validated shape and issued sources. Semantic support still requires review.':state.error||'Provisional text · source links withheld';
+ el('draft').textContent=state.draft||'No answer text';el('raw').textContent=state.raw||'No formatter arguments';
+ el('links').replaceChildren();for(const id of state.links){const button=document.createElement('button');button.textContent=id+' · '+supplied[id].title;button.onclick=()=>{el('source').textContent=JSON.stringify(supplied[id],null,2);};el('links').append(button);}
+ el('description').textContent=scenarios[scenario].description;el('steps').replaceChildren();scenarios[scenario].steps.forEach(([label,name],index)=>{const b=document.createElement('button');b.textContent=(index+1)+'. '+label;b.disabled=index!==step;b.onclick=()=>{run(name);step++;render();};el('steps').append(b);});
+}
+for(const name of ['next','first','finish','cancel','fail','retry','late','withdraw','reset'])el(name).onclick=()=>run(name);
+scenarios.forEach((s,index)=>{const b=document.createElement('button');b.textContent=s.name;b.onclick=()=>{scenario=index;for(const tab of el('tabs').children)tab.classList.remove('active');b.classList.add('active');el('source').textContent='Select a validated source button';run('reset');};if(index===0)b.classList.add('active');el('tabs').append(b);});
+const m=DATA.summary;el('verdict').textContent='One answer completed; Flex unavailable on request two. First draft '+m.liveStream.firstDraftMillis+' ms; final '+m.liveStream.finalMillis+' ms. Compact format quality and token savings remain unmeasured.';
+el('method').textContent='Actual AgentRuntime and passage-reference renderer; synthetic delivered evidence, no executable tools or vault. The temporary adapter records formatter argument deltas. This replay is not native chat UI delivery or a tested durable retry/cancellation integration. Production core and runtime are unchanged. Browser layout remains unverified because local-file preview was blocked.';
+el('review').textContent=JSON.stringify({answer:row.rawAnswer,review:DATA.review,summary:DATA.summary},null,2);el('source').textContent='Select a validated source button';render();
+</script></html>

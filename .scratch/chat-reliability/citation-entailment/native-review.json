@@ -1,0 +1,278 @@
+{
+  "corpusSha256": "78a281c4d111ca8b22d4e8cd26968ef87a57c9cb0445fb38e64d6c1eb1de4195",
+  "instruction": "Annotate every note-based claim, exact quote, citation scope, semantic verdict/reason and required coverage. Empty or pending reviews cannot pass.",
+  "results": [
+    {
+      "caseId": "deadline-1",
+      "answer": "According to **Meridian deadlines**, the note records four checkbox items; the fenced-code example is not a task. As of **September 30, 2026**:\n\n| Checkbox item | Recorded status | Supported deadline | Actionable overdue on September 30? |\n|---|---|---|---|\n| Parent | Open | October 1, 2026\u2014the first valid `@due` annotation | **No**; its supported deadline was the next day. |\n| Undated child | Open | None recorded; it does not inherit the parent\u2019s deadline | **Cannot determine** from the note. |\n| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |\n| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |\n\nThe Parent line also has a later `@due(2026-10-07)` annotation, but the note\u2019s deadline parsing uses the first valid annotation. The fenced example is code, not a checkbox task. \u3010S2\u3011",
+      "answerSha256": "52c67188e53b054c8c5d5932c0ceb09f66de208e21d8a84ca8ee3b1dd92c752e",
+      "claims": [
+        {
+          "quote": "According to **Meridian deadlines**, the note records four checkbox items;",
+          "proposition": "The canonical note records four actual checkbox tasks.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-1"
+        },
+        {
+          "quote": "the fenced-code example is not a task.",
+          "proposition": "The fenced-code example is not an actual task.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-2"
+        },
+        {
+          "quote": "| Parent | Open | October 1, 2026\u2014the first valid `@due` annotation | **No**; its supported deadline was the next day. |",
+          "proposition": "Parent is open, due October 1, 2026 under first-valid precedence, and not overdue as of September 30, 2026.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-3"
+        },
+        {
+          "quote": "| Undated child | Open | None recorded; it does not inherit the parent\u2019s deadline | **Cannot determine** from the note. |",
+          "proposition": "Child is open and independently undated; overdue status cannot be determined as of September 30, 2026.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-4"
+        },
+        {
+          "quote": "| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |",
+          "proposition": "Completed task is recorded completed, due September 29, 2026, and not actionable overdue as of September 30, 2026.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-5"
+        },
+        {
+          "quote": "| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |",
+          "proposition": "Invalid-date task is open with no supported deadline; overdue status cannot be determined as of September 30, 2026.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-6"
+        },
+        {
+          "quote": "The Parent line also has a later `@due(2026-10-07)` annotation, but the note\u2019s deadline parsing uses the first valid annotation.",
+          "proposition": "Later October 7 annotation does not replace the first valid Parent due date.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-7"
+        },
+        {
+          "quote": "The fenced example is code, not a checkbox task.",
+          "proposition": "The fenced checkbox text is code rather than an actual task.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "This fact matches the native canonical body/parsed deadline interpretation, but raw literal \u3010S2\u3011 is not an issued usable reference and remains unlinked after rendering.",
+          "failureTags": [
+            "missing_citation",
+            "malformed_reference"
+          ],
+          "id": "claim-8"
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        },
+        {
+          "id": "completed",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        },
+        {
+          "id": "invalid",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        },
+        {
+          "id": "fence",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        },
+        {
+          "id": "inventory",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 2314,
+          "inputTokens": 5940,
+          "outputTokens": 529,
+          "reasoningTokens": 245,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 6469
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 0
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial-selected",
+      "answer": "Yes. Using only the selected excerpt, **Meridian retrospective names Jordan**: \u201cJordan approved deployment.\u201d [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+      "answerSha256": "1dfb5222022bae7558b0fe2aa8dc1ddc8ff3a557db043aab6830b1d08072c687",
+      "claims": [
+        {
+          "quote": "Using only the selected excerpt, **Meridian retrospective names Jordan**",
+          "proposition": "The selected excerpt names Jordan as an approver.",
+          "citationIds": [
+            "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c"
+          ],
+          "requiresCitation": true,
+          "verdict": "unsupported",
+          "reason": "The cited full-body passage supports Jordan in the note, but the selected excerpt is only \u201cDeployment approval was discussed.\u201d The attributed excerpt scope is unsupported and violates the explicit request. No whole-note absence is inferred.",
+          "failureTags": [
+            "source_scope_misattribution",
+            "request_scope_violation"
+          ],
+          "id": "claim-1"
+        },
+        {
+          "quote": "\u201cJordan approved deployment.\u201d",
+          "proposition": "\u201cJordan approved deployment.\u201d",
+          "citationIds": [
+            "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Exact quote occurs in the successfully read canonical body, outside the selected excerpt.",
+          "failureTags": [],
+          "id": "claim-2"
+        }
+      ],
+      "coverage": [
+        {
+          "id": "bounded_scope",
+          "status": "missing",
+          "reason": "The answer broadens beyond the explicit excerpt-only constraint and does not preserve uncertainty from that excerpt."
+        },
+        {
+          "id": "uncertainty",
+          "status": "missing",
+          "reason": "The answer broadens beyond the explicit excerpt-only constraint and does not preserve uncertainty from that excerpt."
+        }
+      ],
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 2375,
+          "inputTokens": 5628,
+          "outputTokens": 68,
+          "reasoningTokens": 0,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 5696
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 1
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial-unrestricted",
+      "answer": "Yes. Meridian retrospective names Jordan as the approver: \u201cJordan approved deployment.\u201d [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+      "answerSha256": "4ef45e4837fd3c6e5f11132d3e03d599113aeb471f1406290fb3f67e356520ed",
+      "claims": [
+        {
+          "quote": "Meridian retrospective names Jordan as the approver: \u201cJordan approved deployment.\u201d",
+          "proposition": "Meridian retrospective names Jordan as the approver: \u201cJordan approved deployment.\u201d",
+          "citationIds": [
+            "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The complete canonical body read contains the exact approval statement and establishes the named approver; unrestricted request permits reading beyond selection.",
+          "failureTags": [],
+          "id": "claim-1"
+        }
+      ],
+      "coverage": [
+        {
+          "id": "approver",
+          "status": "covered",
+          "reason": "The required factual classification or identification is correct; citation support is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 6806,
+          "inputTokens": 8132,
+          "outputTokens": 100,
+          "reasoningTokens": 9,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 8232
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 2
+        }
+      },
+      "claimInventory": "full"
+    }
+  ]
+}

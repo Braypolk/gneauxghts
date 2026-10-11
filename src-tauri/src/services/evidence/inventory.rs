@@ -89,14 +89,15 @@ impl EvidenceSession {
                 let candidate = &self.candidates[&row.evidence_id];
                 json!({"noteId":candidate.citation.note_id,"evidenceId":row.evidence_id,
                 "title":bounded(&row.title,240),"preview":bounded(&row.excerpt,PREVIEW_BYTES),
-                "exampleRecordedChange":row.activity.first(),"uncertain":row.uncertain})
+                "exampleRecordedChange":row.activity.first(),"uncertain":row.uncertain,
+                "alreadyRead":self.already_read(&candidate.citation)})
             })
             .collect();
         let payload = json!({"status":"ready","items":items,"notesReturned":items.len(),
             "pageOffset":inventory.page_offset,"nextCursor":inventory.continuation,
             "coverage":inventory.budgets["retrieval"]["coverage"],
             "resolvedRange":inventory.query,
-            "delivery":{"complete":inventory.continuation.is_none() && !inventory.budgets["stopReasons"].as_array().is_some_and(|reasons| reasons.iter().any(|r| r == "inventory_item_bytes")),"hasMore":inventory.continuation.is_some(),"limits":inventory.budgets["stopReasons"]},
+            "delivery":{"kind":"previews","complete":inventory.continuation.is_none() && !inventory.budgets["stopReasons"].as_array().is_some_and(|reasons| reasons.iter().any(|r| r == "inventory_item_bytes")),"hasMore":inventory.continuation.is_some(),"limits":inventory.budgets["stopReasons"]},
             "historyScope":if include_history {"retained_changes"} else {"surviving_content"},
             "meaning":"One example change per note; read evidence before citing, and search the same note/range for all matching passages. Counts are per page, not accomplishments."});
         let size = serde_json::to_vec(&payload)

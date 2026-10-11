@@ -20,6 +20,57 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// Collect a bounded read, including guidance-only and provenance pages.
+    /// Discovery and citation admission stay on the real evidence service path.
+    fn read_evidence_pages(
+        &self,
+        session: &mut crate::services::evidence::EvidenceSession,
+        mut request: crate::services::evidence::ReadRequest,
+    ) -> Vec<serde_json::Value> {
+        let mut pages = Vec::new();
+        let mut cursors = HashSet::new();
+        loop {
+            let (page, sources) = session
+                .read_request(&self.state, None, &HashSet::new(), request)
+                .unwrap();
+            assert!(page.to_string().len() <= crate::services::evidence::READ_BYTES);
+            assert!(page["failures"].as_array().unwrap().is_empty(), "{page}");
+            let items = page["items"].as_array().unwrap();
+            assert_eq!(sources.len(), items.len());
+            if items.is_empty() {
+                assert_eq!(page["truncationReason"], "guidance", "{page}");
+                assert!(!page["interpretationGuidance"]
+                    .as_array()
+                    .unwrap()
+                    .is_empty());
+            }
+            for (citation, _, _) in sources {
+                assert!(crate::services::evidence::validate_citation(
+                    &self.state,
+                    &citation,
+                    None,
+                    &HashSet::new()
+                )
+                .is_some());
+            }
+            let cursor = page["nextCursor"].as_str().map(str::to_owned);
+            if cursor.is_none() {
+                assert_eq!(page["delivery"]["complete"], true, "{page}");
+            }
+            pages.push(page);
+            let Some(cursor) = cursor else { break };
+            assert!(
+                cursors.insert(cursor.clone()),
+                "Read cursor did not advance"
+            );
+            request = crate::services::evidence::ReadRequest {
+                cursor: Some(cursor),
+                ..Default::default()
+            };
+        }
+        pages
+    }
+
     fn new() -> Self {
         let app_data = crate::test_support::TestDir::new("window-capture-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();

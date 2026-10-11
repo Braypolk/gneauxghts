@@ -41,3 +41,14 @@ provider generation. Consider a private targeted revision/predecessor comparison
 and reuse the already loaded discovery header while preserving lineage,
 permission and freshness checks. Keep this storage change separate from the
 completed worker milestone.
+
+## Separate native harness observation — 2026-10-10
+
+The [citation reproduction](../citation-entailment/native-validation.md) observed
+a Flex provider attempt end after about 6.2 seconds with unknown usage. Its
+persisted message status was error, which the native polling helper did not
+recognize. Polling continued to 120 seconds and cancellation of the ended request
+masked the provider failure. The shared live wait helper and new probe now
+recognize error; support33 and TypeScript checks pass. No paid rerun. This is a
+demonstrated harness wait in a separate hosted request, not a diagnosis of the
+older five-minute local request. Provider/retrieval/UI measurement remains open.

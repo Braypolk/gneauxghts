@@ -111,6 +111,7 @@ fn terminal_source_failure_rolls_back_run_and_message_and_remains_recoverable() 
             "final",
             None,
             &sources,
+            &["editing-note".into()],
             &(3, 2),
             &Default::default(),
             None
@@ -122,6 +123,15 @@ fn terminal_source_failure_rolls_back_run_and_message_and_remains_recoverable() 
     assert_eq!(
         state,
         ("streaming".into(), "partial".into(), "running".into())
+    );
+    assert!(
+        service
+            .get_conversation(&conversation.summary.id)
+            .unwrap()
+            .messages[1]
+            .note_reference_ids
+            .is_empty(),
+        "A failed terminal transaction published its editing references"
     );
     service
         .fail_terminal_outcome(
@@ -135,6 +145,7 @@ fn terminal_source_failure_rolls_back_run_and_message_and_remains_recoverable() 
     assert_eq!(restored.messages[1].status, "error");
     assert_eq!(restored.messages[1].content, "partial");
     assert!(restored.messages[1].sources.is_empty());
+    assert!(restored.messages[1].note_reference_ids.is_empty());
     reopened
         .connection()
         .unwrap()
@@ -159,6 +170,7 @@ fn terminal_source_failure_rolls_back_run_and_message_and_remains_recoverable() 
             "final",
             None,
             &sources,
+            &["retry-editing-note".into()],
             &(3, 2),
             &Default::default(),
             None,
@@ -168,6 +180,15 @@ fn terminal_source_failure_rolls_back_run_and_message_and_remains_recoverable() 
     assert_eq!(restored.messages.len(), 3);
     assert_eq!(restored.messages[2].content, "final");
     assert_eq!(restored.messages[2].sources.len(), 1);
+    assert_eq!(
+        restored.messages[2].note_reference_ids,
+        ["retry-editing-note"]
+    );
+    let public_message = serde_json::to_value(&restored.messages[2]).unwrap();
+    assert!(
+        !public_message.to_string().contains("retry-editing-note"),
+        "Internal navigation metadata leaked into the public source contract"
+    );
 }
 
 #[test]
@@ -251,6 +272,7 @@ fn repeated_retry_keeps_original_user_and_context_after_newer_turns() {
             "Newer answer",
             None,
             &[],
+            &[],
             &(0, 0),
             &Default::default(),
             None,
@@ -328,6 +350,7 @@ fn repeated_retry_keeps_original_user_and_context_after_newer_turns() {
             "complete",
             "Recovered first answer",
             None,
+            &[],
             &[],
             &(0, 0),
             &Default::default(),

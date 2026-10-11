@@ -1,0 +1,68 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Answer references · disposable prototype</title>
+<style>
+body{font:15px/1.55 system-ui,sans-serif;color:#222c2b;background:#f5f6f3;max-width:1220px;margin:36px auto;padding:0 24px}h1{font-size:29px;margin:0}h2{font-size:19px;margin:0 0 12px}h3{font-size:15px}p{max-width:920px}button,select{font:inherit;padding:7px 12px;border:1px solid #cbd4cf;border-radius:6px;background:white;color:inherit;cursor:pointer}button:hover,button[aria-selected=true]{background:#e0eee7;border-color:#52826c}button:disabled{opacity:.5;cursor:default}.grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}.card{background:white;border:1px solid #d9e0da;border-radius:9px;padding:20px;margin:16px 0}.muted{color:#626f69}.tag{font-size:12px;text-transform:uppercase;letter-spacing:.07em;color:#496d5b}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:13px/1.65 ui-monospace,monospace;background:#f7f8f5;padding:12px;border-radius:5px;max-height:430px;overflow:auto}nav,.actions{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0}.facts{display:flex;gap:22px;flex-wrap:wrap}.fact{display:grid}.fact b{font-size:20px}.segment{border-left:3px solid #d9e9df;padding:0 0 12px 12px;margin:12px 0;white-space:pre-wrap}.source{font-size:12px;padding:3px 8px;margin:6px 4px 0 0}.warning{color:#8b4230}.status{padding:10px;background:#eef4ef;border-radius:5px}details{margin-top:12px}footer{margin:30px 0;color:#626f69}@media(max-width:800px){.grid{grid-template-columns:1fr}body{margin:20px auto;padding:0 14px}}
+</style>
+<header><span class="tag">Throwaway · fixed evidence · no live requests</span><h1>Can references be answer data?</h1>
+<p>Compare Markdown citation markers with answer segments carrying source IDs. The question: does the structured format reduce broken references while preserving useful answers and reasonable cost? This demo includes actual paired model outputs and clearly labeled authored stress cases. It does not change chat.</p></header>
+<section class="card"><h2>Paired model comparison</h2><div id="totals" class="facts"></div><p id="limits" class="muted"></p><label>Question <select id="cases"></select></label><p id="question"></p><div class="grid"><article><h3>Current Markdown references</h3><div id="markdownMeta"></div><pre id="markdown"></pre></article><article><h3>Structured answer segments</h3><div id="structuredMeta"></div><div id="structured"></div></article></div><p id="review" class="status"></p><details><summary>Exact returned model text and source associations</summary><pre id="raw"></pre></details></section>
+<section class="card"><h2>Try the boundaries</h2><p class="muted">Authored examples below demonstrate mechanics, not model success rates. Each action resets to the chosen example; nothing is saved.</p><nav id="walkthroughs"></nav><p id="scenario"></p><div class="actions" id="steps"></div><div class="actions"><button data-action="reset">Reset answer</button><button data-action="unknown">Use an unissued source</button><button data-action="wrong">Attach the title instead</button><button data-action="omit">Remove source association</button><button data-action="withhold">Withhold the body passage</button><button data-action="partial">Receive unfinished output</button><button data-action="finish">Receive complete output</button></div><div class="grid"><div><h3>Current state</h3><p id="state"></p><div id="stressAnswer"></div><p id="mechanics" class="status"></p><p id="meaning" class="warning"></p></div><div><h3>Exact structured data</h3><pre id="stressRaw"></pre><h3>Source registry</h3><pre id="registry"></pre></div></div></section>
+<section class="card"><h2>Inspect a source</h2><p id="sourceTitle" class="muted">Select a source button to inspect the exact supplied passage.</p><pre id="sourceText">No source selected.</pre></section>
+<footer>Structured validity checks shape and issued sources. It cannot establish that a passage supports a claim, or that the answer respects an excerpt-only request. No automatic source assignment or semantic verification is performed here.</footer>
+<script>
+const DATA = /*DATA*/;
+// Portable pure prototype logic: validation and association, with no DOM or IO.
+function associate(raw, registry, complete=true) {
+  if(!complete)return {state:'waiting',segments:[],reason:'Incomplete output stays inert; no citations are exposed.'};
+  let answer;try{answer=JSON.parse(raw)}catch{return {state:'rejected',segments:[],reason:'Not a complete JSON answer.'}}
+  if(!answer || Array.isArray(answer) || Object.keys(answer).join()!=='segments' || !Array.isArray(answer.segments) || answer.segments.length<1 || answer.segments.length>24)return {state:'rejected',segments:[],reason:'Invalid answer shape.'};
+  const segments=[];
+  for(const segment of answer.segments){
+    if(!segment || Object.keys(segment).sort().join()!=='sources,text' || typeof segment.text!=='string' || !segment.text.trim() || !Array.isArray(segment.sources))return {state:'rejected',segments:[],reason:'Invalid segment shape.'};
+    const ids=new Set();const citations=[];
+    for(const id of segment.sources){
+      if(typeof id!=='string' || ids.has(id) || !registry[id])return {state:'rejected',segments:[],reason:'Source is duplicated, unissued, or no longer delivered.'};
+      ids.add(id);citations.push({id,...registry[id]});
+    }
+    segments.push({text:segment.text,citations});
+  }
+  return {state:'accepted',segments,reason:'All source IDs resolve to delivered passages. Meaning still requires review.'};
+}
+function transition(state, action){
+  const next=structuredClone(state);const segment=next.answer.segments[0];
+  if(action==='unknown')segment.sources=['S99'];
+  if(action==='wrong')segment.sources=['S1'];
+  if(action==='omit')segment.sources=[];
+  if(action==='withhold')delete next.registry.S2;
+  if(action==='partial')next.complete=false;
+  if(action==='finish')next.complete=true;
+  return next;
+}
+const $=id=>document.getElementById(id);
+function inspect(source){$('sourceTitle').textContent=source.title+' · '+source.location;$('sourceText').textContent=source.excerpt;}
+function drawSegments(target,segments){target.replaceChildren();for(const segment of segments){const block=document.createElement('div');block.className='segment';const text=document.createElement('div');text.textContent=segment.text;block.append(text);for(const source of segment.citations){const button=document.createElement('button');button.className='source';button.textContent=source.title+' · '+source.id;button.onclick=()=>inspect(source);block.append(button)}target.append(block)}}
+function registryFor(row){return Object.fromEntries(row.input.evidence.items.filter(item=>item.citation).map(item=>[item.citation.slice(1,-1),{title:item.title,excerpt:item.excerpt,location:item.location,passageId:item.id}]))}
+function meta(row){if(!row)return 'No completed comparison';const usage=row.usage||{};return `${row.status} · ${usage.total_tokens??'?'} tokens · ${row.modelCalls??'?'} model call(s) · ${(row.latencyMillis/1000).toFixed(2)} s`}
+const results=DATA.runtime.results;
+const cases=DATA.runtime.corpusSnapshot.cases;
+for(const item of cases){const option=document.createElement('option');option.value=item.id;option.textContent=item.id;$('cases').append(option)}
+function showCase(){const id=$('cases').value;const item=cases.find(item=>item.id===id);const plain=results.find(row=>row.caseId===id&&row.variant==='markdown');const structured=results.find(row=>row.caseId===id&&row.variant==='structured');$('question').textContent=item.question;$('markdownMeta').textContent=meta(plain);$('structuredMeta').textContent=meta(structured);$('markdown').textContent=plain?.answer||plain?.error||'Not run';if(structured?.status==='complete'){const result=associate(structured.rawAnswer,registryFor(structured));drawSegments($('structured'),result.segments);if(result.state!=='accepted')$('structured').textContent=result.reason}else $('structured').textContent=structured?.error||'Not run';$('raw').textContent=JSON.stringify({markdown:plain?.rawAnswer,structured:structured?.rawAnswer,associations:structured?.associations},null,2);$('review').textContent=DATA.reviews[id]?.summary||'Manual review pending.'}
+$('cases').onchange=showCase;
+for(const arm of ['markdown','structured']){const rows=results.filter(row=>row.variant===arm&&row.status==='complete');const total=rows.reduce((sum,row)=>sum+row.usage.total_tokens,0);const fact=document.createElement('div');fact.className='fact';const label=document.createElement('span');label.textContent=arm==='markdown'?'Markdown':'Structured';const b=document.createElement('b');b.textContent=total.toLocaleString()+' tokens';const note=document.createElement('span');note.className='muted';note.textContent=rows.length+' complete answers';fact.append(label,b,note);$('totals').append(fact)}
+$('limits').textContent=DATA.verdict;
+const registry={S1:{title:'Meridian retrospective',location:'title',excerpt:'Meridian retrospective'},S2:{title:'Meridian retrospective',location:'body',excerpt:'Deployment approval was discussed.\n\nJordan approved deployment.'}};
+const scenarios=[
+{name:'Marker spelling',description:'The recorded native answer used 【S2】. Explicit source data avoids this punctuation dependency. This is a mechanically equivalent authored conversion, not a regenerated model answer.',text:'Jordan approved deployment.',meaning:'The body passage supports this claim.',steps:[['Receive complete output','finish'],['Try unissued S99','unknown']]},
+{name:'Wrong passage',description:'A title reference can be valid while failing to establish who approved deployment.',text:'Jordan approved deployment.',meaning:'S1 contains only the title. Passing reference validation cannot make it support the approver claim.',steps:[['Attach the title','wrong'],['Remove the citation','omit']]},
+{name:'Excerpt-only scope',description:'The selected excerpt is only “Deployment approval was discussed.” The full note names Jordan. A typed source does not enforce the user’s requested boundary.',text:'Using only the selected excerpt, Jordan approved deployment.',meaning:'This assertion violates the excerpt-only request even when its source points to the full note.',steps:[['Inspect valid full-note reference','finish'],['Try the title instead','wrong']]},
+{name:'Streaming and delivery',description:'Partial JSON cannot be treated as a finished cited answer. This conservative prototype buffers until complete; incremental rendering would need additional adapter work.',text:'Jordan approved deployment.',meaning:'A withheld passage cannot become a link just because the model selected its old ID.',steps:[['Receive unfinished output','partial'],['Finish the answer','finish'],['Withhold the body passage','withhold']]}
+];
+let scenarioIndex=0,state;
+function reset(){const selected=scenarios[scenarioIndex];state={answer:{segments:[{text:selected.text,sources:['S2']}]},registry:structuredClone(registry),complete:true};renderStress()}
+function renderStress(){const raw=JSON.stringify(state.answer,null,2);const outcome=associate(raw,state.registry,state.complete);$('stressRaw').textContent=state.complete?raw:raw.slice(0,-12);$('registry').textContent=JSON.stringify(state.registry,null,2);$('state').textContent=`Answer ${state.complete?'complete':'unfinished'} · ${Object.keys(state.registry).length} delivered sources · ${outcome.state}`;$('mechanics').textContent=outcome.reason;drawSegments($('stressAnswer'),outcome.segments);const ids=state.answer.segments[0].sources;$('meaning').textContent=scenarios[scenarioIndex].meaning+(ids.length===0?' Empty source arrays are allowed for ordinary prose; they also allow accidental citation omissions.':ids.includes('S1')?' The selected title reference does not establish who approved deployment.':'')}
+function act(action){if(action==='reset')reset();else{state=transition(state,action);renderStress()}}
+function choose(index){scenarioIndex=index;$('scenario').textContent=scenarios[index].description;$('steps').replaceChildren();for(const [label,action] of scenarios[index].steps){const button=document.createElement('button');button.textContent=label;button.onclick=()=>act(action);$('steps').append(button)}for(const [i,button] of [...$('walkthroughs').children].entries())button.setAttribute('aria-selected',String(i===index));reset()}
+scenarios.forEach((scenario,index)=>{const button=document.createElement('button');button.textContent=scenario.name;button.setAttribute('role','tab');button.onclick=()=>choose(index);$('walkthroughs').append(button)});
+document.querySelectorAll('[data-action]').forEach(button=>button.onclick=()=>act(button.dataset.action));
+showCase();choose(0);
+</script></html>

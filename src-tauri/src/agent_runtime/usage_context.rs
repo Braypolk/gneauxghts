@@ -1,7 +1,7 @@
 //! Per-conversation context policy. Aggregate run spending has a different owner.
 use super::*;
-use rig_core::completion::{CompletionError, CompletionRequest};
 use rig_core::message::ToolChoice;
+use rig_core::{completion::CompletionRequest, error::ProviderError as CompletionError};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
@@ -161,7 +161,7 @@ impl UsageContext {
                 if let Err(violation) = guard.check_context_bytes(bytes.saturating_add(added)) {
                     drop(state);
                     emit_guard_violation(&self.on_event, &violation);
-                    return Err(CompletionError::RequestError(violation.message.into()));
+                    return Err(CompletionError::request(violation.message));
                 }
             }
             state.finish = true;
@@ -172,17 +172,18 @@ impl UsageContext {
             let result_tool = result_formatter_name(request, self.result_schema.as_ref());
             request
                 .tools
-                .retain(|tool| result_tool.as_ref() == Some(&tool.name));
+                .retain(|tool| result_tool.as_deref() == Some(tool.name.as_str()));
             request.tool_choice = Some(match result_tool {
                 Some(name) => ToolChoice::Specific {
-                    function_names: vec![name],
+                    function_names: vec![rig_core::message::ToolName::new(name)
+                        .map_err(|_| context_error("Invalid result tool name"))?],
                 },
                 None => ToolChoice::None,
             });
             // Qwen's chat template requires system content at the beginning.
             // Preserve existing instructions and every conversation/evidence message.
             match request.chat_history.first_mut() {
-                Message::System { content } => {
+                Some(Message::System { content }) => {
                     content.push_str("\n\n");
                     content.push_str(FINISH);
                 }
@@ -219,8 +220,8 @@ impl UsageContext {
         state.baseline = state
             .pending
             .take()
-            .filter(|_| usage.input_tokens > 0)
-            .map(|s| (s, usage.input_tokens));
+            .zip(usage.input_tokens.filter(|n| *n > 0))
+            .map(|(s, input)| (s, input));
         if state.baseline.is_none() {
             state.finish = false;
             return;
@@ -230,7 +231,8 @@ impl UsageContext {
             // request reveals exactly which assistant messages were retained.
             state.finish |= usage
                 .input_tokens
-                .saturating_add(usage.output_tokens)
+                .unwrap_or_default()
+                .saturating_add(usage.output_tokens.unwrap_or_default())
                 .saturating_add(OUTPUT_RESERVE + SAFETY_MARGIN + GATHER_ALLOWANCE)
                 >= capacity;
         }
@@ -254,12 +256,12 @@ pub(super) fn result_formatter_name(
             .tools
             .last()
             .filter(|tool| request.output_schema.is_none() && &tool.parameters == schema)
-            .map(|tool| tool.name.clone())
+            .map(|tool| tool.name.to_string())
     })
 }
 
 fn context_error(message: &'static str) -> CompletionError {
-    CompletionError::RequestError(message.into())
+    CompletionError::request(message)
 }
 
 fn fingerprint(value: &Value) -> u64 {
@@ -290,13 +292,9 @@ fn snapshot(request: &CompletionRequest) -> Option<(Snapshot, Vec<u64>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rig_core::test_utils::MockCompletionModel;
 
     fn request() -> CompletionRequest {
-        MockCompletionModel::default()
-            .completion_request("Evidence question")
-            .preamble("Keep citations".into())
-            .build()
+        CompletionRequest::new("Evidence question").preamble("Keep citations")
     }
     fn context(worker: bool) -> Arc<UsageContext> {
         let request = AgentRuntimeRequest {
@@ -316,12 +314,10 @@ mod tests {
         UsageContext::new(&request, Arc::new(|_| {}), worker)
     }
     fn usage(input_tokens: u64) -> Usage {
-        Usage {
-            input_tokens,
-            output_tokens: 100,
-            total_tokens: input_tokens + 100,
-            ..Usage::new()
-        }
+        Usage::default()
+            .input_tokens(input_tokens)
+            .output_tokens(100)
+            .total_tokens(input_tokens + 100)
     }
     fn baseline(context: &UsageContext, request: &mut CompletionRequest, input: u64) {
         context.prepare_with_capacity(request, Some(19000)).unwrap();
@@ -353,21 +349,15 @@ mod tests {
             assert!(context.finishing());
             match change {
                 0 => next.model = Some("other-model".into()),
-                1 => next.preamble = Some("Different instructions".into()),
+                1 => next.chat_history[0] = Message::system("Different instructions"),
                 2 => next.tools.push(rig_core::completion::ToolDefinition {
-                    name: "other".into(),
+                    name: rig_core::message::ToolName::new("other").unwrap(),
                     description: "different schema".into(),
                     parameters: json!({}),
                 }),
-                3 => {
-                    next.chat_history =
-                        rig_core::OneOrMany::one(Message::user("Replacement history"))
-                }
+                3 => next.chat_history = vec![Message::user("Replacement history")],
                 4 => next.additional_params = Some(json!({"reasoning_effort":"high"})),
-                _ => {
-                    next.chat_history =
-                        rig_core::OneOrMany::one(Message::system("Replaced system instructions"))
-                }
+                _ => next.chat_history = vec![Message::system("Replaced system instructions")],
             }
             context
                 .prepare_with_capacity(&mut next, Some(19000))
@@ -388,6 +378,21 @@ mod tests {
         context.prepare_with_capacity(&mut next, None).unwrap();
         assert!(!context.finishing());
         context.observe(Usage::new());
+        context
+            .prepare_with_capacity(&mut next, Some(19000))
+            .unwrap();
+        assert!(!context.finishing());
+        assert_ne!(next.tool_choice, Some(ToolChoice::None));
+    }
+
+    #[test]
+    fn partial_usage_without_input_does_not_supply_a_context_baseline() {
+        let context = context(false);
+        let mut next = request();
+        context
+            .prepare_with_capacity(&mut next, Some(19000))
+            .unwrap();
+        context.observe(Usage::default().output_tokens(10000).total_tokens(20000));
         context
             .prepare_with_capacity(&mut next, Some(19000))
             .unwrap();
@@ -456,7 +461,7 @@ mod tests {
             let context = context(false);
             let mut next = request();
             if !has_system {
-                next.chat_history = rig_core::OneOrMany::one(Message::user("Question"));
+                next.chat_history = vec![Message::user("Question")];
             }
             let count = next.chat_history.len();
             baseline(&context, &mut next, 10000);
@@ -464,12 +469,12 @@ mod tests {
                 .prepare_with_capacity(&mut next, Some(19000))
                 .unwrap();
             assert!(
-                matches!(next.chat_history.first_ref(), Message::System { content } if content.contains(FINISH))
+                matches!(next.chat_history.first(), Some(Message::System { content }) if content.contains(FINISH))
             );
             assert_eq!(next.chat_history.len(), count + usize::from(!has_system));
             if has_system {
                 assert!(
-                    matches!(next.chat_history.first_ref(), Message::System { content } if content.contains("Keep citations"))
+                    matches!(next.chat_history.first(), Some(Message::System { content }) if content.contains("Keep citations"))
                 );
             }
         }

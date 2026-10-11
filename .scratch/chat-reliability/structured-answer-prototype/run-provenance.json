@@ -1,0 +1,11 @@
+{
+  "hostBeforeSha256": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+  "runtime.rs": "2bb922170fc3cb813e060c805900f829930d2efef3e4555b84fbc0ba2e3b119a",
+  "run.py": "24a5803455d978585da7beace323043c1d67f13effefc7d332b08ce5fa748290",
+  "fixtures.json": "f4f746e7e5c41d1d5ffa6462039674e746f4df1d3b7028ff4cbc4e8ad5b0fae3",
+  "settings.json": "236a41bbd86e7e8aa05d6b287de9fa5d4f89d3b8c539ff3cdbb99db7948751b2",
+  "baseline-preamble.txt": "2dbc0a0f3320915184a057dc047d15f47ef177409a83258f8251f320b7607beb",
+  "hostRestoredSha256": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+  "executableSha256": "c50bee23a295987db92b023fe3438bd30e7b33b8b92f39a262576a709def37c4",
+  "executable": "/Users/bray.polkinghorne/Documents/code/personal/Gneauxghts/src-tauri/target/debug/deps/gneauxghts_lib-b4d3c8687611f17f"
+}

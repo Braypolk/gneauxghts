@@ -78,6 +78,26 @@ impl PassageReferences {
         Ok(())
     }
 
+    /// Resolve an exact issued ID against freshly validated delivered sources.
+    pub(crate) fn source<'a>(
+        &self,
+        reference: &str,
+        sources: &'a [ChatSource],
+    ) -> Option<&'a ChatSource> {
+        let index = reference
+            .strip_prefix('S')?
+            .parse::<usize>()
+            .ok()?
+            .checked_sub(1)?;
+        if reference != format!("S{}", index + 1) {
+            return None;
+        }
+        let id = self.ids.get(index)?;
+        sources
+            .iter()
+            .find(|source| source.passage.as_ref().is_some_and(|p| &p.id == id))
+    }
+
     /// Only references issued to this run AND delivered as sources may become links.
     /// Parse Markdown so examples, fenced code, escapes and link definitions are respected.
     pub(crate) fn render(&self, text: &str, sources: &[ChatSource]) -> String {

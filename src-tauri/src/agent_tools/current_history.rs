@@ -89,3 +89,72 @@ pub(crate) fn filter_revision_sources(
     });
     Ok(())
 }
+
+impl AgentToolContext {
+    // Identity survives authored-content changes; old excerpts and passage hashes
+    // are deliberately not used to establish the current navigation hint.
+    fn current_note_identity(&self, note_id: &str) -> Option<(PathBuf, String)> {
+        let (path, _, _) = self.resolve_note(note_id).ok()?;
+        let path = fs::canonicalize(path).ok()?;
+        let root = fs::canonicalize(self.service.notes_root()).ok()?;
+        if !crate::state::is_valid_note_path(&path, &root) {
+            return None;
+        }
+        let raw = fs::read_to_string(&path).ok()?;
+        let parsed = note::parse_note(&raw);
+        let identity = parsed.frontmatter.managed.as_ref()?;
+        if identity.id != note_id || identity.kind != DocumentKind::Note {
+            return None;
+        }
+        let title = path.file_stem()?.to_str()?.to_string();
+        Some((path, title))
+    }
+
+    pub(crate) fn note_reference_hint(&self, note_id: &str) -> Option<Value> {
+        if !self.allowed(note_id).ok()? {
+            return None;
+        }
+        let reference = self.current_note_identity(note_id)?;
+        let hint =
+            json!({"noteId":note_id,"title":crate::services::evidence::bounded(&reference.1, 256)});
+        self.note_reference_versions
+            .lock()
+            .ok()?
+            .entry(note_id.into())
+            .or_insert(reference);
+        Some(hint)
+    }
+
+    // Resolution holds exact provisional snapshots until history admission is
+    // complete. Rejected candidates must never become validation obligations.
+    pub(crate) fn retain_note_references(&self, admitted: &HashSet<String>) -> Result<(), String> {
+        self.note_reference_versions
+            .lock()
+            .map_err(|_| "Note references unavailable")?
+            .retain(|id, _| admitted.contains(id));
+        Ok(())
+    }
+
+    pub(super) fn validate_note_references(
+        &self,
+        allowed: Option<&HashSet<String>>,
+        excluded: &HashSet<String>,
+    ) -> Result<(), String> {
+        let versions = self
+            .note_reference_versions
+            .lock()
+            .map_err(|_| "Note references unavailable")?;
+        for (id, expected) in versions.iter() {
+            if excluded.contains(id)
+                || allowed.is_some_and(|ids| !ids.contains(id))
+                || self.current_note_identity(id).as_ref() != Some(expected)
+            {
+                return Err(
+                    "Conversational note access or identity changed; retry for current context"
+                        .into(),
+                );
+            }
+        }
+        Ok(())
+    }
+}

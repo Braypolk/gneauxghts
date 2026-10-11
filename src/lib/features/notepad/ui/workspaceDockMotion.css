@@ -70,6 +70,10 @@
   left: var(--dock-icon-x);
   width: var(--dock-icon-size);
   height: var(--dock-icon-size);
+  /* The measured send control supplies the touch size. A global mobile
+     min-height must not stretch its circular projection during the morph. */
+  min-width: 0;
+  min-height: 0;
   display: inline-flex;
   align-items: center;
   justify-content: center;

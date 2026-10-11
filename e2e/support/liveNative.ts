@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { browser, $ } from '@wdio/globals';
-import { createEvaluationArtifact, requireLiveConfiguration, selectAssistant } from './liveEvaluationArtifacts.mjs';
+import { createEvaluationArtifact, isTerminalAssistant, requireLiveConfiguration, selectAssistant } from './liveEvaluationArtifacts.mjs';
 
 export async function invokeNative<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   const result = await browser.executeAsync((command: string, args: Record<string, unknown>, done: (value: { ok: boolean; value?: unknown; error?: string }) => void) => {
@@ -68,7 +68,7 @@ export function createLiveNativeEvaluation() {
           answer = selectAssistant(conversation.messages, options) as T | undefined;
           options.onUpdate?.(answer);
           artifact.observeAnswer(conversationId, answer);
-          return Boolean(answer && ['complete', 'failed', 'cancelled'].includes(answer.status));
+          return isTerminalAssistant(answer);
       }, { timeout: options.timeoutMs ?? 300_000, interval: 1000, timeoutMsg: `Native agent did not reach a terminal state in conversation ${conversationId}` });
       } finally { artifact.write(); }
       assert(answer);

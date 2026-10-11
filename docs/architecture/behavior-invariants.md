@@ -757,7 +757,14 @@ answer. `chat/citations.rs` constructs durable destinations; recognized but unis
 `[S#]` references and invalid passage destinations become unavailable. Other
 malformed model citation text is not automatically recognized. References are
 never resolved by title or fuzzy matching. Worker references are remapped on
-parent admission. Unvalidated streaming markers remain inert.
+parent admission. Tool-capable chat selects exact run-local IDs in structured
+answer segments; the app rejects unknown, duplicate, stale or excluded references
+before constructing any durable citation. This validates the citation selection,
+not whether the source entails the claim. Structured drafts render decoded text
+literally with no Markdown or clickable links. Draft snapshots are transient and
+scoped by request/message identity, dispatch attempt and sequence. Retry resets
+replace them; late events cannot revive a terminal answer. Final validated Markdown
+and its selected sources replace a draft only after the terminal transaction commits.
 Source and quotation requests use ordinary chat capabilities, context and streaming.
 Show evidence expands delivered source excerpts on the answer without another model
 call. Excerpts render as literal text, with current/historical labels and recorded
@@ -846,7 +853,10 @@ missing, forgotten, excluded, or no-longer-current citation evidence is withheld
 when results or conversations are delivered, including branches. Explicit source
 access uses the originating run grants with current exclusions. Earlier note-based
 answers remain visible in their transcript but are omitted from later model
-context and compaction; source-free dialogue is preserved. Bounded note references
+context and compaction; source-free dialogue is preserved. Editing acknowledgements
+retain working-note identities separately from selected citation sources. Those
+IDs commit with the terminal answer and survive reloads and branches; they carry
+no working-copy content or citation authority. Bounded note references
 may remain as navigation hints associated with earlier turns, including compacted
 turns. Fresh app-issued metadata stays separate from old assistant prose. Note
 fields contain only currently permitted canonical Note Identity and title. Each
@@ -999,10 +1009,13 @@ retry is available. If storage is unavailable, startup recovery settles the run.
 
 ### Interrupted runs preserve partial output
 
-After a crash, the last durable partial assistant checkpoint survives and becomes
-retryable after restart. `chat/runtime.rs` currently ignores checkpoint write
-errors while continuing UI delta delivery, so visible text can lead that durable
-checkpoint. Retry creates a traceable
+After a crash, ordinary text responses retain the last durable partial assistant
+checkpoint and become retryable after restart. `chat/answer_stream.rs` ignores
+checkpoint write errors while continuing ordinary UI delta delivery, so visible
+text can lead that durable checkpoint. Structured answer drafts are not persisted:
+cancellation, failed validation, failed final persistence or a crash leaves the
+empty assistant placeholder retryable, with no provisional sources or answer text.
+Retry creates a traceable
 continuation without erasing the interrupted output. Its original user message
 and context come from the same durable run, including repeated retries after
 newer turns. Checkpoint branches remap that lineage to copied messages; transcript

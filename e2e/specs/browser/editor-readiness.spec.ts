@@ -52,7 +52,8 @@ describe('editor readiness', () => {
     await $('button[aria-label^="Open search result:"]').waitForExist();
     await browser.keys('Enter');
     expect(await search.getValue()).toBe('independent');
-    expect(await $('[data-testid="note-editor"] .cm-content').isFocused()).toBe(true);
+    // Enter previews this-note matches while keeping the query ready to edit.
+    await expect(search).toBeFocused();
 
     for (let attempt = 0; attempt < 12; attempt += 1) {
       await browser.execute(() => {

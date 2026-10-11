@@ -224,3 +224,58 @@ execution. Current implementation and release limits remain in the
 [Gemma record](../embeddinggemma-2/spec.md); current provider ownership is in
 ARCHITECTURE.md. Speculative audio/video extensions were not implemented by this
 proposal and are not an automatically approved backlog.
+
+
+2026-10-11: [Rig upgraded to 0.44.0](rig-upgrade-2026-10-11.md) with Rust 1.95.0,
+after completing the [0.41 compact/streaming comparison](../chat-reliability/structured-answer-streaming/completion/README.md).
+Compact remains experimental. Migration checks and two live smoke cases pass;
+three evidence-test failures reproduced on 0.41 and were subsequently diagnosed
+as fixture assumptions; see [Evidence regression fixtures](#evidence-regression-fixtures).
+Prototype capture commit: `95aaa36e2cf3b984bc88845f9432077fd590a0aa`.
+
+## Evidence regression fixtures
+
+2026-10-11: The [three existing failures](../chat-reliability/issues/10-existing-evidence-regression-failures.md)
+were reproduced and traced to test assumptions. Provenance and weekly-task reads
+now follow guidance/continuation pages before inspecting delivered evidence.
+The prose fixture keeps its exhaustive temporal inspection and separately
+verifies selective action retrieval plus a late-report read within one shared
+allowance. Every delivered citation is validated; per-page limits and complete
+delivery are checked. Production behavior and the 6,000-byte read / 24,000-byte
+shared limits are unchanged.
+
+The focused run passes 3/3. The full Rust library suite passes **861 tests,
+0 failures, 27 ignored** (`cargo test --manifest-path src-tauri/Cargo.toml --lib`),
+with loopback binding permitted for the local HTTP fixture. Live provider tests
+remain ignored. These deterministic service checks make no model/API requests
+and do not establish live-model selection quality or semantic citation entailment.
+`git diff --check` passes. Local diagnostic/focused/full logs are retained at
+`/tmp/gneaux-evidence-failures-probe.log`,
+`/tmp/gneaux-evidence-failures-focused-final.log`, and
+`/tmp/gneaux-evidence-failures-full-rust-final.log` for this session; temporary
+diagnostic instrumentation was removed.
+
+## Final chat cleanup, 2026-10-11
+
+The final bounded source/config review found no remaining production diagnostics,
+exposed credentials or machine-specific source paths. Removed 11 unreferenced
+scratch code backups/intermediate patches and four generated Python cache files
+(473,200 bytes total); Python caches are now ignored. Retained the synthetic
+fixtures, recorded answers, reviews, provenance and runners used by the offline
+comparisons, plus local evidence for the open citation and latency investigations.
+
+Current work indexes now distinguish the completed comparison, rejected compact
+format, integrated readable streaming and resolved evidence fixtures from the
+remaining live-native quality, selected-range scope and semantic entailment work.
+Historical checkpoint counts remain intact. The partial streaming replay now
+checks recorded pre-upgrade host restoration instead of comparing migrated
+production bytes with historical hashes; frozen source and answer bindings remain
+checked.
+
+Final cleanup verification: Svelte/E2E TypeScript checks pass with zero errors or
+warnings, citation evaluation support passes 12 tests, and all three historical
+prototype/streaming analyses replay offline. New core Rust modules pass formatting
+and `git diff --check` is clean. Production code is unchanged by this cleanup;
+the full backend result remains 861 passed, 0 failed, 27 ignored. No paid requests
+or native UI runs were made in this pass. Changes are prepared for commit, not
+committed.

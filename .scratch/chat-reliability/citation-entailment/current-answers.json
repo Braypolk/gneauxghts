@@ -1,0 +1,210 @@
+[
+  {
+    "caseId": "title_is_not_content",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The pilot idea is in **“Meridian activity.”** Its text was added on September 30, 2026, at 15:00 UTC. [Source](passage:title) [Source](passage:added)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 993,
+      "output_tokens": 243,
+      "reasoning_tokens": 190,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1236
+    }
+  },
+  {
+    "caseId": "event_date_is_not_edit_date",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "Cedar passed the drill on September 11, 2026, at 14:00. [Source](passage:outcome)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 944,
+      "output_tokens": 73,
+      "reasoning_tokens": 38,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1017
+    }
+  },
+  {
+    "caseId": "missing_report_is_not_failure",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The September 11 drill date has passed, but the record gives no outcome report. So it doesn’t establish whether Juniper missed the drill. [Source](passage:schedule)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 950,
+      "output_tokens": 97,
+      "reasoning_tokens": 54,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1047
+    }
+  },
+  {
+    "caseId": "wording_edit_is_not_completion",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "No. “Send the report” is currently marked complete, but its completion marker changed on September 28, not September 30. The September 30 change was to the wording, which doesn’t establish a new completion. [Source](passage:task)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1167,
+      "output_tokens": 174,
+      "reasoning_tokens": 115,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1341
+    }
+  },
+  {
+    "caseId": "restore_and_reopen",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "No. The October 8 entry was a restored checkbox, not a new recorded accomplishment. [Source](passage:restored) The task’s current status is open. [Source](passage:current)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1165,
+      "output_tokens": 128,
+      "reasoning_tokens": 79,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1293
+    }
+  },
+  {
+    "caseId": "deadline_inventory",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "As of September 30:\n\n- **Parent:** Upcoming, due October 1. The first valid deadline annotation applies; the later October 7 annotation does not replace it.\n- **Child:** Undated. It does not inherit the parent’s deadline.\n- **Completed example:** Marked complete, with a September 29 deadline; it is not actionable overdue work.\n- **Invalid-date example:** No supported deadline; February 30 is invalid.\n- **Fenced example:** Not a task—it appears inside a code block. [Source](passage:tasks)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1301,
+      "output_tokens": 265,
+      "reasoning_tokens": 145,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1566
+    }
+  },
+  {
+    "caseId": "editing_window_uncertainty",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "It’s unknown. The evidence places the addition between 19:58 and 20:03 on September 30, so it could have been before or after 20:00. [Source](passage:window)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 992,
+      "output_tokens": 117,
+      "reasoning_tokens": 66,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1109
+    }
+  },
+  {
+    "caseId": "idea_is_not_execution",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "According to **idea**, the record adds only “Experimental pilot idea.” [Source](passage:idea) It doesn’t describe any change made during pilot activity. **canceled** records that the pilot was canceled, so the supplied evidence does not establish that it ran. [Source](passage:canceled)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 988,
+      "output_tokens": 227,
+      "reasoning_tokens": 158,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1215
+    }
+  },
+  {
+    "caseId": "superseded_approval",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "No. The September 8 decision superseded the earlier approval and says to hold the release until route B passes a witnessed drill; no completion is recorded in that source. [Source](passage:hold) The drill was only planned for September 11, which is after September 10. [Source](passage:plan)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1045,
+      "output_tokens": 162,
+      "reasoning_tokens": 89,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1207
+    }
+  },
+  {
+    "caseId": "conflicting_reports",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The records conflict: one says Birch drill B-4 **passed**, signed by Avery; another says it **failed**, signed by Rowan. Neither is marked as a correction, so I can’t determine which result is accurate. [Source](passage:pass) [Source](passage:fail)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1007,
+      "output_tokens": 111,
+      "reasoning_tokens": 44,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1118
+    }
+  },
+  {
+    "caseId": "related_note_attribution",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "Meridian retrospective does not record who approved the deployment; it says the retrospective records no approver. [Source](passage:retro)\n\nAccording to **Meridian approvals**, Asha approved the production deployment. [Source](passage:approval)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1013,
+      "output_tokens": 121,
+      "reasoning_tokens": 65,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1134
+    }
+  },
+  {
+    "caseId": "preview_is_not_read",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "I can’t establish execution from the available evidence. The only supplied excerpt says “The pilot was running,” but it is marked as a discovery-only preview, not authoritative note content. The pilot note’s canonical content wasn’t provided.",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 915,
+      "output_tokens": 132,
+      "reasoning_tokens": 80,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1047
+    }
+  },
+  {
+    "caseId": "partial_read_absence",
+    "variant": "current",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The available passage says, “Deployment approval was discussed,” but doesn’t name an approver【Source】. I can’t determine whether the rest of *Meridian retrospective* names one, because its complete content isn’t available here.",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 936,
+      "output_tokens": 122,
+      "reasoning_tokens": 69,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1058
+    }
+  }
+]

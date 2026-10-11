@@ -1,0 +1,47 @@
+[
+  {
+    "caseId": "deadline-1",
+    "variant": "native-production-context",
+    "model": "gpt-6-luna",
+    "answer": "According to **Meridian deadlines**, the note records four checkbox items; the fenced-code example is not a task. As of **September 30, 2026**:\n\n| Checkbox item | Recorded status | Supported deadline | Actionable overdue on September 30? |\n|---|---|---|---|\n| Parent | Open | October 1, 2026\u2014the first valid `@due` annotation | **No**; its supported deadline was the next day. |\n| Undated child | Open | None recorded; it does not inherit the parent\u2019s deadline | **Cannot determine** from the note. |\n| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |\n| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |\n\nThe Parent line also has a later `@due(2026-10-07)` annotation, but the note\u2019s deadline parsing uses the first valid annotation. The fenced example is code, not a checkbox task. \u3010S2\u3011",
+    "usage": {
+      "cacheCreationInputTokens": 0,
+      "cachedInputTokens": 2314,
+      "inputTokens": 5940,
+      "outputTokens": 529,
+      "reasoningTokens": 245,
+      "toolUsePromptTokens": 0,
+      "totalTokens": 6469
+    }
+  },
+  {
+    "caseId": "partial-selected",
+    "variant": "native-production-context",
+    "model": "gpt-6-luna",
+    "answer": "Yes. Using only the selected excerpt, **Meridian retrospective names Jordan**: \u201cJordan approved deployment.\u201d [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+    "usage": {
+      "cacheCreationInputTokens": 0,
+      "cachedInputTokens": 2375,
+      "inputTokens": 5628,
+      "outputTokens": 68,
+      "reasoningTokens": 0,
+      "toolUsePromptTokens": 0,
+      "totalTokens": 5696
+    }
+  },
+  {
+    "caseId": "partial-unrestricted",
+    "variant": "native-production-context",
+    "model": "gpt-6-luna",
+    "answer": "Yes. Meridian retrospective names Jordan as the approver: \u201cJordan approved deployment.\u201d [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+    "usage": {
+      "cacheCreationInputTokens": 0,
+      "cachedInputTokens": 6806,
+      "inputTokens": 8132,
+      "outputTokens": 100,
+      "reasoningTokens": 9,
+      "toolUsePromptTokens": 0,
+      "totalTokens": 8232
+    }
+  }
+]

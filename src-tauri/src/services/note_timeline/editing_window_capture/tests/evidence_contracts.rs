@@ -138,7 +138,7 @@ fn evidence_contracts_dense_deadlines_are_bounded_and_report_omitted_metadata() 
             .collect::<String>(),
     );
     let mut session = EvidenceSession::default();
-    let (page, _) = session
+    let (mut page, _) = session
         .read_request(
             &f.state,
             None,
@@ -149,6 +149,30 @@ fn evidence_contracts_dense_deadlines_are_bounded_and_report_omitted_metadata() 
             },
         )
         .unwrap();
+    while !page["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|item| item["location"] == "body")
+    {
+        assert!(page.to_string().len() <= 6000);
+        let cursor = page["nextCursor"]
+            .as_str()
+            .expect("Dense body remains pending")
+            .to_string();
+        page = session
+            .read_request(
+                &f.state,
+                None,
+                &HashSet::new(),
+                ReadRequest {
+                    cursor: Some(cursor),
+                    ..Default::default()
+                },
+            )
+            .unwrap()
+            .0;
+    }
     let body = page["items"]
         .as_array()
         .unwrap()
@@ -637,25 +661,24 @@ fn evidence_contracts_compact_reads_preserve_proofs_without_expanding_lineage() 
         .is_some()));
 
     let mut expanded = EvidenceSession::default();
-    let (proof_page, _) = expanded
-        .read_request(
-            &f.state,
-            None,
-            &excluded,
-            ReadRequest {
-                note_id: Some(f.note.as_str().into()),
-                include_provenance: Some(true),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    assert!(proof_page["items"]
-        .as_array()
-        .unwrap()
+    let proof_pages = f.read_evidence_pages(
+        &mut expanded,
+        ReadRequest {
+            note_id: Some(f.note.as_str().into()),
+            include_provenance: Some(true),
+            ..Default::default()
+        },
+    );
+    assert!(proof_pages
         .iter()
+        .flat_map(|page| page["items"].as_array().unwrap())
         .any(|i| !i["provenance"].is_null()));
     assert!(
-        proof_page.to_string().len() > page.to_string().len(),
+        proof_pages
+            .iter()
+            .map(|page| page.to_string().len())
+            .sum::<usize>()
+            > page.to_string().len(),
         "optional lineage must remain available, outside the compact default"
     );
 

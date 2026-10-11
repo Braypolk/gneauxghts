@@ -1,0 +1,54 @@
+{
+  "method": "Pre-run native reproduction: production instructions/tool definitions, actual canonical selected excerpt or ordinary read, saved non-secret model settings, disposable fixture. No production changes.",
+  "files": {
+    "e2e/specs/native/citation-reliability.spec.ts": "e84e8f1ba0d3a08b5edb374bee9fbb0d9b25f89dbcd78f5f33563065feb26e6a",
+    "e2e/support/citationReliabilityNative.mjs": "12fd87db94549f5cf1bf9196c8b403faabc685e0b4ee47f146097e8fcca1b38b",
+    "e2e/support/liveNative.ts": "e123972b6e17feaa72a8e96e1685d66709e6909fd0bcd5db82e3c608d4cc6c90",
+    "e2e/wdio.native.conf.ts": "d0e57284134452bd5d2852a18406257f6c79c1b3ee8667c47c10e37046b2e473",
+    "src-tauri/src/chat/assistant_instructions.txt": "64bd25993dcc5cf80ce253833efd08d8ae171a8478349186d83082a54435a414",
+    "src-tauri/src/chat/runtime.rs": "4f1f5be6570ff95df736fd8cad858e9dc91ef5b88ec572655e027c138c424c6a",
+    "src-tauri/src/chat/citations.rs": "2853f78237b9db3c8ac01d3fa2ad9b44967b13453134537737817352aedf553f",
+    "src-tauri/src/agent_tools.rs": "42b5d6dcf9a7623f0552fc19234d9f296249369a5f2da11db029ecfcac794f77",
+    "src-tauri/src/agent_tools/interface.rs": "ba84afbada42d918c9e0b2aef721517c78c78e73049e9bb68eb1547f627fb6e5",
+    "src-tauri/src/services/evidence/reads.rs": "8674f7c7c37edcf3736fbd18314fd735aa97ba684a883a539b67992cf6221d71",
+    "src-tauri/src/services/evidence/guidance.rs": "0e91a6b74f46035d05dfd2f0bf536878d0cc28c7a63bfd8cbcd05da6a751c3fe"
+  },
+  "backendSourceTreeSha256": "a0194ec104f2dd269a1efa4a3379f28f534bfff93376b492d0b11e1c1493f557",
+  "backendSourceFileCount": 185,
+  "binary": {
+    "kind": "gneauxghts-native-e2e-v1",
+    "profile": "debug",
+    "devPort": 1430,
+    "features": [
+      "e2e-wdio"
+    ],
+    "sha256": "a278f72f51566bd6fb0d20594d464b433b633f4514e29c7296c1833489a10c8c",
+    "buildCommand": "node e2e/support/buildNative.mjs"
+  },
+  "settings": {
+    "provider": "openai",
+    "model": "gpt-6-luna",
+    "openai_model": "gpt-6-luna",
+    "local_model": "qwen/qwen3.8-27b",
+    "local_base_url": "http://100.117.20.29:1234/v1",
+    "reasoning_effort": "medium",
+    "service_tier": "flex"
+  },
+  "cases": [
+    "deadline-1",
+    "partial-selected",
+    "partial-unrestricted",
+    "deadline-2"
+  ],
+  "runSpecSnapshot": ".scratch/chat-reliability/citation-entailment/native-spec-at-run.ts",
+  "runHelperSnapshot": ".scratch/chat-reliability/citation-entailment/native-helper-at-run.ts",
+  "postRunHarnessRepair": {
+    "method": "Recognize real persisted error status; preserve cancellation-race evidence. Offline verified only, no paid rerun. Original runtime/log remain unchanged.",
+    "files": {
+      "e2e/specs/native/citation-reliability.spec.ts": "819734ccf330e6a91ced7b5402c93299a6e80f1d953ef0b20fe34833080acbb2",
+      "e2e/support/liveNative.ts": "01f085124bd889a2cb19f0409c7b448576730fff545507f7753ecbc4e68b7b65",
+      "e2e/support/liveEvaluationArtifacts.mjs": "c7138cd580b289575f4b0d1710bbf1929ebef5961a72febd5e8fb49b3f4b09ab",
+      "e2e/support/liveEvaluationArtifacts.test.mjs": "0ec9e5348b9b7a821276d8a8fdc6a5599d7067d596c61be9cbb93d73019f758c"
+    }
+  }
+}

@@ -29,6 +29,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Rig 0.44 upgrade](archive/rig-upgrade-2026-10-11.md): completed after the 0.41 comparison; the three existing [evidence fixture failures are resolved](archive/completed-work.md#evidence-regression-fixtures).
+
 [Completed-work record](archive/completed-work.md) replaces the redundant completed
 specs, tickets, coordination reports and intermediate artifacts. It preserves
 outcomes, material validation limits and the Git revision for original records.

@@ -1,5 +1,5 @@
 use super::*;
-use crate::services::evidence::{EvidenceSession, SearchRequest};
+use crate::services::evidence::{EvidenceSession, ReadRequest, SearchRequest};
 
 fn millis(date: &str) -> u64 {
     chrono::DateTime::parse_from_rfc3339(date)
@@ -92,21 +92,20 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
                         .into(),
                 );
             }
-            let (read, sources) = reader
-                .read(&f.state, None, &HashSet::new(), &[id], false)
-                .unwrap();
-            let returned = read["items"].as_array().unwrap();
+            let pages = f.read_evidence_pages(
+                &mut reader,
+                ReadRequest {
+                    evidence_ids: vec![id],
+                    ..Default::default()
+                },
+            );
+            let returned: Vec<_> = pages
+                .iter()
+                .flat_map(|page| page["items"].as_array().unwrap())
+                .cloned()
+                .collect();
             assert_eq!(returned.len(), 1);
-            for (citation, _, _) in sources {
-                assert!(crate::services::evidence::validate_citation(
-                    &f.state,
-                    &citation,
-                    None,
-                    &HashSet::new()
-                )
-                .is_some());
-            }
-            items.extend(returned.iter().cloned());
+            items.extend(returned);
         }
         match page["nextCursor"].as_str() {
             Some(cursor) => request.cursor = Some(cursor.into()),

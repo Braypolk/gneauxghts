@@ -1,0 +1,95 @@
+{
+  "method": "Earlier successful six-case run vs current run, same six fixture candidates/questions/provider settings; not repeated randomized trials. First-call tokens are provider reported.",
+  "cases": [
+    {
+      "case": "greeting",
+      "beforeFirstInputTokens": 3027,
+      "afterFirstInputTokens": 2491,
+      "beforeAggregateInputTokens": 3027,
+      "afterAggregateInputTokens": 2491,
+      "beforeModelCalls": 1,
+      "afterModelCalls": 1,
+      "beforeToolCalls": 0,
+      "afterToolCalls": 0
+    },
+    {
+      "case": "selection",
+      "beforeFirstInputTokens": 3033,
+      "afterFirstInputTokens": 2497,
+      "beforeAggregateInputTokens": 10320,
+      "afterAggregateInputTokens": 5796,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 2,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 1
+    },
+    {
+      "case": "different_note",
+      "beforeFirstInputTokens": 3030,
+      "afterFirstInputTokens": 2493,
+      "beforeAggregateInputTokens": 10786,
+      "afterAggregateInputTokens": 9357,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "followup",
+      "beforeFirstInputTokens": 3041,
+      "afterFirstInputTokens": 2501,
+      "beforeAggregateInputTokens": 12099,
+      "afterAggregateInputTokens": 9143,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 3,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "deadlines",
+      "beforeFirstInputTokens": 3038,
+      "afterFirstInputTokens": 2501,
+      "beforeAggregateInputTokens": 11116,
+      "afterAggregateInputTokens": 9466,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    },
+    {
+      "case": "reviewed_edit",
+      "beforeFirstInputTokens": 3045,
+      "afterFirstInputTokens": 2511,
+      "beforeAggregateInputTokens": 9608,
+      "afterAggregateInputTokens": 8085,
+      "beforeModelCalls": 3,
+      "afterModelCalls": 3,
+      "beforeToolCalls": 2,
+      "afterToolCalls": 2
+    }
+  ],
+  "before6": {
+    "inputTokens": 56956,
+    "cachedInputTokens": 46428,
+    "outputTokens": 822,
+    "modelCalls": 16,
+    "toolCalls": 11,
+    "estimatedUSD": 0.00192808
+  },
+  "after6": {
+    "inputTokens": 44338,
+    "cachedInputTokens": 35188,
+    "outputTokens": 643,
+    "modelCalls": 15,
+    "toolCalls": 9,
+    "estimatedUSD": 0.0015883800000000001
+  },
+  "after8": {
+    "inputTokens": 61706,
+    "cachedInputTokens": 50273,
+    "outputTokens": 1058,
+    "modelCalls": 21,
+    "toolCalls": 13,
+    "estimatedUSD": 0.0021750299999999997
+  }
+}

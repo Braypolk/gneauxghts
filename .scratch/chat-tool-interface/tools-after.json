@@ -1,0 +1,426 @@
+[
+  {
+    "name": "find_notes",
+    "description": "Discover passages by topic/text; result=notes returns one representative passage per note and requires activity_range. Previews need reading with read_notes purpose=answer before citation. Use returned IDs/folders, never topics as folders. For recorded activity use include_history and activity_range; timestamps, backlog and note counts do not establish work. Ranges filter text changes, not deadlines or event dates: omit them to find events in unchanged/later-authored text. For current deadlines try literal @due. Continue with cursor only; result and filters are retained.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string"
+        },
+        "include_history": {
+          "description": "Include retained added/removed, even superseded lines. Requires activity_range; not current status. With query use literal/regex.",
+          "type": "boolean"
+        },
+        "limit": {
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "hybrid",
+            "lexical",
+            "literal",
+            "regex"
+          ],
+          "type": "string"
+        },
+        "note_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query": {
+          "description": "Match content; history matches changed text, not titles. Omit for all activity, then narrow by returned noteId.",
+          "type": "string"
+        },
+        "result": {
+          "description": "Default passages; notes groups recorded activity by note and requires activity_range. Omit on continuation.",
+          "enum": [
+            "passages",
+            "notes"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "read_notes",
+    "description": "purpose=answer: Read evidence IDs or a known canonical note; continue with purpose and cursor only. Cite exact returned [S#] references; the app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status. Coverage excludes cleared history and discarded Editing Window states; it is not a complete real-world record. purpose=edit: Read bounded working-copy pages for reviewed changes; lines are 1-based. pendingChanges is unapproved content, not answer evidence. Use returned contentHash when proposing changes.",
+    "parameters": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "oneOf": [
+            {
+              "required": [
+                "evidence_ids"
+              ]
+            },
+            {
+              "required": [
+                "note_id"
+              ]
+            },
+            {
+              "required": [
+                "cursor"
+              ]
+            }
+          ],
+          "properties": {
+            "activity_range": {
+              "additionalProperties": false,
+              "properties": {
+                "end": {
+                  "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+                  "type": "string"
+                },
+                "start": {
+                  "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+                  "type": "string"
+                },
+                "timezone": {
+                  "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "start",
+                "end"
+              ],
+              "type": "object"
+            },
+            "cursor": {
+              "description": "Continuation handle; use alone.",
+              "type": "string"
+            },
+            "evidence_ids": {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 8,
+              "minItems": 1,
+              "type": "array"
+            },
+            "include_provenance": {
+              "description": "Default false. Expand only for lineage; validation, timing and activitySupport are always included.",
+              "type": "boolean"
+            },
+            "note_id": {
+              "description": "Known canonical note ID; bounded current pages, no pending proposals.",
+              "type": "string"
+            },
+            "purpose": {
+              "enum": [
+                "answer"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "purpose"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "max_chars": {
+              "maximum": 6000,
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "note_id": {
+              "type": "string"
+            },
+            "purpose": {
+              "enum": [
+                "edit"
+              ],
+              "type": "string"
+            },
+            "start_line": {
+              "minimum": 1,
+              "type": [
+                "integer",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "note_id",
+            "purpose"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "propose_note_change",
+    "description": "Stage a reviewed change; the user must Keep before disk changes. operation=edit applies targeted edits to a surfaced note. replace supplies its complete body: first read every current purpose=edit page in this run, including pendingChanges; retain all desired content and omit managed frontmatter. Both fold pending content into the combined preview. create stages a uniquely named new note. Submit through this tool. Deadlines: @due(YYYY-MM-DD), Gregorian years 0001-9999, on the exact checkbox line. Preserve unrelated/child text; when changing/removing a deadline consolidate only supported valid annotations on that line. No stored slash commands, due times or reminders.",
+    "parameters": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "edits": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "contextAfter": {
+                    "description": "Exact following anchor for insert/replace; omit for append/prepend.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "contextBefore": {
+                    "description": "Exact preceding anchor for insert/replace; omit for append/prepend.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  },
+                  "kind": {
+                    "description": "append/prepend: document boundaries. replace: exact oldText. insert: exact, unique contextBefore/contextAfter anchors.",
+                    "enum": [
+                      "replace",
+                      "insert",
+                      "append",
+                      "prepend"
+                    ],
+                    "type": "string"
+                  },
+                  "newText": {
+                    "description": "Exact Markdown, including needed separators/newlines.",
+                    "type": "string"
+                  },
+                  "oldText": {
+                    "description": "Exact nonempty text for replace; otherwise omit.",
+                    "type": [
+                      "string",
+                      "null"
+                    ]
+                  }
+                },
+                "required": [
+                  "kind",
+                  "newText"
+                ],
+                "type": "object"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "expected_content_hash": {
+              "type": "string"
+            },
+            "note_id": {
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "edit"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "note_id",
+            "expected_content_hash",
+            "edits",
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "expected_content_hash": {
+              "type": "string"
+            },
+            "markdown": {
+              "description": "Complete replacement body including all retained content; no managed frontmatter.",
+              "minLength": 1,
+              "type": "string"
+            },
+            "note_id": {
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "replace"
+              ],
+              "type": "string"
+            }
+          },
+          "required": [
+            "note_id",
+            "expected_content_hash",
+            "markdown",
+            "operation"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "markdown": {
+              "type": "string"
+            },
+            "operation": {
+              "enum": [
+                "create"
+              ],
+              "type": "string"
+            },
+            "title": {
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "title",
+            "markdown",
+            "operation"
+          ],
+          "type": "object"
+        }
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "research_notes",
+    "description": "Gather a focused remaining gap with a bounded worker sharing this run's provider/model, scope and budgets. Prefer direct reads for known passages; preserve allowance for other work. Returned passages are validated, already-read evidence: cite directly; on partial delivery read only remainingEvidenceIds. Follow direct-evidence recovery on failure. One worker at a time; repeat only for a different gap/scope. Returns selected passages, not its transcript. Cannot write, use web or delegate.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "folder": {
+          "description": "Known vault-relative path only; never infer from topics.",
+          "type": "string"
+        },
+        "include_history": {
+          "type": "boolean"
+        },
+        "note_ids": {
+          "description": "Known note IDs only; omit for discovery.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 2000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "update_plan",
+    "description": "Publish or update a concise user-visible plan for multi-step work. Do not include hidden reasoning. Re-send the full plan whenever a step changes.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "inProgress",
+                  "completed"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "status"
+            ],
+            "type": "object"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    }
+  }
+]

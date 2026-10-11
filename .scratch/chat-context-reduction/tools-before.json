@@ -1,0 +1,470 @@
+[
+  {
+    "name": "search_evidence",
+    "description": "Discover allowed passages by topic or exact text. Use returned metadata for note IDs and folder scopes; topics are search terms, not folder names. Previews are unread discovery: read selected evidence before quoting or citing it. Activity ranges describe recorded text changes, not deadlines or real-world event dates. For work or recorded activity during a period, discover changed passages with include_history=true and an explicit activity_range using the run's timezone: inclusive start, exclusive end. Note timestamps and unchanged backlog do not establish that activity. Search without that edit-time filter when the question concerns an event described in otherwise unchanged or later-authored text. Continue with the returned cursor only. Returns matching passages. For current deadlines, literal @due can help discover relevant notes.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string"
+        },
+        "include_history": {
+          "description": "For activity questions, include retained added/removed lines, even when superseded. Requires activity_range. Historical content is not current status. With query, use literal or regex mode.",
+          "type": "boolean"
+        },
+        "limit": {
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "hybrid",
+            "lexical",
+            "literal",
+            "regex"
+          ],
+          "type": "string"
+        },
+        "note_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query": {
+          "description": "Content to match. Historical filters match changed text, not note titles. Omit to discover all activity in activity_range, then narrow by returned noteId metadata.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "list_note_activity",
+    "description": "Discover allowed passages by topic or exact text. Use returned metadata for note IDs and folder scopes; topics are search terms, not folder names. Previews are unread discovery: read selected evidence before quoting or citing it. Activity ranges describe recorded text changes, not deadlines or real-world event dates. For work or recorded activity during a period, discover changed passages with include_history=true and an explicit activity_range using the run's timezone: inclusive start, exclusive end. Note timestamps and unchanged backlog do not establish that activity. Search without that edit-time filter when the question concerns an event described in otherwise unchanged or later-authored text. Continue with the returned cursor only. Returns distinct notes with one representative passage each. Use search_evidence within discovered scope for additional changes; note counts do not establish completed work.",
+    "parameters": {
+      "additionalProperties": false,
+      "anyOf": [
+        {
+          "required": [
+            "activity_range"
+          ]
+        },
+        {
+          "required": [
+            "cursor"
+          ]
+        }
+      ],
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "cursor": {
+          "type": "string"
+        },
+        "folder": {
+          "type": "string"
+        },
+        "include_history": {
+          "description": "For activity questions, include retained added/removed lines, even when superseded. Requires activity_range. Historical content is not current status. With query, use literal or regex mode.",
+          "type": "boolean"
+        },
+        "limit": {
+          "maximum": 20,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "mode": {
+          "enum": [
+            "hybrid",
+            "lexical",
+            "literal",
+            "regex"
+          ],
+          "type": "string"
+        },
+        "note_ids": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "query": {
+          "description": "Content to match. Historical filters match changed text, not note titles. Omit to discover all activity in activity_range, then narrow by returned noteId metadata.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "read_evidence",
+    "description": "Read selected evidence IDs or a known canonical note, then continue with cursor only. Cite exact returned references such as [S1]; the app creates links, so do not construct destinations or use a whole-note link as passage support. Request activity_range to assess changed passages against an interval. Temporal support is distinct from semantic support; qualify uncertain support and do not attribute not_established passages to that period. Supporting context is not itself recorded change. Read enough context to resolve the actor, event date, negation, and action status. Keep expanded provenance off unless inspecting lineage. Coverage describes retained evidence, excluding cleared history and discarded states within Editing Windows; it never establishes a complete real-world activity record.",
+    "parameters": {
+      "additionalProperties": false,
+      "oneOf": [
+        {
+          "required": [
+            "evidence_ids"
+          ]
+        },
+        {
+          "required": [
+            "note_id"
+          ]
+        },
+        {
+          "required": [
+            "cursor"
+          ]
+        }
+      ],
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "cursor": {
+          "description": "Continue a previous read using only this handle.",
+          "type": "string"
+        },
+        "evidence_ids": {
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 8,
+          "minItems": 1,
+          "type": "array"
+        },
+        "include_provenance": {
+          "description": "Expand per-range lineage when inspecting provenance; defaults to false. Canonical validation, historical timing and activitySupport are always returned without expansion.",
+          "type": "boolean"
+        },
+        "note_id": {
+          "description": "Read a known canonical note, including bounded pages of current content. Does not read pending proposals.",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  {
+    "name": "get_active_note",
+    "description": "Return the note adjacent to Chat, including its stable ID, body, selection, and content hash. Use this when the user says 'this note' or asks to change what they are viewing.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    }
+  },
+  {
+    "name": "read_working_note",
+    "description": "Read an allowed note by stable ID in bounded pages. For preparing reviewed edits. When pendingChanges is true, content is the unapproved working copy, not evidence for ordinary answers. Use search_evidence/read_evidence for recall. Line numbers are 1-based.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "max_chars": {
+          "maximum": 6000,
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "note_id": {
+          "type": "string"
+        },
+        "start_line": {
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "note_id"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "propose_note_edits",
+    "description": "Prepare a reviewed, no-write update for a note surfaced during this run. Use append or prepend for changes at the document boundaries; use insert only between exact, unique contextBefore/contextAfter anchors; use replace with exact non-empty oldText. Include any needed Markdown separators or newlines in newText. If the latest content has pendingChanges, edits are folded into that unapproved proposal. Submit proposals through tools rather than Markdown fences. Write deadlines as @due(YYYY-MM-DD), with Gregorian years 0001-9999, on the exact checkbox line, preserving unrelated and child text. When changing or removing a deadline, consolidate only supported valid annotations on that line. Slash commands are not stored deadline values; due times and reminders are unavailable. The user must explicitly Keep the combined preview before disk is changed.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "edits": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "contextAfter": {
+                "description": "For insert/replace, exact text immediately after the target. Do not use for append/prepend.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "contextBefore": {
+                "description": "For insert/replace, exact text immediately before the target. Do not use for append/prepend.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "kind": {
+                "description": "Use append/prepend at document boundaries, replace for existing text, and insert only between exact anchors.",
+                "enum": [
+                  "replace",
+                  "insert",
+                  "append",
+                  "prepend"
+                ],
+                "type": "string"
+              },
+              "newText": {
+                "description": "Exact replacement or inserted Markdown, including any required leading/trailing newlines.",
+                "type": "string"
+              },
+              "oldText": {
+                "description": "Required and non-empty for replace; omit for insert, append, and prepend.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "kind",
+              "newText"
+            ],
+            "type": "object"
+          },
+          "minItems": 1,
+          "type": "array"
+        },
+        "expected_content_hash": {
+          "type": "string"
+        },
+        "note_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "note_id",
+        "expected_content_hash",
+        "edits"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "propose_note_rewrite",
+    "description": "Prepare a reviewed, no-write complete rewrite of a note fully read during this run. Use this for whole-note cleanup, restructuring, translation, or tone changes; use propose_note_edits for localized changes. Read every page of the current note first. markdown must contain the complete replacement body, including every part that should be retained, and must omit managed frontmatter. If pendingChanges is true, rewrite the complete current unapproved working copy. Submit proposals through tools rather than Markdown fences. Write deadlines as @due(YYYY-MM-DD), with Gregorian years 0001-9999, on the exact checkbox line, preserving unrelated and child text. When changing or removing a deadline, consolidate only supported valid annotations on that line. Slash commands are not stored deadline values; due times and reminders are unavailable. The user must explicitly Keep the preview before disk is changed.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "expected_content_hash": {
+          "type": "string"
+        },
+        "markdown": {
+          "description": "Complete replacement Markdown body. Include all content to retain; omit managed frontmatter.",
+          "minLength": 1,
+          "type": "string"
+        },
+        "note_id": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "note_id",
+        "expected_content_hash",
+        "markdown"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "propose_create_note",
+    "description": "Prepare a reviewed, no-write new Markdown note. The user must explicitly Keep the preview before a uniquely named file is created.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "markdown": {
+          "type": "string"
+        },
+        "title": {
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "title",
+        "markdown"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "research_notes",
+    "description": "Gather evidence for a focused question using a bounded worker with the same provider/model, current scope and shared run budgets. Returned items are already-read primary evidence: cite them without reading them again. For partial delivery, read only remainingEvidenceIds, not the delivered items. Use direct reads for known passages and research for a focused remaining gap. Follow direct-evidence recovery after worker failure. Preserve the shared allowance for other parts of the request. Can be called again for a different gap or scope; only one worker may run at a time. It returns only selected backend-validated passages, never its transcript. Supply a focused question and optional note/folder scope and explicit activity_range. Research cannot write notes, use web, or delegate again.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "activity_range": {
+          "additionalProperties": false,
+          "properties": {
+            "end": {
+              "description": "Exclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "start": {
+              "description": "Inclusive YYYY-MM-DD local date or RFC3339 timestamp with UTC offset.",
+              "type": "string"
+            },
+            "timezone": {
+              "description": "IANA timezone for local dates; defaults to the run's supplied timezone.",
+              "type": "string"
+            }
+          },
+          "required": [
+            "start",
+            "end"
+          ],
+          "type": "object"
+        },
+        "folder": {
+          "description": "Optional confirmed vault-relative folder path. Omit unless this exact path is known; a project/topic name is not a folder.",
+          "type": "string"
+        },
+        "include_history": {
+          "type": "boolean"
+        },
+        "note_ids": {
+          "description": "Optional confirmed note IDs. Omit to let the worker discover notes; never infer IDs from topics.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "question": {
+          "maxLength": 2000,
+          "type": "string"
+        }
+      },
+      "required": [
+        "question"
+      ],
+      "type": "object"
+    }
+  },
+  {
+    "name": "update_plan",
+    "description": "Publish or update a concise user-visible plan for multi-step work. Do not include hidden reasoning. Re-send the full plan whenever a step changes.",
+    "parameters": {
+      "additionalProperties": false,
+      "properties": {
+        "entries": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "detail": {
+                "type": "string"
+              },
+              "id": {
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "pending",
+                  "inProgress",
+                  "completed"
+                ],
+                "type": "string"
+              },
+              "text": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "text",
+              "status"
+            ],
+            "type": "object"
+          },
+          "maxItems": 12,
+          "minItems": 1,
+          "type": "array"
+        }
+      },
+      "required": [
+        "entries"
+      ],
+      "type": "object"
+    }
+  }
+]

@@ -1,0 +1,106 @@
+{
+  "schemaVersion": 1,
+  "method": "Fresh held-out examples frozen before candidate generation; controls intentionally omitted; review rubric withheld from generation.",
+  "cases": [
+    {
+      "id": "heldout_project_bullets",
+      "category": "citation_scope",
+      "question": "List the next recorded action, owner and deadline for Ember, Harbor and Ridge. Use one bullet per project.",
+      "context": {},
+      "sources": [
+        {
+          "id": "ember",
+          "title": "Ember",
+          "location": "body",
+          "text": "Nora is to draft the Ember outline by October 4, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "harbor",
+          "title": "Harbor",
+          "location": "body",
+          "text": "Tomas is to send Harbor’s budget by October 7, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "ridge",
+          "title": "Ridge",
+          "location": "body",
+          "text": "Mira is to schedule the Ridge review. No deadline is recorded.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "ember": "Ember: Nora is to draft the outline by October 4, 2026.",
+        "harbor": "Harbor: Tomas is to send the budget by October 7, 2026.",
+        "ridge": "Ridge: Mira is to schedule the review; no deadline is recorded.",
+        "plans": "Report planned next actions, not completed work; one bullet per project."
+      },
+      "rubric": [
+        "Each project claim needs the appropriate source; a final-bullet citation does not establish preceding bullet scope."
+      ],
+      "controls": []
+    },
+    {
+      "id": "heldout_task_table",
+      "category": "status",
+      "question": "Show every task in Workshop checklist in a table with recorded status, deadline, and whether it is actionable overdue work as of October 2, 2026. Include completed tasks.",
+      "context": {
+        "localToday": "2026-10-02"
+      },
+      "sources": [
+        {
+          "id": "workshop",
+          "title": "Workshop checklist",
+          "location": "body",
+          "text": "- [ ] Draft outline @due(2026-10-01)\n- [x] Send budget @due(2026-09-30)\n- [ ] Book review",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "taskDates": {
+              "complete": true,
+              "entries": [
+                {
+                  "text": "- [ ] Draft outline @due(2026-10-01)",
+                  "status": "open",
+                  "dueDate": "2026-10-01"
+                },
+                {
+                  "text": "- [x] Send budget @due(2026-09-30)",
+                  "status": "completed",
+                  "dueDate": "2026-09-30"
+                },
+                {
+                  "text": "- [ ] Book review",
+                  "status": "open",
+                  "dueDate": null
+                }
+              ]
+            },
+            "coverage": {
+              "scope": "canonical_note",
+              "complete": true,
+              "wholeNoteComplete": true
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "outline": "Draft outline: open, due October 1, actionable overdue.",
+        "budget": "Send budget: completed, due September 30, not actionable overdue.",
+        "review": "Book review: open, no supported deadline, overdue status unestablished.",
+        "table": "Present every task in a table without inventing a deadline or omitting completed work."
+      },
+      "rubric": [
+        "Each row must have a supporting reference or an explicit whole-table source association."
+      ],
+      "controls": []
+    }
+  ]
+}

@@ -89,6 +89,7 @@ export interface ChatControllerOptions {
 const chatChannels = {
   'chat://started': true,
   'chat://text-delta': true,
+  'chat://answer-draft': true,
   'chat://source': true,
   'chat://completed': true,
   'chat://title-updated': true,

@@ -510,6 +510,17 @@ function reduceBackend(state: ChatControllerMachineState, event: BackendChatEven
         messages: upsertTerminalMessage(conversation.messages, event.payload.message)
       });
     case 'chat://activity': return selected(next, conversation);
+    case 'chat://answer-draft': return selected(next, {
+      ...conversation,
+      messages: conversation.messages.map(message => {
+        const { attempt, sequence, content } = event.payload;
+        if (message.id !== event.payload.messageId || message.requestId !== event.payload.requestId ||
+            attempt < 1 || sequence < 1 || !Number.isSafeInteger(attempt) || !Number.isSafeInteger(sequence) ||
+            (message.answerDraft && (attempt < message.answerDraft.attempt || sequence <= message.answerDraft.sequence)))
+          return message;
+        return { ...message, answerDraft: { attempt, sequence, text: content }, status: 'streaming', updatedAtMillis: event.now };
+      })
+    });
     case 'chat://text-delta': return selected(next, {
       ...conversation,
       messages: conversation.messages.map(message => {

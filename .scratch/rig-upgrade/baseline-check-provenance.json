@@ -1,0 +1,28 @@
+{
+  "sourceRoot": "/tmp/gneaux-rig-041-baseline-check",
+  "rigVersion": "0.41.0",
+  "overlayHashes": {
+    "src-tauri/Cargo.toml": "5952eabf66bed700b7af163ff0d9dbaa570a41198ac6acaa27b5a00d3776557e",
+    "src-tauri/Cargo.lock": "d6784f547d4b50fe6d9f6bbb9c4dc03e379cce758c9abe3b2f06c6241a40b0aa",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_tools.rs": "42b5d6dcf9a7623f0552fc19234d9f296249369a5f2da11db029ecfcac794f77",
+    "src-tauri/src/chat.rs": "9dd6bce368b5f29e9596bc25d046409750ee376c6751c6247d1f598a78a10e1b",
+    "src-tauri/src/chat/runtime.rs": "4f1f5be6570ff95df736fd8cad858e9dc91ef5b88ec572655e027c138c424c6a",
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/chat/tests.rs": "d4eb3a24eeda0307f909afd40e4fc1d52cf9cc890b9189414c8de11b1a0ec2cb",
+    "src-tauri/src/chat/grounding_evaluation.rs": "cb0766a28f742da74a053408a0bdf682438ef93fa45c6ce5a06d1421b0d5edb1",
+    "src-tauri/src/agent_tools/feedback.rs": "14ef1a58c5af5bba87ebabad15f1b16b55b5757435080964bf97c89951c80a51",
+    "src-tauri/src/agent_tools/research.rs": "6b613c09df7003f6599a484adb832d8dbcefe92689dcd628c933ca8c38a331b2",
+    "src-tauri/src/agent_tools/tests.rs": "fc252d52cb6d5a227fbbb08d510d7c3b9be2312cb75819d3572ae2fcb9d17831",
+    "src-tauri/src/agent_runtime/usage_context_live.rs": "16c3395141a0150a6ddbe345399eea6ee018a5416b60e69eb3d4765d13e8fb66",
+    "src-tauri/src/agent_runtime/usage_context.rs": "95d18263c8c6f757f7c39ed5792c34879cd5d4bf365d8342f6079a25e67b5a7d",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1",
+    "src-tauri/src/agent_runtime/openai_model.rs": "b3c34c6e24956edaa3030889dbffc86aa3eb2ba150adc9e013e87c50831bb291",
+    "src-tauri/src/agent_tools/tests/context_selection_audit.rs": "feb212842cdca281eb115d84516dc17ab02393cb3d34ae473e43dfe091f665ec",
+    "src-tauri/src/agent_tools/tests/live_behavior.rs": "aa76267dae3d80193913619b23fdce643f82d72bc218b2fa15f25a0822b24191",
+    "src-tauri/src/agent_tools/tests/reliability_eval.rs": "7a43668b0e9296f59535502d770b78879a47876dc84991cd735bd40b5537c615",
+    "src-tauri/src/agent_tools/tests/interface_contracts.rs": "9be34c95924f7922cca00c33accb5ebe48892d592470aea54f112d8735f4a344",
+    "src-tauri/src/agent_tools/tests/context_regressions.rs": "657cd2db8230761ada08495ae95e06b8e930c6b9100e8bb62b349f6d6fce18e1",
+    "src-tauri/src/agent_tools/tests/context_selection_live.rs": "1aeaf451991ad94953c162ae9b1c20798196e033ce5aa57c55d9540f5ca45d65"
+  }
+}

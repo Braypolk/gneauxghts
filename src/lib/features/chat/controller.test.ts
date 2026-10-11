@@ -15,7 +15,7 @@ describe('chat controller conversations', () => {
     expect(controller.getSnapshot().settings).toEqual(settings);
     expect(controller.getSnapshot().isInitialized).toBe(true);
     expect(controller.getSnapshot().conversation?.id).toBe('conversation-1');
-    expect(fake.handlers.size).toBe(11);
+    expect(fake.handlers.size).toBe(12);
   });
 
   it('opens a durable checkpoint branch as the active conversation', async () => {

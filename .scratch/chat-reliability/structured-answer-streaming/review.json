@@ -1,0 +1,28 @@
+{
+  "method": "Manual review of the sole completed answer, bound to its exact raw output. No compact answer was produced; no paired inference or general success rate.",
+  "answers": {
+    "fresh_mixed_bullets/verbose": {
+      "rawAnswerSha256": "0bfb62aa3ed6fcd080f1e96bdacab30bbac2a946e37078c37be7e8a5d7d01bf4",
+      "citationCoveragePass": true,
+      "factAndScopePass": true,
+      "observations": [
+        {
+          "quote": "Draft the brief — Leah; planned deadline: October 13, 2026.",
+          "finding": "Willow plan, owner and deadline match S1; segment explicitly cites S1."
+        },
+        {
+          "quote": "Review the budget — Ravi; deadline: October 16, 2026.",
+          "finding": "Quartz action, owner and deadline match S2; segment explicitly cites S2."
+        },
+        {
+          "quote": "Arrange the handoff — Mina; no deadline is recorded.",
+          "finding": "Meadow action, owner and unknown deadline match S3; segment explicitly cites S3."
+        },
+        {
+          "quote": "Suggestion (my prioritization)",
+          "finding": "Prioritization is explicitly an assistant suggestion, in its own unsourced segment. It does not claim that the notes assign priorities."
+        }
+      ]
+    }
+  }
+}

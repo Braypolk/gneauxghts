@@ -1,0 +1,318 @@
+{
+  "method": "Human claim judgments over fixed evidence; not automatic semantic grading",
+  "reviewSha256": "3df62ce113c69442d4c7e9ef0211e83e4446c2e4315dff3bf4dec1bd31866614",
+  "summary": {
+    "reviewedSamples": 4,
+    "pendingSamples": 0,
+    "passingReviewedSamples": 1,
+    "annotatedClaims": 13,
+    "noteClaims": 11,
+    "noteClaimsWithCitation": 9,
+    "noteClaimsWithAllCitationsInSuppliedSources": 9,
+    "noteClaimsWithReadAuthority": 9,
+    "semanticVerdicts": {
+      "supported": 11,
+      "unassessable": 2
+    },
+    "failureTags": {
+      "missing_citation": 2
+    }
+  },
+  "results": [
+    {
+      "case": "deadline_inventory",
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1315,
+          "output_tokens": 219,
+          "reasoning_tokens": 100,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1534
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 0
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-4",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "parent",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "child",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "examples",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "completed",
+            "status": "missing",
+            "reason": "Completed task omitted under the original strict full-inventory rubric; original grouped examples wording is ambiguous."
+          }
+        ]
+      }
+    },
+    {
+      "case": "partial_read_absence",
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 950,
+          "output_tokens": 81,
+          "reasoning_tokens": 37,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1031
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 1
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": null,
+            "citationMembership": null,
+            "readAuthority": null,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "scope",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "deadline_inventory",
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 1312,
+          "input_tokens": 1315,
+          "output_tokens": 210,
+          "reasoning_tokens": 88,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1525
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 2
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": true,
+        "claimInventory": "full",
+        "wholeAnswerPass": true,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-4",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          },
+          {
+            "id": "claim-5",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "parent",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "child",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "examples",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          },
+          {
+            "id": "completed",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "partial_read_absence",
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 950,
+          "output_tokens": 105,
+          "reasoning_tokens": 53,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1055
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 3
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": null,
+            "citationMembership": null,
+            "readAuthority": null,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "scope",
+            "status": "covered",
+            "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+          }
+        ]
+      }
+    }
+  ]
+}

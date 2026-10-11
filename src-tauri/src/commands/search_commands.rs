@@ -642,6 +642,9 @@ async fn search_notes_hybrid_unchecked(
         .hash
         .clone()
         .unwrap_or_else(|| blake3::hash(resolved_body.as_bytes()).to_hex().to_string());
+    let settings = state.semantic.get_settings()?;
+    let lexical_weight = lexical_weight.unwrap_or(settings.lexical_weight).max(0.0);
+    let semantic_weight = semantic_weight.unwrap_or(settings.semantic_weight).max(0.0);
     let cache_fingerprint = build_search_fingerprint(
         &format!(
             "{}|{:?}|{:?}",
@@ -651,8 +654,9 @@ async fn search_notes_hybrid_unchecked(
         Some(&cache_body_hash),
         &current_title,
         effective_limit,
-        lexical_weight,
-        semantic_weight,
+        Some(lexical_weight),
+        Some(semantic_weight),
+        settings.semantic_search_enabled,
     );
     if let Some(cached) = search_cache_get(&cache_fingerprint, cache_generation) {
         return Ok(cached);
@@ -670,9 +674,6 @@ async fn search_notes_hybrid_unchecked(
         &tag_query,
         current_tags.as_deref(),
     )?;
-    let settings = state.semantic.get_settings()?;
-    let lexical_weight = lexical_weight.unwrap_or(settings.lexical_weight).max(0.0);
-    let semantic_weight = semantic_weight.unwrap_or(settings.semantic_weight).max(0.0);
     let current_path_raw = current_path
         .as_deref()
         .map(|path| path.to_string_lossy().into_owned());
@@ -1079,6 +1080,7 @@ fn build_search_fingerprint(
     limit: usize,
     lexical_weight: Option<f32>,
     semantic_weight: Option<f32>,
+    semantic_enabled: bool,
 ) -> String {
     // Structured framing avoids collisions when user inputs contain separators.
     serde_json::to_string(&(
@@ -1089,6 +1091,7 @@ fn build_search_fingerprint(
         limit,
         lexical_weight.map(f32::to_bits),
         semantic_weight.map(f32::to_bits),
+        semantic_enabled,
     ))
     .unwrap()
 }
@@ -1989,6 +1992,95 @@ mod tag_search_tests {
 #[cfg(test)]
 mod command_composition_regressions {
     use super::*;
+
+    #[test]
+    #[cfg(any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(
+            target_os = "linux",
+            any(target_arch = "aarch64", target_arch = "x86_64")
+        ),
+        all(target_os = "windows", target_arch = "x86_64")
+    ))]
+    fn semantic_setting_changes_do_not_reuse_keyword_only_results() {
+        let mut fixture = crate::test_support::TestVault::new("search-semantic-settings-cache");
+        let semantic = crate::semantic::SemanticState::new_with_runtime(
+            fixture.data.path().to_path_buf(),
+            fixture.data.path().join("vault"),
+            fixture.notes.path().to_path_buf(),
+            None,
+        )
+        .unwrap();
+        fixture.state =
+            std::sync::Arc::new(AppState::new(semantic, crate::app::EventBus::disabled()).unwrap());
+        let search = || {
+            tauri::async_runtime::block_on(search_notes_hybrid_unchecked(
+                &fixture.state,
+                "semantic settings cache probe".into(),
+                None,
+                String::new(),
+                None,
+                None,
+                8,
+                None,
+                None,
+                None,
+            ))
+            .unwrap()
+        };
+        invalidate_result_caches();
+        let mut settings = fixture.state.semantic.get_settings().unwrap();
+        settings.semantic_search_enabled = false;
+        let applied = fixture
+            .state
+            .semantic
+            .set_settings(settings.clone())
+            .unwrap();
+        assert!(!applied.semantic_search_enabled);
+        fixture.state.semantic.clear_debug_metrics().unwrap();
+        search();
+        settings.semantic_search_enabled = true;
+        let applied = fixture
+            .state
+            .semantic
+            .set_settings(settings.clone())
+            .unwrap();
+        assert!(applied.semantic_search_enabled);
+        search();
+        let metrics = fixture.state.semantic.debug_snapshot().unwrap().metrics;
+        assert_eq!(
+            metrics.search_request_count, 2,
+            "enabling semantic search must recompute the same query"
+        );
+        // No model download is needed: even an unavailable embedding runtime
+        // must attempt the newly enabled path rather than hit the old cache.
+        settings.lexical_weight = 0.1;
+        fixture.state.semantic.set_settings(settings).unwrap();
+        search();
+        assert_eq!(
+            fixture
+                .state
+                .semantic
+                .debug_snapshot()
+                .unwrap()
+                .metrics
+                .search_request_count,
+            3,
+            "changing a default ranking weight must also recompute"
+        );
+        search();
+        assert_eq!(
+            fixture
+                .state
+                .semantic
+                .debug_snapshot()
+                .unwrap()
+                .metrics
+                .search_request_count,
+            3,
+            "unchanged effective settings should still reuse results"
+        );
+    }
 
     #[test]
     fn title_only_and_unhashed_body_changes_do_not_reuse_search_results() {

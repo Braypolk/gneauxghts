@@ -1,0 +1,1128 @@
+{
+  "cases": [
+    {
+      "answer": "Hi! I’m here and ready to help. How are you?",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 0,
+            "inputTokens": 2180,
+            "outputTokens": 52,
+            "reasoningTokens": 32,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2232
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "greeting",
+      "proposal": null,
+      "question": "Hi! How are you?",
+      "requestBytes": [
+        13032
+      ],
+      "runtimeError": null,
+      "sources": [],
+      "stats": {
+        "elapsedMillis": 2971,
+        "modelCalls": 1,
+        "toolCalls": 0
+      },
+      "tools": [],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 2180,
+        "outputTokens": 52,
+        "reasoningTokens": 32,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 2232
+      }
+    },
+    {
+      "answer": "Basil. The selected text says, “Water basil every morning.” [Source 2](passage:5aa649043aeeb62951006c1340dfbb57a1e401fefd85f292ba9fbe6d4a7f4ca2)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2186,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2225
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "RMBZJNM92r0cXr6_ervW8",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "RMBZJNM92r0cXr6_ervW8",
+          "duration_millis": 7,
+          "name": "read_notes",
+          "output_summary": "Read 2 passages from 1 notes",
+          "status": "success",
+          "step_index": 0,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4045,
+            "inputTokens": 5172,
+            "outputTokens": 61,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5233
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "selection",
+      "proposal": null,
+      "question": "What plant should I water in the selected text?",
+      "requestBytes": [
+        13089,
+        16640
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "2414e09228f7ba22217065c2e8ae37cbfe691d74fb00458005d92084fc13823e",
+          "excerpt": "Garden plan",
+          "kind": "passage",
+          "noteId": "01M4HN2HFPSHA3XM4YYFSWCAZJ",
+          "notePath": "Garden plan.md",
+          "passage": {
+            "contentHash": "3c6ac14075e6456240058ba5945ad6a8a8e2df38eed8e8ba2684aaf72933f01a",
+            "end": 11,
+            "excerpt": "Garden plan",
+            "id": "2414e09228f7ba22217065c2e8ae37cbfe691d74fb00458005d92084fc13823e",
+            "location": "title",
+            "noteId": "01M4HN2HFPSHA3XM4YYFSWCAZJ",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Garden plan",
+          "url": null
+        },
+        {
+          "anchor": "5aa649043aeeb62951006c1340dfbb57a1e401fefd85f292ba9fbe6d4a7f4ca2",
+          "excerpt": "Water basil every morning.\nGarden-only code: FERN-831.\n",
+          "kind": "passage",
+          "noteId": "01M4HN2HFPSHA3XM4YYFSWCAZJ",
+          "notePath": "Garden plan.md",
+          "passage": {
+            "contentHash": "3c6ac14075e6456240058ba5945ad6a8a8e2df38eed8e8ba2684aaf72933f01a",
+            "end": 55,
+            "excerpt": "Water basil every morning.\nGarden-only code: FERN-831.\n",
+            "id": "5aa649043aeeb62951006c1340dfbb57a1e401fefd85f292ba9fbe6d4a7f4ca2",
+            "location": "body",
+            "noteId": "01M4HN2HFPSHA3XM4YYFSWCAZJ",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Garden plan",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2679,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "tools": [
+        "read_notes"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4045,
+        "inputTokens": 5172,
+        "outputTokens": 61,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5233
+      }
+    },
+    {
+      "answer": "The launch code in Meridian launch is **SABLE-472**. [Source 1](passage:10a391ffb9c988c86625fa17f8edf829dc5d81152786c491b03eab9faee44961)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2183,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2212
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "ExdfF3ciW6IZ16ymarYkq",
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Search notes for “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "ExdfF3ciW6IZ16ymarYkq",
+          "duration_millis": 23,
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "output_summary": "Matched 2 candidate passages; coverage is partial",
+          "status": "success",
+          "step_index": 0,
+          "title": "Search notes for “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4042,
+            "inputTokens": 4869,
+            "outputTokens": 87,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4956
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "EHRijieELvfpuxCxHpAOz",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "EHRijieELvfpuxCxHpAOz",
+          "duration_millis": 6,
+          "name": "read_notes",
+          "output_summary": "Read 1 passages from 1 notes",
+          "status": "success",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6725,
+            "inputTokens": 8179,
+            "outputTokens": 109,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8288
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "different_note",
+      "proposal": null,
+      "question": "What is the launch code in Meridian launch?",
+      "requestBytes": [
+        13059,
+        15087,
+        18122
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "10a391ffb9c988c86625fa17f8edf829dc5d81152786c491b03eab9faee44961",
+          "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+          "kind": "passage",
+          "noteId": "01M4HN2MCNS2KKAZS3R9NRZKE6",
+          "notePath": "Meridian launch.md",
+          "passage": {
+            "contentHash": "69cf5a8a60500ec25afaefa21cd004ea8d0433d31a266a908e79e7993e9ab17a",
+            "end": 74,
+            "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+            "id": "10a391ffb9c988c86625fa17f8edf829dc5d81152786c491b03eab9faee44961",
+            "location": "body",
+            "noteId": "01M4HN2MCNS2KKAZS3R9NRZKE6",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Meridian launch",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4686,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "tools": [
+        "find_notes",
+        "read_notes"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6725,
+        "inputTokens": 8179,
+        "outputTokens": 109,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 8288
+      }
+    },
+    {
+      "answer": "Priya owns the Meridian launch. [Source 1](passage:dc3e39cc60a9259716ad856c7231a29fe18a6f6088fa1ba4a42a7a1c55bf2201)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2194,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2223
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "WIc1dVXf6hipZLQXoJ_Gu",
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Search notes for “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "WIc1dVXf6hipZLQXoJ_Gu",
+          "duration_millis": 9,
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "output_summary": "Matched 2 candidate passages; coverage is partial",
+          "status": "success",
+          "step_index": 0,
+          "title": "Search notes for “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4053,
+            "inputTokens": 4895,
+            "outputTokens": 92,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4987
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "ht356pZ_Bj5pYW1tg0SxC",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "ht356pZ_Bj5pYW1tg0SxC",
+          "duration_millis": 5,
+          "name": "read_notes",
+          "output_summary": "Read 1 passages from 1 notes",
+          "status": "success",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6751,
+            "inputTokens": 8230,
+            "outputTokens": 107,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8337
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "followup",
+      "proposal": null,
+      "question": "Who owns that launch?",
+      "requestBytes": [
+        13134,
+        15162,
+        18197
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "dc3e39cc60a9259716ad856c7231a29fe18a6f6088fa1ba4a42a7a1c55bf2201",
+          "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+          "kind": "passage",
+          "noteId": "01M4HN2S4NP945C531M5F8F3ZG",
+          "notePath": "Meridian launch.md",
+          "passage": {
+            "contentHash": "69cf5a8a60500ec25afaefa21cd004ea8d0433d31a266a908e79e7993e9ab17a",
+            "end": 74,
+            "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+            "id": "dc3e39cc60a9259716ad856c7231a29fe18a6f6088fa1ba4a42a7a1c55bf2201",
+            "location": "body",
+            "noteId": "01M4HN2S4NP945C531M5F8F3ZG",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Meridian launch",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3842,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "tools": [
+        "find_notes",
+        "read_notes"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6751,
+        "inputTokens": 8230,
+        "outputTokens": 107,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 8337
+      }
+    },
+    {
+      "answer": "- [ ] Send launch brief @due(2026-10-09) [Source 1](passage:fe7a10d3a0ddfd44f81c7d5241a6bbabdf7eb68cf4beec0650afdacd07585cb9)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2191,
+            "outputTokens": 27,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2218
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "8e2VdcbzkaBZ4-cTvmXdz",
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Search notes for “Launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "8e2VdcbzkaBZ4-cTvmXdz",
+          "duration_millis": 10,
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "output_summary": "Matched 2 candidate passages; coverage is partial",
+          "status": "success",
+          "step_index": 0,
+          "title": "Search notes for “Launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4050,
+            "inputTokens": 4886,
+            "outputTokens": 89,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4975
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "HePF4JwY7CO9q6aICIPSb",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "HePF4JwY7CO9q6aICIPSb",
+          "duration_millis": 10,
+          "name": "read_notes",
+          "output_summary": "Read 1 passages from 1 notes",
+          "status": "success",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6742,
+            "inputTokens": 8535,
+            "outputTokens": 145,
+            "reasoningTokens": 30,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8680
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "deadlines",
+      "proposal": null,
+      "question": "Which unchecked Launch tasks are due today? List only matching tasks, with citations.",
+      "requestBytes": [
+        13101,
+        15119,
+        19432
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "fe7a10d3a0ddfd44f81c7d5241a6bbabdf7eb68cf4beec0650afdacd07585cb9",
+          "excerpt": "- [ ] Send launch brief @due(2026-10-09)\n- [x] Archive retired deck @due(2026-10-09)\n- [ ] Prepare demo @due(2026-10-10)",
+          "kind": "passage",
+          "noteId": "01M4HN2X8FF2TCRA5T27AH7M7V",
+          "notePath": "Launch tasks.md",
+          "passage": {
+            "contentHash": "14492d78c612671e6ff4a4a13fcdb8ea071cbe1d65066893f655223f585a3b84",
+            "end": 120,
+            "excerpt": "- [ ] Send launch brief @due(2026-10-09)\n- [x] Archive retired deck @due(2026-10-09)\n- [ ] Prepare demo @due(2026-10-10)",
+            "id": "fe7a10d3a0ddfd44f81c7d5241a6bbabdf7eb68cf4beec0650afdacd07585cb9",
+            "location": "body",
+            "noteId": "01M4HN2X8FF2TCRA5T27AH7M7V",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Launch tasks",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3269,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "tools": [
+        "find_notes",
+        "read_notes"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6742,
+        "inputTokens": 8535,
+        "outputTokens": 145,
+        "reasoningTokens": 30,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 8680
+      }
+    },
+    {
+      "answer": "I prepared the change for review: the owner is changed from Priya to Anika, and everything else is preserved. The note won’t be changed until you accept the proposal.",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2197,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2236
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "wQoYHrdpy22gtkfFA5cWh",
+          "input_summary": "From the beginning",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Read “Meridian launch” for editing",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "wQoYHrdpy22gtkfFA5cWh",
+          "duration_millis": 3,
+          "input_summary": "From the beginning",
+          "name": "read_notes",
+          "output_summary": "Read lines 1–3",
+          "status": "success",
+          "step_index": 0,
+          "title": "Read “Meridian launch” for editing",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4056,
+            "inputTokens": 4580,
+            "outputTokens": 143,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4723
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "SLLKZOHz2rJWu8bqbYm-o",
+          "input_summary": "1 targeted edits",
+          "name": "propose_note_change",
+          "status": "running",
+          "step_index": 1,
+          "title": "Prepare changes to “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "SLLKZOHz2rJWu8bqbYm-o",
+          "duration_millis": 9,
+          "input_summary": "1 targeted edits",
+          "name": "propose_note_change",
+          "output_summary": "Ready for review",
+          "status": "success",
+          "step_index": 1,
+          "title": "Prepare changes to “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6436,
+            "inputTokens": 7111,
+            "outputTokens": 183,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 7294
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "reviewed_edit",
+      "proposal": {
+        "assistantMessageId": "msg_b5cdb220a8832f1ce167",
+        "baseHash": "bb17264421156f5a8d3959352f69353fad213205d9a480ab830316f7a564f639",
+        "conversationId": "chat_0d3e1750ca710bd95ce3",
+        "createdAtMillis": 1791593909813,
+        "id": "proposal_4071ad02a1eb0bc02f2c",
+        "kind": "update",
+        "noteId": "01M4HN30K0TFW49F0BFR06873S",
+        "payload": {
+          "edits": [
+            {
+              "contextAfter": null,
+              "contextBefore": null,
+              "kind": "replace",
+              "newText": "Owner: Anika.",
+              "oldText": "Owner: Priya."
+            }
+          ],
+          "expected_content_hash": "bb17264421156f5a8d3959352f69353fad213205d9a480ab830316f7a564f639",
+          "note_id": "01M4HN30K0TFW49F0BFR06873S"
+        },
+        "preview": {
+          "baseContentHash": "bb17264421156f5a8d3959352f69353fad213205d9a480ab830316f7a564f639",
+          "baseEditorMarkdown": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.\n",
+          "hunks": [
+            {
+              "baseFrom": 24,
+              "baseTo": 37,
+              "id": "hunk-1",
+              "newText": "Owner: Anika.",
+              "oldText": "Owner: Priya.",
+              "proposedFrom": 24,
+              "proposedTo": 37
+            }
+          ],
+          "notePath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-real-agent-tools-1791593906710118000/Meridian launch.md",
+          "proposedEditorMarkdown": "Launch code: SABLE-472.\nOwner: Anika.\nKeep the cobalt checklist unchanged.\n",
+          "reviewId": "75f98976977f1d578c72e97d841d7863f513d7c5a4344c700d105125ad6dacac",
+          "title": "Meridian launch"
+        },
+        "runId": "run_c0a40dc3bd0dd09bdf1a",
+        "status": "pending",
+        "suggestedPath": null,
+        "title": "Meridian launch",
+        "updatedAtMillis": 1791593909813
+      },
+      "question": "Change the owner in this note from Priya to Anika. Preserve everything else and prepare the change for review.",
+      "requestBytes": [
+        13130,
+        14065,
+        14829
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "lines 1-3",
+          "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+          "kind": "note",
+          "noteId": "01M4HN30K0TFW49F0BFR06873S",
+          "notePath": "Meridian launch.md",
+          "title": "Meridian launch",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4141,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "tools": [
+        "read_notes",
+        "propose_note_change"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6436,
+        "inputTokens": 7111,
+        "outputTokens": 183,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 7294
+      }
+    },
+    {
+      "answer": "- **Priya:** On September 18, 2026, Priya completed checksum verification. [Source 1](passage:192a68d1defb3ce935b2d91ceceaa5a05daf3281ea0e1a0ca8782adcdf50cfa8)\n- **Entire launch:** No—the retrospective says checksum verification was one substep and that the entire launch has no recorded completion. [Source 1](passage:192a68d1defb3ce935b2d91ceceaa5a05daf3281ea0e1a0ca8782adcdf50cfa8)\n- **Deployment approver:** The retrospective says deployment was approved but does not identify who approved it. [Source 1](passage:192a68d1defb3ce935b2d91ceceaa5a05daf3281ea0e1a0ca8782adcdf50cfa8)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2218,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2247
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "DHGIbvXmawdM-05pVCdzr",
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Search notes for “Meridian retrospective”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "DHGIbvXmawdM-05pVCdzr",
+          "duration_millis": 20,
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "output_summary": "Matched 2 candidate passages; coverage is partial",
+          "status": "success",
+          "step_index": 0,
+          "title": "Search notes for “Meridian retrospective”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4077,
+            "inputTokens": 4939,
+            "outputTokens": 159,
+            "reasoningTokens": 25,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5098
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "OFvKCZrxass0kMilPmAuY",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "OFvKCZrxass0kMilPmAuY",
+          "duration_millis": 11,
+          "name": "read_notes",
+          "output_summary": "Read 1 passages from 1 notes",
+          "status": "success",
+          "step_index": 1,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "YN0FLlqui4ncuULDs6a-p",
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 1,
+          "title": "Search notes for “deployment approv”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "YN0FLlqui4ncuULDs6a-p",
+          "duration_millis": 13,
+          "input_summary": "Up to 10 results",
+          "name": "find_notes",
+          "output_summary": "Matched 1 candidate passages; coverage is partial",
+          "status": "success",
+          "step_index": 1,
+          "title": "Search notes for “deployment approv”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6795,
+            "inputTokens": 8717,
+            "outputTokens": 213,
+            "reasoningTokens": 51,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 8930
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "o0qSp8fq0EFYov-88wToh",
+          "input_summary": "Up to 20 results",
+          "name": "find_notes",
+          "status": "running",
+          "step_index": 2,
+          "title": "Search notes for “approved”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "o0qSp8fq0EFYov-88wToh",
+          "duration_millis": 12,
+          "input_summary": "Up to 20 results",
+          "name": "find_notes",
+          "output_summary": "Matched 1 candidate passages",
+          "status": "success",
+          "step_index": 2,
+          "title": "Search notes for “approved”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 10570,
+            "inputTokens": 12865,
+            "outputTokens": 374,
+            "reasoningTokens": 129,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 13239
+          },
+          "call_index": 3,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "semantic_status",
+      "proposal": null,
+      "question": "In Meridian retrospective, what did Priya complete on September 18? Is the entire launch recorded as complete, and who approved deployment? Use three bullets labeled Priya, Entire launch, and Deployment approver, with citations.",
+      "requestBytes": [
+        13244,
+        15371,
+        22051,
+        25560
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "192a68d1defb3ce935b2d91ceceaa5a05daf3281ea0e1a0ca8782adcdf50cfa8",
+          "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.",
+          "kind": "passage",
+          "noteId": "01M4HN34YZH93MXKQT0Z8YN8N3",
+          "notePath": "Meridian retrospective.md",
+          "passage": {
+            "contentHash": "be6cfd39731179793da9666c8cfcc58d12b4f78e4c004e14711addb063e58cba",
+            "end": 213,
+            "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.",
+            "id": "192a68d1defb3ce935b2d91ceceaa5a05daf3281ea0e1a0ca8782adcdf50cfa8",
+            "location": "body",
+            "noteId": "01M4HN34YZH93MXKQT0Z8YN8N3",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Meridian retrospective",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 7411,
+        "modelCalls": 4,
+        "toolCalls": 4
+      },
+      "tools": [
+        "find_notes",
+        "read_notes",
+        "find_notes",
+        "find_notes"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 10570,
+        "inputTokens": 12865,
+        "outputTokens": 374,
+        "reasoningTokens": 129,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 13239
+      }
+    },
+    {
+      "answer": "Prepared the note as three Markdown bullets, preserving the wording, values, and order. The change is ready for your review.",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1862,
+            "inputTokens": 2199,
+            "outputTokens": 40,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2239
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "7POTJk6ckKAe3X4Ke6Ldm",
+          "input_summary": "From the beginning",
+          "name": "read_notes",
+          "status": "running",
+          "step_index": 0,
+          "title": "Read “Meridian launch” for editing",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "7POTJk6ckKAe3X4Ke6Ldm",
+          "duration_millis": 114,
+          "input_summary": "From the beginning",
+          "name": "read_notes",
+          "output_summary": "Read lines 1–3",
+          "status": "success",
+          "step_index": 0,
+          "title": "Read “Meridian launch” for editing",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4058,
+            "inputTokens": 4591,
+            "outputTokens": 242,
+            "reasoningTokens": 55,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4833
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "AWV6PLK6AsIi_3-Wg02jN",
+          "input_summary": "1 targeted edits",
+          "name": "propose_note_change",
+          "status": "running",
+          "step_index": 1,
+          "title": "Prepare changes to “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "AWV6PLK6AsIi_3-Wg02jN",
+          "duration_millis": 6,
+          "input_summary": "1 targeted edits",
+          "name": "propose_note_change",
+          "output_summary": "Ready for review",
+          "status": "success",
+          "step_index": 1,
+          "title": "Prepare changes to “Meridian launch”",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 6447,
+            "inputTokens": 7227,
+            "outputTokens": 271,
+            "reasoningTokens": 55,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 7498
+          },
+          "call_index": 2,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "reviewed_rewrite",
+      "proposal": {
+        "assistantMessageId": "msg_0ac6f749390024087301",
+        "baseHash": "1e846ffddd3a453838ea6b219aa8b52585b5a9bcf92b0ae095976729fdb8fc4d",
+        "conversationId": "chat_ebc0058fd2aefa10fda3",
+        "createdAtMillis": 1791593922941,
+        "id": "proposal_b2060cbb7d9bee8eb144",
+        "kind": "update",
+        "noteId": "01M4HN3CEHRMSTJZMSE7V3P1BG",
+        "payload": {
+          "edits": [
+            {
+              "contextAfter": null,
+              "contextBefore": null,
+              "kind": "replace",
+              "newText": "- Launch code: SABLE-472.\n- Owner: Priya.\n- Keep the cobalt checklist unchanged.",
+              "oldText": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged."
+            }
+          ],
+          "expected_content_hash": "1e846ffddd3a453838ea6b219aa8b52585b5a9bcf92b0ae095976729fdb8fc4d",
+          "note_id": "01M4HN3CEHRMSTJZMSE7V3P1BG"
+        },
+        "preview": {
+          "baseContentHash": "1e846ffddd3a453838ea6b219aa8b52585b5a9bcf92b0ae095976729fdb8fc4d",
+          "baseEditorMarkdown": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.\n",
+          "hunks": [
+            {
+              "baseFrom": 0,
+              "baseTo": 74,
+              "id": "hunk-1",
+              "newText": "- Launch code: SABLE-472.\n- Owner: Priya.\n- Keep the cobalt checklist unchanged.",
+              "oldText": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+              "proposedFrom": 0,
+              "proposedTo": 80
+            }
+          ],
+          "notePath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-real-agent-tools-1791593918840661000/Meridian launch.md",
+          "proposedEditorMarkdown": "- Launch code: SABLE-472.\n- Owner: Priya.\n- Keep the cobalt checklist unchanged.\n",
+          "reviewId": "ca448f69885c040e4aaffc32831ad3503958499155497ada3b93d267d917e874",
+          "title": "Meridian launch"
+        },
+        "runId": "run_a911150b2bb4ca4e3f90",
+        "status": "pending",
+        "suggestedPath": null,
+        "title": "Meridian launch",
+        "updatedAtMillis": 1791593922941
+      },
+      "question": "Reformat this whole note as three Markdown bullets in its existing order, preserving wording and values. Prepare it for review.",
+      "requestBytes": [
+        13147,
+        14082,
+        17319
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "lines 1-3",
+          "excerpt": "Launch code: SABLE-472.\nOwner: Priya.\nKeep the cobalt checklist unchanged.",
+          "kind": "note",
+          "noteId": "01M4HN3CEHRMSTJZMSE7V3P1BG",
+          "notePath": "Meridian launch.md",
+          "title": "Meridian launch",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5012,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "tools": [
+        "read_notes",
+        "propose_note_change"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6447,
+        "inputTokens": 7227,
+        "outputTokens": 271,
+        "reasoningTokens": 55,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 7498
+      }
+    }
+  ],
+  "limits": {
+    "callsPerCase": 6,
+    "cases": 8,
+    "outputTokensPerCall": 1024,
+    "secondsPerCase": 60,
+    "serializedBytesPerCall": 64000
+  },
+  "model": "gpt-6-luna",
+  "reasoningEffort": "provider default",
+  "scope": "Real streaming runner and vault tools; synthetic fixtures. No native UI/durable chat admission, web, or configured research worker. No paired old-prompt baseline.",
+  "semanticReview": "semantic_status assertions are smoke checks; manually verify actor, event date, substep completion, project uncertainty and unknown approver."
+}

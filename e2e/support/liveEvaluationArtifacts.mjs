@@ -19,6 +19,12 @@ export function selectAssistant(messages, { messageId, excludeIds = [] } = {}) {
     && (!messageId || message.id === messageId) && !excludeIds.includes(message.id));
 }
 
+// Production persists provider/runtime failures as `error`. Retain the older
+// `failed` spelling for historical harness fixtures as well.
+export function isTerminalAssistant(answer) {
+  return Boolean(answer && ['complete', 'error', 'failed', 'cancelled'].includes(answer.status));
+}
+
 // Execution success means the assertions in the native spec passed. It never
 // silently promotes retrieved/cited coverage into a semantic answer grade.
 export function createEvaluationArtifact(config, { now = () => new Date(), timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone } = {}) {

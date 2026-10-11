@@ -1,0 +1,272 @@
+{
+  "scope": "Offline actual context helpers, registered tools and streaming runner with scripted model choices. No provider requests, native UI or model reasoning. Search modes in the scripted replay are explicit experimental inputs; the prior live report did not retain full tool arguments.",
+  "startingCases": [
+    {
+      "name": "greeting",
+      "adjacentHintBytes": 203,
+      "linkedContextBytes": 0,
+      "selectedContextBytes": 0,
+      "inputBytes": 12627
+    },
+    {
+      "name": "plain_named_note",
+      "adjacentHintBytes": 203,
+      "linkedContextBytes": 0,
+      "selectedContextBytes": 0,
+      "inputBytes": 12654
+    },
+    {
+      "name": "linked_named_note",
+      "adjacentHintBytes": 203,
+      "linkedContextBytes": 234,
+      "selectedContextBytes": 0,
+      "inputBytes": 12946
+    },
+    {
+      "name": "selected_text",
+      "adjacentHintBytes": 227,
+      "linkedContextBytes": 0,
+      "selectedContextBytes": 0,
+      "inputBytes": 12684
+    },
+    {
+      "name": "long_linked_note",
+      "adjacentHintBytes": 203,
+      "linkedContextBytes": 2556,
+      "selectedContextBytes": 0,
+      "inputBytes": 15332
+    }
+  ],
+  "searchProbes": [
+    {
+      "args": {
+        "limit": 10,
+        "mode": "lexical",
+        "note_ids": [
+          "01M4HPH8J9F187G741QV875TMK"
+        ],
+        "query": "Meridian retrospective"
+      },
+      "resultBytes": 1226,
+      "sameReadTextPreviews": 1,
+      "notesInScope": 1,
+      "coverage": {
+        "budget": {
+          "evidenceBytes": 24000,
+          "usedBytes": 0
+        },
+        "candidatesMatched": 1,
+        "complete": false,
+        "gaps": [
+          "An indexed passage changed or was ambiguous"
+        ],
+        "historyScope": "Current content only; activity dates apply to surviving ranges",
+        "lexical": "ready",
+        "notesInScope": 1,
+        "notesInspected": 1,
+        "notesInspectedMeaning": "Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index",
+        "period": null,
+        "scope": {
+          "folder": null,
+          "noteIds": [
+            "01M4HPH8J9F187G741QV875TMK"
+          ]
+        },
+        "semantic": "not_requested"
+      },
+      "delivery": {
+        "complete": true,
+        "hasMore": false
+      }
+    },
+    {
+      "args": {
+        "limit": 10,
+        "query": "deployment approv"
+      },
+      "resultBytes": 1211,
+      "sameReadTextPreviews": 1,
+      "notesInScope": 5,
+      "coverage": {
+        "budget": {
+          "evidenceBytes": 24000,
+          "usedBytes": 0
+        },
+        "candidatesMatched": 1,
+        "complete": false,
+        "gaps": [
+          "Semantic search is disabled; results use lexical search only"
+        ],
+        "historyScope": "Current content only; activity dates apply to surviving ranges",
+        "lexical": "ready",
+        "notesInScope": 5,
+        "notesInspected": 1,
+        "notesInspectedMeaning": "Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index",
+        "period": null,
+        "scope": {
+          "folder": null,
+          "noteIds": null
+        },
+        "semantic": "disabled"
+      },
+      "delivery": {
+        "complete": true,
+        "hasMore": false
+      }
+    },
+    {
+      "args": {
+        "limit": 20,
+        "mode": "literal",
+        "query": "approved"
+      },
+      "resultBytes": 1139,
+      "sameReadTextPreviews": 1,
+      "notesInScope": 5,
+      "coverage": {
+        "budget": {
+          "evidenceBytes": 24000,
+          "usedBytes": 0
+        },
+        "candidatesMatched": 1,
+        "complete": true,
+        "gaps": [],
+        "historyScope": "Current content only; activity dates apply to surviving ranges",
+        "lexical": "ready",
+        "notesInScope": 5,
+        "notesInspected": 5,
+        "notesInspectedMeaning": "Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index",
+        "period": null,
+        "scope": {
+          "folder": null,
+          "noteIds": null
+        },
+        "semantic": "not_requested"
+      },
+      "delivery": {
+        "complete": true,
+        "hasMore": false
+      }
+    },
+    {
+      "args": {
+        "limit": 20,
+        "mode": "lexical",
+        "query": "approved"
+      },
+      "resultBytes": 1153,
+      "sameReadTextPreviews": 1,
+      "notesInScope": 5,
+      "coverage": {
+        "budget": {
+          "evidenceBytes": 24000,
+          "usedBytes": 0
+        },
+        "candidatesMatched": 1,
+        "complete": true,
+        "gaps": [],
+        "historyScope": "Current content only; activity dates apply to surviving ranges",
+        "lexical": "ready",
+        "notesInScope": 5,
+        "notesInspected": 1,
+        "notesInspectedMeaning": "Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index",
+        "period": null,
+        "scope": {
+          "folder": null,
+          "noteIds": null
+        },
+        "semantic": "not_requested"
+      },
+      "delivery": {
+        "complete": true,
+        "hasMore": false
+      }
+    },
+    {
+      "args": {
+        "limit": 20,
+        "mode": "literal",
+        "note_ids": [
+          "01M4HPH8J9F187G741QV875TMK"
+        ],
+        "query": "approved"
+      },
+      "resultBytes": 1165,
+      "sameReadTextPreviews": 1,
+      "notesInScope": 1,
+      "coverage": {
+        "budget": {
+          "evidenceBytes": 24000,
+          "usedBytes": 0
+        },
+        "candidatesMatched": 1,
+        "complete": true,
+        "gaps": [],
+        "historyScope": "Current content only; activity dates apply to surviving ranges",
+        "lexical": "ready",
+        "notesInScope": 1,
+        "notesInspected": 1,
+        "notesInspectedMeaning": "Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index",
+        "period": null,
+        "scope": {
+          "folder": null,
+          "noteIds": [
+            "01M4HPH8J9F187G741QV875TMK"
+          ]
+        },
+        "semantic": "not_requested"
+      },
+      "delivery": {
+        "complete": true,
+        "hasMore": false
+      }
+    }
+  ],
+  "hintOnlyHistoryMarker": {
+    "afterHint": 1,
+    "beforeHint": 0,
+    "citableSources": 0
+  },
+  "scriptedComparisons": {
+    "scriptedRetrievalTrace": {
+      "requests": 4,
+      "aggregateInputBytes": 67239,
+      "perRequest": [
+        {
+          "inputBytes": 12750,
+          "toolResultBytes": 0
+        },
+        {
+          "inputBytes": 14700,
+          "toolResultBytes": 1742
+        },
+        {
+          "inputBytes": 19163,
+          "toolResultBytes": 5781
+        },
+        {
+          "inputBytes": 20626,
+          "toolResultBytes": 7029
+        }
+      ]
+    },
+    "focusedRetrievalTrace": {
+      "requests": 3,
+      "aggregateInputBytes": 45163,
+      "perRequest": [
+        {
+          "inputBytes": 12750,
+          "toolResultBytes": 0
+        },
+        {
+          "inputBytes": 14700,
+          "toolResultBytes": 1742
+        },
+        {
+          "inputBytes": 17713,
+          "toolResultBytes": 4492
+        }
+      ]
+    }
+  }
+}

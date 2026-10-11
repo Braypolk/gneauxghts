@@ -12,7 +12,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const RULES: &str = include_str!("answer_grounding.txt");
+const RULES: &str = include_str!("grounding_baseline.txt");
 
 #[test]
 #[ignore = "requires the explicitly selected local provider; synthetic grounding comparison"]
@@ -45,21 +45,26 @@ fn live_answer_grounding_comparison() {
         .enable_all()
         .build()
         .unwrap();
-    // After adoption, stripping only the exact added suffix retains an explicit
-    // baseline of the former production prompt for repeatable A/B comparisons.
+    // Historical supplement is a test-only baseline. The candidate receives the
+    // same interpretation contracts as an evidence read, with fixed retrieval.
     let current = agent_preamble(&AgentProvider::Local, false);
-    let base = current.strip_suffix(RULES).unwrap_or(&current);
+    let base = &current;
     let baseline_rules = std::env::var("GNEAUX_GROUNDING_BASELINE_INSTRUCTIONS")
         .map(|path| fs::read_to_string(path).expect("read baseline grounding instructions"))
-        .unwrap_or_default();
-    let baseline = format!("{base}{baseline_rules}");
-    let rules = std::env::var("GNEAUX_GROUNDING_INSTRUCTIONS")
-        .map(|path| fs::read_to_string(path).expect("read explicit grounding instructions"))
         .unwrap_or_else(|_| RULES.to_string());
-    let candidate = format!("{base}{rules}");
+    let baseline = format!("{base}{baseline_rules}");
+    let rules_override = std::env::var("GNEAUX_GROUNDING_INSTRUCTIONS")
+        .ok()
+        .map(|path| fs::read_to_string(path).expect("read explicit grounding instructions"));
     let mut rows = Vec::new();
     for repeat in 0..repeats {
         for (index, case) in cases.iter().enumerate() {
+            let rules = rules_override.clone().unwrap_or_else(|| {
+                crate::services::evidence::interpretation_guidance(
+                    case["sources"].as_array().map(Vec::as_slice).unwrap_or(&[]),
+                )
+            });
+            let candidate = format!("{base}\n\n{rules}");
             // Alternate order; do not attribute cache/order effects to policy.
             let variants = if (index + repeat) % 2 == 0 {
                 [false, true]
@@ -89,12 +94,13 @@ fn live_answer_grounding_comparison() {
                     },
                     None,
                     AgentRuntimeObserver {
+                evidence_context: None,
                         cancelled: tokio_util::sync::CancellationToken::new(),
                         on_event: Arc::new(|_| {}), permissions: None,
                     },
                     AgentRunGuard::new(AgentRunLimits { max_elapsed: Duration::from_secs(90), ..Default::default() }),
                 ));
-                let mut row = json!({"case":case["id"],"variant":label,"repeat":repeat+1,"latencyMillis":start.elapsed().as_millis(),"rubric":case["expected"]});
+                let mut row = json!({"case":case["id"],"variant":label,"repeat":repeat+1,"latencyMillis":start.elapsed().as_millis(),"rubric":case["expected"],"candidatePreamble":candidate});
                 match response {
                     Ok(answer) => {
                         row["status"] = json!("complete");
@@ -109,8 +115,8 @@ fn live_answer_grounding_comparison() {
                 println!("GROUNDING DONE {} {label}: {}", case["id"], row["status"]);
                 rows.push(row);
                 fs::write(&output, serde_json::to_string_pretty(&json!({
-                    "endpoint":endpoint,"model":model,"method":"actual AgentRuntime, fixed synthetic evidence, no retrieval/tools or live citation validation; manual rubric grading",
-                    "baselinePreamble":baseline,"candidatePreamble":candidate,"cases":cases,"results":rows
+                    "endpoint":endpoint,"model":model,"method":"actual AgentRuntime, fixed per-case synthetic evidence; old versus new interpretation supplement on the new core, not full pre/post production prompts; no retrieval/tools or live citation validation; manual rubric grading",
+                    "baselinePreamble":baseline,"cases":cases,"results":rows
                 })).unwrap()).unwrap();
             }
         }

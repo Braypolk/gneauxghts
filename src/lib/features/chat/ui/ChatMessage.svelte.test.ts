@@ -38,6 +38,36 @@ function renderMessage(
 }
 
 describe('ChatMessage text rendering', () => {
+  it('renders a structured draft literally with no links, then renders validated Markdown', () => {
+    const draft = '**Draft** [Source](passage:secret) [web](https://example.com) [[Note]] <script>bad()</script>';
+    const body = renderMessage('assistant', {
+      content: '', status: 'streaming', parts: [],
+      answerDraft: { attempt: 2, sequence: 1, text: draft }
+    });
+    expect(body).toContain('**Draft**');
+    expect(body).toContain('&lt;script');
+    expect(body).not.toContain('<script>');
+    expect(body).not.toContain('href=');
+    expect(body).not.toContain('data-chat-note-citation-id');
+    expect(body).not.toContain('<strong>Draft</strong>');
+    const final = renderMessage('assistant', { content: '**Final**', parts: [] });
+    expect(final).toContain('<strong>Final</strong>');
+    expect(final).not.toContain('Draft');
+  });
+
+  it('renders final lists, tables, quotations and app-backed citations', () => {
+    const content = '- First\n- Second\n\n| Task | Status |\n| --- | --- |\n| Deploy | Done |\n\n> Verified bytes\n\n[Source 1](passage:proof)';
+    const body = renderMessage('assistant', { content, parts: [], citations: [{
+      id: 'source-1', kind: 'note', label: 'Actual note', noteId: 'note', notePath: 'Note.md', sectionLabel: null, startLine: null, excerpt: 'Verified bytes',
+      passage: { id: 'proof', noteId: 'note', contentHash: 'hash', location: 'body', start: 0, end: 14, excerpt: 'Verified bytes', revisions: [] }
+    }] });
+    expect(body).toContain('<li>First</li>');
+    expect(body).toContain('<table>');
+    expect(body).toContain('<blockquote>');
+    expect(body).toContain('data-chat-note-citation-id="source-1"');
+    expect(body).not.toContain('data-chat-answer-draft');
+  });
+
   it('renders assistant text as Markdown', () => {
     const body = renderMessage('assistant');
     expect(body).toContain(

@@ -2,7 +2,7 @@ use super::*;
 use crate::test_support::{load_json_fixture, TestDir};
 use serde_json::json;
 
-fn service(name: &str) -> (TestDir, ChatService) {
+pub(super) fn service(name: &str) -> (TestDir, ChatService) {
     let root = TestDir::new(name);
     let data = root.path().join(".gneauxghts");
     fs::create_dir_all(&data).unwrap();
@@ -910,26 +910,21 @@ fn exclusion_overrides_full_and_approved_access_by_stable_id() {
 }
 
 #[test]
-fn agent_instructions_use_tools_and_reviewed_writes_without_fences() {
-    let instructions = agent_preamble(&crate::agent_runtime::AgentProvider::Openai, true);
-    assert!(instructions.contains("Use the vault tools"));
-    assert!(instructions.contains("appropriate proposal tool"));
-    assert!(instructions.contains("Use propose_note_rewrite"));
-    assert!(instructions.contains("Use propose_note_edits for localized changes"));
-    assert!(instructions.contains("current unapproved working copy"));
-    assert!(instructions.contains("never write directly"));
-    assert!(instructions.contains("Never expose a note ID or filesystem path"));
-    assert!(instructions.contains("immediately after the claim it supports"));
-    assert!(!instructions.contains("Local-model rules"));
-    assert!(!instructions.contains("gneauxghts-proposal"));
-}
-
-#[test]
-fn local_agent_instructions_prefer_boundary_edits_and_authoritative_note_ids() {
-    let instructions = agent_preamble(&crate::agent_runtime::AgentProvider::Local, true);
-    assert!(instructions.contains("Local-model rules"));
-    assert!(instructions.contains("never derive a note ID"));
-    assert!(instructions.contains("use append or prepend"));
+fn assistant_core_is_shared_and_disabled_tools_have_no_capability_supplement() {
+    let hosted = agent_preamble(&crate::agent_runtime::AgentProvider::Openai, true);
+    let local = agent_preamble(&crate::agent_runtime::AgentProvider::Local, true);
+    assert_eq!(hosted, local);
+    assert!(hosted.len() < 3200);
+    assert!(hosted.contains("An open note is a clue"));
+    assert!(hosted.contains("app-issued source IDs"));
+    assert!(hosted.contains("only after the user accepts"));
+    let disabled = agent_preamble(&crate::agent_runtime::AgentProvider::Local, false);
+    assert!(disabled.contains("Tools are unavailable"));
+    for instructions in [&hosted, &disabled] {
+        assert!(!instructions.contains("taskDates"));
+        assert!(!instructions.contains("statusMarkerChangedInPeriod"));
+        assert!(!instructions.contains("propose_note_rewrite"));
+    }
 }
 
 #[test]
@@ -960,6 +955,7 @@ fn normalized_history_excludes_latest_user_and_provider_payloads() {
             created_at_millis: 1,
             sources: Vec::new(),
             has_revision_evidence: false,
+            note_reference_ids: vec![],
             attachments: Vec::new(),
             agent_events: Vec::new(),
         },
@@ -975,11 +971,14 @@ fn normalized_history_excludes_latest_user_and_provider_payloads() {
             created_at_millis: 2,
             sources: Vec::new(),
             has_revision_evidence: false,
+            note_reference_ids: vec![],
             attachments: Vec::new(),
             agent_events: Vec::new(),
         },
     ];
-    let history = normalized_rig_history(&messages, "m2", None).unwrap();
+    let history = normalized_rig_history(&messages, "m2", None, |_| None)
+        .unwrap()
+        .messages;
     assert_eq!(history.len(), 1);
     assert!(matches!(
         history.first(),
@@ -1044,7 +1043,9 @@ fn passage_citations_and_explicit_grants_survive_branching() {
     assert_eq!(copied.content, "current [Source 1](passage:passage-1)");
     assert_eq!(copied.sources[0].passage.as_ref().unwrap().id, "passage-1");
     assert!(!serde_json::to_string(
-        &normalized_rig_history(&branch.messages, "next", None).unwrap()
+        &normalized_rig_history(&branch.messages, "next", None, |_| None)
+            .unwrap()
+            .messages
     )
     .unwrap()
     .contains("\"current\""));
@@ -1181,7 +1182,9 @@ fn recent_history_preserves_requirements_until_explicit_context_admission() {
         .finish_message(&assistant, "complete", &reply, None, &[])
         .unwrap();
     let current = service.get_conversation(&conversation.summary.id).unwrap();
-    let history = normalized_rig_history(&current.messages, "follow-up", None).unwrap();
+    let history = normalized_rig_history(&current.messages, "follow-up", None, |_| None)
+        .unwrap()
+        .messages;
     let serialized = serde_json::to_string(&history).unwrap();
     assert!(
         serialized.contains(&question),
@@ -1263,7 +1266,9 @@ fn revision_answers_do_not_replay_removed_prose_through_history_or_compaction() 
         serde_json::to_value(&branched.messages[1].sources[0].revision).unwrap(),
         serde_json::to_value(&reloaded.messages[1].sources[0].revision).unwrap()
     );
-    let history = normalized_rig_history(&reloaded.messages, "next-user", None).unwrap();
+    let history = normalized_rig_history(&reloaded.messages, "next-user", None, |_| None)
+        .unwrap()
+        .messages;
     assert!(!serde_json::to_string(&history)
         .unwrap()
         .contains("once-current secret"));
@@ -1275,7 +1280,9 @@ fn revision_answers_do_not_replay_removed_prose_through_history_or_compaction() 
     assert!(excluded.messages[1].sources.is_empty());
     let branch = service.branch_from_message(&assistant).unwrap();
     assert!(!serde_json::to_string(
-        &normalized_rig_history(&branch.messages, "next-user", None).unwrap()
+        &normalized_rig_history(&branch.messages, "next-user", None, |_| None)
+            .unwrap()
+            .messages
     )
     .unwrap()
     .contains("once-current secret"));
@@ -1293,7 +1300,9 @@ fn revision_answers_do_not_replay_removed_prose_through_history_or_compaction() 
         .unwrap()
         .summary
         .contains("once-current secret"));
-    let history = normalized_rig_history(&excluded.messages, "next-user", None).unwrap();
+    let history = normalized_rig_history(&excluded.messages, "next-user", None, |_| None)
+        .unwrap()
+        .messages;
     assert!(!serde_json::to_string(&history)
         .unwrap()
         .contains("once-current secret"));
@@ -1341,7 +1350,11 @@ fn durable_compaction_covers_the_entire_older_transcript_and_is_reused() {
 
     let reloaded = service.get_conversation(&conversation.summary.id).unwrap();
     let history =
-        normalized_rig_history(&reloaded.messages, "message-20", Some(&compaction)).unwrap();
+        normalized_rig_history(&reloaded.messages, "message-20", Some(&compaction), |_| {
+            None
+        })
+        .unwrap()
+        .messages;
     assert_eq!(history.len(), 16);
     assert!(matches!(
         history.first(),
@@ -2368,6 +2381,96 @@ fn deleting_an_archived_conversation_takes_its_draft_with_it() {
 mod lifecycle;
 
 impl ChatService {
+    pub(crate) fn test_store_structured_edit_answer(
+        &self,
+        tools: &crate::agent_tools::AgentToolContext,
+        message: &str,
+        run: &str,
+    ) {
+        let success = Self::finalize_agent_response(tools, crate::agent_runtime::AgentRuntimeResponse {
+            output: serde_json::json!({"segments":[{"text":"Prepared changes for review.","sources":[]}]}).to_string(),
+            usage: Default::default(), stats: Default::default(),
+        }, true, &CancellationToken::new()).ok().unwrap();
+        assert!(
+            success.sources.is_empty(),
+            "Editing reads must not become passage citations"
+        );
+        self.persist_terminal_outcome(
+            message,
+            run,
+            "complete",
+            &success.content,
+            None,
+            &success.sources,
+            &success.note_reference_ids,
+            &(0, 0),
+            &success.stats,
+            None,
+        )
+        .unwrap();
+    }
+
+    pub(crate) fn test_model_history_with_note_hints(
+        &self,
+        conversation_id: &str,
+        tools: &crate::agent_tools::AgentToolContext,
+    ) -> String {
+        let conversation = self.get_conversation(conversation_id).unwrap();
+        let compaction = self.context_compaction(conversation_id).unwrap();
+        serde_json::to_string(
+            &assemble_model_history(&conversation.messages, "next", compaction.as_ref(), tools)
+                .unwrap(),
+        )
+        .unwrap()
+    }
+
+    pub(crate) fn finish_message_for_history_test(&self, id: &str, sources: &[ChatSource]) {
+        self.finish_message(id, "complete", "OBSOLETE_ANSWER_FACT", None, sources)
+            .unwrap();
+    }
+
+    /// Exercise terminal storage and both subsequent model-context paths for a tool fixture.
+    pub(crate) fn test_complete_and_model_context(
+        &self,
+        message_id: &str,
+        reply: &str,
+        sources: &[ChatSource],
+    ) -> (String, String) {
+        self.finish_message(message_id, "complete", reply, None, sources)
+            .unwrap();
+        let connection = self.connection().unwrap();
+        let conversation_id: String = connection
+            .query_row(
+                "SELECT conversation_id FROM chat_messages WHERE id = ?1",
+                [message_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let current = self.get_conversation(&conversation_id).unwrap();
+        let recent = serde_json::to_string(
+            &normalized_rig_history(&current.messages, "next-user", None, |_| None)
+                .unwrap()
+                .messages,
+        )
+        .unwrap();
+        drop(connection);
+        let compacted = self.test_compact_saved_conversation(&conversation_id);
+        (recent, compacted)
+    }
+
+    pub(crate) fn test_compact_saved_conversation(&self, conversation_id: &str) -> String {
+        let connection = self.connection().unwrap();
+        for ordinal in 3..=22 {
+            connection.execute("INSERT INTO chat_messages (id, conversation_id, ordinal, role, status, content, part, created_at_millis) VALUES (?1, ?2, ?3, 'user', 'complete', 'later question', 1, 1)", params![format!("{conversation_id}-later-{ordinal}"), conversation_id, ordinal]).unwrap();
+        }
+        drop(connection);
+        self.refresh_continuation_summary(conversation_id).unwrap();
+        self.context_compaction(conversation_id)
+            .unwrap()
+            .unwrap()
+            .summary
+    }
+
     pub(crate) fn test_tool_run(&self) -> (String, String, String) {
         let conversation = self.create_conversation(None, None).unwrap();
         let admission = self
@@ -2390,4 +2493,106 @@ impl ChatService {
             admission.run_id,
         )
     }
+}
+
+#[test]
+fn history_note_references_preserve_turns_and_stay_bounded_without_old_claims() {
+    let (_root, service) = service("chat-note-reference-budget");
+    let conversation = service.create_conversation(None, None).unwrap();
+    let mut messages = Vec::new();
+    for ordinal in 1..=20 {
+        messages.push(ChatMessage {
+            id: format!("m-{ordinal}"),
+            conversation_id: conversation.summary.id.clone(),
+            ordinal,
+            role: "assistant".into(),
+            status: "complete".into(),
+            content: "OBSOLETE_FACT".into(),
+            error: None,
+            part: 1,
+            created_at_millis: 1,
+            has_revision_evidence: true,
+            note_reference_ids: vec![],
+            attachments: vec![],
+            agent_events: vec![],
+            sources: vec![ChatSource {
+                kind: "passage".into(),
+                note_id: Some(format!("note-{ordinal}")),
+                note_path: Some("obsolete-path.md".into()),
+                title: "OBSOLETE_TITLE".into(),
+                excerpt: "OBSOLETE_EXCERPT".into(),
+                url: None,
+                anchor: Some("OLD_CITATION".into()),
+                revision: None,
+                passage: None,
+            }],
+        });
+    }
+    let plain = serde_json::to_string(
+        &normalized_rig_history(&messages, "next", None, |_| None)
+            .unwrap()
+            .messages,
+    )
+    .unwrap();
+    let normalized = normalized_rig_history(&messages, "next", None, |id| {
+        Some(json!({"noteId":id,"title":"current ".repeat(30)}))
+    })
+    .unwrap();
+    assert!(normalized.admitted_note_ids.contains("note-20"));
+    assert!(!normalized.admitted_note_ids.contains("note-1"));
+    let history = normalized.messages;
+    let text = serde_json::to_string(&history).unwrap();
+    for obsolete in [
+        "OBSOLETE_FACT",
+        "OBSOLETE_TITLE",
+        "OBSOLETE_EXCERPT",
+        "OLD_CITATION",
+        "obsolete-path",
+    ] {
+        assert!(!text.contains(obsolete));
+    }
+    assert!(text.contains("mostRecentAnswer") && text.contains("note-20"));
+    assert!(matches!(
+        history.last(),
+        Some(rig_core::completion::Message::System { .. })
+    ));
+    for message in &history {
+        if matches!(message, rig_core::completion::Message::Assistant { .. }) {
+            assert!(
+                !serde_json::to_string(message).unwrap().contains("noteId"),
+                "Fresh app-issued IDs must not look like old assistant prose"
+            );
+        }
+    }
+
+    assert!(
+        !text.contains("note-1\""),
+        "Recent references should win the bound"
+    );
+    assert!(
+        text.len() - plain.len() <= 2600,
+        "Serialized framing must stay close to the 2400-byte text allowance"
+    );
+    let content_bytes = |history: &[rig_core::completion::Message]| -> usize {
+        history
+            .iter()
+            .map(|m| match m {
+                rig_core::completion::Message::Assistant(
+                    rig_core::completion::AssistantMessage { content, .. },
+                ) => content
+                    .iter()
+                    .map(|c| match c {
+                        rig_core::completion::AssistantContent::Text(t) => t.text.len(),
+                        _ => 0,
+                    })
+                    .sum(),
+                rig_core::completion::Message::System { content } => content.len(),
+                _ => 0,
+            })
+            .sum()
+    };
+    let plain_history = normalized_rig_history(&messages, "next", None, |_| None)
+        .unwrap()
+        .messages;
+    assert!(content_bytes(&history) - content_bytes(&plain_history) <= 2400);
 }

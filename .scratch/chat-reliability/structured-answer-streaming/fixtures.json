@@ -1,0 +1,153 @@
+{
+  "method": "Four fresh fixed-evidence cases frozen before generation; verbose v1 versus compact v2. No retrieval/native claim.",
+  "cases": [
+    {
+      "id": "fresh_mixed_bullets",
+      "question": "Give one bullet each for Willow, Quartz and Meadow: recorded next action, owner and deadline. Then add a brief suggestion for how I could prioritize them; distinguish your suggestion from the notes.",
+      "context": {},
+      "sources": [
+        {
+          "id": "willow",
+          "title": "Willow",
+          "text": "Leah plans to draft the Willow brief by October 13, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        },
+        {
+          "id": "quartz",
+          "title": "Quartz",
+          "text": "Ravi is to review the Quartz budget by October 16, 2026.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        },
+        {
+          "id": "meadow",
+          "title": "Meadow",
+          "text": "Mina is to arrange the Meadow handoff. No deadline is recorded.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        }
+      ],
+      "requirements": [
+        "All three plans/owners/dates correct, with the correct per-note sources.",
+        "Suggestion is identified as interpretation; no invented priority or completed work."
+      ]
+    },
+    {
+      "id": "fresh_task_table",
+      "question": "Show every task in Release checklist in a table with recorded status, supported deadline, and whether it is actionable overdue as of October 11, 2026. Include completed tasks.",
+      "context": {
+        "localToday": "2026-10-11"
+      },
+      "sources": [
+        {
+          "id": "release",
+          "title": "Release checklist",
+          "text": "- [ ] Draft release memo @due(2026-10-10)\n- [x] Send invitations @due(2026-10-09)\n- [ ] Arrange review",
+          "metadata": {
+            "coverage": {
+              "scope": "canonical_note",
+              "complete": true,
+              "wholeNoteComplete": true
+            },
+            "taskDates": {
+              "complete": true,
+              "entries": [
+                {
+                  "text": "- [ ] Draft release memo @due(2026-10-10)",
+                  "status": "open",
+                  "dueDate": "2026-10-10"
+                },
+                {
+                  "text": "- [x] Send invitations @due(2026-10-09)",
+                  "status": "completed",
+                  "dueDate": "2026-10-09"
+                },
+                {
+                  "text": "- [ ] Arrange review",
+                  "status": "open",
+                  "dueDate": null
+                }
+              ]
+            }
+          },
+          "authority": "read",
+          "scope": "current",
+          "location": "body"
+        }
+      ],
+      "requirements": [
+        "All three tasks with whole-table or per-row source association.",
+        "Memo open/overdue; invitations completed/not actionable; undated review unknown."
+      ]
+    },
+    {
+      "id": "fresh_excerpt_only",
+      "question": "Using only the selected excerpt, can you tell whether Summit retrospective names an approver anywhere?",
+      "context": {
+        "selectedExcerpt": "Release approval was discussed."
+      },
+      "sources": [
+        {
+          "id": "summit",
+          "title": "Summit retrospective",
+          "text": "Release approval was discussed.\n\nPriya approved release.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        }
+      ],
+      "requirements": [
+        "Bound claim to selected excerpt; whole-note presence unknown from that excerpt alone.",
+        "Do not attribute Priya to selected excerpt, even though full body is available."
+      ]
+    },
+    {
+      "id": "fresh_multi_source_hold",
+      "question": "As of October 11, 2026, is Cedar cleared to release? Explain which decision governs and what is unknown.",
+      "context": {
+        "asOf": "2026-10-11"
+      },
+      "sources": [
+        {
+          "id": "approval",
+          "title": "Cedar approval",
+          "text": "October 3: approve the October 14 release using route C.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        },
+        {
+          "id": "hold",
+          "title": "Cedar hold",
+          "text": "October 9 supersedes the October 3 approval. Hold release until route D passes a witnessed drill. No completion is recorded here.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        },
+        {
+          "id": "plan",
+          "title": "Cedar drill plan",
+          "text": "October 10 plan: schedule the drill for October 12.",
+          "authority": "read",
+          "scope": "current",
+          "location": "body",
+          "metadata": {}
+        }
+      ],
+      "requirements": [
+        "Latest hold controls; route D condition.",
+        "Planned drill not proof of completion; absence bounded to available record."
+      ]
+    }
+  ]
+}

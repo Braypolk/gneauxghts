@@ -59,27 +59,25 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
     let calls = Arc::new(AtomicUsize::new(0));
     let start = std::time::Instant::now();
     let result = tauri::async_runtime::block_on(async {
-        let client = openai::CompletionsClient::builder()
-            .api_key("lm-studio")
-            .base_url(&endpoint)
-            .build()
-            .unwrap();
-        let model = context_measurement::MeasuredModel {
-            inner: client.completion_model(&model_name),
-            measurement: None,
-            context: Some(context.clone()),
-        };
+        let model = openai::OpenAIConfig::new("lm-studio")
+            .with_base_url(&endpoint)
+            .client()
+            .chat(&model_name);
         let cancelled = CancellationToken::new();
         let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
         let agent = configured_builder(model, &request, local_parameters(Some("medium")))
             .unwrap()
             .add_hook(RuntimeEventHook {
+                web_search_selection: Arc::default(),
+                evidence_context: None,
                 on_event: sink.clone(),
                 cancelled: cancelled.clone(),
                 permissions: None,
                 guard: guard.clone(),
                 tools: None,
                 context: Some(context.clone()),
+                measurement: None,
+                result_stream: None,
             })
             .tool(SyntheticEvidence(calls.clone()))
             .build();
@@ -87,6 +85,7 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
             agent,
             request,
             AgentRuntimeObserver {
+                evidence_context: None,
                 cancelled,
                 on_event: sink,
                 permissions: None,
@@ -94,6 +93,7 @@ fn live_usage_guard_finishes_from_synthetic_evidence() {
             guard,
             None,
             Some(context),
+            None,
         )
         .await
     });

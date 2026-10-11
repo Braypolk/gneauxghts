@@ -1,0 +1,40 @@
+{
+  "rigVersion": "0.44.0",
+  "rustc": "rustc 1.95.0 (59807616e 2026-04-14)",
+  "sourceHashes": {
+    "src-tauri/Cargo.toml": "c11191c6e87d7bf712c61d558e3730bd6a7e300b089bba02c91f4341a41b8515",
+    "src-tauri/Cargo.lock": "45c916e6d67e55535684429593dd146797819e76a6045a53fd1a913924f1a6a3",
+    "src-tauri/src/agent_runtime.rs": "b0081cd5be5ac5c8d31400d33a0f2df59ede77050cdf67bf43228b2a23f91ad8",
+    "src-tauri/src/agent_tools.rs": "b3e8fbab0a6010f4582d5da328d388a2d3a02a5fd4938b2cc6b3c33104d9154c",
+    "src-tauri/src/chat.rs": "e90705deec8a71b2a5f4c51047736987a9c2954f536b3b0d0199245becee1b82",
+    "src-tauri/src/chat/tests.rs": "acbc21babb68acdb4342c98532ad160a20d4f52b1bfa587b3cfcc2f2b3ee9b3e",
+    "src-tauri/src/agent_tools/research.rs": "b966758a167c97c2ca420ea7d438d4c6823f6d2f84f496ebdcf66f287bd7a942",
+    "src-tauri/src/agent_runtime/usage_context_live.rs": "77fc1173e71e2a3c7180555d2cad33d3dd7e3e645e25969af125c281f2620a63",
+    "src-tauri/src/agent_runtime/usage_context.rs": "e73e60c43c891055efe606515340903dc83c82a1ad8b51455a08a38db25157a7",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "44560cc57862f713e0b4978df09a0f3c813da27f2996162810e7dfc279409d20",
+    "src-tauri/src/agent_runtime/openai_model.rs": "f959795ac06699a822f5c77cbe7dcebca048835ed89cb30d4688e69e6558f190",
+    "src-tauri/src/agent_tools/tests/live_behavior.rs": "fcb8a230ebec1b907776df1e5cd93a625426a8737522517bc188383190e6ac8d",
+    "src-tauri/src/agent_tools/tests/reliability_eval.rs": "117dedfbb6a1a75d0868dadcd5740e64b8483eacf78172c1a263d363d47cd672",
+    "src-tauri/src/agent_tools/tests/context_selection_live.rs": "72a5d94daec5abd2bfdae0e619074a5084d8515344d9e22dca2acc9686b80d26",
+    "rust-toolchain.toml": "7d21c66a15f41bad66b82ed06a289f5dc8a6e3751951d2696bbf20ce296f2b0f",
+    ".github/workflows/tests.yml": "53f1c4900bee7886e5302a548ddbb1721d9d78b3b3f4a06683e53fbdd8e5f437"
+  },
+  "executable": "/Users/bray.polkinghorne/Documents/code/personal/Gneauxghts/src-tauri/target/debug/deps/gneauxghts_lib-4415465e8a487f17",
+  "executableSha256": "b938b8e04dc9788da15e90fb2f9b10d20f6952193240236fd73c1d8071088244",
+  "comparisonCaptureCommit": "95aaa36e2cf3b984bc88845f9432077fd590a0aa",
+  "baselineExecutableSha256": "62b5b79117326e56b0f980315b8d1db3b0603493d40a4d2aeada9a59a25bc640",
+  "baselineRustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)",
+  "validation": {
+    "library": {
+      "passed": 845,
+      "failedExistingOn041": 3,
+      "ignored": 27
+    },
+    "architecturePassed": 21,
+    "liveSmokePassed": 2,
+    "liveSmokeReportedTokens": 11685,
+    "frontendCheck": "passed",
+    "productionCheck": "passed",
+    "comparisonAnalysis": "passed"
+  }
+}

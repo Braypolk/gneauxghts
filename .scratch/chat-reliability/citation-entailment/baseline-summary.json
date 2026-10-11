@@ -1,0 +1,1487 @@
+{
+  "method": "Offline accounting of explicit human claim judgments; not an automatic semantic judge.",
+  "corpusSha256": "30265df5ff365d57ce08a644c1932bae2f1a15646afe74e1f57ca1dabdaec532",
+  "baselineSha256": "8195eba9e90ac458350e947ed7f06290ca5d7654cf12eb0077b961f4b12be44e",
+  "controls": {
+    "summary": {
+      "reviewedSamples": 28,
+      "pendingSamples": 0,
+      "passingReviewedSamples": 13,
+      "annotatedClaims": 41,
+      "noteClaims": 40,
+      "noteClaimsWithCitation": 39,
+      "noteClaimsWithAllCitationsInSuppliedSources": 39,
+      "noteClaimsWithReadAuthority": 38,
+      "semanticVerdicts": {
+        "supported": 26,
+        "unsupported": 10,
+        "contradicted": 4,
+        "unassessable": 1
+      },
+      "failureTags": {
+        "title_for_content": 2,
+        "event_vs_edit_date": 1,
+        "missing_citation": 1,
+        "unnecessary_uncertainty": 1,
+        "absence_as_failure": 1,
+        "checkbox_timing": 1,
+        "record_vs_world": 1,
+        "restore_as_completion": 1,
+        "historical_as_current": 1,
+        "deadline_precedence": 1,
+        "child_inheritance": 1,
+        "fenced_as_task": 1,
+        "completed_as_overdue": 1,
+        "editing_window_precision": 1,
+        "idea_as_execution": 1,
+        "superseded_as_current": 1,
+        "conflict_hidden": 1,
+        "last_edit_as_authority": 1,
+        "wrong_note_attribution": 1,
+        "preview_as_evidence": 1,
+        "partial_as_whole_absence": 1
+      }
+    },
+    "results": [
+      {
+        "case": "title_is_not_content",
+        "category": "citation_scope",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "identity",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "text_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "title_is_not_content",
+        "category": "citation_scope",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "title_for_content"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "identity",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "text_date",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Attribute September 30 to addition of the idea text, using retained change evidence."
+            }
+          ]
+        }
+      },
+      {
+        "case": "event_date_is_not_edit_date",
+        "category": "dates",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "event_date_is_not_edit_date",
+        "category": "dates",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "event_vs_edit_date"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "missing",
+              "reason": "This regression does not satisfy: State the recorded event date September 11, not September 13."
+            }
+          ]
+        }
+      },
+      {
+        "case": "event_date_is_not_edit_date",
+        "category": "dates",
+        "control": "missing-citation",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": false,
+              "citationMembership": false,
+              "readAuthority": false,
+              "semanticVerdict": "unassessable",
+              "failureTags": [
+                "missing_citation"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "event_date_is_not_edit_date",
+        "category": "dates",
+        "control": "evasive-unknown",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "unnecessary_uncertainty"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "missing",
+              "reason": "This control fails the required distinction."
+            }
+          ]
+        }
+      },
+      {
+        "case": "missing_report_is_not_failure",
+        "category": "status",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "uncertainty",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "missing_report_is_not_failure",
+        "category": "status",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "absence_as_failure"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "uncertainty",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Explain that the accessible record does not establish occurrence or a missed deadline."
+            }
+          ]
+        }
+      },
+      {
+        "case": "wording_edit_is_not_completion",
+        "category": "status",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "recorded_status",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completion_time",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "wording_edit_is_not_completion",
+        "category": "status",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "checkbox_timing",
+                "record_vs_world"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "recorded_status",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completion_time",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not count the September 30 wording edit as a new completion."
+            }
+          ]
+        }
+      },
+      {
+        "case": "restore_and_reopen",
+        "category": "status",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "restore",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "current",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "restore_and_reopen",
+        "category": "status",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "restore_as_completion",
+                "historical_as_current"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "restore",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Restoring a checked marker does not establish a new accomplishment."
+            },
+            {
+              "id": "current",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the current open marker for current status."
+            }
+          ]
+        }
+      },
+      {
+        "case": "deadline_inventory",
+        "category": "dates",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-3",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-4",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "parent",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "child",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "examples",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completed",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "deadline_inventory",
+        "category": "dates",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "deadline_precedence",
+                "child_inheritance"
+              ],
+              "passed": false
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "fenced_as_task",
+                "completed_as_overdue"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "parent",
+              "status": "missing",
+              "reason": "This regression does not satisfy: First valid annotation makes the parent due October 1 (tomorrow)."
+            },
+            {
+              "id": "child",
+              "status": "missing",
+              "reason": "This regression does not satisfy: The child has no supported deadline and does not inherit the parent date."
+            },
+            {
+              "id": "examples",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Fenced example is not a task; invalid date is not a deadline."
+            },
+            {
+              "id": "completed",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Completed checkbox is not actionable overdue work."
+            }
+          ]
+        }
+      },
+      {
+        "case": "editing_window_uncertainty",
+        "category": "history",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "interval",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "editing_window_uncertainty",
+        "category": "history",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "editing_window_precision"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "interval",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Preserve the 19:58\u201320:03 window and explain that exact after-20:00 timing is not established."
+            }
+          ]
+        }
+      },
+      {
+        "case": "idea_is_not_execution",
+        "category": "history",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "change",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "execution",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "idea_is_not_execution",
+        "category": "history",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "idea_as_execution"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "change",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Report the idea text addition and the current cancellation."
+            },
+            {
+              "id": "execution",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not infer earlier execution from an idea or a later cancellation."
+            }
+          ]
+        }
+      },
+      {
+        "case": "superseded_approval",
+        "category": "status",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "decision",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "condition",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "superseded_approval",
+        "category": "status",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "superseded_as_current"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "decision",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the explicit superseding hold."
+            },
+            {
+              "id": "condition",
+              "status": "missing",
+              "reason": "This regression does not satisfy: The supplied record does not establish whether the recovery condition has been met."
+            }
+          ]
+        }
+      },
+      {
+        "case": "conflicting_reports",
+        "category": "status",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "conflict",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "conflicting_reports",
+        "category": "status",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "conflict_hidden",
+                "last_edit_as_authority"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "conflict",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Surface both contradictory reports without selecting a definitive result."
+            }
+          ]
+        }
+      },
+      {
+        "case": "related_note_attribution",
+        "category": "citation_scope",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "record",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "related",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "related_note_attribution",
+        "category": "citation_scope",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "wrong_note_attribution",
+                "title_for_content"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "record",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "related",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the related approvals note for Asha and attribute it clearly."
+            }
+          ]
+        }
+      },
+      {
+        "case": "preview_is_not_read",
+        "category": "read_authority",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": null,
+              "citationMembership": null,
+              "readAuthority": null,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "authority",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ]
+        }
+      },
+      {
+        "case": "preview_is_not_read",
+        "category": "read_authority",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": false,
+              "semanticVerdict": "supported",
+              "failureTags": [
+                "preview_as_evidence"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "authority",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not present an unread discovery preview as a supported finding; identify the need for an admitted read."
+            }
+          ]
+        }
+      },
+      {
+        "case": "partial_read_absence",
+        "category": "citation_scope",
+        "control": "supported",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "full",
+          "wholeAnswerPass": true,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "scope",
+              "status": "covered",
+              "reason": "The supplied passage and selected-only coverage support this narrow gap, not whole-note absence."
+            }
+          ]
+        }
+      },
+      {
+        "case": "partial_read_absence",
+        "category": "citation_scope",
+        "control": "regression",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "full",
+          "wholeAnswerPass": false,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "partial_as_whole_absence"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "scope",
+              "status": "missing",
+              "reason": "Selected-passage coverage cannot establish absence throughout the note."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "recordedBaseline": {
+    "sampling": "Purposive selected historical failures and positive controls, including recent context replays. Different models, prompts and dates; not a random sample, paired comparison or current-model success rate. Each full answer is retained for context, but only the explicitly annotated claims are graded.",
+    "summary": {
+      "reviewedSamples": 11,
+      "pendingSamples": 0,
+      "passingReviewedSamples": 4,
+      "annotatedClaims": 12,
+      "noteClaims": 12,
+      "noteClaimsWithCitation": 10,
+      "noteClaimsWithAllCitationsInSuppliedSources": 10,
+      "noteClaimsWithReadAuthority": 10,
+      "semanticVerdicts": {
+        "unsupported": 3,
+        "supported": 5,
+        "unassessable": 2,
+        "contradicted": 2
+      },
+      "failureTags": {
+        "title_for_content": 1,
+        "idea_as_execution": 1,
+        "missing_citation": 2,
+        "preview_as_evidence": 1,
+        "date_rendering": 1,
+        "fenced_as_task": 1,
+        "answer_inconsistency": 1,
+        "wrong_note_attribution": 1
+      }
+    },
+    "results": [
+      {
+        "id": "recorded-title-cannot-date-insertion",
+        "category": "citation_scope",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "title_for_content"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-valid-added-text",
+        "category": "history",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-pilot-running-invention",
+        "category": "history",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "idea_as_execution"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-unread-historical-discovery",
+        "category": "read_authority",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": false,
+              "citationMembership": false,
+              "readAuthority": false,
+              "semanticVerdict": "unassessable",
+              "failureTags": [
+                "missing_citation",
+                "preview_as_evidence"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-worker-date-rendering",
+        "category": "dates",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "date_rendering"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-fenced-example-as-open",
+        "category": "dates",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "contradicted",
+              "failureTags": [
+                "fenced_as_task",
+                "answer_inconsistency"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-fenced-and-completed-correct",
+        "category": "dates",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            },
+            {
+              "id": "claim-2",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-correct-child-deadline",
+        "category": "dates",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-wrong-production-source",
+        "category": "citation_scope",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "unsupported",
+              "failureTags": [
+                "wrong_note_attribution"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-fresh-production-token",
+        "category": "citation_scope",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": true,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": true,
+              "citationMembership": true,
+              "readAuthority": true,
+              "semanticVerdict": "supported",
+              "failureTags": [],
+              "passed": true
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      },
+      {
+        "id": "recorded-correct-fact-without-citation",
+        "category": "citation_presence",
+        "traceVerification": "verified",
+        "score": {
+          "reviewComplete": true,
+          "passed": false,
+          "claimInventory": "focused",
+          "wholeAnswerPass": null,
+          "claims": [
+            {
+              "id": "claim-1",
+              "citationPresent": false,
+              "citationMembership": false,
+              "readAuthority": false,
+              "semanticVerdict": "unassessable",
+              "failureTags": [
+                "missing_citation"
+              ],
+              "passed": false
+            }
+          ],
+          "coverage": [
+            {
+              "id": "focus",
+              "status": "covered",
+              "reason": "Selected claim(s) are explicitly identified; other answer claims remain ungraded."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "limitations": [
+    "Hand-written controls exercise the rubric and accounting, not model behavior.",
+    "Historical observations are selected regressions and controls from different model/prompt versions, not a current-model success rate.",
+    "Original traces verify recorded snapshots; disposable vault citations are not revalidated as current.",
+    "Semantic support, citation scope, and complete claim inventory require human review.",
+    "No new model requests or provider spend."
+  ]
+}

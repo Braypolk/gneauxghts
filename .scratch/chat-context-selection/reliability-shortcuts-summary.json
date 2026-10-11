@@ -1,0 +1,750 @@
+{
+  "basis": "Current implementation only on held-out checks, not a causal comparison. Three shortcut/recovery cases reuse their original corpus with new questions. Three intent cases use new phrasings; absent-actor case deliberately omits the related approvals note. Same bounded real runtime/tools, disposable synthetic notes, no web/research/UI/final chat completion. Small synthetic sample; not a significance test, invoice, or proof of causality. Manual answer entailment review required.",
+  "source": "reliability-shortcuts-trace.json",
+  "model": "gpt-6-luna",
+  "costRates": {
+    "basis": "Standard short-context rates applied to provider-reported categories; not an invoice. Missing usage is unknown. No web/research charges.",
+    "checked": "2026-10-09",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "usdPerMillion": {
+      "cacheWrite": 0.125,
+      "cachedInput": 0.01,
+      "input": 0.1,
+      "output": 0.5
+    }
+  },
+  "costLimitation": "Rig reports no OpenAI cache-write category (maps it to zero); reported-cost estimate excludes any unexposed cache-write charge. All-zero usage is unknown. Output already includes reasoning; do not add reasoning tokens again.",
+  "reuseLimitation": "Repeated body overlap is a diagnostic, not proof the read was unnecessary; provenance/coverage may differ. Exact repeated calls include only identical arguments.",
+  "runs": [
+    {
+      "name": "heldout_named_note",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_named_note",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": null,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed the exact cited passage: identifier SABLE-472, basil watering, or tail credential QUARTZ-908 is present. Named lookup selects a note different from adjacent editor; selection uses its known note scope. Long-link answer follows all canonical continuations beyond the clipped prefix. No absence inference is made. Canonical originals and excluded private canary remain protected.",
+        "claims": [
+          {
+            "text": "The launch identifier is **SABLE-472**. [Source 1](passage:34e977e0ac4eb873ca800b0552655b482829c498cafc87102d08d9da4f333767)",
+            "citations": [
+              "34e977e0ac4eb873ca800b0552655b482829c498cafc87102d08d9da4f333767"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian launch",
+                "excerpt": "Launch code: SABLE-472.\nOwner: Priya."
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1YVQTDWW55ZRSM48BRN71",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian launch",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EMS50S3PPTFFXS-2"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 10558,
+        "inputTokens": 13251,
+        "outputTokens": 126,
+        "reasoningTokens": 13,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 13377
+      },
+      "estimatedUsd": 0.00043788,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2235,
+            "outputTokens": 28,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2263
+          },
+          "estimatedUsd": 6.236e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2232,
+            "inputTokens": 2439,
+            "outputTokens": 45,
+            "reasoningTokens": 13,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2484
+          },
+          "estimatedUsd": 6.552000000000001e-05
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2436,
+            "inputTokens": 3947,
+            "outputTokens": 34,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3981
+          },
+          "estimatedUsd": 0.00019245999999999998
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3944,
+            "inputTokens": 4630,
+            "outputTokens": 19,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4649
+          },
+          "estimatedUsd": 0.00011754
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 7963,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13200,
+        14363,
+        21904,
+        25325
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1370,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1660,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 873,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3681,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 6393,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3972,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 9523,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_selection",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_selection",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": null,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed the exact cited passage: identifier SABLE-472, basil watering, or tail credential QUARTZ-908 is present. Named lookup selects a note different from adjacent editor; selection uses its known note scope. Long-link answer follows all canonical continuations beyond the clipped prefix. No absence inference is made. Canonical originals and excluded private canary remain protected.",
+        "claims": [
+          {
+            "text": "Basil needs watering every morning, according to your garden plan. [Source 1](passage:fa1b82abb8e47f9c8f658dbb1194e670cc64beea6613cbab11ddba2911f78c28)",
+            "citations": [
+              "fa1b82abb8e47f9c8f658dbb1194e670cc64beea6613cbab11ddba2911f78c28"
+            ],
+            "supportingSources": [
+              {
+                "title": "Garden plan",
+                "excerpt": "Water basil every morning.\nGarden-only code: FERN-831.\n"
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1Z3V9TG9F8EGK31KQ45N8",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Garden plan",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EBZ6KTWBYEGF2H-1"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6768,
+        "inputTokens": 8122,
+        "outputTokens": 112,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 8234
+      },
+      "estimatedUsd": 0.00025908,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2234,
+            "outputTokens": 55,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2289
+          },
+          "estimatedUsd": 7.576e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2231,
+            "inputTokens": 2594,
+            "outputTokens": 36,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2630
+          },
+          "estimatedUsd": 7.661e-05
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2591,
+            "inputTokens": 3294,
+            "outputTokens": 21,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3315
+          },
+          "estimatedUsd": 0.00010671
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4309,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13203,
+        14768,
+        18204
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1373,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1715,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 1223,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2006,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 4368,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_long_link",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_long_link",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": null,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed the exact cited passage: identifier SABLE-472, basil watering, or tail credential QUARTZ-908 is present. Named lookup selects a note different from adjacent editor; selection uses its known note scope. Long-link answer follows all canonical continuations beyond the clipped prefix. No absence inference is made. Canonical originals and excluded private canary remain protected.",
+        "claims": [
+          {
+            "text": "The recovery code near the end of **Meridian long plan** is **`QUARTZ-908`**. [Source 4](passage:23b499b3ab2a10aa0dbd73e02ba1f5e55c64d5306657daef51bdd2c504a20c96)",
+            "citations": [
+              "23b499b3ab2a10aa0dbd73e02ba1f5e55c64d5306657daef51bdd2c504a20c96"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian long plan",
+                "excerpt": "his is background logistics, with no recovery credential.\nStage 37: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 38: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 39: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 40: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 41: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 42: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 43: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\nStage 44: Keep the archived packing checklist for the launch rehearsal. This is background logistics, with no recovery credential.\n\nRecovery code: QUARTZ-908.\n"
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [
+          "01M4M1Z8BN0ZRXRYNRHM2PHMAG"
+        ],
+        "reads": [
+          {
+            "coverage": {
+              "complete": false,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [
+                {
+                  "cursor": "read:1",
+                  "purpose": "answer"
+                }
+              ],
+              "noteId": "01M4M1Z8BN0ZRXRYNRHM2PHMAG",
+              "scope": "canonical_note",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian long plan",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "EMV9FCZWYZ47YN-1"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": false,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [
+                {
+                  "cursor": "read:2",
+                  "purpose": "answer"
+                }
+              ],
+              "noteId": "01M4M1Z8BN0ZRXRYNRHM2PHMAG",
+              "scope": "canonical_note",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian long plan",
+                "location": "body",
+                "alreadyRead": "full",
+                "evidenceId": "EMV9FCZWYZ47YN-2"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1Z8BN0ZRXRYNRHM2PHMAG",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian long plan",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EMV9FCZWYZ47YN-3"
+              },
+              {
+                "title": "Meridian long plan",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EMV9FCZWYZ47YN-4"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 12724,
+        "inputTokens": 16503,
+        "outputTokens": 228,
+        "reasoningTokens": 103,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 16731
+      },
+      "estimatedUsd": 0.0006191400000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2792,
+            "outputTokens": 107,
+            "reasoningTokens": 66,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2899
+          },
+          "estimatedUsd": 0.00015756
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2789,
+            "inputTokens": 3552,
+            "outputTokens": 44,
+            "reasoningTokens": 18,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3596
+          },
+          "estimatedUsd": 0.00012619
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3549,
+            "inputTokens": 4443,
+            "outputTokens": 45,
+            "reasoningTokens": 19,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4488
+          },
+          "estimatedUsd": 0.00014739
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4440,
+            "inputTokens": 5716,
+            "outputTokens": 32,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5748
+          },
+          "estimatedUsd": 0.000188
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 7737,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "read_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "UAAW9ZytJpisvOPImyNrX"
+      ],
+      "requestInputBytes": [
+        15914,
+        21829,
+        27875,
+        35613
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 4084,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6847,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 3152,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 8885,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 7160,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 10967,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 12816,
+          "tools": 8628
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "name": "heldout_named_note",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 13251,
+        "cachedInputTokens": 10558,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 126,
+        "totalTokens": 13377,
+        "reasoningTokens": 13
+      },
+      "estimatedUsd": 0.00043788,
+      "costPerRun": {
+        "min": 0.00043788,
+        "median": 0.00043788,
+        "max": 0.00043788
+      },
+      "modelCallAttempts": [
+        4
+      ],
+      "admittedProviderCalls": [
+        4
+      ],
+      "toolCalls": [
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_selection",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 8122,
+        "cachedInputTokens": 6768,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 112,
+        "totalTokens": 8234,
+        "reasoningTokens": 0
+      },
+      "estimatedUsd": 0.00025908,
+      "costPerRun": {
+        "min": 0.00025908,
+        "median": 0.00025908,
+        "max": 0.00025908
+      },
+      "modelCallAttempts": [
+        3
+      ],
+      "admittedProviderCalls": [
+        3
+      ],
+      "toolCalls": [
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_long_link",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 16503,
+        "cachedInputTokens": 12724,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 228,
+        "totalTokens": 16731,
+        "reasoningTokens": 103
+      },
+      "estimatedUsd": 0.0006191400000000001,
+      "costPerRun": {
+        "min": 0.0006191400000000001,
+        "median": 0.0006191400000000001,
+        "max": 0.0006191400000000001
+      },
+      "modelCallAttempts": [
+        4
+      ],
+      "admittedProviderCalls": [
+        4
+      ],
+      "toolCalls": [
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 1
+    },
+    {
+      "name": "all",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 37876,
+        "cachedInputTokens": 30050,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 466,
+        "totalTokens": 38342,
+        "reasoningTokens": 116
+      },
+      "estimatedUsd": 0.0013161000000000002,
+      "costPerRun": {
+        "min": 0.00025908,
+        "median": 0.00043788,
+        "max": 0.0006191400000000001
+      },
+      "modelCallAttempts": [
+        4,
+        3,
+        4
+      ],
+      "admittedProviderCalls": [
+        4,
+        3,
+        4
+      ],
+      "toolCalls": [
+        3,
+        2,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 1
+    }
+  ]
+}

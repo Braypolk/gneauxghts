@@ -1,0 +1,3449 @@
+{
+  "basis": "Small paired synthetic signal ablation; order alternated, canonical identities shared within each pair. Not a full historical comparison, significance test, invoice, or proof of causality. Manual answer entailment review required.",
+  "source": "live-selection-trace.json",
+  "model": "gpt-6-luna",
+  "costRates": {
+    "basis": "Standard short-context rates applied to provider-reported categories; not an invoice. Missing usage is unknown. No web/research charges.",
+    "checked": "2026-10-09",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "usdPerMillion": {
+      "cacheWrite": 0.125,
+      "cachedInput": 0.01,
+      "input": 0.1,
+      "output": 0.5
+    }
+  },
+  "costLimitation": "Rig reports no OpenAI cache-write category (maps it to zero); reported-cost estimate excludes any unexposed cache-write charge. All-zero usage is unknown. Output already includes reasoning; do not add reasoning tokens again.",
+  "reuseLimitation": "Repeated body overlap is a diagnostic, not proof the read was unnecessary; provenance/coverage may differ. Exact repeated calls include only identical arguments.",
+  "runs": [
+    {
+      "name": "named_note",
+      "variant": "signals_removed",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "signals_removed",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 6010,
+        "inputTokens": 10531,
+        "outputTokens": 138,
+        "reasoningTokens": 21,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10669
+      },
+      "estimatedUsd": 0.0005812,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 0,
+            "inputTokens": 2144,
+            "outputTokens": 42,
+            "reasoningTokens": 11,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2186
+          },
+          "estimatedUsd": 0.0002354
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2141,
+            "inputTokens": 3872,
+            "outputTokens": 77,
+            "reasoningTokens": 10,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3949
+          },
+          "estimatedUsd": 0.00023301000000000002
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3869,
+            "inputTokens": 4515,
+            "outputTokens": 19,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4534
+          },
+          "estimatedUsd": 0.00011279000000000001
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4732,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12706,
+        20517,
+        25193
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1331,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3301,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5841,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 5321,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 8497,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "named_note",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8679,
+        "inputTokens": 13506,
+        "outputTokens": 172,
+        "reasoningTokens": 22,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 13678
+      },
+      "estimatedUsd": 0.00065549,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 0,
+            "inputTokens": 2165,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2195
+          },
+          "estimatedUsd": 0.0002315
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2162,
+            "inputTokens": 2365,
+            "outputTokens": 43,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2408
+          },
+          "estimatedUsd": 6.342e-05
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2362,
+            "inputTokens": 4158,
+            "outputTokens": 77,
+            "reasoningTokens": 10,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4235
+          },
+          "estimatedUsd": 0.00024172000000000004
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4155,
+            "inputTokens": 4818,
+            "outputTokens": 22,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4840
+          },
+          "estimatedUsd": 0.00011884999999999999
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6170,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12824,
+        13963,
+        22047,
+        26771
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1333,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1627,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 845,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3622,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6934,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 5618,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9662,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4051,
+        "inputTokens": 5182,
+        "outputTokens": 64,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5246
+      },
+      "estimatedUsd": 0.00018561,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2169,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2208
+          },
+          "estimatedUsd": 6.675e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2166,
+            "inputTokens": 3013,
+            "outputTokens": 25,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3038
+          },
+          "estimatedUsd": 0.00011886
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2416,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12854,
+        16545
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1363,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1657,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3397,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "signals_removed",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "signals_removed",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4009,
+        "inputTokens": 5096,
+        "outputTokens": 58,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5154
+      },
+      "estimatedUsd": 0.00017779000000000002,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2148,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2187
+          },
+          "estimatedUsd": 6.654000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2145,
+            "inputTokens": 2948,
+            "outputTokens": 19,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2967
+          },
+          "estimatedUsd": 0.00011125000000000002
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3243,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12736,
+        16285
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1361,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1655,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3255,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "signals_removed",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "signals_removed",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8488,
+        "inputTokens": 11839,
+        "outputTokens": 122,
+        "reasoningTokens": 24,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11961
+      },
+      "estimatedUsd": 0.00048098,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2672,
+            "outputTokens": 58,
+            "reasoningTokens": 16,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2730
+          },
+          "estimatedUsd": 0.00012844
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2669,
+            "inputTokens": 3958,
+            "outputTokens": 34,
+            "reasoningTokens": 8,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3992
+          },
+          "estimatedUsd": 0.00017259
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3955,
+            "inputTokens": 5209,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5239
+          },
+          "estimatedUsd": 0.00017995
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3577,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "0LUdDNMhPZ_yMb-bz1x7X"
+      ],
+      "requestInputBytes": [
+        15311,
+        23000,
+        30452
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 3936,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 5975,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5650,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 7885,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11192,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8701,
+        "inputTokens": 12207,
+        "outputTokens": 136,
+        "reasoningTokens": 48,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 12343
+      },
+      "estimatedUsd": 0.00050561,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2734,
+            "outputTokens": 81,
+            "reasoningTokens": 39,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2815
+          },
+          "estimatedUsd": 0.00014425
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2731,
+            "inputTokens": 4088,
+            "outputTokens": 35,
+            "reasoningTokens": 9,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4123
+          },
+          "estimatedUsd": 0.00018051000000000002
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4085,
+            "inputTokens": 5385,
+            "outputTokens": 20,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5405
+          },
+          "estimatedUsd": 0.00018085
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4417,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "QwqNJ__biJWVYAMVdMelK"
+      ],
+      "requestInputBytes": [
+        15559,
+        23687,
+        31301
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 4068,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6403,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5793,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 8333,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11477,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "reason": "Correct September 18 checksum substep attributed to Priya; entire launch remains unrecorded as complete; passive deployment approval has no named approver. All three claims cite the retrospective body."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8060,
+        "inputTokens": 10838,
+        "outputTokens": 184,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11022
+      },
+      "estimatedUsd": 0.00045040000000000005,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2205,
+            "outputTokens": 38,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2243
+          },
+          "estimatedUsd": 6.984999999999999e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2202,
+            "inputTokens": 3976,
+            "outputTokens": 64,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4040
+          },
+          "estimatedUsd": 0.00023142
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3973,
+            "inputTokens": 4657,
+            "outputTokens": 82,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4739
+          },
+          "estimatedUsd": 0.00014913
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3975,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        19450,
+        22702
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1869,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6090,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2208,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9003,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "signals_removed",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "signals_removed",
+        "repeat": 1,
+        "passed": false,
+        "reason": "No final answer before six provider dispatches; the next provider dispatch was rejected. Relevant retrospective body had already been delivered. Failure retained, not rerun or excluded."
+      },
+      "runtimeError": "runtime_failed",
+      "usage": {
+        "inputTokens": 26443,
+        "cachedInputTokens": 21465,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 396,
+        "totalTokens": 26839,
+        "reasoningTokens": 84
+      },
+      "estimatedUsd": 0.00091045,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2184,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2213
+          },
+          "estimatedUsd": 6.514e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2181,
+            "inputTokens": 3885,
+            "outputTokens": 64,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3949
+          },
+          "estimatedUsd": 0.00022421
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3882,
+            "inputTokens": 4005,
+            "outputTokens": 87,
+            "reasoningTokens": 25,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4092
+          },
+          "estimatedUsd": 9.462e-05
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4002,
+            "inputTokens": 4439,
+            "outputTokens": 64,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4503
+          },
+          "estimatedUsd": 0.00011572
+        },
+        {
+          "index": 4,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4436,
+            "inputTokens": 5103,
+            "outputTokens": 61,
+            "reasoningTokens": 27,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5164
+          },
+          "estimatedUsd": 0.00014156
+        },
+        {
+          "index": 5,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5100,
+            "inputTokens": 6827,
+            "outputTokens": 91,
+            "reasoningTokens": 32,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6918
+          },
+          "estimatedUsd": 0.00026920000000000004
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 8443,
+        "modelCalls": 7,
+        "toolCalls": 6
+      },
+      "admittedProviderCalls": 6,
+      "reportedUsageCalls": 6,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes",
+        "read_notes",
+        "find_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12891,
+        19030,
+        19750,
+        23339,
+        26519,
+        34530
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1516,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1812,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5843,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2151,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6224,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4369,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 7595,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4708,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 10436,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6933,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 16222,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "named_note",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "current",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7978,
+        "inputTokens": 10672,
+        "outputTokens": 110,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10782
+      },
+      "estimatedUsd": 0.0004041800000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2167,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2196
+          },
+          "estimatedUsd": 6.155e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2164,
+            "inputTokens": 3932,
+            "outputTokens": 62,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3994
+          },
+          "estimatedUsd": 0.00022944
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3929,
+            "inputTokens": 4573,
+            "outputTokens": 19,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4592
+          },
+          "estimatedUsd": 0.00011318999999999999
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4884,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12824,
+        19201,
+        22268
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1333,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1622,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6088,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1961,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 8816,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "named_note",
+      "variant": "signals_removed",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "signals_removed",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7858,
+        "inputTokens": 10478,
+        "outputTokens": 117,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10595
+      },
+      "estimatedUsd": 0.00039908,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2146,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2176
+          },
+          "estimatedUsd": 6.184e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2143,
+            "inputTokens": 3854,
+            "outputTokens": 62,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3916
+          },
+          "estimatedUsd": 0.00022353000000000002
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3851,
+            "inputTokens": 4478,
+            "outputTokens": 25,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4503
+          },
+          "estimatedUsd": 0.00011371000000000001
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4389,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12706,
+        18842,
+        21837
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1331,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1625,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5842,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1964,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 8498,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "signals_removed",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "signals_removed",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4010,
+        "inputTokens": 5104,
+        "outputTokens": 52,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5156
+      },
+      "estimatedUsd": 0.0001755,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2149,
+            "outputTokens": 40,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2189
+          },
+          "estimatedUsd": 6.714e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2146,
+            "inputTokens": 2955,
+            "outputTokens": 12,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2967
+          },
+          "estimatedUsd": 0.00010836000000000001
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2396,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12736,
+        16285
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1361,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1655,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3255,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "current",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4052,
+        "inputTokens": 5191,
+        "outputTokens": 66,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5257
+      },
+      "estimatedUsd": 0.00018742000000000002,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2170,
+            "outputTokens": 40,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2210
+          },
+          "estimatedUsd": 6.735e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2167,
+            "inputTokens": 3021,
+            "outputTokens": 26,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3047
+          },
+          "estimatedUsd": 0.00012007000000000001
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2628,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12854,
+        16545
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1363,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1657,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3397,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "current",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8682,
+        "inputTokens": 12165,
+        "outputTokens": 118,
+        "reasoningTokens": 21,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 12283
+      },
+      "estimatedUsd": 0.00049412,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2741,
+            "outputTokens": 53,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2794
+          },
+          "estimatedUsd": 0.00013095
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2738,
+            "inputTokens": 4062,
+            "outputTokens": 35,
+            "reasoningTokens": 9,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4097
+          },
+          "estimatedUsd": 0.00017728
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4059,
+            "inputTokens": 5362,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5392
+          },
+          "estimatedUsd": 0.00018589000000000002
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3836,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "yl4vatN-53IabkkQRAUzK"
+      ],
+      "requestInputBytes": [
+        15559,
+        23327,
+        30941
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 4068,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6043,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5793,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 7973,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11477,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "signals_removed",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "signals_removed",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8504,
+        "inputTokens": 11873,
+        "outputTokens": 122,
+        "reasoningTokens": 35,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11995
+      },
+      "estimatedUsd": 0.00048294000000000006,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2680,
+            "outputTokens": 62,
+            "reasoningTokens": 21,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2742
+          },
+          "estimatedUsd": 0.00013124
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2677,
+            "inputTokens": 3966,
+            "outputTokens": 40,
+            "reasoningTokens": 14,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4006
+          },
+          "estimatedUsd": 0.00017567
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3963,
+            "inputTokens": 5227,
+            "outputTokens": 20,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5247
+          },
+          "estimatedUsd": 0.00017603
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3517,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "qFHdw7Yq4NkENAbuA01Fz"
+      ],
+      "requestInputBytes": [
+        15311,
+        23084,
+        30620
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 3936,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6059,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5650,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 8053,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11192,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "signals_removed",
+      "repeat": 2,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "signals_removed",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct September 18 checksum substep attributed to Priya; entire launch remains unrecorded as complete; passive deployment approval has no named approver. All three claims cite the retrospective body. Automated smoke check is a false negative: the valid wording \u201cdoesn\u2019t say who approved it\u201d is absent from its keyword list."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 10905,
+        "inputTokens": 13302,
+        "outputTokens": 246,
+        "reasoningTokens": 76,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 13548
+      },
+      "estimatedUsd": 0.00047175,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2180,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2209
+          },
+          "estimatedUsd": 6.474000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2177,
+            "inputTokens": 3014,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3053
+          },
+          "estimatedUsd": 0.00012497
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3011,
+            "inputTokens": 3856,
+            "outputTokens": 65,
+            "reasoningTokens": 35,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3921
+          },
+          "estimatedUsd": 0.00014711000000000002
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3853,
+            "inputTokens": 4252,
+            "outputTokens": 113,
+            "reasoningTokens": 41,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4365
+          },
+          "estimatedUsd": 0.00013493
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5365,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12891,
+        15924,
+        19667,
+        23384
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1516,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1811,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 2738,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2105,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6187,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4419,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 7590,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 2,
+        "passed": true,
+        "reason": "Correct September 18 checksum substep attributed to Priya; entire launch remains unrecorded as complete; passive deployment approval has no named approver. All three claims cite the retrospective body."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8048,
+        "inputTokens": 11059,
+        "outputTokens": 206,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11265
+      },
+      "estimatedUsd": 0.00048458,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2201,
+            "outputTokens": 37,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2238
+          },
+          "estimatedUsd": 6.895000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2198,
+            "inputTokens": 3968,
+            "outputTokens": 98,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4066
+          },
+          "estimatedUsd": 0.00024797999999999997
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3965,
+            "inputTokens": 4890,
+            "outputTokens": 71,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4961
+          },
+          "estimatedUsd": 0.00016765
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3995,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        19441,
+        23395
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1860,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6090,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2266,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9638,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "named_note",
+      "variant": "signals_removed",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "signals_removed",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 10400,
+        "inputTokens": 13234,
+        "outputTokens": 154,
+        "reasoningTokens": 11,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 13388
+      },
+      "estimatedUsd": 0.0004644,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2145,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2175
+          },
+          "estimatedUsd": 6.174e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2142,
+            "inputTokens": 2334,
+            "outputTokens": 41,
+            "reasoningTokens": 11,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2375
+          },
+          "estimatedUsd": 6.112000000000001e-05
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2331,
+            "inputTokens": 4066,
+            "outputTokens": 61,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4127
+          },
+          "estimatedUsd": 0.00022731
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4063,
+            "inputTokens": 4689,
+            "outputTokens": 22,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4711
+          },
+          "estimatedUsd": 0.00011423000000000001
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5299,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12706,
+        13808,
+        21614,
+        24609
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1331,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1625,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 808,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3588,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6651,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3927,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9307,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "named_note",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "named_note",
+        "variant": "current",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7992,
+        "inputTokens": 10700,
+        "outputTokens": 115,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10815
+      },
+      "estimatedUsd": 0.00040822000000000005,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2166,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2195
+          },
+          "estimatedUsd": 6.145e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2163,
+            "inputTokens": 3947,
+            "outputTokens": 61,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4008
+          },
+          "estimatedUsd": 0.00023053
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3944,
+            "inputTokens": 4587,
+            "outputTokens": 25,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4612
+          },
+          "estimatedUsd": 0.00011624
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4037,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12824,
+        19201,
+        22268
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1333,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1622,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6088,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1961,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 8816,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "current",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4049,
+        "inputTokens": 5173,
+        "outputTokens": 59,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5232
+      },
+      "estimatedUsd": 0.00018239000000000002,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2167,
+            "outputTokens": 37,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2204
+          },
+          "estimatedUsd": 6.555000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2164,
+            "inputTokens": 3006,
+            "outputTokens": 22,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3028
+          },
+          "estimatedUsd": 0.00011684
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2612,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12854,
+        16545
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1363,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1657,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3397,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "selected_text",
+      "variant": "signals_removed",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "selected_text",
+        "variant": "signals_removed",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 4007,
+        "inputTokens": 5089,
+        "outputTokens": 60,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 5149
+      },
+      "estimatedUsd": 0.00017827,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2146,
+            "outputTokens": 37,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2183
+          },
+          "estimatedUsd": 6.534000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2143,
+            "inputTokens": 2943,
+            "outputTokens": 23,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2966
+          },
+          "estimatedUsd": 0.00011293
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2204,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "admittedProviderCalls": 2,
+      "reportedUsageCalls": 2,
+      "toolSequence": [
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12736,
+        16285
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1361,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1655,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 3255,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "signals_removed",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "signals_removed",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8499,
+        "inputTokens": 11865,
+        "outputTokens": 120,
+        "reasoningTokens": 32,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11985
+      },
+      "estimatedUsd": 0.00048159000000000006,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2673,
+            "outputTokens": 66,
+            "reasoningTokens": 24,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2739
+          },
+          "estimatedUsd": 0.00013254000000000003
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2670,
+            "inputTokens": 3968,
+            "outputTokens": 34,
+            "reasoningTokens": 8,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4002
+          },
+          "estimatedUsd": 0.0001735
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3965,
+            "inputTokens": 5224,
+            "outputTokens": 20,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5244
+          },
+          "estimatedUsd": 0.00017555
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 3745,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "TITytd-am-2Qtd9DZk-sC"
+      ],
+      "requestInputBytes": [
+        15311,
+        23104,
+        30556
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 3936,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6079,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5650,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 7989,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11192,
+          "tools": 8397
+        }
+      ]
+    },
+    {
+      "name": "long_link",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "long_link",
+        "variant": "current",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct factual answer; cited delivered passage contains the requested fact."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8688,
+        "inputTokens": 12188,
+        "outputTokens": 133,
+        "reasoningTokens": 35,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 12321
+      },
+      "estimatedUsd": 0.00050338,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2735,
+            "outputTokens": 65,
+            "reasoningTokens": 23,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2800
+          },
+          "estimatedUsd": 0.00013635
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2732,
+            "inputTokens": 4074,
+            "outputTokens": 38,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4112
+          },
+          "estimatedUsd": 0.00018052
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4071,
+            "inputTokens": 5379,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5409
+          },
+          "estimatedUsd": 0.00018651000000000003
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4304,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [
+        "yeqV3XpaRgdiaDJD9iGbk"
+      ],
+      "requestInputBytes": [
+        15559,
+        23495,
+        31153
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 4068,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6211,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5793,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 8185,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11477,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 3,
+        "passed": false,
+        "reason": "No final answer before six provider dispatches; the next provider dispatch was rejected. Relevant retrospective body had already been delivered. Failure retained, not rerun or excluded."
+      },
+      "runtimeError": "model_call_limit",
+      "usage": {
+        "inputTokens": 28722,
+        "cachedInputTokens": 23273,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 479,
+        "totalTokens": 29201,
+        "reasoningTokens": 202
+      },
+      "estimatedUsd": 0.00101713,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2199,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2228
+          },
+          "estimatedUsd": 6.475e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2196,
+            "inputTokens": 3983,
+            "outputTokens": 62,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4045
+          },
+          "estimatedUsd": 0.00023166000000000001
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3980,
+            "inputTokens": 4658,
+            "outputTokens": 67,
+            "reasoningTokens": 37,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4725
+          },
+          "estimatedUsd": 0.0001411
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4655,
+            "inputTokens": 5074,
+            "outputTokens": 66,
+            "reasoningTokens": 35,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5140
+          },
+          "estimatedUsd": 0.00012145000000000001
+        },
+        {
+          "index": 4,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5071,
+            "inputTokens": 5489,
+            "outputTokens": 168,
+            "reasoningTokens": 73,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5657
+          },
+          "estimatedUsd": 0.00017651
+        },
+        {
+          "index": 5,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5486,
+            "inputTokens": 7319,
+            "outputTokens": 87,
+            "reasoningTokens": 57,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 7406
+          },
+          "estimatedUsd": 0.00028166000000000004
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 11496,
+        "modelCalls": 7,
+        "toolCalls": 7
+      },
+      "admittedProviderCalls": 6,
+      "reportedUsageCalls": 6,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes",
+        "find_notes",
+        "read_notes",
+        "read_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        19395,
+        22647,
+        26442,
+        30173,
+        39998
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1814,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6090,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2153,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9003,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4487,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 10464,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6757,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11925,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 9880,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 18627,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "signals_removed",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "signals_removed",
+        "repeat": 3,
+        "passed": true,
+        "reason": "Correct September 18 checksum substep attributed to Priya; entire launch remains unrecorded as complete; passive deployment approval has no named approver. All three claims cite the retrospective body."
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 12756,
+        "inputTokens": 16110,
+        "outputTokens": 287,
+        "reasoningTokens": 33,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 16397
+      },
+      "estimatedUsd": 0.0006064600000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1864,
+            "inputTokens": 2178,
+            "outputTokens": 33,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2211
+          },
+          "estimatedUsd": 6.654000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2175,
+            "inputTokens": 3905,
+            "outputTokens": 104,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4009
+          },
+          "estimatedUsd": 0.00024675
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3902,
+            "inputTokens": 4818,
+            "outputTokens": 68,
+            "reasoningTokens": 33,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4886
+          },
+          "estimatedUsd": 0.00016462
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4815,
+            "inputTokens": 5209,
+            "outputTokens": 82,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5291
+          },
+          "estimatedUsd": 0.00012855
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5715,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        12891,
+        19036,
+        22897,
+        26557
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1516,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1818,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5843,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2224,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 9298,
+          "tools": 8397
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4539,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 10643,
+          "tools": 8397
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "name": "named_note",
+      "variant": "signals_removed",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 34243,
+        "cachedInputTokens": 24268,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 409,
+        "totalTokens": 34652,
+        "reasoningTokens": 32
+      },
+      "estimatedUsd": 0.00144468,
+      "costPerRun": {
+        "min": 0.00039908,
+        "median": 0.0004644,
+        "max": 0.0005812
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        4
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        4
+      ],
+      "toolCalls": [
+        2,
+        2,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "named_note",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 34878,
+        "cachedInputTokens": 24649,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 397,
+        "totalTokens": 35275,
+        "reasoningTokens": 22
+      },
+      "estimatedUsd": 0.0014678900000000001,
+      "costPerRun": {
+        "min": 0.0004041800000000001,
+        "median": 0.00040822000000000005,
+        "max": 0.00065549
+      },
+      "modelCallAttempts": [
+        4,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        4,
+        3,
+        3
+      ],
+      "toolCalls": [
+        3,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "selected_text",
+      "variant": "signals_removed",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 15289,
+        "cachedInputTokens": 12026,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 170,
+        "totalTokens": 15459,
+        "reasoningTokens": 0
+      },
+      "estimatedUsd": 0.00053156,
+      "costPerRun": {
+        "min": 0.0001755,
+        "median": 0.00017779000000000002,
+        "max": 0.00017827
+      },
+      "modelCallAttempts": [
+        2,
+        2,
+        2
+      ],
+      "admittedProviderCalls": [
+        2,
+        2,
+        2
+      ],
+      "toolCalls": [
+        1,
+        1,
+        1
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "selected_text",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 15546,
+        "cachedInputTokens": 12152,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 189,
+        "totalTokens": 15735,
+        "reasoningTokens": 0
+      },
+      "estimatedUsd": 0.00055542,
+      "costPerRun": {
+        "min": 0.00018239000000000002,
+        "median": 0.00018561,
+        "max": 0.00018742000000000002
+      },
+      "modelCallAttempts": [
+        2,
+        2,
+        2
+      ],
+      "admittedProviderCalls": [
+        2,
+        2,
+        2
+      ],
+      "toolCalls": [
+        1,
+        1,
+        1
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "long_link",
+      "variant": "signals_removed",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 35577,
+        "cachedInputTokens": 25491,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 364,
+        "totalTokens": 35941,
+        "reasoningTokens": 91
+      },
+      "estimatedUsd": 0.0014455100000000001,
+      "costPerRun": {
+        "min": 0.00048098,
+        "median": 0.00048159000000000006,
+        "max": 0.00048294000000000006
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        3
+      ],
+      "toolCalls": [
+        2,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 3
+    },
+    {
+      "name": "long_link",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 36560,
+        "cachedInputTokens": 26071,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 387,
+        "totalTokens": 36947,
+        "reasoningTokens": 104
+      },
+      "estimatedUsd": 0.00150311,
+      "costPerRun": {
+        "min": 0.00049412,
+        "median": 0.00050338,
+        "max": 0.00050561
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        3
+      ],
+      "toolCalls": [
+        2,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 3
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "signals_removed",
+      "runs": 3,
+      "smokePassed": 1,
+      "manualPassed": 2,
+      "usage": {
+        "inputTokens": 55855,
+        "cachedInputTokens": 45126,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 929,
+        "totalTokens": 56784,
+        "reasoningTokens": 193
+      },
+      "estimatedUsd": 0.00198866,
+      "costPerRun": {
+        "min": 0.00047175,
+        "median": 0.0006064600000000001,
+        "max": 0.00091045
+      },
+      "modelCallAttempts": [
+        7,
+        4,
+        4
+      ],
+      "admittedProviderCalls": [
+        6,
+        4,
+        4
+      ],
+      "toolCalls": [
+        6,
+        3,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 2,
+      "manualPassed": 2,
+      "usage": {
+        "inputTokens": 50619,
+        "cachedInputTokens": 39381,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 869,
+        "totalTokens": 51488,
+        "reasoningTokens": 202
+      },
+      "estimatedUsd": 0.00195211,
+      "costPerRun": {
+        "min": 0.00045040000000000005,
+        "median": 0.00048458,
+        "max": 0.00101713
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        7
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        6
+      ],
+      "toolCalls": [
+        2,
+        2,
+        7
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "all",
+      "variant": "signals_removed",
+      "runs": 12,
+      "smokePassed": 10,
+      "manualPassed": 11,
+      "usage": {
+        "inputTokens": 140964,
+        "cachedInputTokens": 106911,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 1872,
+        "totalTokens": 142836,
+        "reasoningTokens": 316
+      },
+      "estimatedUsd": 0.00541041,
+      "costPerRun": {
+        "min": 0.0001755,
+        "median": 0.00047636499999999997,
+        "max": 0.00091045
+      },
+      "modelCallAttempts": [
+        3,
+        2,
+        3,
+        7,
+        3,
+        2,
+        3,
+        4,
+        4,
+        2,
+        3,
+        4
+      ],
+      "admittedProviderCalls": [
+        3,
+        2,
+        3,
+        6,
+        3,
+        2,
+        3,
+        4,
+        4,
+        2,
+        3,
+        4
+      ],
+      "toolCalls": [
+        2,
+        1,
+        2,
+        6,
+        2,
+        1,
+        2,
+        3,
+        3,
+        1,
+        2,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 3
+    },
+    {
+      "name": "all",
+      "variant": "current",
+      "runs": 12,
+      "smokePassed": 11,
+      "manualPassed": 11,
+      "usage": {
+        "inputTokens": 137603,
+        "cachedInputTokens": 102253,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 1842,
+        "totalTokens": 139445,
+        "reasoningTokens": 328
+      },
+      "estimatedUsd": 0.0054785300000000006,
+      "costPerRun": {
+        "min": 0.00018239000000000002,
+        "median": 0.00046749000000000004,
+        "max": 0.00101713
+      },
+      "modelCallAttempts": [
+        4,
+        2,
+        3,
+        3,
+        3,
+        2,
+        3,
+        3,
+        3,
+        2,
+        3,
+        7
+      ],
+      "admittedProviderCalls": [
+        4,
+        2,
+        3,
+        3,
+        3,
+        2,
+        3,
+        3,
+        3,
+        2,
+        3,
+        6
+      ],
+      "toolCalls": [
+        3,
+        1,
+        2,
+        2,
+        2,
+        1,
+        2,
+        2,
+        2,
+        1,
+        2,
+        7
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 3
+    }
+  ]
+}

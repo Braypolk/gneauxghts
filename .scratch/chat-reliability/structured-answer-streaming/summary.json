@@ -1,0 +1,54 @@
+{
+  "plannedAnswers": 8,
+  "attemptedAnswers": 2,
+  "completedAnswers": 1,
+  "reasonStopped": "Flex unavailable on second request; no retry or tier fallback.",
+  "failedAttemptUsage": null,
+  "settings": {
+    "model": "gpt-6-luna",
+    "provider": "openai",
+    "reasoning_effort": "medium",
+    "service_tier": "flex"
+  },
+  "variants": {
+    "verbose": {
+      "preambleBytes": 3729,
+      "schemaBytes": 361,
+      "completedAnswers": 1
+    },
+    "compact": {
+      "preambleBytes": 3495,
+      "schemaBytes": 291,
+      "completedAnswers": 0
+    }
+  },
+  "liveStream": {
+    "caseId": "fresh_mixed_bullets",
+    "variant": "verbose",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1281,
+      "output_tokens": 234,
+      "reasoning_tokens": 90,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1515
+    },
+    "modelCalls": 1,
+    "firstDraftMillis": 5245,
+    "finalMillis": 8226,
+    "previewLeadMillis": 2981,
+    "formatterDeltas": 129,
+    "draftUpdates": 98,
+    "previewMatchesFinal": true,
+    "earlySourceLinks": 0,
+    "ordinaryTextDeltaEvents": 0,
+    "manualCitationCoveragePass": true,
+    "manualFactAndScopePass": true
+  },
+  "formatBytesSaved": 304,
+  "formatBytesReductionPercent": 7.432762836185819,
+  "totalReportedTokens": 1515,
+  "tokenReductionMeasured": false,
+  "limits": "One completed verbose answer is streaming evidence only. No completed compact answer, paired quality/cost comparison, native UI delivery, local model evaluation, or strict-schema guarantee."
+}

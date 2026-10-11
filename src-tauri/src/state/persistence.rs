@@ -1645,11 +1645,32 @@ pub(crate) fn db_set_note_collapsed(note_id: &str, collapsed: bool) -> Result<()
 
 pub(crate) fn db_set_note_order(note_ids: &[String]) -> Result<(), String> {
     with_state_database(|connection| {
-        let transaction = connection.transaction().map_err(|err| err.to_string())?;
+        // The caller may be reordering a filtered task view. Preserve omitted
+        // notes in their existing slots under the same write reservation.
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|err| err.to_string())?;
+        let previous = read_ordered_string_column(
+            &transaction,
+            "SELECT note_id FROM app_state_note_order_note_ids ORDER BY position",
+        )?;
+        let requested: HashSet<&String> = note_ids.iter().collect();
+        let mut incoming = note_ids.iter();
+        let mut merged: Vec<&String> = previous
+            .iter()
+            .map(|id| {
+                if requested.contains(id) {
+                    incoming.next().unwrap_or(id)
+                } else {
+                    id
+                }
+            })
+            .collect();
+        merged.extend(incoming);
         transaction
             .execute("DELETE FROM app_state_note_order_note_ids", [])
             .map_err(|err| err.to_string())?;
-        for (index, note_id) in note_ids.iter().enumerate() {
+        for (index, note_id) in merged.iter().enumerate() {
             transaction
                 .execute(
                     "INSERT INTO app_state_note_order_note_ids (position, note_id) VALUES (?1, ?2)",

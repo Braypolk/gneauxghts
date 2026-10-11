@@ -3,6 +3,50 @@ import { createChatController } from './controller.svelte';
 import { message, conversation, fakeApi } from './chatTestSupport';
 
 describe('chat controller events', () => {
+  it('replaces structured drafts by attempt/sequence, rejects late events and settles only final content', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const streaming = message();
+    const identity = { requestId: 'request-1', conversationId: 'conversation-1', messageId: streaming.id };
+    fake.emit('chat://started', { ...identity, message: streaming });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 1, sequence: 1, content: '**First** [S1]' });
+    expect(controller.getSnapshot().conversation?.messages[0].answerDraft?.text).toBe('**First** [S1]');
+    expect(controller.getSnapshot().conversation?.messages[0].content).toBe('');
+    expect(controller.getSnapshot().conversation?.messages[0].citations).toEqual([]);
+    fake.emit('chat://answer-draft', { ...identity, attempt: 2, sequence: 2, content: '' });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 1, sequence: 3, content: 'Late old attempt' });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 2, sequence: 4, content: 'Replacement' });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 2, sequence: 3, content: 'Out of order' });
+    fake.emit('chat://answer-draft', { ...identity, requestId: 'wrong-request', attempt: 3, sequence: 9, content: 'Wrong run' });
+    fake.emit('chat://answer-draft', { ...identity, conversationId: 'wrong-conversation', attempt: 3, sequence: 10, content: 'Wrong chat' });
+    expect(controller.getSnapshot().conversation?.messages[0].answerDraft?.text).toBe('Replacement');
+    fake.emit('chat://completed', { ...identity, message: message({ content: '**Final**', status: 'completed' }) });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 3, sequence: 5, content: 'Late after final' });
+    expect(controller.getSnapshot().conversation?.messages[0].answerDraft).toBeUndefined();
+    expect(controller.getSnapshot().conversation?.messages[0].content).toBe('**Final**');
+    controller.dispose();
+  });
+
+  it.each(['chat://cancelled', 'chat://failed'] as const)('clears a structured draft on %s and ignores late completion', async (channel) => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    const streaming = message();
+    const identity = { requestId: 'request-1', conversationId: 'conversation-1', messageId: streaming.id };
+    fake.emit('chat://started', { ...identity, message: streaming });
+    fake.emit('chat://answer-draft', { ...identity, attempt: 1, sequence: 1, content: 'Unvalidated' });
+    expect(controller.getSnapshot().conversation?.messages[0].answerDraft?.text).toBe('Unvalidated');
+    const terminal = message({ content: '', status: channel === 'chat://failed' ? 'error' : 'cancelled' });
+    if (channel === 'chat://failed') fake.emit(channel, { ...identity, message: terminal, error: 'Rejected', retryable: true });
+    else fake.emit(channel, { ...identity, message: terminal });
+    fake.emit('chat://completed', { ...identity, message: message({ content: 'Too late', status: 'completed' }) });
+    expect(controller.getSnapshot().conversation?.messages[0].answerDraft).toBeUndefined();
+    expect(controller.getSnapshot().conversation?.messages[0].content).toBe('');
+    expect(controller.getSnapshot().conversation?.messages[0].citations).toEqual([]);
+    controller.dispose();
+  });
+
   it('reconciles streaming deltas, citations, and completion', async () => {
     const fake = fakeApi();
     const onAssistantCompleted = vi.fn();

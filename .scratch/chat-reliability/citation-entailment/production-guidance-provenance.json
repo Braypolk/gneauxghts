@@ -1,0 +1,11 @@
+{
+  "method": "Test-only high-authority placement of exact existing read-tool citation clause; approximates production guidance, not complete production tool definitions/context",
+  "referenceInstruction": "Cite exact returned [S#] references; the app builds links.",
+  "files": {
+    ".scratch/chat-reliability/citation-entailment/production-guidance-preamble.txt": "2dbc0a0f3320915184a057dc047d15f47ef177409a83258f8251f320b7607beb",
+    ".scratch/chat-reliability/citation-entailment/production-guidance-fixtures.json": "a2d7db956fd33d4cd7dd8f2b6ae0e19fa45b046aeeafe6a16198db20fd4b788d",
+    "src-tauri/src/agent_tools/interface.rs": "ba84afbada42d918c9e0b2aef721517c78c78e73049e9bb68eb1547f627fb6e5",
+    "src-tauri/src/chat/assistant_instructions.txt": "64bd25993dcc5cf80ce253833efd08d8ae171a8478349186d83082a54435a414",
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24"
+  }
+}

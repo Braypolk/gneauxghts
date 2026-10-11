@@ -1,0 +1,11 @@
+{
+  "method": "One generic instruction replacement; frozen held-out evidence before candidate runs",
+  "additionalInstructionBytes": 101,
+  "files": {
+    ".scratch/chat-reliability/citation-entailment/citation-preamble-candidate.txt": "9c9bd2f42e6742e410da2f55b153122dc9aa7c26a4238cefd8851c890e145eb0",
+    ".scratch/chat-reliability/citation-entailment/heldout-fixtures.json": "56bb1a2bf7625f219b179b91fcbb22110ee5e1caa4970e4ff39cc7974b7cb7e4",
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/chat/assistant_instructions.txt": "64bd25993dcc5cf80ce253833efd08d8ae171a8478349186d83082a54435a414",
+    "src-tauri/src/chat/citations.rs": "2853f78237b9db3c8ac01d3fa2ad9b44967b13453134537737817352aedf553f"
+  }
+}

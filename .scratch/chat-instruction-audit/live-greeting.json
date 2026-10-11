@@ -1,0 +1,61 @@
+{
+  "cases": [
+    {
+      "answer": "Hi! I’m doing well, thanks for asking. How are you?",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 0,
+            "inputTokens": 3024,
+            "outputTokens": 19,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3043
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "greeting",
+      "proposal": null,
+      "question": "Hi! How are you?",
+      "requestBytes": [
+        17849
+      ],
+      "runtimeError": null,
+      "sources": [],
+      "stats": {
+        "elapsedMillis": 1454,
+        "modelCalls": 1,
+        "toolCalls": 0
+      },
+      "tools": [],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 0,
+        "inputTokens": 3024,
+        "outputTokens": 19,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 3043
+      }
+    }
+  ],
+  "limits": {
+    "callsPerCase": 6,
+    "cases": 6,
+    "outputTokensPerCall": 1024,
+    "secondsPerCase": 60,
+    "serializedBytesPerCall": 64000
+  },
+  "model": "gpt-6-luna",
+  "reasoningEffort": "provider default",
+  "scope": "Real streaming runner and vault tools; synthetic fixtures. No native UI/durable chat admission, web, or configured research worker. No paired old-prompt baseline."
+}

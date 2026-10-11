@@ -1,0 +1,66 @@
+[
+  {
+    "caseId": "deadline_inventory",
+    "variant": "current-existing-reference-guidance",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "As of September 30:\n\n- **Parent:** Upcoming; its supported deadline is **October 1**. The first valid due-date annotation applies, so the later October 7 annotation does not change it.\n- **Child:** Open but **undated**; it does not inherit the parent\u2019s deadline.\n- **Invalid-date example:** Open, with **no supported deadline**; February 30 is not a valid calendar date.\n- **Fenced-code example:** Not a task for deadline classification; its text is inside a code block.\n- **Completed example:** Completed, with a September 29 deadline. It is not actionable overdue work. [Source 1](passage:tasks)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1312,
+      "output_tokens": 220,
+      "reasoning_tokens": 80,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1532
+    }
+  },
+  {
+    "caseId": "partial_read_absence",
+    "variant": "current-existing-reference-guidance",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "The available passage says, \u201cDeployment approval was discussed,\u201d but it doesn\u2019t show whether an approver is named elsewhere in the note. I can\u2019t determine that from the supplied excerpt. [Source 1](passage:partial)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 947,
+      "output_tokens": 106,
+      "reasoning_tokens": 59,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1053
+    }
+  },
+  {
+    "caseId": "heldout_project_bullets",
+    "variant": "current-existing-reference-guidance",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "- **Ember:** Nora is to draft the outline; deadline **October 4, 2026**. [Source 1](passage:ember)\n- **Harbor:** Tomas is to send the budget; deadline **October 7, 2026**. [Source 2](passage:harbor)\n- **Ridge:** Mira is to schedule the review; **no deadline is recorded**. [Source 3](passage:ridge)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1045,
+      "output_tokens": 129,
+      "reasoning_tokens": 46,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1174
+    }
+  },
+  {
+    "caseId": "heldout_task_table",
+    "variant": "current-existing-reference-guidance",
+    "repeat": 1,
+    "model": "gpt-6-luna",
+    "answer": "| Task | Recorded status | Deadline | Actionable overdue work as of October 2, 2026? |\n|---|---|---|---|\n| Draft outline | Open | October 1, 2026 | **Yes** \u2014 its deadline has passed. |\n| Send budget | Completed | September 30, 2026 | **No** \u2014 completed tasks are not actionable overdue work. |\n| Book review | Open | No deadline recorded | **Cannot determine** \u2014 no deadline is recorded. |\n\n[Source 1](passage:workshop)",
+    "usage": {
+      "cache_creation_input_tokens": 0,
+      "cached_input_tokens": 0,
+      "input_tokens": 1264,
+      "output_tokens": 181,
+      "reasoning_tokens": 68,
+      "tool_use_prompt_tokens": 0,
+      "total_tokens": 1445
+    }
+  }
+]

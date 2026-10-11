@@ -401,6 +401,37 @@ mod tests {
         assert_eq!(state.last_opened_note_id, Some(live_note_id));
     }
 
+    #[test]
+    fn filtered_note_order_preserves_omitted_ranks_in_persistence() {
+        let fixture = crate::test_support::TestVault::new("state-filtered-note-order");
+        let empty = |_: &str| None;
+        let cold_lookup = super::NoteIdLookup::Index {
+            resolver: &empty,
+            is_warm: false,
+        };
+        let read_order = || {
+            super::read_state_with_lookup(fixture.notes.path(), &cold_lookup)
+                .expect("read persisted order")
+                .note_order_note_ids
+        };
+        let ids = |values: &[&str]| {
+            values
+                .iter()
+                .map(|value| value.to_string())
+                .collect::<Vec<_>>()
+        };
+        super::db_set_note_order(&ids(&["a", "hidden", "b", "c"])).expect("seed order");
+        super::db_set_note_order(&ids(&["a", "c", "b"])).expect("reorder filtered view");
+        assert_eq!(read_order(), ids(&["a", "hidden", "c", "b"]));
+        super::db_set_note_order(&ids(&["b", "a", "c", "new"])).expect("include new group");
+        assert_eq!(read_order(), ids(&["b", "hidden", "a", "c", "new"]));
+        super::db_set_note_order(&[]).expect("empty view");
+        assert_eq!(read_order(), ids(&["b", "hidden", "a", "c", "new"]));
+        super::db_set_note_order(&ids(&["new", "c", "a", "hidden", "b"]))
+            .expect("reorder full view");
+        assert_eq!(read_order(), ids(&["new", "c", "a", "hidden", "b"]));
+    }
+
     /// Warm-index prune drops unknown ids cleanly. The lookup closure
     /// here resolves only `live_note_id`; with `is_warm: true` the
     /// pruner trusts the index and drops everything else without

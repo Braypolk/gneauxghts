@@ -7,6 +7,19 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: listenMock }));
 
 describe('TauriChatApi', () => {
+  it('normalizes draft snapshots without treating them as terminal messages', async () => {
+    let deliver: (event: { payload: unknown }) => void = () => undefined;
+    listenMock.mockImplementation(async (_event, callback) => { deliver = callback; return () => undefined; });
+    const { TauriChatApi } = await import('./api');
+    const handler = vi.fn();
+    await new TauriChatApi().on('chat://answer-draft', handler);
+    const payload = { requestId: 'request', conversationId: 'chat', messageId: 'answer', attempt: 2, sequence: 4, content: '**Literal draft**' };
+    deliver({ payload });
+    expect(handler).toHaveBeenCalledWith(payload);
+    expect(handler.mock.calls[0][0]).not.toHaveProperty('message');
+    deliver({ payload: { ...payload, sequence: 1.5 } });
+    expect(handler).toHaveBeenCalledTimes(1);
+  });
   beforeEach(() => {
     invokeMock.mockReset();
     listenMock.mockReset();

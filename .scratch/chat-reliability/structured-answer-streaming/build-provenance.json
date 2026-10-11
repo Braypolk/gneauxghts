@@ -1,0 +1,23 @@
+{
+  "hostBeforeSha256": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  },
+  "sourceHashes": {
+    ".scratch/chat-reliability/structured-answer-streaming/adapter.rs": "260213f058fba67d0234ab2b79521b5ba08281c888cc8bd553354763b2a11369",
+    ".scratch/chat-reliability/structured-answer-streaming/bench.rs": "1fe24b6d5a19361514e606351f06b3f253807a05714ac8bd3ac53eeab9b96c92",
+    ".scratch/chat-reliability/structured-answer-streaming/run.py": "1814fc315ea079512d740e417bffe5ae4f041961ccf851e4964412c01563e93a",
+    ".scratch/chat-reliability/structured-answer-streaming/fixtures.json": "4ddda76be8eee897f35be27d5e75a3532bb2bc78fe32dc11aac4431154c5e486",
+    ".scratch/chat-reliability/structured-answer-streaming/settings.json": "236a41bbd86e7e8aa05d6b287de9fa5d4f89d3b8c539ff3cdbb99db7948751b2",
+    ".scratch/chat-reliability/structured-answer-streaming/baseline-preamble.txt": "2dbc0a0f3320915184a057dc047d15f47ef177409a83258f8251f320b7607beb",
+    ".scratch/chat-reliability/structured-answer-prototype/runtime.rs": "2bb922170fc3cb813e060c805900f829930d2efef3e4555b84fbc0ba2e3b119a"
+  },
+  "hostRestoredSha256": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  },
+  "executableSha256": "2c7e778842d42359db26d5a75a863494e67d88b8b7b77fc1637b808436fdbd05",
+  "executable": "/Users/bray.polkinghorne/Documents/code/personal/Gneauxghts/src-tauri/target/debug/deps/gneauxghts_lib-b4d3c8687611f17f"
+}

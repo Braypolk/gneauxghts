@@ -1,0 +1,49 @@
+[
+  {
+    "strict": "omitted",
+    "calls": [
+      {
+        "name": "search_evidence",
+        "arguments": {
+          "query": "Meridian launch launch code",
+          "cursor": ""
+        }
+      }
+    ],
+    "usage": {
+      "input_tokens": 83,
+      "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      },
+      "output_tokens": 27,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 110
+    }
+  },
+  {
+    "strict": "explicit_false",
+    "calls": [
+      {
+        "name": "search_evidence",
+        "arguments": {
+          "query": "Meridian launch launch code"
+        }
+      }
+    ],
+    "usage": {
+      "input_tokens": 83,
+      "input_tokens_details": {
+        "cache_write_tokens": 0,
+        "cached_tokens": 0
+      },
+      "output_tokens": 23,
+      "output_tokens_details": {
+        "reasoning_tokens": 0
+      },
+      "total_tokens": 106
+    }
+  }
+]

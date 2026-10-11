@@ -1,0 +1,2257 @@
+{
+  "basis": "Paired instruction comparison with current tools and coverage/reuse signals unchanged. Same canonical identities per pair; fresh run/context per variant; alternating order. Synthetic named-note and explicit cross-note questions share the same corpus, including an approval recorded outside the named note. Only tool exchanges are logged; no reasoning or credentials. Small synthetic sample; not a significance test, invoice, or proof of causality. Manual answer entailment review required.",
+  "source": "named-source-attempt2-trace.json",
+  "model": "gpt-6-luna",
+  "costRates": {
+    "basis": "Standard short-context rates applied to provider-reported categories; not an invoice. Missing usage is unknown. No web/research charges.",
+    "checked": "2026-10-09",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "usdPerMillion": {
+      "cacheWrite": 0.125,
+      "cachedInput": 0.01,
+      "input": 0.1,
+      "output": 0.5
+    }
+  },
+  "costLimitation": "Rig reports no OpenAI cache-write category (maps it to zero); reported-cost estimate excludes any unexposed cache-write charge. All-zero usage is unknown. Output already includes reasoning; do not add reasoning tokens again.",
+  "reuseLimitation": "Repeated body overlap is a diagnostic, not proof the read was unnecessary; provenance/coverage may differ. Exact repeated calls include only identical arguments.",
+  "runs": [
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 1,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification. [Source 2](passage:baeffa4974b642b184bf402c575ad2f229d3911c6b361c7ebe6f8cc825fee9b7)",
+            "citations": [
+              "baeffa4974b642b184bf402c575ad2f229d3911c6b361c7ebe6f8cc825fee9b7"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the retrospective says the full launch has no recorded completion; checksum verification was only one substep. [Source 2](passage:baeffa4974b642b184bf402c575ad2f229d3911c6b361c7ebe6f8cc825fee9b7)",
+            "citations": [
+              "baeffa4974b642b184bf402c575ad2f229d3911c6b361c7ebe6f8cc825fee9b7"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 4](passage:62b21bca7509ebd108afd278496417c9f7b0e4161b1cc14ccc65f2a23823c108)",
+            "citations": [
+              "62b21bca7509ebd108afd278496417c9f7b0e4161b1cc14ccc65f2a23823c108"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch.\n"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 10809,
+        "inputTokens": 16197,
+        "outputTokens": 187,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 16384
+      },
+      "estimatedUsd": 0.0007403900000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 0,
+            "inputTokens": 2248,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2277
+          },
+          "estimatedUsd": 0.00023930000000000002
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2245,
+            "inputTokens": 3844,
+            "outputTokens": 40,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3884
+          },
+          "estimatedUsd": 0.00020234999999999999
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3841,
+            "inputTokens": 4726,
+            "outputTokens": 39,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4765
+          },
+          "estimatedUsd": 0.00014641
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4723,
+            "inputTokens": 5379,
+            "outputTokens": 79,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5458
+          },
+          "estimatedUsd": 0.00015233
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5101,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13251,
+        18799,
+        22684,
+        25226
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1814,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2108,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 8843,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2402,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 11091,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "baseline",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "baseline",
+        "repeat": 1,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** She completed checksum verification on September 18, 2026. [Source 1](passage:fd09c1293a8e6d6d474c6147d5efb37687aa58d4eeb08b7313a9ef2f325a0273)",
+            "citations": [
+              "fd09c1293a8e6d6d474c6147d5efb37687aa58d4eeb08b7313a9ef2f325a0273"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the retrospective says the checksum check was one substep and the entire launch has no recorded completion. [Source 1](passage:fd09c1293a8e6d6d474c6147d5efb37687aa58d4eeb08b7313a9ef2f325a0273)",
+            "citations": [
+              "fd09c1293a8e6d6d474c6147d5efb37687aa58d4eeb08b7313a9ef2f325a0273"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:6e70eb0b5d67bae65e145dd0a03835eb8b604b63366a4de75f2487f4ae9a4f23)",
+            "citations": [
+              "6e70eb0b5d67bae65e145dd0a03835eb8b604b63366a4de75f2487f4ae9a4f23"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7884,
+        "inputTokens": 10764,
+        "outputTokens": 217,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10981
+      },
+      "estimatedUsd": 0.00047534000000000004,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2202,
+            "outputTokens": 34,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2236
+          },
+          "estimatedUsd": 6.755000000000002e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2199,
+            "inputTokens": 3803,
+            "outputTokens": 106,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3909
+          },
+          "estimatedUsd": 0.00023539
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3800,
+            "inputTokens": 4759,
+            "outputTokens": 77,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4836
+          },
+          "estimatedUsd": 0.00017240000000000002
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5374,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        18577,
+        22611
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1834,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2240,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 8880,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "baseline",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "baseline",
+        "repeat": 1,
+        "passed": true,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": null,
+        "note": "Actor/date/substep uncertainty and Mateo approval each supported by the appropriate delivered body citation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification\u2014a substep of the launch. [Source 1](passage:4f05690bf69de8916b1268738b1393a77eec085950d364ec24fd76baa7256f51)",
+            "citations": [
+              "4f05690bf69de8916b1268738b1393a77eec085950d364ec24fd76baa7256f51"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No; the notes say the entire launch has no recorded completion. [Source 1](passage:4f05690bf69de8916b1268738b1393a77eec085950d364ec24fd76baa7256f51)",
+            "citations": [
+              "4f05690bf69de8916b1268738b1393a77eec085950d364ec24fd76baa7256f51"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 3](passage:cb73c8c26532c4130ef83eed2165e985b0b6d863d01a1b70f1db7c8fe30db950)",
+            "citations": [
+              "cb73c8c26532c4130ef83eed2165e985b0b6d863d01a1b70f1db7c8fe30db950"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 12190,
+        "inputTokens": 15943,
+        "outputTokens": 292,
+        "reasoningTokens": 25,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 16235
+      },
+      "estimatedUsd": 0.0006432,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2203,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2232
+          },
+          "estimatedUsd": 6.515000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2200,
+            "inputTokens": 3684,
+            "outputTokens": 35,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3719
+          },
+          "estimatedUsd": 0.00018790000000000001
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3681,
+            "inputTokens": 4427,
+            "outputTokens": 150,
+            "reasoningTokens": 13,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4577
+          },
+          "estimatedUsd": 0.00018641000000000003
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4424,
+            "inputTokens": 5629,
+            "outputTokens": 78,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5707
+          },
+          "estimatedUsd": 0.00020374
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6581,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13021,
+        18568,
+        23039,
+        29496
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1818,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5259,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3771,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 7777,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 5965,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 12040,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "current",
+        "repeat": 1,
+        "passed": false,
+        "factualClaimsSupported": null,
+        "namedSourceScopeRespected": null,
+        "note": "Tool-call cap prevented a final answer; retained as failure.",
+        "claims": []
+      },
+      "runtimeError": "tool_call_limit",
+      "usage": {
+        "inputTokens": 13344,
+        "cachedInputTokens": 11589,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 590,
+        "totalTokens": 13934,
+        "reasoningTokens": 176
+      },
+      "estimatedUsd": 0.00058639,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1931,
+            "inputTokens": 2249,
+            "outputTokens": 65,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2314
+          },
+          "estimatedUsd": 8.361e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2246,
+            "inputTokens": 2367,
+            "outputTokens": 58,
+            "reasoningTokens": 24,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2425
+          },
+          "estimatedUsd": 6.356000000000001e-05
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2364,
+            "inputTokens": 2469,
+            "outputTokens": 71,
+            "reasoningTokens": 10,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2540
+          },
+          "estimatedUsd": 6.964e-05
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2466,
+            "inputTokens": 2585,
+            "outputTokens": 73,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2658
+          },
+          "estimatedUsd": 7.306000000000001e-05
+        },
+        {
+          "index": 4,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2582,
+            "inputTokens": 3674,
+            "outputTokens": 323,
+            "reasoningTokens": 130,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3997
+          },
+          "estimatedUsd": 0.00029652
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 10055,
+        "modelCalls": 5,
+        "toolCalls": 9
+      },
+      "admittedProviderCalls": 5,
+      "reportedUsageCalls": 5,
+      "toolSequence": [
+        "find_notes",
+        "find_notes",
+        "find_notes",
+        "find_notes",
+        "read_notes",
+        "read_notes",
+        "read_notes",
+        "read_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13263,
+        14071,
+        16582,
+        18961,
+        24428
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1939,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 399,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4111,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 738,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6154,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 1074,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 8177,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 4518,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "baseline",
+      "repeat": 2,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "baseline",
+        "repeat": 2,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, she completed checksum verification. [Source 1](passage:f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c)",
+            "citations": [
+              "f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the note says checksum verification was one substep and that the entire launch has no recorded completion. [Source 1](passage:f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c)",
+            "citations": [
+              "f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:932c728ed531b3ea6a6be87f20b0e1b7f57373383708946d24935bf5b925a8ff)",
+            "citations": [
+              "932c728ed531b3ea6a6be87f20b0e1b7f57373383708946d24935bf5b925a8ff"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7888,
+        "inputTokens": 11434,
+        "outputTokens": 327,
+        "reasoningTokens": 81,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11761
+      },
+      "estimatedUsd": 0.00059698,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2202,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2231
+          },
+          "estimatedUsd": 6.505000000000001e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2199,
+            "inputTokens": 3807,
+            "outputTokens": 173,
+            "reasoningTokens": 36,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3980
+          },
+          "estimatedUsd": 0.00026929000000000005
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3804,
+            "inputTokens": 5425,
+            "outputTokens": 125,
+            "reasoningTokens": 45,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5550
+          },
+          "estimatedUsd": 0.00026263999999999997
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5326,
+        "modelCalls": 3,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        18557,
+        27345
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1814,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4472,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11382,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 2,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification. The note identifies it as a substep of the launch. [Source 1](passage:f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c)",
+            "citations": [
+              "f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the retrospective says the entire launch has no recorded completion. [Source 1](passage:f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c)",
+            "citations": [
+              "f9c6847c0aa72e18a25c32ce0747eac90332a7aaf10b2f3c022da8dc462ff80c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:932c728ed531b3ea6a6be87f20b0e1b7f57373383708946d24935bf5b925a8ff)",
+            "citations": [
+              "932c728ed531b3ea6a6be87f20b0e1b7f57373383708946d24935bf5b925a8ff"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8026,
+        "inputTokens": 10968,
+        "outputTokens": 280,
+        "reasoningTokens": 64,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11248
+      },
+      "estimatedUsd": 0.00051446,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1931,
+            "inputTokens": 2248,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2277
+          },
+          "estimatedUsd": 6.551e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2245,
+            "inputTokens": 3853,
+            "outputTokens": 168,
+            "reasoningTokens": 64,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4021
+          },
+          "estimatedUsd": 0.00026725
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3850,
+            "inputTokens": 4867,
+            "outputTokens": 83,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4950
+          },
+          "estimatedUsd": 0.0001817
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4957,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13251,
+        18799,
+        25322
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1814,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4709,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 8880,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "current",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "current",
+        "repeat": 2,
+        "passed": true,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": null,
+        "note": "Actor/date/substep uncertainty and Mateo approval each supported by the appropriate delivered body citation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification, a substep of the launch. [Source 1](passage:d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428)",
+            "citations": [
+              "d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the notes say the entire launch has no recorded completion. That means completion isn\u2019t established in the notes, not necessarily that the launch wasn\u2019t completed. [Source 1](passage:d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428)",
+            "citations": [
+              "d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:e159a13dea23398aef4027362f81c4b0e7a84f14e72040919ccf1d012df9106d)",
+            "citations": [
+              "e159a13dea23398aef4027362f81c4b0e7a84f14e72040919ccf1d012df9106d"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8032,
+        "inputTokens": 11201,
+        "outputTokens": 427,
+        "reasoningTokens": 165,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11628
+      },
+      "estimatedUsd": 0.00061072,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1931,
+            "inputTokens": 2253,
+            "outputTokens": 28,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2281
+          },
+          "estimatedUsd": 6.551e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2250,
+            "inputTokens": 3854,
+            "outputTokens": 186,
+            "reasoningTokens": 51,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4040
+          },
+          "estimatedUsd": 0.0002759
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3851,
+            "inputTokens": 5094,
+            "outputTokens": 213,
+            "reasoningTokens": 114,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5307
+          },
+          "estimatedUsd": 0.00026931
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6168,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13263,
+        18797,
+        25790
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1812,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4542,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 9515,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "baseline",
+      "repeat": 2,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "baseline",
+        "repeat": 2,
+        "passed": true,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": null,
+        "note": "Actor/date/substep uncertainty and Mateo approval each supported by the appropriate delivered body citation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification\u2014a substep of the launch. [Source 1](passage:d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428)",
+            "citations": [
+              "d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** The notes say there is no recorded completion of the entire launch; completing checksum verification does not establish that the launch was completed. [Source 1](passage:d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428)",
+            "citations": [
+              "d813de7f93730fe40138babae39c5989603ad50e81415927336e6a186449d428"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:e159a13dea23398aef4027362f81c4b0e7a84f14e72040919ccf1d012df9106d)",
+            "citations": [
+              "e159a13dea23398aef4027362f81c4b0e7a84f14e72040919ccf1d012df9106d"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8325,
+        "inputTokens": 11631,
+        "outputTokens": 239,
+        "reasoningTokens": 12,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11870
+      },
+      "estimatedUsd": 0.00053335,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2207,
+            "outputTokens": 41,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2248
+          },
+          "estimatedUsd": 7.155000000000002e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2204,
+            "inputTokens": 4239,
+            "outputTokens": 108,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4347
+          },
+          "estimatedUsd": 0.00027953999999999994
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4236,
+            "inputTokens": 5185,
+            "outputTokens": 90,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5275
+          },
+          "estimatedUsd": 0.00018225999999999998
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4809,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13021,
+        20265,
+        26000
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1878,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6896,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3985,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 10524,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "current",
+        "repeat": 3,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, Priya completed checksum verification. [Source 1](passage:ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c)",
+            "citations": [
+              "ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the retrospective says the entire launch has no recorded completion; checksum verification was only one substep. [Source 1](passage:ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c)",
+            "citations": [
+              "ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18. [Source 2](passage:7d597261e8734562f37242011c369876e4d50cd5c2ed244f0e92d337b026e6ea)",
+            "citations": [
+              "7d597261e8734562f37242011c369876e4d50cd5c2ed244f0e92d337b026e6ea"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8014,
+        "inputTokens": 10865,
+        "outputTokens": 196,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11061
+      },
+      "estimatedUsd": 0.00046324,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1931,
+            "inputTokens": 2247,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2276
+          },
+          "estimatedUsd": 6.541e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2244,
+            "inputTokens": 3842,
+            "outputTokens": 96,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3938
+          },
+          "estimatedUsd": 0.00023024000000000002
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3839,
+            "inputTokens": 4776,
+            "outputTokens": 71,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4847
+          },
+          "estimatedUsd": 0.00016759
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 4290,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13251,
+        18799,
+        22833
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1814,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 5252,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2220,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 8880,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "baseline",
+      "repeat": 3,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "uncertain_actor",
+        "variant": "baseline",
+        "repeat": 3,
+        "passed": false,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": false,
+        "note": "Completed claims and citations are supported; fails the strict requested-source rubric by retrieving the factual approver elsewhere. Original multipart question has a plausible broader interpretation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification. [Source 1](passage:ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c)",
+            "citations": [
+              "ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the retrospective says checksum verification was one substep and the entire launch has no recorded completion. [Source 1](passage:ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c)",
+            "citations": [
+              "ec55c44dedc7413dc95fb5e0503013d8ea51f1f2f713769695a62a386045703c"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 2](passage:7d597261e8734562f37242011c369876e4d50cd5c2ed244f0e92d337b026e6ea)",
+            "citations": [
+              "7d597261e8734562f37242011c369876e4d50cd5c2ed244f0e92d337b026e6ea"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7537,
+        "inputTokens": 10049,
+        "outputTokens": 204,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10253
+      },
+      "estimatedUsd": 0.00042857,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2201,
+            "outputTokens": 30,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2231
+          },
+          "estimatedUsd": 6.545e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2198,
+            "inputTokens": 3457,
+            "outputTokens": 96,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3553
+          },
+          "estimatedUsd": 0.00019588
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3454,
+            "inputTokens": 4391,
+            "outputTokens": 78,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4469
+          },
+          "estimatedUsd": 0.00016724
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5339,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13009,
+        17375,
+        21409
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1518,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1823,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 4061,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2229,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 7689,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "baseline",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "baseline",
+        "repeat": 3,
+        "passed": true,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": null,
+        "note": "Actor/date/substep uncertainty and Mateo approval each supported by the appropriate delivered body citation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification. [Source 1](passage:c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61)",
+            "citations": [
+              "c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the notes say checksum verification was one substep and that the entire launch has no recorded completion. [Source 1](passage:c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61)",
+            "citations": [
+              "c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 3](passage:acc883c9328159b1c98da7faaf510e9370ee392bde453b01ddeec59c34c75cfd)",
+            "citations": [
+              "acc883c9328159b1c98da7faaf510e9370ee392bde453b01ddeec59c34c75cfd"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8321,
+        "inputTokens": 11908,
+        "outputTokens": 349,
+        "reasoningTokens": 104,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 12257
+      },
+      "estimatedUsd": 0.0006164100000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1885,
+            "inputTokens": 2204,
+            "outputTokens": 42,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2246
+          },
+          "estimatedUsd": 7.175e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2201,
+            "inputTokens": 4238,
+            "outputTokens": 173,
+            "reasoningTokens": 39,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4411
+          },
+          "estimatedUsd": 0.00031221000000000005
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4235,
+            "inputTokens": 5466,
+            "outputTokens": 134,
+            "reasoningTokens": 53,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5600
+          },
+          "estimatedUsd": 0.00023245
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5868,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13021,
+        21881,
+        28702
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3493,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 6897,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6051,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 2976,
+          "toolResults": 11160,
+          "tools": 8513
+        }
+      ]
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "current",
+      "repeat": 3,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "cross_note_actor",
+        "variant": "current",
+        "repeat": 3,
+        "passed": true,
+        "factualClaimsSupported": true,
+        "namedSourceScopeRespected": null,
+        "note": "Actor/date/substep uncertainty and Mateo approval each supported by the appropriate delivered body citation.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya completed checksum verification. [Source 1](passage:c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61)",
+            "citations": [
+              "c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No\u2014the notes say checksum verification was one substep and that the entire launch has no recorded completion. [Source 1](passage:c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61)",
+            "citations": [
+              "c1691e787323aa341987d412123debb1e98a9022b19e85a9ee64a0b985902c61"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** Mateo approved deployment on September 18, 2026. [Source 3](passage:acc883c9328159b1c98da7faaf510e9370ee392bde453b01ddeec59c34c75cfd)",
+            "citations": [
+              "acc883c9328159b1c98da7faaf510e9370ee392bde453b01ddeec59c34c75cfd"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8227,
+        "inputTokens": 11785,
+        "outputTokens": 399,
+        "reasoningTokens": 112,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 12184
+      },
+      "estimatedUsd": 0.00063757,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1931,
+            "inputTokens": 2250,
+            "outputTokens": 59,
+            "reasoningTokens": 22,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2309
+          },
+          "estimatedUsd": 8.071e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2247,
+            "inputTokens": 4052,
+            "outputTokens": 225,
+            "reasoningTokens": 56,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4277
+          },
+          "estimatedUsd": 0.00031547000000000004
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4049,
+            "inputTokens": 5483,
+            "outputTokens": 115,
+            "reasoningTokens": 34,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5598
+          },
+          "estimatedUsd": 0.00024139000000000002
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5771,
+        "modelCalls": 3,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13263,
+        21564,
+        29687
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1530,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3658,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 6173,
+          "tools": 8513
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 6682,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3218,
+          "toolResults": 11272,
+          "tools": 8513
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "name": "uncertain_actor",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 0,
+      "manualPassed": 0,
+      "usage": {
+        "inputTokens": 38030,
+        "cachedInputTokens": 26849,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 663,
+        "totalTokens": 38693,
+        "reasoningTokens": 64
+      },
+      "estimatedUsd": 0.00171809,
+      "costPerRun": {
+        "min": 0.00046324,
+        "median": 0.00051446,
+        "max": 0.0007403900000000001
+      },
+      "modelCallAttempts": [
+        4,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        4,
+        3,
+        3
+      ],
+      "toolCalls": [
+        3,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "uncertain_actor",
+      "variant": "baseline",
+      "runs": 3,
+      "smokePassed": 0,
+      "manualPassed": 0,
+      "usage": {
+        "inputTokens": 32247,
+        "cachedInputTokens": 23309,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 748,
+        "totalTokens": 32995,
+        "reasoningTokens": 81
+      },
+      "estimatedUsd": 0.00150089,
+      "costPerRun": {
+        "min": 0.00042857,
+        "median": 0.00047534000000000004,
+        "max": 0.00059698
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        3
+      ],
+      "toolCalls": [
+        2,
+        3,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 2,
+      "manualPassed": 2,
+      "usage": {
+        "inputTokens": 36330,
+        "cachedInputTokens": 27848,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 1416,
+        "totalTokens": 37746,
+        "reasoningTokens": 453
+      },
+      "estimatedUsd": 0.00183468,
+      "costPerRun": {
+        "min": 0.00058639,
+        "median": 0.00061072,
+        "max": 0.00063757
+      },
+      "modelCallAttempts": [
+        5,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        5,
+        3,
+        3
+      ],
+      "toolCalls": [
+        9,
+        2,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "cross_note_actor",
+      "variant": "baseline",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 39482,
+        "cachedInputTokens": 28836,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 880,
+        "totalTokens": 40362,
+        "reasoningTokens": 141
+      },
+      "estimatedUsd": 0.0017929600000000001,
+      "costPerRun": {
+        "min": 0.00053335,
+        "median": 0.0006164100000000001,
+        "max": 0.0006432
+      },
+      "modelCallAttempts": [
+        4,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        4,
+        3,
+        3
+      ],
+      "toolCalls": [
+        3,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "all",
+      "variant": "current",
+      "runs": 6,
+      "smokePassed": 2,
+      "manualPassed": 2,
+      "usage": {
+        "inputTokens": 74360,
+        "cachedInputTokens": 54697,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 2079,
+        "totalTokens": 76439,
+        "reasoningTokens": 517
+      },
+      "estimatedUsd": 0.0035527700000000002,
+      "costPerRun": {
+        "min": 0.00046324,
+        "median": 0.000598555,
+        "max": 0.0007403900000000001
+      },
+      "modelCallAttempts": [
+        4,
+        5,
+        3,
+        3,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        4,
+        5,
+        3,
+        3,
+        3,
+        3
+      ],
+      "toolCalls": [
+        3,
+        9,
+        2,
+        2,
+        2,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "all",
+      "variant": "baseline",
+      "runs": 6,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 71729,
+        "cachedInputTokens": 52145,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 1628,
+        "totalTokens": 73357,
+        "reasoningTokens": 222
+      },
+      "estimatedUsd": 0.00329385,
+      "costPerRun": {
+        "min": 0.00042857,
+        "median": 0.0005651650000000001,
+        "max": 0.0006432
+      },
+      "modelCallAttempts": [
+        3,
+        4,
+        3,
+        3,
+        3,
+        3
+      ],
+      "admittedProviderCalls": [
+        3,
+        4,
+        3,
+        3,
+        3,
+        3
+      ],
+      "toolCalls": [
+        2,
+        3,
+        3,
+        2,
+        2,
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    }
+  ]
+}

@@ -1,0 +1,103 @@
+{
+  "basis": "Post-dialogue/title fixes compared with coverage/reuse changes. Same synthetic cases and fixed scripted tool choices. UTF-8 assembled input bytes before provider formatting, not billed tokens or live model behavior.",
+  "baseline": "fixed-trace.json",
+  "current": "coverage-trace.json",
+  "startingCases": [
+    {
+      "name": "greeting",
+      "beforeInputBytes": 12627,
+      "afterInputBytes": 12740,
+      "deltaBytes": 113,
+      "afterToolBytes": 8513,
+      "afterLinkedContextBytes": 0
+    },
+    {
+      "name": "plain_named_note",
+      "beforeInputBytes": 12654,
+      "afterInputBytes": 12767,
+      "deltaBytes": 113,
+      "afterToolBytes": 8513,
+      "afterLinkedContextBytes": 0
+    },
+    {
+      "name": "linked_named_note",
+      "beforeInputBytes": 12946,
+      "afterInputBytes": 13109,
+      "deltaBytes": 163,
+      "afterToolBytes": 8513,
+      "afterLinkedContextBytes": 277
+    },
+    {
+      "name": "selected_text",
+      "beforeInputBytes": 12684,
+      "afterInputBytes": 12797,
+      "deltaBytes": 113,
+      "afterToolBytes": 8513,
+      "afterLinkedContextBytes": 0
+    },
+    {
+      "name": "long_linked_note",
+      "beforeInputBytes": 15332,
+      "afterInputBytes": 15577,
+      "deltaBytes": 245,
+      "afterToolBytes": 8513,
+      "afterLinkedContextBytes": 2671
+    }
+  ],
+  "scriptedTraces": {
+    "focusedRetrievalTrace": {
+      "beforeInputBytesPerRequest": [
+        12750,
+        15318,
+        18331
+      ],
+      "afterInputBytesPerRequest": [
+        12863,
+        15552,
+        18637
+      ],
+      "beforeTotalInputBytes": 46399,
+      "afterTotalInputBytes": 47052,
+      "deltaBytes": 653
+    },
+    "scriptedRetrievalTrace": {
+      "beforeInputBytesPerRequest": [
+        12750,
+        15318,
+        19781,
+        21244
+      ],
+      "afterInputBytesPerRequest": [
+        12863,
+        15552,
+        20145,
+        21669
+      ],
+      "beforeTotalInputBytes": 69093,
+      "afterTotalInputBytes": 70229,
+      "deltaBytes": 1136
+    }
+  },
+  "behavior": {
+    "hintMarker": {
+      "afterHint": 0,
+      "beforeHint": 0,
+      "citableSources": 0
+    },
+    "selectedReadCoverage": {
+      "complete": true,
+      "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+      "scope": "selected_passages"
+    },
+    "directReadCoverage": {
+      "complete": true,
+      "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+      "noteId": "01M4HS76DTS9JZJWGE76C5W9YB",
+      "scope": "canonical_note"
+    },
+    "repeatReadAlreadyRead": [
+      "full"
+    ],
+    "newTools": 0
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "hostBeforeSha256": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  },
+  "sourceHashes": {
+    ".scratch/chat-reliability/structured-answer-streaming/adapter.rs": "260213f058fba67d0234ab2b79521b5ba08281c888cc8bd553354763b2a11369",
+    ".scratch/chat-reliability/structured-answer-streaming/bench.rs": "1fe24b6d5a19361514e606351f06b3f253807a05714ac8bd3ac53eeab9b96c92",
+    ".scratch/chat-reliability/structured-answer-streaming/run.py": "1814fc315ea079512d740e417bffe5ae4f041961ccf851e4964412c01563e93a",
+    ".scratch/chat-reliability/structured-answer-streaming/fixtures.json": "4ddda76be8eee897f35be27d5e75a3532bb2bc78fe32dc11aac4431154c5e486",
+    ".scratch/chat-reliability/structured-answer-streaming/settings.json": "236a41bbd86e7e8aa05d6b287de9fa5d4f89d3b8c539ff3cdbb99db7948751b2",
+    ".scratch/chat-reliability/structured-answer-streaming/baseline-preamble.txt": "2dbc0a0f3320915184a057dc047d15f47ef177409a83258f8251f320b7607beb",
+    ".scratch/chat-reliability/structured-answer-streaming/runtime.json": "2528228963ab2db53a4c2804563305a31eb13ea8460be773b5f2fb9b347322ce",
+    ".scratch/chat-reliability/structured-answer-streaming/run-provenance.json": "e17843cb99998b7a250bd09ebac06e5b9a5866087120635d3018a3e0b8c0d724",
+    ".scratch/chat-reliability/structured-answer-streaming/completion/resume.py": "d98de93521ec04353c45a790b5a6d7ef4e9f39b352bd9ab2bdd0521ef26f0fbd",
+    ".scratch/chat-reliability/structured-answer-streaming/completion/resume-bench.rs": "d36ff5ad61ae6fe1dbfdd9bf3d867117eb315e4b02f4353e01e5401940dafe8a",
+    ".scratch/chat-reliability/structured-answer-prototype/runtime.rs": "2bb922170fc3cb813e060c805900f829930d2efef3e4555b84fbc0ba2e3b119a",
+    "src-tauri/Cargo.toml": "5952eabf66bed700b7af163ff0d9dbaa570a41198ac6acaa27b5a00d3776557e",
+    "src-tauri/Cargo.lock": "d6784f547d4b50fe6d9f6bbb9c4dc03e379cce758c9abe3b2f06c6241a40b0aa"
+  },
+  "hostRestoredSha256": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  },
+  "executableSha256": "490d7060a9b0cf431633449dcff4cb6c145257a9d4a583d2cd54c224c5bef0dc",
+  "executable": "/Users/bray.polkinghorne/Documents/code/personal/Gneauxghts/src-tauri/target/debug/deps/gneauxghts_lib-b4d3c8687611f17f"
+}

@@ -1,0 +1,72 @@
+[
+  {
+    "path": "src-tauri/Cargo.toml",
+    "beforeSha256": "5952eabf66bed700b7af163ff0d9dbaa570a41198ac6acaa27b5a00d3776557e",
+    "afterSha256": "c11191c6e87d7bf712c61d558e3730bd6a7e300b089bba02c91f4341a41b8515"
+  },
+  {
+    "path": "src-tauri/Cargo.lock",
+    "beforeSha256": "d6784f547d4b50fe6d9f6bbb9c4dc03e379cce758c9abe3b2f06c6241a40b0aa",
+    "afterSha256": "45c916e6d67e55535684429593dd146797819e76a6045a53fd1a913924f1a6a3"
+  },
+  {
+    "path": "src-tauri/src/agent_runtime.rs",
+    "beforeSha256": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "afterSha256": "b0081cd5be5ac5c8d31400d33a0f2df59ede77050cdf67bf43228b2a23f91ad8"
+  },
+  {
+    "path": "src-tauri/src/agent_tools.rs",
+    "beforeSha256": "42b5d6dcf9a7623f0552fc19234d9f296249369a5f2da11db029ecfcac794f77",
+    "afterSha256": "b3e8fbab0a6010f4582d5da328d388a2d3a02a5fd4938b2cc6b3c33104d9154c"
+  },
+  {
+    "path": "src-tauri/src/chat.rs",
+    "beforeSha256": "9dd6bce368b5f29e9596bc25d046409750ee376c6751c6247d1f598a78a10e1b",
+    "afterSha256": "e90705deec8a71b2a5f4c51047736987a9c2954f536b3b0d0199245becee1b82"
+  },
+  {
+    "path": "src-tauri/src/chat/tests.rs",
+    "beforeSha256": "d4eb3a24eeda0307f909afd40e4fc1d52cf9cc890b9189414c8de11b1a0ec2cb",
+    "afterSha256": "acbc21babb68acdb4342c98532ad160a20d4f52b1bfa587b3cfcc2f2b3ee9b3e"
+  },
+  {
+    "path": "src-tauri/src/agent_tools/research.rs",
+    "beforeSha256": "6b613c09df7003f6599a484adb832d8dbcefe92689dcd628c933ca8c38a331b2",
+    "afterSha256": "b966758a167c97c2ca420ea7d438d4c6823f6d2f84f496ebdcf66f287bd7a942"
+  },
+  {
+    "path": "src-tauri/src/agent_runtime/usage_context_live.rs",
+    "beforeSha256": "16c3395141a0150a6ddbe345399eea6ee018a5416b60e69eb3d4765d13e8fb66",
+    "afterSha256": "77fc1173e71e2a3c7180555d2cad33d3dd7e3e645e25969af125c281f2620a63"
+  },
+  {
+    "path": "src-tauri/src/agent_runtime/usage_context.rs",
+    "beforeSha256": "95d18263c8c6f757f7c39ed5792c34879cd5d4bf365d8342f6079a25e67b5a7d",
+    "afterSha256": "e73e60c43c891055efe606515340903dc83c82a1ad8b51455a08a38db25157a7"
+  },
+  {
+    "path": "src-tauri/src/agent_runtime/context_measurement.rs",
+    "beforeSha256": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1",
+    "afterSha256": "44560cc57862f713e0b4978df09a0f3c813da27f2996162810e7dfc279409d20"
+  },
+  {
+    "path": "src-tauri/src/agent_runtime/openai_model.rs",
+    "beforeSha256": "b3c34c6e24956edaa3030889dbffc86aa3eb2ba150adc9e013e87c50831bb291",
+    "afterSha256": "f959795ac06699a822f5c77cbe7dcebca048835ed89cb30d4688e69e6558f190"
+  },
+  {
+    "path": "src-tauri/src/agent_tools/tests/live_behavior.rs",
+    "beforeSha256": "aa76267dae3d80193913619b23fdce643f82d72bc218b2fa15f25a0822b24191",
+    "afterSha256": "fcb8a230ebec1b907776df1e5cd93a625426a8737522517bc188383190e6ac8d"
+  },
+  {
+    "path": "src-tauri/src/agent_tools/tests/reliability_eval.rs",
+    "beforeSha256": "7a43668b0e9296f59535502d770b78879a47876dc84991cd735bd40b5537c615",
+    "afterSha256": "117dedfbb6a1a75d0868dadcd5740e64b8483eacf78172c1a263d363d47cd672"
+  },
+  {
+    "path": "src-tauri/src/agent_tools/tests/context_selection_live.rs",
+    "beforeSha256": "1aeaf451991ad94953c162ae9b1c20798196e033ce5aa57c55d9540f5ca45d65",
+    "afterSha256": "72a5d94daec5abd2bfdae0e619074a5084d8515344d9e22dca2acc9686b80d26"
+  }
+]

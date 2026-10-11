@@ -1,0 +1,13 @@
+{
+  "verifiedBeforeRigUpgrade": true,
+  "currentHosts": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  },
+  "restoredHosts": {
+    "src-tauri/src/chat/citation_evaluation.rs": "46a9bcd1c63e49f37b7b5f509ccae47bef53b1d8688a68a2bfd1e2420d645d24",
+    "src-tauri/src/agent_runtime.rs": "d7e0729869d9408499627f1ce86ed8fedd9015d3789b7bb45c28650a55564906",
+    "src-tauri/src/agent_runtime/context_measurement.rs": "6efdd5114a4461e1ab8b64ec64442cc9609547b387bc0628d4dd5780d7f68dc1"
+  }
+}

@@ -10,7 +10,8 @@ pub(super) fn open_connection(path: &Path) -> Result<Connection, String> {
 }
 
 // Reuse one configured connection for a running response while committing each
-// delta independently. No buffering weakens the existing partial-output guarantee.
+// ordinary-text delta independently. Structured drafts deliberately never use this
+// checkpoint: their Markdown and sources become durable only at final validation.
 pub(super) struct StreamingCheckpoint {
     connection: Connection,
     message_id: String,
@@ -38,6 +39,7 @@ impl ChatService {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn store_terminal_message(
         connection: &Connection,
         message_id: &str,
@@ -45,11 +47,14 @@ impl ChatService {
         content: &str,
         error: Option<&str>,
         sources: &[ChatSource],
+        note_reference_ids: &[String],
     ) -> Result<(), String> {
         connection
             .execute(
-                "UPDATE chat_messages SET status = ?2, content = ?3, error = ?4, has_revision_evidence = MAX(has_revision_evidence, ?5) WHERE id = ?1",
-                params![message_id, status, content, error, sources.iter().any(|source| source.note_id.is_some())],
+                "UPDATE chat_messages SET status = ?2, content = ?3, error = ?4, has_revision_evidence = MAX(has_revision_evidence, ?5), note_reference_ids_json = ?6 WHERE id = ?1",
+                params![message_id, status, content, error,
+                    !note_reference_ids.is_empty() || sources.iter().any(|source| source.note_id.is_some()),
+                    serde_json::to_string(note_reference_ids).map_err(|e| e.to_string())?],
             )
             .map_err(|value| value.to_string())?;
         connection
@@ -91,6 +96,7 @@ impl ChatService {
         content: &str,
         error: Option<&str>,
         sources: &[ChatSource],
+        note_reference_ids: &[String],
         usage: &(u64, u64),
         stats: &crate::agent_guardrails::AgentRunStats,
         reason: Option<&str>,
@@ -111,7 +117,7 @@ impl ChatService {
         if changed != 1 {
             return Err("The current chat run is unavailable".into());
         }
-        Self::store_terminal_message(&tx, message_id, status, content, error, sources)?;
+        Self::store_terminal_message(&tx, message_id, status, content, error, sources, note_reference_ids)?;
         tx.commit().map_err(|e| e.to_string())
     }
     // Best-effort terminal recovery after source/receipt persistence fails.
@@ -137,6 +143,7 @@ impl ChatService {
             "error",
             &partial,
             Some(error),
+            &[],
             &[],
             &(0, 0),
             &Default::default(),
@@ -398,6 +405,10 @@ impl ChatService {
         let _ = connection.execute("ALTER TABLE chat_sources ADD COLUMN passage_json TEXT", []);
         let _ = connection.execute(
             "ALTER TABLE chat_messages ADD COLUMN has_revision_evidence INTEGER NOT NULL DEFAULT 0",
+            [],
+        );
+        let _ = connection.execute(
+            "ALTER TABLE chat_messages ADD COLUMN note_reference_ids_json TEXT NOT NULL DEFAULT '[]'",
             [],
         );
         connection.execute("UPDATE chat_messages SET has_revision_evidence = 1 WHERE has_revision_evidence = 0 AND EXISTS (SELECT 1 FROM chat_sources s WHERE s.message_id = chat_messages.id AND s.kind != 'web')", []).map_err(|e| e.to_string())?;

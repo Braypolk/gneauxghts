@@ -1,0 +1,62 @@
+{
+  "rigVersion": "0.41.0",
+  "method": "Four fresh fixed-evidence pairs, one answer per arm/case; manual review. Original complete answer reused, original Flex failure retained; seven unfinished answers completed on explicit user authorization. No native UI/retrieval or causal latency estimate.",
+  "variants": {
+    "verbose": {
+      "completedAnswers": 4,
+      "modelCalls": 4,
+      "usage": {
+        "cache_creation_input_tokens": 0,
+        "cached_input_tokens": 0,
+        "input_tokens": 5199,
+        "output_tokens": 877,
+        "reasoning_tokens": 388,
+        "tool_use_prompt_tokens": 0,
+        "total_tokens": 6076
+      },
+      "formatValidAnswers": 4,
+      "manualFactAndScopePasses": 3,
+      "manualCitationCoveragePasses": 3,
+      "manualPresentationPasses": 2,
+      "medianLatencyMillis": 5689.5,
+      "firstDraftMillis": [
+        5245,
+        2389,
+        1289,
+        5286
+      ],
+      "previewMatchesValidatedFinal": 4
+    },
+    "compact": {
+      "completedAnswers": 4,
+      "modelCalls": 4,
+      "usage": {
+        "cache_creation_input_tokens": 0,
+        "cached_input_tokens": 0,
+        "input_tokens": 4863,
+        "output_tokens": 884,
+        "reasoning_tokens": 394,
+        "tool_use_prompt_tokens": 0,
+        "total_tokens": 5747
+      },
+      "formatValidAnswers": 2,
+      "manualFactAndScopePasses": 3,
+      "manualCitationCoveragePasses": 2,
+      "manualPresentationPasses": 2,
+      "medianLatencyMillis": 3761.0,
+      "firstDraftMillis": [
+        5101,
+        2195,
+        1556,
+        2795
+      ],
+      "previewMatchesValidatedFinal": 2
+    }
+  },
+  "inputTokensSaved": 336,
+  "inputTokensReductionPercent": 6.462781304096942,
+  "totalReportedTokens": 11823,
+  "totalTokensReductionPercent": 5.414746543778803,
+  "failedAttemptUsage": null,
+  "verdict": "Do not promote compact formatting. Input reduced, but compact source-ID validation fails in two of four answers. Both formats fail excerpt-only scope; verbose also leaks formatting commentary. All eight emit decoded provisional drafts; six valid results match final text and two invalid results are rejected without links."
+}

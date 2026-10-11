@@ -1,0 +1,888 @@
+{
+  "corpusSha256": "30265df5ff365d57ce08a644c1932bae2f1a15646afe74e1f57ca1dabdaec532",
+  "instruction": "Annotate every note-based claim, exact quote, citation scope, semantic verdict/reason and required coverage. Empty or pending reviews cannot pass.",
+  "results": [
+    {
+      "caseId": "title_is_not_content",
+      "answer": "The pilot idea is in **“Meridian activity.”** Its text was added on September 30, 2026, at 15:00 UTC. [Source](passage:title) [Source](passage:added)",
+      "answerSha256": "e42a63b453be1fca3c0af59c4ba4ccdcb3671edeb49a17781cd31d49716ce6f3",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The pilot idea is in **“Meridian activity.”**",
+          "proposition": "The pilot idea is in **“Meridian activity.”**",
+          "citationIds": [
+            "title",
+            "added"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The title and retained idea passage identify the note associated with the idea; this is note identity in the question context, not a claim of current unchanged body content.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "Its text was added on September 30, 2026, at 15:00 UTC.",
+          "proposition": "Its text was added on September 30, 2026, at 15:00 UTC.",
+          "citationIds": [
+            "added"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The added text and committedAt metadata establish this text addition and time, without implying pilot execution.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "identity",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "text_date",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 993,
+          "output_tokens": 243,
+          "reasoning_tokens": 190,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1236
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 0
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "event_date_is_not_edit_date",
+      "answer": "Cedar passed the drill on September 11, 2026, at 14:00. [Source](passage:outcome)",
+      "answerSha256": "b3d3db83abc3fd93d2348836b4a1367ab5fbfe471467dfc071d8777480538dc6",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "Cedar passed the drill on September 11, 2026, at 14:00.",
+          "proposition": "Cedar passed the drill on September 11, 2026, at 14:00.",
+          "citationIds": [
+            "outcome"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Explicit event text establishes actor, passed outcome, date and time, rather than the spelling-edit date.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "event_date",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 944,
+          "output_tokens": 73,
+          "reasoning_tokens": 38,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1017
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 1
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "missing_report_is_not_failure",
+      "answer": "The September 11 drill date has passed, but the record gives no outcome report. So it doesn’t establish whether Juniper missed the drill. [Source](passage:schedule)",
+      "answerSha256": "a7d0364744d74fc31d0c698b7c2d2bf8617068ec6b5290d7c0a3b4d1fef56193",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The September 11 drill date has passed, but the record gives no outcome report.",
+          "proposition": "The September 11 drill date has passed, but the record gives no outcome report.",
+          "citationIds": [
+            "schedule"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The fixed September 13 reference day and supplied accessible record establish a past schedule and absent outcome report.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "So it doesn’t establish whether Juniper missed the drill.",
+          "proposition": "So it doesn’t establish whether Juniper missed the drill.",
+          "citationIds": [
+            "schedule"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "A schedule and documentary gap do not establish occurrence or failure; uncertainty is preserved.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "uncertainty",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 950,
+          "output_tokens": 97,
+          "reasoning_tokens": 54,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1047
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 2
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "wording_edit_is_not_completion",
+      "answer": "No. “Send the report” is currently marked complete, but its completion marker changed on September 28, not September 30. The September 30 change was to the wording, which doesn’t establish a new completion. [Source](passage:task)",
+      "answerSha256": "80c0b5d1b1cf5566789d6e0a13933018d93abc874cb995b98229acadc0b3c642",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "“Send the report” is currently marked complete",
+          "proposition": "“Send the report” is currently marked complete",
+          "citationIds": [
+            "task"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The checked excerpt and currentStatus establish the current recorded state.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "its completion marker changed on September 28, not September 30.",
+          "proposition": "its completion marker changed on September 28, not September 30.",
+          "citationIds": [
+            "task"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Explicit statusMarkerChangedAt and false statusMarkerChangedInPeriod establish marker timing.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "The September 30 change was to the wording, which doesn’t establish a new completion.",
+          "proposition": "The September 30 change was to the wording, which doesn’t establish a new completion.",
+          "citationIds": [
+            "task"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Explicit wordingChangedAt differs from marker timing; the qualified explanation scopes the opening No to a new recorded completion.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "recorded_status",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "completion_time",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1167,
+          "output_tokens": 174,
+          "reasoning_tokens": 115,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1341
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 3
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "restore_and_reopen",
+      "answer": "No. The October 8 entry was a restored checkbox, not a new recorded accomplishment. [Source](passage:restored) The task’s current status is open. [Source](passage:current)",
+      "answerSha256": "183534e086b0d92aedc26103744fe2ac14e8d3b899979a1c6d762c667cf8d6ce",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The October 8 entry was a restored checkbox, not a new recorded accomplishment.",
+          "proposition": "The October 8 entry was a restored checkbox, not a new recorded accomplishment.",
+          "citationIds": [
+            "restored"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The retained mutationSource=restore metadata and interpretation guidance distinguish restoration of a marker from a new recorded accomplishment.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "The task’s current status is open.",
+          "proposition": "The task’s current status is open.",
+          "citationIds": [
+            "current"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The supplied current-scope open checkbox supports the current recorded state, rather than the retained checked state; freshness is a fixture fact, not independently validated here.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "restore",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "current",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1165,
+          "output_tokens": 128,
+          "reasoning_tokens": 79,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1293
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 4
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "deadline_inventory",
+      "answer": "As of September 30:\n\n- **Parent:** Upcoming, due October 1. The first valid deadline annotation applies; the later October 7 annotation does not replace it.\n- **Child:** Undated. It does not inherit the parent’s deadline.\n- **Completed example:** Marked complete, with a September 29 deadline; it is not actionable overdue work.\n- **Invalid-date example:** No supported deadline; February 30 is invalid.\n- **Fenced example:** Not a task—it appears inside a code block. [Source](passage:tasks)",
+      "answerSha256": "d3fd42c512a29a92212fa31512b11b592c0899531f492ea58a6d20d4f3f99c79",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Parent:** Upcoming, due October 1. The first valid deadline annotation applies; the later October 7 annotation does not replace it.",
+          "proposition": "**Parent:** Upcoming, due October 1. The first valid deadline annotation applies; the later October 7 annotation does not replace it.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The supplied passage/parsed metadata support these details, but this bullet has no inline citation and no introduction scopes the final-bullet citation to the whole list.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "**Child:** Undated. It does not inherit the parent’s deadline.",
+          "proposition": "**Child:** Undated. It does not inherit the parent’s deadline.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The child metadata has null dueDate and guidance prohibits inheritance; this bullet has no scoped citation.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-3",
+          "quote": "**Completed example:** Marked complete, with a September 29 deadline; it is not actionable overdue work.",
+          "proposition": "**Completed example:** Marked complete, with a September 29 deadline; it is not actionable overdue work.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "Checked state and deadline support the classification, but this bullet has no scoped citation.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-4",
+          "quote": "**Invalid-date example:** No supported deadline; February 30 is invalid.",
+          "proposition": "**Invalid-date example:** No supported deadline; February 30 is invalid.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The excerpt and null parsed deadline support this fact, but this bullet has no scoped citation.",
+          "failureTags": [
+            "missing_citation",
+            "list_citation_scope"
+          ]
+        },
+        {
+          "id": "claim-5",
+          "quote": "**Fenced example:** Not a task—it appears inside a code block.",
+          "proposition": "**Fenced example:** Not a task—it appears inside a code block.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The fenced excerpt and parsed inventory support exclusion; the inline citation is attached to this final bullet.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "examples",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "completed",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1301,
+          "output_tokens": 265,
+          "reasoning_tokens": 145,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1566
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 5
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "editing_window_uncertainty",
+      "answer": "It’s unknown. The evidence places the addition between 19:58 and 20:03 on September 30, so it could have been before or after 20:00. [Source](passage:window)",
+      "answerSha256": "ef44180b8a99e34ee5c0f394d02efb09e5941f54f977b4735792062a3e647a7e",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The evidence places the addition between 19:58 and 20:03 on September 30",
+          "proposition": "The evidence places the addition between 19:58 and 20:03 on September 30",
+          "citationIds": [
+            "window"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The supplied editing-window bounds establish this interval, not an exact insertion time.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "so it could have been before or after 20:00.",
+          "proposition": "so it could have been before or after 20:00.",
+          "citationIds": [
+            "window"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The interval straddles the requested boundary, supporting the opening unknown conclusion.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "interval",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 992,
+          "output_tokens": 117,
+          "reasoning_tokens": 66,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1109
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 6
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "idea_is_not_execution",
+      "answer": "According to **idea**, the record adds only “Experimental pilot idea.” [Source](passage:idea) It doesn’t describe any change made during pilot activity. **canceled** records that the pilot was canceled, so the supplied evidence does not establish that it ran. [Source](passage:canceled)",
+      "answerSha256": "dcad0755962d889a4e833d500a412acaa7908041c7e9d1d0e36a006acb165766",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "According to **idea**, the record adds only “Experimental pilot idea.”",
+          "proposition": "According to **idea**, the record adds only “Experimental pilot idea.”",
+          "citationIds": [
+            "idea"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Exact retained added text is quoted and attributed to its note.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "It doesn’t describe any change made during pilot activity.",
+          "proposition": "It doesn’t describe any change made during pilot activity.",
+          "citationIds": [
+            "idea"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "In context It refers to the just-cited idea record; the sentence distinguishes an idea-text addition from evidence of actual pilot work.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "**canceled** records that the pilot was canceled",
+          "proposition": "**canceled** records that the pilot was canceled",
+          "citationIds": [
+            "canceled"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Current text explicitly records cancellation.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-4",
+          "quote": "so the supplied evidence does not establish that it ran.",
+          "proposition": "so the supplied evidence does not establish that it ran.",
+          "citationIds": [
+            "idea",
+            "canceled"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "An idea addition and later cancellation together do not establish prior execution; paragraph references identify both records.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "change",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "execution",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 988,
+          "output_tokens": 227,
+          "reasoning_tokens": 158,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1215
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 7
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "superseded_approval",
+      "answer": "No. The September 8 decision superseded the earlier approval and says to hold the release until route B passes a witnessed drill; no completion is recorded in that source. [Source](passage:hold) The drill was only planned for September 11, which is after September 10. [Source](passage:plan)",
+      "answerSha256": "d8df0438e71d71936f6bb13bcdebe39ddb5d9456a8c7abcc805aa015cbc701f3",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The September 8 decision superseded the earlier approval and says to hold the release until route B passes a witnessed drill",
+          "proposition": "The September 8 decision superseded the earlier approval and says to hold the release until route B passes a witnessed drill",
+          "citationIds": [
+            "hold"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The explicit later hold supersedes the identified earlier approval and supplies the condition.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "no completion is recorded in that source.",
+          "proposition": "no completion is recorded in that source.",
+          "citationIds": [
+            "hold"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "This absence claim is bounded to the supplied hold source, which records no witnessed drill completion.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "The drill was only planned for September 11, which is after September 10.",
+          "proposition": "The drill was only planned for September 11, which is after September 10.",
+          "citationIds": [
+            "plan"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The planned date is explicit and later than the fixed reference day; no actual result is inferred.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "decision",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        },
+        {
+          "id": "condition",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1045,
+          "output_tokens": 162,
+          "reasoning_tokens": 89,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1207
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 8
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "conflicting_reports",
+      "answer": "The records conflict: one says Birch drill B-4 **passed**, signed by Avery; another says it **failed**, signed by Rowan. Neither is marked as a correction, so I can’t determine which result is accurate. [Source](passage:pass) [Source](passage:fail)",
+      "answerSha256": "97c0c267be8fd7c05463898393e385bd7a65d3737e268cf52d7ce5bb186b2421",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "one says Birch drill B-4 **passed**, signed by Avery",
+          "proposition": "one says Birch drill B-4 **passed**, signed by Avery",
+          "citationIds": [
+            "pass"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The passed report explicitly names drill and signer.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "another says it **failed**, signed by Rowan.",
+          "proposition": "another says it **failed**, signed by Rowan.",
+          "citationIds": [
+            "fail"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The failed report explicitly names the same drill and signer.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "Neither is marked as a correction, so I can’t determine which result is accurate.",
+          "proposition": "Neither is marked as a correction, so I can’t determine which result is accurate.",
+          "citationIds": [
+            "pass",
+            "fail"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "Conflicting reports with no supersession/correction remain unresolved; last-edit time is not chosen as truth.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "conflict",
+          "status": "covered",
+          "reason": "The answer correctly addresses this fixed-case requirement; citation presence and scope are graded independently above."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1007,
+          "output_tokens": 111,
+          "reasoning_tokens": 44,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1118
+        },
+        "origin": {
+          "path": "current-runtime.json",
+          "resultIndex": 9
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "related_note_attribution",
+      "answer": "Meridian retrospective does not record who approved the deployment; it says the retrospective records no approver. [Source](passage:retro)\n\nAccording to **Meridian approvals**, Asha approved the production deployment. [Source](passage:approval)",
+      "answerSha256": "05946a101bcc89bca9255f4e3367bcef881487baa673f4926f1208c162db7823",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "Meridian retrospective does not record who approved the deployment; it says the retrospective records no approver.",
+          "proposition": "Meridian retrospective does not record who approved the deployment; it says the retrospective records no approver.",
+          "citationIds": [
+            "retro"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The supplied complete canonical retrospective explicitly has no approver, satisfying the named-note record boundary.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "According to **Meridian approvals**, Asha approved the production deployment.",
+          "proposition": "According to **Meridian approvals**, Asha approved the production deployment.",
+          "citationIds": [
+            "approval"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The related approval note explicitly supplies the approver and deployment; the answer clearly attributes and cites that note.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "record",
+          "status": "covered",
+          "reason": "Required attribution/authority/scope distinctions are correctly addressed; citation usability is accounted separately."
+        },
+        {
+          "id": "related",
+          "status": "covered",
+          "reason": "Required attribution/authority/scope distinctions are correctly addressed; citation usability is accounted separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1013,
+          "output_tokens": 121,
+          "reasoning_tokens": 65,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1134
+        },
+        "origin": {
+          "path": "current-runtime-resume.json",
+          "resultIndex": 0
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "preview_is_not_read",
+      "answer": "I can’t establish execution from the available evidence. The only supplied excerpt says “The pilot was running,” but it is marked as a discovery-only preview, not authoritative note content. The pilot note’s canonical content wasn’t provided.",
+      "answerSha256": "1fe7f7054ab89f0e137e93e8355c7450d9f4f9759073835f1d091fe23fc91f82",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "I can’t establish execution from the available evidence.",
+          "proposition": "I can’t establish execution from the available evidence.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural evidence-availability limitation: the input contains only a discovery preview, with no admitted execution evidence.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "The only supplied excerpt says “The pilot was running,” but it is marked as a discovery-only preview, not authoritative note content.",
+          "proposition": "The only supplied excerpt says “The pilot was running,” but it is marked as a discovery-only preview, not authoritative note content.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Describes and exactly quotes the explicitly qualified preview supplied in context; does not assert that the pilot ran or promote preview text to an authoritative note finding.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "The pilot note’s canonical content wasn’t provided.",
+          "proposition": "The pilot note’s canonical content wasn’t provided.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural description of supplied context: the sole source is preview-only, not canonical read content.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "authority",
+          "status": "covered",
+          "reason": "Required attribution/authority/scope distinctions are correctly addressed; citation usability is accounted separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 915,
+          "output_tokens": 132,
+          "reasoning_tokens": 80,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1047
+        },
+        "origin": {
+          "path": "current-runtime-resume.json",
+          "resultIndex": 1
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial_read_absence",
+      "answer": "The available passage says, “Deployment approval was discussed,” but doesn’t name an approver【Source】. I can’t determine whether the rest of *Meridian retrospective* names one, because its complete content isn’t available here.",
+      "answerSha256": "73bae973b5891b2c54d715f138898bc19ca58b22fb9620a741d362d2e7d3b2a6",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The available passage says, “Deployment approval was discussed,” but doesn’t name an approver【Source】.",
+          "proposition": "The available passage says, “Deployment approval was discussed,” but doesn’t name an approver【Source】.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The excerpt supports the bounded statement, but literal 【Source】 is not an inline passage citation; no usable citation is attached to the note-based claim.",
+          "failureTags": [
+            "missing_citation",
+            "invalid_citation_format"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "I can’t determine whether the rest of *Meridian retrospective* names one, because its complete content isn’t available here.",
+          "proposition": "I can’t determine whether the rest of *Meridian retrospective* names one, because its complete content isn’t available here.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural limitation of the supplied selected-passage input: wholeNoteComplete is false. The answer does not assert whole-note absence.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "scope",
+          "status": "covered",
+          "reason": "Required attribution/authority/scope distinctions are correctly addressed; citation usability is accounted separately."
+        }
+      ],
+      "metadata": {
+        "variant": "current",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 936,
+          "output_tokens": 122,
+          "reasoning_tokens": 69,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1058
+        },
+        "origin": {
+          "path": "current-runtime-resume.json",
+          "resultIndex": 2
+        }
+      },
+      "claimInventory": "full"
+    }
+  ]
+}

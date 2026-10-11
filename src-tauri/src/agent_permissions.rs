@@ -491,12 +491,10 @@ mod tests {
             );
             let (events, sink) = sink();
             for tool in [
-                "get_active_note",
-                "search_notes",
-                "read_note",
-                "propose_note_edits",
-                "propose_note_rewrite",
-                "propose_create_note",
+                "find_notes",
+                "read_notes",
+                "propose_note_change",
+                "research_notes",
                 "update_plan",
             ] {
                 assert_eq!(

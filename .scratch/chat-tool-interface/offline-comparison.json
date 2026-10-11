@@ -1,0 +1,15 @@
+{
+  "toolCount": {
+    "before": 10,
+    "after": 5
+  },
+  "branchSchemasPreserved": true,
+  "inputBytes": {
+    "before": 14272,
+    "after": 12581
+  },
+  "toolBytes": {
+    "before": 10091,
+    "after": 8400
+  }
+}

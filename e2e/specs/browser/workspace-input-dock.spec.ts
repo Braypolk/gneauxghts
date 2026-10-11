@@ -29,6 +29,30 @@ describe('shared workspace input dock', () => {
     await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   });
 
+  it('keeps settled shells separate and send controls circular at desktop and narrow widths', async () => {
+    await openChat();
+    for (const width of [638, 1440, 390]) {
+      await browser.setWindowSize(width, 950);
+      await waitForWorkspaceAnimationSettled();
+      const geometry = await browser.execute(() => {
+        const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
+        const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
+        const search = dock.querySelector('.dock-search-toggle')!.getBoundingClientRect();
+        const controls = ['.chat-send-button', '.dock-chat-toggle'].map(selector => {
+          const rect = dock.querySelector(selector)!.getBoundingClientRect();
+          return { width: rect.width, height: rect.height };
+        });
+        return { controls, gap: body.left - search.right,
+          blur: dock.querySelector<SVGFEGaussianBlurElement>('feGaussianBlur')!.stdDeviationX.baseVal };
+      });
+      for (const control of geometry.controls) {
+        expect(Math.abs(control.width - control.height)).toBeLessThanOrEqual(1);
+      }
+      expect(geometry.gap).toBeGreaterThanOrEqual(6);
+      expect(geometry.blur).toBe(0);
+    }
+  });
+
   it('reuses mounted inputs and retains search, draft, attachments and configuration across mode switches', async () => {
     await openChat();
     await expectMode('chat');

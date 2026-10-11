@@ -1,8 +1,7 @@
 //! Assembled completion boundary with optional counter-only observations.
 //! The independent usage_context module owns context admission policy.
 use super::*;
-use rig_core::completion::{CompletionError, CompletionRequest, CompletionResponse};
-use rig_core::streaming::StreamingCompletionResponse;
+use rig_core::completion::CompletionRequest;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
@@ -48,7 +47,7 @@ impl Measurement {
         })
     }
 
-    async fn begin(&self, request: &CompletionRequest, capacity: Option<u64>) {
+    pub(super) async fn begin(&self, request: &CompletionRequest, capacity: Option<u64>) {
         self.unreported("attempt_superseded");
         let mut details = measure(request);
         let formatter = usize::from(
@@ -85,17 +84,15 @@ impl Measurement {
         };
         details["phase"] = json!("usage");
         details["callIndex"] = json!(call_index);
-        // Rig uses zero when the provider omitted usage. Do not claim exact zero.
-        details["reportedUsage"] =
-            if usage.total_tokens == 0 && usage.input_tokens == 0 && usage.output_tokens == 0 {
-                Value::Null
-            } else {
-                json!(AgentUsage::from(usage))
-            };
+        details["reportedUsage"] = if usage.is_reported() {
+            json!({"inputTokens":usage.input_tokens,"outputTokens":usage.output_tokens,"totalTokens":usage.total_tokens,"cachedInputTokens":usage.cached_input_tokens,"cacheCreationInputTokens":usage.cache_creation_input_tokens,"toolUsePromptTokens":usage.tool_use_prompt_tokens,"reasoningTokens":usage.reasoning_tokens})
+        } else {
+            Value::Null
+        };
         details["inputEstimateErrorTokens"] = details["estimatedInputTokens"]
             .as_u64()
-            .filter(|_| usage.input_tokens > 0)
-            .map(|estimate| json!(estimate as i128 - usage.input_tokens as i128))
+            .zip(usage.input_tokens)
+            .map(|(estimate, input)| json!(estimate as i128 - input as i128))
             .unwrap_or(Value::Null);
         (self.on_event)(AgentEvent::ContextMeasured { details });
     }
@@ -147,7 +144,7 @@ pub(super) fn has_media(value: &Value) -> bool {
     }
 }
 
-fn measure(request: &CompletionRequest) -> Value {
+pub(super) fn measure(request: &CompletionRequest) -> Value {
     let Ok(value) = serde_json::to_value(request) else {
         return json!({"mode":"measurement_only","countingMethod":"unavailable","enforcementEligible":false});
     };
@@ -299,74 +296,6 @@ impl CapacityProbe {
     }
 }
 
-#[derive(Clone)]
-pub(super) struct MeasuredModel<M> {
-    pub(super) inner: M,
-    pub(super) measurement: Option<Arc<Measurement>>,
-    pub(super) context: Option<Arc<super::usage_context::UsageContext>>,
-}
-impl<M: CompletionModel> CompletionModel for MeasuredModel<M> {
-    type Response = M::Response;
-    type StreamingResponse = M::StreamingResponse;
-    type Client = (
-        M::Client,
-        Option<Arc<Measurement>>,
-        Option<Arc<super::usage_context::UsageContext>>,
-    );
-    fn make(client: &Self::Client, model: impl Into<String>) -> Self {
-        Self {
-            inner: M::make(&client.0, model),
-            measurement: client.1.clone(),
-            context: client.2.clone(),
-        }
-    }
-    fn composes_native_output_with_tools(&self) -> bool {
-        self.inner.composes_native_output_with_tools()
-    }
-    async fn completion(
-        &self,
-        mut request: CompletionRequest,
-    ) -> Result<CompletionResponse<Self::Response>, CompletionError> {
-        if let Some(context) = &self.context {
-            context.prepare(&mut request).await?;
-        }
-        if let Some(m) = &self.measurement {
-            m.begin(&request, self.context.as_ref().and_then(|c| c.capacity()))
-                .await;
-        }
-        let result = self.inner.completion(request).await;
-        if let Some(context) = &self.context {
-            context.observe(result.as_ref().map(|r| r.usage).unwrap_or_default());
-        }
-        if let Some(m) = &self.measurement {
-            match &result {
-                Ok(response) => m.finish(None, response.usage),
-                Err(_) => m.unreported("provider_call_failed"),
-            }
-        }
-        result
-    }
-    async fn stream(
-        &self,
-        mut request: CompletionRequest,
-    ) -> Result<StreamingCompletionResponse<Self::StreamingResponse>, CompletionError> {
-        if let Some(context) = &self.context {
-            context.prepare(&mut request).await?;
-        }
-        if let Some(m) = &self.measurement {
-            m.begin(&request, self.context.as_ref().and_then(|c| c.capacity()))
-                .await;
-        }
-        let result = self.inner.stream(request).await;
-        if result.is_err() {
-            if let Some(m) = &self.measurement {
-                m.unreported("provider_call_failed");
-            }
-        }
-        result
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -375,13 +304,14 @@ mod tests {
     #[test]
     fn full_request_measurement_includes_tools_and_does_not_mutate_forwarded_request() {
         tauri::async_runtime::block_on(async {
-            let model = MockCompletionModel::new([MockTurn::text("unchanged")]);
-            let request = model.completion_request("PRIVATE_PROMPT")
+            let model = MockCompletionModel::from_turns([MockTurn::text("unchanged")]);
+            let request = rig_core::completion::CompletionRequest::new("PRIVATE_PROMPT")
+                .model("mock-model")
                 .preamble("PRIVATE_SYSTEM".repeat(100))
                 .tools(vec![rig_core::completion::ToolDefinition {
-                    name: "read_evidence".into(), description: "PRIVATE_TOOL_DESCRIPTION".repeat(100),
+                    name: rig_core::message::ToolName::new("read_evidence").unwrap(), description: "PRIVATE_TOOL_DESCRIPTION".repeat(100),
                     parameters: json!({"type":"object","properties":{"evidence_ids":{"type":"array","items":{"type":"string"}}}}),
-                }]).max_tokens(123).build();
+                }]).max_tokens(123);
             let expected = serde_json::to_value(&request).unwrap();
             let counters = measure(&request);
             assert!(
@@ -412,12 +342,9 @@ mod tests {
                 worker: false,
                 result_schema: None,
             });
-            let forwarded = MeasuredModel {
-                inner: model.clone(),
-                measurement: Some(measurement),
-                context: None,
-            };
-            forwarded.completion(request).await.unwrap();
+            measurement.begin(&request, None).await;
+            let response = model.call(request).await.unwrap();
+            measurement.finish(None, response.usage);
             assert_eq!(
                 serde_json::to_value(&model.requests()[0]).unwrap(),
                 expected
@@ -603,6 +530,38 @@ mod tests {
     }
 
     #[test]
+    fn reported_zero_and_partial_usage_remain_distinct_from_absence() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let measurement = Measurement {
+            runtime: 1,
+            sequence: AtomicUsize::new(1),
+            pending: Mutex::new(None),
+            on_event: Arc::new(move |e| {
+                sink.lock().unwrap().push(serde_json::to_value(e).unwrap())
+            }),
+            provider: AgentProvider::Openai,
+            model: "mock".into(),
+            worker: false,
+            result_schema: None,
+        };
+        for usage in [
+            Usage::default().input_tokens(0),
+            Usage::default().output_tokens(7),
+        ] {
+            *measurement.pending.lock().unwrap() = Some(json!({"estimatedInputTokens":100}));
+            measurement.finish(Some(0), usage);
+        }
+        let events = events.lock().unwrap();
+        assert_eq!(events[0]["details"]["reportedUsage"]["inputTokens"], 0);
+        assert_eq!(events[0]["details"]["inputEstimateErrorTokens"], 100);
+        assert!(events[0]["details"]["reportedUsage"]["outputTokens"].is_null());
+        assert_eq!(events[1]["details"]["reportedUsage"]["outputTokens"], 7);
+        assert!(events[1]["details"]["reportedUsage"]["inputTokens"].is_null());
+        assert!(events[1]["details"]["inputEstimateErrorTokens"].is_null());
+    }
+
+    #[test]
     fn missing_usage_remains_unknown_and_is_consumed_once() {
         let events = Arc::new(Mutex::new(Vec::new()));
         let sink = events.clone();
@@ -681,6 +640,7 @@ mod live_tests {
                     prompt: Message::user(prompt), history, enable_web: false, require_web: false,
                     flex: false, reasoning_effort: Some("medium".into()),
                 }, None, AgentRuntimeObserver {
+                evidence_context: None,
                     cancelled: CancellationToken::new(), permissions: None,
                     on_event: Arc::new(move |event| {
                         if matches!(event, AgentEvent::ContextMeasured { .. } | AgentEvent::UsageUpdated { .. }) {

@@ -165,11 +165,13 @@
       <ChainOfThought steps={toolParts} />
     {/if}
     {#each visibleParts as part (part.id)}
-      {#if part.type === 'text' && part.text}
+      {#if part.type === 'text' && (part.text || message.answerDraft?.text)}
         <div
           class={`chat-message-content bg-transparent p-0 text-foreground ${message.status === 'cancelled' ? 'opacity-70' : ''}`}
         >
-          {#if message.role === 'assistant'}
+          {#if message.role === 'assistant' && message.status === 'streaming' && message.answerDraft}
+            <div class="whitespace-pre-wrap break-words" data-chat-answer-draft aria-busy="true">{message.answerDraft.text}</div>
+          {:else if message.role === 'assistant'}
             <ChatMarkdown
               source={part.text}
               citations={message.citations}

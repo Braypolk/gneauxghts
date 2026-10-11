@@ -1,0 +1,14 @@
+{
+  "schemaStructureUnchanged": true,
+  "toolCount": 10,
+  "inputBytes": {
+    "before": 17398,
+    "after": 14272
+  },
+  "toolBytes": {
+    "before": 13217,
+    "after": 10091
+  },
+  "inputByteReductionPercent": 17.967582480744916,
+  "toolByteReductionPercent": 23.65135809941742
+}

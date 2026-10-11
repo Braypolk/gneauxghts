@@ -2,11 +2,18 @@ use super::*;
 use crate::services::evidence::{query::ActivityRange, SearchMode, SearchRequest};
 
 #[derive(Clone)]
-pub(super) struct SearchEvidenceTool(pub(super) AgentToolContext);
-#[derive(Clone)]
 pub(super) struct ReadEvidenceTool(pub(super) AgentToolContext);
 #[derive(Clone)]
-pub(super) struct ListNoteActivityTool(pub(super) AgentToolContext);
+pub(super) struct FindNotesTool(pub(super) AgentToolContext);
+
+#[derive(Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+enum FindResult {
+    #[default]
+    Passages,
+    Notes,
+}
+
 type ReadEvidenceArgs = crate::services::evidence::ReadRequest;
 
 impl AgentToolContext {
@@ -19,12 +26,19 @@ impl AgentToolContext {
         if let Some(context) = &self.date_time_context {
             label.push_str(&context.prompt_context());
         }
+        label.push_str("\n");
+        label.push_str(crate::chat::date_time::REFERENCE_GUIDANCE);
         label
     }
     pub(super) fn admit_passages(
         &self,
         sources: Vec<(crate::services::evidence::PassageCitation, PathBuf, String)>,
     ) -> Result<(), String> {
+        // Remember evidence use before later exclusions can remove its source cards.
+        if !sources.is_empty() {
+            self.service
+                .mark_current_history_use(&self.assistant_message_id, &self.run_id)?;
+        }
         let mut target = self.sources.lock().map_err(|_| "Sources unavailable")?;
         for (citation, path, title) in sources {
             self.surface(&citation.note_id);
@@ -44,7 +58,28 @@ impl AgentToolContext {
             .passage_references
             .lock()
             .map_err(|_| "Citations unavailable")?;
-        references.prepare(payload, &sources)
+        references.prepare(payload, &sources)?;
+        let delivered: Vec<_> = payload["items"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|item| {
+                sources
+                    .iter()
+                    .filter_map(|source| source.passage.as_ref())
+                    .find(|passage| item["evidenceId"].as_str() == Some(passage.id.as_str()))
+                    .cloned()
+            })
+            .collect();
+        drop(references);
+        drop(sources);
+        self.evidence
+            .lock()
+            .map_err(|_| "Evidence unavailable")?
+            .record_delivery(&delivered);
+        self.prepare_evidence_references(payload)
+            .map_err(|e| e.to_string())?;
+        Ok(())
     }
 
     pub(crate) fn render_passage_references(&self, text: &str) -> Result<String, String> {
@@ -56,12 +91,55 @@ impl AgentToolContext {
         Ok(references.render(text, &sources))
     }
 
+    pub(crate) fn render_structured_answer(
+        &self,
+        text: &str,
+    ) -> Result<(String, Vec<ChatSource>), String> {
+        let sources = self.sources();
+        let references = self
+            .passage_references
+            .lock()
+            .map_err(|_| "Citations unavailable")?;
+        crate::chat::structured_answer::render(text, &references, &sources)
+    }
+
     pub(super) fn admit_context(&self, text: &str, max: usize) -> Result<String, AgentToolError> {
         self.evidence
             .lock()
             .map_err(|_| AgentToolError::unavailable("Evidence unavailable"))?
             .admit_context(text, max)
             .map_err(AgentToolError::from)
+    }
+
+    pub(super) fn context_coverage(
+        &self,
+        note_id: &str,
+        scope: &str,
+        complete: bool,
+    ) -> Result<String, AgentToolError> {
+        let mut coverage = json!({"scope":scope,"complete":complete});
+        if !complete {
+            coverage["nextRead"] = json!({"purpose":"answer","note_id":note_id});
+        }
+        let metadata = format!("coverage: {}\n", coverage);
+        if self.admit_context(&metadata, metadata.len())?.len() != metadata.len() {
+            return Err(AgentToolError::evidence_budget());
+        }
+        Ok(metadata)
+    }
+
+    pub(super) fn record_body_context(
+        &self,
+        note_id: &str,
+        raw: &str,
+        excerpt: &str,
+        start: Option<usize>,
+    ) -> Result<(), AgentToolError> {
+        self.evidence
+            .lock()
+            .map_err(|_| AgentToolError::unavailable("Evidence unavailable"))?
+            .record_body_context(note_id, raw, excerpt, start);
+        Ok(())
     }
 
     pub(crate) fn evidence_scope(
@@ -86,6 +164,7 @@ impl AgentToolContext {
     }
     pub(crate) fn validate_context(&self) -> Result<(), String> {
         let (allowed, excluded) = self.evidence_scope()?;
+        self.validate_note_references(allowed.as_ref(), &excluded)?;
         let state = self.host.state().ok_or("Notes index unavailable")?;
         if !self
             .evidence
@@ -103,7 +182,7 @@ impl AgentToolContext {
             .lock()
             .map_err(|_| "Context unavailable")?;
         for (id, expected) in versions.iter() {
-            if !self.allowed(id).map_err(|e| e.to_string())? {
+            if excluded.contains(id) || allowed.as_ref().is_some_and(|ids| !ids.contains(id)) {
                 return Err("Note access changed during this answer".into());
             }
             let (path, _, _) = self.resolve_note(id).map_err(|e| e.to_string())?;
@@ -120,6 +199,7 @@ impl AgentToolContext {
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub(super) struct SearchArgs {
+    result: Option<FindResult>,
     query: String,
     include_history: bool,
     mode: SearchMode,
@@ -130,19 +210,15 @@ pub(super) struct SearchArgs {
     limit: Option<usize>,
 }
 impl SearchArgs {
-    fn schema(require_range: bool) -> Value {
-        let mut schema = json!({"type":"object","properties":{
-            "query":{"type":"string","description":"Content to match. Historical filters match changed text, not note titles. Omit to discover all activity in activity_range, then narrow by returned noteId metadata."},
-            "include_history":{"type":"boolean","description":"For activity questions, include retained added/removed lines, even when superseded. Requires activity_range. Historical content is not current status. With query, use literal or regex mode."},
+    fn schema() -> Value {
+        json!({"type":"object","properties":{
+            "query":{"type":"string","description":"Match content; history matches changed text, not titles. Omit for all activity, then narrow by returned noteId."},
+            "include_history":{"type":"boolean","description":"Include retained added/removed, even superseded lines. Requires activity_range; not current status. With query use literal/regex."},
             "mode":{"type":"string","enum":["hybrid","lexical","literal","regex"]},
             "activity_range":ActivityRange::schema(),
             "folder":{"type":"string"},"note_ids":{"type":"array","items":{"type":"string"}},
             "cursor":{"type":"string"},"limit":{"type":"integer","minimum":1,"maximum":20}
-        },"additionalProperties":false});
-        if require_range {
-            schema["anyOf"] = json!([{"required":["activity_range"]},{"required":["cursor"]}]);
-        }
-        schema
+        },"additionalProperties":false})
     }
     fn into_request(self) -> Result<SearchRequest, AgentToolError> {
         if self.limit.is_some_and(|limit| !(1..=20).contains(&limit)) {
@@ -161,41 +237,44 @@ impl SearchArgs {
         })
     }
 }
-impl Tool for SearchEvidenceTool {
-    const NAME: &'static str = "search_evidence";
+impl Tool for FindNotesTool {
+    const NAME: &'static str = "find_notes";
     type Error = AgentToolError;
     type Args = SearchArgs;
     type Output = Value;
     fn description(&self) -> String {
-        "Find allowed current passages by content and optional explicit activity range. Returns bounded previews, evidence IDs, task facts, coverage and continuation; read selected IDs with read_evidence before citing. Activity filters date surviving text changes, not real-world events or deadlines. Omit the activity filter when those changes are not the question. Combine with other searches and tools as needed. Set include_history with an activity_range to discover retained added/removed lines, including superseded text. Continue with cursor only.".into()
+        "Discover passages by topic/text; result=notes returns one representative passage per note and requires activity_range. Previews are not citable; reuse prior reads or read_notes purpose=answer. alreadyRead is prior text overlap, not provenance. Use returned IDs/folders, never topics as folders. For recorded activity use include_history and activity_range; timestamps, backlog and note counts do not establish work. Ranges filter text changes, not deadlines or event dates: omit them to find events in unchanged/later-authored text. For current deadlines try literal @due. Continue with cursor only; result and filters are retained.".into()
     }
     fn parameters(&self) -> Value {
-        SearchArgs::schema(false)
+        let mut schema = SearchArgs::schema();
+        schema["properties"]["result"] = json!({"type":"string","enum":["passages","notes"],"description":"Default passages; notes groups recorded activity by note and requires activity_range. Omit on continuation."});
+        schema
     }
     async fn call(&self, _: &mut ToolContext, args: SearchArgs) -> Result<Value, AgentToolError> {
-        search(self.0.clone(), args, false).await
-    }
-}
-impl Tool for ListNoteActivityTool {
-    const NAME: &'static str = "list_note_activity";
-    type Error = AgentToolError;
-    type Args = SearchArgs;
-    type Output = Value;
-    fn description(&self) -> String {
-        "Discover distinct allowed notes with surviving recorded changes in an explicit activity_range, optionally matching content or scope. Returns one representative evidence ID and preview per note, per-page counts, coverage and continuation. These are intermediate results: read selected evidence IDs, search related content or tasks, and continue working. Counts describe notes with surviving text activity, not completed work. Read evidence before citing; use search_evidence for additional passages within a note. Set include_history for retained changes. Continue with cursor only. This is note discovery, not all changed passages; search each relevant scope with the range to retrieve additional changes.".into()
-    }
-    fn parameters(&self) -> Value {
-        SearchArgs::schema(true)
-    }
-    async fn call(&self, _: &mut ToolContext, args: SearchArgs) -> Result<Value, AgentToolError> {
-        if args.activity_range.is_none() && args.cursor.is_none() {
+        let distinct = if let Some(cursor) = args.cursor.as_deref() {
+            if args.result.is_some() {
+                return Err(AgentToolError::invalid(
+                    "Continue with cursor only; result and filters are retained",
+                ));
+            }
+            self.0
+                .evidence
+                .lock()
+                .map_err(|_| AgentToolError::unavailable("Evidence unavailable"))?
+                .search_is_distinct(cursor)
+                .map_err(AgentToolError::from)?
+        } else {
+            args.result.unwrap_or_default() == FindResult::Notes
+        };
+        if distinct && args.cursor.is_none() && args.activity_range.is_none() {
             return Err(AgentToolError::invalid(
-                "list_note_activity requires an explicit activity_range",
+                "result=notes requires activity_range",
             ));
         }
-        search(self.0.clone(), args, true).await
+        search(self.0.clone(), args, distinct).await
     }
 }
+
 fn apply_research_scope(
     request: &mut SearchRequest,
     scope: &SearchRequest,
@@ -388,6 +467,7 @@ async fn search(
                 }
             }),
         });
+        context.prepare_evidence_references(&mut result)?;
         Ok(result)
     })
     .await
@@ -399,13 +479,13 @@ impl Tool for ReadEvidenceTool {
     type Args = ReadEvidenceArgs;
     type Output = Value;
     fn description(&self) -> String {
-        "Read selected evidence IDs or a known canonical note; continue with cursor only. Returns exact passages, sourceKind, citations, provenance, and explicit delivery gaps. Pass activity_range to check whether each selected changed passage supports that interval; supported/uncertain/not_established describe temporal support, not semantic truth or accomplishment. Historical excerpts describe recorded added/removed lines, never current status; read the current note or related evidence before recommending actions. Unchanged surrounding context is not activity. Cite only returned references. Prior assistant answers and working copies are not primary evidence. Read failures include recovery actions; missing completion evidence means unknown, not definitely open.".into()
+        "Read evidence IDs or a known canonical note; continue with cursor only. Cite returned [S#] references; the app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status before answering. Coverage excludes cleared history and discarded Editing Window states, and cannot establish a complete real-world record.".into()
     }
     fn parameters(&self) -> Value {
         json!({"type":"object","properties":{
-            "cursor":{"type":"string","description":"Continue a previous read using only this handle."},
-            "note_id":{"type":"string","description":"Read a known canonical note, including bounded pages of current content. Does not read pending proposals."},
-            "include_provenance":{"type":"boolean","description":"Expand per-range lineage when inspecting provenance; defaults to false. Canonical validation, historical timing and activitySupport are always returned without expansion."},
+            "cursor":{"type":"string","description":"Continuation handle; use alone."},
+            "note_id":{"type":"string","description":"Known canonical note ID; bounded current pages, no pending proposals."},
+            "include_provenance":{"type":"boolean","description":"Default false. Expand only for lineage; validation, timing and activitySupport are always included."},
             "activity_range":ActivityRange::schema(),
             "evidence_ids":{"type":"array","minItems":1,"maxItems":8,"items":{"type":"string"}}},
             "oneOf":[{"required":["evidence_ids"]},{"required":["note_id"]},{"required":["cursor"]}],"additionalProperties":false})
@@ -436,6 +516,12 @@ impl Tool for ReadEvidenceTool {
                     .lock()
                     .map_err(|_| "Evidence unavailable")?;
                 let mut args = args;
+                if args.evidence_ids.len() > 8 {
+                    return Err(AgentToolError::invalid(
+                        "Read at most eight evidence IDs per selection",
+                    ));
+                }
+                args.evidence_ids = context.resolve_evidence_ids(args.evidence_ids)?;
                 apply_research_read_scope(&mut args, context.worker_period.as_ref(), &evidence)?;
                 evidence.read_request(&state, allowed.as_ref(), &excluded, args)?
             };

@@ -27,6 +27,8 @@ pub(crate) enum HourCycle {
     H24,
 }
 
+pub(crate) const REFERENCE_GUIDANCE: &str = "Use the supplied local reference instant and editor date order/hour cycle, Gregorian dates and Latin digits for new input and text. They do not establish the locale or timezone of existing notes. Ask about material numeric-date ambiguity and preserve existing uncertain dates. /date, /today, /time, /now and their chips represent fixed authored text. Date-only values have no UTC conversion; wall-clock text has no implicit offset and DST-gap times must not be silently rescheduled. Dates in prose do not create reminders or prove activity. In the picker, Next week means seven calendar days and a weekday means its next occurrence including today; conversational ambiguity still needs clarification before assigning a deadline.";
+
 impl DateTimeContext {
     pub(crate) fn validate(&self) -> Result<(), String> {
         if self.locale.is_empty()

@@ -1,18 +1,22 @@
 mod context_measurement;
+mod openai_model;
+mod result_stream;
 mod usage_context;
 #[cfg(test)]
 mod usage_context_live;
 use futures_util::StreamExt;
 use rig_agent::agent::{
     Agent, AgentBuilder, AgentHook, CompletionCallAction,
-    CompletionCallEvent as HookCompletionCall, HookContext, MultiTurnStreamItem, NoToolConfig,
-    ToolCall as HookToolCall, ToolCallAction, ToolResultAction, ToolResultEvent,
+    CompletionCallEvent as HookCompletionCall, DispatchAction, DispatchEvent, HookContext,
+    MultiTurnStreamItem, NoToolConfig, OutcomeAction, OutcomeEvent,
 };
 use rig_core::{
-    client::CompletionClient,
-    completion::{CompletionModel, GetTokenUsage, Message, Usage},
+    completion::{Message, Usage},
+    effect::EffectKind,
+    operation::Completion,
     providers::openai,
-    streaming::StreamedAssistantContent,
+    streaming::{Item, StreamEvent},
+    DynModel,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -62,7 +66,7 @@ pub(crate) struct AgentRuntimeRequest {
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRuntimeResponse {
     pub(crate) output: String,
-    pub(crate) usage: Usage,
+    pub(crate) usage: AgentUsage,
     pub(crate) stats: crate::agent_guardrails::AgentRunStats,
 }
 
@@ -83,13 +87,13 @@ pub(crate) struct AgentUsage {
 impl From<Usage> for AgentUsage {
     fn from(value: Usage) -> Self {
         Self {
-            input_tokens: value.input_tokens,
-            output_tokens: value.output_tokens,
-            total_tokens: value.total_tokens,
-            cached_input_tokens: value.cached_input_tokens,
-            cache_creation_input_tokens: value.cache_creation_input_tokens,
-            tool_use_prompt_tokens: value.tool_use_prompt_tokens,
-            reasoning_tokens: value.reasoning_tokens,
+            input_tokens: value.input_tokens.unwrap_or_default(),
+            output_tokens: value.output_tokens.unwrap_or_default(),
+            total_tokens: value.total_tokens.unwrap_or_default(),
+            cached_input_tokens: value.cached_input_tokens.unwrap_or_default(),
+            cache_creation_input_tokens: value.cache_creation_input_tokens.unwrap_or_default(),
+            tool_use_prompt_tokens: value.tool_use_prompt_tokens.unwrap_or_default(),
+            reasoning_tokens: value.reasoning_tokens.unwrap_or_default(),
         }
     }
 }
@@ -107,6 +111,11 @@ pub(crate) struct AgentPlanEntry {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub(crate) enum AgentEvent {
+    /// Internal transient result arguments; chat decodes them before UI delivery.
+    ResultStream {
+        attempt: usize,
+        delta: Option<String>,
+    },
     TextDelta {
         delta: String,
     },
@@ -175,7 +184,8 @@ impl AgentEvent {
     pub(crate) fn is_durable(&self) -> bool {
         !matches!(
             self,
-            Self::TextDelta { .. }
+            Self::ResultStream { .. }
+                | Self::TextDelta { .. }
                 | Self::PermissionRequested { .. }
                 | Self::PermissionResolved { .. }
         )
@@ -184,6 +194,8 @@ impl AgentEvent {
 
 #[derive(Clone)]
 pub(crate) struct AgentRuntimeObserver {
+    /// Context validation remains active even when executable tools are disabled.
+    pub(crate) evidence_context: Option<crate::agent_tools::AgentToolContext>,
     pub(crate) cancelled: CancellationToken,
     pub(crate) on_event: AgentEventSink,
     pub(crate) permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
@@ -191,12 +203,16 @@ pub(crate) struct AgentRuntimeObserver {
 
 #[derive(Clone)]
 struct RuntimeEventHook {
+    web_search_selection: Arc<openai_model::WebSearchSelection>,
     on_event: AgentEventSink,
     cancelled: CancellationToken,
     permissions: Option<crate::agent_permissions::AgentPermissionBoundary>,
     guard: crate::agent_guardrails::AgentRunGuard,
     tools: Option<crate::agent_tools::AgentToolContext>,
+    evidence_context: Option<crate::agent_tools::AgentToolContext>,
     context: Option<Arc<usage_context::UsageContext>>,
+    measurement: Option<Arc<context_measurement::Measurement>>,
+    result_stream: Option<Arc<result_stream::ResultStream>>,
 }
 
 impl AgentHook for RuntimeEventHook {
@@ -215,8 +231,8 @@ impl AgentHook for RuntimeEventHook {
         if let Some(context) = &self.context {
             context.record_admission(&self.guard, bytes);
         }
-        if let Some(tools) = &self.tools {
-            if let Err(error) = tools.validate_context() {
+        if let Some(context) = &self.evidence_context {
+            if let Err(error) = context.validate_context() {
                 return CompletionCallAction::stop(error);
             }
         }
@@ -232,43 +248,72 @@ impl AgentHook for RuntimeEventHook {
         CompletionCallAction::continue_run()
     }
 
-    async fn on_tool_call(&self, context: &HookContext, event: HookToolCall<'_>) -> ToolCallAction {
+    async fn on_dispatch(
+        &self,
+        _context: &HookContext,
+        event: DispatchEvent<'_>,
+    ) -> DispatchAction {
+        if let EffectKind::Completion { request, stream } = event.kind {
+            let mut request = request.clone();
+            if let Some(context) = &self.context {
+                if let Err(error) = context.prepare(&mut request).await {
+                    return DispatchAction::stop(error.to_string());
+                }
+            }
+            self.web_search_selection.prepare(&mut request);
+            if let Some(result_stream) = &self.result_stream {
+                result_stream.begin(&request, &self.on_event);
+            }
+            if let Some(m) = &self.measurement {
+                m.begin(&request, self.context.as_ref().and_then(|c| c.capacity()))
+                    .await;
+            }
+            return DispatchAction::patch(EffectKind::Completion {
+                request,
+                stream: *stream,
+            });
+        }
+        let Some(name) = event.tool_name() else {
+            return DispatchAction::proceed();
+        };
+        let args = event.tool_args().unwrap_or("{}");
+        let call_id = event
+            .call_id
+            .expect("tool dispatch has call identity")
+            .to_string();
         if self
             .context
             .as_ref()
             .is_some_and(|context| context.finishing())
         {
-            return ToolCallAction::skip(usage_context::FINISH);
+            return DispatchAction::skip(usage_context::FINISH);
         }
         if let Some(tools) = &self.tools {
             if let Err(error) = tools.check_worker_call() {
-                return ToolCallAction::skip(error.payload().to_string());
+                return DispatchAction::skip(error.payload().to_string());
             }
         }
 
-        if let Err(violation) =
-            self.guard
-                .begin_tool(event.internal_call_id, event.tool_name, event.args)
-        {
+        if let Err(violation) = self.guard.begin_tool(&call_id, name, args) {
             emit_guard_violation(&self.on_event, &violation);
             (self.on_event)(AgentEvent::ToolCallUpdated {
-                call_id: event.internal_call_id.to_string(),
-                name: event.tool_name.to_string(),
-                title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
+                call_id: call_id.clone(),
+                name: name.to_string(),
+                title: tool_title(name, args, self.tools.as_ref()),
                 status: "error".to_string(),
-                step_index: Some(product_step_index(context.turn())),
-                input_summary: tool_input_summary(event.tool_name, event.args),
+                step_index: Some(product_step_index(event.turn)),
+                input_summary: tool_input_summary(name, args),
                 output_summary: Some(violation.message.clone()),
-                duration_millis: self.guard.finish_tool(event.internal_call_id),
+                duration_millis: self.guard.finish_tool(&call_id),
             });
-            return ToolCallAction::stop(violation.message);
+            return DispatchAction::stop(violation.message);
         }
         let permission = match &self.permissions {
             Some(boundary) => {
                 boundary
                     .request_for_tool(
-                        event.internal_call_id,
-                        event.tool_name,
+                        &call_id,
+                        name,
                         self.cancelled.clone(),
                         Arc::clone(&self.on_event),
                     )
@@ -279,53 +324,56 @@ impl AgentHook for RuntimeEventHook {
         match permission {
             Ok(Some(crate::agent_permissions::AgentPermissionResolution::Denied)) => {
                 (self.on_event)(AgentEvent::ToolCallUpdated {
-                    call_id: event.internal_call_id.to_string(),
-                    name: event.tool_name.to_string(),
-                    title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
+                    call_id: call_id.clone(),
+                    name: name.to_string(),
+                    title: tool_title(name, args, self.tools.as_ref()),
                     status: "denied".to_string(),
-                    step_index: Some(product_step_index(context.turn())),
-                    input_summary: tool_input_summary(event.tool_name, event.args),
+                    step_index: Some(product_step_index(event.turn)),
+                    input_summary: tool_input_summary(name, args),
                     output_summary: Some("Permission denied".to_string()),
-                    duration_millis: self.guard.finish_tool(event.internal_call_id),
+                    duration_millis: self.guard.finish_tool(&call_id),
                 });
-                return ToolCallAction::skip("The user denied this permission request");
+                return DispatchAction::skip("The user denied this permission request");
             }
             Ok(Some(crate::agent_permissions::AgentPermissionResolution::Cancelled)) => {
-                return ToolCallAction::stop("Request cancelled");
+                return DispatchAction::stop("Request cancelled");
             }
-            Err(error) => return ToolCallAction::stop(error),
+            Err(error) => return DispatchAction::stop(error),
             _ => {}
         }
         (self.on_event)(AgentEvent::ToolCallUpdated {
-            call_id: event.internal_call_id.to_string(),
-            name: event.tool_name.to_string(),
-            title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
+            call_id: call_id.clone(),
+            name: name.to_string(),
+            title: tool_title(name, args, self.tools.as_ref()),
             status: "running".to_string(),
-            step_index: Some(product_step_index(context.turn())),
-            input_summary: tool_input_summary(event.tool_name, event.args),
+            step_index: Some(product_step_index(event.turn)),
+            input_summary: tool_input_summary(name, args),
             output_summary: None,
             duration_millis: None,
         });
-        ToolCallAction::run()
+        DispatchAction::proceed()
     }
 
-    async fn on_tool_result(
-        &self,
-        context: &HookContext,
-        event: ToolResultEvent<'_>,
-    ) -> ToolResultAction {
-        let status = presented_tool_status(event.raw_result);
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        let (Some(name), Some(result)) = (event.tool_name(), event.tool_result()) else {
+            return OutcomeAction::proceed();
+        };
+        let args = event.tool_args().unwrap_or("{}");
+        let call_id = event
+            .call_id
+            .expect("tool outcome has call identity")
+            .to_string();
         (self.on_event)(AgentEvent::ToolCallUpdated {
-            call_id: event.internal_call_id.to_string(),
-            name: event.tool_name.to_string(),
-            title: tool_title(event.tool_name, event.args, self.tools.as_ref()),
-            status: status.to_string(),
-            step_index: Some(product_step_index(context.turn())),
-            input_summary: tool_input_summary(event.tool_name, event.args),
-            output_summary: Some(tool_output_summary(event.tool_name, event.raw_result)),
-            duration_millis: self.guard.finish_tool(event.internal_call_id),
+            call_id: call_id.clone(),
+            name: name.to_string(),
+            title: tool_title(name, args, self.tools.as_ref()),
+            status: presented_tool_status(result).to_string(),
+            step_index: Some(product_step_index(event.turn)),
+            input_summary: tool_input_summary(name, args),
+            output_summary: Some(tool_output_summary(name, result)),
+            duration_millis: self.guard.finish_tool(&call_id),
         });
-        ToolResultAction::keep()
+        OutcomeAction::proceed()
     }
 }
 
@@ -348,20 +396,32 @@ fn product_step_index(rig_turn: usize) -> usize {
 fn tool_input_summary(name: &str, args: &str) -> Option<String> {
     let value = serde_json::from_str::<Value>(args).ok();
     match name {
-        "search_notes" | "search_evidence" | "list_note_activity" => value
+        "find_notes" | "search_notes" | "search_evidence" | "list_note_activity" => value
             .as_ref()
             .and_then(|value| value.get("limit"))
             .and_then(Value::as_u64)
             .map(|limit| format!("Up to {limit} results")),
-        "read_note" | "read_working_note" => value
-            .as_ref()
-            .and_then(|value| value.get("start_line"))
-            .and_then(Value::as_u64)
-            .filter(|line| *line > 1)
-            .map(|line| format!("Continue from line {line}"))
-            .or_else(|| Some("From the beginning".to_string())),
+        "read_note" | "read_working_note" | "read_notes"
+            if name != "read_notes" || value.as_ref().is_some_and(|v| v["purpose"] == "edit") =>
+        {
+            value
+                .as_ref()
+                .and_then(|value| value.get("start_line"))
+                .and_then(Value::as_u64)
+                .filter(|line| *line > 1)
+                .map(|line| format!("Continue from line {line}"))
+                .or_else(|| Some("From the beginning".to_string()))
+        }
         "current_note_history" => Some("Current excerpts and revision evidence only".to_string()),
         "get_active_note" => Some("Adjacent to this chat".to_string()),
+        "propose_note_change" => match value.as_ref().and_then(|v| v["operation"].as_str()) {
+            Some("create") => Some("Review required before creation".into()),
+            Some("replace") => Some("Complete note replacement".into()),
+            _ => value
+                .as_ref()
+                .and_then(|v| v["edits"].as_array())
+                .map(|edits| format!("{} targeted edits", edits.len())),
+        },
         "propose_note_edits" => value
             .as_ref()
             .and_then(|value| value.get("edits"))
@@ -411,44 +471,52 @@ fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> Strin
             .unwrap_or_else(|| "Could not complete this action".to_string());
     }
     match (name, output) {
-        ("read_evidence" | "research_notes", Some(value)) => format!(
-            "Read {} passages from {} notes{}",
-            value["items"].as_array().map_or(0, Vec::len),
-            value["notesRead"].as_u64().unwrap_or_else(|| {
-                value["items"]
+        ("read_evidence" | "read_notes" | "research_notes", Some(value))
+            if value.get("items").is_some() =>
+        {
+            format!(
+                "Read {} passages from {} notes{}",
+                value["items"].as_array().map_or(0, Vec::len),
+                value["notesRead"].as_u64().unwrap_or_else(|| {
+                    value["items"]
+                        .as_array()
+                        .into_iter()
+                        .flatten()
+                        .filter_map(|item| item["noteId"].as_str())
+                        .collect::<std::collections::HashSet<_>>()
+                        .len() as u64
+                }),
+                if value["delivery"]["complete"] == false
+                    || value["truncated"] == true
+                    || matches!(value["status"].as_str(), Some("partial" | "limited"))
+                {
+                    "; incomplete delivery"
+                } else if value["failures"]
                     .as_array()
-                    .into_iter()
-                    .flatten()
-                    .filter_map(|item| item["noteId"].as_str())
-                    .collect::<std::collections::HashSet<_>>()
-                    .len() as u64
-            }),
-            if value["delivery"]["complete"] == false
-                || value["truncated"] == true
-                || matches!(value["status"].as_str(), Some("partial" | "limited"))
-            {
-                "; incomplete delivery"
-            } else if value["failures"]
-                .as_array()
-                .is_some_and(|items| !items.is_empty())
-            {
-                "; some passages unavailable"
-            } else if value["nextCursor"].as_str().is_some() {
-                "; more remains"
-            } else {
-                ""
-            }
-        ),
-        ("list_note_activity", Some(value)) => format!(
-            "Found {} notes with recorded activity{}",
-            value["notesReturned"].as_u64().unwrap_or(0),
-            if value["coverage"]["complete"] == false {
-                "; coverage is partial"
-            } else {
-                ""
-            }
-        ),
-        ("search_evidence", Some(value)) => format!(
+                    .is_some_and(|items| !items.is_empty())
+                {
+                    "; some passages unavailable"
+                } else if value["nextCursor"].as_str().is_some() {
+                    "; more remains"
+                } else {
+                    ""
+                }
+            )
+        }
+        ("list_note_activity" | "find_notes", Some(value))
+            if value.get("notesReturned").is_some() =>
+        {
+            format!(
+                "Found {} notes with recorded activity{}",
+                value["notesReturned"].as_u64().unwrap_or(0),
+                if value["coverage"]["complete"] == false {
+                    "; coverage is partial"
+                } else {
+                    ""
+                }
+            )
+        }
+        ("search_evidence" | "find_notes", Some(value)) => format!(
             "Matched {} candidate passages{}",
             value["items"].as_array().map_or(0, Vec::len),
             if value["coverage"]["complete"] == false {
@@ -469,7 +537,7 @@ fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> Strin
                 )
             })
             .unwrap_or_else(|| "Search completed".to_string()),
-        ("read_note" | "read_working_note", Some(value)) => {
+        ("read_note" | "read_working_note" | "read_notes", Some(value)) => {
             let start = value.get("startLine").and_then(Value::as_u64);
             let end = value.get("endLine").and_then(Value::as_u64);
             match (start, end) {
@@ -488,9 +556,13 @@ fn tool_output_summary(name: &str, result: &rig_core::tool::ToolResult) -> Strin
             "Loaded a shortened view of the note".to_string()
         }
         ("get_active_note", _) => "Loaded the note".to_string(),
-        ("propose_note_edits" | "propose_note_rewrite" | "propose_create_note", _) => {
-            "Ready for review".to_string()
-        }
+        (
+            "propose_note_change"
+            | "propose_note_edits"
+            | "propose_note_rewrite"
+            | "propose_create_note",
+            _,
+        ) => "Ready for review".to_string(),
         ("update_plan", Some(value)) => value
             .get("steps")
             .and_then(Value::as_u64)
@@ -549,18 +621,28 @@ fn tool_title(
             .and_then(quoted_activity_text)
             .map(|title| format!("Read {title}"))
             .unwrap_or_else(|| "Read adjacent note".to_string()),
-        "search_notes" | "search_evidence" => argument("query")
+        "find_notes" if argument("result") == Some("notes") => {
+            "Find notes with recorded activity".into()
+        }
+        "find_notes" | "search_notes" | "search_evidence" => argument("query")
             .and_then(quoted_activity_text)
             .map(|query| format!("Search notes for {query}"))
             .unwrap_or_else(|| "Search notes".to_string()),
-        "read_evidence" => "Read selected passages".into(),
+        "read_notes" if argument("purpose") == Some("edit") => note_title()
+            .map(|title| format!("Read {title} for editing"))
+            .unwrap_or_else(|| "Read note for editing".into()),
+        "read_notes" | "read_evidence" => "Read selected passages".into(),
         "list_note_activity" => "Find notes with recorded activity".into(),
         "research_notes" => "Research across notes".into(),
         "current_note_history" => "Check current-note history".to_string(),
         "read_note" | "read_working_note" => note_title()
             .map(|title| format!("Read {title}"))
             .unwrap_or_else(|| "Read selected note".to_string()),
-        "propose_note_edits" => note_title()
+        "propose_note_change" if argument("operation") == Some("create") => argument("title")
+            .and_then(quoted_activity_text)
+            .map(|title| format!("Prepare new note {title}"))
+            .unwrap_or_else(|| "Prepare new note".into()),
+        "propose_note_change" | "propose_note_edits" => note_title()
             .map(|title| format!("Prepare changes to {title}"))
             .unwrap_or_else(|| "Prepare note changes".to_string()),
         "propose_note_rewrite" => note_title()
@@ -611,11 +693,11 @@ impl AgentRuntime {
                     .take()
                     .filter(|value| !value.trim().is_empty())
                     .ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
-                let client = openai::Client::new(key)
-                    .map_err(|error| format!("OpenAI setup failed: {error}"))?;
-                let mut model = client.completion_model(&request.model);
+                let client = openai::OpenAI::new(key);
+                let mut model = client.responses(&request.model);
                 if request.enable_web {
-                    model = model
+                    model.wire = model
+                        .wire
                         .with_tool(openai::responses_api::ResponsesToolDefinition::web_search());
                 }
                 let params = openai_parameters(
@@ -637,12 +719,10 @@ impl AgentRuntime {
                     .clone()
                     .filter(|value| !value.trim().is_empty())
                     .unwrap_or_else(|| "lm-studio".to_string());
-                let client = openai::CompletionsClient::builder()
-                    .api_key(key)
-                    .base_url(&request.local_base_url)
-                    .build()
-                    .map_err(|error| format!("Local model setup failed: {error}"))?;
-                let model = client.completion_model(&request.model);
+                let client = openai::OpenAIConfig::new(key)
+                    .with_base_url(&request.local_base_url)
+                    .client();
+                let model = client.chat(&request.model);
                 let params = local_parameters(request.reasoning_effort.as_deref());
                 run_model(model, request, tools, params, observer, guard).await
             }
@@ -650,29 +730,116 @@ impl AgentRuntime {
     }
 }
 
+// Size-only diagnostics reused by the opt-in synthetic provider wrapper.
+#[cfg(test)]
+pub(crate) fn measure_synthetic_request(
+    request: &rig_core::completion::CompletionRequest,
+) -> Value {
+    context_measurement::measure(request)
+}
+
 #[cfg(test)]
 pub(crate) async fn run_test_model(
-    model: rig_core::test_utils::MockCompletionModel,
+    model: impl Into<DynModel<Completion>>,
     request: AgentRuntimeRequest,
     tools: Option<crate::agent_tools::AgentToolContext>,
     observer: AgentRuntimeObserver,
     guard: crate::agent_guardrails::AgentRunGuard,
 ) -> Result<AgentRuntimeResponse, String> {
-    run_model_with_measurement(model, request, tools, None, observer, guard, None).await
+    run_model_with_measurement(model, request, tools, None, observer, guard, None, None).await
 }
 
-async fn run_model<M>(
-    model: M,
+/// Exact tool lifecycle capture is compiled only for opted-in synthetic tests.
+#[cfg(test)]
+pub(crate) async fn run_traced_test_model(
+    model: impl Into<DynModel<Completion>>,
+    request: AgentRuntimeRequest,
+    tools: Option<crate::agent_tools::AgentToolContext>,
+    observer: AgentRuntimeObserver,
+    guard: crate::agent_guardrails::AgentRunGuard,
+    trace: Arc<std::sync::Mutex<Vec<Value>>>,
+) -> Result<AgentRuntimeResponse, String> {
+    run_model_with_measurement(
+        model,
+        request,
+        tools,
+        None,
+        observer,
+        guard,
+        None,
+        Some(trace),
+    )
+    .await
+}
+
+#[cfg(test)]
+struct SyntheticToolTrace(Arc<std::sync::Mutex<Vec<Value>>>);
+
+#[cfg(test)]
+impl SyntheticToolTrace {
+    fn record(&self, value: Value) {
+        // Keep diagnostic retention bounded even on rejected tool paths.
+        let mut trace = self.0.lock().unwrap();
+        if trace.len() < 32 {
+            trace.push(if value.to_string().len() <= 64_000 {
+                value
+            } else {
+                json!({"type":"trace_oversized"})
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+impl AgentHook for SyntheticToolTrace {
+    async fn on_dispatch(
+        &self,
+        _context: &HookContext,
+        event: DispatchEvent<'_>,
+    ) -> DispatchAction {
+        if let Some(name) = event.tool_name() {
+            self.record(json!({"type":"toolcall","turn":event.turn,"id":event.call_id.map(ToString::to_string),"name":name,"arguments":event.tool_args()}));
+        }
+        DispatchAction::proceed()
+    }
+    async fn on_outcome(&self, _context: &HookContext, event: OutcomeEvent<'_>) -> OutcomeAction {
+        if let (Some(name), Some(result)) = (event.tool_name(), event.tool_result()) {
+            self.record(json!({"type":"toolresult","turn":event.turn,"id":event.call_id.map(ToString::to_string),"name":name,"arguments":event.tool_args(),"content":result.output().as_content()}));
+        }
+        OutcomeAction::proceed()
+    }
+}
+
+#[cfg(test)]
+pub(crate) async fn measure_test_model(
+    model: rig_core::test_utils::MockCompletionModel,
+    request: AgentRuntimeRequest,
+    tools: Option<crate::agent_tools::AgentToolContext>,
+    observer: AgentRuntimeObserver,
+) -> Result<AgentRuntimeResponse, String> {
+    let measurement =
+        context_measurement::Measurement::enabled(&request, observer.on_event.clone(), false);
+    run_model_with_measurement(
+        model,
+        request,
+        tools,
+        None,
+        observer,
+        crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+        Some(measurement),
+        None,
+    )
+    .await
+}
+
+async fn run_model(
+    model: impl Into<DynModel<Completion>>,
     request: AgentRuntimeRequest,
     tools: Option<crate::agent_tools::AgentToolContext>,
     additional_params: Option<Value>,
     observer: AgentRuntimeObserver,
     guard: crate::agent_guardrails::AgentRunGuard,
-) -> Result<AgentRuntimeResponse, String>
-where
-    M: CompletionModel + 'static,
-    M::StreamingResponse: Send + Unpin + GetTokenUsage,
-{
+) -> Result<AgentRuntimeResponse, String> {
     let measurement = context_measurement::Measurement::configured(
         &request,
         observer.on_event.clone(),
@@ -688,50 +855,69 @@ where
         observer,
         guard,
         measurement,
+        #[cfg(test)]
+        None,
     )
     .await
 }
 
-async fn run_model_with_measurement<M>(
-    model: M,
+async fn run_model_with_measurement(
+    model: impl Into<DynModel<Completion>>,
     request: AgentRuntimeRequest,
     tools: Option<crate::agent_tools::AgentToolContext>,
     additional_params: Option<Value>,
     observer: AgentRuntimeObserver,
     guard: crate::agent_guardrails::AgentRunGuard,
     measurement: Option<Arc<context_measurement::Measurement>>,
-) -> Result<AgentRuntimeResponse, String>
-where
-    M: CompletionModel + 'static,
-    M::StreamingResponse: Send + Unpin + GetTokenUsage,
-{
+    #[cfg(test)] synthetic_trace: Option<Arc<std::sync::Mutex<Vec<Value>>>>,
+) -> Result<AgentRuntimeResponse, String> {
+    let result_stream = request
+        .output_schema
+        .clone()
+        .map(result_stream::ResultStream::new);
     let context = usage_context::UsageContext::new(
         &request,
         observer.on_event.clone(),
         tools.as_ref().is_some_and(|t| t.is_research_worker()),
     );
-    let model = context_measurement::MeasuredModel {
-        inner: model,
-        measurement: measurement.clone(),
-        context: Some(context.clone()),
-    };
     let hook_context = tools.clone();
     let hook_tools = tools.clone();
-    let builder =
-        configured_builder(model, &request, additional_params)?.add_hook(RuntimeEventHook {
-            on_event: Arc::clone(&observer.on_event),
-            cancelled: observer.cancelled.clone(),
-            permissions: observer.permissions.clone(),
-            guard: guard.clone(),
-            tools: hook_tools,
-            context: Some(context.clone()),
-        });
+    let builder = configured_builder(model, &request, additional_params)?;
+    #[cfg(test)]
+    let builder = if let Some(trace) = synthetic_trace {
+        builder.add_hook(SyntheticToolTrace(trace))
+    } else {
+        builder
+    };
+    let builder = builder.add_hook(RuntimeEventHook {
+        web_search_selection: Arc::default(),
+        on_event: Arc::clone(&observer.on_event),
+        cancelled: observer.cancelled.clone(),
+        permissions: observer.permissions.clone(),
+        guard: guard.clone(),
+        evidence_context: observer
+            .evidence_context
+            .clone()
+            .or_else(|| hook_tools.clone()),
+        tools: hook_tools,
+        context: Some(context.clone()),
+        measurement: measurement.clone(),
+        result_stream: result_stream.clone(),
+    });
     let agent = match tools {
         Some(tools) => tools.build_agent(builder),
         None => builder.build(),
     };
-    let mut response =
-        drive_agent(agent, request, observer, guard, measurement, Some(context)).await?;
+    let mut response = drive_agent(
+        agent,
+        request,
+        observer,
+        guard,
+        measurement,
+        Some(context),
+        result_stream,
+    )
+    .await?;
     if let Some(tools) = &hook_context {
         let child = tools.research_usage();
         response.usage.input_tokens += child.input_tokens;
@@ -745,14 +931,11 @@ where
     Ok(response)
 }
 
-fn configured_builder<M>(
-    model: M,
+fn configured_builder(
+    model: impl Into<DynModel<Completion>>,
     request: &AgentRuntimeRequest,
     additional_params: Option<Value>,
-) -> Result<AgentBuilder<M, NoToolConfig>, String>
-where
-    M: CompletionModel,
-{
+) -> Result<AgentBuilder<NoToolConfig>, String> {
     let mut builder = AgentBuilder::new(model)
         .name("gneauxghts-vault-agent")
         .description("Searches and reads the local vault and prepares reviewed note changes")
@@ -773,28 +956,24 @@ where
     Ok(builder)
 }
 
-async fn drive_agent<M>(
-    agent: Agent<M>,
+async fn drive_agent(
+    agent: Agent,
     request: AgentRuntimeRequest,
     observer: AgentRuntimeObserver,
     guard: crate::agent_guardrails::AgentRunGuard,
     measurement: Option<Arc<context_measurement::Measurement>>,
     context: Option<Arc<usage_context::UsageContext>>,
-) -> Result<AgentRuntimeResponse, String>
-where
-    M: CompletionModel + 'static,
-    M::StreamingResponse: Send + Unpin + GetTokenUsage,
-{
+    result_stream: Option<Arc<result_stream::ResultStream>>,
+) -> Result<AgentRuntimeResponse, String> {
     let mut stream = agent
-        .runner(request.prompt)
+        .prompt(request.prompt)
         .history(request.history)
         .max_turns(MAX_MODEL_CALLS)
         .max_invalid_tool_call_retries(MAX_INVALID_TOOL_RETRIES)
         .tool_concurrency(1)
-        .stream()
-        .await;
+        .stream();
     let mut response = None;
-    let mut aggregate_usage = Usage::new();
+    let mut aggregate_usage = AgentUsage::default();
     loop {
         let remaining = match guard.deadline_remaining() {
             Ok(remaining) => remaining,
@@ -824,9 +1003,17 @@ where
                 return Err(format!("Agent run failed: {error}"));
             }
         };
+        if let (Some(result_stream), MultiTurnStreamItem::StreamAssistantItem(Item::Event(event))) =
+            (&result_stream, &item)
+        {
+            result_stream.observe(event, &observer.on_event);
+        }
         match item {
-            MultiTurnStreamItem::StreamAssistantItem(StreamedAssistantContent::Text(text)) => {
-                (observer.on_event)(AgentEvent::TextDelta { delta: text.text });
+            MultiTurnStreamItem::StreamAssistantItem(Item::Event(StreamEvent::Text {
+                text,
+                ..
+            })) if result_stream.is_none() => {
+                (observer.on_event)(AgentEvent::TextDelta { delta: text });
             }
             MultiTurnStreamItem::CompletionCall(call) => {
                 if let Some(context) = &context {
@@ -835,7 +1022,14 @@ where
                 if let Some(m) = &measurement {
                     m.finish(Some(call.call_index), call.usage);
                 }
-                aggregate_usage += call.usage;
+                let counted = AgentUsage::from(call.usage);
+                aggregate_usage.input_tokens += counted.input_tokens;
+                aggregate_usage.output_tokens += counted.output_tokens;
+                aggregate_usage.total_tokens += counted.total_tokens;
+                aggregate_usage.cached_input_tokens += counted.cached_input_tokens;
+                aggregate_usage.cache_creation_input_tokens += counted.cache_creation_input_tokens;
+                aggregate_usage.tool_use_prompt_tokens += counted.tool_use_prompt_tokens;
+                aggregate_usage.reasoning_tokens += counted.reasoning_tokens;
                 (observer.on_event)(AgentEvent::StepUpdated {
                     index: call.call_index,
                     status: "completed".to_string(),
@@ -843,9 +1037,11 @@ where
                 });
                 (observer.on_event)(AgentEvent::UsageUpdated {
                     call_index: call.call_index,
-                    aggregate: aggregate_usage.into(),
+                    aggregate: aggregate_usage.clone(),
                 });
-                if let Err(violation) = guard.add_tokens(call.usage.total_tokens) {
+                if let Err(violation) =
+                    guard.add_tokens(call.usage.total_tokens.unwrap_or_default())
+                {
                     emit_guard_violation(&observer.on_event, &violation);
                     return Err(violation.message);
                 }
@@ -865,7 +1061,7 @@ where
     };
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),
-        usage: response.usage(),
+        usage: response.usage().into(),
         stats: guard.stats(),
     })
 }
@@ -968,31 +1164,31 @@ mod tests {
         context: Option<Arc<usage_context::UsageContext>>,
     }
     impl RuntimeHarness {
-        fn builder<M: CompletionModel>(
+        fn builder(
             &self,
-            model: M,
+            model: impl Into<DynModel<Completion>>,
             request: &AgentRuntimeRequest,
-        ) -> AgentBuilder<M, NoToolConfig> {
+        ) -> AgentBuilder<NoToolConfig> {
             configured_builder(model, request, None)
                 .unwrap()
                 .add_hook(RuntimeEventHook {
+                    web_search_selection: Arc::default(),
                     on_event: self.observer.on_event.clone(),
                     cancelled: self.observer.cancelled.clone(),
                     permissions: self.observer.permissions.clone(),
                     guard: self.guard.clone(),
                     tools: None,
+                    evidence_context: self.observer.evidence_context.clone(),
                     context: self.context.clone(),
+                    measurement: None,
+                    result_stream: None,
                 })
         }
-        async fn run<M>(
+        async fn run(
             self,
-            agent: Agent<M>,
+            agent: Agent,
             request: AgentRuntimeRequest,
-        ) -> Result<AgentRuntimeResponse, String>
-        where
-            M: CompletionModel + 'static,
-            M::StreamingResponse: Send + Unpin + GetTokenUsage,
-        {
+        ) -> Result<AgentRuntimeResponse, String> {
             drive_agent(
                 agent,
                 request,
@@ -1000,6 +1196,7 @@ mod tests {
                 self.guard,
                 None,
                 self.context,
+                None,
             )
             .await
         }
@@ -1084,17 +1281,18 @@ mod tests {
         let response = tauri::async_runtime::block_on(run_model_with_measurement(
             MockCompletionModel::from_stream_turns([vec![
                 MockStreamEvent::text("Test answer"),
-                MockStreamEvent::final_response(Usage {
-                    input_tokens: 3000,
-                    output_tokens: 3,
-                    total_tokens: 3003,
-                    ..Usage::new()
-                }),
+                MockStreamEvent::final_response(
+                    Usage::default()
+                        .input_tokens(3000)
+                        .output_tokens(3)
+                        .total_tokens(3003),
+                ),
             ]]),
             request,
             None,
             None,
             AgentRuntimeObserver {
+                evidence_context: None,
                 cancelled: CancellationToken::new(),
                 on_event: Arc::new(move |e| {
                     capture
@@ -1106,6 +1304,7 @@ mod tests {
             },
             crate::agent_guardrails::AgentRunGuard::new(Default::default()),
             Some(measurement),
+            None,
         ));
         assert_eq!(response.unwrap().output, "Test answer");
         let events = events.lock().unwrap();
@@ -1183,7 +1382,7 @@ mod tests {
             "delivery":{"complete":false,"hasMore":true}
         })));
         assert_eq!(
-            tool_output_summary("read_evidence", &read),
+            tool_output_summary("read_notes", &read),
             "Read 3 passages from 2 notes; incomplete delivery"
         );
         let partial = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
@@ -1197,7 +1396,7 @@ mod tests {
             json!({"status":"ready","notesReturned":9,"coverage":{"complete":true}}),
         ));
         assert_eq!(
-            tool_output_summary("list_note_activity", &inventory),
+            tool_output_summary("find_notes", &inventory),
             "Found 9 notes with recorded activity"
         );
         let search = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
@@ -1208,6 +1407,26 @@ mod tests {
             "Found 2 notes"
         );
 
+        assert_eq!(
+            tool_output_summary("find_notes", &search),
+            "Matched 2 candidate passages"
+        );
+        assert_eq!(
+            tool_title("read_notes", r#"{"purpose":"edit"}"#, None),
+            "Read note for editing"
+        );
+        assert_eq!(
+            tool_title(
+                "propose_note_change",
+                r#"{"operation":"create","title":"Draft"}"#,
+                None
+            ),
+            "Prepare new note “Draft”"
+        );
+        assert_eq!(
+            tool_input_summary("read_notes", r#"{"purpose":"answer"}"#),
+            None
+        );
         let unavailable = rig_core::tool::ToolResult::success(rig_core::tool::ToolOutput::json(
             json!({"status":"unavailable","reason":"The note is outside the allowed vault."}),
         ));
@@ -1260,6 +1479,57 @@ mod tests {
     }
 
     #[test]
+    fn structured_formatter_streams_only_result_arguments_and_resets_each_attempt() {
+        tauri::async_runtime::block_on(async {
+            let model = MockCompletionModel::from_stream_turns([vec![
+                MockStreamEvent::text("PRIVATE_FORMATTING_COMMENTARY"),
+                MockStreamEvent::tool_call_name_delta("answer", "final_result"),
+                MockStreamEvent::tool_call_arguments_delta("answer", "{\"value\":\""),
+                MockStreamEvent::tool_call_arguments_delta("answer", "shown\"}"),
+                MockStreamEvent::tool_call_end("answer"),
+                MockStreamEvent::final_response_with_default_usage(),
+            ]]);
+            let mut request = fake_request("Answer");
+            request.output_schema = Some(
+                json!({"type":"object","required":["value"],"properties":{"value":{"type":"string"}},"additionalProperties":false}),
+            );
+            let events = Arc::new(std::sync::Mutex::new(Vec::new()));
+            let saved = events.clone();
+            let result = run_test_model(
+                model,
+                request,
+                None,
+                AgentRuntimeObserver {
+                    evidence_context: None,
+                    permissions: None,
+                    cancelled: CancellationToken::new(),
+                    on_event: Arc::new(move |event| {
+                        saved
+                            .lock()
+                            .unwrap()
+                            .push(serde_json::to_value(event).unwrap())
+                    }),
+                },
+                crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+            )
+            .await
+            .unwrap();
+            assert!(result.output.contains("shown"));
+            let events = events.lock().unwrap();
+            assert!(
+                events
+                    .iter()
+                    .any(|e| e["type"] == "resultStream" && e["delta"].is_string()),
+                "formatter arguments must stream through the runtime seam"
+            );
+            assert!(
+                !events.iter().any(|e| e["type"] == "textDelta"),
+                "formatter commentary is not answer text"
+            );
+        });
+    }
+
+    #[test]
     fn structured_results_compose_with_tools_and_reject_prose_as_the_final_result() {
         tauri::async_runtime::block_on(async {
             let selected = json!({"evidence_ids":["read-id"],"gaps":[]});
@@ -1290,6 +1560,7 @@ mod tests {
             let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
+                    evidence_context: None,
                     on_event: sink.clone(),
                     cancelled: cancelled.clone(),
                     permissions: None,
@@ -1329,12 +1600,12 @@ mod tests {
                         "final_result",
                         json!({"value":"Verified evidence"}),
                     ),
-                    MockStreamEvent::final_response(Usage {
-                        input_tokens: 4_000,
-                        output_tokens: 30,
-                        total_tokens: 4_030,
-                        ..Usage::new()
-                    }),
+                    MockStreamEvent::final_response(
+                        Usage::default()
+                            .input_tokens(4_000)
+                            .output_tokens(30)
+                            .total_tokens(4_030),
+                    ),
                 ],
                 vec![
                     MockStreamEvent::tool_call(
@@ -1342,12 +1613,12 @@ mod tests {
                         "final_result",
                         json!({"value":"Do not read"}),
                     ),
-                    MockStreamEvent::final_response(Usage {
-                        input_tokens: 10_000,
-                        output_tokens: 30,
-                        total_tokens: 10_030,
-                        ..Usage::new()
-                    }),
+                    MockStreamEvent::final_response(
+                        Usage::default()
+                            .input_tokens(10_000)
+                            .output_tokens(30)
+                            .total_tokens(10_030),
+                    ),
                 ],
                 vec![
                     MockStreamEvent::tool_call(
@@ -1355,12 +1626,12 @@ mod tests {
                         "final_result_1",
                         json!({"value":"Verified evidence; coverage partial"}),
                     ),
-                    MockStreamEvent::final_response(Usage {
-                        input_tokens: 11_000,
-                        output_tokens: 30,
-                        total_tokens: 11_030,
-                        ..Usage::new()
-                    }),
+                    MockStreamEvent::final_response(
+                        Usage::default()
+                            .input_tokens(11_000)
+                            .output_tokens(30)
+                            .total_tokens(11_030),
+                    ),
                 ],
             ]);
             let mut request = fake_request("Gather bounded evidence");
@@ -1382,10 +1653,10 @@ mod tests {
             // Collision with the engine's default result name, deliberately
             // sharing the result schema: only its appended formatter may remain.
             let action = rig_agent::tool::DynamicTool::new(
-                "final_result",
+                rig_core::message::ToolName::new("final_result").unwrap(),
                 "Read evidence",
                 request.output_schema.clone().unwrap(),
-                move |_, _| {
+                move |_| {
                     let counter = counter.clone();
                     Box::pin(async move {
                         counter.fetch_add(1, Ordering::Relaxed);
@@ -1397,6 +1668,7 @@ mod tests {
             );
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
+                    evidence_context: None,
                     on_event: sink.clone(),
                     cancelled: cancelled.clone(),
                     permissions: None,
@@ -1405,14 +1677,7 @@ mod tests {
                 context: Some(context.clone()),
             };
             let agent = harness
-                .builder(
-                    context_measurement::MeasuredModel {
-                        inner: model.clone(),
-                        measurement: None,
-                        context: Some(context.clone()),
-                    },
-                    &request,
-                )
+                .builder(model.clone(), &request)
                 .dynamic_tool(action)
                 .build();
             let result = harness.run(agent, request).await.unwrap();
@@ -1428,7 +1693,9 @@ mod tests {
             assert_eq!(
                 requests[2].tool_choice,
                 Some(rig_core::message::ToolChoice::Specific {
-                    function_names: vec!["final_result_1".into()]
+                    function_names: vec![
+                        rig_core::message::ToolName::new("final_result_1").unwrap()
+                    ]
                 })
             );
         });
@@ -1438,12 +1705,12 @@ mod tests {
     fn usage_guard_finishes_with_existing_citation_and_skips_pending_gathering() {
         tauri::async_runtime::block_on(async {
             let usage = |input| {
-                MockStreamEvent::final_response(Usage {
-                    input_tokens: input,
-                    output_tokens: 30,
-                    total_tokens: input + 30,
-                    ..Usage::new()
-                })
+                MockStreamEvent::final_response(
+                    Usage::default()
+                        .input_tokens(input)
+                        .output_tokens(30)
+                        .total_tokens(input + 30),
+                )
             };
             let model = MockCompletionModel::from_stream_turns([
                 vec![
@@ -1490,6 +1757,7 @@ mod tests {
             let calls = Arc::new(AtomicUsize::new(0));
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
+                    evidence_context: None,
                     on_event: sink.clone(),
                     cancelled: cancelled.clone(),
                     permissions: None,
@@ -1498,14 +1766,7 @@ mod tests {
                 context: Some(context.clone()),
             };
             let agent = harness
-                .builder(
-                    context_measurement::MeasuredModel {
-                        inner: model.clone(),
-                        measurement: None,
-                        context: Some(context.clone()),
-                    },
-                    &request,
-                )
+                .builder(model.clone(), &request)
                 .tool(EchoTool(calls.clone()))
                 .build();
             let result = harness.run(agent, request).await.unwrap();
@@ -1529,7 +1790,13 @@ mod tests {
                 .to_string();
             assert!(history.contains("Verified evidence"));
             assert!(history.contains("note://citation-one"));
-            assert!(history.contains("read-1") && history.contains("read-2"));
+            // Rig 0.44's generic mock replay represents exchanges as text.
+            // Keep both action records, the successful result, and the skipped
+            // action's error; only the first action may actually execute.
+            assert_eq!(history.matches("[called tool echo with").count(), 2);
+            assert!(history.contains("[tool echo result]"));
+            assert!(history.contains("[tool echo error]"));
+            assert!(history.contains("Should not be read"));
             assert!(history.contains("Context allowance"));
             assert_eq!(
                 events
@@ -1604,6 +1871,7 @@ mod tests {
             let request = fake_request("Find and update it");
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
+                    evidence_context: None,
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),
@@ -1683,6 +1951,7 @@ mod tests {
             let request = fake_request("Try the fake side effect");
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
+                    evidence_context: None,
                     on_event: Arc::clone(&event_sink),
                     cancelled: cancelled.clone(),
                     permissions: Some(permission_boundary.clone()),

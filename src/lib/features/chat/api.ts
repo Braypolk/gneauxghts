@@ -80,7 +80,7 @@ interface RawConversation extends RawSummary {
 interface RawReceipt { requestId: string; conversationId: string; userMessageId: string; assistantMessageId: string }
 interface RawStreamEvent {
   requestId: string; conversationId: string; messageId: string; delta?: string; content?: string;
-  source?: RawSource; error?: string; conversation?: RawSummary | null;
+  source?: RawSource; error?: string; conversation?: RawSummary | null; attempt?: number; sequence?: number;
 }
 interface RawTitleUpdatedEvent {
   conversationId: string;
@@ -615,6 +615,10 @@ export class TauriChatApi implements ChatApi {
           conversation: stream.conversation ? normalizeSummary(stream.conversation) : null,
           message
         } as ChatEventMap[K]);
+      } else if (event === 'chat://answer-draft') {
+        if (Number.isSafeInteger(stream.attempt) && Number.isSafeInteger(stream.sequence)) {
+          handler({ ...stream, content: stream.content ?? '' } as ChatEventMap[K]);
+        }
       } else if (event === 'chat://text-delta') {
         handler({ ...stream, delta: stream.delta ?? '' } as ChatEventMap[K]);
       } else if (event === 'chat://source') {

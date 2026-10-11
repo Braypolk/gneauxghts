@@ -1,0 +1,134 @@
+{
+  "cases": [
+    {
+      "answer": "Water the **basil**—the selected text says, “Water basil every morning.” [Source 2](passage:5fcf2c4342478c5dbbb6d035c65c8ca1657abde50c08640d51ad8c16096f00c1)",
+      "checks": {
+        "canonicalUnchanged": true,
+        "passed": true,
+        "privacy": true,
+        "scenario": true
+      },
+      "events": [
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2708,
+            "inputTokens": 3034,
+            "outputTokens": 38,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3072
+          },
+          "call_index": 0,
+          "type": "usageUpdated"
+        },
+        {
+          "call_id": "0aWs-puzMr856Uax6q3mz",
+          "name": "read_evidence",
+          "status": "running",
+          "step_index": 0,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "call_id": "0aWs-puzMr856Uax6q3mz",
+          "duration_millis": 16,
+          "name": "read_evidence",
+          "output_summary": "Read 2 passages from 1 notes",
+          "status": "success",
+          "step_index": 0,
+          "title": "Read selected passages",
+          "type": "toolCallUpdated"
+        },
+        {
+          "aggregate": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5739,
+            "inputTokens": 6874,
+            "outputTokens": 64,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6938
+          },
+          "call_index": 1,
+          "type": "usageUpdated"
+        }
+      ],
+      "name": "selection",
+      "proposal": null,
+      "question": "What plant should I water in the selected text?",
+      "requestBytes": [
+        17906,
+        21441
+      ],
+      "runtimeError": null,
+      "sources": [
+        {
+          "anchor": "53b34ad31d095209a0cc87dde49bce372ad8fddbc63e1bbc575f945273caebdc",
+          "excerpt": "Garden plan",
+          "kind": "passage",
+          "noteId": "01M4HKC8J8TSG8XVX3EZ7JXHRR",
+          "notePath": "Garden plan.md",
+          "passage": {
+            "contentHash": "3c6ac14075e6456240058ba5945ad6a8a8e2df38eed8e8ba2684aaf72933f01a",
+            "end": 11,
+            "excerpt": "Garden plan",
+            "id": "53b34ad31d095209a0cc87dde49bce372ad8fddbc63e1bbc575f945273caebdc",
+            "location": "title",
+            "noteId": "01M4HKC8J8TSG8XVX3EZ7JXHRR",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Garden plan",
+          "url": null
+        },
+        {
+          "anchor": "5fcf2c4342478c5dbbb6d035c65c8ca1657abde50c08640d51ad8c16096f00c1",
+          "excerpt": "Water basil every morning.\nGarden-only code: FERN-831.\n",
+          "kind": "passage",
+          "noteId": "01M4HKC8J8TSG8XVX3EZ7JXHRR",
+          "notePath": "Garden plan.md",
+          "passage": {
+            "contentHash": "3c6ac14075e6456240058ba5945ad6a8a8e2df38eed8e8ba2684aaf72933f01a",
+            "end": 55,
+            "excerpt": "Water basil every morning.\nGarden-only code: FERN-831.\n",
+            "id": "5fcf2c4342478c5dbbb6d035c65c8ca1657abde50c08640d51ad8c16096f00c1",
+            "location": "body",
+            "noteId": "01M4HKC8J8TSG8XVX3EZ7JXHRR",
+            "revisions": [],
+            "start": 0
+          },
+          "title": "Garden plan",
+          "url": null
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 2602,
+        "modelCalls": 2,
+        "toolCalls": 1
+      },
+      "tools": [
+        "read_evidence"
+      ],
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 5739,
+        "inputTokens": 6874,
+        "outputTokens": 64,
+        "reasoningTokens": 0,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 6938
+      }
+    }
+  ],
+  "limits": {
+    "callsPerCase": 6,
+    "cases": 6,
+    "outputTokensPerCall": 1024,
+    "secondsPerCase": 60,
+    "serializedBytesPerCall": 64000
+  },
+  "model": "gpt-6-luna",
+  "reasoningEffort": "provider default",
+  "scope": "Real streaming runner and vault tools; synthetic fixtures. No native UI/durable chat admission, web, or configured research worker. No paired old-prompt baseline."
+}

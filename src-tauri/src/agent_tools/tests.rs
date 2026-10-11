@@ -1,4 +1,14 @@
 use super::*;
+mod context_regressions;
+mod context_selection_audit;
+mod coverage_regressions;
+mod interface_contracts;
+mod reliability_eval;
+
+#[cfg(target_os = "macos")]
+mod context_selection_live;
+#[cfg(target_os = "macos")]
+mod live_behavior;
 
 #[test]
 fn read_coverage_requires_contiguous_pages_from_the_current_content() {
@@ -13,22 +23,6 @@ fn read_coverage_requires_contiguous_pages_from_the_current_content() {
     coverage.record("hash-2", 7, 8, 8);
     assert!(!coverage.complete_for("hash-1"));
     assert!(!coverage.complete_for("hash-2"));
-}
-
-#[test]
-fn active_note_context_is_bounded_without_appending_stale_selection() {
-    let note = ActiveNoteSnapshot {
-        note_id: Some("n".into()),
-        title: "Long".into(),
-        path: None,
-        body: "a".repeat(50_000),
-        body_hash: "hash".into(),
-        selection: Some("important".into()),
-    };
-    let (body, truncated) = truncate_active_body(&note);
-    assert!(truncated);
-    assert!(!body.contains("important"));
-    assert!(body.len() <= 2400);
 }
 
 pub(super) fn fixture() -> (crate::test_support::TestVault, AgentToolContext, String) {
@@ -167,14 +161,18 @@ fn production_streaming_runner_dispatches_actual_working_read_and_proposal_tools
     let hash = content_hash(&fs::read_to_string(path).unwrap());
     let model = MockCompletionModel::from_stream_turns([
         vec![
-            MockStreamEvent::tool_call("read", "read_working_note", json!({"note_id":id})),
+            MockStreamEvent::tool_call(
+                "read",
+                "read_notes",
+                json!({"purpose":"edit","note_id":id}),
+            ),
             MockStreamEvent::final_response(rig_core::completion::Usage::new()),
         ],
         vec![
             MockStreamEvent::tool_call(
                 "rewrite",
-                "propose_note_rewrite",
-                json!({"note_id":id,"expected_content_hash":hash,"markdown":"Reviewed replacement"}),
+                "propose_note_change",
+                json!({"operation":"replace","note_id":id,"expected_content_hash":hash,"markdown":"Reviewed replacement"}),
             ),
             MockStreamEvent::final_response(rig_core::completion::Usage::new()),
         ],
@@ -188,6 +186,7 @@ fn production_streaming_runner_dispatches_actual_working_read_and_proposal_tools
         request(),
         Some(context.clone()),
         crate::agent_runtime::AgentRuntimeObserver {
+            evidence_context: None,
             cancelled: tokio_util::sync::CancellationToken::new(),
             on_event: Arc::new(|_| {}),
             permissions: None,
@@ -277,4 +276,196 @@ fn working_read_yields_the_current_thread_executor_while_its_index_is_locked() {
             "blocking tool prevented unrelated executor work"
         );
     });
+}
+
+/// Offline audit of the real assembled request, including registered tool schemas.
+#[test]
+fn assistant_request_instruction_audit() {
+    let (_vault, mut context, id) = fixture();
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id),
+        title: "Tool note".into(),
+        path: None,
+        body: String::new(),
+        body_hash: String::new(),
+        selection: None,
+    });
+    let mut request = request();
+    request.preamble = crate::chat::agent_preamble(&request.provider, true);
+    request.prompt = rig_core::completion::Message::user(format!(
+        "Hello\nQuery reference instant and timezone: {}\n{}",
+        context.query_anchor_label(),
+        context.active_note_context().unwrap()
+    ));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let capture = events.clone();
+    let model = rig_core::test_utils::MockCompletionModel::from_stream_turns([vec![
+        rig_core::test_utils::MockStreamEvent::text("Hello"),
+        rig_core::test_utils::MockStreamEvent::final_response(rig_core::completion::Usage::new()),
+    ]]);
+    tauri::async_runtime::block_on(crate::agent_runtime::measure_test_model(
+        model.clone(),
+        request,
+        Some(context),
+        crate::agent_runtime::AgentRuntimeObserver {
+            evidence_context: None,
+            cancelled: tokio_util::sync::CancellationToken::new(),
+            on_event: Arc::new(move |event| {
+                if let AgentEvent::ContextMeasured { details } = event {
+                    capture.lock().unwrap().push(details);
+                }
+            }),
+            permissions: None,
+        },
+    ))
+    .unwrap();
+    let events = events.lock().unwrap();
+    let measurement = &events[0];
+    assert_eq!(measurement["executableToolCount"], 5);
+    assert!(measurement["componentBytes"]["tools"].as_u64().unwrap() > 4000);
+    println!("INSTRUCTION_AUDIT {}", measurement);
+    if let Ok(path) = std::env::var("GNEAUX_INSTRUCTION_AUDIT_OUTPUT") {
+        std::fs::write(path, serde_json::to_string_pretty(measurement).unwrap()).unwrap();
+    }
+    if let Ok(path) = std::env::var("GNEAUX_TOOL_AUDIT_OUTPUT") {
+        let requests = model.requests();
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&requests[0].tools).unwrap(),
+        )
+        .unwrap();
+    }
+}
+
+#[test]
+fn adjacent_editor_hint_uses_allowed_canonical_context_without_read_or_source_authority() {
+    let (_vault, mut context, id) = fixture();
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id.clone()),
+        title: "STALE_TITLE".into(),
+        path: None,
+        body: "PRIVATE_STALE_BODY".into(),
+        body_hash: "stale".into(),
+        selection: Some("second line".into()),
+    });
+    let hint = context.active_note_context().unwrap();
+    assert!(hint.contains("Tool note"));
+    assert!(hint.contains("second line"));
+    assert!(!hint.contains("first line"));
+    assert!(!hint.contains("PRIVATE_STALE_BODY"));
+    assert!(!hint.contains("STALE_TITLE"));
+    assert!(
+        context.sources().is_empty(),
+        "A relevance hint is not read evidence"
+    );
+    assert!(
+        context.read_coverage.lock().unwrap().is_empty(),
+        "A hint cannot authorize a rewrite"
+    );
+    assert!(context.context_versions.lock().unwrap().contains_key(&id));
+    context.validate_context().unwrap();
+    context.active_note.as_mut().unwrap().selection = Some("stale selection".into());
+    assert!(!context
+        .active_note_context()
+        .unwrap()
+        .contains("stale selection"));
+    context
+        .service
+        .set_note_excluded(&id, "Tool note", true)
+        .unwrap();
+    assert!(context.active_note_context().unwrap().is_empty());
+    assert!(
+        context.validate_context().is_err(),
+        "Later exclusions revoke admitted context"
+    );
+}
+
+#[test]
+fn adjacent_editor_hint_stops_when_canonical_content_changes() {
+    let (_vault, mut context, id) = fixture();
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id.clone()),
+        title: String::new(),
+        path: None,
+        body: String::new(),
+        body_hash: String::new(),
+        selection: None,
+    });
+    context.active_note_context().unwrap();
+    let (path, _, _) = context.resolve_note(&id).unwrap();
+    std::fs::write(path, "changed canonical content").unwrap();
+    assert!(context.validate_context().is_err());
+}
+
+#[test]
+fn streaming_evidence_reads_retain_interpretation_without_repeating_guidance() {
+    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
+    let (_vault, context, id) = fixture();
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call(
+                "read-1",
+                "read_notes",
+                json!({"purpose":"answer","note_id":id}),
+            ),
+            MockStreamEvent::final_response(rig_core::completion::Usage::new()),
+        ],
+        vec![
+            MockStreamEvent::tool_call(
+                "read-2",
+                "read_notes",
+                json!({"purpose":"answer","note_id":id}),
+            ),
+            MockStreamEvent::final_response(rig_core::completion::Usage::new()),
+        ],
+        vec![
+            MockStreamEvent::text("Read complete"),
+            MockStreamEvent::final_response(rig_core::completion::Usage::new()),
+        ],
+    ]);
+    let mut input = request();
+    input.preamble = crate::chat::agent_preamble(&input.provider, true);
+    input.prompt = rig_core::completion::Message::user(format!(
+        "Read this known note: {id}\n{}",
+        context.query_anchor_label()
+    ));
+    let events = Arc::new(Mutex::new(Vec::new()));
+    let capture = events.clone();
+    tauri::async_runtime::block_on(crate::agent_runtime::measure_test_model(
+        model.clone(),
+        input,
+        Some(context),
+        crate::agent_runtime::AgentRuntimeObserver {
+            evidence_context: None,
+            cancelled: tokio_util::sync::CancellationToken::new(),
+            permissions: None,
+            on_event: Arc::new(move |event| {
+                if let AgentEvent::ContextMeasured { details } = event {
+                    capture.lock().unwrap().push(details);
+                }
+            }),
+        },
+    ))
+    .unwrap();
+    let requests = model.requests();
+    assert_eq!(requests.len(), 3);
+    let final_request = serde_json::to_string(requests.last().unwrap()).unwrap();
+    assert_eq!(
+        final_request.matches("interpretationGuidance").count(),
+        1,
+        "The first contract remains in history; a repeated read must not duplicate it"
+    );
+    assert!(final_request.contains("Evaluate each action"));
+    assert!(
+        final_request.contains("[S1]"),
+        "Read citations reach the model alongside their interpretation contract"
+    );
+    if let Ok(path) = std::env::var("GNEAUX_EVIDENCE_AUDIT_OUTPUT") {
+        let events = events.lock().unwrap();
+        let requests: Vec<_> = events
+            .iter()
+            .filter(|event| event["phase"] == "request")
+            .collect();
+        std::fs::write(path, serde_json::to_string_pretty(&requests).unwrap()).unwrap();
+    }
 }

@@ -539,8 +539,8 @@ fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
     assert_contains_all(
         &tools,
         &[
-            ".tool(ModelTool(SearchEvidenceTool(self.clone())))",
-            ".tool(ModelTool(ReadEvidenceTool(self.clone())))",
+            ".tool(ModelTool(FindNotesTool(self.clone())))",
+            ".tool(ModelTool(ReadNotesTool(self.clone())))",
             ".tool(ModelTool(ResearchNotesTool(self.clone())))",
         ],
     );
@@ -548,6 +548,7 @@ fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
     for source in [
         &tools,
         &history_tool,
+        &repository_file("src-tauri/src/agent_tools/interface.rs"),
         &evidence,
         &repository_file("src-tauri/src/agent_tools/research.rs"),
         &repository_module_tree("src-tauri/src/chat.rs"),

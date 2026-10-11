@@ -1,4 +1,5 @@
 use crate::services::tool_outcome::{FailureCode, ToolError};
+mod guidance;
 pub(crate) mod inventory;
 pub(crate) mod query;
 mod reads;
@@ -99,9 +100,13 @@ struct SearchBinding {
 #[derive(Default)]
 pub(crate) struct EvidenceSession {
     pub(crate) anchor: query::QueryAnchor,
+    delivered_guidance: guidance::Guidance,
     candidates: HashMap<String, Candidate>,
     searches: HashMap<String, (String, String, Vec<String>, Value)>,
     admitted: HashMap<String, PassageCitation>,
+    // Text delivered into this runtime's context, separate from discovery's
+    // freshness proofs. Forked workers have independent histories.
+    read_passages: HashMap<String, PassageCitation>,
     used_bytes: Arc<AtomicUsize>,
     sequence: usize,
     blocked_reads: HashSet<String>,
@@ -301,6 +306,103 @@ impl EvidenceSession {
             }
         }
     }
+    pub(crate) fn record_delivery(&mut self, passages: &[PassageCitation]) {
+        for passage in passages {
+            self.read_passages
+                .entry(passage.id.clone())
+                .or_insert_with(|| passage.clone());
+        }
+    }
+
+    /// Explicit canonical body context is readable text, but does not mint a
+    /// passage citation. Ambiguous selections conservatively grant no reuse.
+    pub(crate) fn record_body_context(
+        &mut self,
+        note_id: &str,
+        raw: &str,
+        excerpt: &str,
+        exact_start: Option<usize>,
+    ) {
+        if excerpt.is_empty() {
+            return;
+        }
+        let body = note::parse_note(raw).body;
+        let start = if let Some(start) = exact_start {
+            start
+        } else {
+            let mut hits = body.match_indices(excerpt);
+            let Some((start, _)) = hits.next() else {
+                return;
+            };
+            if hits.next().is_some() {
+                return;
+            }
+            start
+        };
+        let end = start + excerpt.len();
+        if body.get(start..end) != Some(excerpt) {
+            return;
+        }
+        let content_hash = canonical_content_hash(raw);
+        self.record_delivery(&[PassageCitation {
+            id: hash(&format!("{note_id}:{content_hash}:body:{start}:{end}")),
+            note_id: note_id.into(),
+            content_hash,
+            location: "body".into(),
+            start,
+            end,
+            excerpt: excerpt.into(),
+            revisions: vec![],
+            historical: None,
+        }]);
+    }
+
+    fn already_read(&self, passage: &PassageCitation) -> &'static str {
+        let mut spans: Vec<_> = self
+            .read_passages
+            .values()
+            .filter_map(|read| {
+                if read.note_id != passage.note_id
+                    || read.content_hash != passage.content_hash
+                    || read.location != passage.location
+                    || read.historical != passage.historical
+                {
+                    return None;
+                }
+                let start = read.start.max(passage.start);
+                let end = read.end.min(passage.end);
+                if start >= end {
+                    return None;
+                }
+                // Also check intersecting bytes: titles can change without changing
+                // the body/properties hash, and must never reuse old title text.
+                read.excerpt
+                    .get(start - read.start..end - read.start)
+                    .zip(
+                        passage
+                            .excerpt
+                            .get(start - passage.start..end - passage.start),
+                    )
+                    .is_some_and(|(prior, current)| prior == current)
+                    .then_some((start, end))
+            })
+            .collect();
+        spans.sort_unstable();
+        let mut end = passage.start;
+        let mut covered = 0;
+        for (start, next) in spans {
+            covered += next.saturating_sub(end.max(start));
+            end = end.max(next);
+        }
+        if covered == 0 {
+            "none"
+        } else if covered == passage.end - passage.start {
+            "full"
+        } else {
+            "partial"
+        }
+    }
+
     pub(super) fn used(&self) -> usize {
         self.used_bytes.load(Ordering::SeqCst)
     }
@@ -764,30 +866,37 @@ impl EvidenceSession {
                 }
             }
             ranked.sort_by(|a, b| {
-                b.3.total_cmp(&a.3)
-                    .then_with(|| a.0.cmp(&b.0))
-                    .then_with(|| a.1.cmp(&b.1))
+                b.score
+                    .total_cmp(&a.score)
+                    .then_with(|| a.note_id.cmp(&b.note_id))
+                    .then_with(|| a.text.cmp(&b.text))
             });
-            for (rank, (id, text, section, _)) in ranked.into_iter().enumerate() {
-                let Some(snapshot) = snapshot_for(state, &mut snapshots, &id) else {
+            for (rank, hit) in ranked.into_iter().enumerate() {
+                let Some(snapshot) = snapshot_for(state, &mut snapshots, &hit.note_id) else {
                     gaps.push("An indexed note is unavailable".into());
                     continue;
                 };
-                let body = &snapshot.locations["body"];
-                let Some((start, end)) = current_text_range(&body, &text) else {
+                let location = hit.location.as_str();
+                let content = &snapshot.locations[location];
+                let Some((start, end)) = current_text_range(content, &hit.text) else {
                     gaps.push("An indexed passage changed or was ambiguous".into());
                     continue;
                 };
                 let mut offset = start;
-                for text in passage_slices(&body[start..end]) {
+                for text in passage_slices(&content[start..end]) {
                     let relevant = request
                         .query
                         .split_whitespace()
                         .any(|term| text.to_lowercase().contains(&term.to_lowercase()));
                     let score = reciprocal_rank(rank) * if relevant { 1.1 } else { 1.0 };
-                    if let Some(c) =
-                        snapshot.candidate(&id, text, "body", &section, score, Some(offset))
-                    {
+                    if let Some(c) = snapshot.candidate(
+                        &hit.note_id,
+                        text,
+                        location,
+                        &hit.section_label,
+                        score,
+                        Some(offset),
+                    ) {
                         candidates.push(c);
                     } else {
                         gaps.push("An indexed passage changed".into());
@@ -910,7 +1019,7 @@ impl EvidenceSession {
         for c in candidates {
             self.candidates.insert(c.citation.id.clone(), c);
         }
-        let coverage = json!({"historyScope":if request.include_history {"Retained body and property line changes; excludes discarded within-window states, cleared history, title and lifecycle events"} else {"Current content only; activity dates apply to surviving ranges"},"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":EVIDENCE_BYTES,"usedBytes":self.used()}});
+        let coverage = json!({"kind":"retrieval","historyScope":if request.include_history {"Retained body and property line changes; excludes discarded within-window states, cleared history, title and lifecycle events"} else {"Current content only; activity dates apply to surviving ranges"},"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":EVIDENCE_BYTES,"usedBytes":self.used()}});
         self.searches.insert(
             key.clone(),
             (version, binding, result_ids.clone(), coverage.clone()),
@@ -944,16 +1053,17 @@ impl EvidenceSession {
                     + c.title.len().min(240)
                     + c.section.len().min(160)
                     + c.task.as_ref().map_or(0, |task| task.to_string().len())
+                    + 32 // Conservative allowance for alreadyRead metadata.
                     + 256,
             ) {
                 break;
             }
             next += 1;
             self.admit(c.citation.clone());
-            items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":bounded(&c.title,240),"section":bounded(&c.section,160),"preview":preview,"score":c.score,"location":c.citation.location,"hasTemporalEvidence":c.provenance.is_some(),"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"task":c.task}));
+            items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":bounded(&c.title,240),"section":bounded(&c.section,160),"preview":preview,"score":c.score,"location":c.citation.location,"hasTemporalEvidence":c.provenance.is_some(),"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"task":c.task,"alreadyRead":self.already_read(&c.citation)}));
         }
         Ok(
-            json!({"status":"ready","items":items,"nextCursor":(next<ids.len()).then(|| format!("{key}:{next}")),"truncated":next<ids.len(),"budgetExhausted":next==offset && next<ids.len(),"delivery":{"complete":next>=ids.len(),"hasMore":next<ids.len()},"coverage":coverage}),
+            json!({"status":"ready","items":items,"nextCursor":(next<ids.len()).then(|| format!("{key}:{next}")),"truncated":next<ids.len(),"budgetExhausted":next==offset && next<ids.len(),"delivery":{"kind":"previews","complete":next>=ids.len(),"hasMore":next<ids.len()},"coverage":coverage}),
         )
     }
 
@@ -1109,6 +1219,7 @@ impl EvidenceSession {
         if let Some(metadata) = task_dates.filter(|value| !value.is_null()) {
             item["taskDates"] = metadata;
         }
+        item["alreadyRead"] = json!(self.already_read(&c.citation));
         Ok((item, c.citation, path, title))
     }
 
@@ -1501,3 +1612,8 @@ pub(crate) fn validate_citation(
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+pub(crate) fn interpretation_guidance(items: &[Value]) -> String {
+    guidance::Guidance::default().pending(items).join("\n\n")
+}

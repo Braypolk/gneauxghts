@@ -1,4 +1,5 @@
 use super::*;
+mod coverage;
 
 #[test]
 fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
@@ -351,6 +352,13 @@ fn read_budget_never_charges_passages_discarded_by_response_overhead() {
                     session.admitted.is_empty(),
                     "Undelivered citations must not become admitted"
                 );
+                assert!(
+                    !session
+                        .delivered_guidance
+                        .pending(&[json!({"excerpt":"later"})])
+                        .is_empty(),
+                    "A failed delivery must not consume the interpretation contract"
+                );
             }
             Ok((payload, citations)) => {
                 let items = payload["items"].as_array().unwrap();
@@ -403,7 +411,7 @@ fn research_and_mixed_read_pages_preserve_deliverable_evidence_within_budget() {
         .to_string();
     let mut partials = 0;
     for research in [false, true] {
-        for remaining in (100..3000).step_by(50) {
+        for remaining in (100..=READ_BYTES).step_by(50) {
             let mut session = EvidenceSession::default();
             session.candidates = initial.candidates.clone();
             session
@@ -679,4 +687,144 @@ fn hybrid_composition_merges_agreement_widens_allowed_scope_and_reports_failure(
     assert!(gaps
         .iter()
         .any(|gap| gap.contains("lexical results remain")));
+}
+
+#[test]
+fn read_guidance_is_budgeted_once_and_reintroduced_for_independent_workers() {
+    let vault = crate::test_support::TestVault::new("read-guidance");
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Delivery".into(),
+        "- [ ] Ship @due(2026-10-09)".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let mut session = EvidenceSession::default();
+    let read = ReadRequest {
+        note_id: saved.note_id,
+        ..Default::default()
+    };
+    let (first, _) = session
+        .read_request(&vault.state, None, &HashSet::new(), read.clone())
+        .unwrap();
+    let guidance = first["interpretationGuidance"].as_array().unwrap();
+    assert_eq!(
+        guidance.len(),
+        3,
+        "Source scope, prose and current task deadline interpretation"
+    );
+    assert!(first.to_string().len() <= READ_BYTES);
+    assert!(session.used() >= first.to_string().len());
+    let (second, _) = session
+        .read_request(&vault.state, None, &HashSet::new(), read.clone())
+        .unwrap();
+    assert!(second.get("interpretationGuidance").is_none());
+    let before = session.used();
+    let mut worker = session.fork();
+    let (worker_page, _) = worker
+        .read_request(&vault.state, None, &HashSet::new(), read)
+        .unwrap();
+    assert_eq!(
+        worker_page["interpretationGuidance"],
+        first["interpretationGuidance"]
+    );
+    assert!(
+        session.used() > before,
+        "Workers share allowance but have independent guidance context"
+    );
+}
+
+#[test]
+fn guidance_bootstrap_preserves_complete_long_task_passages_and_shared_budget() {
+    let vault = crate::test_support::TestVault::new("long-task-guidance");
+    let line = format!("- [ ] {} @due(2026-10-09)", "a".repeat(1794));
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Long task".into(),
+        line.clone(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let mut initial = EvidenceSession::default();
+    initial
+        .read_request(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            ReadRequest {
+                note_id: saved.note_id,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    let id = initial
+        .candidates
+        .iter()
+        .find(|(_, c)| c.citation.location == "body")
+        .unwrap()
+        .0
+        .clone();
+    // Exercise all interpretation contracts at the serialization boundary. Task
+    // fact correctness itself is covered by the retained-activity contract tests.
+    initial.candidates.get_mut(&id).unwrap().task = Some(json!({"currentStatus":"open"}));
+    for research in [false, true] {
+        let mut session = initial.fork();
+        let before = session.used();
+        let (bootstrap, sources) = if research {
+            session.read_research(
+                &vault.state,
+                None,
+                &HashSet::new(),
+                &[id.clone()],
+                None,
+                vec![],
+            )
+        } else {
+            session.read_request(
+                &vault.state,
+                None,
+                &HashSet::new(),
+                ReadRequest {
+                    evidence_ids: vec![id.clone()],
+                    ..Default::default()
+                },
+            )
+        }
+        .unwrap();
+        assert!(
+            sources.is_empty(),
+            "Bootstrap does not admit the pending passage"
+        );
+        assert!(bootstrap["items"].as_array().unwrap().is_empty());
+        assert_eq!(
+            bootstrap["interpretationGuidance"]
+                .as_array()
+                .unwrap()
+                .len(),
+            4
+        );
+        assert!(bootstrap.to_string().len() <= READ_BYTES);
+        let followup = if research {
+            ReadRequest {
+                evidence_ids: vec![id.clone()],
+                ..Default::default()
+            }
+        } else {
+            ReadRequest {
+                cursor: Some(bootstrap["nextCursor"].as_str().unwrap().into()),
+                ..Default::default()
+            }
+        };
+        let (page, sources) = session
+            .read_request(&vault.state, None, &HashSet::new(), followup)
+            .unwrap();
+        assert_eq!(sources.len(), 1);
+        assert_eq!(page["items"][0]["excerpt"], line);
+        assert_eq!(page["items"][0]["taskDates"]["complete"], true);
+        assert!(page.get("interpretationGuidance").is_none());
+        assert!(page.to_string().len() <= READ_BYTES);
+        assert!(session.used() - before >= bootstrap.to_string().len() + page.to_string().len());
+    }
 }

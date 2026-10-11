@@ -9,6 +9,9 @@
   const centerY = $derived(geometry.bodyHeight - circle / 2);
   const leftNeckHeight = $derived(circle * 0.45 * geometry.leftNeck);
   const rightNeckHeight = $derived(circle * 0.45 * geometry.rightNeck);
+  // Blur joins nearby shells as well as the animated neck. Release it at
+  // either endpoint so the settled contours stay crisp and separate.
+  const blur = $derived(4 * Math.max(geometry.leftNeck, geometry.rightNeck));
 </script>
 
 <!-- One SVG paint layer owns the entire contour. Filtering HTML descendants
@@ -17,7 +20,7 @@
 <svg class="dock-material" aria-hidden="true">
   <defs>
     <filter id={filterId} x="-10%" y="-50%" width="120%" height="200%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="4" result="soft" />
+      <feGaussianBlur in="SourceGraphic" stdDeviation={blur < 0.001 ? 0 : blur} result="soft" />
       <feColorMatrix in="soft" type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 18 -8" result="joined" />
       <feMorphology in="joined" operator="dilate" radius="1" result="edge" />
       <feComposite in="edge" in2="joined" operator="out" result="outline" />

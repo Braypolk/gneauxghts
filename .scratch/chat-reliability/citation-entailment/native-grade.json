@@ -1,0 +1,291 @@
+{
+  "method": "Human claim judgments over fixed evidence; not automatic semantic grading",
+  "reviewSha256": "602f56d7919527123e904f9d531495d42a644eb43a920baffb76f0fc3fa84f8b",
+  "summary": {
+    "reviewedSamples": 3,
+    "pendingSamples": 0,
+    "passingReviewedSamples": 1,
+    "annotatedClaims": 11,
+    "noteClaims": 11,
+    "noteClaimsWithCitation": 3,
+    "noteClaimsWithAllCitationsInSuppliedSources": 3,
+    "noteClaimsWithReadAuthority": 3,
+    "semanticVerdicts": {
+      "unassessable": 8,
+      "unsupported": 1,
+      "supported": 2
+    },
+    "failureTags": {
+      "missing_citation": 8,
+      "malformed_reference": 8,
+      "source_scope_misattribution": 1,
+      "request_scope_violation": 1
+    }
+  },
+  "results": [
+    {
+      "case": "deadline-1",
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 2314,
+          "inputTokens": 5940,
+          "outputTokens": 529,
+          "reasoningTokens": 245,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 6469
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 0
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-3",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-4",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-5",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-6",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-7",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-8",
+            "citationPresent": false,
+            "citationMembership": false,
+            "readAuthority": false,
+            "semanticVerdict": "unassessable",
+            "failureTags": [
+              "missing_citation",
+              "malformed_reference"
+            ],
+            "passed": false
+          }
+        ],
+        "coverage": [
+          {
+            "id": "parent",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          },
+          {
+            "id": "child",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          },
+          {
+            "id": "completed",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          },
+          {
+            "id": "invalid",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          },
+          {
+            "id": "fence",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          },
+          {
+            "id": "inventory",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          }
+        ]
+      }
+    },
+    {
+      "case": "partial-selected",
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 2375,
+          "inputTokens": 5628,
+          "outputTokens": 68,
+          "reasoningTokens": 0,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 5696
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 1
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": false,
+        "claimInventory": "full",
+        "wholeAnswerPass": false,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "unsupported",
+            "failureTags": [
+              "source_scope_misattribution",
+              "request_scope_violation"
+            ],
+            "passed": false
+          },
+          {
+            "id": "claim-2",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "bounded_scope",
+            "status": "missing",
+            "reason": "The answer broadens beyond the explicit excerpt-only constraint and does not preserve uncertainty from that excerpt."
+          },
+          {
+            "id": "uncertainty",
+            "status": "missing",
+            "reason": "The answer broadens beyond the explicit excerpt-only constraint and does not preserve uncertainty from that excerpt."
+          }
+        ]
+      }
+    },
+    {
+      "case": "partial-unrestricted",
+      "metadata": {
+        "variant": "native-production-context",
+        "model": "gpt-6-luna",
+        "usage": {
+          "cacheCreationInputTokens": 0,
+          "cachedInputTokens": 6806,
+          "inputTokens": 8132,
+          "outputTokens": 100,
+          "reasoningTokens": 9,
+          "toolUsePromptTokens": 0,
+          "totalTokens": 8232
+        },
+        "origin": {
+          "path": "native-runtime.json",
+          "sha256": "51fd075588c16f2be154520b0b359a047a467689fed25e49891d242f4752e00b",
+          "resultIndex": 2
+        }
+      },
+      "score": {
+        "reviewComplete": true,
+        "passed": true,
+        "claimInventory": "full",
+        "wholeAnswerPass": true,
+        "claims": [
+          {
+            "id": "claim-1",
+            "citationPresent": true,
+            "citationMembership": true,
+            "readAuthority": true,
+            "semanticVerdict": "supported",
+            "failureTags": [],
+            "passed": true
+          }
+        ],
+        "coverage": [
+          {
+            "id": "approver",
+            "status": "covered",
+            "reason": "The required factual classification or identification is correct; citation support is graded separately."
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,173 @@
+{
+  "method": "Manual answer-level review of eight completed answers. No automated entailment score or general reliability estimate. Original failed request retained separately.",
+  "answers": {
+    "fresh_mixed_bullets/verbose": {
+      "rawAnswerSha256": "0bfb62aa3ed6fcd080f1e96bdacab30bbac2a946e37078c37be7e8a5d7d01bf4",
+      "factAndScopePass": true,
+      "citationCoveragePass": true,
+      "presentationPass": true,
+      "observations": [
+        {
+          "quote": "Willow",
+          "finding": "Action/Leah/October 13 correctly cite S1."
+        },
+        {
+          "quote": "Quartz",
+          "finding": "Action/Ravi/October 16 correctly cite S2."
+        },
+        {
+          "quote": "Meadow",
+          "finding": "Action/Mina/missing deadline correctly cite S3."
+        },
+        {
+          "quote": "Suggestion",
+          "finding": "Advice explicitly identified as the assistant interpretation. Compact cites its factual basis; verbose uses an unsourced segment. Both acceptable."
+        }
+      ]
+    },
+    "fresh_mixed_bullets/compact": {
+      "rawAnswerSha256": "f03f960ba786229f00c0a9bcadb8401af424a12ff36d1d11564fb76372af4e73",
+      "factAndScopePass": true,
+      "citationCoveragePass": true,
+      "presentationPass": true,
+      "observations": [
+        {
+          "quote": "Willow",
+          "finding": "Action/Leah/October 13 correctly cite S1."
+        },
+        {
+          "quote": "Quartz",
+          "finding": "Action/Ravi/October 16 correctly cite S2."
+        },
+        {
+          "quote": "Meadow",
+          "finding": "Action/Mina/missing deadline correctly cite S3."
+        },
+        {
+          "quote": "suggestion",
+          "finding": "Advice explicitly identified as the assistant interpretation. Compact cites its factual basis; verbose uses an unsourced segment. Both acceptable."
+        }
+      ]
+    },
+    "fresh_task_table/compact": {
+      "rawAnswerSha256": "a7bb7642b42e63f99e33a098993db9acef6f70001401f1f51af8db68891323b0",
+      "factAndScopePass": true,
+      "citationCoveragePass": false,
+      "presentationPass": false,
+      "observations": [
+        {
+          "quote": "Draft release memo",
+          "finding": "Open with October 10 deadline and actionable overdue."
+        },
+        {
+          "quote": "Send invitations",
+          "finding": "Completed with October 9 deadline; not actionable overdue."
+        },
+        {
+          "quote": "Arrange review",
+          "finding": "Open and undated; overdue unknown."
+        },
+        {
+          "quote": "[S1]",
+          "finding": "Invalid bracketed source ID in sources array: final validation rejects the entire answer; correct table facts do not repair delivery."
+        }
+      ]
+    },
+    "fresh_task_table/verbose": {
+      "rawAnswerSha256": "6fbed3e423915650b0a83996b96fb8794aec3300efd8d4e514d1cb900f9f297c",
+      "factAndScopePass": true,
+      "citationCoveragePass": true,
+      "presentationPass": true,
+      "observations": [
+        {
+          "quote": "Draft release memo",
+          "finding": "Open with October 10 deadline and actionable overdue."
+        },
+        {
+          "quote": "Send invitations",
+          "finding": "Completed with October 9 deadline; not actionable overdue."
+        },
+        {
+          "quote": "Arrange review",
+          "finding": "Open and undated; overdue unknown."
+        }
+      ]
+    },
+    "fresh_excerpt_only/verbose": {
+      "rawAnswerSha256": "4f201dcc326dfd4caaf19382da518874321c7192e4d7609d17c1370602b6278e",
+      "factAndScopePass": false,
+      "citationCoveragePass": false,
+      "presentationPass": false,
+      "observations": [
+        {
+          "quote": "Priya",
+          "finding": "Incorrectly attributes Priya to the selected excerpt. Full body names Priya; selected excerpt does not. Scope fails in both arms."
+        },
+        {
+          "quote": "citeS1",
+          "finding": "Verbose leaks a foreign citation marker in text despite its structured-format instruction."
+        }
+      ]
+    },
+    "fresh_excerpt_only/compact": {
+      "rawAnswerSha256": "cf2d912ae9b2c25adfa0d84cadb6f8cbcbcc6f51669e8bd96a0e6c0f9d153956",
+      "factAndScopePass": false,
+      "citationCoveragePass": false,
+      "presentationPass": false,
+      "observations": [
+        {
+          "quote": "Priya",
+          "finding": "Incorrectly attributes Priya to the selected excerpt. Full body names Priya; selected excerpt does not. Scope fails in both arms."
+        },
+        {
+          "quote": "[S1]",
+          "finding": "Compact also fails issued-ID validation because of bracketed sources."
+        }
+      ]
+    },
+    "fresh_multi_source_hold/compact": {
+      "rawAnswerSha256": "0abe016091f7e4faa15190f9738db93b5acf0bb3ad3ca2307e121f2261a41ade",
+      "factAndScopePass": true,
+      "citationCoveragePass": true,
+      "presentationPass": true,
+      "observations": [
+        {
+          "quote": "October 9",
+          "finding": "Latest hold supersedes earlier approval; correctly cites S1/S2."
+        },
+        {
+          "quote": "route D",
+          "finding": "Witnessed drill requirement preserved."
+        },
+        {
+          "quote": "October 12",
+          "finding": "Planned drill is not evidence of completion; uncertainty bounded to available record and S2/S3."
+        }
+      ]
+    },
+    "fresh_multi_source_hold/verbose": {
+      "rawAnswerSha256": "4f0c4a858790bc52be4acc86c6a53b901266e0d67fb70e401deef2de6248cf52",
+      "factAndScopePass": true,
+      "citationCoveragePass": true,
+      "presentationPass": false,
+      "observations": [
+        {
+          "quote": "October 9",
+          "finding": "Latest hold supersedes earlier approval; correctly cites S1/S2."
+        },
+        {
+          "quote": "route D",
+          "finding": "Witnessed drill requirement preserved."
+        },
+        {
+          "quote": "October 12",
+          "finding": "Planned drill is not evidence of completion; uncertainty bounded to available record and S2/S3."
+        },
+        {
+          "quote": "[Actually citation text no bracket markers; citation sources.]",
+          "finding": "Leaks internal formatting commentary into the answer. Facts and source associations otherwise pass."
+        }
+      ]
+    }
+  }
+}

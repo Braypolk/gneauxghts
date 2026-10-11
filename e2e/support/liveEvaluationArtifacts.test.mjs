@@ -3,7 +3,19 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createEvaluationArtifact, requireLiveConfiguration, selectAssistant } from './liveEvaluationArtifacts.mjs';
+import { createEvaluationArtifact, isTerminalAssistant, requireLiveConfiguration, selectAssistant } from './liveEvaluationArtifacts.mjs';
+
+test('native provider errors terminate waiting without cancelling an already finished request', () => {
+  const providerFailure = { role: 'assistant', status: 'error', error: 'Flex unavailable' };
+  assert.equal(isTerminalAssistant(providerFailure), true);
+  assert.equal(isTerminalAssistant({ status: 'complete' }), true);
+  assert.equal(isTerminalAssistant({ status: 'cancelled' }), true);
+  assert.equal(isTerminalAssistant({ status: 'failed' }), true);
+  assert.equal(isTerminalAssistant({ status: 'streaming' }), false);
+  assert.equal(isTerminalAssistant(undefined), false);
+  const messages = [{ id: 'user', role: 'user', status: 'complete' }, providerFailure];
+  assert.equal(isTerminalAssistant(selectAssistant(messages)), true);
+});
 
 test('live configuration has no model/endpoint/artifact fallback and rejects scale fixtures', () => {
   const config = { GNEAUX_LIVE_ENDPOINT: 'http://localhost:8080/v1', GNEAUX_LIVE_MODEL: 'fixture-model', GNEAUX_LIVE_OUTPUT: '/tmp/result.json' };

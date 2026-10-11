@@ -1,0 +1,16 @@
+{
+  "method": "Source hashes before opt-in production-reference check; source/evidence facts and core instructions remain unchanged, only supplied citation representation differs",
+  "cases": [
+    "deadline_inventory",
+    "partial_read_absence"
+  ],
+  "repeats": 2,
+  "files": {
+    "src-tauri/src/chat/citation_evaluation.rs": "5cefbfc4a00eb682ae4026dc626357361d7465f43699a9bdef575d03acb1765c",
+    "src-tauri/src/chat/citations.rs": "2853f78237b9db3c8ac01d3fa2ad9b44967b13453134537737817352aedf553f",
+    "src-tauri/src/chat/assistant_instructions.txt": "64bd25993dcc5cf80ce253833efd08d8ae171a8478349186d83082a54435a414",
+    "src-tauri/src/services/evidence/guidance.rs": "0e91a6b74f46035d05dfd2f0bf536878d0cc28c7a63bfd8cbcd05da6a751c3fe",
+    ".scratch/chat-reliability/citation-entailment/run_live.py": "3b1e423f4201076910efdf054af85c4f0e2cfdeb350802aebad86641b0397ec7",
+    ".scratch/chat-reliability/citation-entailment/fixtures.json": "e3b6765c7942049fca10d017edd090a8edf089a304504f507d454867ae52471a"
+  }
+}

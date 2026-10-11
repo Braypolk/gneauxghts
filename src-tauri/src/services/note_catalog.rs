@@ -466,8 +466,8 @@ mod tests {
             .unwrap();
         assert_eq!(count, 1);
         assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].0, "projection-id");
-        assert_eq!(matches[0].1, "Managed chat lexical body");
+        assert_eq!(matches[0].note_id, "projection-id");
+        assert_eq!(matches[0].text, "Managed chat lexical body");
         let tasks = crate::state::task_projection::load_tasks_for_note_id("projection-id").unwrap();
         assert_eq!(tasks.len(), 1);
         assert_eq!(tasks[0].text, "retained ordinary task");

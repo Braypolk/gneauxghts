@@ -1,0 +1,56 @@
+{
+  "traces": [
+    {
+      "trace": "native-navigation-harness-failure.json",
+      "sha256": "e4a6965faee01308f5abd3f00386db369ed405d766e9d4aa339ea8639ccc7b46",
+      "turns": 1,
+      "modelCalls": 4,
+      "inputTokens": 11877,
+      "outputTokens": 222,
+      "cachedInputTokens": 7758
+    },
+    {
+      "trace": "native-composer-harness-failure.json",
+      "sha256": "9f728b50bf3aebaf6a2ab1e2ed5709ca6ba7f46e349f06379ac044e06e3204e5",
+      "turns": 1,
+      "modelCalls": 3,
+      "inputTokens": 9800,
+      "outputTokens": 268,
+      "cachedInputTokens": 7380
+    },
+    {
+      "trace": "native-token-oracle-failure.json",
+      "sha256": "1212af2c28118d9421b177d057f14df367430a0a8800baab877ba0bf68bed962",
+      "turns": 2,
+      "modelCalls": 7,
+      "inputTokens": 23182,
+      "outputTokens": 543,
+      "cachedInputTokens": 17852
+    },
+    {
+      "trace": "native-updated-referent-failure.json",
+      "sha256": "4b5ca1d48c505b90c9a7afa728106ad595aabcfee78f91ca9f364cd89de650f2",
+      "turns": 3,
+      "modelCalls": 9,
+      "inputTokens": 27787,
+      "outputTokens": 660,
+      "cachedInputTokens": 22243
+    },
+    {
+      "trace": "native-multiturn-semantic.json",
+      "sha256": "1119f1077f88055530edca2e63b9eac3864f9592fabc76b323077a46cab0beef",
+      "turns": 5,
+      "modelCalls": 15,
+      "inputTokens": 45877,
+      "outputTokens": 871,
+      "cachedInputTokens": 36345
+    }
+  ],
+  "totals": {
+    "turns": 12,
+    "modelCalls": 38,
+    "inputTokens": 118523,
+    "outputTokens": 2564,
+    "cachedInputTokens": 91578
+  }
+}

@@ -648,16 +648,19 @@ assembly. Private `chat/admission.rs` commits the user message, attachments,
 assistant placeholder, run, and context in one transaction. Private `chat/store.rs`
 owns connection policy and atomic terminal message/source/run persistence; all
 connections enforce foreign keys. `chat/runtime.rs` reports successful completion
-only after that transaction commits. Streaming checkpoints use one connection
-per response; checkpoint errors do not prevent UI delta delivery, so streamed
-text can lead its durable checkpoint. `chat/projection.rs` serializes managed
+only after that transaction commits. `chat/answer_stream.rs` owns transient
+structured drafts separately from ordinary text. Structured answers are never
+checkpointed before final validation; a failed or cancelled draft has no durable
+answer text or sources. Ordinary text checkpoints use one connection per response;
+checkpoint errors do not prevent UI delta delivery, so that text can lead its
+durable checkpoint. `chat/projection.rs` serializes managed
 transcript publication (filesystem bytes and SQLite hash receipts) with conflict
 classification; a projection failure after admission cannot reject an already
 accepted request. The watcher rechecks current
 projection bytes after publication; queued own-write events cannot detach chats.
 Provider client/model construction belongs to `agent_runtime.rs`. The internal
-chat/runtime request still uses Rig messages and usage types; persisted chat and
-frontend contracts use app-owned types.
+chat/runtime request still uses Rig messages; usage, persisted chat and frontend
+contracts use app-owned types.
 
 At startup, `ChatService` recovers missing conversation identities from surviving
 managed Markdown in `Chats` through its private transcript recovery module.
@@ -875,7 +878,10 @@ canonical note identities and titles to its answer ordinal and a bounded copy of
 the preceding user request, and marks the latest completed answer. That historical
 user wording preserves conversational intent; it does not establish note facts.
 These navigation hints carry no old excerpts, assistant claims or citation authority. Compacted references
-are rebuilt from stored sources on every request rather than persisted in summaries.
+are rebuilt from stored sources and separate working-note reference IDs on every
+request rather than persisted in summaries. Successful editing acknowledgements
+save those IDs in the terminal transaction, including across reloads and branches;
+working-copy excerpts never become citation sources or later context.
 Access, identity and location are rechecked before inference and delivery; body
 changes alone do not invalidate these metadata hints. Only references admitted
 to the rendered history retain validation bindings. Runtime observers carry an
@@ -923,11 +929,33 @@ uses a closed evidence-ID/gap schema; accidental terminal prose receives the
 engine's bounded output retry under the same call/token/time limits. The evidence
 owner still rejects unread IDs, unknown fields/gaps and oversized selections.
 Isolation clears any parent result schema before assigning the worker contract.
+OpenAI forced web search selects the hosted tool on the initial completion only.
+The app-owned dispatch policy releases that raw selection on subsequent requests,
+including output retries, so gathering tools and the result formatter can run.
 During context finishing, only this appended formatter remains callable; all
 executable tools are removed. The private compatibility check matches the final
 definition's exact result schema, including collision-renamed formatters, and is
 covered through the production streaming runner. Measurement separates formatter
 count from executable tool count without recording their definitions or content.
+
+Tool-capable chat uses a readable `segments`/`text`/`sources` answer schema.
+`agent_runtime/result_stream.rs` identifies the appended formatter by its exact
+schema on each actual dispatch (including output retries and renamed formatters),
+then emits internal, non-durable `ResultStream` fragments for that part only.
+Executable arguments and ordinary formatter commentary are not draft answer text.
+`chat/structured_answer.rs` decodes only segment text from bounded JSON prefixes;
+`chat://answer-draft` carries a full literal-text snapshot with request/message
+identity, dispatch attempt and sequence. Raw JSON never enters frontend activity
+or durable event history. The controller rejects old attempts, sequences and
+terminal-run events; draft text has no Markdown, links or citation controls.
+At finalization the app independently rejects malformed/unknown fields, duplicate
+or unissued IDs and stale/excluded passages, then constructs Markdown links and
+persists only selected validated sources. Rig Tool mode retries malformed JSON;
+it does not enforce the app's closed schema. App validation failures are terminal
+and retryable by the user, without an extra automatic model call. Final Markdown
+replaces the draft only after terminal persistence succeeds. Local models without
+tool support keep their ordinary text path. These checks establish source identity
+and shape, not semantic entailment of a model's claims.
 
 An empty resolved research scope returns `empty_scope` without starting worker
 inference or widening access. Selection accepts raw JSON or one standalone JSON

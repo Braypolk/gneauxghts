@@ -1,0 +1,171 @@
+{
+  "schemaVersion": 1,
+  "method": "Post-run review snapshot of actual native delivered passages; no generation uses these expected requirements. Original questions/notes/preamble frozen in pre-run spec/provenance.",
+  "cases": [
+    {
+      "id": "deadline-1",
+      "question": "In Meridian deadlines, as of September 30, 2026, classify every checkbox item (including the completed one) by recorded status and supported deadline. Explain whether each would be actionable overdue on that date, and whether the fenced-code example is a task.",
+      "context": {
+        "asOf": "2026-09-30"
+      },
+      "sources": [
+        {
+          "id": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+          "title": "Meridian deadlines",
+          "location": "title",
+          "text": "Meridian deadlines",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+              "end": 18,
+              "excerpt": "Meridian deadlines",
+              "id": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+              "location": "title",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        },
+        {
+          "id": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+          "title": "Meridian deadlines",
+          "location": "body",
+          "text": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+              "end": 187,
+              "excerpt": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+              "id": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+              "location": "body",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "parent": "Parent open, due October 1 (first valid annotation), upcoming/not overdue as of September 30, 2026.",
+        "child": "Child open, independently undated; overdue classification unknown.",
+        "completed": "Completed due September 29; not actionable overdue.",
+        "invalid": "Invalid date yields open undated task; overdue classification unknown.",
+        "fence": "Fenced checkbox example is not an actual task.",
+        "inventory": "All four actual checkboxes classified."
+      },
+      "controls": []
+    },
+    {
+      "id": "partial-selected",
+      "question": "Using only the selected excerpt, can you tell whether Meridian retrospective names an approver anywhere?",
+      "context": {
+        "selectedExcerpt": "Deployment approval was discussed."
+      },
+      "sources": [
+        {
+          "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+          "title": "Meridian retrospective",
+          "location": "title",
+          "text": "Meridian retrospective",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        },
+        {
+          "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "bounded_scope": "Use only the selected excerpt; do not attribute Jordan to this excerpt.",
+        "uncertainty": "Excerpt does not name an approver; whole-note presence cannot be determined from that excerpt alone."
+      },
+      "controls": []
+    },
+    {
+      "id": "partial-unrestricted",
+      "question": "Does Meridian retrospective name an approver anywhere?",
+      "context": {
+        "selectedExcerpt": "Deployment approval was discussed."
+      },
+      "sources": [
+        {
+          "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+          "title": "Meridian retrospective",
+          "location": "title",
+          "text": "Meridian retrospective",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        },
+        {
+          "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "nativePassage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "approver": "Read beyond selected excerpt as needed and identify Jordan with supporting canonical body evidence."
+      },
+      "controls": []
+    }
+  ]
+}

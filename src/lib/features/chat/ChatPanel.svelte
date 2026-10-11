@@ -210,7 +210,6 @@
     split={headerSplit}
     workspace={variant === 'pane'}
     bind:titleDraft
-    contextNoteTitle={contextNote?.noteTitle ?? null}
     {openMenu}
     onOpenMenu={(menu) => (openMenu = menu)}
     onFocusComposer={focusChatComposer}

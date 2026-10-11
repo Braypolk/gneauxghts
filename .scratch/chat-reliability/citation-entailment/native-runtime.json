@@ -1,0 +1,3319 @@
+{
+  "method": "Real native app and production chat_send_message IPC, canonical synthetic notes, full production tool definitions/preamble, actual source admission and reference rendering. Lexical-only retrieval; no semantic quality or UI navigation claim. Semantic judgments recorded separately.",
+  "settings": {
+    "atlasVisibility": "hidden",
+    "defaultAccess": "approved",
+    "localBaseUrl": "http://localhost:1234/v1",
+    "localModel": "",
+    "model": "gpt-6-luna",
+    "openaiModel": "gpt-6-luna",
+    "provider": "openai",
+    "reasoningEffort": "medium",
+    "serviceTier": "flex",
+    "webAccess": "off"
+  },
+  "notes": [
+    {
+      "markdown": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+      "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+      "path": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-native-e2e-E9tdj0/documents/vault/Meridian deadlines.md",
+      "tags": [],
+      "title": "Meridian deadlines"
+    },
+    {
+      "markdown": "Deployment approval was discussed.\n\nJordan approved deployment.",
+      "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+      "path": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-native-e2e-E9tdj0/documents/vault/Meridian retrospective.md",
+      "tags": [],
+      "title": "Meridian retrospective"
+    }
+  ],
+  "selectedExcerpt": "Deployment approval was discussed.",
+  "limits": {
+    "maxCases": 4,
+    "modelCallsPerAnswer": 4,
+    "toolCallsPerAnswer": 6,
+    "reportedTokensPerAnswer": 24000,
+    "timeoutMillisPerAnswer": 120000,
+    "note": "Observed cancellation bounds; an in-flight call can exceed a token threshold before usage is reported."
+  },
+  "results": [
+    {
+      "caseId": "deadline-1",
+      "question": "In Meridian deadlines, as of September 30, 2026, classify every checkbox item (including the completed one) by recorded status and supported deadline. Explain whether each would be actionable overdue on that date, and whether the fenced-code example is a task.",
+      "conversationId": "chat_49c419657e318bb055db",
+      "requestId": "req_bbbdd720004315289e87",
+      "answer": {
+        "agentEvents": [
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693507257,
+            "event": {
+              "index": 0,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 1
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693507261,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1524,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3408,
+                "executableToolCount": 5,
+                "inputBytes": 13632,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 13802,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 0,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 2
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516944,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "callIndex": 0,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1524,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3408,
+                "executableToolCount": 5,
+                "inputBytes": 13632,
+                "inputEstimateErrorTokens": 1091,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2317,
+                  "outputTokens": 75,
+                  "reasoningTokens": 31,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2392
+                },
+                "requestBytes": 13802,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 0,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 3
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516947,
+            "event": {
+              "index": 0,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 0,
+                "inputTokens": 2317,
+                "outputTokens": 75,
+                "reasoningTokens": 31,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2392
+              }
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 4
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516949,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 0,
+                "inputTokens": 2317,
+                "outputTokens": 75,
+                "reasoningTokens": 31,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2392
+              },
+              "call_index": 0,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 5
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516951,
+            "event": {
+              "call_id": "76HwfYzikB9rfgHfMa0Z6",
+              "name": "read_notes",
+              "status": "running",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 6
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516963,
+            "event": {
+              "call_id": "76HwfYzikB9rfgHfMa0Z6",
+              "duration_millis": 11,
+              "name": "read_notes",
+              "output_summary": "Read 2 passages from 1 notes",
+              "status": "success",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 7
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516968,
+            "event": {
+              "index": 1,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 8
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693516973,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 3731,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "toolResults": 5154,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 5249,
+                "executableToolCount": 5,
+                "inputBytes": 20993,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 21165,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 0,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 9
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693532682,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "callIndex": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 3731,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "toolResults": 5154,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 5249,
+                "executableToolCount": 5,
+                "inputBytes": 20993,
+                "inputEstimateErrorTokens": 1626,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2314,
+                  "inputTokens": 3623,
+                  "outputTokens": 454,
+                  "reasoningTokens": 214,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 4077
+                },
+                "requestBytes": 21165,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 0,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 242
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693532685,
+            "event": {
+              "index": 1,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2314,
+                "inputTokens": 3623,
+                "outputTokens": 454,
+                "reasoningTokens": 214,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 4077
+              }
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 243
+          },
+          {
+            "conversationId": "chat_49c419657e318bb055db",
+            "createdAtMillis": 1791693532687,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2314,
+                "inputTokens": 5940,
+                "outputTokens": 529,
+                "reasoningTokens": 245,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 6469
+              },
+              "call_index": 1,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_1e23b0ddf79fee1baa80",
+            "requestId": "req_bbbdd720004315289e87",
+            "runId": "run_9e5817287943ff6a0c48",
+            "schemaVersion": 2,
+            "sequence": 244
+          }
+        ],
+        "attachments": [],
+        "content": "According to **Meridian deadlines**, the note records four checkbox items; the fenced-code example is not a task. As of **September 30, 2026**:\n\n| Checkbox item | Recorded status | Supported deadline | Actionable overdue on September 30? |\n|---|---|---|---|\n| Parent | Open | October 1, 2026—the first valid `@due` annotation | **No**; its supported deadline was the next day. |\n| Undated child | Open | None recorded; it does not inherit the parent’s deadline | **Cannot determine** from the note. |\n| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |\n| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |\n\nThe Parent line also has a later `@due(2026-10-07)` annotation, but the note’s deadline parsing uses the first valid annotation. The fenced example is code, not a checkbox task. 【S2】",
+        "conversationId": "chat_49c419657e318bb055db",
+        "createdAtMillis": 1791693507110,
+        "error": null,
+        "id": "msg_1e23b0ddf79fee1baa80",
+        "ordinal": 2,
+        "part": 1,
+        "role": "assistant",
+        "sources": [
+          {
+            "anchor": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+            "excerpt": "Meridian deadlines",
+            "kind": "passage",
+            "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+            "notePath": "Meridian deadlines.md",
+            "passage": {
+              "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+              "end": 18,
+              "excerpt": "Meridian deadlines",
+              "id": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+              "location": "title",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian deadlines",
+            "url": null
+          },
+          {
+            "anchor": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+            "excerpt": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+            "kind": "passage",
+            "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+            "notePath": "Meridian deadlines.md",
+            "passage": {
+              "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+              "end": 187,
+              "excerpt": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+              "id": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+              "location": "body",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian deadlines",
+            "url": null
+          }
+        ],
+        "status": "complete"
+      },
+      "resolutions": [],
+      "rawStream": "According to **Meridian deadlines**, the note records four checkbox items; the fenced-code example is not a task. As of **September 30, 2026**:\n\n| Checkbox item | Recorded status | Supported deadline | Actionable overdue on September 30? |\n|---|---|---|---|\n| Parent | Open | October 1, 2026—the first valid `@due` annotation | **No**; its supported deadline was the next day. |\n| Undated child | Open | None recorded; it does not inherit the parent’s deadline | **Cannot determine** from the note. |\n| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |\n| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |\n\nThe Parent line also has a later `@due(2026-10-07)` annotation, but the note’s deadline parsing uses the first valid annotation. The fenced example is code, not a checkbox task. 【S2】",
+      "elapsedMillis": 25664
+    },
+    {
+      "caseId": "partial-selected",
+      "question": "Using only the selected excerpt, can you tell whether Meridian retrospective names an approver anywhere?",
+      "conversationId": "chat_1947df089d7f59443451",
+      "requestId": "req_e2386add3e6801f3b1cd",
+      "answer": {
+        "agentEvents": [
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693532945,
+            "event": {
+              "compacted": false,
+              "selected_note_titles": [
+                "Meridian retrospective"
+              ],
+              "type": "contextUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 1
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693532947,
+            "event": {
+              "index": 0,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 2
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693532949,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1672,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3455,
+                "executableToolCount": 5,
+                "inputBytes": 13818,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 13988,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 1,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 3
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535267,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "callIndex": 0,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1672,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3455,
+                "executableToolCount": 5,
+                "inputBytes": 13818,
+                "inputEstimateErrorTokens": 1077,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2378,
+                  "outputTokens": 39,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2417
+                },
+                "requestBytes": 13988,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 1,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 4
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535271,
+            "event": {
+              "index": 0,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 0,
+                "inputTokens": 2378,
+                "outputTokens": 39,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2417
+              }
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 5
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535273,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 0,
+                "inputTokens": 2378,
+                "outputTokens": 39,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2417
+              },
+              "call_index": 0,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 6
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535276,
+            "event": {
+              "call_id": "LN5UcuTz9m1n07XPCbvFl",
+              "name": "read_notes",
+              "status": "running",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 7
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535290,
+            "event": {
+              "call_id": "LN5UcuTz9m1n07XPCbvFl",
+              "duration_millis": 14,
+              "name": "read_notes",
+              "output_summary": "Read 2 passages from 1 notes",
+              "status": "success",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 8
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535297,
+            "event": {
+              "index": 1,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 9
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693535302,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1966,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 3735,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 4462,
+                "executableToolCount": 5,
+                "inputBytes": 17847,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 18019,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 1,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 10
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693537328,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "callIndex": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1966,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 3735,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 4462,
+                "executableToolCount": 5,
+                "inputBytes": 17847,
+                "inputEstimateErrorTokens": 1212,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2375,
+                  "inputTokens": 3250,
+                  "outputTokens": 29,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 3279
+                },
+                "requestBytes": 18019,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 1,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 36
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693537332,
+            "event": {
+              "index": 1,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2375,
+                "inputTokens": 3250,
+                "outputTokens": 29,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 3279
+              }
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 37
+          },
+          {
+            "conversationId": "chat_1947df089d7f59443451",
+            "createdAtMillis": 1791693537333,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2375,
+                "inputTokens": 5628,
+                "outputTokens": 68,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 5696
+              },
+              "call_index": 1,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_889706a49bedcccc50f5",
+            "requestId": "req_e2386add3e6801f3b1cd",
+            "runId": "run_8e3ae2a39d88d57d4b60",
+            "schemaVersion": 2,
+            "sequence": 38
+          }
+        ],
+        "attachments": [],
+        "content": "Yes. Using only the selected excerpt, **Meridian retrospective names Jordan**: “Jordan approved deployment.” [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+        "conversationId": "chat_1947df089d7f59443451",
+        "createdAtMillis": 1791693532797,
+        "error": null,
+        "id": "msg_889706a49bedcccc50f5",
+        "ordinal": 2,
+        "part": 1,
+        "role": "assistant",
+        "sources": [
+          {
+            "anchor": null,
+            "excerpt": "Deployment approval was discussed.",
+            "kind": "note",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          {
+            "anchor": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+            "excerpt": "Meridian retrospective",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          {
+            "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+            "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          }
+        ],
+        "status": "complete"
+      },
+      "resolutions": [
+        {
+          "markdown": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "selection": {
+            "anchor": 0,
+            "head": 63
+          },
+          "source": {
+            "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+            "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          "evidenceId": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "status": "resolved"
+        }
+      ],
+      "rawStream": "Yes. Using only the selected excerpt, **Meridian retrospective names Jordan**: “Jordan approved deployment.” [S2]",
+      "elapsedMillis": 4683
+    },
+    {
+      "caseId": "partial-unrestricted",
+      "question": "Does Meridian retrospective name an approver anywhere?",
+      "conversationId": "chat_f1cc83a02b4a09cd5892",
+      "requestId": "req_2cbce39b45d07310ab3c",
+      "answer": {
+        "agentEvents": [
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693537540,
+            "event": {
+              "compacted": false,
+              "selected_note_titles": [
+                "Meridian retrospective"
+              ],
+              "type": "contextUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 1
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693537546,
+            "event": {
+              "index": 0,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 2
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693537548,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1622,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3442,
+                "executableToolCount": 5,
+                "inputBytes": 13768,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 13938,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 3
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539439,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "callIndex": 0,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1622,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3442,
+                "executableToolCount": 5,
+                "inputBytes": 13768,
+                "inputEstimateErrorTokens": 1073,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2004,
+                  "inputTokens": 2369,
+                  "outputTokens": 26,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2395
+                },
+                "requestBytes": 13938,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 4
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539442,
+            "event": {
+              "index": 0,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2004,
+                "inputTokens": 2369,
+                "outputTokens": 26,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2395
+              }
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 5
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539444,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2004,
+                "inputTokens": 2369,
+                "outputTokens": 26,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2395
+              },
+              "call_index": 0,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 6
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539446,
+            "event": {
+              "call_id": "xeYcagLyFfDDd55_FpIR6",
+              "name": "read_notes",
+              "status": "running",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 7
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539451,
+            "event": {
+              "call_id": "xeYcagLyFfDDd55_FpIR6",
+              "duration_millis": 4,
+              "name": "read_notes",
+              "output_summary": "Unknown evidence ID; search first",
+              "status": "error",
+              "step_index": 0,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 8
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539455,
+            "event": {
+              "index": 1,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 9
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693539459,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1899,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 336,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3596,
+                "executableToolCount": 5,
+                "inputBytes": 14381,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 14553,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 10
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541946,
+            "event": {
+              "details": {
+                "attempt": 2,
+                "callIndex": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1899,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 336,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3596,
+                "executableToolCount": 5,
+                "inputBytes": 14381,
+                "inputEstimateErrorTokens": 1157,
+                "loadedContextTokens": null,
+                "messageCount": 5,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2366,
+                  "inputTokens": 2439,
+                  "outputTokens": 50,
+                  "reasoningTokens": 9,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2489
+                },
+                "requestBytes": 14553,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 11
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541950,
+            "event": {
+              "index": 1,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2366,
+                "inputTokens": 2439,
+                "outputTokens": 50,
+                "reasoningTokens": 9,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 2489
+              }
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 12
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541952,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 4370,
+                "inputTokens": 4808,
+                "outputTokens": 76,
+                "reasoningTokens": 9,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 4884
+              },
+              "call_index": 1,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 13
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541955,
+            "event": {
+              "call_id": "oZiFWGdtMb_QkEuNEtSgN",
+              "name": "read_notes",
+              "status": "running",
+              "step_index": 1,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 14
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541970,
+            "event": {
+              "call_id": "oZiFWGdtMb_QkEuNEtSgN",
+              "duration_millis": 15,
+              "name": "read_notes",
+              "output_summary": "Read 2 passages from 1 notes",
+              "status": "success",
+              "step_index": 1,
+              "title": "Read selected passages",
+              "type": "toolCallUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 15
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541977,
+            "event": {
+              "index": 2,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 16
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693541983,
+            "event": {
+              "details": {
+                "attempt": 3,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 3830,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 4071,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 5012,
+                "executableToolCount": 5,
+                "inputBytes": 20047,
+                "loadedContextTokens": null,
+                "messageCount": 7,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 20221,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 17
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693544016,
+            "event": {
+              "details": {
+                "attempt": 3,
+                "callIndex": 2,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 3830,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3493,
+                  "toolResults": 4071,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 5012,
+                "executableToolCount": 5,
+                "inputBytes": 20047,
+                "inputEstimateErrorTokens": 1688,
+                "loadedContextTokens": null,
+                "messageCount": 7,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "usage",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reportedUsage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2436,
+                  "inputTokens": 3324,
+                  "outputTokens": 24,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 3348
+                },
+                "requestBytes": 20221,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 2,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 38
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693544019,
+            "event": {
+              "index": 2,
+              "status": "completed",
+              "type": "stepUpdated",
+              "usage": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 2436,
+                "inputTokens": 3324,
+                "outputTokens": 24,
+                "reasoningTokens": 0,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 3348
+              }
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 39
+          },
+          {
+            "conversationId": "chat_f1cc83a02b4a09cd5892",
+            "createdAtMillis": 1791693544020,
+            "event": {
+              "aggregate": {
+                "cacheCreationInputTokens": 0,
+                "cachedInputTokens": 6806,
+                "inputTokens": 8132,
+                "outputTokens": 100,
+                "reasoningTokens": 9,
+                "toolUsePromptTokens": 0,
+                "totalTokens": 8232
+              },
+              "call_index": 2,
+              "type": "usageUpdated"
+            },
+            "messageId": "msg_f5a6fdc7fe24fdc58d16",
+            "requestId": "req_2cbce39b45d07310ab3c",
+            "runId": "run_bc514d1dc64349a006c4",
+            "schemaVersion": 2,
+            "sequence": 40
+          }
+        ],
+        "attachments": [],
+        "content": "Yes. Meridian retrospective names Jordan as the approver: “Jordan approved deployment.” [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+        "conversationId": "chat_f1cc83a02b4a09cd5892",
+        "createdAtMillis": 1791693537503,
+        "error": null,
+        "id": "msg_f5a6fdc7fe24fdc58d16",
+        "ordinal": 2,
+        "part": 1,
+        "role": "assistant",
+        "sources": [
+          {
+            "anchor": null,
+            "excerpt": "Deployment approval was discussed.",
+            "kind": "note",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          {
+            "anchor": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+            "excerpt": "Meridian retrospective",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 22,
+              "excerpt": "Meridian retrospective",
+              "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "location": "title",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          {
+            "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+            "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          }
+        ],
+        "status": "complete"
+      },
+      "resolutions": [
+        {
+          "markdown": "Deployment approval was discussed.\n\nJordan approved deployment.",
+          "selection": {
+            "anchor": 0,
+            "head": 63
+          },
+          "source": {
+            "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+            "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+            "kind": "passage",
+            "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+            "notePath": "Meridian retrospective.md",
+            "passage": {
+              "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+              "end": 63,
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "location": "body",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "revisions": [],
+              "start": 0
+            },
+            "title": "Meridian retrospective",
+            "url": null
+          },
+          "evidenceId": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+          "status": "resolved"
+        }
+      ],
+      "rawStream": "Yes. Meridian retrospective names Jordan as the approver: “Jordan approved deployment.” [S2]",
+      "elapsedMillis": 7094
+    },
+    {
+      "caseId": "deadline-2",
+      "question": "In Meridian deadlines, as of September 30, 2026, classify every checkbox item (including the completed one) by recorded status and supported deadline. Explain whether each would be actionable overdue on that date, and whether the fenced-code example is a task.",
+      "conversationId": "chat_214a38d88b84591e8569",
+      "requestId": "req_782fa9f1425000289c68",
+      "answer": {
+        "agentEvents": [
+          {
+            "conversationId": "chat_214a38d88b84591e8569",
+            "createdAtMillis": 1791693544762,
+            "event": {
+              "index": 0,
+              "status": "running",
+              "type": "stepUpdated"
+            },
+            "messageId": "msg_dafb4348ee4642bad648",
+            "requestId": "req_782fa9f1425000289c68",
+            "runId": "run_5b07772beb4a01224ef0",
+            "schemaVersion": 2,
+            "sequence": 1
+          },
+          {
+            "conversationId": "chat_214a38d88b84591e8569",
+            "createdAtMillis": 1791693544765,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1524,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3408,
+                "executableToolCount": 5,
+                "inputBytes": 13632,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "request",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "requestBytes": 13802,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 3,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_dafb4348ee4642bad648",
+            "requestId": "req_782fa9f1425000289c68",
+            "runId": "run_5b07772beb4a01224ef0",
+            "schemaVersion": 2,
+            "sequence": 2
+          },
+          {
+            "conversationId": "chat_214a38d88b84591e8569",
+            "createdAtMillis": 1791693550953,
+            "event": {
+              "details": {
+                "attempt": 1,
+                "capacitySource": "unknown",
+                "componentBytes": {
+                  "additional_params": 23,
+                  "conversationMessages": 1524,
+                  "documents": 2,
+                  "output_schema": 0,
+                  "preamble": 0,
+                  "systemMessages": 3455,
+                  "tools": 8628
+                },
+                "configuredOutputLimitTokens": null,
+                "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                "enforcementEligible": false,
+                "estimatedInputTokens": 3408,
+                "executableToolCount": 5,
+                "inputBytes": 13632,
+                "inputEstimateErrorTokens": null,
+                "loadedContextTokens": null,
+                "messageCount": 3,
+                "mode": "measurement_only",
+                "model": "gpt-6-luna",
+                "multimodalTokensUnknown": false,
+                "phase": "unreported",
+                "provider": "openai",
+                "providerParametersPresent": true,
+                "reason": "runtime_ended_without_usage",
+                "reportedUsage": null,
+                "requestBytes": 13802,
+                "reservedOutputTokens": null,
+                "resultFormatterCount": 0,
+                "runtimeInstance": 3,
+                "safetyMarginTokens": null,
+                "toolCount": 5,
+                "worker": false
+              },
+              "type": "contextMeasured"
+            },
+            "messageId": "msg_dafb4348ee4642bad648",
+            "requestId": "req_782fa9f1425000289c68",
+            "runId": "run_5b07772beb4a01224ef0",
+            "schemaVersion": 2,
+            "sequence": 3
+          }
+        ],
+        "attachments": [],
+        "content": "",
+        "conversationId": "chat_214a38d88b84591e8569",
+        "createdAtMillis": 1791693544623,
+        "error": "Agent run failed: CompletionError: ProviderResponseError: {\"type\":\"error\",\"error\":{\"type\":\"resource_unavailable\",\"code\":\"flex_unavailable\",\"headers\":{\"retry-after\":\"300\",\"retry-after-ms\":\"300000\",\"x-retry-metadata\":\"NO_MORE_RETRY\"},\"message\":\"Flex processing is temporarily unavailable. Please try again later or use standard processing.\",\"param\":null},\"sequence_number\":2}",
+        "id": "msg_dafb4348ee4642bad648",
+        "ordinal": 2,
+        "part": 1,
+        "role": "assistant",
+        "sources": [],
+        "status": "error"
+      }
+    }
+  ],
+  "endpoint": "https://api.openai.com/v1",
+  "model": "gpt-6-luna",
+  "evaluationClock": {
+    "startedAt": "2026-10-11T04:38:26.148Z",
+    "recordedAt": "2026-10-11T04:41:04.800Z",
+    "timeZone": "America/Denver",
+    "mode": "real-native-clock"
+  },
+  "structuralExecution": {
+    "cases": [
+      {
+        "title": "Citation reliability with native read/tool context retains raw references for deadline lists and bounded excerpt answers",
+        "status": "failed",
+        "startedAt": "2026-10-11T04:38:26.178Z",
+        "finishedAt": "2026-10-11T04:41:04.799Z"
+      }
+    ],
+    "requests": [
+      {
+        "conversationId": "chat_49c419657e318bb055db",
+        "observedAt": "2026-10-11T04:38:52.769Z",
+        "answer": {
+          "agentEvents": [
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693507257,
+              "event": {
+                "index": 0,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 1
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693507261,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1524,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3455,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3408,
+                  "executableToolCount": 5,
+                  "inputBytes": 13632,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 13802,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 0,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 2
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516944,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "callIndex": 0,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1524,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3455,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3408,
+                  "executableToolCount": 5,
+                  "inputBytes": 13632,
+                  "inputEstimateErrorTokens": 1091,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 0,
+                    "inputTokens": 2317,
+                    "outputTokens": 75,
+                    "reasoningTokens": 31,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 2392
+                  },
+                  "requestBytes": 13802,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 0,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 3
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516947,
+              "event": {
+                "index": 0,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2317,
+                  "outputTokens": 75,
+                  "reasoningTokens": 31,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2392
+                }
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 4
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516949,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2317,
+                  "outputTokens": 75,
+                  "reasoningTokens": 31,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2392
+                },
+                "call_index": 0,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 5
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516951,
+              "event": {
+                "call_id": "76HwfYzikB9rfgHfMa0Z6",
+                "name": "read_notes",
+                "status": "running",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 6
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516963,
+              "event": {
+                "call_id": "76HwfYzikB9rfgHfMa0Z6",
+                "duration_millis": 11,
+                "name": "read_notes",
+                "output_summary": "Read 2 passages from 1 notes",
+                "status": "success",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 7
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516968,
+              "event": {
+                "index": 1,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 8
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693516973,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 3731,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3455,
+                    "toolResults": 5154,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 5249,
+                  "executableToolCount": 5,
+                  "inputBytes": 20993,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 21165,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 0,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 9
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693532682,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "callIndex": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 3731,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3455,
+                    "toolResults": 5154,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 5249,
+                  "executableToolCount": 5,
+                  "inputBytes": 20993,
+                  "inputEstimateErrorTokens": 1626,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 2314,
+                    "inputTokens": 3623,
+                    "outputTokens": 454,
+                    "reasoningTokens": 214,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 4077
+                  },
+                  "requestBytes": 21165,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 0,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 242
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693532685,
+              "event": {
+                "index": 1,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2314,
+                  "inputTokens": 3623,
+                  "outputTokens": 454,
+                  "reasoningTokens": 214,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 4077
+                }
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 243
+            },
+            {
+              "conversationId": "chat_49c419657e318bb055db",
+              "createdAtMillis": 1791693532687,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2314,
+                  "inputTokens": 5940,
+                  "outputTokens": 529,
+                  "reasoningTokens": 245,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 6469
+                },
+                "call_index": 1,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_1e23b0ddf79fee1baa80",
+              "requestId": "req_bbbdd720004315289e87",
+              "runId": "run_9e5817287943ff6a0c48",
+              "schemaVersion": 2,
+              "sequence": 244
+            }
+          ],
+          "attachments": [],
+          "content": "According to **Meridian deadlines**, the note records four checkbox items; the fenced-code example is not a task. As of **September 30, 2026**:\n\n| Checkbox item | Recorded status | Supported deadline | Actionable overdue on September 30? |\n|---|---|---|---|\n| Parent | Open | October 1, 2026—the first valid `@due` annotation | **No**; its supported deadline was the next day. |\n| Undated child | Open | None recorded; it does not inherit the parent’s deadline | **Cannot determine** from the note. |\n| Completed | Completed | September 29, 2026 | **No**; it is recorded as completed, so it is not actionable overdue work. |\n| Invalid | Open | None; `2026-02-30` is not a valid date | **Cannot determine** from the note. |\n\nThe Parent line also has a later `@due(2026-10-07)` annotation, but the note’s deadline parsing uses the first valid annotation. The fenced example is code, not a checkbox task. 【S2】",
+          "conversationId": "chat_49c419657e318bb055db",
+          "createdAtMillis": 1791693507110,
+          "error": null,
+          "id": "msg_1e23b0ddf79fee1baa80",
+          "ordinal": 2,
+          "part": 1,
+          "role": "assistant",
+          "sources": [
+            {
+              "anchor": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+              "excerpt": "Meridian deadlines",
+              "kind": "passage",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "notePath": "Meridian deadlines.md",
+              "passage": {
+                "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+                "end": 18,
+                "excerpt": "Meridian deadlines",
+                "id": "04a51401ba251afb1c2b23e3fb48e4cf59adfc478dde010e8f1b85c71ceb102b",
+                "location": "title",
+                "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian deadlines",
+              "url": null
+            },
+            {
+              "anchor": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+              "excerpt": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+              "kind": "passage",
+              "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+              "notePath": "Meridian deadlines.md",
+              "passage": {
+                "contentHash": "6921aeae462c96fe5bc68f7bdde19ebf573972ce9567d21b3f0d06b7ed8b77a4",
+                "end": 187,
+                "excerpt": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+                "id": "a1f3a77bc63f1dbdec45597467acf24cc00713cf75ad03abfa4ec2a03531ddff",
+                "location": "body",
+                "noteId": "01M4MM2J83WWK9TCRJ5Q0W0GHP",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian deadlines",
+              "url": null
+            }
+          ],
+          "status": "complete"
+        }
+      },
+      {
+        "conversationId": "chat_1947df089d7f59443451",
+        "observedAt": "2026-10-11T04:38:57.475Z",
+        "answer": {
+          "agentEvents": [
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693532945,
+              "event": {
+                "compacted": false,
+                "selected_note_titles": [
+                  "Meridian retrospective"
+                ],
+                "type": "contextUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 1
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693532947,
+              "event": {
+                "index": 0,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 2
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693532949,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1672,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3455,
+                  "executableToolCount": 5,
+                  "inputBytes": 13818,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 13988,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 1,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 3
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535267,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "callIndex": 0,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1672,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3455,
+                  "executableToolCount": 5,
+                  "inputBytes": 13818,
+                  "inputEstimateErrorTokens": 1077,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 0,
+                    "inputTokens": 2378,
+                    "outputTokens": 39,
+                    "reasoningTokens": 0,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 2417
+                  },
+                  "requestBytes": 13988,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 1,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 4
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535271,
+              "event": {
+                "index": 0,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2378,
+                  "outputTokens": 39,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2417
+                }
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 5
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535273,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 0,
+                  "inputTokens": 2378,
+                  "outputTokens": 39,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2417
+                },
+                "call_index": 0,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 6
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535276,
+              "event": {
+                "call_id": "LN5UcuTz9m1n07XPCbvFl",
+                "name": "read_notes",
+                "status": "running",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 7
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535290,
+              "event": {
+                "call_id": "LN5UcuTz9m1n07XPCbvFl",
+                "duration_millis": 14,
+                "name": "read_notes",
+                "output_summary": "Read 2 passages from 1 notes",
+                "status": "success",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 8
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535297,
+              "event": {
+                "index": 1,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 9
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693535302,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1966,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 3735,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 4462,
+                  "executableToolCount": 5,
+                  "inputBytes": 17847,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 18019,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 1,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 10
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693537328,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "callIndex": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1966,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 3735,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 4462,
+                  "executableToolCount": 5,
+                  "inputBytes": 17847,
+                  "inputEstimateErrorTokens": 1212,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 2375,
+                    "inputTokens": 3250,
+                    "outputTokens": 29,
+                    "reasoningTokens": 0,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 3279
+                  },
+                  "requestBytes": 18019,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 1,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 36
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693537332,
+              "event": {
+                "index": 1,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2375,
+                  "inputTokens": 3250,
+                  "outputTokens": 29,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 3279
+                }
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 37
+            },
+            {
+              "conversationId": "chat_1947df089d7f59443451",
+              "createdAtMillis": 1791693537333,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2375,
+                  "inputTokens": 5628,
+                  "outputTokens": 68,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 5696
+                },
+                "call_index": 1,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_889706a49bedcccc50f5",
+              "requestId": "req_e2386add3e6801f3b1cd",
+              "runId": "run_8e3ae2a39d88d57d4b60",
+              "schemaVersion": 2,
+              "sequence": 38
+            }
+          ],
+          "attachments": [],
+          "content": "Yes. Using only the selected excerpt, **Meridian retrospective names Jordan**: “Jordan approved deployment.” [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+          "conversationId": "chat_1947df089d7f59443451",
+          "createdAtMillis": 1791693532797,
+          "error": null,
+          "id": "msg_889706a49bedcccc50f5",
+          "ordinal": 2,
+          "part": 1,
+          "role": "assistant",
+          "sources": [
+            {
+              "anchor": null,
+              "excerpt": "Deployment approval was discussed.",
+              "kind": "note",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "title": "Meridian retrospective",
+              "url": null
+            },
+            {
+              "anchor": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "excerpt": "Meridian retrospective",
+              "kind": "passage",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "passage": {
+                "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+                "end": 22,
+                "excerpt": "Meridian retrospective",
+                "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+                "location": "title",
+                "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian retrospective",
+              "url": null
+            },
+            {
+              "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "kind": "passage",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "passage": {
+                "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+                "end": 63,
+                "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+                "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+                "location": "body",
+                "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian retrospective",
+              "url": null
+            }
+          ],
+          "status": "complete"
+        }
+      },
+      {
+        "conversationId": "chat_f1cc83a02b4a09cd5892",
+        "observedAt": "2026-10-11T04:39:04.592Z",
+        "answer": {
+          "agentEvents": [
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693537540,
+              "event": {
+                "compacted": false,
+                "selected_note_titles": [
+                  "Meridian retrospective"
+                ],
+                "type": "contextUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 1
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693537546,
+              "event": {
+                "index": 0,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 2
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693537548,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1622,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3442,
+                  "executableToolCount": 5,
+                  "inputBytes": 13768,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 13938,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 3
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539439,
+              "event": {
+                "details": {
+                  "attempt": 1,
+                  "callIndex": 0,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1622,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3442,
+                  "executableToolCount": 5,
+                  "inputBytes": 13768,
+                  "inputEstimateErrorTokens": 1073,
+                  "loadedContextTokens": null,
+                  "messageCount": 3,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 2004,
+                    "inputTokens": 2369,
+                    "outputTokens": 26,
+                    "reasoningTokens": 0,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 2395
+                  },
+                  "requestBytes": 13938,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 4
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539442,
+              "event": {
+                "index": 0,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2004,
+                  "inputTokens": 2369,
+                  "outputTokens": 26,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2395
+                }
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 5
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539444,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2004,
+                  "inputTokens": 2369,
+                  "outputTokens": 26,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2395
+                },
+                "call_index": 0,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 6
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539446,
+              "event": {
+                "call_id": "xeYcagLyFfDDd55_FpIR6",
+                "name": "read_notes",
+                "status": "running",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 7
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539451,
+              "event": {
+                "call_id": "xeYcagLyFfDDd55_FpIR6",
+                "duration_millis": 4,
+                "name": "read_notes",
+                "output_summary": "Unknown evidence ID; search first",
+                "status": "error",
+                "step_index": 0,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 8
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539455,
+              "event": {
+                "index": 1,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 9
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693539459,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1899,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 336,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3596,
+                  "executableToolCount": 5,
+                  "inputBytes": 14381,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 14553,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 10
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541946,
+              "event": {
+                "details": {
+                  "attempt": 2,
+                  "callIndex": 1,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 1899,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 336,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 3596,
+                  "executableToolCount": 5,
+                  "inputBytes": 14381,
+                  "inputEstimateErrorTokens": 1157,
+                  "loadedContextTokens": null,
+                  "messageCount": 5,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 2366,
+                    "inputTokens": 2439,
+                    "outputTokens": 50,
+                    "reasoningTokens": 9,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 2489
+                  },
+                  "requestBytes": 14553,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 11
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541950,
+              "event": {
+                "index": 1,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2366,
+                  "inputTokens": 2439,
+                  "outputTokens": 50,
+                  "reasoningTokens": 9,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 2489
+                }
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 12
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541952,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 4370,
+                  "inputTokens": 4808,
+                  "outputTokens": 76,
+                  "reasoningTokens": 9,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 4884
+                },
+                "call_index": 1,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 13
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541955,
+              "event": {
+                "call_id": "oZiFWGdtMb_QkEuNEtSgN",
+                "name": "read_notes",
+                "status": "running",
+                "step_index": 1,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 14
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541970,
+              "event": {
+                "call_id": "oZiFWGdtMb_QkEuNEtSgN",
+                "duration_millis": 15,
+                "name": "read_notes",
+                "output_summary": "Read 2 passages from 1 notes",
+                "status": "success",
+                "step_index": 1,
+                "title": "Read selected passages",
+                "type": "toolCallUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 15
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541977,
+              "event": {
+                "index": 2,
+                "status": "running",
+                "type": "stepUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 16
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693541983,
+              "event": {
+                "details": {
+                  "attempt": 3,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 3830,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 4071,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 5012,
+                  "executableToolCount": 5,
+                  "inputBytes": 20047,
+                  "loadedContextTokens": null,
+                  "messageCount": 7,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "request",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "requestBytes": 20221,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 17
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693544016,
+              "event": {
+                "details": {
+                  "attempt": 3,
+                  "callIndex": 2,
+                  "capacitySource": "unknown",
+                  "componentBytes": {
+                    "additional_params": 23,
+                    "conversationMessages": 3830,
+                    "documents": 2,
+                    "output_schema": 0,
+                    "preamble": 0,
+                    "systemMessages": 3493,
+                    "toolResults": 4071,
+                    "tools": 8628
+                  },
+                  "configuredOutputLimitTokens": null,
+                  "countingMethod": "assembled_utf8_bytes_div_4_v1",
+                  "coverage": "assembled request before provider formatting; provider chat template and hidden input overhead are not counted",
+                  "enforcementEligible": false,
+                  "estimatedInputTokens": 5012,
+                  "executableToolCount": 5,
+                  "inputBytes": 20047,
+                  "inputEstimateErrorTokens": 1688,
+                  "loadedContextTokens": null,
+                  "messageCount": 7,
+                  "mode": "measurement_only",
+                  "model": "gpt-6-luna",
+                  "multimodalTokensUnknown": false,
+                  "phase": "usage",
+                  "provider": "openai",
+                  "providerParametersPresent": true,
+                  "reportedUsage": {
+                    "cacheCreationInputTokens": 0,
+                    "cachedInputTokens": 2436,
+                    "inputTokens": 3324,
+                    "outputTokens": 24,
+                    "reasoningTokens": 0,
+                    "toolUsePromptTokens": 0,
+                    "totalTokens": 3348
+                  },
+                  "requestBytes": 20221,
+                  "reservedOutputTokens": null,
+                  "resultFormatterCount": 0,
+                  "runtimeInstance": 2,
+                  "safetyMarginTokens": null,
+                  "toolCount": 5,
+                  "worker": false
+                },
+                "type": "contextMeasured"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 38
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693544019,
+              "event": {
+                "index": 2,
+                "status": "completed",
+                "type": "stepUpdated",
+                "usage": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 2436,
+                  "inputTokens": 3324,
+                  "outputTokens": 24,
+                  "reasoningTokens": 0,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 3348
+                }
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 39
+            },
+            {
+              "conversationId": "chat_f1cc83a02b4a09cd5892",
+              "createdAtMillis": 1791693544020,
+              "event": {
+                "aggregate": {
+                  "cacheCreationInputTokens": 0,
+                  "cachedInputTokens": 6806,
+                  "inputTokens": 8132,
+                  "outputTokens": 100,
+                  "reasoningTokens": 9,
+                  "toolUsePromptTokens": 0,
+                  "totalTokens": 8232
+                },
+                "call_index": 2,
+                "type": "usageUpdated"
+              },
+              "messageId": "msg_f5a6fdc7fe24fdc58d16",
+              "requestId": "req_2cbce39b45d07310ab3c",
+              "runId": "run_bc514d1dc64349a006c4",
+              "schemaVersion": 2,
+              "sequence": 40
+            }
+          ],
+          "attachments": [],
+          "content": "Yes. Meridian retrospective names Jordan as the approver: “Jordan approved deployment.” [Source 2](passage:b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c)",
+          "conversationId": "chat_f1cc83a02b4a09cd5892",
+          "createdAtMillis": 1791693537503,
+          "error": null,
+          "id": "msg_f5a6fdc7fe24fdc58d16",
+          "ordinal": 2,
+          "part": 1,
+          "role": "assistant",
+          "sources": [
+            {
+              "anchor": null,
+              "excerpt": "Deployment approval was discussed.",
+              "kind": "note",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "title": "Meridian retrospective",
+              "url": null
+            },
+            {
+              "anchor": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+              "excerpt": "Meridian retrospective",
+              "kind": "passage",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "passage": {
+                "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+                "end": 22,
+                "excerpt": "Meridian retrospective",
+                "id": "f1a835251c0a16359e232c5f6a96c9ae914f608dc91bb9ae9c3c306578277659",
+                "location": "title",
+                "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian retrospective",
+              "url": null
+            },
+            {
+              "anchor": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+              "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+              "kind": "passage",
+              "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+              "notePath": "Meridian retrospective.md",
+              "passage": {
+                "contentHash": "f8b65b3087db5a8a1875289067d3b2ce1a399ba9f40390a3df8cbbc76c1f8114",
+                "end": 63,
+                "excerpt": "Deployment approval was discussed.\n\nJordan approved deployment.",
+                "id": "b6ad86c6cc18ab963bcf95d0e0d6e5a6b18a6fd0aae60948b6461edd26da334c",
+                "location": "body",
+                "noteId": "01M4MM2JDS190JNVC7X09R5QWK",
+                "revisions": [],
+                "start": 0
+              },
+              "title": "Meridian retrospective",
+              "url": null
+            }
+          ],
+          "status": "complete"
+        }
+      }
+    ]
+  },
+  "semanticGrading": {
+    "status": "not_run",
+    "instruction": "Grade the recorded answers against each scenario rubric separately; structural execution and citation coverage are not factual correctness scores."
+  }
+}

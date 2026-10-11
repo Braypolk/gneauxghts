@@ -329,6 +329,8 @@ export type ChatCitation =
     };
 
 export interface ChatMessage {
+  /** Transient decoded output; never persisted or treated as evidence. */
+  answerDraft?: { attempt: number; sequence: number; text: string };
   id: string;
   conversationId: string;
   role: ChatRole;
@@ -488,6 +490,7 @@ export interface ChatSurfaceHandle {
 export interface ChatEventMap {
   'chat://started': ChatStartedEvent;
   'chat://text-delta': ChatTextDeltaEvent;
+  'chat://answer-draft': ChatStreamIdentity & { attempt: number; sequence: number; content: string };
   'chat://source': ChatSourceEvent;
   'chat://completed': ChatCompletedEvent;
   'chat://title-updated': ChatTitleUpdatedEvent;

@@ -1,0 +1,320 @@
+{
+  "corpusSha256": "30265df5ff365d57ce08a644c1932bae2f1a15646afe74e1f57ca1dabdaec532",
+  "instruction": "Annotate every note-based claim, exact quote, citation scope, semantic verdict/reason and required coverage. Empty or pending reviews cannot pass.",
+  "results": [
+    {
+      "caseId": "deadline_inventory",
+      "answer": "As of September 30:\n\n- **Parent:** Open and upcoming; its first valid deadline is **October 1**. The later deadline annotation does not replace it. [Source 1](passage:tasks)\n- **Child:** Open, with **no supported deadline**; it does not inherit the parent\u2019s date. [Source 1](passage:tasks)\n- **Invalid-date example:** Open, but has **no supported deadline** because February 30 is invalid. [Source 1](passage:tasks)\n- **Fenced example:** Not counted as a task; it is inside a code block. [Source 1](passage:tasks)",
+      "answerSha256": "f452506f77c8e9c89c7f519bbe727a0e6e70fdb67f958127d21bc97eb3dcf810",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Parent:** Open and upcoming; its first valid deadline is **October 1**. The later deadline annotation does not replace it.",
+          "proposition": "**Parent:** Open and upcoming; its first valid deadline is **October 1**. The later deadline annotation does not replace it.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "**Child:** Open, with **no supported deadline**; it does not inherit the parent\u2019s date.",
+          "proposition": "**Child:** Open, with **no supported deadline**; it does not inherit the parent\u2019s date.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "**Invalid-date example:** Open, but has **no supported deadline** because February 30 is invalid.",
+          "proposition": "**Invalid-date example:** Open, but has **no supported deadline** because February 30 is invalid.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-4",
+          "quote": "**Fenced example:** Not counted as a task; it is inside a code block.",
+          "proposition": "**Fenced example:** Not counted as a task; it is inside a code block.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "examples",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "completed",
+          "status": "missing",
+          "reason": "Completed task omitted under the original strict full-inventory rubric; original grouped examples wording is ambiguous."
+        }
+      ],
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 1315,
+          "output_tokens": 219,
+          "reasoning_tokens": 100,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1534
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 0
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial_read_absence",
+      "answer": "The available passage says, \u201cDeployment approval was discussed,\u201d but it doesn\u2019t name an approver. I can\u2019t determine whether the full note names one because its complete content isn\u2019t available.",
+      "answerSha256": "63e6beeb4e923437a24c9ffb47b712dc1f7a6ed202ff931f7fe41d9763982b4b",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The available passage says, \u201cDeployment approval was discussed,\u201d but it doesn\u2019t name an approver.",
+          "proposition": "The available passage says, \u201cDeployment approval was discussed,\u201d but it doesn\u2019t name an approver.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The bounded excerpt fact is correct, but the raw answer supplies no reference and rendering adds none.",
+          "failureTags": [
+            "missing_citation"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "I can\u2019t determine whether the full note names one because its complete content isn\u2019t available.",
+          "proposition": "I can\u2019t determine whether the full note names one because its complete content isn\u2019t available.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural limit correctly preserves whole-note uncertainty because only selected passages were supplied.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "scope",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 1,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 950,
+          "output_tokens": 81,
+          "reasoning_tokens": 37,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1031
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 1
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "deadline_inventory",
+      "answer": "As of September 30:\n\n- **Parent:** Open, due October 1, so it is **upcoming**. The first valid deadline annotation applies; the later October 7 annotation is not used. [Source 1](passage:tasks)\n- **Child:** Open and **undated**. It does not inherit the parent\u2019s deadline. [Source 1](passage:tasks)\n- **Examples:** The September 29 task is **completed**, so it is not actionable overdue work. The invalid-date task has **no supported deadline**. The fenced example is code, not a task. [Source 1](passage:tasks)",
+      "answerSha256": "a19c1e0800e37e86a118eb9b5c8efaff8f214bf38f5b20b0797a877ac64bcc96",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "**Parent:** Open, due October 1, so it is **upcoming**. The first valid deadline annotation applies; the later October 7 annotation is not used.",
+          "proposition": "**Parent:** Open, due October 1, so it is **upcoming**. The first valid deadline annotation applies; the later October 7 annotation is not used.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-2",
+          "quote": "**Child:** Open and **undated**. It does not inherit the parent\u2019s deadline.",
+          "proposition": "**Child:** Open and **undated**. It does not inherit the parent\u2019s deadline.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-3",
+          "quote": "The September 29 task is **completed**, so it is not actionable overdue work.",
+          "proposition": "The September 29 task is **completed**, so it is not actionable overdue work.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-4",
+          "quote": "The invalid-date task has **no supported deadline**.",
+          "proposition": "The invalid-date task has **no supported deadline**.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        },
+        {
+          "id": "claim-5",
+          "quote": "The fenced example is code, not a task.",
+          "proposition": "The fenced example is code, not a task.",
+          "citationIds": [
+            "tasks"
+          ],
+          "requiresCitation": true,
+          "verdict": "supported",
+          "reason": "The exact current excerpt and supplied parsed deadline metadata establish the full bounded classification.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "parent",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "child",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "examples",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        },
+        {
+          "id": "completed",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 1312,
+          "input_tokens": 1315,
+          "output_tokens": 210,
+          "reasoning_tokens": 88,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1525
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 2
+        }
+      },
+      "claimInventory": "full"
+    },
+    {
+      "caseId": "partial_read_absence",
+      "answer": "The available excerpt from **Meridian retrospective** says, \u201cDeployment approval was discussed,\u201d but it does not name an approver. I can\u2019t determine whether another part of the note names one because its complete content isn\u2019t available.",
+      "answerSha256": "74a11e8e609bbcf37e4d70af50281460cda1c0b300413bb1dc734adf12c6c3a5",
+      "claims": [
+        {
+          "id": "claim-1",
+          "quote": "The available excerpt from **Meridian retrospective** says, \u201cDeployment approval was discussed,\u201d but it does not name an approver.",
+          "proposition": "The available excerpt from **Meridian retrospective** says, \u201cDeployment approval was discussed,\u201d but it does not name an approver.",
+          "citationIds": [],
+          "requiresCitation": true,
+          "verdict": "unassessable",
+          "reason": "The bounded excerpt fact is correct, but the raw answer supplies no reference and rendering adds none.",
+          "failureTags": [
+            "missing_citation"
+          ]
+        },
+        {
+          "id": "claim-2",
+          "quote": "I can\u2019t determine whether another part of the note names one because its complete content isn\u2019t available.",
+          "proposition": "I can\u2019t determine whether another part of the note names one because its complete content isn\u2019t available.",
+          "citationIds": [],
+          "requiresCitation": false,
+          "verdict": "supported",
+          "reason": "Procedural limit correctly preserves whole-note uncertainty because only selected passages were supplied.",
+          "failureTags": []
+        }
+      ],
+      "coverage": [
+        {
+          "id": "scope",
+          "status": "covered",
+          "reason": "Required factual detail or qualification is correctly addressed; citation scope is graded separately."
+        }
+      ],
+      "metadata": {
+        "variant": "citation-final-check",
+        "repeat": 2,
+        "model": "gpt-6-luna",
+        "usage": {
+          "cache_creation_input_tokens": 0,
+          "cached_input_tokens": 0,
+          "input_tokens": 950,
+          "output_tokens": 105,
+          "reasoning_tokens": 53,
+          "tool_use_prompt_tokens": 0,
+          "total_tokens": 1055
+        },
+        "origin": {
+          "path": "candidate-reference-runtime.json",
+          "resultIndex": 3
+        }
+      },
+      "claimInventory": "full"
+    }
+  ]
+}

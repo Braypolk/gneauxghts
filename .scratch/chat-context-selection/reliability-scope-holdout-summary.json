@@ -1,0 +1,1676 @@
+{
+  "basis": "Paired current versus revised Source scope rule on three held-out intent phrasings, with the absent-actor case omitting the approvals note. Identical current core, tools, coverage and references; same canonical identities per pair, fresh contexts and rotated order. Only the hint changes at the model boundary; production tools/admission stay current. Same finite caps and exact retained traces. Not a full historical replay. Small synthetic sample; not a significance test, invoice, or proof of causality. Manual answer entailment review required.",
+  "source": "reliability-scope-holdout-trace.json",
+  "model": "gpt-6-luna",
+  "costRates": {
+    "basis": "Standard short-context rates applied to provider-reported categories; not an invoice. Missing usage is unknown. No web/research charges.",
+    "checked": "2026-10-09",
+    "source": "https://developers.openai.com/api/docs/pricing",
+    "usdPerMillion": {
+      "cacheWrite": 0.125,
+      "cachedInput": 0.01,
+      "input": 0.1,
+      "output": 0.5
+    }
+  },
+  "costLimitation": "Rig reports no OpenAI cache-write category (maps it to zero); reported-cost estimate excludes any unexposed cache-write charge. All-zero usage is unknown. Output already includes reasoning; do not add reasoning tokens again.",
+  "reuseLimitation": "Repeated body overlap is a diagnostic, not proof the read was unnecessary; provenance/coverage may differ. Exact repeated calls include only identical arguments.",
+  "runs": [
+    {
+      "name": "heldout_related_fact",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_related_fact",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": null,
+        "explicitProseRelatedAttribution": true,
+        "userVisibleRelatedAttribution": true,
+        "note": "Manually reviewed all claims and exact citations. Related approval correctly attributed. Source-record omissions have full canonical retrospective coverage. Revised absent-actor answer canonically checks retrospective, keeps approver unresolved, and makes no exhaustive vault-absence claim. Entire-launch statement quotes an explicit record rather than inventing real-world status.",
+        "claims": [
+          {
+            "text": "- **Priya:** According to *Meridian retrospective*, Priya finished checksum verification on September 18, 2026. [Source 1](passage:3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193)",
+            "citations": [
+              "3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** No. The retrospective says checksum verification was one substep and that the entire launch has no recorded completion. [Source 1](passage:3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193)",
+            "citations": [
+              "3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** According to *Meridian approvals*, Mateo approved the deployment on September 18, 2026. [Source 2](passage:c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4)",
+            "citations": [
+              "c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1TJTPH812P1VJF5QP9KKM",
+                  "purpose": "answer"
+                },
+                {
+                  "note_id": "01M4M1TJVE7GR496BP734528BT",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EQW6WK43805D6Q-1"
+              },
+              {
+                "title": "Meridian approvals",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EQW6WK43805D6Q-3"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7918,
+        "inputTokens": 10649,
+        "outputTokens": 246,
+        "reasoningTokens": 65,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10895
+      },
+      "estimatedUsd": 0.00047528,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2270,
+            "outputTokens": 36,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2306
+          },
+          "estimatedUsd": 6.986e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2267,
+            "inputTokens": 3708,
+            "outputTokens": 63,
+            "reasoningTokens": 14,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3771
+          },
+          "estimatedUsd": 0.00019826999999999998
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3705,
+            "inputTokens": 4671,
+            "outputTokens": 147,
+            "reasoningTokens": 51,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4818
+          },
+          "estimatedUsd": 0.00020715
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6846,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13391,
+        18983,
+        25029
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1561,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1896,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 5257,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3951,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 9248,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_related_fact",
+      "variant": "scope_revised",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_related_fact",
+        "variant": "scope_revised",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": null,
+        "explicitProseRelatedAttribution": true,
+        "userVisibleRelatedAttribution": true,
+        "note": "Manually reviewed all claims and exact citations. Related approval correctly attributed. Source-record omissions have full canonical retrospective coverage. Revised absent-actor answer canonically checks retrospective, keeps approver unresolved, and makes no exhaustive vault-absence claim. Entire-launch statement quotes an explicit record rather than inventing real-world status.",
+        "claims": [
+          {
+            "text": "- **Priya** \u2014 According to *Meridian retrospective*, Priya finished checksum verification on September 18, 2026. [Source 1](passage:3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193)",
+            "citations": [
+              "3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch** \u2014 No. The retrospective says checksum verification was one substep and records no completion of the entire launch; a separate deployment approval does not establish that completion. [Source 1](passage:3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193) [Source 2](passage:c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4)",
+            "citations": [
+              "3c0a00a241246318430047855dfb4ee3f410f21ffe117c9a8e4de71b76fa2193",
+              "c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              },
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver** \u2014 According to *Meridian approvals*, Mateo approved the deployment on September 18, 2026. [Source 2](passage:c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4)",
+            "citations": [
+              "c94bcdd23f65b306f078efad28d382d992accf99324214661e5b1cb4443ae1c4"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian approvals",
+                "excerpt": "Mateo approved deployment on September 18, 2026. This approval does not establish completion of the entire launch."
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1TJTPH812P1VJF5QP9KKM",
+                  "purpose": "answer"
+                },
+                {
+                  "note_id": "01M4M1TJVE7GR496BP734528BT",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EMFJAEFPVM72YD-6"
+              },
+              {
+                "title": "Meridian approvals",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EMFJAEFPVM72YD-8"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 7823,
+        "inputTokens": 10470,
+        "outputTokens": 205,
+        "reasoningTokens": 19,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 10675
+      },
+      "estimatedUsd": 0.00044543,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2270,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2299
+          },
+          "estimatedUsd": 6.636e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2267,
+            "inputTokens": 3613,
+            "outputTokens": 66,
+            "reasoningTokens": 19,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3679
+          },
+          "estimatedUsd": 0.00019026999999999998
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3610,
+            "inputTokens": 4587,
+            "outputTokens": 110,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4697
+          },
+          "estimatedUsd": 0.0001888
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 5851,
+        "modelCalls": 3,
+        "toolCalls": 2
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13391,
+        18517,
+        24654
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1561,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1857,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 4830,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3952,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 8872,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_absent_actor",
+      "variant": "scope_revised",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_absent_actor",
+        "variant": "scope_revised",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": true,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed all claims and exact citations. Related approval correctly attributed. Source-record omissions have full canonical retrospective coverage. Revised absent-actor answer canonically checks retrospective, keeps approver unresolved, and makes no exhaustive vault-absence claim. Entire-launch statement quotes an explicit record rather than inventing real-world status.",
+        "claims": [
+          {
+            "text": "- **Priya:** According to *Meridian retrospective*, Priya finished checksum verification on September 18, 2026. [Source 2](passage:e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032)",
+            "citations": [
+              "e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** The note says the entire launch has no recorded completion; it documents a finished substep, not completion of the launch as a whole. [Source 2](passage:e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032)",
+            "citations": [
+              "e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** The note records that deployment was approved, but does not say who approved it. The approver remains unresolved. [Source 2](passage:e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032)",
+            "citations": [
+              "e0d805a05c4085fbc38682d5ce934f6e805a686730be96880ade2cf6f06d1032"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion."
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [
+          "01M4M1TZDGS7FGV2TCQJMMV1K7"
+        ],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1TZDGS7FGV2TCQJMMV1K7",
+                  "purpose": "answer"
+                },
+                {
+                  "note_id": "01M4M1TZEP5KXC2RP9YZZMGV3T",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian launch",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EFMEHWKAZ8RAKK-5"
+              },
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EFMEHWKAZ8RAKK-6"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1TZDGS7FGV2TCQJMMV1K7",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian launch",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "EFMEHWKAZ8RAKK-1"
+              },
+              {
+                "title": "Meridian launch",
+                "location": "body",
+                "alreadyRead": "partial",
+                "evidenceId": "EFMEHWKAZ8RAKK-11"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 8012,
+        "inputTokens": 11479,
+        "outputTokens": 344,
+        "reasoningTokens": 106,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 11823
+      },
+      "estimatedUsd": 0.00059882,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2269,
+            "outputTokens": 33,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2302
+          },
+          "estimatedUsd": 6.826e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2266,
+            "inputTokens": 3803,
+            "outputTokens": 129,
+            "reasoningTokens": 28,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3932
+          },
+          "estimatedUsd": 0.00024086000000000002
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3800,
+            "inputTokens": 5407,
+            "outputTokens": 182,
+            "reasoningTokens": 78,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5589
+          },
+          "estimatedUsd": 0.00028970000000000005
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6458,
+        "modelCalls": 3,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 3,
+      "reportedUsageCalls": 3,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13392,
+        19363,
+        27941
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1562,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1864,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 5669,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4339,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 11772,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_absent_actor",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": false,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_absent_actor",
+        "variant": "current",
+        "repeat": 1,
+        "passed": false,
+        "answerIntentPassed": false,
+        "factualClaimsSupported": false,
+        "completeCanonicalCoverageBeforeAbsence": true,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Failure retained: original scope wording keeps searching after adequate retrospective evidence and hits the tool-call limit. No final answer, no semantic credit. Ninth attempted tool call is rejected by the existing eight-call execution guard; partial provider usage retained.",
+        "claims": [],
+        "completeCanonicalNoteIds": [
+          "01M4M1TZDGS7FGV2TCQJMMV1K7",
+          "01M4M1TZEP5KXC2RP9YZZMGV3T"
+        ],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1TZEP5KXC2RP9YZZMGV3T",
+                  "purpose": "answer"
+                },
+                {
+                  "note_id": "01M4M1TZDGS7FGV2TCQJMMV1K7",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EX9F7WSXPANAF6-1"
+              },
+              {
+                "title": "Meridian launch",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "EX9F7WSXPANAF6-2"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1TZDGS7FGV2TCQJMMV1K7",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian launch",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "EX9F7WSXPANAF6-3"
+              },
+              {
+                "title": "Meridian launch",
+                "location": "body",
+                "alreadyRead": "partial",
+                "evidenceId": "EX9F7WSXPANAF6-12"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1TZEP5KXC2RP9YZZMGV3T",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "EX9F7WSXPANAF6-7"
+              },
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "partial",
+                "evidenceId": "EX9F7WSXPANAF6-13"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": "tool_call_limit",
+      "usage": {
+        "inputTokens": 24390,
+        "cachedInputTokens": 18971,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 957,
+        "totalTokens": 25347,
+        "reasoningTokens": 563
+      },
+      "estimatedUsd": 0.0012101100000000001,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2269,
+            "outputTokens": 51,
+            "reasoningTokens": 12,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2320
+          },
+          "estimatedUsd": 7.726e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2266,
+            "inputTokens": 3824,
+            "outputTokens": 216,
+            "reasoningTokens": 123,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4040
+          },
+          "estimatedUsd": 0.00028646000000000005
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3821,
+            "inputTokens": 5254,
+            "outputTokens": 72,
+            "reasoningTokens": 43,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5326
+          },
+          "estimatedUsd": 0.00021751000000000002
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5251,
+            "inputTokens": 5690,
+            "outputTokens": 324,
+            "reasoningTokens": 204,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 6014
+          },
+          "estimatedUsd": 0.00025841
+        },
+        {
+          "index": 4,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 5687,
+            "inputTokens": 7353,
+            "outputTokens": 294,
+            "reasoningTokens": 181,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 7647
+          },
+          "estimatedUsd": 0.00037047
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 15245,
+        "modelCalls": 5,
+        "toolCalls": 9
+      },
+      "admittedProviderCalls": 5,
+      "reportedUsageCalls": 5,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "find_notes",
+        "find_notes",
+        "read_notes",
+        "read_notes",
+        "find_notes",
+        "find_notes",
+        "find_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13392,
+        21038,
+        30125,
+        34107,
+        44514
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1562,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 3571,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 5637,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 7391,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 10904,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 9739,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 12538,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 14851,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 17833,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_source_record",
+      "variant": "current",
+      "repeat": 1,
+      "checks": {
+        "answer": false,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": false,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_source_record",
+        "variant": "current",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": true,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed all claims and exact citations. Related approval correctly attributed. Source-record omissions have full canonical retrospective coverage. Revised absent-actor answer canonically checks retrospective, keeps approver unresolved, and makes no exhaustive vault-absence claim. Entire-launch statement quotes an explicit record rather than inventing real-world status.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya finished checksum verification. The retrospective says this was one substep of the launch. [Source 3](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** The retrospective records no completion for the entire launch. [Source 3](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** The retrospective says deployment was approved but does not name the approver. [Source 3](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [
+          "01M4M1VMY1W4YNNNHMNHAM9PKZ"
+        ],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1VMY1W4YNNNHMNHAM9PKZ",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "E6XJZQR0DAC9M9-6"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1VMY1W4YNNNHMNHAM9PKZ",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "E6XJZQR0DAC9M9-1"
+              },
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "partial",
+                "evidenceId": "E6XJZQR0DAC9M9-11"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 12217,
+        "inputTokens": 15357,
+        "outputTokens": 258,
+        "reasoningTokens": 66,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 15615
+      },
+      "estimatedUsd": 0.00056517,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2267,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2296
+          },
+          "estimatedUsd": 6.606e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2264,
+            "inputTokens": 3648,
+            "outputTokens": 37,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3685
+          },
+          "estimatedUsd": 0.00017954000000000003
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3645,
+            "inputTokens": 4365,
+            "outputTokens": 109,
+            "reasoningTokens": 66,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4474
+          },
+          "estimatedUsd": 0.00016294999999999998
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4362,
+            "inputTokens": 5077,
+            "outputTokens": 83,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5160
+          },
+          "estimatedUsd": 0.00015662
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 6254,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13398,
+        18495,
+        22050,
+        27086
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1568,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1864,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 4801,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2155,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 8065,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4854,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 10402,
+          "tools": 8628
+        }
+      ]
+    },
+    {
+      "name": "heldout_source_record",
+      "variant": "scope_revised",
+      "repeat": 1,
+      "checks": {
+        "answer": true,
+        "canonicalUnchanged": true,
+        "citations": true,
+        "passed": true,
+        "privacy": true
+      },
+      "manualReview": {
+        "name": "heldout_source_record",
+        "variant": "scope_revised",
+        "repeat": 1,
+        "passed": true,
+        "answerIntentPassed": true,
+        "factualClaimsSupported": true,
+        "completeCanonicalCoverageBeforeAbsence": true,
+        "explicitProseRelatedAttribution": null,
+        "userVisibleRelatedAttribution": null,
+        "note": "Manually reviewed all claims and exact citations. Related approval correctly attributed. Source-record omissions have full canonical retrospective coverage. Revised absent-actor answer canonically checks retrospective, keeps approver unresolved, and makes no exhaustive vault-absence claim. Entire-launch statement quotes an explicit record rather than inventing real-world status.",
+        "claims": [
+          {
+            "text": "- **Priya:** On September 18, 2026, Priya finished checksum verification. The retrospective identifies this as one substep of the launch. [Source 4](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Entire launch:** The retrospective says it has no recorded completion; it does not establish that the whole launch was completed. [Source 4](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          },
+          {
+            "text": "- **Deployment approver:** The retrospective says deployment was approved but does not name the approver. [Source 4](passage:1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf)",
+            "citations": [
+              "1929948afe488cbc628bbeac97e099e5b931af326b88025c414f8352dc6a1ccf"
+            ],
+            "supportingSources": [
+              {
+                "title": "Meridian retrospective",
+                "excerpt": "On September 18, 2026, Priya finished checksum verification; deployment was approved.\nOn September 19, Anika planned the rollout.\nChecksum verification is one substep; the entire launch has no recorded completion.\n"
+              }
+            ]
+          }
+        ],
+        "completeCanonicalNoteIds": [
+          "01M4M1VMY1W4YNNNHMNHAM9PKZ"
+        ],
+        "reads": [
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Only selected passages across this read; not the whole note or a complete real-world record",
+              "nextReads": [
+                {
+                  "note_id": "01M4M1VMY1W4YNNNHMNHAM9PKZ",
+                  "purpose": "answer"
+                },
+                {
+                  "note_id": "01M4M1VMYH6MKGV5XSBWRJ2A31",
+                  "purpose": "answer"
+                }
+              ],
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "title",
+                "alreadyRead": "none",
+                "evidenceId": "ECQQ33278QNFKP-1"
+              },
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "ECQQ33278QNFKP-6"
+              },
+              {
+                "title": "Meridian approvals",
+                "location": "body",
+                "alreadyRead": "none",
+                "evidenceId": "ECQQ33278QNFKP-8"
+              }
+            ]
+          },
+          {
+            "coverage": {
+              "complete": true,
+              "meaning": "Current title, properties and body across this read; not retained history or a complete real-world record",
+              "nextReads": [],
+              "noteId": "01M4M1VMY1W4YNNNHMNHAM9PKZ",
+              "scope": "canonical_note",
+              "wholeNoteComplete": true
+            },
+            "items": [
+              {
+                "title": "Meridian retrospective",
+                "location": "title",
+                "alreadyRead": "full",
+                "evidenceId": "ECQQ33278QNFKP-1"
+              },
+              {
+                "title": "Meridian retrospective",
+                "location": "body",
+                "alreadyRead": "partial",
+                "evidenceId": "ECQQ33278QNFKP-11"
+              }
+            ]
+          }
+        ]
+      },
+      "runtimeError": null,
+      "usage": {
+        "cacheCreationInputTokens": 0,
+        "cachedInputTokens": 12584,
+        "inputTokens": 16120,
+        "outputTokens": 281,
+        "reasoningTokens": 63,
+        "toolUsePromptTokens": 0,
+        "totalTokens": 16401
+      },
+      "estimatedUsd": 0.00061994,
+      "perCall": [
+        {
+          "index": 0,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 1946,
+            "inputTokens": 2267,
+            "outputTokens": 29,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 2296
+          },
+          "estimatedUsd": 6.606e-05
+        },
+        {
+          "index": 1,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 2264,
+            "inputTokens": 3615,
+            "outputTokens": 53,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 3668
+          },
+          "estimatedUsd": 0.00018424
+        },
+        {
+          "index": 2,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 3612,
+            "inputTokens": 4765,
+            "outputTokens": 106,
+            "reasoningTokens": 63,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 4871
+          },
+          "estimatedUsd": 0.00020442000000000002
+        },
+        {
+          "index": 3,
+          "usage": {
+            "cacheCreationInputTokens": 0,
+            "cachedInputTokens": 4762,
+            "inputTokens": 5473,
+            "outputTokens": 93,
+            "reasoningTokens": 0,
+            "toolUsePromptTokens": 0,
+            "totalTokens": 5566
+          },
+          "estimatedUsd": 0.00016522
+        }
+      ],
+      "stats": {
+        "elapsedMillis": 7239,
+        "modelCalls": 4,
+        "toolCalls": 3
+      },
+      "admittedProviderCalls": 4,
+      "reportedUsageCalls": 4,
+      "toolSequence": [
+        "find_notes",
+        "read_notes",
+        "read_notes"
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": [],
+      "requestInputBytes": [
+        13398,
+        18525,
+        23475,
+        28561
+      ],
+      "requestComponentBytes": [
+        {
+          "additional_params": 0,
+          "conversationMessages": 1568,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 1864,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 4831,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 2193,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 9452,
+          "tools": 8628
+        },
+        {
+          "additional_params": 0,
+          "conversationMessages": 4912,
+          "documents": 2,
+          "output_schema": 0,
+          "preamble": 0,
+          "systemMessages": 3200,
+          "toolResults": 11819,
+          "tools": 8628
+        }
+      ]
+    }
+  ],
+  "aggregates": [
+    {
+      "name": "heldout_related_fact",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 10649,
+        "cachedInputTokens": 7918,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 246,
+        "totalTokens": 10895,
+        "reasoningTokens": 65
+      },
+      "estimatedUsd": 0.00047528,
+      "costPerRun": {
+        "min": 0.00047528,
+        "median": 0.00047528,
+        "max": 0.00047528
+      },
+      "modelCallAttempts": [
+        3
+      ],
+      "admittedProviderCalls": [
+        3
+      ],
+      "toolCalls": [
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_related_fact",
+      "variant": "scope_revised",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 10470,
+        "cachedInputTokens": 7823,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 205,
+        "totalTokens": 10675,
+        "reasoningTokens": 19
+      },
+      "estimatedUsd": 0.00044543,
+      "costPerRun": {
+        "min": 0.00044543,
+        "median": 0.00044543,
+        "max": 0.00044543
+      },
+      "modelCallAttempts": [
+        3
+      ],
+      "admittedProviderCalls": [
+        3
+      ],
+      "toolCalls": [
+        2
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_absent_actor",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 0,
+      "manualPassed": 0,
+      "usage": {
+        "inputTokens": 24390,
+        "cachedInputTokens": 18971,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 957,
+        "totalTokens": 25347,
+        "reasoningTokens": 563
+      },
+      "estimatedUsd": 0.0012101100000000001,
+      "costPerRun": {
+        "min": 0.0012101100000000001,
+        "median": 0.0012101100000000001,
+        "max": 0.0012101100000000001
+      },
+      "modelCallAttempts": [
+        5
+      ],
+      "admittedProviderCalls": [
+        5
+      ],
+      "toolCalls": [
+        9
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_absent_actor",
+      "variant": "scope_revised",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 11479,
+        "cachedInputTokens": 8012,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 344,
+        "totalTokens": 11823,
+        "reasoningTokens": 106
+      },
+      "estimatedUsd": 0.00059882,
+      "costPerRun": {
+        "min": 0.00059882,
+        "median": 0.00059882,
+        "max": 0.00059882
+      },
+      "modelCallAttempts": [
+        3
+      ],
+      "admittedProviderCalls": [
+        3
+      ],
+      "toolCalls": [
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_source_record",
+      "variant": "current",
+      "runs": 1,
+      "smokePassed": 0,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 15357,
+        "cachedInputTokens": 12217,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 258,
+        "totalTokens": 15615,
+        "reasoningTokens": 66
+      },
+      "estimatedUsd": 0.00056517,
+      "costPerRun": {
+        "min": 0.00056517,
+        "median": 0.00056517,
+        "max": 0.00056517
+      },
+      "modelCallAttempts": [
+        4
+      ],
+      "admittedProviderCalls": [
+        4
+      ],
+      "toolCalls": [
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "heldout_source_record",
+      "variant": "scope_revised",
+      "runs": 1,
+      "smokePassed": 1,
+      "manualPassed": 1,
+      "usage": {
+        "inputTokens": 16120,
+        "cachedInputTokens": 12584,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 281,
+        "totalTokens": 16401,
+        "reasoningTokens": 63
+      },
+      "estimatedUsd": 0.00061994,
+      "costPerRun": {
+        "min": 0.00061994,
+        "median": 0.00061994,
+        "max": 0.00061994
+      },
+      "modelCallAttempts": [
+        4
+      ],
+      "admittedProviderCalls": [
+        4
+      ],
+      "toolCalls": [
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "all",
+      "variant": "current",
+      "runs": 3,
+      "smokePassed": 1,
+      "manualPassed": 2,
+      "usage": {
+        "inputTokens": 50396,
+        "cachedInputTokens": 39106,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 1461,
+        "totalTokens": 51857,
+        "reasoningTokens": 694
+      },
+      "estimatedUsd": 0.0022505600000000004,
+      "costPerRun": {
+        "min": 0.00047528,
+        "median": 0.00056517,
+        "max": 0.0012101100000000001
+      },
+      "modelCallAttempts": [
+        3,
+        5,
+        4
+      ],
+      "admittedProviderCalls": [
+        3,
+        5,
+        4
+      ],
+      "toolCalls": [
+        2,
+        9,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    },
+    {
+      "name": "all",
+      "variant": "scope_revised",
+      "runs": 3,
+      "smokePassed": 3,
+      "manualPassed": 3,
+      "usage": {
+        "inputTokens": 38069,
+        "cachedInputTokens": 28419,
+        "cacheCreationInputTokens": 0,
+        "outputTokens": 830,
+        "totalTokens": 38899,
+        "reasoningTokens": 188
+      },
+      "estimatedUsd": 0.00166419,
+      "costPerRun": {
+        "min": 0.00044543,
+        "median": 0.00059882,
+        "max": 0.00061994
+      },
+      "modelCallAttempts": [
+        3,
+        3,
+        4
+      ],
+      "admittedProviderCalls": [
+        3,
+        3,
+        4
+      ],
+      "toolCalls": [
+        2,
+        3,
+        3
+      ],
+      "exactRepeatedCalls": 0,
+      "readsWhoseBodyTextWasAlreadyFullyDelivered": 0
+    }
+  ]
+}

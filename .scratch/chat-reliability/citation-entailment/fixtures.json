@@ -1,0 +1,1523 @@
+{
+  "schemaVersion": 1,
+  "method": "Model-independent fixed-evidence cases. Source IDs are synthetic selectors for evaluation only, never app permissions or live citation destinations. Controls are authored and manually judged; they are not model output.",
+  "cases": [
+    {
+      "id": "title_is_not_content",
+      "category": "citation_scope",
+      "question": "Which note contains the pilot idea, and when was its text added?",
+      "context": {},
+      "sources": [
+        {
+          "id": "title",
+          "title": "Meridian activity",
+          "location": "title",
+          "text": "Meridian activity",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "added",
+          "title": "Meridian activity",
+          "location": "body",
+          "text": "Experimental pilot idea.",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "changeKind": "added",
+            "timeEvidence": {
+              "kind": "committed",
+              "committedAt": "2026-09-30T15:00:00Z"
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "identity": "Name Meridian activity.",
+        "text_date": "Attribute September 30 to addition of the idea text, using retained change evidence."
+      },
+      "rubric": [
+        "A title may establish note identity, but not body content or historical timing.",
+        "A true fact with the wrong supporting citation still fails."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The note is Meridian activity. [Source](passage:title)\n\nThe idea text was recorded as added on September 30, 2026. [Source](passage:added)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The note is Meridian activity.",
+              "proposition": "The note is Meridian activity.",
+              "citationIds": [
+                "title"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "The idea text was recorded as added on September 30, 2026.",
+              "proposition": "The idea text was recorded as added on September 30, 2026.",
+              "citationIds": [
+                "added"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "Historical added text and its committed timestamp support text addition, not execution.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "identity",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "text_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The note is Meridian activity. [Source](passage:title)\n\nThe idea text was recorded as added on September 30, 2026. [Source](passage:title)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The note is Meridian activity.",
+              "proposition": "The note is Meridian activity.",
+              "citationIds": [
+                "title"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "The idea text was recorded as added on September 30, 2026.",
+              "proposition": "The idea text was recorded as added on September 30, 2026.",
+              "citationIds": [
+                "title"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "A title contains neither the idea nor its addition date.",
+              "failureTags": [
+                "title_for_content"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "identity",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "text_date",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Attribute September 30 to addition of the idea text, using retained change evidence."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "event_date_is_not_edit_date",
+      "category": "dates",
+      "question": "When did the Cedar drill pass?",
+      "context": {},
+      "sources": [
+        {
+          "id": "outcome",
+          "title": "outcome",
+          "location": "body",
+          "text": "Witnessed outcome: Cedar passed the drill on September 11, 2026 at 14:00. Edited September 13 to correct a spelling error.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "event_date": "State the recorded event date September 11, not September 13."
+      },
+      "rubric": [
+        "Give the explicit event date without substituting an edit date or withholding a supported result."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The recorded drill passed on September 11, 2026 at 14:00. [Source](passage:outcome)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The recorded drill passed on September 11, 2026 at 14:00.",
+              "proposition": "The recorded drill passed on September 11, 2026 at 14:00.",
+              "citationIds": [
+                "outcome"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The drill passed on September 13, 2026. [Source](passage:outcome)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The drill passed on September 13, 2026.",
+              "proposition": "The drill passed on September 13, 2026.",
+              "citationIds": [
+                "outcome"
+              ],
+              "requiresCitation": true,
+              "verdict": "contradicted",
+              "reason": "The passage explicitly dates the outcome September 11 and labels September 13 as an edit.",
+              "failureTags": [
+                "event_vs_edit_date"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "missing",
+              "reason": "This regression does not satisfy: State the recorded event date September 11, not September 13."
+            }
+          ],
+          "expectedPass": false
+        },
+        {
+          "id": "missing-citation",
+          "answer": "The recorded drill passed on September 11, 2026 at 14:00.",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The recorded drill passed on September 11, 2026 at 14:00.",
+              "proposition": "The recorded drill passed on September 11, 2026 at 14:00.",
+              "citationIds": [],
+              "requiresCitation": true,
+              "verdict": "unassessable",
+              "reason": "The fact matches the supplied passage but the answer gives no citation.",
+              "failureTags": [
+                "missing_citation"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": false
+        },
+        {
+          "id": "evasive-unknown",
+          "answer": "The event date is unknown. [Source](passage:outcome)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The event date is unknown.",
+              "proposition": "The event date is unknown.",
+              "citationIds": [
+                "outcome"
+              ],
+              "requiresCitation": true,
+              "verdict": "contradicted",
+              "reason": "The supplied outcome explicitly dates the event.",
+              "failureTags": [
+                "unnecessary_uncertainty"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "event_date",
+              "status": "missing",
+              "reason": "This control fails the required distinction."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "missing_report_is_not_failure",
+      "category": "status",
+      "question": "Today is September 13. Did Juniper miss its September 11 drill deadline?",
+      "context": {
+        "localToday": "2026-09-13"
+      },
+      "sources": [
+        {
+          "id": "schedule",
+          "title": "schedule",
+          "location": "body",
+          "text": "Juniper drill scheduled for September 11, 2026. The supplied accessible record has no outcome report.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "uncertainty": "Explain that the accessible record does not establish occurrence or a missed deadline."
+      },
+      "rubric": [
+        "A past schedule plus an absent report establishes a documentary gap, not nonoccurrence.",
+        "Do not invent inaccessible outcomes."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The supplied record schedules September 11 but does not establish whether the drill happened or missed its deadline. [Source](passage:schedule)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The supplied record schedules September 11 but does not establish whether the drill happened or missed its deadline.",
+              "proposition": "The supplied record schedules September 11 but does not establish whether the drill happened or missed its deadline.",
+              "citationIds": [
+                "schedule"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "uncertainty",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "Juniper failed to hold the drill by its September 11 deadline. [Source](passage:schedule)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Juniper failed to hold the drill by its September 11 deadline.",
+              "proposition": "Juniper failed to hold the drill by its September 11 deadline.",
+              "citationIds": [
+                "schedule"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "The elapsed deadline and missing outcome report do not prove nonoccurrence.",
+              "failureTags": [
+                "absence_as_failure"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "uncertainty",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Explain that the accessible record does not establish occurrence or a missed deadline."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "wording_edit_is_not_completion",
+      "category": "status",
+      "question": "Was Send the report newly completed on September 30?",
+      "context": {
+        "activityRange": {
+          "start": "2026-09-30T00:00:00Z",
+          "end": "2026-10-01T00:00:00Z"
+        }
+      },
+      "sources": [
+        {
+          "id": "task",
+          "title": "task",
+          "location": "body",
+          "text": "- [x] Send the report",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "task": {
+              "currentStatus": "completed",
+              "statusMarkerChangedInPeriod": false,
+              "statusMarkerTimeUncertain": false
+            },
+            "currentContentProvenance": {
+              "wordingChangedAt": "2026-09-30T15:00:00Z",
+              "statusMarkerChangedAt": "2026-09-28T15:00:00Z"
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "recorded_status": "Report current checked status.",
+        "completion_time": "Do not count the September 30 wording edit as a new completion."
+      },
+      "rubric": [
+        "Separate current checkbox status from marker timing and real-world completion."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The task is currently marked complete. [Source](passage:task)\n\nThe September 30 wording edit does not record a new completion; the status marker changed on September 28. [Source](passage:task)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The task is currently marked complete.",
+              "proposition": "The task is currently marked complete.",
+              "citationIds": [
+                "task"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "The September 30 wording edit does not record a new completion; the status marker changed on September 28.",
+              "proposition": "The September 30 wording edit does not record a new completion; the status marker changed on September 28.",
+              "citationIds": [
+                "task"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "recorded_status",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completion_time",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The task is currently marked complete. [Source](passage:task)\n\nYou completed sending the report on September 30. [Source](passage:task)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The task is currently marked complete.",
+              "proposition": "The task is currently marked complete.",
+              "citationIds": [
+                "task"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "You completed sending the report on September 30.",
+              "proposition": "You completed sending the report on September 30.",
+              "citationIds": [
+                "task"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "An earlier checkbox marker and a wording-only edit do not establish sending on September 30; they also do not contradict a real-world sending event that was never recorded.",
+              "failureTags": [
+                "checkbox_timing",
+                "record_vs_world"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "recorded_status",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completion_time",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not count the September 30 wording edit as a new completion."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "restore_and_reopen",
+      "category": "status",
+      "question": "Did restoring the report task record a new accomplishment on October 8, and what is its status now?",
+      "context": {},
+      "sources": [
+        {
+          "id": "restored",
+          "title": "restored",
+          "location": "body",
+          "text": "- [x] Send the report",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "changeKind": "added",
+            "mutationSource": "restore",
+            "recordedAt": "2026-10-08T15:00:00Z"
+          }
+        },
+        {
+          "id": "current",
+          "title": "current",
+          "location": "body",
+          "text": "- [ ] Send the report",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "task": {
+              "currentStatus": "open"
+            },
+            "wording": "Reopened October 9."
+          }
+        }
+      ],
+      "requirements": {
+        "restore": "Restoring a checked marker does not establish a new accomplishment.",
+        "current": "Use the current open marker for current status."
+      },
+      "rubric": [
+        "Historical checked text neither establishes a new real-world completion nor overrides the current reopened task."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The October 8 restore returned a checked marker; it does not establish a new accomplishment. [Source](passage:restored)\n\nThe task is currently open. [Source](passage:current)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The October 8 restore returned a checked marker; it does not establish a new accomplishment.",
+              "proposition": "The October 8 restore returned a checked marker; it does not establish a new accomplishment.",
+              "citationIds": [
+                "restored"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "The task is currently open.",
+              "proposition": "The task is currently open.",
+              "citationIds": [
+                "current"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "restore",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "current",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "You completed the report on October 8 and it is still complete. [Source](passage:restored)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "You completed the report on October 8 and it is still complete.",
+              "proposition": "You completed the report on October 8 and it is still complete.",
+              "citationIds": [
+                "restored"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "A restore is not a new accomplishment, and historical text cannot establish current status against a reopened marker.",
+              "failureTags": [
+                "restore_as_completion",
+                "historical_as_current"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "restore",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Restoring a checked marker does not establish a new accomplishment."
+            },
+            {
+              "id": "current",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the current open marker for current status."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "deadline_inventory",
+      "category": "dates",
+      "question": "As of September 30, classify the parent, child, and examples using supported task deadlines.",
+      "context": {
+        "localToday": "2026-09-30"
+      },
+      "sources": [
+        {
+          "id": "tasks",
+          "title": "tasks",
+          "location": "body",
+          "text": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)\n  - [ ] Undated child\n- [x] Completed @due(2026-09-29)\n- [ ] Invalid @due(2026-02-30)\n\n```markdown\n- [ ] Fenced example @due(2026-09-29)\n```",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "taskDates": {
+              "complete": true,
+              "entries": [
+                {
+                  "text": "- [ ] Parent @due(2026-10-01) @due(2026-10-07)",
+                  "status": "open",
+                  "dueDate": "2026-10-01"
+                },
+                {
+                  "text": "  - [ ] Undated child",
+                  "status": "open",
+                  "dueDate": null
+                },
+                {
+                  "text": "- [x] Completed @due(2026-09-29)",
+                  "status": "completed",
+                  "dueDate": "2026-09-29"
+                },
+                {
+                  "text": "- [ ] Invalid @due(2026-02-30)",
+                  "status": "open",
+                  "dueDate": null
+                }
+              ]
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "parent": "First valid annotation makes the parent due October 1 (tomorrow).",
+        "child": "The child has no supported deadline and does not inherit the parent date.",
+        "examples": "Fenced example is not a task; invalid date is not a deadline.",
+        "completed": "Completed checkbox is not actionable overdue work."
+      },
+      "rubric": [
+        "Metadata must match the actual checkbox text.",
+        "Distinguish an inline-code annotation on a real task from an entire fenced-code example."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "Parent is due tomorrow, October 1; the first valid annotation wins. [Source](passage:tasks)\n\nUndated child has no supported deadline. [Source](passage:tasks)\n\nFenced example is not a task; Invalid has no valid deadline. [Source](passage:tasks)\n\nCompleted is checked and is not actionable overdue work. [Source](passage:tasks)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Parent is due tomorrow, October 1; the first valid annotation wins.",
+              "proposition": "Parent is due tomorrow, October 1; the first valid annotation wins.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "Undated child has no supported deadline.",
+              "proposition": "Undated child has no supported deadline.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-3",
+              "quote": "Fenced example is not a task; Invalid has no valid deadline.",
+              "proposition": "Fenced example is not a task; Invalid has no valid deadline.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-4",
+              "quote": "Completed is checked and is not actionable overdue work.",
+              "proposition": "Completed is checked and is not actionable overdue work.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "parent",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "child",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "examples",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "completed",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "Parent is due October 7, and its child inherits that deadline. [Source](passage:tasks)\n\nFenced example and Completed are overdue open tasks. [Source](passage:tasks)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Parent is due October 7, and its child inherits that deadline.",
+              "proposition": "Parent is due October 7, and its child inherits that deadline.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "contradicted",
+              "reason": "The first valid date is October 1 and children do not inherit dates.",
+              "failureTags": [
+                "deadline_precedence",
+                "child_inheritance"
+              ]
+            },
+            {
+              "id": "claim-2",
+              "quote": "Fenced example and Completed are overdue open tasks.",
+              "proposition": "Fenced example and Completed are overdue open tasks.",
+              "citationIds": [
+                "tasks"
+              ],
+              "requiresCitation": true,
+              "verdict": "contradicted",
+              "reason": "A fenced example is not a task and Completed is checked.",
+              "failureTags": [
+                "fenced_as_task",
+                "completed_as_overdue"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "parent",
+              "status": "missing",
+              "reason": "This regression does not satisfy: First valid annotation makes the parent due October 1 (tomorrow)."
+            },
+            {
+              "id": "child",
+              "status": "missing",
+              "reason": "This regression does not satisfy: The child has no supported deadline and does not inherit the parent date."
+            },
+            {
+              "id": "examples",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Fenced example is not a task; invalid date is not a deadline."
+            },
+            {
+              "id": "completed",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Completed checkbox is not actionable overdue work."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "editing_window_uncertainty",
+      "category": "history",
+      "question": "Was the idea text added after 20:00 on September 30?",
+      "context": {
+        "threshold": "2026-09-30T20:00:00Z"
+      },
+      "sources": [
+        {
+          "id": "window",
+          "title": "window",
+          "location": "body",
+          "text": "Experimental pilot idea.",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "changeKind": "added",
+            "timeEvidence": {
+              "kind": "editingWindow",
+              "minWall": "2026-09-30T19:58:00Z",
+              "maxWall": "2026-09-30T20:03:00Z",
+              "clockDiscontinuity": false
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "interval": "Preserve the 19:58–20:03 window and explain that exact after-20:00 timing is not established."
+      },
+      "rubric": [
+        "An Editing Window straddling the requested boundary cannot be collapsed to its end timestamp.",
+        "The evidence concerns text introduction, not when a pilot ran."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The retained addition belongs to the 19:58–20:03 Editing Window, so its exact position relative to 20:00 is not established. [Source](passage:window)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The retained addition belongs to the 19:58–20:03 Editing Window, so its exact position relative to 20:00 is not established.",
+              "proposition": "The retained addition belongs to the 19:58–20:03 Editing Window, so its exact position relative to 20:00 is not established.",
+              "citationIds": [
+                "window"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "interval",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The idea was added exactly at 20:03, so it was added after 20:00. [Source](passage:window)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The idea was added exactly at 20:03, so it was added after 20:00.",
+              "proposition": "The idea was added exactly at 20:03, so it was added after 20:00.",
+              "citationIds": [
+                "window"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "The end of an Editing Window is not an exact introduction timestamp.",
+              "failureTags": [
+                "editing_window_precision"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "interval",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Preserve the 19:58–20:03 window and explain that exact after-20:00 timing is not established."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "idea_is_not_execution",
+      "category": "history",
+      "question": "What did the pilot activity record change, and does it establish that the pilot ran?",
+      "context": {},
+      "sources": [
+        {
+          "id": "idea",
+          "title": "idea",
+          "location": "body",
+          "text": "Experimental pilot idea.",
+          "authority": "read",
+          "scope": "historical",
+          "metadata": {
+            "changeKind": "added",
+            "recordedAt": "2026-09-30T15:00:00Z"
+          }
+        },
+        {
+          "id": "canceled",
+          "title": "canceled",
+          "location": "body",
+          "text": "The experimental pilot was canceled.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "change": "Report the idea text addition and the current cancellation.",
+        "execution": "Do not infer earlier execution from an idea or a later cancellation."
+      },
+      "rubric": [
+        "Text insertion and cancellation do not prove a pilot was running."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The retained change added an experimental pilot idea; the current note records cancellation. [Source](passage:idea) [Source](passage:canceled)\n\nThese passages do not establish that the pilot ran. [Source](passage:idea) [Source](passage:canceled)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The retained change added an experimental pilot idea; the current note records cancellation.",
+              "proposition": "The retained change added an experimental pilot idea; the current note records cancellation.",
+              "citationIds": [
+                "idea",
+                "canceled"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "These passages do not establish that the pilot ran.",
+              "proposition": "These passages do not establish that the pilot ran.",
+              "citationIds": [
+                "idea",
+                "canceled"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "change",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "execution",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The pilot was running before it was canceled. [Source](passage:canceled)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The pilot was running before it was canceled.",
+              "proposition": "The pilot was running before it was canceled.",
+              "citationIds": [
+                "canceled"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "Cancellation does not entail prior execution and the older passage records only an idea.",
+              "failureTags": [
+                "idea_as_execution"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "change",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Report the idea text addition and the current cancellation."
+            },
+            {
+              "id": "execution",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not infer earlier execution from an idea or a later cancellation."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "superseded_approval",
+      "category": "status",
+      "question": "As of September 10, is Harbor cleared to launch?",
+      "context": {
+        "asOf": "2026-09-10"
+      },
+      "sources": [
+        {
+          "id": "old",
+          "title": "old",
+          "location": "body",
+          "text": "September 1: approve September 12 release with route A.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "hold",
+          "title": "hold",
+          "location": "body",
+          "text": "September 8 supersedes the September 1 decision. Hold release. Resume only after route B passes a witnessed drill; no completion is recorded here.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "plan",
+          "title": "plan",
+          "location": "body",
+          "text": "September 9 plan: schedule the drill for September 11.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "decision": "Use the explicit superseding hold.",
+        "condition": "The supplied record does not establish whether the recovery condition has been met."
+      },
+      "rubric": [
+        "An older approval and a planned drill do not override an explicit superseding hold.",
+        "Do not assert that the drill definitely never happened merely because it was scheduled later."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The latest recorded controlling decision is the September 8 hold. [Source](passage:old) [Source](passage:hold)\n\nThe supplied record does not establish that route B passed; the later entry only schedules the drill. [Source](passage:hold) [Source](passage:plan)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The latest recorded controlling decision is the September 8 hold.",
+              "proposition": "The latest recorded controlling decision is the September 8 hold.",
+              "citationIds": [
+                "old",
+                "hold"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "The supplied record does not establish that route B passed; the later entry only schedules the drill.",
+              "proposition": "The supplied record does not establish that route B passed; the later entry only schedules the drill.",
+              "citationIds": [
+                "hold",
+                "plan"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "decision",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "condition",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "Harbor remains approved to launch on September 12 because route A was approved. [Source](passage:old)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Harbor remains approved to launch on September 12 because route A was approved.",
+              "proposition": "Harbor remains approved to launch on September 12 because route A was approved.",
+              "citationIds": [
+                "old"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "The old approval is real but superseded; the answer omits the controlling hold.",
+              "failureTags": [
+                "superseded_as_current"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "decision",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the explicit superseding hold."
+            },
+            {
+              "id": "condition",
+              "status": "missing",
+              "reason": "This regression does not satisfy: The supplied record does not establish whether the recovery condition has been met."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "conflicting_reports",
+      "category": "status",
+      "question": "Did Birch drill B-4 pass?",
+      "context": {},
+      "sources": [
+        {
+          "id": "pass",
+          "title": "pass",
+          "location": "body",
+          "text": "September 11 at 14:00: Birch B-4 PASS. Signed Avery. No correction marker.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "editedAt": "2026-09-12"
+          }
+        },
+        {
+          "id": "fail",
+          "title": "fail",
+          "location": "body",
+          "text": "September 11 at 14:00: Birch B-4 FAIL. Signed Rowan. No correction marker.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "editedAt": "2026-09-13"
+          }
+        }
+      ],
+      "requirements": {
+        "conflict": "Surface both contradictory reports without selecting a definitive result."
+      },
+      "rubric": [
+        "The most recently edited report does not automatically supersede another report.",
+        "Explicit failure or success should be reported when uncontradicted, rather than always hedging."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The reports conflict for the same drill and time: Avery records PASS, Rowan records FAIL; no correction resolves the conflict. [Source](passage:pass) [Source](passage:fail)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The reports conflict for the same drill and time: Avery records PASS, Rowan records FAIL; no correction resolves the conflict.",
+              "proposition": "The reports conflict for the same drill and time: Avery records PASS, Rowan records FAIL; no correction resolves the conflict.",
+              "citationIds": [
+                "pass",
+                "fail"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "conflict",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "Birch failed; Rowan edited the report last so it supersedes Avery. [Source](passage:fail)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Birch failed; Rowan edited the report last so it supersedes Avery.",
+              "proposition": "Birch failed; Rowan edited the report last so it supersedes Avery.",
+              "citationIds": [
+                "fail"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "The later edit timestamp establishes no supersession or resolution.",
+              "failureTags": [
+                "conflict_hidden",
+                "last_edit_as_authority"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "conflict",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Surface both contradictory reports without selecting a definitive result."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "related_note_attribution",
+      "category": "citation_scope",
+      "question": "In Meridian retrospective, who approved deployment?",
+      "context": {},
+      "sources": [
+        {
+          "id": "retro-title",
+          "title": "Meridian retrospective",
+          "location": "title",
+          "text": "Meridian retrospective",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        },
+        {
+          "id": "retro",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment was discussed; this complete retrospective records no approver.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "wholeNoteComplete": true
+          }
+        },
+        {
+          "id": "approval",
+          "title": "Meridian approvals",
+          "location": "body",
+          "text": "Asha approved the production deployment.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {}
+        }
+      ],
+      "requirements": {
+        "record": "Identify that the complete retrospective does not name an approver.",
+        "related": "Use the related approvals note for Asha and attribute it clearly."
+      },
+      "rubric": [
+        "Related evidence may answer the factual gap with attribution.",
+        "A citation to the starting note must not stand in for the note establishing the approver."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The retrospective does not name an approver. [Source](passage:retro)\n\nAccording to Meridian approvals, Asha approved the production deployment. [Source](passage:approval)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The retrospective does not name an approver.",
+              "proposition": "The retrospective does not name an approver.",
+              "citationIds": [
+                "retro"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "According to Meridian approvals, Asha approved the production deployment.",
+              "proposition": "According to Meridian approvals, Asha approved the production deployment.",
+              "citationIds": [
+                "approval"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "record",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "related",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The retrospective does not name an approver. [Source](passage:retro)\n\nAccording to Meridian retrospective, Asha approved deployment. [Source](passage:retro-title)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The retrospective does not name an approver.",
+              "proposition": "The retrospective does not name an approver.",
+              "citationIds": [
+                "retro"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The cited passage directly supports this recorded fact.",
+              "failureTags": []
+            },
+            {
+              "id": "claim-2",
+              "quote": "According to Meridian retrospective, Asha approved deployment.",
+              "proposition": "According to Meridian retrospective, Asha approved deployment.",
+              "citationIds": [
+                "retro-title"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "The title does not establish an approver, and the actual actor evidence comes from another note.",
+              "failureTags": [
+                "wrong_note_attribution",
+                "title_for_content"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "record",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            },
+            {
+              "id": "related",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Use the related approvals note for Asha and attribute it clearly."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "preview_is_not_read",
+      "category": "read_authority",
+      "question": "What does the pilot note establish about execution?",
+      "context": {},
+      "sources": [
+        {
+          "id": "preview",
+          "title": "preview",
+          "location": "body",
+          "text": "The pilot was running.",
+          "authority": "preview",
+          "scope": "current",
+          "metadata": {
+            "discoveryOnly": true
+          }
+        }
+      ],
+      "requirements": {
+        "authority": "Do not present an unread discovery preview as a supported finding; identify the need for an admitted read."
+      },
+      "rubric": [
+        "Even a verbatim matching preview is not admitted citation authority.",
+        "This is a fixed-evidence synthesis case, not a test that the agent actually chooses or executes a read."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "Only a discovery preview is supplied; an admitted passage read is needed before reporting a supported execution finding.",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Only a discovery preview is supplied; an admitted passage read is needed before reporting a supported execution finding.",
+              "proposition": "Only a discovery preview is supplied; an admitted passage read is needed before reporting a supported execution finding.",
+              "citationIds": [],
+              "requiresCitation": false,
+              "verdict": "supported",
+              "reason": "This reports the supplied evidence boundary, not a fact about the note.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "authority",
+              "status": "covered",
+              "reason": "Explicitly addressed in this control."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "The pilot was running. [Source](passage:preview)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The pilot was running.",
+              "proposition": "The pilot was running.",
+              "citationIds": [
+                "preview"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The text matches the preview, but matching text alone does not grant read authority.",
+              "failureTags": [
+                "preview_as_evidence"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "authority",
+              "status": "missing",
+              "reason": "This regression does not satisfy: Do not present an unread discovery preview as a supported finding; identify the need for an admitted read."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    },
+    {
+      "id": "partial_read_absence",
+      "category": "citation_scope",
+      "question": "Does Meridian retrospective name an approver anywhere?",
+      "context": {},
+      "sources": [
+        {
+          "id": "partial",
+          "title": "Meridian retrospective",
+          "location": "body",
+          "text": "Deployment approval was discussed.",
+          "authority": "read",
+          "scope": "current",
+          "metadata": {
+            "coverage": {
+              "complete": true,
+              "scope": "selected_passages",
+              "wholeNoteComplete": false
+            }
+          }
+        }
+      ],
+      "requirements": {
+        "scope": "Limit the absence claim to the delivered passage and preserve uncertainty about the rest of the note."
+      },
+      "rubric": [
+        "A complete selected passage is not complete canonical-note coverage.",
+        "The complete-note absence positive control is related_note_attribution."
+      ],
+      "controls": [
+        {
+          "id": "supported",
+          "answer": "The supplied passage does not name an approver; it does not establish whether the rest of the note does. [Source](passage:partial)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "The supplied passage does not name an approver; it does not establish whether the rest of the note does.",
+              "proposition": "The supplied passage does not name an approver; it does not establish whether the rest of the note does.",
+              "citationIds": [
+                "partial"
+              ],
+              "requiresCitation": true,
+              "verdict": "supported",
+              "reason": "The supplied passage and selected-only coverage support this narrow gap, not whole-note absence.",
+              "failureTags": []
+            }
+          ],
+          "coverage": [
+            {
+              "id": "scope",
+              "status": "covered",
+              "reason": "The supplied passage and selected-only coverage support this narrow gap, not whole-note absence."
+            }
+          ],
+          "expectedPass": true
+        },
+        {
+          "id": "regression",
+          "answer": "Meridian retrospective does not name an approver anywhere. [Source](passage:partial)",
+          "claims": [
+            {
+              "id": "claim-1",
+              "quote": "Meridian retrospective does not name an approver anywhere.",
+              "proposition": "Meridian retrospective does not name an approver anywhere.",
+              "citationIds": [
+                "partial"
+              ],
+              "requiresCitation": true,
+              "verdict": "unsupported",
+              "reason": "Selected-passage coverage cannot establish absence throughout the note.",
+              "failureTags": [
+                "partial_as_whole_absence"
+              ]
+            }
+          ],
+          "coverage": [
+            {
+              "id": "scope",
+              "status": "missing",
+              "reason": "Selected-passage coverage cannot establish absence throughout the note."
+            }
+          ],
+          "expectedPass": false
+        }
+      ]
+    }
+  ]
+}
