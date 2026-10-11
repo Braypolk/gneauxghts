@@ -1,10 +1,14 @@
 import { tick } from 'svelte';
-import { dockClockProgress, type DockMotionEasing } from '../ui/workspaceDockMachine';
+import { dockClockProgress, dockMorphDuration, type DockMotionEasing } from '../ui/workspaceDockMachine';
 
 const PANE = '.notepad-pane';
 const CARD = '.notepad-workspace-card';
 const CONTENT = '[data-pane-content]';
 const FRAME = '[data-pane-frame]';
+const RAIL = '.pane-rail-surface';
+const LABEL = '.pane-rail-label';
+const VIEWPORT = '.pane-viewport';
+const SHEET = '.related-bottom-sheet';
 
 interface Geometry {
   width: number;
@@ -12,25 +16,53 @@ interface Geometry {
   left: string;
   marginLeft: string;
   marginRight: string;
+  x: number;
+  right: string;
+  bottom: string;
+  clipInset: number;
+  targetClipInset: number;
+}
+
+/** Interpolate measured CSS values, including the clip's percentage/length width. */
+function interpolateValue(start: Keyframe[string], end: Keyframe[string], progress: number) {
+  if (start === end) return start;
+  const numbers = /[+-]?(?:\d+\.?\d*|\.\d+)/g;
+  const from = String(start).match(numbers), to = String(end).match(numbers);
+  if (!from || !to || from.length !== to.length ||
+    String(start).replace(numbers, '#') !== String(end).replace(numbers, '#')) {
+    return progress < 0.5 ? start : end;
+  }
+  let index = 0;
+  return String(end).replace(numbers, () => {
+    const a = Number(from[index]), b = Number(to[index++]);
+    return String(a + (b - a) * progress);
+  });
 }
 
 function geometry(element: HTMLElement): Geometry {
   const style = getComputedStyle(element);
+  const rect = element.getBoundingClientRect();
   return {
-    width: element.getBoundingClientRect().width,
+    width: rect.width,
     opacity: style.opacity,
     left: style.left,
     marginLeft: style.marginLeft,
-    marginRight: style.marginRight
+    marginRight: style.marginRight,
+    x: rect.left,
+    right: style.right,
+    bottom: style.bottom,
+    clipInset: element.matches(VIEWPORT)
+      ? Math.max(0, element.parentElement!.getBoundingClientRect().width - rect.width) : 0,
+    targetClipInset: parseFloat(style.getPropertyValue('--pane-clip-inset')) || 0
   };
 }
 
 /**
  * Presentation only: the workspace still owns pane membership and departure.
  * Capture before Svelte updates, measure the destination before paint, then
- * interpolate pane widths together. Document/transcript bodies immediately
- * take their final width and stay visible as the pane reveals them. Entering
- * panes also hold their chrome and choice/composer layout at its final width.
+ * interpolate pane widths together. Revealed bodies take their final width;
+ * departing bodies keep their captured wrapping until hidden. Compact frames
+ * also hold their chrome and choice/composer layout at the same fixed width.
  * Editors stay mounted. No editor copies or per-frame DOM reads.
  */
 export function createPaneLayoutMotion(deps: {
@@ -60,16 +92,22 @@ export function createPaneLayoutMotion(deps: {
     if (!area || !outer || !card) return;
 
     const elements = [outer, area, card, ...shell.querySelectorAll<HTMLElement>(
-      `${PANE}, .related-drawer`
+      `${PANE}, ${FRAME}, ${CONTENT}, ${RAIL}, ${VIEWPORT}, .related-drawer, ${SHEET}`
     )];
+    // Capture the source presentation before DOM changes. Every rail edge
+    // keeps the dock's timing even when its destination is solo layout.
+    const wasCompact = elements.some(element => element.matches(`${PANE}[data-pane-compact]`));
     const before = new Map(elements.map(element => [element, geometry(element)]));
-    const contentWidthsBefore = new Map(
-      [...shell.querySelectorAll<HTMLElement>(CONTENT)]
-        .map(element => [element, element.getBoundingClientRect().width])
-    );
+    const displayedRailEntry = [...before.entries()].find(([element, pose]) => element.matches(RAIL) && Number(pose.opacity) > 0.5);
+    // Snapshot only inert label chrome, never editor/chat content. Retargeting
+    // retains the displayed blend before the previous operation removes it.
+    const labelsBefore = [...(displayedRailEntry?.[0].querySelectorAll<HTMLElement>(LABEL) ?? [])]
+      .map(label => ({ node: label.cloneNode(true) as HTMLElement, opacity: Number(getComputedStyle(label).opacity) }))
+      .filter(label => label.opacity > 0.01);
     // Capture interrupted motion's displayed dimensions before cancelling it.
     cancel();
     const animations: Animation[] = [];
+    const labelSnapshots: HTMLElement[] = [];
     let timeout: ReturnType<typeof setTimeout> | undefined;
     let resolve!: () => void;
     finished = new Promise<void>(done => { resolve = done; });
@@ -80,6 +118,7 @@ export function createPaneLayoutMotion(deps: {
         active = undefined;
         clearTimeout(timeout);
         for (const animation of animations) animation.cancel();
+        for (const label of labelSnapshots) label.remove();
         // Flush the final unanimated geometry while transitions are suppressed.
         deps.updateRelatedLayout();
         shell.removeAttribute('data-pane-motion');
@@ -102,27 +141,36 @@ export function createPaneLayoutMotion(deps: {
       await tick();
       if (active !== operation) return;
       const style = getComputedStyle(shell);
+      const panes = [...shell.querySelectorAll<HTMLElement>(PANE)];
+      const compact = panes.some(pane => pane.hasAttribute('data-pane-compact'));
+      const enteringCompact = compact && !displayedRailEntry && panes.some(pane => !before.has(pane));
       const dock = shell.querySelector<HTMLElement>('[data-dock-started-at]');
       const dockStartedAt = Number(dock?.dataset.dockStartedAt);
       const dockDuration = Number(dock?.dataset.dockDuration);
       const coordinatedDock = !!dock && Number.isFinite(dockStartedAt) && dockDuration > 0 && !reducedMotion.matches;
+      // Entering, exchanging and leaving rail layout share the dock's clock,
+      // including note-to-note moves where the dock itself stays settled.
+      const compactMotion = wasCompact || compact;
+      const sharedDockCurve = coordinatedDock || compactMotion;
       const capturedAt = performance.now();
       const elapsed = coordinatedDock ? Math.min(1, Math.max(0, (capturedAt - dockStartedAt) / dockDuration)) : 0;
-      const dockEasing: DockMotionEasing = dock?.dataset.dockEasing === 'editor' ? 'editor' : 'pinch';
+      const dockEasing: DockMotionEasing = !coordinatedDock || dock?.dataset.dockEasing === 'editor' ? 'editor' : 'pinch';
       const originProgress = dockClockProgress(elapsed, dockEasing);
       const durationToken = style.getPropertyValue('--pane-transition-duration').trim();
-      const duration = reducedMotion.matches ? 0 : coordinatedDock ? dockDuration * (1 - elapsed) : parseFloat(durationToken) * (
+      const duration = reducedMotion.matches ? 0 : coordinatedDock ? dockDuration * (1 - elapsed) : compactMotion ? dockMorphDuration : parseFloat(durationToken) * (
         durationToken.endsWith('ms') ? 1 : 1000
       );
       if (!Number.isFinite(duration) || duration <= 0 || !shell.animate) return;
       const options: KeyframeAnimationOptions = {
         duration,
-        easing: coordinatedDock ? 'linear' : style.getPropertyValue('--pane-transition-ease').trim(),
+        easing: sharedDockCurve ? 'linear' : style.getPropertyValue('--pane-transition-ease').trim(),
         fill: 'both'
       };
-      const panes = [...shell.querySelectorAll<HTMLElement>(PANE)];
+      const compactSurfaces = panes.flatMap(pane => pane.hasAttribute('data-pane-compact')
+        ? [...pane.querySelectorAll<HTMLElement>(`${FRAME}, ${RAIL}, ${CONTENT}, ${VIEWPORT}`)] : []);
       const drawer = shell.querySelector<HTMLElement>('.related-drawer');
-      const participants = [outer, area, card, ...panes, ...(drawer ? [drawer] : [])];
+      const sheet = shell.querySelector<HTMLElement>(SHEET);
+      const participants = [outer, area, card, ...panes, ...compactSurfaces, ...(drawer ? [drawer] : []), ...(sheet ? [sheet] : [])];
       // Read all destination geometry before installing any animation effects.
       const after = new Map(participants.map(element => [element, geometry(element)]));
       // Measure the dock's final flex space without its temporary displayed
@@ -138,36 +186,33 @@ export function createPaneLayoutMotion(deps: {
       // New panes reveal one settled layout, including titles, choices and
       // chat controls. Existing panes keep their fluid chrome and stable text.
       const contentByPane = new Map(panes.map(pane => [
-        pane, pane.querySelector<HTMLElement>(before.has(pane) ? CONTENT : FRAME)
+        pane, pane.querySelector<HTMLElement>(compact || !before.has(pane) ? FRAME : CONTENT)
       ]));
       const contentWidthsAfter = new Map(
         [...contentByPane.values()]
           .filter((element): element is HTMLElement => element !== null)
           .map(element => [element, element.getBoundingClientRect().width])
       );
+      // Every surface follows the same remaining dock clock. Sample it once
+      // per operation rather than solving the curve again for every element.
+      const clockSamples = sharedDockCurve ? Array.from({ length: 81 }, (_, index) => {
+        const offset = index / 80;
+        // Retarget from the displayed bounds using only the remaining clock.
+        const progress = offset === 0 || offset === 1 ? offset :
+          (dockClockProgress(elapsed + (1 - elapsed) * offset, dockEasing) - originProgress) / (1 - originProgress);
+        return { offset, progress };
+      }) : undefined;
       const add = (element: HTMLElement, from: Keyframe, to: Keyframe) => {
         // Sampling the dock's clock into linear WAAPI keyframes lets the card,
         // pane bounds and Related reservation follow the same selected curve.
         // Otherwise their earlier completion clips the still-moving actions.
-        const keyframes = !coordinatedDock ? [from, to] : Array.from({ length: 81 }, (_, index) => {
-          const offset = index / 80;
-          // A retarget begins at the displayed bounds and consumes only the
-          // remaining clock, rather than sampling the old progress twice.
-          const progress = offset === 0 || offset === 1 ? offset :
-            (dockClockProgress(elapsed + (1 - elapsed) * offset, dockEasing) - originProgress) / (1 - originProgress);
+        const keyframes = clockSamples?.map(({ offset, progress }) => {
           const frame: Keyframe = { offset };
           for (const key of Object.keys(from)) {
-            const start = from[key], end = to[key];
-            if (start === end) frame[key] = start;
-            else {
-              const a = parseFloat(String(start)), b = parseFloat(String(end));
-              const unit = String(end).replace(/^[+-]?(?:\d+\.?\d*|\.\d+)/, '');
-              frame[key] = Number.isFinite(a) && Number.isFinite(b)
-                ? `${a + (b - a) * progress}${unit}` : progress < 0.5 ? start : end;
-            }
+            frame[key] = interpolateValue(from[key], to[key], progress);
           }
           return frame;
-        });
+        }) ?? [from, to];
         animations.push(element.animate(keyframes, options));
       };
       for (const element of [outer, area]) {
@@ -186,24 +231,81 @@ export function createPaneLayoutMotion(deps: {
         const from = before.get(pane);
         const to = after.get(pane)!;
         add(pane, {
-          flexGrow: 0, flexShrink: 0, flexBasis: `${from?.width ?? 0}px`, opacity: from?.opacity ?? '1'
+          flexGrow: 0, flexShrink: 0, flexBasis: `${from?.width ?? 0}px`,
+          ...(!compact ? { opacity: from?.opacity ?? '1' } : {})
         }, {
-          flexGrow: 0, flexShrink: 0, flexBasis: `${to.width}px`, opacity: to.opacity
+          flexGrow: 0, flexShrink: 0, flexBasis: `${to.width}px`,
+          ...(!compact ? { opacity: to.opacity } : {})
         });
         const content = contentByPane.get(pane);
         if (content) {
           const destinationWidth = contentWidthsAfter.get(content)!;
           // Closing content keeps its old width until its pane is removed.
-          const finalWidth = to.width > 1
-            ? destinationWidth
-            : contentWidthsBefore.get(content) ?? destinationWidth;
+          // The first compact reveal covers the solo editor in its original
+          // wrapping. Restore compact sizing only once that frame is hidden.
+          const coveredSolo = enteringCompact && pane.hasAttribute('data-pane-collapsed');
+          const finalWidth = coveredSolo || to.width <= 1
+            ? before.get(content)?.width ?? destinationWidth : destinationWidth;
           const fixedWidth = {
             width: `${finalWidth}px`, minWidth: `${finalWidth}px`, maxWidth: `${finalWidth}px`
           };
-          // A constant effect holds the final wrapping while the surrounding
+          // A constant effect holds the chosen wrapping while the surrounding
           // pane animates. Cancelling it restores responsive sizing at rest.
           add(content, fixedWidth, fixedWidth);
         }
+      }
+      // One opaque rail travels from the currently displayed position. Both
+      // native buttons remain mounted, but only the destination rail paints.
+      const displayedRail = displayedRailEntry?.[1];
+      // The first split has no retained rail pose. Start just outside the card
+      // and run the same rail/clip reveal used for subsequent exchanges.
+      const railOrigin = displayedRail?.x ?? (enteringCompact ? cardFrom.x + cardFrom.width : undefined);
+      for (const surface of compactSurfaces) {
+        if (surface.matches(RAIL)) {
+          const visible = surface.classList.contains('pane-rail');
+          const to = after.get(surface)!;
+          const pane = surface.closest<HTMLElement>(PANE)!;
+          const fromLeft = visible && railOrigin !== undefined
+            ? `${railOrigin - (before.get(pane)?.x ?? after.get(pane)!.x)}px` : to.left;
+          add(surface, { opacity: visible ? 1 : 0, left: fromLeft }, {
+            opacity: visible ? 1 : 0, left: to.left
+          });
+          if (visible && labelsBefore.length) {
+            const label = surface.querySelector<HTMLElement>(LABEL)!;
+            add(label, { opacity: 0 }, { opacity: 1 });
+            for (const snapshot of labelsBefore) {
+              snapshot.node.setAttribute('aria-hidden', 'true');
+              snapshot.node.setAttribute('data-rail-label-snapshot', '');
+              snapshot.node.style.position = 'absolute';
+              snapshot.node.style.pointerEvents = 'none';
+              surface.append(snapshot.node);
+              labelSnapshots.push(snapshot.node);
+              add(snapshot.node, { opacity: snapshot.opacity }, { opacity: 0 });
+            }
+          }
+        } else if (surface.matches(VIEWPORT)) {
+          const from = before.get(surface) ?? after.get(surface)!;
+          const to = after.get(surface)!;
+          // Opening, exchange and closing share one outer-edge-anchored clip.
+          // The fixed frame keeps its wrapping even when this clip reaches zero.
+          add(surface, { width: `calc(100% - ${from.clipInset}px)` }, {
+            width: `calc(100% - ${to.targetClipInset}px)`
+          });
+        } else if (surface.matches(CONTENT)) {
+          // The motion marker keeps frames opaque without an opacity effect,
+          // which would isolate their backdrop filters even at constant 1.
+          const frame = surface.closest<HTMLElement>(FRAME)!;
+          const from = !before.has(frame) || Number(before.get(frame)?.opacity) === 0 ? 0.85 : Number(before.get(surface)?.opacity ?? 1);
+          const to = frame.closest(PANE)!.hasAttribute('data-pane-collapsed') ? 0.85 : 1;
+          add(surface, { opacity: from }, { opacity: to });
+        }
+      }
+      if (sheet) {
+        const from = before.get(sheet) ?? after.get(sheet)!;
+        const to = after.get(sheet)!;
+        add(sheet, { right: from.right, bottom: from.bottom, width: `${from.width}px` }, {
+          right: to.right, bottom: to.bottom, width: `${to.width}px`
+        });
       }
       if (drawer) {
         const from = before.get(drawer);
@@ -216,7 +318,10 @@ export function createPaneLayoutMotion(deps: {
       const start = document.timeline.currentTime;
       if (start !== null) for (const animation of animations) animation.startTime = start;
       if (start !== null && coordinatedDock) for (const animation of animations) {
-        animation.startTime = Number(start) - (performance.now() - capturedAt);
+        // The document timeline uses the performance time origin, but its
+        // currentTime stays at the last frame during measurement. Backdating
+        // that stale frame time by setup cost makes panes run ahead of the dock.
+        animation.startTime = capturedAt;
       }
       shell.dispatchEvent(new CustomEvent('workspace-pane-layout-ready', { detail: dockDestination ? {
         id: Number(dock?.dataset.dockMotion), left: dockDestination.left, width: dockDestination.width

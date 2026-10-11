@@ -177,12 +177,78 @@ describe('task projection admission', () => {
     const reorder = store.reorderNote(0, 1); await store.load(); order.reject(new Error('late')); await reorder;
     expect(store.groups.map(g => g.noteTitle)).toEqual(['new']); expect(store.errorMessage).toBe('');
   });
+  it('admits only one pending reorder and restores the persisted order on failure', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const write = deferred<unknown>(); mocks.invoke.mockReturnValueOnce(write.promise);
+    const store = new TaskListStore();
+    store.groups = [group('one'), { ...group('two'), noteId: 'note-2' }, { ...group('three'), noteId: 'note-3' }];
+    const first = store.reorderNote(0, 1);
+    expect(store.isReordering).toBe(true);
+    await store.reorderNote(1, 2);
+    expect(mocks.invoke).toHaveBeenCalledTimes(1);
+    expect(store.groups.map(g => g.noteTitle)).toEqual(['two', 'one', 'three']);
+    write.reject(new Error('offline')); await first;
+    expect(store.groups.map(g => g.noteTitle)).toEqual(['one', 'two', 'three']);
+    expect(store.isReordering).toBe(false);
+    expect(store.errorMessage).toBe('Unable to save note order.');
+  });
   it('refreshes a committed mutation in the current view without retrying it', async () => {
     const write = deferred<unknown>(); mocks.invoke.mockReturnValueOnce(write.promise).mockResolvedValueOnce([group('filter')]).mockResolvedValueOnce({ noteId: task.noteId, group: group('fresh') });
     const store = new TaskListStore(); store.groups = [group('initial')];
     const mutation = store.toggleTask(task); await Promise.resolve(); store.filter = 'open'; await store.load();
     write.resolve({ noteId: task.noteId, group: group('stale') }); await mutation;
     expect(store.groups[0].noteTitle).toBe('fresh'); expect(mocks.invoke.mock.calls.filter(([command]) => command === 'toggle_task')).toHaveLength(1);
+  });
+  it('restores failed order without discarding a group update admitted during the write', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const write = deferred<unknown>();
+    mocks.invoke.mockReturnValueOnce(write.promise).mockResolvedValueOnce({ noteId: task.noteId, group: group('updated') });
+    const store = new TaskListStore(); store.groups = [group('one'), { ...group('two'), noteId: 'note-2' }];
+    const reorder = store.reorderNote(0, 1); await store.refreshGroup(task.noteId);
+    write.reject(new Error('offline')); await reorder;
+    expect(store.groups.map(g => g.noteTitle)).toEqual(['updated', 'two']);
+    expect(store.errorMessage).toBe('Unable to save note order.');
+  });
+  it('refreshes a newer filter after the pending reorder commits', async () => {
+    const write = deferred<unknown>();
+    mocks.invoke.mockReturnValueOnce(write.promise).mockResolvedValueOnce([group('old filter order')]).mockResolvedValueOnce([group('committed order')]);
+    const store = new TaskListStore(); store.groups = [group('one'), { ...group('two'), noteId: 'note-2' }];
+    const reorder = store.reorderNote(0, 1); store.filter = 'open'; await store.load();
+    write.resolve(null); await reorder;
+    expect(store.groups.map(g => g.noteTitle)).toEqual(['committed order']);
+    expect(mocks.invoke.mock.calls.map(([command]) => command)).toEqual(['set_note_order', 'list_tasks', 'list_tasks']);
+    expect(store.isReordering).toBe(false);
+  });
+  it.each([
+    { starts: 'before', finishes: 'before' },
+    { starts: 'before', finishes: 'after' },
+    { starts: 'during', finishes: 'after' }
+  ])('retains committed ranks when a refresh starts $starts and finishes $finishes the reorder write', async ({ starts, finishes }) => {
+    const write = deferred<unknown>();
+    const staleRead = deferred<unknown>();
+    const original = [group('one'), { ...group('two'), noteId: 'note-2' }];
+    const committed = [original[1], original[0]];
+    let reads = 0;
+    mocks.invoke.mockImplementation((command: string) => command === 'set_note_order'
+      ? write.promise : reads++ === 0 ? staleRead.promise : Promise.resolve(committed));
+    const store = new TaskListStore();
+    store.groups = original;
+    let refresh = starts === 'before' ? store.load({ background: true }) : undefined;
+    const reorder = store.reorderNote(0, 1);
+    if (!refresh) refresh = store.load({ background: true });
+    if (finishes === 'before') {
+      staleRead.resolve(original);
+      await refresh;
+    }
+    write.resolve(null);
+    await reorder;
+    if (finishes === 'after') {
+      staleRead.resolve(original);
+      await refresh;
+    }
+    await vi.waitFor(() => expect(store.groups.map(group => group.noteId)).toEqual(['note-2', 'note-1']));
+    expect(mocks.invoke.mock.calls.filter(([command]) => command === 'set_note_order')).toHaveLength(1);
+    expect(store.isReordering).toBe(false);
   });
   it('keeps due-date failure observable and always releases the note lock', async () => {
     mocks.routeTaskDocumentMutation.mockRejectedValue(new Error('save failed'));

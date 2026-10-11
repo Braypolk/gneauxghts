@@ -320,7 +320,7 @@
       onclick={closeEditor}
     ></button>
     <div
-      class="relative z-10 w-full max-w-lg rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
+      class="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="local-model-editor-title"

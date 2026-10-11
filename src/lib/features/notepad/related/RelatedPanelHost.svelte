@@ -12,6 +12,8 @@
   interface Props {
     placement: RelatedPanelPlacement;
     reservedWidth: number;
+    rightInset?: number;
+    leftInset?: number;
     collapsed: boolean;
     items: RelatedNoteItem[];
     scope: RelatedScope;
@@ -28,6 +30,8 @@
   let {
     placement,
     reservedWidth,
+    rightInset = 0,
+    leftInset = 0,
     collapsed,
     items,
     scope,
@@ -104,7 +108,7 @@
     </div>
   </aside>
 {:else}
-  <div class="related-bottom-sheet pointer-events-none absolute z-20 flex max-w-[calc(100%-1rem)] flex-col items-end justify-end [--related-bottom-sheet-toggle-height:2.75rem]" style={getBottomSheetStyle()}>
+  <div class="related-bottom-sheet pointer-events-none absolute z-20 flex max-w-[calc(100%-1rem)] flex-col items-end justify-end [--related-bottom-sheet-toggle-height:2.75rem]" style={getBottomSheetStyle({ leftInset, rightInset })}>
     <div class="pointer-events-none relative h-full w-full">
       <div
         aria-hidden="true"

@@ -43,6 +43,7 @@
     remember: NotepadCommandBarRememberProps;
     search: NotepadCommandBarSearchProps;
     chatAvailable?: boolean;
+    chatCollapsed?: boolean;
     dockMode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
     onDockModeChange?: (mode: 'search' | 'chat') => void;
@@ -54,6 +55,7 @@
     remember,
     search,
     chatAvailable = false,
+    chatCollapsed = false,
     dockMode = 'search',
     chatSlot = $bindable(null),
     onDockModeChange,
@@ -771,6 +773,7 @@
 
     <WorkspaceInputDock
       hasChat={chatAvailable}
+      {chatCollapsed}
       mode={dockMode}
       bind:chatSlot
       bind:actionPresentation
@@ -782,7 +785,7 @@
           class="notepad-search-bar"
           bind:this={searchBar}
           value={searchQuery}
-          expanded={chatAvailable ? dockMode === 'search' : undefined}
+          expanded={chatAvailable && !chatCollapsed ? dockMode === 'search' : undefined}
           presentationActive={presentation.active}
           presentationExpanded={presentation.expanded}
           hasQuery={imageQueryUrl !== null}

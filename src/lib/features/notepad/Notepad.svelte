@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { nextEditorFrame } from './editor/editorPresentation';
   import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from '@tauri-apps/api/core';
@@ -40,6 +41,7 @@
   import SelectionMenu from "$lib/features/notepad/editor/SelectionMenu.svelte";
   import WikilinkAutocomplete from "$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte";
   import RelatedPanelHost from "$lib/features/notepad/related/RelatedPanelHost.svelte";
+  import { captureFocusIntent } from "$lib/features/notepad/navigation/focusIntent";
   import {
     getCardStyle,
     getRelatedGroupStyle,
@@ -162,6 +164,32 @@
   let paneOrder = $derived(workspaceStore.paneOrder);
   let activePaneId = $derived(workspaceStore.activePaneId);
   let collapsingPaneId = $derived(workspaceStore.collapsingPaneId);
+  let paneSpaceWidth = $state(0);
+  const retainedPaneIds = $derived(paneOrder.filter(id => id !== collapsingPaneId));
+  // Presentation follows the actual card space (including Related's reservation).
+  // Pane membership, editor mounts and the active pane remain workspace-owned.
+  const compactPanes = $derived(retainedPaneIds.length > 1 && paneSpaceWidth > 0 &&
+    paneSpaceWidth / retainedPaneIds.length < 360);
+  // Keep compact frames/rails mounted until the workspace retires a closing
+  // pane. The destination layout above still determines dock/Related space.
+  const compactPaneFrames = $derived(paneOrder.length > 1 && paneSpaceWidth > 0 &&
+    paneSpaceWidth / paneOrder.length < 360);
+  const paneRailWidth = 48;
+  const compactContentWidth = $derived(Math.max(0,
+    paneSpaceWidth - paneRailWidth * (retainedPaneIds.length - 1)));
+  const trailingRailWidth = $derived(compactPanes
+    ? paneRailWidth * Math.max(0, retainedPaneIds.length - retainedPaneIds.indexOf(activePaneId) - 1)
+    : 0);
+  const leadingRailWidth = $derived(compactPanes
+    ? paneRailWidth * Math.max(0, retainedPaneIds.indexOf(activePaneId))
+    : 0);
+  function observePaneSpace(node: HTMLElement) {
+    const read = () => { paneSpaceWidth = node.clientWidth; };
+    read();
+    const observer = new ResizeObserver(read);
+    observer.observe(node);
+    return { destroy() { observer.disconnect(); } };
+  }
 
   // The dock owns presentation only; each mounted chat keeps its composer state.
   let dockMode = $state<'search' | 'chat'>('search');
@@ -176,12 +204,15 @@
   $effect.pre(() => {
     const available = dockChatPaneIds;
     const activeChat = available.includes(activePaneId) ? activePaneId : null;
+    const compact = compactPanes;
     untrack(() => {
-      if (activeChat && activeChat !== preferredDockChatPaneId) {
+      if (activeChat && (compact || activeChat !== preferredDockChatPaneId)) {
         preferredDockChatPaneId = activeChat;
         dockMode = 'chat';
       } else if (available.length === 0) {
         preferredDockChatPaneId = null;
+        dockMode = 'search';
+      } else if (compact && !activeChat) {
         dockMode = 'search';
       }
     });
@@ -872,8 +903,42 @@
   $effect.pre(() => {
     const target = paneOrder.filter(id => id !== collapsingPaneId)
       .map(id => `${id}:${getPaneKind(id)}`).join(",");
+    const compactTarget = compactPanes ? `:rail:${activePaneId}` : '';
     const ready = notepadRuntimeState.hasLoadedInitialSession;
-    untrack(() => paneLayoutMotion.update(target, ready));
+    untrack(() => paneLayoutMotion.update(target + compactTarget,
+      ready && !workspaceShell?.hasAttribute('data-window-resizing')));
+  });
+
+  async function waitForPaneMotion() {
+    await paneLayoutMotion.wait();
+    // Native inert/style propagation settles with paint after retained frames
+    // change sides. Focus only after that boundary and recheck activation.
+    if (compactPanes) {
+      // A frame callback runs before paint. Cross a paint before focusing a
+      // newly non-inert retained subtree, as editor restoration already does.
+      await nextEditorFrame();
+      await nextEditorFrame();
+    }
+  }
+
+  async function expandPaneRail(paneId: PaneId) {
+    const focusIntent = captureFocusIntent();
+    try {
+      commands.activatePane(paneId);
+      await tick();
+      await waitForPaneMotion();
+      if (workspaceShell?.isConnected && activePaneId === paneId && focusIntent.isCurrent()) {
+        commands.focusPaneAfterShortcut(paneId);
+      }
+    } finally {
+      focusIntent.dispose();
+    }
+  }
+
+  $effect(() => {
+    const compact = compactPanes;
+    const paneId = activePaneId;
+    if (compact) untrack(() => closeTransientUiExcept(paneId));
   });
 
   function updateRelatedDrawerLayout() {
@@ -948,7 +1013,7 @@
       closeTransientUiExcept,
       updateSelectedRelatedText,
       closeWikilinkAutocomplete,
-      waitForPaneMotion: paneLayoutMotion.wait,
+      waitForPaneMotion,
     },
     derivedViews: {
       discoverPendingProposals,
@@ -1538,12 +1603,18 @@
         class="pointer-events-none absolute inset-0 bg-card/55 backdrop-blur-xl"
       ></div>
 
-      <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0">
+      <div class="relative z-10 flex min-h-0 min-w-0 flex-1 gap-0 px-0 pt-0"
+        use:observePaneSpace data-compact-panes={compactPaneFrames || undefined}
+        style={`--pane-rail-width:${paneRailWidth}px;--compact-pane-content-width:${compactContentWidth}px;`}>
         {#each paneOrder as paneId (paneId)}
           <NotepadPane
             pane={getPaneRuntime(paneId)}
             viewModel={getPaneViewModel(paneId)}
             actions={paneActions}
+            compact={compactPaneFrames}
+            collapsed={compactPaneFrames && (collapsingPaneId
+              ? paneId === collapsingPaneId : paneId !== activePaneId)}
+            onExpand={() => void expandPaneRail(paneId)}
             composerDock={{
               slot: paneId === dockChatPaneId ? chatDockSlot : null,
               expanded: paneId === dockChatPaneId && dockMode === 'chat',
@@ -1560,6 +1631,7 @@
       >
         <NotepadCommandBar
           chatAvailable={dockChatPaneId !== null}
+          chatCollapsed={compactPanes && !isActivePaneChat}
           {dockMode}
           bind:chatSlot={chatDockSlot}
           onDockModeChange={(mode) => (dockMode = mode)}
@@ -1673,6 +1745,8 @@
 
   {#if !historyMode.isActive && relatedState.panelPlacement !== "side"}
     <RelatedPanelHost
+      rightInset={trailingRailWidth}
+      leftInset={leadingRailWidth}
       placement={relatedState.panelPlacement}
       reservedWidth={relatedState.reservedWidth}
       collapsed={relatedState.isPanelCollapsed}
@@ -1843,6 +1917,12 @@
   .notepad-shell:global([data-window-resizing]) :global(.workspace-card-motion),
   .notepad-shell:global([data-window-resizing]) :global(.related-drawer-motion) {
     transition: none;
+  }
+
+  @media (max-width: 639px) {
+    .notepad-shell {
+      --related-sheet-top: calc(3.75rem + env(safe-area-inset-top, 0px));
+    }
   }
 
   @media (min-width: 640px) {

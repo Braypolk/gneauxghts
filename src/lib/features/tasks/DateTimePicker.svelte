@@ -109,13 +109,13 @@
             <Calendar.Header class="mb-3 flex items-center justify-between gap-2">
               <Calendar.PrevButton data-testid="date-picker-previous-month" aria-label="Previous month" class="flex size-8 shrink-0 items-center justify-center rounded-lg hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"><ChevronLeft class="size-4" /></Calendar.PrevButton>
               <Calendar.Heading class="sr-only" />
-              <div class="flex items-center gap-2">
-                <div class="relative">
-                  <Calendar.MonthSelect aria-label="Calendar month" monthFormat="short" disabled={saving} class="h-9 w-20 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
+              <div class="flex min-w-0 flex-1 items-center gap-2">
+                <div class="relative min-w-0 flex-1">
+                  <Calendar.MonthSelect aria-label="Calendar month" monthFormat="short" disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
                   <ChevronDown class="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 </div>
-                <div class="relative">
-                  <Calendar.YearSelect aria-label="Calendar year" {years} disabled={saving} class="h-9 w-22 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
+                <div class="relative min-w-0 flex-1">
+                  <Calendar.YearSelect aria-label="Calendar year" {years} disabled={saving} class="h-9 w-full min-w-0 appearance-none rounded-lg border border-border bg-transparent pl-2.5 pr-7 text-sm tabular-nums outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring" />
                   <ChevronDown class="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 </div>
               </div>
@@ -127,7 +127,7 @@
                 <Calendar.GridBody>
                   {#each month.weeks as week}<Calendar.GridRow>
                     {#each week as date}<Calendar.Cell {date} month={month.value} class="h-11 p-0 text-center">
-                      <Calendar.Day class="mx-auto flex size-9 items-center justify-center rounded-xl p-0 text-sm leading-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-accent data-selected:text-foreground data-outside-month:text-muted-foreground data-today:font-medium">{date.day}</Calendar.Day>
+                      <Calendar.Day class="mx-auto flex size-9 max-w-full items-center justify-center rounded-xl p-0 text-sm leading-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring data-selected:bg-accent data-selected:text-foreground data-outside-month:text-muted-foreground data-today:font-medium">{date.day}</Calendar.Day>
                     </Calendar.Cell>{/each}
                   </Calendar.GridRow>{/each}
                 </Calendar.GridBody>

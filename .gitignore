@@ -26,3 +26,6 @@ vite.config.ts.timestamp-*
 target/
 **/target/
 **/Cargo.lock
+
+# Responsive captures are regenerated locally.
+.scratch/responsive-screens/evidence/

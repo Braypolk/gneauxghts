@@ -82,10 +82,10 @@
           <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
             <div class="min-w-0">
               <div class="flex flex-wrap items-center gap-2">
-                <p class="text-sm font-medium">{note.title}</p>
+                <p class="min-w-0 wrap-anywhere text-sm font-medium">{note.title}</p>
                 <span class="rounded-full border border-amber-300/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-amber-700 dark:border-amber-900 dark:text-amber-200">missing</span>
               </div>
-              <p class="mt-1 text-xs text-muted-foreground">{note.fileName} · missing {formatTimestamp(note.missingAtMillis)}</p>
+              <p class="mt-1 wrap-anywhere text-xs text-muted-foreground">{note.fileName} · missing {formatTimestamp(note.missingAtMillis)}</p>
               <p class="mt-1 text-xs text-muted-foreground">Purges {formatTimestamp(note.purgeAtMillis)} after {formatForgottenRetention(note.retentionDays)}</p>
               <p class="mt-1 break-all text-xs text-muted-foreground">Last known path: {note.path}</p>
             </div>

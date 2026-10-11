@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { CornerUpLeft, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
+  import { CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
@@ -13,6 +13,7 @@
   import ChatPanel, { type ComposerDock } from '$lib/features/chat/ChatPanel.svelte';
   import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
   import { editorChromeInset } from '$lib/features/notepad/editor/editorChromeInset';
+  import { paneRailChrome } from './workspace/paneRailChrome';
   import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
   import type {
     PaneViewModel,
@@ -32,6 +33,9 @@
     actions: PaneWorkspaceActions;
     paneCommandFocusRoot?: HTMLElement | null;
     composerDock?: ComposerDock;
+    compact?: boolean;
+    collapsed?: boolean;
+    onExpand?: () => void;
   }
 
   let {
@@ -39,10 +43,19 @@
     viewModel,
     actions,
     composerDock,
+    compact = false,
+    collapsed = false,
+    onExpand,
     paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
   }: Props = $props();
 
   let optionsButton = $state<HTMLButtonElement | null>(null);
+  let optionsOpen = $state(false);
+  const chatController = $derived(viewModel.paneKind === 'chat' ? viewModel.chat.session.controller : null);
+  const railStatus = $derived(viewModel.paneKind === 'editor'
+    ? viewModel.documentStatus.kind === 'idle' ? '' : viewModel.documentStatus.label
+    : $chatController?.error || ($chatController?.isSending ? 'Reply in progress' : ''));
+  $effect(() => { if (collapsed) optionsOpen = false; });
   let showEditorLoadingIndicator = $state(false);
   $effect(() => {
     showEditorLoadingIndicator = false;
@@ -61,6 +74,9 @@
   const displayedTitle = $derived(
     titleDraftBelongsToCurrentDocument ? titleDraft ?? viewModel.titleValue : viewModel.titleValue
   );
+  const railTitle = $derived(viewModel.paneKind === 'chat'
+    ? $chatController?.conversation?.title || $chatController?.conversationDraft.title || 'Thought partner'
+    : displayedTitle.trim() || 'Untitled note');
   const splitPaneTopActions = $derived(
     getPaneTopActions(viewModel.paneKind, 'split')
   );
@@ -140,203 +156,222 @@
   data-testid="workspace-pane"
   data-pane-id={viewModel.paneId}
   data-pane-kind={viewModel.paneKind}
-  onpointerdown={() => actions.onActivate(viewModel.paneId)}
-  onfocusin={() => actions.onActivate(viewModel.paneId)}
+  data-pane-collapsed={collapsed || undefined}
+  data-pane-compact={compact || undefined}
+  onpointerdown={() => { if (!collapsed) actions.onActivate(viewModel.paneId); }}
+  onfocusin={() => { if (!collapsed) actions.onActivate(viewModel.paneId); }}
 >
-  {#if viewModel.showActiveBorder}
+  {#if compact}
+    <button type="button" class="pane-rail-surface" class:pane-rail={collapsed} onclick={onExpand}
+      disabled={!collapsed} aria-hidden={!collapsed || undefined} tabindex={collapsed ? 0 : -1}
+      aria-label={`Expand ${railTitle}${railStatus ? `. ${railStatus}` : ''}`}
+      aria-expanded="false" aria-controls={`pane-frame-${viewModel.paneId}`}
+      title={`${railTitle}${railStatus ? ` — ${railStatus}` : ''}`}>
+      <span class="pane-rail-label">
+        {#if railStatus}<span class="h-2 w-2 shrink-0 rounded-full bg-primary" aria-hidden="true"></span>{/if}
+        <span class="pane-rail-icon" aria-hidden="true">
+          {#if viewModel.paneKind === 'editor'}<FileText class="h-4 w-4" />{:else}<MessagesSquare class="h-4 w-4" />{/if}
+        </span>
+        <span class="pane-rail-title">{railTitle}</span>
+      </span>
+    </button>
+  {/if}
+  {#if viewModel.showActiveBorder && !compact}
     <div data-pane-border={viewModel.paneId} class="pointer-events-none absolute inset-0 z-20 hidden rounded-t-4xl shadow-[inset_0_0_0_2px_var(--border)] sm:block"></div>
   {/if}
-  <div class={viewModel.frameClass} data-pane-frame>
-    {#if viewModel.paneKind === 'editor'}
-      <div class="notepad-editor-top-overlay pane-header-host absolute inset-x-0 top-0 z-20">
-        <PaneHeader
-          titleText={displayedTitle}
-          titlePlaceholder={viewModel.titlePlaceholder}
-          titleMeasureTestId="note-title-measure"
-          bind:titleShell={pane.refs.titleShell}
-          workspace
-          split={viewModel.showCloseButton}
-          right={paneButtons}
-        >
-          {#snippet left()}
-            <DropdownMenu.Root onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
-              <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target pane-header-action" aria-label="Note options" title="Note options">
-                <Ellipsis class="h-4 w-4" />
-              </DropdownMenu.Trigger>
-              <DropdownMenu.Portal>
-                <DropdownMenu.Content onCloseAutoFocus={(event) => {
-                  if (historyRequested) {
-                    event.preventDefault();
-                    historyRequested = false;
-                    optionsButton?.focus();
-                    void actions.onOpenHistory(viewModel.paneId);
-                  }
-                }} align="start" sideOffset={6} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
-                  <DropdownMenu.Item aria-label="Open note history" disabled={!viewModel.canPin} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { historyRequested = true; }}>
-                    <History class="h-4 w-4" /> Note history <span class="ml-auto pl-3 text-xs text-muted-foreground">{historyShortcutLabel}</span>
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item aria-label="Open file location" disabled={!viewModel.canOpenFileLocation} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { void actions.onOpenFileLocation(viewModel.paneId); }}>
-                    <FolderOpen class="h-4 w-4" /> Open file location
-                  </DropdownMenu.Item>
-                  <DropdownMenu.Item class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent" onSelect={() => { appSettings.setTagsVisible(!appSettings.tagsVisible); }}>
-                    <Tags class="h-4 w-4" /> {appSettings.tagsVisible ? 'Hide tags' : 'Show tags'}
-                  </DropdownMenu.Item>
-                </DropdownMenu.Content>
-              </DropdownMenu.Portal>
-            </DropdownMenu.Root>
-          {/snippet}
-          {#snippet titleLeading()}
-            <button
-              type="button"
-              disabled={!viewModel.canPin}
-              class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
-              aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
-              aria-pressed={viewModel.isPinned}
-              title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
-              onmousedown={(event) => event.preventDefault()}
-              onclick={() => void actions.onTogglePin(viewModel.paneId)}
-            >
-              <Pin
-                class={`h-4 w-4 transition-[rotate,fill] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${viewModel.isPinned ? '-rotate-45' : 'rotate-0'}`}
-                fill={viewModel.isPinned ? 'currentColor' : 'none'}
-              />
-            </button>
-          {/snippet}
-          {#snippet title()}
-            <input
-              bind:this={pane.refs.titleInput}
-              type="text"
-              size="1"
-              data-testid="note-title"
-              class={viewModel.titleClass}
-              placeholder={viewModel.titlePlaceholder}
-              value={displayedTitle}
-              readonly={viewModel.titleReadonly}
-              onfocus={() => {
-                titleDraft = viewModel.titleValue;
-                titleDraftDocument = viewModel.titleDocument;
-                actions.onTitleFocus(viewModel.paneId);
-              }}
-              oninput={(event) => {
-                titleDraft = (event.currentTarget as HTMLInputElement).value;
-                titleDraftDocument = viewModel.titleDocument;
-                actions.onTitleInput(viewModel.paneId);
-              }}
-              onblur={() => {
-                const shouldCommit = titleDraftDocument === viewModel.titleDocument;
-                const rawTitle = titleDraft ?? viewModel.titleValue;
-                titleDraft = null;
-                if (shouldCommit) {
-                  actions.onTitleBlur(viewModel.paneId, rawTitle);
-                }
-              }}
-              onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
-            />
-          {/snippet}
-        </PaneHeader>
-      </div>
-    {/if}
-
-    {#if viewModel.paneKind === 'editor'}
-      <div class="flex h-full min-w-0 flex-1 min-h-0 flex-col">
-        <ExternalConflictResolver
-          status={viewModel.documentStatus}
-          onKeepMyEdits={() => actions.onKeepMyEdits(viewModel.paneId)}
-          onLoadDiskVersion={() => actions.onLoadDiskVersion(viewModel.paneId)}
-          onCopyMyEdits={() => actions.onCopyMyEdits(viewModel.paneId)}
-        />
-        <div
-          bind:this={pane.refs.editorShell}
-          use:editorChromeInset
-          class={`notepad-editor-shell relative h-full min-h-0 min-w-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
-            viewModel.isSlashMenuOpen ? 'overscroll-none touch-none' : ''
-          } ${
-            viewModel.isPaneCommandOpen
-              ? '[--editor-scroll-past-end:0px]'
-              : ''
-          }`}
-        >
-          {#if !pane.ui.isEditorReady && showEditorLoadingIndicator}
-            <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
-              <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
-                Loading editor
-              </span>
-            </div>
-          {/if}
-
-          <div
-            bind:this={pane.refs.editorRoot}
-            data-testid="note-editor"
-            aria-busy={!pane.ui.isEditorReady}
-            class:editor-loading={!pane.ui.isEditorReady}
-            data-pane-content
-            class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
-            use:editorAction={viewModel.editorLifecycle}
-          ></div>
-
-          {#if appSettings.tagsVisible && pane.ui.isEditorReady}
-            {#key viewModel.titleDocument.handle}
-              {@const tagDocument = viewModel.titleDocument}
-              <ScrollingNoteTags view={pane.controller?.view} tags={tagDocument.working.tags ?? []} error={tagDocument.working.tagsError} disabled={viewModel.titleReadonly} onChange={(tags) => actions.onUpdateTags(viewModel.paneId, tagDocument.handle, tags)} onDone={() => pane.controller?.view.focus()} />
-            {/key}
-          {/if}
-
-          {#if viewModel.isPaneCommandOpen}
-            <div class="pointer-events-none absolute inset-0 z-20">
-              <div class="pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] left-1/2 box-border w-[min(calc(100%-2rem),var(--content-readable-width))] max-w-md -translate-x-1/2 cursor-default">
-                <div class="w-full flex items-center pb-6 gap-3">
-                  <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
-                  <span class="text-base md:text-lg text-muted-foreground/80 select-none">or</span>
-                  <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
-                </div>
-
-                <PaneCommandPicker
-                  bind:focusRoot={paneCommandFocusRoot}
-                  highlightedIndex={viewModel.paneCommandHighlightedIndex}
-                  mode={viewModel.paneCommandMode}
-                  presentation="embedded"
-                  currentNoteLabel={viewModel.paneCommandCurrentNoteLabel}
-                  previousNoteLabel={viewModel.paneCommandPreviousNoteLabel}
-                  previousNoteShortcutLabel={viewModel.paneCommandPreviousNoteShortcutLabel}
-                  onHighlightChange={actions.onPaneCommandHighlightChange}
-                  onChoose={(choice: PaneCommandChoice) => void actions.onPaneCommandChoose(viewModel.paneId, choice)}
+  <div class="pane-viewport relative flex min-h-0 min-w-0 flex-1">
+    <div class={viewModel.frameClass} use:paneRailChrome={viewModel.paneKind} data-pane-frame id={`pane-frame-${viewModel.paneId}`} inert={collapsed} aria-hidden={collapsed ? 'true' : undefined}>
+      {#if viewModel.paneKind === 'editor'}
+        <div class="notepad-editor-top-overlay pane-header-host absolute inset-x-0 top-0 z-20">
+          <PaneHeader
+            titleText={displayedTitle}
+            titlePlaceholder={viewModel.titlePlaceholder}
+            titleMeasureTestId="note-title-measure"
+            bind:titleShell={pane.refs.titleShell}
+            workspace
+            split={viewModel.showCloseButton}
+            right={paneButtons}
+          >
+            {#snippet left()}
+              <DropdownMenu.Root bind:open={optionsOpen} onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
+                <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target pane-header-action" aria-label="Note options" title="Note options">
+                  <Ellipsis class="h-4 w-4" />
+                </DropdownMenu.Trigger>
+                <DropdownMenu.Portal>
+                  <DropdownMenu.Content onCloseAutoFocus={(event) => {
+                    if (historyRequested) {
+                      event.preventDefault();
+                      historyRequested = false;
+                      optionsButton?.focus();
+                      void actions.onOpenHistory(viewModel.paneId);
+                    }
+                  }} align="start" sideOffset={6} class="z-50 min-w-48 rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
+                    <DropdownMenu.Item aria-label="Open note history" disabled={!viewModel.canPin} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { historyRequested = true; }}>
+                      <History class="h-4 w-4" /> Note history <span class="ml-auto pl-3 text-xs text-muted-foreground">{historyShortcutLabel}</span>
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item aria-label="Open file location" disabled={!viewModel.canOpenFileLocation} class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40" onSelect={() => { void actions.onOpenFileLocation(viewModel.paneId); }}>
+                      <FolderOpen class="h-4 w-4" /> Open file location
+                    </DropdownMenu.Item>
+                    <DropdownMenu.Item class="flex cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent" onSelect={() => { appSettings.setTagsVisible(!appSettings.tagsVisible); }}>
+                      <Tags class="h-4 w-4" /> {appSettings.tagsVisible ? 'Hide tags' : 'Show tags'}
+                    </DropdownMenu.Item>
+                  </DropdownMenu.Content>
+                </DropdownMenu.Portal>
+              </DropdownMenu.Root>
+            {/snippet}
+            {#snippet titleLeading()}
+              <button
+                type="button"
+                disabled={!viewModel.canPin}
+                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
+                aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
+                aria-pressed={viewModel.isPinned}
+                title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
+                onmousedown={(event) => event.preventDefault()}
+                onclick={() => void actions.onTogglePin(viewModel.paneId)}
+              >
+                <Pin
+                  class={`h-4 w-4 transition-[rotate,fill] duration-200 ease-[cubic-bezier(0.34,1.56,0.64,1)] motion-reduce:transition-none ${viewModel.isPinned ? '-rotate-45' : 'rotate-0'}`}
+                  fill={viewModel.isPinned ? 'currentColor' : 'none'}
                 />
+              </button>
+            {/snippet}
+            {#snippet title()}
+              <input
+                bind:this={pane.refs.titleInput}
+                type="text"
+                size="1"
+                data-testid="note-title"
+                class={viewModel.titleClass}
+                placeholder={viewModel.titlePlaceholder}
+                value={displayedTitle}
+                readonly={viewModel.titleReadonly}
+                onfocus={() => {
+                  titleDraft = viewModel.titleValue;
+                  titleDraftDocument = viewModel.titleDocument;
+                  actions.onTitleFocus(viewModel.paneId);
+                }}
+                oninput={(event) => {
+                  titleDraft = (event.currentTarget as HTMLInputElement).value;
+                  titleDraftDocument = viewModel.titleDocument;
+                  actions.onTitleInput(viewModel.paneId);
+                }}
+                onblur={() => {
+                  const shouldCommit = titleDraftDocument === viewModel.titleDocument;
+                  const rawTitle = titleDraft ?? viewModel.titleValue;
+                  titleDraft = null;
+                  if (shouldCommit) {
+                    actions.onTitleBlur(viewModel.paneId, rawTitle);
+                  }
+                }}
+                onkeydown={(event) => actions.onTitleKeydown(viewModel.paneId, event)}
+              />
+            {/snippet}
+          </PaneHeader>
+        </div>
+      {/if}
+
+      {#if viewModel.paneKind === 'editor'}
+        <div class="flex h-full min-w-0 flex-1 min-h-0 flex-col">
+          <div
+            bind:this={pane.refs.editorShell}
+            use:editorChromeInset
+            class={`notepad-editor-shell relative h-full min-h-0 min-w-0 flex-1 overflow-hidden overscroll-y-contain [-webkit-overflow-scrolling:touch] ${
+              viewModel.isSlashMenuOpen ? 'overscroll-none touch-none' : ''
+            } ${
+              viewModel.isPaneCommandOpen
+                ? '[--editor-scroll-past-end:0px]'
+                : ''
+            }`}
+          >
+            <ExternalConflictResolver
+              status={viewModel.documentStatus}
+              onKeepMyEdits={() => actions.onKeepMyEdits(viewModel.paneId)}
+              onLoadDiskVersion={() => actions.onLoadDiskVersion(viewModel.paneId)}
+              onCopyMyEdits={() => actions.onCopyMyEdits(viewModel.paneId)}
+            />
+            {#if !pane.ui.isEditorReady && showEditorLoadingIndicator}
+              <div class="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+                <span class="rounded-full bg-card px-4 py-2 text-sm font-medium text-muted-foreground shadow-sm">
+                  Loading editor
+                </span>
               </div>
-            </div>
+            {/if}
+
+            <div
+              bind:this={pane.refs.editorRoot}
+              data-testid="note-editor"
+              aria-busy={!pane.ui.isEditorReady}
+              class:editor-loading={!pane.ui.isEditorReady}
+              data-pane-content
+              class="relative h-full min-h-full w-full min-w-0 max-w-full overflow-x-clip"
+              use:editorAction={viewModel.editorLifecycle}
+            ></div>
+
+            {#if appSettings.tagsVisible && pane.ui.isEditorReady}
+              {#key viewModel.titleDocument.handle}
+                {@const tagDocument = viewModel.titleDocument}
+                <ScrollingNoteTags view={pane.controller?.view} tags={tagDocument.working.tags ?? []} error={tagDocument.working.tagsError} disabled={viewModel.titleReadonly} onChange={(tags) => actions.onUpdateTags(viewModel.paneId, tagDocument.handle, tags)} onDone={() => pane.controller?.view.focus()} />
+              {/key}
+            {/if}
+
+            {#if viewModel.isPaneCommandOpen}
+              <div class="pointer-events-none absolute inset-0 z-20">
+                <div class="pane-command-scroll pointer-events-auto absolute top-[calc(var(--editor-top-padding)+5.25rem)] bottom-(--command-bar-clearance) overflow-y-auto overscroll-contain left-1/2 box-border w-[min(calc(100%-2rem),var(--content-readable-width))] max-w-md -translate-x-1/2 cursor-default">
+                  <div class="w-full flex items-center pb-6 gap-3">
+                    <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
+                    <span class="text-base md:text-lg text-muted-foreground/80 select-none">or</span>
+                    <div class="flex-1 h-[1px] rounded-full bg-border/70"></div>
+                  </div>
+
+                  <PaneCommandPicker
+                    bind:focusRoot={paneCommandFocusRoot}
+                    highlightedIndex={viewModel.paneCommandHighlightedIndex}
+                    mode={viewModel.paneCommandMode}
+                    presentation="embedded"
+                    currentNoteLabel={viewModel.paneCommandCurrentNoteLabel}
+                    previousNoteLabel={viewModel.paneCommandPreviousNoteLabel}
+                    previousNoteShortcutLabel={viewModel.paneCommandPreviousNoteShortcutLabel}
+                    onHighlightChange={actions.onPaneCommandHighlightChange}
+                    onChoose={(choice: PaneCommandChoice) => void actions.onPaneCommandChoose(viewModel.paneId, choice)}
+                  />
+                </div>
+              </div>
+            {/if}
+          </div>
+        </div>
+      {:else}
+        <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
+          {#if viewModel.chat.session.controller}
+            <ChatPanel
+              controller={viewModel.chat.session.controller}
+              conversationId={viewModel.chat.session.conversationId}
+              draftSlot={viewModel.chat.session.draftSlot}
+              contextNote={viewModel.chat.context.note}
+              getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
+              targetAnchor={viewModel.chat.session.targetAnchor}
+              variant="pane"
+              {composerDock}
+              headerActions={paneButtons}
+              headerSplit={viewModel.showCloseButton}
+              selectionActions={viewModel.chat.context.selectionActions}
+              onConversationChange={viewModel.chat.session.onConversationChange}
+              onOpenCitation={viewModel.chat.context.onOpenCitation}
+              onOpenWikilink={viewModel.chat.context.onOpenWikilink}
+              onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
+              proposalSnapshot={viewModel.chat.proposalReview.snapshot}
+              onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}
+              onProposalUndoAll={viewModel.chat.proposalReview.onUndoAll}
+              onProposalReview={viewModel.chat.proposalReview.onReview}
+              onProposalRetry={viewModel.chat.proposalReview.onRetry}
+              onProposalCopyCurrent={viewModel.chat.proposalReview.onCopyCurrent}
+              onProposalReloadDisk={viewModel.chat.proposalReview.onReloadDisk}
+              onReviewAgentProposal={viewModel.chat.proposalReview.onReviewAgentProposal}
+            />
           {/if}
         </div>
-      </div>
-    {:else}
-      <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
-        {#if viewModel.chat.session.controller}
-          <ChatPanel
-            controller={viewModel.chat.session.controller}
-            conversationId={viewModel.chat.session.conversationId}
-            draftSlot={viewModel.chat.session.draftSlot}
-            contextNote={viewModel.chat.context.note}
-            getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
-            targetAnchor={viewModel.chat.session.targetAnchor}
-            variant="pane"
-            {composerDock}
-            headerActions={paneButtons}
-            headerSplit={viewModel.showCloseButton}
-            selectionActions={viewModel.chat.context.selectionActions}
-            onConversationChange={viewModel.chat.session.onConversationChange}
-            onOpenCitation={viewModel.chat.context.onOpenCitation}
-            onOpenWikilink={viewModel.chat.context.onOpenWikilink}
-            onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
-            proposalSnapshot={viewModel.chat.proposalReview.snapshot}
-            onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}
-            onProposalUndoAll={viewModel.chat.proposalReview.onUndoAll}
-            onProposalReview={viewModel.chat.proposalReview.onReview}
-            onProposalRetry={viewModel.chat.proposalReview.onRetry}
-            onProposalCopyCurrent={viewModel.chat.proposalReview.onCopyCurrent}
-            onProposalReloadDisk={viewModel.chat.proposalReview.onReloadDisk}
-            onReviewAgentProposal={viewModel.chat.proposalReview.onReviewAgentProposal}
-          />
-        {/if}
-      </div>
-    {/if}
+      {/if}
+    </div>
   </div>
 </div>
 
@@ -361,7 +396,115 @@
     pointer-events: none;
   }
 
-  :global([data-pane-motion]) .notepad-pane {
+  .notepad-pane[data-pane-collapsed] {
+    flex: 0 0 var(--pane-rail-width);
+  }
+
+  .notepad-pane[data-pane-compact] {
+    /* The rail travels across its neighbor; only the retained content clips. */
+    z-index: auto;
+  }
+
+  .notepad-pane[data-pane-compact].notepad-pane--collapsing {
+    flex: 0 0 0;
+    opacity: 1;
+    overflow: visible;
+  }
+
+  .notepad-pane[data-pane-compact].notepad-pane--collapsing:first-child > .pane-rail-surface {
+    left: calc(0px - var(--pane-rail-width));
+  }
+
+  .notepad-pane[data-pane-compact] > .pane-viewport {
+    position: absolute;
+    inset: 0 auto 0 0;
+    z-index: 0;
+    overflow: clip;
+    --pane-clip-inset: 0px;
+    width: calc(100% - var(--pane-clip-inset));
+  }
+
+  /* Anchor the clip and frame to the same outer edge. Width clamps at zero
+     without moving that edge when a departing pane is narrower than its rail.
+     Overflow clipping preserves header backdrop sampling. */
+  .notepad-pane[data-pane-compact]:last-child > .pane-viewport {
+    inset: 0 0 0 auto;
+  }
+  .notepad-pane[data-pane-compact][data-pane-collapsed] > .pane-viewport {
+    --pane-clip-inset: var(--pane-rail-width);
+  }
+
+  .notepad-pane[data-pane-compact] > .pane-viewport > [data-pane-frame] {
+    /* Retain the expanded wrapping/scroll geometry in the mounted neighbor. */
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: var(--compact-pane-content-width);
+  }
+
+  .notepad-pane[data-pane-compact]:last-child > .pane-viewport > [data-pane-frame] {
+    /* The right edge stays fixed as flex widths exchange. Reveal stationary
+       content through the pane's clip instead of carrying it with the divider. */
+    inset: 0 0 0 auto;
+  }
+
+  .notepad-pane[data-pane-collapsed] > .pane-viewport > [data-pane-frame] {
+    /* Opacity preserves measured editor geometry; inert handles interaction
+       without inherited visibility or pointer styles in the retained tree. */
+    opacity: 0;
+  }
+
+  :global([data-pane-motion]) .notepad-pane[data-pane-compact] > .pane-viewport > [data-pane-frame] {
+    /* Avoid even a constant opacity animation on a backdrop-filter ancestor. */
+    opacity: 1;
+  }
+
+  .pane-rail-surface {
+    position: absolute;
+    /* Retained frames have their own positioned stacking context. */
+    z-index: 1;
+    inset: 0;
+    width: var(--pane-rail-width);
+    top: var(--pane-rail-header-clearance, var(--editor-overlay-inset));
+    bottom: var(--command-bar-clearance);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem 0.5rem;
+    opacity: 0;
+    color: var(--muted-foreground);
+    touch-action: manipulation;
+  }
+  .pane-rail-surface::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in oklab, var(--muted) 60%, var(--card));
+    mask-image: linear-gradient(to bottom, transparent, black 3rem, black calc(100% - 3rem), transparent);
+  }
+  .pane-rail { opacity: 1; }
+  .pane-rail:hover { color: var(--accent-foreground); }
+  .pane-rail:hover::before { background: var(--accent); }
+  .pane-rail:focus-visible { outline: 2px solid var(--ring); outline-offset: -3px; }
+  .pane-rail-label {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    min-height: 0;
+    max-height: 100%;
+    writing-mode: vertical-rl;
+    transform: rotate(180deg);
+  }
+  .pane-rail-icon { flex-shrink: 0; transform: rotate(90deg); }
+  .pane-rail-title {
+    min-height: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+  }
+
+  :global([data-pane-motion]) .notepad-pane:not([data-pane-compact]) {
     /* Focus in the fixed-width content must not horizontally scroll the pane
        (and its border) while the outer shell is still opening. */
     overflow: clip;

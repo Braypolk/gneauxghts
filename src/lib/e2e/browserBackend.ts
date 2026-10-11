@@ -956,6 +956,7 @@ function historicalDiff(
 
   const bridge = {
     invocations,
+    restoreIpc() { window.__TAURI_INTERNALS__ = internals; },
     setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
     seedChatControls() { Object.assign(overrides, createChatControlsFixture((event, payload) => bridge.emit(event, payload))); },
     emit(event: string, payload: unknown) {

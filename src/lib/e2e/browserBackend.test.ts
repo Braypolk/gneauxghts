@@ -1,7 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { createBrowserE2eBackend } from './browserBackend';
 
 describe('browser fixture command ownership', () => {
+  it('reattaches its IPC after service injection without losing fixture state', async () => {
+    const backend = createBrowserE2eBackend();
+    await backend.invoke('save_note', { currentPath: '/e2e/alpha.md', title: 'Alpha', markdown: 'Retained fixture edit' });
+    vi.stubGlobal('window', { __TAURI_INTERNALS__: { invoke: () => { throw new Error('service interceptor'); } } });
+    try {
+      backend.bridge.restoreIpc();
+      const ipc = window.__TAURI_INTERNALS__ as { invoke: typeof backend.invoke };
+      expect(await ipc.invoke('read_note', { noteId: 'note-alpha' })).toMatchObject({ markdown: 'Retained fixture edit' });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('rejects unknown commands and identities instead of silently succeeding', async () => {
     const backend = createBrowserE2eBackend();
     await expect(backend.invoke('list_typo')).rejects.toThrow('does not implement');

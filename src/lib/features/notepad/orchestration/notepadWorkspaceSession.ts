@@ -234,6 +234,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
 
   async function focusAfterPresentation(operation: Navigation, preferTitle = false) {
     await tick();
+    await presentation.waitForPaneMotion();
     operation.check();
     if (workspace.activePaneId === operation.paneId && operation.focusIntent.isCurrent()) {
       focusPaneAfterShortcut(operation.paneId, { preferTitle });

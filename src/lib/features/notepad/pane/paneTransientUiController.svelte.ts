@@ -142,6 +142,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   closeExcept(paneId: TPaneId) {
     for (const id of this.deps.getVisiblePaneIds()) {
       if (id === paneId) continue;
+      this.deps.getEditorCapabilities(id)?.closeDatePicker();
       this.closeImageViewer(id);
       this.closeSlashMenu(id);
       this.closeSelectionMenu(id);

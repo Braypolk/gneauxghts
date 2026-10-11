@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import PaneHeader from '$lib/ui/PaneHeader.svelte';
   import { Check, FileText, History } from '@lucide/svelte';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
   import type {
     ChatController,
     ChatControllerState
@@ -40,6 +41,14 @@
   }: Props = $props();
 
   let titleInput = $state<HTMLInputElement | null>(null);
+  let historyButton = $state<HTMLButtonElement | null>(null);
+  let historyMenu = $state<HTMLDivElement | null>(null);
+  let historyMenuStyle = $state(hiddenFloatingPanelStyle);
+
+  $effect(() => {
+    if (openMenu !== 'history' || !historyButton || !historyMenu) return;
+    return positionFloatingPanel(historyButton, historyMenu, (style) => { historyMenuStyle = style; });
+  });
   let titleFocused = $state(false);
   let titleCommitPending = false;
   let titleContextKey: string | null = null;
@@ -131,6 +140,7 @@
     {#if showConversationPicker}
       <div class="relative" data-chat-menu>
         <button
+          bind:this={historyButton}
           type="button"
           class="mobile-touch-target pane-header-action"
           aria-label="Conversations"
@@ -145,7 +155,9 @@
         </button>
         {#if openMenu === 'history' && snapshot.conversations.length > 0}
           <div
-            class="chat-menu chat-menu--down"
+            bind:this={historyMenu}
+            class="chat-menu conversation-menu"
+            style={historyMenuStyle}
             role="menu"
             aria-label="Conversations"
           >
@@ -182,3 +194,9 @@
     />
   {/snippet}
 </PaneHeader>
+
+<style>
+  .conversation-menu {
+    --floating-panel-max-height: min(16rem, calc(100dvh - var(--command-bar-clearance, 5rem) - var(--pane-header-block-size, 4rem) - 6rem));
+  }
+</style>

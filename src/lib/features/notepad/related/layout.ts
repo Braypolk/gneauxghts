@@ -144,8 +144,8 @@ export function getRelatedDrawerStyle(
   return `left: calc(var(--related-reserved-width) - var(--related-drawer-gap) - ${visualWidth}px); width: ${visualWidth}px;`;
 }
 
-export function getBottomSheetStyle() {
-  return 'top: 1rem; right: 1rem; bottom: var(--related-bottom-offset); width: min(calc(100% - 1rem), 32rem);';
+export function getBottomSheetStyle({ leftInset = 0, rightInset = 0 } = {}) {
+  return `top: var(--related-sheet-top, 1rem); right: calc(1rem + ${rightInset}px); bottom: var(--related-bottom-offset); width: min(calc(100% - 1rem - ${leftInset + rightInset}px), 32rem);`;
 }
 
 export function buildRelatedRequestKey(

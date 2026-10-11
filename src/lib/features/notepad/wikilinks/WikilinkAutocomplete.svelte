@@ -68,7 +68,7 @@
           floatingUi.size({
             padding: 16,
             apply({ availableHeight, elements }) {
-              elements.floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
+              elements.floating.style.maxHeight = `${Math.max(0, Math.floor(availableHeight))}px`;
             }
           })
         ]
@@ -129,7 +129,7 @@
 {#if active && activeWikilink}
   <div
     bind:this={popupElement}
-    class="fixed z-30 flex min-w-72 max-w-md flex-col overflow-hidden rounded-[1.25rem] border border-border bg-popover/95 shadow-xl backdrop-blur-md pointer-events-auto"
+    class="fixed z-30 flex w-[min(28rem,calc(100vw-2rem))] min-w-0 flex-col overflow-hidden rounded-[1.25rem] border border-border bg-popover/95 shadow-xl backdrop-blur-md pointer-events-auto"
     style={popupStyle}
   >
     {#if suggestions.length === 0}

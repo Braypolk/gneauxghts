@@ -245,7 +245,14 @@
     changeActive(pool[(index + direction + pool.length) % pool.length], false);
   }
   function wheelCard(event: WheelEvent) {
-    if ((event.target as HTMLElement).closest('.full-source')) { event.stopPropagation(); return; }
+    const target = event.target as HTMLElement;
+    const reader = event.currentTarget as HTMLElement;
+    const excerpt = target.closest<HTMLElement>('.reader-excerpt');
+    // Scrolling a constrained reader must not replace the note being read.
+    if (target.closest('.full-source') || reader.scrollHeight > reader.clientHeight + 1 ||
+        (excerpt && excerpt.scrollHeight > excerpt.clientHeight + 1)) {
+      event.stopPropagation(); return;
+    }
     event.preventDefault(); event.stopPropagation();
     if (performance.now() - wheelTime < 135 || Math.abs(event.deltaY) < 3) return;
     wheelTime = performance.now(); cycle(event.deltaY > 0 ? 1 : -1);
@@ -529,13 +536,13 @@
   .connection-control p{font-size:10px;color:var(--color-muted-foreground);margin:0;line-height:1.5}
   @keyframes info-reveal{from{opacity:0;transform:translateY(-6px)}to{opacity:1;transform:translateY(0)}}
   @media(prefers-reduced-motion:reduce){.dock,.regions-toggle :global(.info-chevron){transition:none}.info-body{animation:none}}
-  .reader{flex:1;min-height:0;display:flex;flex-direction:column;overflow:hidden;padding:18px}
+  .reader{flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto;overscroll-behavior:contain;padding:18px}
   .guide-heading{display:flex;align-items:center;justify-content:space-between;gap:8px;font-size:12px;color:var(--color-muted-foreground)}
   .reader h2{font-size:20px;font-weight:600;line-height:1.35;overflow-wrap:anywhere;margin:10px 0 6px}
   .activity-detail{font-size:11px;line-height:1.5;color:var(--color-muted-foreground);margin:0 0 12px}
   .browse{display:flex;justify-content:space-between;align-items:center;gap:8px;border-block:1px solid var(--color-border);padding:9px 0;font-size:11px;color:var(--color-muted-foreground)}
   .browse>div{display:flex;gap:7px;align-items:center}.browse button{border:1px solid var(--color-border);border-radius:6px;width:30px;height:30px;font-size:15px}
-  .reader-excerpt,.full-source{flex:1;min-height:0;overflow:auto;overscroll-behavior:contain;margin:12px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
+  .reader-excerpt,.full-source{flex:1 0 8rem;min-height:8rem;overflow:auto;overscroll-behavior:contain;margin:12px 0;font-size:13px;line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere}
   .reader-footer{display:flex;flex-wrap:wrap;align-items:center;gap:9px;border-top:1px solid var(--color-border);padding-top:12px;color:var(--color-muted-foreground);font-size:10px}
   .reader-footer button,.guide-heading button{padding:7px 10px;border:1px solid var(--color-border);border-radius:6px;font-size:11px;min-height:30px}
   .reader h2,.activity-detail,.browse,.reader-footer{flex-shrink:0}

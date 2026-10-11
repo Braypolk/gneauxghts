@@ -22,17 +22,19 @@ export function positionFloatingPanel(
         offset(10),
         flip({ ...collision, fallbackPlacements: ['top-start', 'bottom-end', 'top-end'] }),
         shift(collision),
-        size({ ...collision, apply({ availableHeight }) {
+        size({ ...collision, apply({ availableHeight, availableWidth }) {
           if (disposed) return;
           const height = Math.max(0, Math.floor(availableHeight));
+          panel.style.maxWidth = `${Math.max(0, Math.floor(availableWidth))}px`;
           if (options.resize) options.resize(height);
-          else panel.style.maxHeight = `${height}px`;
+          // A consumer can reserve local chrome in addition to collision bounds.
+          else panel.style.maxHeight = `min(${height}px, var(--floating-panel-max-height, 100dvh))`;
         } })
       ]
     });
     if (!disposed) {
       const maxHeight = options.resize ? '' : ` max-height: ${panel.style.maxHeight};`;
-      setStyle(`position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible;${maxHeight}`);
+      setStyle(`position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible; max-width: ${panel.style.maxWidth};${maxHeight}`);
     }
   };
   const cleanup = autoUpdate(reference, panel, () => { void update(); });

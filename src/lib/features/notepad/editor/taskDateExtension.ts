@@ -9,6 +9,10 @@ import { editorFloatingReference } from './editorFloatingReference';
 
 const pickerClosers = new WeakMap<EditorView, { close: DateTimePickerClose; editInNote: boolean }>();
 
+export function closeEditorDatePicker(view: EditorView) {
+  pickerClosers.get(view)?.close(false);
+}
+
 function pickerClosed(view: EditorView, close: DateTimePickerClose, restoreFocus: boolean) {
   if (pickerClosers.get(view)?.close === close) pickerClosers.delete(view);
   if (restoreFocus && !isDateTimePickerOpen() && view.dom.isConnected) view.focus();

@@ -73,6 +73,7 @@ export class TaskListStore {
   mutatingNoteIds = $state<Record<string, boolean>>({});
   isLoading = $state(true);
   errorMessage = $state('');
+  isReordering = $state(false);
 
   #activeRequest = 0;
   #projectionRevision = 0;
@@ -340,6 +341,7 @@ export class TaskListStore {
   }
 
   async reorderNote(fromIndex: number, toIndex: number) {
+    if (this.isReordering || this.#disposed) return;
     const noteOrder = this.#buildNoteOrder();
     if (fromIndex < 0 || fromIndex >= noteOrder.length) return;
     if (toIndex < 0 || toIndex >= noteOrder.length) return;
@@ -350,7 +352,9 @@ export class TaskListStore {
     noteOrder.splice(toIndex, 0, movedNoteId);
 
     const request = ++this.#reorderRequest;
+    this.isReordering = true;
     const lifetime = this.#lifetime;
+    const view = this.#activeRequest;
     const previousGroups = this.groups;
     const noteRank = new Map(noteOrder.map((noteId, index) => [noteId, index]));
     this.groups = [...previousGroups].sort(
@@ -360,16 +364,32 @@ export class TaskListStore {
     );
 
     const optimisticGroups = this.groups;
-    const admit = () => !this.#disposed && lifetime === this.#lifetime && request === this.#reorderRequest && this.groups === optimisticGroups;
+    const isCurrent = () => !this.#disposed && lifetime === this.#lifetime && request === this.#reorderRequest;
     try {
       await invoke('set_note_order', { noteIds: noteOrder });
-      if (!admit()) return;
+      if (!isCurrent()) return;
+      // Reads started before this commit may contain old persisted ranks.
+      // The existing projection revision rejects those still in flight.
+      this.#projectionRevision += 1;
+      if (view !== this.#activeRequest || this.groups !== optimisticGroups) {
+        // A read or group patch already published during the write. Refresh
+        // the current view without replaying the committed order mutation.
+        await this.load({ background: true });
+        return;
+      }
       this.errorMessage = '';
     } catch (error) {
-      if (!admit()) return;
+      if (!isCurrent() || view !== this.#activeRequest) return;
       console.error('Failed to save note order:', error);
-      this.groups = previousGroups;
+      // A checkbox or collapse can publish newer group data during the write.
+      // Restore only ranks, retaining that data and any newly admitted groups.
+      const previousRank = new Map(previousGroups.map((group, index) => [group.noteId, index]));
+      this.groups = [...this.groups].sort((left, right) =>
+        (previousRank.get(left.noteId) ?? Number.MAX_SAFE_INTEGER) -
+        (previousRank.get(right.noteId) ?? Number.MAX_SAFE_INTEGER));
       this.errorMessage = 'Unable to save note order.';
+    } finally {
+      if (request === this.#reorderRequest) this.isReordering = false;
     }
   }
 

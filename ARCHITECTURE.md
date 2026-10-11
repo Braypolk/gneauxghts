@@ -42,6 +42,7 @@ state references, independently of Tauri dispatch.
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Editing Window capture, deadlines, recovery, and finalization | `NoteTimeline`; workspace departure and save flushing remain with existing frontend owners |
 | Canonical task toggle, delete, and due-date behavior | `TaskMutationService` |
+| Task-group ordering | `TaskListStore` admits one pending reorder for drag and menu actions; the existing SQLite order transaction merges filtered submissions while preserving omitted ranks |
 | Complete pane navigation, departure ordering, and location history | `NotepadWorkspaceSession` using concrete workspace/document owners and private operation admission |
 | Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
 | Chat availability, selection, request lifecycle, and admitted conversation projection | One aggregate ChatController transition; effects submit correlated results |
@@ -54,6 +55,11 @@ state references, independently of Tauri dispatch.
 | Next-launch semantic recovery | Vault-local `semantic-provider.json` stages Gemma or retained Jina; composition selects one provider on launch |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
 | Next-launch vault selection | The atomically published vault configuration preference; Settings Apply stages it without rebinding running resources |
+
+Compact pane rails derive their geometry from measured workspace space and
+WorkspaceStore's active pane. They retain editor/chat mounts and share the
+existing pane layout motion seam. The shared dock keeps its workspace width;
+its actions follow the expanded pane.
 
 `NotepadState` owns documents and its one vault-scoped canonical identity/path
 to handle lookup, while `WorkspaceStore` owns ephemeral handle references from

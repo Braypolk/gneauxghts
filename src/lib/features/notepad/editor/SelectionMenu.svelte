@@ -71,10 +71,11 @@
     }
 
     const view = menu.view;
+    const panel = panelEl;
     const reference = buildSelectionReference(view, menu.selectionFrom, menu.selectionTo);
     const boundary = boundsElement ?? undefined;
 
-    const { x, y } = await floatingUi.computePosition(reference, panelEl, {
+    const { x, y } = await floatingUi.computePosition(reference, panel, {
       strategy: 'fixed',
       placement: 'top',
       middleware: [
@@ -91,8 +92,9 @@
         floatingUi.size({
           padding: 16,
           ...(boundary ? { boundary } : {}),
-          apply({ availableHeight, elements }) {
+          apply({ availableHeight, availableWidth, elements }) {
             const floating = elements.floating;
+            floating.style.maxWidth = `${Math.max(0, Math.floor(availableWidth))}px`;
             const body = floating.querySelector<HTMLElement>('.selection-menu-body');
             const toolbar = floating.querySelector<HTMLElement>('.selection-toolbar');
             const tabs = floating.querySelector<HTMLElement>('.selection-tabs');
@@ -101,16 +103,18 @@
             // and the panel borders in the available-height budget.
             const chrome = (toolbar?.offsetHeight ?? 0) + (tabs?.offsetHeight ?? 0) + 4;
             if (body) {
+              floating.style.maxHeight = '';
               body.style.maxHeight = `${Math.max(0, Math.min(320, Math.floor(availableHeight - chrome)))}px`;
             } else {
-              floating.style.maxHeight = `${Math.max(120, Math.floor(availableHeight))}px`;
+              floating.style.maxHeight = `${Math.max(0, Math.floor(availableHeight))}px`;
             }
           }
         })
       ]
     });
 
-    panelStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible;`;
+    if (!menu.open || panelEl !== panel) return;
+    panelStyle = `position: fixed; left: ${Math.round(x)}px; top: ${Math.round(y)}px; visibility: visible; max-width: ${panel.style.maxWidth}; max-height: ${panel.style.maxHeight || 'none'};`;
   }
 
   $effect(() => {
@@ -286,6 +290,7 @@
 
   .selection-toolbar {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.15rem;
     padding: 0.3rem;

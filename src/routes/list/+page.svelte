@@ -1,7 +1,10 @@
 <script lang="ts">
   import { afterNavigate } from '$app/navigation';
   import { onDestroy, onMount } from 'svelte';
+  import { DropdownMenu } from 'bits-ui';
   import {
+    ArrowDown,
+    ArrowUp,
     CalendarDays,
     CheckCircle2,
     ChevronDown,
@@ -11,6 +14,7 @@
     Eye,
     EyeOff,
     ExternalLink,
+    Ellipsis,
     GripVertical,
     RefreshCw,
     Trash2
@@ -92,6 +96,15 @@
 
   function getGroupIndex(noteId: string) {
     return taskList.groups.findIndex((group) => group.noteId === noteId);
+  }
+
+  async function moveGroup(noteId: string, direction: 1 | -1) {
+    const visibleIndex = visibleTaskGroups.findIndex(group => group.noteId === noteId);
+    const neighbor = visibleTaskGroups[visibleIndex + direction];
+    if (visibleIndex < 0 || !neighbor || taskList.mutatingNoteIds[noteId] || taskList.mutatingNoteIds[neighbor.noteId]) return;
+    // Search/date filters are projections. Translate visible neighbors back to
+    // the existing order owner; never persist just the searched subset.
+    await taskList.reorderNote(getGroupIndex(noteId), getGroupIndex(neighbor.noteId));
   }
 
   function handleDragStart(noteId: string) {
@@ -216,15 +229,16 @@
       <div
         class="flex-1 min-h-0 overflow-y-auto overscroll-y-contain px-3 pb-[calc(6.5rem+env(safe-area-inset-bottom,0px))] pt-3 sm:px-6 sm:pb-28 sm:pt-4 [-webkit-overflow-scrolling:touch]"
       >
+        {#if taskList.errorMessage}
+          <div role="alert" class="mb-3 rounded-xl border border-destructive/25 bg-destructive/10 px-4 py-3 text-sm font-medium text-destructive">
+            {taskList.errorMessage}
+          </div>
+        {/if}
         {#if taskList.isLoading}
           <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-sm font-medium text-muted-foreground">
             Building the task list
           </div>
-        {:else if taskList.errorMessage}
-          <div class="flex h-full items-center justify-center rounded-[1.5rem] border border-destructive/25 bg-destructive/10 px-6 text-sm font-medium text-destructive">
-            {taskList.errorMessage}
-          </div>
-        {:else if visibleTaskGroups.length === 0}
+        {:else if visibleTaskGroups.length === 0 && !taskList.errorMessage}
           <div class="flex h-full flex-col items-center justify-center rounded-[1.5rem] border border-dashed border-border bg-muted px-6 text-center">
             <p class="text-balance text-lg font-medium text-foreground">
               {normalizedSearchQuery === '' ? 'No matching tasks yet' : 'No tasks found'}
@@ -238,15 +252,17 @@
               {/if}
             </p>
           </div>
-        {:else}
+        {:else if visibleTaskGroups.length > 0}
           <div class="space-y-3 sm:space-y-4">
-            {#each visibleTaskGroups as group (group.noteId)}
+            {#each visibleTaskGroups as group, groupIndex (group.noteId)}
               <section
                 class={`task-note-group overflow-hidden rounded-[1.2rem] border sm:rounded-[1.35rem] ${
                   group.noteHidden ? 'border-border bg-muted' : 'border-border bg-card'
                 } ${dragSrcNoteId === group.noteId ? 'opacity-50' : ''} ${dragOverNoteId === group.noteId && dragSrcNoteId !== group.noteId ? 'ring-2 ring-primary/50' : ''}`}
                 role="group"
-                draggable={!taskList.mutatingNoteIds[group.noteId]}
+                aria-label={`Tasks in ${group.noteTitle}`}
+                data-task-note-id={group.noteId}
+                draggable={!taskList.isReordering && !taskList.mutatingNoteIds[group.noteId]}
                 ondragstart={(e) => {
                   const under = document.elementFromPoint(e.clientX, e.clientY);
                   if (!under?.closest('[data-drag-handle]')) {
@@ -265,9 +281,8 @@
                   <span
                     data-drag-handle
                     class="task-drag-handle shrink-0 cursor-grab text-muted-foreground/60 hover:text-muted-foreground active:cursor-grabbing"
-                    role="button"
-                    tabindex="0"
-                    aria-label="Drag to reorder"
+                    aria-hidden="true"
+                    title="Drag to reorder"
                   >
                     <GripVertical class="h-4 w-4" />
                   </span>
@@ -307,6 +322,28 @@
                       </span>
                     </span>
                   </button>
+
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger class="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-full text-muted-foreground touch-manipulation hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring"
+                      aria-label={`Task group options: ${group.noteTitle}`} title="Task group options">
+                      <Ellipsis class="h-4 w-4" />
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content align="end" sideOffset={6} collisionPadding={12}
+                        class="z-50 min-w-40 max-w-[calc(100vw-1.5rem)] rounded-xl border border-border bg-popover p-1.5 text-sm text-popover-foreground shadow-lg outline-none">
+                        <DropdownMenu.Item disabled={taskList.isReordering || groupIndex === 0 || !!taskList.mutatingNoteIds[group.noteId] || !!taskList.mutatingNoteIds[visibleTaskGroups[groupIndex - 1]?.noteId]}
+                          onSelect={() => void moveGroup(group.noteId, -1)}
+                          class="flex min-h-11 cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40">
+                          <ArrowUp class="h-4 w-4" /> Move up
+                        </DropdownMenu.Item>
+                        <DropdownMenu.Item disabled={taskList.isReordering || groupIndex === visibleTaskGroups.length - 1 || !!taskList.mutatingNoteIds[group.noteId] || !!taskList.mutatingNoteIds[visibleTaskGroups[groupIndex + 1]?.noteId]}
+                          onSelect={() => void moveGroup(group.noteId, 1)}
+                          class="flex min-h-11 cursor-default items-center gap-2 rounded-lg px-3 py-2 outline-none data-[highlighted]:bg-accent data-[disabled]:opacity-40">
+                          <ArrowDown class="h-4 w-4" /> Move down
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
 
                   <button
                     type="button"
@@ -355,10 +392,10 @@
                             {/if}
                           </button>
 
-                          <div class="flex min-w-0 flex-1 items-start gap-0.5 sm:items-center sm:gap-3">
+                          <div class="task-content flex min-w-0 flex-1 items-start gap-0.5 sm:items-center sm:gap-3">
                             <span class="min-w-0 flex-1 py-2.5 sm:py-0">
                               <span
-                                class={`block text-pretty text-sm leading-5 ${
+                                class={`block wrap-anywhere text-pretty text-sm leading-5 ${
                                   task.completed ? 'text-muted-foreground line-through' : task.hidden ? 'text-muted-foreground' : 'text-foreground'
                                 }`}
                               >
@@ -374,7 +411,7 @@
                               {/if}
                             </span>
 
-                            <div class="flex shrink-0 items-center self-start sm:self-auto">
+                            <div class="task-actions flex shrink-0 items-center self-start sm:self-auto">
                               {#if !taskDueDate(task.text)}
                                 <button type="button" class="inline-flex h-11 w-9 items-center justify-center rounded-full text-muted-foreground hover:bg-accent disabled:opacity-45 sm:h-auto sm:w-auto sm:px-2.5 sm:py-1.5" onclick={(event) => editDueDate(task, event.currentTarget)} disabled={!!taskList.mutatingNoteIds[group.noteId]} aria-label={`Add due date: ${task.text}`} title="Add due date"><CalendarDays class="h-4 w-4" /></button>
                               {/if}
@@ -438,6 +475,7 @@
           value={searchQuery}
           placeholder="Find tasks"
           ariaLabel="Search tasks"
+          showPlaceholderWhenIdle={true}
           matchCase={matchCase}
           matchWholeWord={matchWholeWord}
           showMatchOptions={true}
@@ -466,7 +504,13 @@
   }
 
   .task-row {
+    container: task-row / inline-size;
     margin-left: calc(var(--task-indent, 0) * 0.65rem);
+  }
+
+  @container task-row (max-width: 34rem) {
+    .task-content { flex-direction: column; align-items: stretch; gap: 0; }
+    .task-actions { align-self: flex-end; flex-wrap: wrap; justify-content: flex-end; max-width: 100%; }
   }
 
   /* HTML5 drag reorder is pointer-first; hide the handle on touch. */

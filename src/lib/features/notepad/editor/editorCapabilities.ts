@@ -13,6 +13,7 @@ import { selectionMenuHideFromUi } from './selectionMenu';
 import { Transaction } from '@codemirror/state';
 import { openImageViewerAt } from '../images/imageEmbeds';
 import { editorScrollEffect } from './editorScroll';
+import { closeEditorDatePicker } from './taskDateExtension';
 
 export interface EditorSelectionCapabilitySnapshot {
   anchor: number;
@@ -79,6 +80,7 @@ export interface EditorCapabilityAdapter {
   ) => boolean;
   closeSlashMenu: () => void;
   closeSelectionMenu: () => void;
+  closeDatePicker: () => void;
   addReadOnlyOverlay: (className: string) => ReadOnlyOverlayHandle;
 
 }
@@ -131,6 +133,10 @@ export function createEditorCapabilityAdapter(
     focus: () => {
       const controller = getController();
       if (!controller) return false;
+      // Retained panes can regain focus after their inert/layout presentation
+      // changes. Flush the current viewport before asking native focus to enter.
+      controller.view.requestMeasure();
+      controller.view.coordsAtPos(controller.view.viewport.from);
       controller.view.focus();
       return true;
     },
@@ -148,6 +154,10 @@ export function createEditorCapabilityAdapter(
       return true;
     },
     readSnapshot: () => readEditorState(getController()),
+    closeDatePicker: () => {
+      const controller = getController();
+      if (controller) closeEditorDatePicker(controller.view);
+    },
     openImageViewer: locator => {
       const controller = getController();
       return controller ? openImageViewerAt(controller.view, locator) : false;

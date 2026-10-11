@@ -42,7 +42,7 @@
 
 {#if status.kind === 'conflict'}
   <aside
-    class="absolute inset-x-3 top-[4.75rem] z-30 mx-auto max-w-2xl rounded-2xl border border-amber-500/35 bg-card/95 px-3 py-3 shadow-lg backdrop-blur-xl sm:inset-x-4 sm:top-[5.25rem] sm:px-4"
+    class="absolute inset-x-3 top-[calc(var(--editor-overlay-inset)+0.5rem)] z-30 mx-auto max-w-2xl rounded-2xl border border-amber-500/35 bg-card/95 px-3 py-3 shadow-lg backdrop-blur-xl sm:inset-x-4 sm:px-4"
     aria-label="External note conflict"
   >
     <div class="flex flex-col gap-3">
@@ -95,7 +95,7 @@
   </aside>
 {:else if status.kind === 'canonicalCollision'}
   <aside
-    class="absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/95 px-3 py-2 text-center shadow-sm sm:top-[5.25rem]"
+    class="absolute inset-x-4 top-[calc(var(--editor-overlay-inset)+0.5rem)] z-30 mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/95 px-3 py-2 text-center shadow-sm"
     role="alert"
     aria-label="Open document collision"
   >
@@ -106,7 +106,7 @@
   </aside>
 {:else if status.kind === 'warning'}
   <aside
-    class="absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-amber-500/35 bg-card/95 px-3 py-2 text-center shadow-sm backdrop-blur-xl sm:top-[5.25rem]"
+    class="absolute inset-x-4 top-[calc(var(--editor-overlay-inset)+0.5rem)] z-30 mx-auto max-w-xl rounded-xl border border-amber-500/35 bg-card/95 px-3 py-2 text-center shadow-sm backdrop-blur-xl"
     role="status"
     aria-label="Saved note synchronization warning"
   >
@@ -122,7 +122,7 @@
   </aside>
 {:else if status.kind === 'busy' && status.historyWaiting}
   <p
-    class="pointer-events-none absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-border bg-card/95 px-3 py-2 text-center text-xs text-muted-foreground shadow-sm backdrop-blur-xl sm:top-[5.25rem]"
+    class="pointer-events-none absolute inset-x-4 top-[calc(var(--editor-overlay-inset)+0.5rem)] z-30 mx-auto max-w-xl rounded-xl border border-border bg-card/95 px-3 py-2 text-center text-xs text-muted-foreground shadow-sm backdrop-blur-xl"
     role="status"
     aria-live="polite"
   >
@@ -130,7 +130,7 @@
   </p>
 {:else if status.kind === 'failed'}
   <p
-    class="absolute inset-x-4 top-[4.75rem] z-30 mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/95 px-3 py-2 text-center text-xs text-destructive shadow-sm backdrop-blur-xl sm:top-[5.25rem]"
+    class="absolute inset-x-4 top-[calc(var(--editor-overlay-inset)+0.5rem)] z-30 mx-auto max-w-xl rounded-xl border border-destructive/30 bg-card/95 px-3 py-2 text-center text-xs text-destructive shadow-sm backdrop-blur-xl"
     role="alert"
   >
     {status.label}

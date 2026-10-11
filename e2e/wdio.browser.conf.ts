@@ -9,6 +9,7 @@ type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunne
 const port = Number(process.env.GNEAUXGHTS_E2E_BROWSER_PORT ?? 1421);
 if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid browser E2E port');
 const devServerUrl = `http://127.0.0.1:${port}`;
+let navigationFixtureInstalled = false;
 
 export const config: TestrunnerConfig = {
   runner: 'local',
@@ -48,6 +49,21 @@ export const config: TestrunnerConfig = {
   connectionRetryTimeout: 120_000,
   connectionRetryCount: 2,
   mochaOpts: { ui: 'bdd', timeout: 60_000 },
+  async beforeSuite() {
+    if (navigationFixtureInstalled) return;
+    navigationFixtureInstalled = true;
+    const { browser } = await import('@wdio/globals');
+    // Install after the service's before hook so our wrapper runs after its
+    // navigation interceptor. Preserve the fixture's notes and listeners.
+    browser.overwriteCommand('url', async function (originalUrl, href, options) {
+      const result = await originalUrl(href, options);
+      if (href !== undefined) {
+        await this.execute(() => window.__GNEAUXGHTS_E2E__?.restoreIpc());
+      }
+      return result;
+    });
+    await browser.execute(() => window.__GNEAUXGHTS_E2E__?.restoreIpc());
+  },
   async afterTest(_test, _context, result) {
     if (!result.error) return;
     const { browser } = await import('@wdio/globals');

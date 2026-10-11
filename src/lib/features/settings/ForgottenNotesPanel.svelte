@@ -114,7 +114,7 @@
         {#each forgottenNotes as note}
           <div class="border-b border-border/70 py-4">
             <div class="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-              <div class="flex items-start gap-3">
+              <div class="flex min-w-0 items-start gap-3">
                 <input
                   class="mt-1"
                   type="checkbox"
@@ -127,14 +127,14 @@
                     )}
                 />
 
-                <div>
+                <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
-                    <p class="text-sm font-medium">{note.title}</p>
+                    <p class="min-w-0 wrap-anywhere text-sm font-medium">{note.title}</p>
                     <span class="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
                       {note.kind}
                     </span>
                   </div>
-                  <p class="mt-1 text-xs text-muted-foreground">
+                  <p class="mt-1 wrap-anywhere text-xs text-muted-foreground">
                     {note.fileName} · forgotten {formatTimestamp(note.forgottenAtMillis)}
                   </p>
                   <p class="mt-1 text-xs text-muted-foreground">

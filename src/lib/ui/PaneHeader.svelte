@@ -37,7 +37,7 @@
 
 <style>
   /* Both scrolling surfaces reserve the same space beneath this overlay. */
-  :global(.pane-header-host) { --pane-header-block-size: 4rem; }
+  :global(.pane-header-host) { container: pane-header / inline-size; --pane-header-block-size: 4rem; }
   :global(.pane-header-host:has(> .pane-header--subtitle)) { --pane-header-block-size: 4.5rem; }
   .pane-header {
     position: relative;
@@ -98,7 +98,7 @@
     letter-spacing: -0.025em;
     line-height: 2rem;
   }
-  .pane-header-title-measure { visibility: hidden; overflow: hidden; white-space: pre; }
+  .pane-header-title-measure { opacity: 0; pointer-events: none; overflow: hidden; white-space: pre; }
   .pane-header-title :global(input) {
     width: 100%;
     background: transparent;
@@ -141,6 +141,33 @@
     :global(.pane-header-host:has(> .pane-header--subtitle)) { --pane-header-block-size: 4.5rem; }
     .pane-header { gap: 0.5rem; padding: 0.75rem 0.75rem 0.5rem; }
     .pane-header-title-wrap { top: 0.75rem; left: 3.5rem; right: 3.5rem; }
+  }
+  /* Split headers use the space in their pane, even in a wide window. */
+  @container pane-header (max-width: 28rem) {
+    .pane-header--split .pane-header-title-wrap { left: 3.5rem; right: 6.5rem; }
+    .pane-header--split .pane-header-right { margin-right: 0; }
+    .pane-header--split .pane-header-title-wrap:has(.pane-header-title--leading) { left: 6.5rem; right: 9rem; }
+    .pane-header--split .pane-header-title--leading { min-width: 0; max-width: 100%; }
+    .pane-header--split .pane-header-title-measure,
+    .pane-header--split .pane-header-title :global(input) { font-size: 1.125rem; }
+  }
+  @container pane-header (max-width: 22rem) {
+    /* A retained pane beside a rail still needs a readable title and full
+       action targets. Give the actions their own row at phone widths. */
+    .pane-header--split { display: grid; grid-template-columns: auto minmax(0, 1fr); }
+    .pane-header--split .pane-header-left { grid-column: 1; grid-row: 1; }
+    .pane-header--split .pane-header-title-wrap,
+    .pane-header--workspace.pane-header--split .pane-header-title-wrap,
+    .pane-header--split .pane-header-title-wrap:has(.pane-header-title--leading) {
+      position: relative;
+      inset: auto;
+      grid-column: 2;
+      grid-row: 1;
+      min-width: 0;
+    }
+    .pane-header--split .pane-header-title-wrap:has(.pane-header-title--leading) { margin-left: 2.75rem; }
+    .pane-header--split .pane-header-title { min-width: 0; max-width: 100%; }
+    .pane-header--split .pane-header-right { grid-column: 1 / -1; grid-row: 2; justify-content: flex-end; }
   }
   @media (prefers-reduced-motion: reduce) { .pane-header :global(.pane-header-action) { transition: none; } }
 </style>

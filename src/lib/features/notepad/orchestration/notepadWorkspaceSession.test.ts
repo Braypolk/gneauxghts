@@ -268,6 +268,29 @@ it('selects the nearest editor for navigation and cycles real workspace panes', 
   });
 });
 
+it('waits for pane presentation and rejects stale keyboard focus after a newer activation', async () => {
+  const f = setup();
+  await f.commands.splitWorkspace('chat');
+  const second = f.workspace.activePaneId;
+  const settled = deferred<void>();
+  const entered = deferred<void>();
+  f.deps.presentation.waitForPaneMotion = async () => {
+    entered.resolve();
+    await settled.promise;
+  };
+  vi.clearAllMocks();
+  const switching = f.commands.switchActivePane();
+  await entered.promise;
+  expect(f.workspace.activePaneId).toBe(f.first);
+  expect(f.deps.presentation.focusPaneEditor).not.toHaveBeenCalled();
+  f.commands.activatePane(second);
+  settled.resolve();
+  await switching;
+  expect(f.deps.presentation.focusPaneEditor).not.toHaveBeenCalled();
+  await f.commands.switchActivePane();
+  expect(f.deps.presentation.focusPaneEditor).toHaveBeenCalledWith(f.first);
+});
+
 it('retains the current chat when its dirty context blocks restoration of another conversation', async () => {
   const f = setup();
   await f.commands.setPaneKind(f.first, 'chat');

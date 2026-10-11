@@ -208,8 +208,11 @@ describe('animation interruptions and controls', () => {
   it('keeps search labels collapsed when the expanded toolbar is narrow', async () => {
     await ready();
     await browser.execute(() => {
-      const shell = document.querySelector<HTMLElement>('.shared-search-bar-shell')!;
-      shell.style.maxWidth = '400px';
+      // The dock owns the projected width and updates its inline projection
+      // styles. Constrain its layout through CSS, as a narrow host would.
+      const style = document.createElement('style');
+      style.textContent = '.workspace-input-dock { max-width: 400px !important; }';
+      document.head.append(style);
     });
     await $('[data-testid="note-search-input"]').setValue('Alpha');
     await waitForWorkspaceAnimationSettled();
@@ -218,12 +221,12 @@ describe('animation interruptions and controls', () => {
       return { expanded: shell.dataset.searchExpanded, width: shell.getBoundingClientRect().width,
         labels: [...shell.querySelectorAll<HTMLElement>('.shared-search-mode-label')].map(element => {
           const style = getComputedStyle(element);
-          return { maxWidth: style.maxWidth, opacity: style.opacity };
+          return { display: style.display };
         }) };
     });
     expect(result.expanded).toBe('true');
     expect(result.width).toBeLessThanOrEqual(400);
     expect(result.labels.length).toBeGreaterThan(0);
-    expect(result.labels.every(label => label.maxWidth === '0px' && label.opacity === '0')).toBe(true);
+    expect(result.labels.every(label => label.display === 'none')).toBe(true);
   });
 });

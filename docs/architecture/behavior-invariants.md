@@ -125,6 +125,50 @@ its view bridges, so its formatting popup cannot remain over chat content.
 After the active pane closes, the pane immediately to its right becomes active
 when present; otherwise the pane immediately to its left becomes active.
 
+### Compact splits keep every pane visibly reachable
+
+When the retained split cannot provide useful pane widths, the active pane
+expands beside a persistent title rail for its neighbor. Pane order stays fixed:
+activating a left rail expands the left pane and leaves a right rail, and vice
+versa. Enough card space restores the ordinary split. This is presentation
+derived from the canonical active pane, never a membership or document departure.
+Editors and chat inputs remain mounted; drafts, undo, selection, reading position
+and pending work survive. Collapsed frames are inert and their transients close.
+The rail supports pointer and keyboard activation, reserves space alongside
+content, and exposes the pane title and pending/error state. The shared dock's
+actions follow the expanded pane. The shared dock retains full workspace width
+and the rail's hit target stops above it. Related stays within the expanded pane's
+horizontal space. Rails sit below the maximum measured retained-header extent
+and above the dock, with matching top/bottom fades; shared clearance stays
+stable while exchanging panes. Pointer and keyboard activation wait for settled presentation
+before focusing and yield to newer user input. Pane and dock transitions use the
+existing coordinated presentation clock; resize and reduced motion settle immediately.
+Compact text stays anchored to the outer edge of its pane's side while moving
+pane bounds reveal it; text does not travel with the divider or rewrap during
+the exchange. A subtle text-body fade accompanies the reveal; header frames
+stay opaque so their backdrop blur keeps sampling the text beneath them.
+The first compact split starts its rail just outside the card and uses the
+same reveal as retained-pane exchanges. The outgoing solo frame keeps its
+original wrapping until covered; the entering frame holds its final width.
+Exactly one opaque rail travels between sides, starting at the displayed rail
+position when interrupted. Its title/icon/status label crossfades on the same
+clock, retaining the displayed blend on reversal. Temporary label snapshots
+are accessibility-hidden and removed when motion settles or is cancelled.
+Retained content clips independently at the moving rail's inner edges, so
+outgoing text cannot show past it near completion. Closing retains compact
+frames and rails until departure completes: the same rail/clip reveal runs
+outward while the outgoing frame holds its captured wrapping and outer edge.
+Clip widths clamp at zero without shifting the frame, and use overflow clipping
+so header backdrop sampling remains intact. Opening, exchange and closing share
+one presentation coordinator and cancellation path.
+Related's bottom-sheet insets and width share the same geometry clock, including
+interrupted switches. Note-to-note
+rail exchanges use the dock's morph duration and editor curve even when the
+dock itself remains settled. Closing from rail layout retains that same duration
+and curve after the surviving pane returns to solo layout. Its editor/chat handoff selects the ordinary
+`editor-search`/`chat-input` dock edge. A collapsed chat keeps its mounted composer
+and expanded reading clearance even while the editor search is presented.
+
 ### History browsing leaves the workspace untouched
 
 Entering global History Mode first flushes pending canonical note saves and
@@ -239,6 +283,22 @@ query. Retry and waiting are bounded; persistent contention returns a failure,
 never a successful empty list or missing group. Stable results still enforce
 current-note eligibility and the selected task filters. Only repeatable reads
 use this protocol; canonical mutation commands are never retried by it.
+
+### Task groups share one order across input methods
+
+Pointer dragging and the keyboard/touch group menu enter the same TaskListStore
+order operation and persistence path. Move up/down targets the neighboring
+visible group, translated back into the loaded order so search/date projections
+do not replace it with a searched subset. Due-date sorting stays within groups.
+Impossible directions are disabled; menu selection returns focus to the moved
+group's trigger. Failed persistence restores the prior order and reports the error.
+One reorder write is admitted at a time. Rollback restores ranks without
+discarding task/group changes admitted during that write. A committed reorder
+invalidates reads started before its commit; if a concurrent read or group patch
+already published, the current view refreshes without replaying the order write.
+Persistence merges
+filtered submissions under one transaction, retaining omitted groups in their
+existing slots and appending newly ordered groups.
 
 ### Task mutations respect dirty documents
 
@@ -907,6 +967,9 @@ During search/chat exchange the main bar and foreground glyph paths are monotoni
 both background circle shells stay full-size and opaque. Editor/chat paths use
 measured endpoints rather than recomputing against the moving flex width, so the
 first painted frame retains the displayed origin and width-cap changes do not hitch.
+Ordinary editor-search CSS transitions resume only after projected margins are
+released and the settled local coordinates have flushed, avoiding a second
+transition from stale bounds at the end of the shared morph.
 Editor/chat edges use a shared cubic Bézier easing for the pane and dock: gentle
 departure and arrival with a faster middle. Input switching retains its pinch
 pacing, and the selected curve follows the remaining clock when interrupted.

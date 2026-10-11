@@ -16,6 +16,8 @@ declare global {
     __GNEAUXGHTS_E2E_COMMANDS__?: BrowserCommandOverrides;
     __GNEAUXGHTS_E2E__?: {
       invocations: InvokeRecord[];
+      /** Reattach this fixture after the WDIO service installs its own interceptor. */
+      restoreIpc(): void;
       setAtlas(response: import('../types/atlas').VaultAtlasResponse): void;
       holdSave(fail?: boolean): void;
       releaseSave(): void;

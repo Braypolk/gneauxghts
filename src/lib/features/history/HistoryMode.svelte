@@ -294,7 +294,7 @@
               <div class="flex flex-wrap items-start justify-between gap-3">
                 <div class="min-w-0">
                   <p class="text-[0.6875rem] font-semibold tracking-[0.14em] text-muted-foreground uppercase">Selected version</p>
-                  <h2 class="mt-1 text-base font-semibold">{selectedVersionTitle}</h2>
+                  <h2 class="mt-1 wrap-anywhere text-base font-semibold">{selectedVersionTitle}</h2>
                   <p class="mt-1 text-xs text-muted-foreground">
                     {historySourceLabels[selectedRevision.source]} · {selectedVersionTime}
                   </p>
