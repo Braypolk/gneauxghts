@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 
 async function editorText(value: string) {
@@ -270,7 +271,7 @@ describe('date commands and chip pickers', () => {
   it('composes task-list deadline and completion filters and edits dates through the picker', async () => {
     await editorText('- [ ] Late @due(2000-01-01)\n- [x] Done @due(2000-01-01)\n- [ ] Undated');
     await waitForSaved('Undated');
-    await $('a[href="/list"]').click();
+    await navigateAppTab('List');
     await $('[aria-label="Due date filter"]').waitForDisplayed();
     await $('[aria-label="Due date filter"]').selectByAttribute('value', 'overdue');
     await expect($('.task-row')).toHaveText(expect.stringContaining('Late'));
@@ -285,7 +286,7 @@ describe('date commands and chip pickers', () => {
     await expect($('.task-row')).toHaveText(expect.stringContaining('Undated'));
   });
   it('preserves inline surroundings and block commands, dismisses slash text and excludes code/URLs', async () => {
-    await $('a[href="/"]').click();
+    await navigateAppTab('Gneauxght');
     await editorText('Before /date after');
     await browser.keys(Array.from({ length: 6 }, () => 'ArrowLeft'));
     await $('.slash-panel').waitForDisplayed();

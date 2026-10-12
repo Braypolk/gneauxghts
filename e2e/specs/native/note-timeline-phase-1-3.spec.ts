@@ -1,3 +1,4 @@
+import { openAppNavigation } from '../../support/appNavigation';
 import { mkdirSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { browser, expect, $, $$ } from '@wdio/globals';
@@ -94,6 +95,7 @@ async function waitForNote(title: string) {
 
 async function showNote(note: NoteSession) {
   await invokeNative('mark_note_opened', { noteId: note.noteId });
+  await openAppNavigation();
   const home = await $('a[aria-label="Gneauxght"]');
   await home.waitForExist({ timeout: 20_000 });
   await browser.execute((element: HTMLElement) => element.click(), home);
@@ -106,6 +108,7 @@ async function showNote(note: NoteSession) {
 }
 
 async function openSettings() {
+  await openAppNavigation();
   const settings = await $('a[aria-label="Settings"]');
   await settings.waitForExist();
   await browser.execute((element: HTMLElement) => element.click(), settings);
@@ -452,7 +455,7 @@ describe('native Phase 1-3 Note Timeline integration', () => {
   });
 
   it('discovers an external deletion, pages retained history, recovers safely, and keeps editing', async () => {
-    await $('a[aria-label="Gneauxght"]').waitForExist({ timeout: 20_000 });
+    await $('.app-navigation-header').waitForExist({ timeout: 20_000 });
     const versions = Array.from(
       { length: 31 },
       (_, index) => `Missing Note native revision ${index + 1}\n\nRetained recovery content`

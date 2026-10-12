@@ -999,7 +999,8 @@
     state: notepadState,
     workspace: workspaceStore,
     maxVisiblePanes: MAX_VISIBLE_PANES,
-    canSplitWorkspace: () => canSplitWorkspace(),
+    // Automatic review presentation still requires room beside the chat.
+    canSplitWorkspace: () => window.innerWidth >= 640 && window.innerHeight >= 560,
     persistence,
     documents,
     documentEditing,
@@ -1036,14 +1037,13 @@
   });
 
   const {
-    canSplitWorkspace,
     splitWorkspaceIfAllowed,
     openPaneChoiceInCurrent,
   } = createWorkspaceChoiceController<PaneId>({
-      // Landscape phones can cross the width breakpoint without enough
-      // vertical room for a useful two-pane editor.
+      // Explicit narrow splits use retained pane rails. Inset, short windows
+      // keep their existing split policy.
       canSplitWorkspace: () =>
-        window.innerWidth >= 640 && window.innerHeight >= 560,
+        window.innerWidth < 640 || window.innerHeight >= 560,
       splitWorkspace: commands.splitWorkspace,
       getPendingPaneCommandId: () =>
         workspaceStore.paneCommand.paneId,
@@ -1601,7 +1601,7 @@
     )}
   >
     <div
-      class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-y border-border text-card-foreground shadow-sm workspace-card-motion sm:rounded-4xl sm:border"
+      class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-b border-border text-card-foreground shadow-sm workspace-card-motion sm:rounded-4xl sm:border"
       style={getCardStyle(relatedState.panelPlacement)}
       data-testid="workspace-card"
     >
@@ -1617,6 +1617,7 @@
             pane={getPaneRuntime(paneId)}
             viewModel={getPaneViewModel(paneId)}
             actions={paneActions}
+            mobileTitleActive={paneId === activePaneId && !historyMode.isActive}
             compact={compactPaneFrames}
             collapsed={compactPaneFrames && (collapsingPaneId
               ? paneId === collapsingPaneId : paneId !== activePaneId)}
@@ -1808,7 +1809,7 @@
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
     <!-- Match the editor card's bounds, including the space reserved for Related. -->
     <div
-      class="absolute inset-y-0 left-0 z-50 workspace-card-motion"
+      class="history-workspace-overlay absolute inset-y-0 left-0 z-50 workspace-card-motion"
       style={`${getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)} ${getCardStyle(relatedState.panelPlacement)}`}
     >
       <HistoryMode
@@ -1927,8 +1928,10 @@
 
   @media (max-width: 639px) {
     .notepad-shell {
-      --related-sheet-top: calc(3.75rem + env(safe-area-inset-top, 0px));
+      --editor-overlay-inset: calc(4rem + var(--app-shell-top-inset, 0px));
+      --related-sheet-top: var(--editor-overlay-inset);
     }
+    .history-workspace-overlay { top: var(--app-shell-top-inset, 0px); }
   }
 
   @media (min-width: 640px) {

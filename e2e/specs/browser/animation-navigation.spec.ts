@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace, openRecentNote, waitForNote } from '../../support/browserWorkspace';
 
@@ -19,7 +20,7 @@ describe('navigation motion ownership', () => {
     await openRecentNote('Beta note');
     await openRecentNote('Alpha note');
     expect(await browser.execute((text: string) => document.querySelector('[data-testid="note-editor"] .cm-content')!.textContent!.includes(text), target)).toBe(false);
-    await $('a[href="/list"]').click();
+    await navigateAppTab('List');
     const task = await $(`button[aria-label="Open task: ${target}"]`);
     await task.waitForClickable();
     await task.click();

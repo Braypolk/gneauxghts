@@ -245,12 +245,11 @@ body {
 }
 
 /*
- * Keep primary controls comfortably tappable on phones. Dense controls can opt
- * into the 40px variant below when several must fit in a single toolbar.
+ * Button touch sizing is opt-in and grows both dimensions. A blanket minimum
+ * height stretches fixed-width icons and embedded controls out of shape.
+ * Dense toolbars can opt into the 40px variant instead of the 44px target.
  */
 @media (max-width: 639px) {
-  button,
-  [role='button'],
   input:not([type='checkbox']):not([type='radio']),
   select,
   textarea {

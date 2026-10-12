@@ -1,3 +1,4 @@
+import { navigateAppTab, openAppNavigation } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 
 interface CardFrame {
@@ -6,6 +7,7 @@ interface CardFrame {
 }
 
 async function returnToEditor() {
+  await openAppNavigation();
   const result = await browser.executeAsync((done: (result: { frames: CardFrame[]; error?: string }) => void) => {
     const frames: CardFrame[] = [];
     let settledSince: number | null = null;
@@ -38,7 +40,7 @@ async function returnToEditor() {
       else frameId = requestAnimationFrame(sample);
     };
     frameId = requestAnimationFrame(sample);
-    document.querySelector<HTMLAnchorElement>('nav a[href="/"]')!.click();
+    document.querySelector<HTMLAnchorElement>('a[href="/"]')!.click();
   });
   if (result.error) throw new Error(result.error);
   return result.frames;
@@ -51,7 +53,7 @@ describe('editor route layout', () => {
       await browser.url('/');
       await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        await $('a[aria-label="Settings"]').click();
+        await navigateAppTab('Settings');
         await $('input[aria-label="Search settings"]').waitForDisplayed();
         const frames = await returnToEditor();
         expect(frames.length).toBeGreaterThan(3);

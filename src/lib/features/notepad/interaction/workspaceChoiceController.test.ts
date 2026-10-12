@@ -35,7 +35,7 @@ function setup() {
 }
 
 describe('workspace choice controller', () => {
-  it('does not split below the supported viewport', async () => {
+  it('does not split when workspace admission disallows it', async () => {
     const harness = setup();
     harness.disableSplit();
 

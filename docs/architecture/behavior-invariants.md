@@ -159,6 +159,8 @@ when present; otherwise the pane immediately to its left becomes active.
 
 ### Compact splits keep every pane visibly reachable
 
+Explicit Split commands can start a split in an edge-to-edge narrow workspace;
+creation uses the ordinary workspace command and opens the retained rail layout.
 When the retained split cannot provide useful pane widths, the active pane
 expands beside a persistent title rail for its neighbor. Pane order stays fixed:
 activating a left rail expands the left pane and leaves a right rail, and vice

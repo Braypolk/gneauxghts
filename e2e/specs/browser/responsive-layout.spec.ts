@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
 import { chatHistoryFixture } from '../../support/chatHistoryFixture';
@@ -101,7 +102,7 @@ describe('responsive layout interactions', () => {
     };
     await assertCalendar();
     await replaceBody('- [ ] Narrow calendar task');
-    await viewport(320, 560); await $('a[aria-label="List"]').click();
+    await viewport(320, 560); await navigateAppTab('List');
     await $('button[aria-label="Add due date: Narrow calendar task"]').click();
     await expectInViewport('dialog.date-time-picker'); await assertCalendar();
     await $('button[aria-label^="Edit due date:"]').waitForDisplayed();
@@ -176,7 +177,7 @@ describe('responsive layout interactions', () => {
   it('keeps nested task text readable and its date actions reachable on a phone', async () => {
     await viewport(390, 844);
     await replaceBody('- [ ] Parent task\n            - [ ] A deeply nested task with a longer description');
-    await $('a[aria-label="List"]').click();
+    await navigateAppTab('List');
     const nested = await $('button[aria-label^="Add due date: A deeply nested"]');
     await nested.waitForDisplayed();
     const width = await browser.execute(() => {
@@ -195,7 +196,7 @@ describe('responsive layout interactions', () => {
   });
 
   it('scrolls a short map reader to its source and editor actions', async () => {
-    await viewport(640, 560); await $('a[aria-label="Map"]').click();
+    await viewport(640, 560); await navigateAppTab('Map');
     await $('[data-node-id="note-beta"] .dot-body').waitForDisplayed();
     await $('[data-node-id="note-beta"] .dot-body').click();
     const open = await $('button=Open in editor');
@@ -211,7 +212,7 @@ describe('responsive layout interactions', () => {
 
   it('scrolls local model configuration controls in a short landscape window', async () => {
     await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-    await viewport(844, 390); await $('a[aria-label="Settings"]').click();
+    await viewport(844, 390); await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
     const provider = await $('[data-settings-anchor="chat-provider"] select');
     await provider.waitForExist(); await provider.scrollIntoView(); await provider.selectByAttribute('value', 'local');

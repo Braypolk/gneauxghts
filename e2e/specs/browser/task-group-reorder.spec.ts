@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
@@ -22,7 +23,7 @@ async function fixture() {
       return null;
     };
   });
-  await $('a[aria-label="List"]').click();
+  await navigateAppTab('List');
   await options('Visible A').waitForDisplayed();
 }
 
@@ -55,7 +56,7 @@ describe('touch and keyboard task group reorder', () => {
     expect(calls.at(-1)?.args.noteIds).toEqual(['a', 'hidden', 'c', 'b']);
     await $('button[aria-label="Clear search"]').click();
     await browser.waitUntil(async () => (await order()).join(',') === 'a,hidden,c,b');
-    await $('a[aria-label="Gneauxght"]').click(); await $('a[aria-label="List"]').click();
+    await navigateAppTab('Gneauxght'); await navigateAppTab('List');
     await options('Visible C').waitForDisplayed();
     expect(await order()).toEqual(['a', 'hidden', 'c', 'b']);
   });

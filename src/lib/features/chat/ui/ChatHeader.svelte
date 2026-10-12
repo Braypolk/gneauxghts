@@ -18,6 +18,7 @@
     right?: Snippet;
     split?: boolean;
     workspace?: boolean;
+    mobileTitleActive?: boolean;
     titleDraft?: string;
     openMenu: ChatMenu | null;
     onOpenMenu: (menu: ChatMenu | null) => void;
@@ -31,6 +32,7 @@
     right,
     split = false,
     workspace = false,
+    mobileTitleActive = true,
     titleDraft = $bindable(''),
     openMenu,
     onOpenMenu,
@@ -121,8 +123,9 @@
   {right}
   {split}
   {workspace}
+  {mobileTitleActive}
 >
-  {#snippet left()}
+  {#snippet secondaryActions()}
     {#if showConversationPicker}
       <div class="relative" data-chat-menu>
         <button

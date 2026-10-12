@@ -1,9 +1,10 @@
 <script lang="ts">
-  import { CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
+  import { Columns2, CornerUpLeft, FileText, FolderOpen, History, MessagesSquare, Pin, X, Ellipsis, Tags } from '@lucide/svelte';
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
   } from '$lib/keyboardShortcuts.svelte';
+  import { MediaQuery } from 'svelte/reactivity';
   import { DropdownMenu } from 'bits-ui';
   import PaneHeader from '$lib/ui/PaneHeader.svelte';
   import ScrollingNoteTags from './ui/ScrollingNoteTags.svelte';
@@ -35,6 +36,7 @@
     composerDock?: ComposerDock;
     compact?: boolean;
     collapsed?: boolean;
+    mobileTitleActive?: boolean;
     onExpand?: () => void;
   }
 
@@ -45,10 +47,12 @@
     composerDock,
     compact = false,
     collapsed = false,
+    mobileTitleActive = true,
     onExpand,
     paneCommandFocusRoot = $bindable<HTMLElement | null>(null)
   }: Props = $props();
 
+  const fullWidth = new MediaQuery('(max-width: 639px)');
   let optionsButton = $state<HTMLButtonElement | null>(null);
   let optionsOpen = $state(false);
   const chatController = $derived(viewModel.paneKind === 'chat' ? viewModel.chat.session.controller : null);
@@ -133,18 +137,38 @@
     {@render splitPaneButtons()}
   {:else}
     <SplitPaneButton paneKind={viewModel.paneKind} onSplit={actions.onSplit} onOpenCurrent={actions.onOpenPaneChoice} />
-    <div class="mobile-pane-switch sm:hidden">
-      <button
-        type="button"
-        class="mobile-touch-target pane-header-action"
-        onmousedown={(event) => event.preventDefault()}
-        onclick={() => void actions.onOpenPaneChoice(viewModel.paneKind === 'editor' ? 'thoughtPartner' : 'previous')}
-        aria-label={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
-        title={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
-      >
-        {#if viewModel.paneKind === 'editor'}<MessagesSquare class="h-4 w-4" />{:else}<CornerUpLeft class="h-4 w-4" />{/if}
-      </button>
-    </div>
+    {#if fullWidth.current}
+      <div class="compact-pane-switch flex items-center gap-1 sm:hidden">
+        {#if viewModel.paneKind === 'editor'}
+          <button type="button" class="mobile-touch-target pane-header-action" onmousedown={(event) => event.preventDefault()}
+            onclick={() => void actions.onOpenPaneChoice('thoughtPartner')} aria-label="Open thought partner" title="Open thought partner">
+            <MessagesSquare class="h-4 w-4" />
+          </button>
+        {/if}
+        <button type="button" class="mobile-touch-target pane-header-action" onmousedown={(event) => event.preventDefault()}
+          onclick={() => void actions.onOpenPaneChoice('previous')} aria-label="Open previous location" title="Open previous location">
+          <CornerUpLeft class="h-4 w-4" />
+        </button>
+        <span class="compact-pane-divider" aria-hidden="true"></span>
+        <button type="button" class="mobile-touch-target pane-header-action" onmousedown={(event) => event.preventDefault()}
+          onclick={() => void actions.onSplit()} aria-label="Split pane" title="Open split pane options">
+          <Columns2 class="h-4 w-4" />
+        </button>
+      </div>
+    {:else}
+      <div class="mobile-pane-switch sm:hidden">
+        <button
+          type="button"
+          class="mobile-touch-target pane-header-action"
+          onmousedown={(event) => event.preventDefault()}
+          onclick={() => void actions.onOpenPaneChoice(viewModel.paneKind === 'editor' ? 'thoughtPartner' : 'previous')}
+          aria-label={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
+          title={viewModel.paneKind === 'editor' ? 'Open thought partner' : 'Open previous location'}
+        >
+          {#if viewModel.paneKind === 'editor'}<MessagesSquare class="h-4 w-4" />{:else}<CornerUpLeft class="h-4 w-4" />{/if}
+        </button>
+      </div>
+    {/if}
   {/if}
 {/snippet}
 
@@ -189,10 +213,11 @@
             titleMeasureTestId="note-title-measure"
             bind:titleShell={pane.refs.titleShell}
             workspace
+            {mobileTitleActive}
             split={viewModel.showCloseButton}
             right={paneButtons}
           >
-            {#snippet left()}
+            {#snippet secondaryActions()}
               <DropdownMenu.Root bind:open={optionsOpen} onOpenChange={(open) => { if (open) actions.onNoteOptionsOpen(); }}>
                 <DropdownMenu.Trigger bind:ref={optionsButton} class="mobile-touch-target pane-header-action" aria-label="Note options" title="Note options">
                   <Ellipsis class="h-4 w-4" />
@@ -219,11 +244,11 @@
                 </DropdownMenu.Portal>
               </DropdownMenu.Root>
             {/snippet}
-            {#snippet titleLeading()}
+            {#snippet primaryActions()}
               <button
                 type="button"
                 disabled={!viewModel.canPin}
-                class={`mobile-touch-target absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
+                class={`mobile-touch-target pane-header-pin absolute top-1/2 right-[calc(100%+0.25rem)] inline-flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground ${viewModel.isPinned ? 'text-accent-foreground' : ''}`}
                 aria-label={viewModel.isPinned ? 'Unpin note' : 'Pin note'}
                 aria-pressed={viewModel.isPinned}
                 title={`${viewModel.isPinned ? 'Unpin note' : 'Pin note'} (${pinShortcutLabel})`}
@@ -354,6 +379,7 @@
               {composerDock}
               headerActions={paneButtons}
               headerSplit={viewModel.showCloseButton}
+              {mobileTitleActive}
               selectionActions={viewModel.chat.context.selectionActions}
               onConversationChange={viewModel.chat.session.onConversationChange}
               onOpenCitation={viewModel.chat.context.onOpenCitation}
@@ -376,6 +402,7 @@
 </div>
 
 <style>
+  .compact-pane-divider { width: 1px; height: 1.5rem; margin-inline: 0.25rem; background: var(--border); }
   /* Keep layout measurable while parsing and scroll restoration finish. */
   .editor-loading {
     visibility: hidden;

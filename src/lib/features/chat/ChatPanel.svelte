@@ -40,6 +40,7 @@
     showConversationPicker?: boolean;
     headerActions?: Snippet;
     headerSplit?: boolean;
+    mobileTitleActive?: boolean;
     composerDock?: ComposerDock;
     selectionActions?: ChatSelectionActions;
     onConversationChange?: (conversationId: string | null) => void;
@@ -77,6 +78,7 @@
     showConversationPicker = true,
     headerActions,
     headerSplit = false,
+    mobileTitleActive = true,
     composerDock,
     selectionActions = {},
     onConversationChange,
@@ -209,6 +211,7 @@
     right={headerActions}
     split={headerSplit}
     workspace={variant === 'pane'}
+    {mobileTitleActive}
     bind:titleDraft
     {openMenu}
     onOpenMenu={(menu) => (openMenu = menu)}

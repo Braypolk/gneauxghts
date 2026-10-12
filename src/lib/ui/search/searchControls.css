@@ -4,6 +4,7 @@
 
 :root {
   --search-bar-height: 2.5rem;
+  --search-control-size: 2rem;
   --search-expansion-duration: 460ms;
   --search-expansion-ease: cubic-bezier(0.32, 0, 0.2, 1);
 }
@@ -15,6 +16,7 @@
 @media (max-width: 639px) {
   /* The 44px touch input plus the search shell's two border pixels. */
   :root { --search-bar-height: calc(2.75rem + 2px); }
+  :root { --search-control-size: 2.5rem; }
 }
 
 .shared-search-control {
@@ -23,8 +25,9 @@
   align-items: center;
   justify-content: center;
   gap: 0;
-  height: 2rem;
-  min-width: 2rem;
+  /* Keep icon-only controls square; labels can still widen the desktop pill. */
+  height: var(--search-control-size);
+  min-width: var(--search-control-size);
   padding-inline: 0.5rem;
   border-radius: 9999px;
   background: transparent;
@@ -110,6 +113,17 @@
 @container workspace-input-dock (max-width: 28rem) {
   .shared-search-mode-label {
     display: none;
+  }
+}
+
+@container workspace-input-dock (max-width: 14rem) {
+  /* Keep all icon controls reachable in the narrow dock between pane actions. */
+  .shared-search-controls .mobile-dense-touch-target {
+    --search-control-size: 2rem;
+    width: var(--search-control-size);
+    height: var(--search-control-size);
+    min-width: var(--search-control-size);
+    min-height: var(--search-control-size);
   }
 }
 

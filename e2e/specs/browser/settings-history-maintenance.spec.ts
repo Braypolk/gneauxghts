@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
@@ -5,8 +6,7 @@ describe('History storage maintenance and recovery', () => {
   beforeEach(resetBrowserWorkspace);
 
   it('confirms vault clear and permanent purge while reporting reclaimable storage', async () => {
-    const openSettings = await $('a[aria-label="Settings"]');
-    await browser.execute((element: HTMLElement) => element.click(), openSettings);
+    await navigateAppTab('Settings');
     await $('[aria-label="Settings categories"]').waitForExist();
     const historyCategory = await $('[aria-label="Settings categories"] button[data-settings-section="history"]');
     await historyCategory.waitForExist();
@@ -38,8 +38,7 @@ describe('History storage maintenance and recovery', () => {
   });
 
   it('inspects and safely recovers an externally deleted note', async () => {
-    const openSettings = await $('a[aria-label="Settings"]');
-    await browser.execute((element: HTMLElement) => element.click(), openSettings);
+    await navigateAppTab('Settings');
     await $('[aria-label="Settings categories"]').waitForExist();
     await $('button=Forgotten Items').click();
     await browser.waitUntil(async () =>

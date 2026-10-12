@@ -1,3 +1,4 @@
+import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $, $$ } from '@wdio/globals';
 
 async function invocations(command: string) {
@@ -136,7 +137,7 @@ describe('chat mounted controls', () => {
   });
 
   it('discovers and configures local model capabilities through mounted Settings controls', async () => {
-    await $('a[aria-label="Settings"]').click();
+    await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
     const provider = await $('[data-settings-anchor="chat-provider"] select');
     await provider.waitForExist(); await provider.selectByAttribute('value', 'local');

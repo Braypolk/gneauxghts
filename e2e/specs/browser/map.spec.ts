@@ -1,3 +1,4 @@
+import { navigateAppTab, openAppNavigation } from '../../support/appNavigation';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { openRecentNote, resetBrowserWorkspace, waitForNote } from '../../support/browserWorkspace';
 import type { AtlasCloud, VaultAtlasResponse } from '../../../src/lib/types/atlas';
@@ -50,7 +51,7 @@ async function showAnimationCloud() {
 describe('Atlas map', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    await $('a[aria-label="Map"]').click();
+    await navigateAppTab('Map');
     await $(beta).waitForDisplayed({ timeout: 30_000 });
   });
 
@@ -79,10 +80,10 @@ describe('Atlas map', () => {
     // Keep the clicked left-hand note outside the right-hand reader overlay.
     // Establish Beta through the real workspace so a missing handoff cannot pass
     // by reopening the default Alpha fixture.
-    await $('a[href="/"]').click();
+    await navigateAppTab('Gneauxght');
     await waitForNote('Alpha note');
     await openRecentNote('Beta note');
-    await $('a[aria-label="Map"]').click();
+    await navigateAppTab('Map');
     await $(beta).waitForDisplayed();
     await $(beta).click();
     await expect($('.reader h2')).toHaveText('beta');
@@ -441,8 +442,9 @@ describe('Atlas map', () => {
     expect(await browser.execute(() => document.querySelectorAll('[data-node-id]').length)).toBe(2000);
     // A route remount creates a fresh layout instance; refresh-only tests miss
     // expensive caption searches over the production-sized smooth outlines.
-    await $('a[href="/"]').click();
+    await navigateAppTab('Gneauxght');
     await expect($('.map-world')).not.toExist();
+    await openAppNavigation();
     const reopeningMillis = await browser.execute(async () => {
       const started = performance.now();
       document.querySelector<HTMLAnchorElement>('a[aria-label="Map"]')!.click();
@@ -676,7 +678,7 @@ describe('Atlas map', () => {
 describe('Atlas continuity controls', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    await $('a[aria-label="Map"]').click();
+    await navigateAppTab('Map');
     await $(beta).waitForDisplayed({timeout:30_000});
   });
   it('names a cloud durably through refresh and restores its automatic name', async () => {

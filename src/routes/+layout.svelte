@@ -1,5 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, setContext } from 'svelte';
+  import { workspaceTitleSlotKey } from '$lib/ui/workspaceTitleSlot';
+  import { isTauriRuntime } from '$lib/tauriRuntime';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import "../app.css";
   import { initializeTheme } from '$lib/theme.svelte';
@@ -28,8 +30,17 @@
   let { children } = $props();
   let shellViewKey = $derived(`${page.url.pathname}::${getAppShellViewGeneration()}`);
 
+  let nativeWindowControlsHeight = $state(0);
+  let nativeWindowControlsWidth = $state(0);
+  let workspaceTitleSlot = $state<HTMLDivElement | null>(null);
+  setContext(workspaceTitleSlotKey, () => workspaceTitleSlot);
+
   onMount(() => {
     const disposeBackgroundPersistence = installBackgroundPersistence();
+    if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && /Mac/i.test(navigator.platform)) {
+      nativeWindowControlsHeight = 32;
+      nativeWindowControlsWidth = 84;
+    }
     let disposed = false;
     const unlisteners: UnlistenFn[] = [];
     void Promise.allSettled([
@@ -66,8 +77,11 @@
 
 <div
   use:mobileViewport
-  class="relative flex h-(--app-shell-height) min-h-(--app-shell-height) flex-col overflow-hidden bg-background pt-[env(safe-area-inset-top,0px)] text-foreground"
+  style={`--native-window-controls-height: ${nativeWindowControlsHeight}px; --native-window-controls-width: ${nativeWindowControlsWidth}px;`}
+  class="app-shell relative flex h-(--app-shell-height) min-h-(--app-shell-height) flex-col overflow-hidden bg-background text-foreground"
 >
+  <div data-tauri-drag-region class="compact-window-drag-region"></div>
+  <div bind:this={workspaceTitleSlot} class="mobile-workspace-title-slot" inert={restartLifecycle.workspaceMutationsBlocked}></div>
   <div inert={restartLifecycle.workspaceMutationsBlocked}>
     <NavBar />
   </div>
@@ -105,3 +119,39 @@
     </div>
   {/if}
 </div>
+
+<style>
+  .app-shell {
+    --app-shell-top-inset: env(safe-area-inset-top, 0px);
+    padding-top: var(--app-shell-top-inset);
+  }
+  .compact-window-drag-region { display: none; }
+  .mobile-workspace-title-slot { display: none; }
+  @media (max-width: 639px) {
+    .app-shell {
+      --app-shell-top-inset: calc(env(safe-area-inset-top, 0px) + var(--native-window-controls-height, 0px));
+    }
+    .app-shell:has(:global(.notepad-shell)) {
+      --app-shell-top-inset: calc(env(safe-area-inset-top, 0px) + max(2.75rem, var(--native-window-controls-height, 0px)));
+      /* Let pane content scroll behind one backdrop all the way to the top. */
+      padding-top: 0;
+    }
+    .app-shell:has(:global(.notepad-shell)) .mobile-workspace-title-slot {
+      display: flex;
+      position: absolute;
+      inset: env(safe-area-inset-top, 0px) 0 auto;
+      height: max(2.75rem, var(--native-window-controls-height, 0px));
+      /* Reserve matching space on both sides to center the title in the window. */
+      padding: 0 calc(0.75rem + var(--native-window-controls-width, 0px));
+      z-index: 45;
+      pointer-events: none;
+    }
+    .compact-window-drag-region {
+      display: block;
+      position: absolute;
+      inset: 0 0 auto;
+      height: var(--app-shell-top-inset);
+      z-index: 40;
+    }
+  }
+</style>

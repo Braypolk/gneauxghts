@@ -12,7 +12,7 @@ describe('Optimized native finalized Editing Window fixture', () => {
   before(async () => { await browser.switchToWindow('main'); });
   it('pages immutable windows and paints their net differences', async () => {
     await browser.setTimeout({ script: 180_000 });
-    await $('a[aria-label="Gneauxght"]').waitForExist({ timeout: 120_000 });
+    await $('.app-navigation-header').waitForExist({ timeout: 120_000 });
     const results: number[] = [];
     for (const note of fixture.notes.filter(n => n.bytes === 1048576)) {
       const page = await invoke<{ records: { timeKind: string }[] }>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
