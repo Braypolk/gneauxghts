@@ -37,6 +37,7 @@ concrete state references, independently of Tauri dispatch.
 | Open note content, mutable durable identity/path, saved baseline, operation, publication warning, and conflicts | `NoteDraftState` in `NotepadState.documentsByHandle`; an immutable ephemeral `DocumentHandle` keys the open lifetime and transitions use the document machines |
 | Committed open-document adoption across model, runtime, and derived views | Operation-specific methods on `DocumentEditingService`; callers provide authoritative results, not synchronization policy |
 | Editor instances, save queues, timers, and resource bindings | `documentRegistry` and the document runtime |
+| Background save notification routing | App-shell `backgroundPersistence` subscriptions; workspace and composer owners retain their existing write queues |
 | Canonical note bytes | The Markdown file in the vault |
 | Ordinary-note mutation, observation, and role-limited history access | `NoteTimeline`; post-publication catalog, task, lexical, semantic, and warning coordination is private behind this seam |
 | Editing Window capture, deadlines, recovery, and finalization | `NoteTimeline`; workspace departure and save flushing remain with existing frontend owners |

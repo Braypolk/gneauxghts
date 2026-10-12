@@ -119,6 +119,27 @@ describe("persistenceController", () => {
     expect(controller.hasCleanBuffer(note)).toBe(true);
   });
 
+  it("flushes a backgrounded note through its real save queue before the autosave timer", async () => {
+    const note = dirtyNote();
+    const saveNoteSession = vi.fn().mockResolvedValue(committed({ title: 'Draft', markdown: 'draft body' }));
+    const controller = controllerFor(note, { saveNoteSession });
+    const workspace = createWorkspacePersistenceService({
+      flushAllPaneCursorSaves: vi.fn(),
+      getDocuments: () => [note],
+      cancelPendingAutosave: controller.cancelPendingAutosave,
+      enqueueSave: controller.enqueueSave
+    });
+    controller.scheduleAutosave(note);
+    expect(saveNoteSession).not.toHaveBeenCalled();
+
+    await workspace.flushAllForBackground();
+
+    expect(saveNoteSession).toHaveBeenCalledExactlyOnceWith('Draft', 'draft body', '/vault/Saved.md');
+    expect(controller.hasCleanBuffer(note)).toBe(true);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(saveNoteSession).toHaveBeenCalledOnce();
+  });
+
   it("schedules autosave through the note queue and clears clean buffers", async () => {
     const note = dirtyNote();
     const saveNoteSession = vi.fn().mockResolvedValue(

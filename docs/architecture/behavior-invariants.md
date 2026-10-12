@@ -54,6 +54,30 @@ with its native engine owned by the application. Native macOS termination may by
 exit-request callback; its final exit event releases the runtime without
 claiming a portable vault close or saved frontend drafts.
 
+### Backgrounding requests saves without closing the running vault
+
+The app shell routes hidden visibility, pagehide and the native mobile suspension
+notification to mounted persistence owners. The workspace joins an admitted
+Version Restore, cancels note debounce timers and requests ordinary note saves
+through the existing per-document queues. Independent notes proceed even when
+another note has a conflict or save failure. Protected proposal reviews are not
+published; external conflicts remain unresolved and failed edits remain dirty.
+Backgrounding does not finalize a review, close the Running Vault or request
+process relaunch.
+
+Each mounted composer captures its live unsent text and flushes through its
+draft owner without sending or creating a conversation. Writes to one slot are
+serialized across remounts, and a flush joins that owner's in-flight writes.
+Failed draft writes retain the in-memory text/cache, report a visible error, and
+can retry when the composer next records and flushes its live text. Subscriptions
+are retired with their owners, including late native listener attachment.
+
+These signals admit best-effort saves while JavaScript is available. They do not
+guarantee durability after immediate OS suspension or termination, persist
+unsent attachments or protected review edits, or establish a portable clean
+close. Physical iPhone background/lock/termination recovery remains a separate
+release-validation requirement.
+
 ### Bootstrap admits one coherent backend snapshot
 
 The bundled application bootstrap is the only initial-session retrieval path.

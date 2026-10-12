@@ -418,6 +418,21 @@ pub fn run() {
 }
 
 fn handle_run_event<R: tauri::Runtime>(app_handle: &tauri::AppHandle<R>, event: RunEvent) {
+    // Request frontend-owned draft publication while the webview is still
+    // active. Suspension is not a vault close or a guaranteed save receipt.
+    #[cfg(mobile)]
+    if matches!(
+        &event,
+        RunEvent::WindowEvent {
+            event: tauri::WindowEvent::Suspended,
+            ..
+        }
+    ) {
+        if let Err(error) = app_handle.emit("app://backgrounding", ()) {
+            eprintln!("background-save notification failed: {error}");
+        }
+    }
+
     // Persist while the window still exists. This also covers the macOS
     // close-window path, which does not necessarily terminate the app.
     #[cfg(desktop)]

@@ -7,6 +7,7 @@ export interface ComposerDraftPersistenceDeps {
   setDraft: (slot: string, body: string) => Promise<void>;
   /** Puts a loaded draft back into the composer. */
   applyDraft: (body: string) => void;
+  onSaveError?: (error: unknown) => void;
   saveDelayMs?: number;
 }
 
@@ -16,10 +17,13 @@ export interface ComposerDraftPersistenceDeps {
  * reload a stale empty value before the flush lands.
  */
 const draftCache = new Map<string, string>();
+// Remounting a composer must not let its newer write overtake the old mount.
+const writeQueues = new Map<string, Promise<void>>();
 
 /** Test helper — clears the process-wide draft mirror. */
 export function resetComposerDraftCacheForTests() {
   draftCache.clear();
+  writeQueues.clear();
 }
 
 /**
@@ -38,6 +42,7 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
   let loadToken = 0;
   /** True while an openSlot load is in flight. */
   let loadInFlight = false;
+  const inFlightWrites = new Set<Promise<void>>();
 
   function cancelPendingSave() {
     if (saveTimer === null) return;
@@ -47,17 +52,33 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
 
   function write(targetSlot: string, body: string) {
     draftCache.set(targetSlot, body);
-    void deps.setDraft(targetSlot, body).catch((error) => {
+    const previous = writeQueues.get(targetSlot);
+    const writing = previous
+      ? previous.catch(() => undefined).then(() => deps.setDraft(targetSlot, body))
+      : deps.setDraft(targetSlot, body);
+    const completion = writing.catch((error) => {
       logDevError('Failed to persist chat composer draft', error);
+      deps.onSaveError?.(error);
+      throw error;
     });
+    writeQueues.set(targetSlot, completion);
+    inFlightWrites.add(completion);
+    const settled = () => {
+      inFlightWrites.delete(completion);
+      if (writeQueues.get(targetSlot) === completion) writeQueues.delete(targetSlot);
+    };
+    // Own rejection even for fire-and-forget reset/disposal paths.
+    void completion.then(settled, settled);
   }
 
-  function flush() {
+  function flush(): Promise<void> {
     cancelPendingSave();
-    if (slot === null || pendingBody === null) return;
-    const body = pendingBody;
-    pendingBody = null;
-    write(slot, body);
+    if (slot !== null && pendingBody !== null) {
+      const body = pendingBody;
+      pendingBody = null;
+      write(slot, body);
+    }
+    return Promise.all([...inFlightWrites]).then(() => undefined);
   }
 
   return {
@@ -67,7 +88,7 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
      */
     async openSlot(nextSlot: string) {
       if (nextSlot === slot) return;
-      flush();
+      void flush().catch(() => undefined);
       slot = nextSlot;
       pendingBody = null;
       const token = ++loadToken;
@@ -141,7 +162,7 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
       cancelPendingSave();
       saveTimer = setTimeout(() => {
         saveTimer = null;
-        flush();
+        void flush().catch(() => undefined);
       }, saveDelayMs);
     },
 
@@ -149,7 +170,7 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
     flush,
 
     dispose() {
-      flush();
+      void flush().catch(() => undefined);
       loadToken += 1;
       loadInFlight = false;
       slot = null;

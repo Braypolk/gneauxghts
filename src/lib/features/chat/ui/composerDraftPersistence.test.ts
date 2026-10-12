@@ -45,6 +45,74 @@ describe('composer draft persistence', () => {
     expect(h.applied).toEqual(['half a thought']);
   });
 
+  it('joins an in-flight draft write when background flushing has no newer text', async () => {
+    const h = harness();
+    let release!: () => void;
+    h.setDraft.mockImplementationOnce((slot, body) => new Promise<void>(resolve => {
+      release = () => { h.drafts.set(slot, body); resolve(); };
+    }));
+    await h.persistence.openSlot('pane:left');
+    h.persistence.record('typed before backgrounding');
+    await vi.advanceTimersByTimeAsync(100);
+    let saved = false;
+    const flushing = Promise.resolve(h.persistence.flush()).then(() => { saved = true; });
+    await Promise.resolve();
+    expect(saved).toBe(false);
+    release();
+    await flushing;
+    expect(h.drafts.get('pane:left')).toBe('typed before backgrounding');
+    expect(saved).toBe(true);
+  });
+
+  it('serializes a newer background draft behind an older pending write', async () => {
+    const h = harness();
+    let release!: () => void;
+    h.setDraft.mockImplementationOnce((slot, body) => new Promise<void>(resolve => {
+      release = () => { h.drafts.set(slot, body); resolve(); };
+    }));
+    await h.persistence.openSlot('pane:left');
+    h.persistence.record('older');
+    await vi.advanceTimersByTimeAsync(100);
+    h.persistence.record('latest');
+    const flushing = h.persistence.flush();
+    expect(h.setDraft).toHaveBeenCalledOnce();
+    release();
+    await flushing;
+    expect(h.drafts.get('pane:left')).toBe('latest');
+  });
+
+  it('retains failed text and can retry it on the next background request', async () => {
+    const h = harness();
+    h.setDraft.mockRejectedValueOnce(new Error('disk unavailable'));
+    await h.persistence.openSlot('pane:left');
+    h.persistence.record('keep this unsent text');
+    await expect(h.persistence.flush()).rejects.toThrow('disk unavailable');
+
+    const restored = harness();
+    await restored.persistence.openSlot('pane:left');
+    expect(restored.applied).toEqual(['keep this unsent text']);
+    // The mounted composer records its live text before every background flush.
+    h.persistence.record('keep this unsent text');
+    await h.persistence.flush();
+    expect(h.drafts.get('pane:left')).toBe('keep this unsent text');
+  });
+
+  it('keeps a remounted composer newer than a write from the retired mount', async () => {
+    const h = harness();
+    let release!: () => void;
+    h.setDraft.mockImplementationOnce((slot, body) => new Promise<void>(resolve => {
+      release = () => { h.drafts.set(slot, body); resolve(); };
+    }));
+    await h.persistence.openSlot('pane:left');
+    h.persistence.record('older mount'); h.persistence.dispose();
+    const next = createComposerDraftPersistence({ getDraft: h.getDraft, setDraft: h.setDraft, applyDraft: () => {} });
+    await next.openSlot('pane:left');
+    next.record('newer mount'); const flushing = next.flush();
+    expect(h.setDraft).toHaveBeenCalledOnce();
+    release(); await flushing;
+    expect(h.drafts.get('pane:left')).toBe('newer mount');
+  });
+
   it('keeps each conversation its own unsent text across a switch', async () => {
     const h = harness();
 

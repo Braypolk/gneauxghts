@@ -7,6 +7,7 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [iOS readiness](mobile-ios-readiness/spec.md): prioritized implementation plan for recent iPhones; background-save handling is implemented, with device validation pending. Vault switching is next. Sync and older-device compatibility are deferred.
 - [Chat reliability](chat-reliability/README.md): request latency and citation entailment are open; this index owns the next steps.
 - [Context selection](chat-context-selection/spec.md): completed selection work and retained follow-ups. Follow [issue 08](chat-context-selection/issues/08-inline-citation-omission.md) for native citation omissions and [issue 09](chat-context-selection/issues/09-selection-only-answer-scope.md) for answer scope.
 - Recent [instruction audit](chat-instruction-audit/spec.md), [context reduction](chat-context-reduction/spec.md) and [tool interface](chat-tool-interface/spec.md) records support those investigations. Their completed steps are measurements, not separate open implementation queues.

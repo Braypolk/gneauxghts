@@ -67,7 +67,30 @@ export function createWorkspacePersistenceService(
     }
   }
 
+  /** Backgrounding cannot be vetoed; one blocked note must not delay the rest. */
+  async function flushAllForBackground(): Promise<void> {
+    deps.flushAllPaneCursorSaves();
+    const documents = [...deps.getDocuments()];
+    for (const document of documents) deps.cancelPendingAutosave(document);
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const results = await Promise.allSettled(documents.map((document) => {
+        if (needsCanonicalSave(document) && !documentHasUnresolvedConflict(document)) {
+          return deps.enqueueSave(document);
+        }
+        return documentRegistry.get(document.handle)?.getSaveQueue() ?? Promise.resolve();
+      }));
+      const failure = results.find((result) => result.status === 'rejected');
+      if (failure?.status === 'rejected') throw failure.reason;
+      const pending = documents.filter(needsCanonicalSave);
+      if (pending.length === 0) return;
+      if (pending.every(documentHasUnresolvedConflict)) break;
+    }
+    throw new Error('Some note changes remain unsaved after backgrounding. Resolve any note conflicts or save errors.');
+  }
+
   return {
-    flushAllForNavigation
+    flushAllForNavigation,
+    flushAllForBackground
   };
 }

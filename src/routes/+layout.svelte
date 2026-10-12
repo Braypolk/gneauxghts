@@ -5,6 +5,7 @@
   import { initializeTheme } from '$lib/theme.svelte';
   import '$lib/editorTextSize.svelte';
   import { mobileViewport } from '$lib/ui/mobileViewport';
+  import { installBackgroundPersistence } from '$lib/app/backgroundPersistence';
   import NavBar from '$lib/ui/NavBar.svelte';
   import { appStore } from '$lib/app/appStore.svelte';
   import { logDevError } from '$lib/logDevError';
@@ -28,6 +29,7 @@
   let shellViewKey = $derived(`${page.url.pathname}::${getAppShellViewGeneration()}`);
 
   onMount(() => {
+    const disposeBackgroundPersistence = installBackgroundPersistence();
     let disposed = false;
     const unlisteners: UnlistenFn[] = [];
     void Promise.allSettled([
@@ -55,6 +57,7 @@
       logDevError('[AppStore] bootstrap failed; retry is required before editing', error);
     });
     return () => {
+      disposeBackgroundPersistence();
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
     };

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
   import { nextEditorFrame } from './editor/editorPresentation';
   import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
@@ -1484,6 +1485,10 @@
     },
   });
   onMount(() => {
+    const unregisterBackgroundSave = registerBackgroundSave(async () => {
+      await historyMode.waitForPendingRestore();
+      await workspacePersistence.flushAllForBackground();
+    });
     const unregisterTaskMutation =
       registerOpenTaskDocumentMutationHandler(
         openTaskDocumentMutation,
@@ -1534,6 +1539,7 @@
       };
     }
     return () => {
+      unregisterBackgroundSave();
       paneLayoutMotion.cancel();
       disposeNativeE2EBridge?.();
       unregisterTaskMutation();

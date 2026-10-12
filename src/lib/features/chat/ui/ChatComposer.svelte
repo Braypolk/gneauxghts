@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
+  import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
   import {
     AlertCircle,
     Check,
@@ -185,10 +186,17 @@
   const draftPersistence = createComposerDraftPersistence({
     getDraft: (slot) => controller.getComposerDraft(slot),
     setDraft: (slot, body) => controller.setComposerDraft(slot, body),
+    onSaveError: () => onActionError('Your unsent message could not be saved. Keep the app open or copy the text before closing it.'),
     applyDraft: (body) => {
       draft = body;
     }
   });
+
+  onMount(() => registerBackgroundSave(() => {
+    // Read live text even if Svelte has not yet run the draft-recording effect.
+    draftPersistence.record(draft);
+    return draftPersistence.flush();
+  }));
 
   onDestroy(() => {
     draftPersistence.dispose();

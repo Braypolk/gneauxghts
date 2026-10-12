@@ -9,6 +9,34 @@ import { createEmptySessionSnapshot } from '$lib/features/notepad/session/sessio
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
 
 describe('workspacePersistenceService', () => {
+  it('background saves independent notes while retaining conflicts, reviews and failed edits', async () => {
+    const failed = createNoteDraftState();
+    const healthy = createNoteDraftState();
+    const conflict = createNoteDraftState();
+    const review = createNoteDraftState();
+    for (const note of [failed, healthy, conflict, review]) updateDocumentMarkdown(note, 'keep these edits');
+    captureExternalSnapshotForTest(conflict, { ...createEmptySessionSnapshot(), bodyMarkdown: 'external' }, 'watcher');
+    const enqueueSave = vi.fn(async (note) => {
+      if (note === failed) throw new Error('disk unavailable');
+      applySessionSnapshotToDocument(note, {
+        ...createEmptySessionSnapshot(), bodyMarkdown: note.working.markdown, lastSavedMarkdown: note.working.markdown
+      });
+    });
+    const service = createWorkspacePersistenceService({
+      flushAllPaneCursorSaves: vi.fn(), getDocuments: () => [failed, conflict, review, healthy],
+      cancelPendingAutosave: vi.fn(), enqueueSave, isReviewingDocument: note => note === review
+    });
+
+    await expect(service.flushAllForBackground()).rejects.toThrow();
+
+    expect(enqueueSave.mock.calls.map(([note]) => note)).toEqual([failed, healthy]);
+    expect(healthy.savedBaseline?.content.markdown).toBe('keep these edits');
+    expect(failed.working.markdown).toBe('keep these edits');
+    expect(failed.savedBaseline).toBeNull();
+    expect(review.savedBaseline).toBeNull();
+    expect(conflict.working.markdown).toBe('keep these edits');
+  });
+
   it('flushes ordinary edits while retaining a pending proposal at the navigation barrier', async () => {
     const left = createNoteDraftState();
     const right = createNoteDraftState();
