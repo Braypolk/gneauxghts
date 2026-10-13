@@ -120,9 +120,13 @@
   {#each splitPaneTopActions as action}
     {@const ActionIcon = splitPaneActionIcons[action]}
     {@const label = splitPaneActionLabels[action]}
+    {#if fullWidth.current && action === 'close'}
+      <span class="compact-pane-divider" aria-hidden="true"></span>
+    {/if}
     <button
       type="button"
       class="mobile-touch-target pane-header-action"
+      onmousedown={(event) => event.preventDefault()}
       onclick={() => void runSplitPaneTopAction(action)}
       aria-label={label}
       title={label}

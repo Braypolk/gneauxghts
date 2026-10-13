@@ -233,7 +233,7 @@ describe('picker and activation', () => {
 
   it('activates the concrete pane and refreshes its derived views', async () => {
     const f = setup();
-    await f.commands.splitWorkspace('chat');
+    await f.commands.splitWorkspace('thoughtPartner');
     vi.clearAllMocks();
     f.commands.activatePane(f.first);
     expect(f.workspace.activePaneId).toBe(f.first);
@@ -270,7 +270,7 @@ it('selects the nearest editor for navigation and cycles real workspace panes', 
 
 it('waits for pane presentation and rejects stale keyboard focus after a newer activation', async () => {
   const f = setup();
-  await f.commands.splitWorkspace('chat');
+  await f.commands.splitWorkspace('thoughtPartner');
   const second = f.workspace.activePaneId;
   const settled = deferred<void>();
   const entered = deferred<void>();
@@ -350,8 +350,8 @@ it('rechecks review pane capacity after waiting behind a departing pane', async 
   const showing = f.commands.presentReviewDocument({
     document: f.initialDocument, noteId: 'a', path: '/vault/a.md'
   });
-  await f.commands.splitWorkspace('chat');
-  await f.commands.splitWorkspace('chat');
+  await f.commands.splitWorkspace('thoughtPartner');
+  await f.commands.splitWorkspace('thoughtPartner');
   opened.resolve(createSessionSnapshot(persistedSession('b')));
   await opening;
   expect(await showing).toBeNull();
@@ -362,15 +362,15 @@ it('rechecks review pane capacity after waiting behind a departing pane', async 
 
 it('keeps pane capacity when two splits finish asynchronous preparation together', async () => {
   const f = setup();
-  await f.commands.splitWorkspace('chat');
+  await f.commands.splitWorkspace('thoughtPartner');
   expect(f.workspace.paneOrder).toHaveLength(2);
   const recent = deferred<SearchItem[]>();
   vi.mocked(f.deps.derivedViews.loadRecentNotes)
     .mockImplementationOnce(() => recent.promise)
     .mockImplementationOnce(() => recent.promise);
 
-  const firstSplit = f.commands.splitWorkspace('chat');
-  const secondSplit = f.commands.splitWorkspace('chat');
+  const firstSplit = f.commands.splitWorkspace('thoughtPartner');
+  const secondSplit = f.commands.splitWorkspace('thoughtPartner');
   recent.resolve([]);
   await Promise.all([firstSplit, secondSplit]);
 

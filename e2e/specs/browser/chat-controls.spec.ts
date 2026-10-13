@@ -1,5 +1,6 @@
 import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $, $$ } from '@wdio/globals';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 async function invocations(command: string) {
   return browser.execute(name => window.__GNEAUXGHTS_E2E__!.invocations.filter(item => item.command === name), command);
@@ -46,6 +47,8 @@ describe('chat mounted controls', () => {
     try {
       const editor = await $('[data-testid="note-editor"] .cm-content');
       await editor.click(); await browser.keys('Unsaved chat context');
+      await $('button[aria-label="Expand chat input"]').click();
+      await waitForWorkspaceAnimationSettled();
       await send('Keep this draft');
       await browser.waitUntil(async () => (await invocations('save_note')).length > 0);
       expect(await invocations('chat_send_message')).toHaveLength(0);

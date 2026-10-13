@@ -106,12 +106,8 @@
    * up with note prose, not the wider cm-content box.
    */
   --content-readable-width: 100%;
-  /* Pane geometry and opacity share these tokens. The view waits for actual
-     animation completion; there is no duplicate JavaScript duration. */
-  --pane-transition-duration: 220ms;
   --related-transition-duration: 300ms;
   --related-transition-ease: cubic-bezier(0, 0, 0.2, 1);
-  --pane-transition-ease: cubic-bezier(0.22, 1, 0.36, 1);
   --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
   --selection-color: var(--foreground);
   /* Editor typography (medium preset defaults; overridden by editorTextSize.ts) */
@@ -211,7 +207,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --pane-transition-duration: 0ms;
     --related-transition-duration: 0ms;
   }
 

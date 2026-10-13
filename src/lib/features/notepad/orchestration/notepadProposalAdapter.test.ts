@@ -125,7 +125,7 @@ describe('proposal workspace composition', () => {
   });
 
   it('installs a passive proposal in an existing editor without activating it from chat', async () => {
-    const f = setup(); await f.commands.splitWorkspace('chat'); const active = f.workspace.activePaneId;
+    const f = setup(); await f.commands.splitWorkspace('thoughtPartner'); const active = f.workspace.activePaneId;
     const order = [...f.workspace.paneOrder];
     const focusHunk = vi.spyOn(f.getEditor(f.first)!, 'focusSelection');
     expect(await f.orchestration.loadDurableProposalIfOpen(f.request())).toBe(true);

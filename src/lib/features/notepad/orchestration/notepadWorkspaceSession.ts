@@ -453,7 +453,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     if (location.kind === 'editor') {
       return true;
     }
-    return canSetPaneKind({
+    return workspace.getPaneMembership(paneId).kind === 'creating' || canSetPaneKind({
       paneOrder: workspace.paneOrder,
       getPaneKind: getPaneKind
     }, paneId, 'chat');
@@ -913,7 +913,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     await navigate(paneId, true, operation => restoreDestination(operation, location));
   }
 
-  async function splitWorkspace(initialKind: PaneKind = 'editor') {
+  async function splitWorkspace(choice?: PaneCommandChoice) {
     if (workspace.paneOrder.length >= options.maxVisiblePanes) {
       await switchActivePane();
       return;
@@ -921,7 +921,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     const sourcePaneId = workspace.activePaneId;
     const source = getPaneDocument(sourcePaneId);
     const paneId = presentation.createPane();
-    await navigate(paneId, false, async (operation) => {
+    await navigate(paneId, choice === 'previous', async (operation) => {
       let created = false;
       try {
         if (!workspace.dispatchPaneMembership(paneId, { type: 'createRequested', operationId: operation.id })) {
@@ -935,10 +935,18 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         if (workspace.paneOrder.length >= options.maxVisiblePanes) {
           return;
         }
+        // Resolve the kind before membership becomes visible. A current/previous
+        // chat must not enter as an editor and restart pane and dock motion.
+        const current = capturePaneLocation(sourcePaneId);
+        const previous = choice === 'previous'
+          ? previousRestorableLocation(paneId, sourcePaneId, current) : null;
+        const destination = choice === 'current' ? current : previous;
+        const initialKind = choice === 'thoughtPartner' ? 'chat' : destination?.kind ?? 'editor';
         const document = initialKind === 'chat' ? source : createFreshDraftNote(state);
         workspace.completePaneCreation(paneId, operation.id, document.handle, initialKind);
         created = true;
-        if (initialKind === 'chat') {
+        if (destination?.kind === 'chat') workspace.setPaneConversationId(paneId, destination.conversationId);
+        if (choice === 'thoughtPartner') {
           workspace.resetPaneCommand();
           touchLocation(paneId, {
             kind: 'editor', noteId: getDocumentNoteId(source), notePath: getDocumentPath(source)
@@ -948,6 +956,10 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         else {
           workspace.beginPaneCommand(paneId, source.handle, 'split', sourcePaneId);
           activatePaneSession(paneId);
+          if (choice) {
+            await applyPaneCommandChoice(operation, choice, previous);
+            return;
+          }
           await paneLifecycle.ensurePaneEditors();
           operation.check();
           presentation.updateSelectedRelatedText(paneId);
@@ -955,7 +967,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         if (workspace.activePaneId !== paneId) {
           return;
         }
-        if (initialKind === 'chat') {
+        if (choice === 'thoughtPartner') {
           await focusAfterPresentation(operation);
         }
         else {
@@ -1135,72 +1147,77 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     if (workspace.paneCommand.paneId !== paneId) {
       return;
     }
-    await navigate(paneId, choice === 'previous', async (operation) => {
-      const sourceKey = workspace.paneCommand.sourceDocumentHandle;
-      const source = sourceKey ? state.documentsByHandle[sourceKey] : null;
-      const reference = findPaneCommandReferencePaneId(paneId);
-      const current = workspace.paneCommand.mode === 'split' ? capturePaneLocation(reference) : null;
-      const previous = choice === 'previous' ? await resolvePreviousLocationForPaneCommand(paneId) : null;
-      operation.check();
-      if (workspace.paneCommand.paneId !== paneId || (choice === 'previous' && !previous)) {
-        return;
+    await navigate(paneId, choice === 'previous', operation => applyPaneCommandChoice(operation, choice));
+  }
+
+  async function applyPaneCommandChoice(operation: Navigation, choice: PaneCommandChoice, preparedPrevious?: NavLocation | null) {
+    const { paneId } = operation;
+    const sourceKey = workspace.paneCommand.sourceDocumentHandle;
+    const source = sourceKey ? state.documentsByHandle[sourceKey] : null;
+    const reference = findPaneCommandReferencePaneId(paneId);
+    const current = workspace.paneCommand.mode === 'split' ? capturePaneLocation(reference) : null;
+    const previous = choice === 'previous'
+      ? preparedPrevious === undefined ? await resolvePreviousLocationForPaneCommand(paneId) : preparedPrevious
+      : null;
+    operation.check();
+    if (workspace.paneCommand.paneId !== paneId || (choice === 'previous' && !previous)) {
+      return;
+    }
+    if (choice === 'current' && current?.kind !== 'chat' && !source) {
+      return;
+    }
+    const placeholder = getPaneDocument(paneId);
+    workspace.resetPaneCommand();
+    activatePaneSession(paneId);
+    if (choice === 'previous') {
+      if (reference === paneId) {
+        await previousDestination(operation);
       }
-      if (choice === 'current' && current?.kind !== 'chat' && !source) {
-        return;
+      else if (previous) {
+        await restoreDestination(operation, previous);
       }
-      const placeholder = getPaneDocument(paneId);
-      workspace.resetPaneCommand();
-      activatePaneSession(paneId);
-      if (choice === 'previous') {
-        if (reference === paneId) {
-          await previousDestination(operation);
-        }
-        else if (previous) {
-          await restoreDestination(operation, previous);
-        }
-      } else if (choice === 'current' && current?.kind === 'chat') {
-        await restoreDestination(operation, current);
-        touchLocation(paneId, current);
-      } else if (choice !== 'typing') {
-        touchLocation(paneId, source ? {
-          kind: 'editor', noteId: getDocumentNoteId(source), notePath: getDocumentPath(source)
-        } : capturePaneLocation(paneId));
-        const kind = choice === 'current' ? 'editor' : 'chat';
-        if (!workspace.setPaneKind(paneId, kind)) {
-          throw new Error('Workspace rejected the pane-command destination.');
-        }
-        if (source) {
-          setPaneDocument(paneId, source);
-        }
-        if (choice === 'current' && source) {
-          await documents.replacePaneDocument(paneId, placeholder, source, { restoreCursor: true });
-          operation.check();
-          derivedViews.discoverPendingProposals(source);
-        }
-        if (placeholder.handle !== sourceKey) {
-          releaseDocument(placeholder.handle);
-        }
+    } else if (choice === 'current' && current?.kind === 'chat') {
+      await restoreDestination(operation, current);
+      touchLocation(paneId, current);
+    } else if (choice !== 'typing') {
+      touchLocation(paneId, source ? {
+        kind: 'editor', noteId: getDocumentNoteId(source), notePath: getDocumentPath(source)
+      } : capturePaneLocation(paneId));
+      const kind = choice === 'current' ? 'editor' : 'chat';
+      if (!workspace.setPaneKind(paneId, kind)) {
+        throw new Error('Workspace rejected the pane-command destination.');
       }
-      operation.release();
-      await paneLifecycle.ensurePaneEditors();
-      operation.check();
-      presentation.updateSelectedRelatedText(paneId);
-      derivedViews.scheduleSearchIfNeeded();
-      derivedViews.scheduleRelatedIfNeeded({ immediate: true });
-      if (choice !== 'previous') {
-        await tick();
+      if (source) {
+        setPaneDocument(paneId, source);
+      }
+      if (choice === 'current' && source) {
+        await documents.replacePaneDocument(paneId, placeholder, source, { restoreCursor: true });
         operation.check();
-        if (workspace.activePaneId !== paneId) {
-          return;
-        }
-        if (choice === 'typing') {
-          presentation.focusPaneEditorAtEnd(paneId);
-        }
-        else {
-          focusPaneAfterShortcut(paneId);
-        }
+        derivedViews.discoverPendingProposals(source);
       }
-    });
+      if (placeholder.handle !== sourceKey) {
+        releaseDocument(placeholder.handle);
+      }
+    }
+    operation.release();
+    if (paneHasCapability(getPaneKind(paneId), 'edit-document')) await paneLifecycle.ensurePaneEditors();
+    operation.check();
+    presentation.updateSelectedRelatedText(paneId);
+    derivedViews.scheduleSearchIfNeeded();
+    derivedViews.scheduleRelatedIfNeeded({ immediate: true });
+    if (choice !== 'previous') {
+      await tick();
+      operation.check();
+      if (workspace.activePaneId !== paneId) {
+        return;
+      }
+      if (choice === 'typing') {
+        presentation.focusPaneEditorAtEnd(paneId);
+      }
+      else {
+        await focusAfterPresentation(operation);
+      }
+    }
   }
 
   function movePaneCommandHighlight(direction: 1 | -1) {

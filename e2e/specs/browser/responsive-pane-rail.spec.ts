@@ -20,6 +20,12 @@ async function openChat() {
   await $(composer).waitForEnabled();
   await waitForWorkspaceAnimationSettled();
 }
+async function openNoteSplit() {
+  await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
+    .dispatchEvent(new PointerEvent('pointerenter')));
+  await $('button[aria-label="Split with current location"]').click();
+  await waitForWorkspaceAnimationSettled();
+}
 async function expandRail() {
   await $('.pane-rail').click();
   await waitForWorkspaceAnimationSettled();
@@ -118,7 +124,7 @@ describe('persistent collapsed pane rail', () => {
     await expect($(composer)).toBeFocused(); await assertGeometry();
   });
 
-  it('uses the ordinary editor/chat dock edge and fades retained surfaces on its clock', async () => {
+  it('keeps the retained chat/search dock edge and fades pane surfaces on its clock', async () => {
     await openChat(); await viewport(640);
     await $(composer).setValue('Retain through the editor transition');
     type MotionSample = { state: string; easing?: string; paneMoving: boolean;
@@ -163,8 +169,8 @@ describe('persistent collapsed pane rail', () => {
     };
     const toEditor = await sampleSwitch();
     expectRevealMotion(toEditor);
-    expect(toEditor.every(sample => sample.state === 'editor-search')).toBe(true);
-    expect(toEditor.some(sample => sample.paneMoving && sample.easing === 'editor' &&
+    expect(toEditor.every(sample => sample.state === 'chat-search')).toBe(true);
+    expect(toEditor.some(sample => sample.paneMoving && sample.easing === 'pinch' &&
       sample.opacity > 0.05 && sample.opacity < 0.95 && sample.railOpacity === 1)).toBe(true);
     await waitForWorkspaceAnimationSettled();
     await expect($(editor)).toBeFocused();
@@ -176,7 +182,7 @@ describe('persistent collapsed pane rail', () => {
     const toChat = await sampleSwitch();
     expectRevealMotion(toChat);
     expect(toChat.every(sample => sample.state === 'chat-input')).toBe(true);
-    expect(toChat.some(sample => sample.paneMoving && sample.easing === 'editor' && sample.opacity > 0.05 && sample.opacity < 0.95)).toBe(true);
+    expect(toChat.some(sample => sample.paneMoving && sample.easing === 'pinch' && sample.opacity > 0.05 && sample.opacity < 0.95)).toBe(true);
     await waitForWorkspaceAnimationSettled();
     await expect($(composer)).toBeFocused();
     await expect($(composer)).toHaveValue('Retain through the editor transition');
@@ -239,9 +245,9 @@ describe('persistent collapsed pane rail', () => {
       });
       await viewport(width);
       const samples = await browser.execute(() => JSON.parse(document.querySelector<HTMLElement>('.workspace-input-dock')!.dataset.resizeSamples!) as Array<{ state: string; moving: boolean }>);
-      expect(samples.length).toBeGreaterThan(0);
       expect(samples.every(sample => !sample.moving)).toBe(true);
-      await expect($('.workspace-input-dock')).toHaveAttribute('data-dock-state', width < 720 ? 'editor-search' : 'chat-search');
+      await expect($('.workspace-input-dock')).not.toHaveAttribute('data-dock-motion');
+      await expect($('.workspace-input-dock')).toHaveAttribute('data-dock-state', 'chat-search');
     }
   });
 
@@ -273,7 +279,8 @@ describe('persistent collapsed pane rail', () => {
   });
 
   it('keeps both rail sides reachable while Related is expanded', async () => {
-    await openChat(); await viewport(390);
+    // Related belongs to notes; it is intentionally hidden over chat.
+    await openNoteSplit(); await viewport(390);
     await $('button[aria-label="Expand related notes"]').click();
     await $('#related-drawer-panel').waitForDisplayed();
     const sheetClearsRail = () => browser.execute(() => {
@@ -384,7 +391,7 @@ describe('persistent collapsed pane rail', () => {
   });
 
   it('moves one opaque rail and Related continuously while preserving the header blur', async () => {
-    await openChat();
+    await openNoteSplit();
     for (const width of [390, 640]) {
       await viewport(width);
       for (let direction = 0; direction < 2; direction++) {

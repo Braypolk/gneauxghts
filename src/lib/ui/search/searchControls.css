@@ -114,16 +114,62 @@
   .shared-search-mode-label {
     display: none;
   }
-}
 
-@container workspace-input-dock (max-width: 14rem) {
-  /* Keep all icon controls reachable in the narrow dock between pane actions. */
-  .shared-search-controls .mobile-dense-touch-target {
-    --search-control-size: 2rem;
-    width: var(--search-control-size);
-    height: var(--search-control-size);
-    min-width: var(--search-control-size);
-    min-height: var(--search-control-size);
+  .workspace-input-dock .shared-search-bar-shell {
+    --search-row-expansion: calc(var(--search-control-size) + 0.25rem);
+    /* Results keep their expanded base while the query row unfolds or folds. */
+    --search-results-anchor-height: calc(var(--search-bar-height) + var(--search-row-expansion));
+  }
+
+  /* Keep one right-anchored control row throughout focus changes. Moving
+     flex items between rows makes the scope buttons jump before they animate.
+     The query row unfolds above it; its measured height also drives dock paint. */
+  .workspace-input-dock .shared-search-input-layer {
+    position: relative;
+    align-items: flex-start;
+  }
+
+  .workspace-input-dock .shared-search-text-field {
+    padding-inline-end: calc(var(--search-mode-count) * (var(--search-control-size) + 0.125rem) + 0.5rem);
+    margin-block-end: 0;
+    transition: margin-block-end var(--search-expansion-duration) var(--search-expansion-ease),
+      padding-inline-end var(--search-expansion-duration) var(--search-expansion-ease);
+  }
+
+  .workspace-input-dock .shared-search-bar-shell[data-search-layout-expanded='true'] {
+    border-radius: 1.5rem;
+  }
+
+  .workspace-input-dock .shared-search-bar-shell[data-search-layout-expanded='true'] .shared-search-text-field {
+    padding-inline-end: 0;
+    margin-block-end: var(--search-row-expansion);
+  }
+
+  /* The dock projects this glyph separately. Retain its measurable inset
+     without consuming query width or changing geometry when focus changes. */
+  .workspace-input-dock .shared-search-bar-shell .shared-search-input-layer > svg {
+    display: block;
+    position: absolute;
+    left: 0;
+    top: 0;
+    visibility: hidden;
+  }
+
+  .workspace-input-dock .shared-search-input-layer > img {
+    margin-block-start: 0.375rem;
+  }
+
+  .workspace-input-dock:has(.shared-search-bar-shell[data-search-layout-expanded='true']) .dock-search-toggle[aria-hidden='true'] {
+    opacity: 0;
+    --dock-search-opacity-duration: 0s;
+  }
+
+  .workspace-input-dock .shared-search-controls {
+    position: absolute;
+    right: 0;
+    bottom: max(0px, calc((var(--search-bar-height) - 2px - var(--search-control-size)) / 2));
+    max-width: 100%;
+    overflow-x: auto;
   }
 }
 
@@ -131,6 +177,7 @@
   .shared-search-mode-label,
   .shared-search-mode-label-text,
   .shared-search-match-options,
+  .shared-search-text-field,
   .shared-search-bar-shell,
   .shared-search-control,
   .shared-search-option-button {

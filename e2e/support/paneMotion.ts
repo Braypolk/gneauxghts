@@ -6,11 +6,13 @@ interface MotionFrame {
   visible: boolean;
   moving: boolean;
   card: number;
+  dock: { left: number; right: number; materialLeft: number; materialRight: number; easing?: string };
   messages: number;
   chatBusy: boolean;
   border: { id: string; left: number; width: number; opacity: number } | null;
   panes: {
     id: string; left: number; width: number; opacity: number; sameEditor: boolean;
+    motion: { duration: number; elapsed: number } | null;
     content: { width: number; opacity: number } | null;
     controlsOpacity: number[];
     layout: Record<string, { left: number; top: number; width: number; height: number }>;
@@ -18,7 +20,24 @@ interface MotionFrame {
 }
 interface MotionResult { before: MotionFrame; frames: MotionFrame[]; maxGap: number; error?: string }
 
-export type PaneMotionAction = 'open' | 'close-left' | 'close-right' | 'open-chat' | 'open-current';
+export type PaneMotionAction = 'open' | 'close-left' | 'close-right' | 'open-chat' | 'open-current' | 'open-previous';
+
+/** Dock edges travel directly to their destination and stay aligned with material. */
+export function expectDockMotion(frames: MotionFrame['dock'][], label: string) {
+  expect(frames.length).toBeGreaterThan(1);
+  for (const edge of ['left', 'right', 'materialLeft', 'materialRight'] as const) {
+    const values = frames.map(frame => frame[edge]);
+    const travel = Math.abs(values.at(-1)! - values[0]);
+    const excursion = Math.max(...values) - Math.min(...values);
+    const path = values.slice(1).reduce((sum, value, index) => sum + Math.abs(value - values[index]), 0);
+    if (excursion > travel + 1 || path > travel + 2) {
+      throw new Error(`${label} reverses dock ${edge}: ${JSON.stringify({ travel, excursion, path, start: frames[0], end: frames.at(-1) })}`);
+    }
+  }
+  expect(Math.max(...frames.map(frame => Math.max(
+    Math.abs(frame.left - frame.materialLeft), Math.abs(frame.right - frame.materialRight)
+  )))).toBeLessThanOrEqual(1);
+}
 
 /** Real workspace operation, sampled in the renderer with no per-frame IPC. */
 export async function samplePaneMotion(action: PaneMotionAction): Promise<MotionResult> {
@@ -42,7 +61,19 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
           opacity: Number(getComputedStyle(border).opacity) };
       })(),
       card: document.querySelector('[data-testid="workspace-card"]')!.getBoundingClientRect().width,
+      dock: (() => {
+        const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
+        const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
+        const material = dock.querySelector('.dock-material-body')!.getBoundingClientRect();
+        return { left: body.left, right: body.right, materialLeft: material.left, materialRight: material.right,
+          easing: dock.dataset.dockEasing };
+      })(),
       panes: [...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => ({
+        motion: (() => {
+          const animation = pane.getAnimations().find(animation => animation.effect instanceof KeyframeEffect && animation.effect.target === pane);
+          if (!animation) return null;
+          return { duration: Number(animation.effect!.getTiming().duration), elapsed: Number(animation.currentTime) };
+        })(),
         id: pane.dataset.paneId!, left: pane.getBoundingClientRect().left, width: pane.getBoundingClientRect().width,
         opacity: Number(getComputedStyle(pane).opacity),
         layout: Object.fromEntries([
@@ -108,16 +139,18 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
           animation.effect?.getTiming().iterations !== Infinity);
       const settled = frame.panes.length === expectedPanes && !frame.moving && !frame.chatBusy && !finiteAnimationRunning;
       settledSince = settled ? settledSince ?? frame.time : null;
-      if (settledSince !== null && frame.time - settledSince >= 80 && frame.time - before.time >= 100) finish();
+      // Continuity checks inspect the final 100ms for settled geometry. Keep a
+      // full settled tail so those checks cannot include the easing's arrival.
+      if (settledSince !== null && frame.time - settledSince >= 120 && frame.time - before.time >= 100) finish();
       else frameId = requestAnimationFrame(sample);
     };
     frameId = requestAnimationFrame(sample);
-    if (action === 'open' || action === 'open-chat' || action === 'open-current') {
+    if (action === 'open' || action === 'open-chat' || action === 'open-current' || action === 'open-previous') {
       // Use the real split command. Quick choices are enabled by pointer entry.
       const button = document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!;
-      if (action === 'open-chat' || action === 'open-current') {
+      if (action === 'open-chat' || action === 'open-current' || action === 'open-previous') {
         button.dispatchEvent(new PointerEvent('pointerenter'));
-        const label = action === 'open-chat' ? 'Split with thought partner' : 'Split with current location';
+        const label = action === 'open-chat' ? 'Split with thought partner' : action === 'open-current' ? 'Split with current location' : 'Split with previous location';
         queueMicrotask(() => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click());
       } else button.click();
     } else {

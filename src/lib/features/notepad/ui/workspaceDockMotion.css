@@ -60,7 +60,8 @@
 .workspace-input-dock .chat-send-button { opacity: 0 !important; transition: none !important; }
 .workspace-input-dock[data-dock-motion] .shared-search-mode-label,
 .workspace-input-dock[data-dock-motion] .shared-search-mode-label-text,
-.workspace-input-dock[data-dock-motion] .shared-search-match-options { transition: none; }
+.workspace-input-dock[data-dock-motion] .shared-search-match-options,
+.workspace-input-dock[data-dock-motion] .shared-search-text-field { transition: none; }
 .workspace-input-dock[data-dock-motion] .search-results-panel { pointer-events: none; }
 .workspace-input-dock .chat-pending-attachments { opacity: var(--dock-chat-controls, 0); }
 .workspace-input-dock .workspace-chat-slot { min-width: 0; }
@@ -93,6 +94,30 @@
 .workspace-input-dock .dock-chat-toggle svg { position: absolute; }
 .workspace-input-dock .dock-chat-toggle .dock-chat-icon { opacity: var(--dock-chat-glyph, 0); }
 .workspace-input-dock .dock-chat-toggle .dock-send-icon { color: var(--background); opacity: calc(var(--dock-send-glyph, 0) * var(--dock-send-opacity, 1)); }
+/* Keep settled editor geometry relative to its flex space. Pixel measurements
+   are for the morph; animating each resize sample would chase Related's layout
+   and start a second search transition on every frame. The existing expansion
+   curve still animates changes to the requested search width. */
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) {
+  --dock-editor-body-width: min(100%, var(--dock-editor-width));
+  --dock-editor-body-x: calc((100% - var(--dock-editor-body-width)) / 2);
+}
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-body {
+  left: var(--dock-editor-body-x);
+  width: var(--dock-editor-body-width);
+}
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-material-body {
+  x: var(--dock-editor-body-x) !important;
+}
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-material-search {
+  cx: calc(var(--dock-editor-body-x) + var(--search-bar-height) / 2) !important;
+}
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-material-chat {
+  cx: calc(var(--dock-editor-body-x) + var(--dock-editor-body-width) - var(--search-bar-height) / 2) !important;
+}
+.workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-search-toggle {
+  left: var(--dock-editor-body-x);
+}
 /* Retain ordinary editor search expansion independently of a dock morph. */
 .workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-body {
   transition: left var(--dock-editor-search-duration) var(--dock-editor-search-ease), width var(--dock-editor-search-duration) var(--dock-editor-search-ease);
@@ -104,12 +129,15 @@
   transition: cx var(--dock-editor-search-duration) var(--dock-editor-search-ease);
 }
 .workspace-input-dock[data-dock-state='editor-search']:not([data-dock-motion]) .dock-search-toggle {
-  transition: left var(--dock-editor-search-duration) var(--dock-editor-search-ease);
+  transition: left var(--dock-editor-search-duration) var(--dock-editor-search-ease), opacity var(--dock-search-opacity-duration, var(--dock-editor-search-duration)) var(--dock-editor-search-ease);
 }
+[data-window-resizing] .workspace-input-dock .shared-search-text-field,
 [data-window-resizing] .workspace-input-dock .dock-surface,
 [data-window-resizing] .workspace-input-dock .shared-search-input-layer,
 [data-window-resizing] .workspace-input-dock .dock-body,
 [data-pane-motion] .workspace-input-dock .dock-body,
+[data-window-resizing] .workspace-input-dock .dock-material-body,
+[data-pane-motion] .workspace-input-dock .dock-material-body,
 [data-window-resizing] .workspace-input-dock .dock-material circle,
 [data-pane-motion] .workspace-input-dock .dock-material circle,
 [data-window-resizing] .workspace-input-dock .dock-search-toggle,
@@ -117,7 +145,7 @@
 @media (prefers-reduced-motion: reduce) {
   .workspace-input-dock .dock-surface,
   .workspace-input-dock .shared-search-input-layer,
-  .workspace-input-dock .dock-body, .workspace-input-dock .dock-material circle,
+  .workspace-input-dock .dock-body, .workspace-input-dock .dock-material-body, .workspace-input-dock .dock-material circle,
   .workspace-input-dock .dock-search-toggle { transition: none !important; }
 }
 @media (max-width: 639px), (max-height: 559px) {

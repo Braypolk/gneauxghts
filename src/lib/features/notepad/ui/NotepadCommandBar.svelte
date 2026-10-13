@@ -43,7 +43,6 @@
     remember: NotepadCommandBarRememberProps;
     search: NotepadCommandBarSearchProps;
     chatAvailable?: boolean;
-    chatCollapsed?: boolean;
     dockMode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
     onDockModeChange?: (mode: 'search' | 'chat') => void;
@@ -55,7 +54,6 @@
     remember,
     search,
     chatAvailable = false,
-    chatCollapsed = false,
     dockMode = 'search',
     chatSlot = $bindable(null),
     onDockModeChange,
@@ -595,7 +593,7 @@
     {#snippet searchPanel()}
       {#key isSearching}
         <div
-          class="search-results-panel absolute bottom-[calc(100%+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(100%+0.85rem)] sm:rounded-[1.5rem]"
+          class="search-results-panel absolute bottom-[calc(var(--search-results-anchor-height,100%)+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(var(--search-results-anchor-height,100%)+0.85rem)] sm:rounded-[1.5rem]"
           data-search-navigation-mode={commandBarState.searchNavigationMode}
           transition:searchResultsReveal|global
         >
@@ -773,7 +771,6 @@
 
     <WorkspaceInputDock
       hasChat={chatAvailable}
-      {chatCollapsed}
       mode={dockMode}
       bind:chatSlot
       bind:actionPresentation
@@ -785,7 +782,7 @@
           class="notepad-search-bar"
           bind:this={searchBar}
           value={searchQuery}
-          expanded={chatAvailable && !chatCollapsed ? dockMode === 'search' : undefined}
+          expanded={chatAvailable ? dockMode === 'search' : undefined}
           presentationActive={presentation.active}
           presentationExpanded={presentation.expanded}
           hasQuery={imageQueryUrl !== null}
@@ -807,7 +804,7 @@
           onScopeChange={handleSharedSearchModeChange}
           onMatchCaseChange={onMatchCaseChange}
           onMatchWholeWordChange={onMatchWholeWordChange}
-          onNavigate={(delta) => commandBarState.navigateSearchResult(delta)}
+          onNavigate={searchMode === 'current' ? (delta) => commandBarState.navigateSearchResult(delta) : undefined}
           onInputKeydown={commandBarState.handleSearchKeydown}
           onImageFile={searchMode === 'all' ? chooseImage : undefined}
           queryPreview={imageQueryUrl ? imageQueryPreview : undefined}
@@ -866,13 +863,17 @@
 
   @container note-toolbar (max-width: 56rem) {
     .notepad-command-action {
-      width: 2.75rem;
+      /* Release the label's space continuously below the icon breakpoint.
+       * Related animates this container's width; an immediate 82px collapse
+       * on each side would make expanded search reverse mid-transition. */
+      --command-action-extra: clamp(0px, calc((100cqw - 45.75rem) / 2), 5.125rem);
+      width: calc(2.75rem + var(--command-action-extra));
       min-width: 2.75rem;
       padding-inline: 0;
     }
 
     .notepad-command-action--restore {
-      width: 3.375rem;
+      width: calc(3.375rem + var(--command-action-extra));
     }
 
     .notepad-command-action-label {
@@ -893,6 +894,14 @@
     margin-right: max(0px, calc(var(--dock-layout-reserved, var(--related-reserved-width, 0px)) - var(--dock-layout-balance, var(--related-balance-width, 0px))));
     --search-layout-duration: var(--related-transition-duration);
     --search-layout-ease: var(--related-transition-ease);
+    transition: margin-left var(--search-layout-duration) var(--search-layout-ease),
+      margin-right var(--search-layout-duration) var(--search-layout-ease);
+  }
+
+  .notepad-command-bar-content :global(.workspace-input-dock:not([data-dock-state='editor-search'])) {
+    /* Chat uses the card's available space; only standalone search balances
+     * the Related reservation to stay centered in the full workspace. */
+    margin-inline: 0;
   }
 
   :global([data-window-resizing]) .notepad-command-bar-content :global(.workspace-input-dock),

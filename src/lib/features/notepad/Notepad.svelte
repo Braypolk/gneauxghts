@@ -198,6 +198,7 @@
   let dockMode = $state<'search' | 'chat'>('search');
   let chatDockSlot = $state<HTMLDivElement | null>(null);
   let preferredDockChatPaneId = $state<PaneId | null>(null);
+  let previousDockActiveTarget: string | null = null;
   const dockChatPaneIds = $derived(paneOrder.filter(id =>
     id !== collapsingPaneId && getPaneKind(id) === 'chat'));
   const dockChatPaneId = $derived(
@@ -206,16 +207,22 @@
   );
   $effect.pre(() => {
     const available = dockChatPaneIds;
-    const activeChat = available.includes(activePaneId) ? activePaneId : null;
+    const paneId = activePaneId;
+    const activeChat = available.includes(paneId) ? paneId : null;
     const compact = compactPanes;
     untrack(() => {
-      if (activeChat && (compact || activeChat !== preferredDockChatPaneId)) {
+      // Follow pane and kind changes at every width, while retaining explicit mode
+      // choices during repeated pointer/focus activation within the same pane.
+      const activeTarget = `${paneId}:${activeChat ? 'chat' : 'editor'}`;
+      const paneChanged = previousDockActiveTarget !== activeTarget;
+      previousDockActiveTarget = activeTarget;
+      if (activeChat && (compact || paneChanged || activeChat !== preferredDockChatPaneId)) {
         preferredDockChatPaneId = activeChat;
         dockMode = 'chat';
       } else if (available.length === 0) {
         preferredDockChatPaneId = null;
         dockMode = 'search';
-      } else if (compact && !activeChat) {
+      } else if ((compact || paneChanged) && !activeChat) {
         dockMode = 'search';
       }
     });
@@ -913,9 +920,9 @@
   $effect.pre(() => {
     const target = paneOrder.filter(id => id !== collapsingPaneId)
       .map(id => `${id}:${getPaneKind(id)}`).join(",");
-    const compactTarget = compactPanes ? `:rail:${activePaneId}` : '';
+    const rail = compactPanes ? activePaneId : undefined;
     const ready = notepadRuntimeState.hasLoadedInitialSession;
-    untrack(() => paneLayoutMotion.update(target + compactTarget,
+    untrack(() => paneLayoutMotion.update({ panes: target, rail },
       ready && !workspaceShell?.hasAttribute('data-window-resizing')));
   });
 
@@ -1054,9 +1061,6 @@
       canSplitWorkspace: () =>
         window.innerWidth < 640 || window.innerHeight >= 560,
       splitWorkspace: commands.splitWorkspace,
-      getPendingPaneCommandId: () =>
-        workspaceStore.paneCommand.paneId,
-      resolvePaneCommandChoice: commands.resolvePaneCommandChoice,
       getActivePaneId: () => activePaneId,
       setPaneKind: commands.setPaneKind,
       goToPreviousLocation: commands.goToPreviousLocation,
@@ -1652,7 +1656,6 @@
       >
         <NotepadCommandBar
           chatAvailable={dockChatPaneId !== null}
-          chatCollapsed={compactPanes && !isActivePaneChat}
           {dockMode}
           bind:chatSlot={chatDockSlot}
           onDockModeChange={(mode) => (dockMode = mode)}
@@ -1764,7 +1767,7 @@
     {/if}
   </div>
 
-  {#if !historyMode.isActive && relatedState.panelPlacement !== "side"}
+  {#if !historyMode.isActive && !isActivePaneChat && relatedState.panelPlacement !== "side"}
     <RelatedPanelHost
       rightInset={trailingRailWidth}
       leftInset={leadingRailWidth}

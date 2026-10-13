@@ -313,8 +313,14 @@
   .app-navigation-header--editor :global(.app-navigation-button) { max-width: calc(100vw - 21rem); }
   @media (max-width: 479px) {
     .app-navigation-header--editor :global(.app-navigation-button) { max-width: calc(100vw - 16rem); padding-inline: 0.5rem; gap: 0.25rem; }
-    :global(.app-shell:has([data-pane-collapsed]:first-child)) .app-navigation-header--editor { left: var(--pane-rail-width, 48px); }
-    :global(.app-shell:has([data-pane-collapsed]:last-child)) .app-navigation-header--editor { right: var(--pane-rail-width, 48px); }
+  }
+  @media (max-width: 639px) {
+    /* Leave room for the full-size action group. Opening a right pane keeps
+       the selector at its solo position; a trailing rail shifts it with the
+       left pane's actions. Closing rails no longer reserve destination space. */
+    :global(.app-shell:has([data-pane-collapsed]:not(.notepad-pane--collapsing):last-child)) .app-navigation-header--editor {
+      right: calc(var(--app-safe-area-right, 0px) + 2 * var(--pane-rail-width, 48px));
+    }
   }
   :global(.app-navigation-button[data-state='open'] .app-navigation-chevron) { transform: rotate(180deg); }
   :global(.app-navigation-menu) {

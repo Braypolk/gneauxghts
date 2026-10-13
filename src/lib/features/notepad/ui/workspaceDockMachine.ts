@@ -20,7 +20,7 @@ export interface WorkspaceDockMotion {
   revision: number;
 }
 export type WorkspaceDockEvent =
-  | { type: 'request'; target: WorkspaceDockState; now: number; immediate?: boolean }
+  | { type: 'request'; target: WorkspaceDockState; now: number; immediate?: boolean; easing?: DockMotionEasing }
   | { type: 'frame'; id: number; now: number }
   | { type: 'finish' };
 
@@ -97,7 +97,7 @@ export function transitionWorkspaceDock(state: WorkspaceDockMotion, event: Works
   return { target: event.target, pose: current.pose, revision: id, transition: {
     id, from: current.target, to: event.target, origin: current.pose,
     startedAt: event.now, duration: dockMorphDuration * Math.max(0.25, distance), progress: 0,
-    easing: current.target === 'editor-search' || event.target === 'editor-search' ? 'editor' : 'pinch'
+    easing: event.easing ?? (current.target === 'editor-search' || event.target === 'editor-search' ? 'editor' : 'pinch')
   } };
 }
 export function workspaceDockPhase(state: WorkspaceDockMotion): WorkspaceDockPhase {
@@ -114,6 +114,8 @@ export interface DockMeasure {
   width: number;
   editorWidth: number;
   searchHeight: number;
+  /** Search content can wrap without changing the circular action size. */
+  searchBodyHeight?: number;
   chatHeight: number;
   gap: number;
   sendSize: number;
@@ -156,7 +158,9 @@ export function workspaceDockGeometry(pose: DockPose, measure: DockMeasure) {
   const bodyX = mix((width - editorWidth) / 2, (circle + gap) * input, present);
   // Finish the circle exchange at compact height, then unfold the composer.
   const expanded = dockRamp(0.75, 1, input);
-  const bodyHeight = mix(circle, Math.max(circle, measure.chatHeight), expanded);
+  const searchExtra = Math.max(0, (measure.searchBodyHeight ?? circle) - circle);
+  const bodyHeight = mix(circle, Math.max(circle, measure.chatHeight), expanded) +
+    searchExtra * (1 - dockRamp(0, 0.25, input));
   const searchX = mix((width - editorWidth) / 2, 0, present);
   // The magnifier's shell stays anchored while the bar slides past it. Growing
   // a translucent circle from the moving bar creates a reversing leading edge

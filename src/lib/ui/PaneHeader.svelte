@@ -181,11 +181,10 @@
   @media (max-width: 479px) {
     .pane-header { padding-right: 0.5rem; }
     .pane-header :global(.pane-header-action) { width: 2rem; height: 2rem; min-width: 2rem; min-height: 2rem; }
-    .pane-header--split :global(.pane-header-action) { width: 1.75rem; height: 1.75rem; min-width: 1.75rem; min-height: 1.75rem; }
     .pane-header :global(.pane-header-pin) { min-width: 2rem; min-height: 2rem; }
     .pane-header-title-wrap:has(.pane-header-title--leading) { padding-left: 2.25rem; }
   }
-  @media (max-width: 639px) {
+  @media (max-width: 639px), (any-pointer: coarse) and (max-height: 559px) {
     .pane-header-title-wrap--mobile-slot {
       position: relative;
       inset: auto;

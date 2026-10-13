@@ -12,6 +12,8 @@ const SHEET = '.related-bottom-sheet';
 
 interface Geometry {
   width: number;
+  height: number;
+  bottomEdge: number;
   opacity: string;
   left: string;
   marginLeft: string;
@@ -44,6 +46,8 @@ function geometry(element: HTMLElement): Geometry {
   const rect = element.getBoundingClientRect();
   return {
     width: rect.width,
+    height: rect.height,
+    bottomEdge: rect.bottom,
     opacity: style.opacity,
     left: style.left,
     marginLeft: style.marginLeft,
@@ -69,17 +73,19 @@ export function createPaneLayoutMotion(deps: {
   getShell: () => HTMLElement | null;
   updateRelatedLayout: () => void;
 }) {
-  let target: string | undefined;
-  let active: { finish: () => void } | undefined;
+  type Target = { panes: string; rail?: string };
+  let target: Target | undefined;
+  let active: { finish: () => void; layoutChanged: boolean } | undefined;
   let finished = Promise.resolve();
 
   function cancel() {
     active?.finish();
   }
 
-  function update(nextTarget: string, enabled: boolean, retarget = false) {
-    if (nextTarget === target && !retarget) return;
+  function update(nextTarget: Target, enabled: boolean, retarget = false) {
+    if (nextTarget.panes === target?.panes && nextTarget.rail === target?.rail && !retarget) return;
     const initial = target === undefined;
+    const layoutChanged = nextTarget.panes !== target?.panes || !!(retarget && active?.layoutChanged);
     target = nextTarget;
     const shell = deps.getShell();
     if (initial || !enabled || !shell) {
@@ -90,13 +96,18 @@ export function createPaneLayoutMotion(deps: {
     const outer = shell.closest<HTMLElement>('.notepad-area-shell');
     const card = shell.querySelector<HTMLElement>(CARD);
     if (!area || !outer || !card) return;
+    const navigation = shell.closest('.app-shell')?.querySelector<HTMLElement>(
+      '.app-navigation-header--compact.app-navigation-header--editor'
+    );
 
-    const elements = [outer, area, card, ...shell.querySelectorAll<HTMLElement>(
+    const inputDock = shell.querySelector<HTMLElement>('.workspace-input-dock');
+    const dockRow = inputDock?.parentElement;
+    const dockElements = inputDock && dockRow ? [inputDock, dockRow] : [];
+    const elements = [outer, area, card, ...dockElements, ...(navigation ? [navigation] : []), ...shell.querySelectorAll<HTMLElement>(
       `${PANE}, ${FRAME}, ${CONTENT}, ${RAIL}, ${VIEWPORT}, .related-drawer, ${SHEET}`
     )];
     // Capture the source presentation before DOM changes. Every rail edge
     // keeps the dock's timing even when its destination is solo layout.
-    const wasCompact = elements.some(element => element.matches(`${PANE}[data-pane-compact]`));
     const before = new Map(elements.map(element => [element, geometry(element)]));
     const displayedRailEntry = [...before.entries()].find(([element, pose]) => element.matches(RAIL) && Number(pose.opacity) > 0.5);
     // Snapshot only inert label chrome, never editor/chat content. Retargeting
@@ -113,6 +124,7 @@ export function createPaneLayoutMotion(deps: {
     finished = new Promise<void>(done => { resolve = done; });
     const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)');
     const operation = {
+      layoutChanged,
       finish() {
         if (active !== operation) return;
         active = undefined;
@@ -122,6 +134,7 @@ export function createPaneLayoutMotion(deps: {
         // Flush the final unanimated geometry while transitions are suppressed.
         deps.updateRelatedLayout();
         shell.removeAttribute('data-pane-motion');
+        shell.removeAttribute('data-pane-layout-change');
         window.removeEventListener('resize', cancel);
         reducedMotion.removeEventListener('change', cancel);
         resolve();
@@ -129,6 +142,7 @@ export function createPaneLayoutMotion(deps: {
     };
     active = operation;
     shell.setAttribute('data-pane-motion', '');
+    shell.toggleAttribute('data-pane-layout-change', layoutChanged);
     window.addEventListener('resize', cancel);
     reducedMotion.addEventListener('change', cancel);
 
@@ -140,47 +154,42 @@ export function createPaneLayoutMotion(deps: {
       deps.updateRelatedLayout();
       await tick();
       if (active !== operation) return;
-      const style = getComputedStyle(shell);
       const panes = [...shell.querySelectorAll<HTMLElement>(PANE)];
       const compact = panes.some(pane => pane.hasAttribute('data-pane-compact'));
       const enteringCompact = compact && !displayedRailEntry && panes.some(pane => !before.has(pane));
-      const dock = shell.querySelector<HTMLElement>('[data-dock-started-at]');
+      const dock = inputDock?.hasAttribute('data-dock-started-at') ? inputDock : null;
       const dockStartedAt = Number(dock?.dataset.dockStartedAt);
       const dockDuration = Number(dock?.dataset.dockDuration);
       const coordinatedDock = !!dock && Number.isFinite(dockStartedAt) && dockDuration > 0 && !reducedMotion.matches;
-      // Entering, exchanging and leaving rail layout share the dock's clock,
-      // including note-to-note moves where the dock itself stays settled.
-      const compactMotion = wasCompact || compact;
-      const sharedDockCurve = coordinatedDock || compactMotion;
+      // Every split entry/departure uses the same layout clock. Retained rail
+      // focus exchanges can still share an in-flight search/chat pinch clock.
       const capturedAt = performance.now();
       const elapsed = coordinatedDock ? Math.min(1, Math.max(0, (capturedAt - dockStartedAt) / dockDuration)) : 0;
-      const dockEasing: DockMotionEasing = !coordinatedDock || dock?.dataset.dockEasing === 'editor' ? 'editor' : 'pinch';
+      const dockEasing: DockMotionEasing = layoutChanged || !coordinatedDock || dock?.dataset.dockEasing === 'editor' ? 'editor' : 'pinch';
       const originProgress = dockClockProgress(elapsed, dockEasing);
-      const durationToken = style.getPropertyValue('--pane-transition-duration').trim();
-      const duration = reducedMotion.matches ? 0 : coordinatedDock ? dockDuration * (1 - elapsed) : compactMotion ? dockMorphDuration : parseFloat(durationToken) * (
-        durationToken.endsWith('ms') ? 1 : 1000
-      );
+      const duration = reducedMotion.matches ? 0 : coordinatedDock ? dockDuration * (1 - elapsed) : dockMorphDuration;
       if (!Number.isFinite(duration) || duration <= 0 || !shell.animate) return;
       const options: KeyframeAnimationOptions = {
         duration,
-        easing: sharedDockCurve ? 'linear' : style.getPropertyValue('--pane-transition-ease').trim(),
+        easing: 'linear',
         fill: 'both'
       };
       const compactSurfaces = panes.flatMap(pane => pane.hasAttribute('data-pane-compact')
         ? [...pane.querySelectorAll<HTMLElement>(`${FRAME}, ${RAIL}, ${CONTENT}, ${VIEWPORT}`)] : []);
       const drawer = shell.querySelector<HTMLElement>('.related-drawer');
       const sheet = shell.querySelector<HTMLElement>(SHEET);
-      const participants = [outer, area, card, ...panes, ...compactSurfaces, ...(drawer ? [drawer] : []), ...(sheet ? [sheet] : [])];
+      const participants = [outer, area, card, ...dockElements, ...panes, ...compactSurfaces, ...(navigation ? [navigation] : []), ...(drawer ? [drawer] : []), ...(sheet ? [sheet] : [])];
       // Read all destination geometry before installing any animation effects.
       const after = new Map(participants.map(element => [element, geometry(element)]));
       // Measure the dock's final flex space without its temporary displayed
       // Related margins. Publish this endpoint after installing the pane effects.
-      const row = dock?.parentElement;
+      const row = dockRow;
       const reservation = row?.style.getPropertyValue('--dock-layout-reserved') ?? '';
       const balance = row?.style.getPropertyValue('--dock-layout-balance') ?? '';
       row?.style.removeProperty('--dock-layout-reserved');
       row?.style.removeProperty('--dock-layout-balance');
-      const dockDestination = dock?.getBoundingClientRect();
+      const dockDestination = inputDock?.getBoundingClientRect();
+      if (inputDock) after.set(inputDock, geometry(inputDock));
       if (reservation) row?.style.setProperty('--dock-layout-reserved', reservation);
       if (balance) row?.style.setProperty('--dock-layout-balance', balance);
       // New panes reveal one settled layout, including titles, choices and
@@ -195,13 +204,13 @@ export function createPaneLayoutMotion(deps: {
       );
       // Every surface follows the same remaining dock clock. Sample it once
       // per operation rather than solving the curve again for every element.
-      const clockSamples = sharedDockCurve ? Array.from({ length: 81 }, (_, index) => {
+      const clockSamples = Array.from({ length: 81 }, (_, index) => {
         const offset = index / 80;
         // Retarget from the displayed bounds using only the remaining clock.
         const progress = offset === 0 || offset === 1 ? offset :
           (dockClockProgress(elapsed + (1 - elapsed) * offset, dockEasing) - originProgress) / (1 - originProgress);
         return { offset, progress };
-      }) : undefined;
+      });
       const add = (element: HTMLElement, from: Keyframe, to: Keyframe) => {
         // Sampling the dock's clock into linear WAAPI keyframes lets the card,
         // pane bounds and Related reservation follow the same selected curve.
@@ -215,6 +224,20 @@ export function createPaneLayoutMotion(deps: {
         }) ?? [from, to];
         animations.push(element.animate(keyframes, options));
       };
+      if (inputDock && dockRow) {
+        const from = before.get(inputDock)!, to = after.get(inputDock)!;
+        const rowFrom = before.get(dockRow)!, rowTo = after.get(dockRow)!;
+        // Interpolate the dock's measured flex bounds once. Leaving flex sizing
+        // active during the reveal changes coordinate systems at max-width caps
+        // and can reverse the bar, even when its input mode never changes.
+        const dockFrame = (box: Geometry, row: Geometry): Keyframe => ({
+          position: 'absolute', left: `${box.x - row.x}px`, width: `${box.width}px`,
+          bottom: `${row.bottomEdge - box.bottomEdge}px`, maxWidth: 'none', marginLeft: '0px', marginRight: '0px'
+        });
+        add(inputDock, dockFrame(from, rowFrom), dockFrame(to, rowTo));
+        add(dockRow, { height: `${rowFrom.height}px`, minHeight: `${rowFrom.height}px` },
+          { height: `${rowTo.height}px`, minHeight: `${rowTo.height}px` });
+      }
       for (const element of [outer, area]) {
         add(element, { maxWidth: `${before.get(element)!.width}px` }, {
           maxWidth: `${after.get(element)!.width}px`
@@ -306,6 +329,14 @@ export function createPaneLayoutMotion(deps: {
         add(sheet, { right: from.right, bottom: from.bottom, width: `${from.width}px` }, {
           right: to.right, bottom: to.bottom, width: `${to.width}px`
         });
+      }
+      // The compact tab selector lives outside the pane shell. Its bounds
+      // must follow this same clock and cancellation path, rather than jump
+      // when collapsed-pane attributes change before the reveal starts.
+      if (navigation) {
+        const from = before.get(navigation)!;
+        const to = after.get(navigation)!;
+        add(navigation, { left: from.left, right: from.right }, { left: to.left, right: to.right });
       }
       if (drawer) {
         const from = before.get(drawer);

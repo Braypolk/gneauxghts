@@ -5,12 +5,7 @@ export interface WorkspaceChoiceControllerDeps<
   TPaneId extends string
 > {
   canSplitWorkspace: () => boolean;
-  splitWorkspace: (initialKind?: PaneKind) => Promise<void>;
-  getPendingPaneCommandId: () => TPaneId | null;
-  resolvePaneCommandChoice: (
-    paneId: TPaneId,
-    choice: PaneCommandChoice
-  ) => Promise<void>;
+  splitWorkspace: (choice?: PaneCommandChoice) => Promise<void>;
   getActivePaneId: () => TPaneId;
   setPaneKind: (
     paneId: TPaneId,
@@ -32,17 +27,7 @@ export function createWorkspaceChoiceController<
   ) {
     if (!canSplitWorkspace()) return;
 
-    if (choice === 'thoughtPartner') {
-      await deps.splitWorkspace('chat');
-      return;
-    }
-    await deps.splitWorkspace();
-    if (!choice) return;
-
-    const paneId = deps.getPendingPaneCommandId();
-    if (!paneId) return;
-
-    await deps.resolvePaneCommandChoice(paneId, choice);
+    await deps.splitWorkspace(choice);
   }
 
   async function openPaneChoiceInCurrent(

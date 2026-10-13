@@ -10,12 +10,10 @@
   } from './workspaceDockMachine';
   import './workspaceDockMotion.css';
 
-  let { search, hasChat = false, chatCollapsed = false, mode = 'search', chatSlot = $bindable(null),
+  let { search, hasChat = false, mode = 'search', chatSlot = $bindable(null),
     actionPresentation = $bindable({ running: false, progress: 1 }), onSearch, onChat }: {
     search: Snippet<[DockSearchPresentation]>;
     hasChat?: boolean;
-    /** A retained compact chat still reserves reading space and owns its draft. */
-    chatCollapsed?: boolean;
     mode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
     actionPresentation?: DockActionPresentation;
@@ -25,13 +23,13 @@
 
   const componentId = $props.id();
   const filterId = `${componentId}-dock-morph`;
-  const presentChat = $derived(hasChat && !chatCollapsed);
-  const target = $derived<WorkspaceDockState>(!presentChat ? 'editor-search' : mode === 'chat' ? 'chat-input' : 'chat-search');
+  const target = $derived<WorkspaceDockState>(!hasChat ? 'editor-search' : mode === 'chat' ? 'chat-input' : 'chat-search');
   let motion = $state.raw(untrack(() => createWorkspaceDockMotion(target)));
   let node = $state<HTMLDivElement | null>(null);
   let searchHeight = $state(0);
   let chatHeight = $state(0);
   let measure = $state.raw<DockMeasure>({ width: 384, editorWidth: 384, searchHeight: 40, chatHeight: 76, gap: 12, sendSize: 29.6, sendInset: 8.2 });
+  let paneLayoutActive = $state(false);
   let layoutLeft = $state(0);
   let actions = $state.raw<Array<{ left: number; width: number }>>([]);
   let layoutOrigin = $state.raw<{ measure: DockMeasure; left: number; actions: Array<{ left: number; width: number }> } | null>(null);
@@ -49,9 +47,9 @@
   let readLayout: (() => void) | undefined;
   const progress = $derived(motion.transition?.progress ?? 1);
   const coordinatedLayout = $derived(!!motion.transition &&
-    (motion.transition.from === 'editor-search' || motion.transition.to === 'editor-search'));
+    (paneLayoutActive || motion.transition.from === 'editor-search' || motion.transition.to === 'editor-search'));
   const renderMeasure = $derived.by(() => {
-    const destination = { ...measure, searchHeight: searchHeight || measure.searchHeight, chatHeight: chatHeight || measure.chatHeight };
+    const destination = { ...measure, searchBodyHeight: searchHeight || measure.searchHeight, chatHeight: chatHeight || measure.chatHeight };
     if (!motion.transition || !layoutOrigin || coordinatedLayout) return destination;
     const origin = layoutOrigin.measure;
     // Related/pane layout can change the dock's available width during entry.
@@ -93,14 +91,16 @@
   const presentation = $derived(workspaceDockPresentation(motion));
   const bodyRadius = $derived(measure.searchHeight / 2 + (19.2 - measure.searchHeight / 2) * motion.pose.input);
   const searchPresentation = $derived<DockSearchPresentation>(running ? {
-    active: originSearchActive || target === 'chat-search',
+    // Preserve outgoing controls through their fade. Incoming search follows
+    // its own focus state, so pane activation cannot flash idle controls.
+    active: target === 'chat-input' ? originSearchActive : undefined,
     // Retain outgoing search widths through the fade. Incoming editor search
     // derives its width from focus and query state rather than forcing it open.
     expanded: target === 'editor-search' ? undefined : target === 'chat-input' ? originSearchExpanded : true
-  } : { expanded: presentChat ? mode === 'search' : undefined });
+  } : { expanded: hasChat ? mode === 'search' : undefined });
   const styles = $derived([
-    `--dock-body-x:${geometry.bodyX}px`, `--dock-body-width:${geometry.bodyWidth}px`,
-    `--dock-search-results-width:${presentChat ? `${geometry.bodyWidth}px` : `min(${renderMeasure.width}px, 42rem)`}`,
+    `--dock-editor-width:${renderMeasure.editorWidth}px`, `--dock-body-x:${geometry.bodyX}px`, `--dock-body-width:${geometry.bodyWidth}px`,
+    `--dock-search-results-width:${hasChat ? `${geometry.bodyWidth}px` : `min(${renderMeasure.width}px, 42rem)`}`,
     `--dock-body-height:${geometry.bodyHeight}px`, `--dock-body-radius:${bodyRadius}px`,
     `--dock-search-x:${geometry.searchCircleX}px`, `--dock-search-glyph:16px`, `--dock-search-glyph-shift:${geometry.searchGlyphShift}px`, `--dock-search-size:${geometry.searchSize}px`,
     `--dock-chat-x:${geometry.chatCircleX}px`, `--dock-chat-size:${geometry.rightSize}px`,
@@ -173,6 +173,7 @@
       }
       settling = undefined;
       motion = transitionWorkspaceDock(motion, { type: 'request', target: next, now: performance.now(),
+        easing: node?.closest('[data-pane-layout-change]') ? 'editor' : undefined,
         immediate: media?.matches || (next === 'editor-search' || motion.target === 'editor-search') &&
           !!node?.closest('[data-window-resizing]') });
       runFrames();
@@ -210,14 +211,15 @@
       const textStyle = textarea ? getComputedStyle(textarea) : null;
       const textTranslation = textStyle?.transform && textStyle.transform !== 'none'
         ? new DOMMatrixReadOnly(textStyle.transform).m41 : 0;
-      const searchSize = parseFloat(root.getPropertyValue('--search-bar-height'));
-      // CSS lengths are resolved by the actual shell, not by parsing rem values.
-      const circle = shell?.getBoundingClientRect().height || (searchSize > 10 ? searchSize : 40);
+      // The resolved minimum supplies the circle diameter. Wrapped content
+      // belongs to the bar height and must not resize the detached buttons.
+      const circle = shell ? parseFloat(getComputedStyle(shell).minHeight) || 40 : 40;
       const searchIconInset = searchIcon && shell ? searchIcon.getBoundingClientRect().left - shell.getBoundingClientRect().left + searchIcon.getBoundingClientRect().width / 2 : 28;
       const next: DockMeasure = {
         width: element.clientWidth,
-        editorWidth: presentChat ? measure.editorWidth : (shell?.dataset.searchLayoutExpanded === 'true' ? 42 : 24) * parseFloat(getComputedStyle(document.documentElement).fontSize),
+        editorWidth: hasChat ? measure.editorWidth : (shell?.dataset.searchLayoutExpanded === 'true' ? 42 : 24) * parseFloat(getComputedStyle(document.documentElement).fontSize),
         searchHeight: circle,
+        searchBodyHeight: searchHeight || shell?.getBoundingClientRect().height || circle,
         chatHeight: chatHeight || 76,
         gap: parseFloat(root.getPropertyValue('--dock-gap')) * parseFloat(getComputedStyle(document.documentElement).fontSize),
         sendSize: send?.getBoundingClientRect().width || measure.sendSize,
@@ -240,11 +242,17 @@
     // destination measurement can never become the first dock frame.
     const workspace = element.closest('.notepad-shell');
     const layoutReady = (event: Event) => {
+      paneLayoutActive = !!workspace?.hasAttribute('data-pane-motion');
       const destination = (event as CustomEvent<{ id: number; left: number; width: number } | null>).detail;
       if (destination?.id === motion.transition?.id) layoutDestination = destination;
       read();
     };
     workspace?.addEventListener('workspace-pane-layout-ready', layoutReady);
+    const paneLayout = new MutationObserver(() => {
+      paneLayoutActive = !!workspace?.hasAttribute('data-pane-motion');
+      read();
+    });
+    if (workspace) paneLayout.observe(workspace, { attributes: true, attributeFilter: ['data-pane-motion'] });
     let previousWidth = element.clientWidth;
     const size = new ResizeObserver(() => {
       if (element.clientWidth === previousWidth) return;
@@ -264,7 +272,7 @@
     media.addEventListener('change', finish);
     window.addEventListener('resize', finish);
     return { destroy() {
-      size.disconnect(); content.disconnect(); media?.removeEventListener('change', finish);
+      size.disconnect(); content.disconnect(); paneLayout.disconnect(); media?.removeEventListener('change', finish);
       window.removeEventListener('resize', finish); readLayout = undefined;
       workspace?.removeEventListener('workspace-pane-layout-ready', layoutReady);
       for (const property of ['--dock-layout-reserved', '--dock-layout-balance', '--dock-action-0-shift', '--dock-action-1-shift']) {
@@ -280,14 +288,15 @@
 </script>
 
 <div bind:this={node} use:observeDock class="workspace-input-dock" style={styles}
-  data-input-dock-mode={presentChat ? mode : 'search'} data-dock-state={target}
+  data-input-dock-mode={hasChat ? mode : 'search'} data-dock-state={target}
   data-dock-results-ready-at={motion.transition ? motion.transition.startedAt + motion.transition.duration : undefined}
   data-dock-started-at={motion.transition?.startedAt}
   data-dock-duration={motion.transition?.duration}
   data-dock-easing={motion.transition?.easing}
-  data-dock-reading-clearance={hasChat ? Math.max(measure.chatHeight, measure.searchHeight) : undefined}
+  data-dock-reading-clearance={hasChat ? Math.max(renderMeasure.chatHeight, renderMeasure.searchBodyHeight ?? measure.searchHeight) : undefined}
   data-dock-clearance={running ? (motion.transition?.from === 'chat-input' || target === 'chat-input'
-    ? Math.max(measure.chatHeight, layoutOrigin?.measure.chatHeight ?? 0, measure.searchHeight) : measure.searchHeight) : undefined}
+    ? Math.max(renderMeasure.chatHeight, layoutOrigin?.measure.chatHeight ?? 0, renderMeasure.searchBodyHeight ?? measure.searchHeight)
+    : renderMeasure.searchBodyHeight ?? measure.searchHeight) : undefined}
   data-dock-phase={phase} data-dock-text-reveal={presentation.textRevealing || undefined}
   data-dock-motion={running ? motion.transition?.id : settling}>
   <WorkspaceDockMaterial {filterId} {geometry} circle={measure.searchHeight} radius={bodyRadius} />

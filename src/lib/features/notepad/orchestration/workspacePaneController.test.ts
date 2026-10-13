@@ -37,7 +37,7 @@ describe('workspace pane lifecycle through real command owners', () => {
 
   it('does not remove the pane when close preparation fails', async () => {
     const f = setup();
-    await f.commands.splitWorkspace('chat');
+    await f.commands.splitWorkspace('thoughtPartner');
     updateDocumentMarkdown(f.initialDocument, 'unsaved');
     f.save.mockRejectedValue(new Error('save failed'));
     await expect(f.commands.closePane(f.first)).rejects.toThrow('save failed');
@@ -48,7 +48,7 @@ describe('workspace pane lifecycle through real command owners', () => {
 
   it('prepares, removes, tears down, then releases retired pane state', async () => {
     const f = setup();
-    await f.commands.splitWorkspace('chat');
+    await f.commands.splitWorkspace('thoughtPartner');
     const events: string[] = [];
     vi.mocked(finalizeNoteEditingWindow).mockImplementation(async () => { events.push('prepare'); });
     const retire = f.workspace.retirePane.bind(f.workspace);
@@ -110,7 +110,7 @@ describe('workspace pane lifecycle through real command owners', () => {
   it('creates chat with retained context and no throwaway editor or draft', async () => {
     const f = setup();
     vi.mocked(f.deps.presentation.focusPaneEditor).mockReturnValue(false);
-    await f.commands.splitWorkspace('chat');
+    await f.commands.splitWorkspace('thoughtPartner');
     const second = f.workspace.activePaneId;
     expect(f.getPaneDocument(second)).toBe(f.initialDocument);
     expect(Object.keys(f.state.documentsByHandle)).toEqual([f.initialDocument.handle]);
@@ -119,6 +119,28 @@ describe('workspace pane lifecycle through real command owners', () => {
     expect(notepadLocationMru.list(second)).toContainEqual({ kind: 'editor', noteId: 'a', notePath: '/vault/a.md' });
     expect(f.deps.presentation.focusPaneChat).toHaveBeenCalledWith(second);
     expect(f.workspace.getPaneMembership(second).kind).toBe('ready');
+  });
+
+  it.each(['current', 'previous'] as const)('admits a %s chat split directly with its retained identity', async choice => {
+    const f = setup();
+    const location = { kind: 'chat' as const, conversationId: 'retained-chat',
+      contextNoteId: 'a', contextNotePath: '/vault/a.md' };
+    if (choice === 'current') {
+      await f.commands.setPaneKind(f.first, 'chat');
+      f.workspace.setPaneConversationId(f.first, location.conversationId);
+    } else {
+      notepadLocationMru.touch(f.first, location);
+    }
+    vi.mocked(f.paneLifecycle.ensurePaneEditors).mockClear();
+    const admit = vi.spyOn(f.workspace, 'completePaneCreation');
+    await f.commands.splitWorkspace(choice);
+    const second = f.workspace.activePaneId;
+    expect(admit).toHaveBeenCalledWith(second, expect.any(Number), f.initialDocument.handle, 'chat');
+    expect(f.workspace.getPaneState(second)).toMatchObject({ kind: 'chat', chatConversationId: 'retained-chat' });
+    expect(f.getPaneDocument(second)).toBe(f.initialDocument);
+    expect(Object.keys(f.state.documentsByHandle)).toEqual([f.initialDocument.handle]);
+    expect(f.workspace.paneCommand.paneId).toBeNull();
+    expect(f.paneLifecycle.ensurePaneEditors).not.toHaveBeenCalled();
   });
 
   it('disposes a creating runtime when split preparation fails', async () => {
@@ -132,7 +154,7 @@ describe('workspace pane lifecycle through real command owners', () => {
 
   it('inherits the split from the active pane, not the first pane in order', async () => {
     const f = setup();
-    await f.commands.splitWorkspace('chat');
+    await f.commands.splitWorkspace('thoughtPartner');
     const second = f.workspace.activePaneId;
     const other = createNoteDraftState(createSessionSnapshot(persistedSession('other')));
     upsertNote(f.state, other);

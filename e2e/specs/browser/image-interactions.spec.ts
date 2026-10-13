@@ -309,7 +309,12 @@ describe('image interactions', () => {
       const magnifier = bar.querySelector('svg');
       if (!magnifier) return false;
       const icon = magnifier.getBoundingClientRect();
-      return icon.width > 0 && icon.right <= image.left && image.left >= shell.left && image.right <= shell.right && image.top >= shell.top && image.bottom <= shell.bottom;
+      const field = bar.querySelector('input')!.getBoundingClientRect();
+      // The dock retains the hidden inner magnifier's measurable bounds for motion.
+      const iconHidden = getComputedStyle(magnifier).visibility === 'hidden';
+      return (iconHidden || icon.width === 0 || icon.right <= image.left) && field.left >= image.right
+        && field.width > 100 && image.left >= shell.left && image.right <= shell.right
+        && image.top >= shell.top && image.bottom <= shell.bottom;
     });
     expect(await previewIsInsideBar()).toBe(true);
     await browser.saveScreenshot('/private/tmp/gemma-image-query-inline-desktop.png');

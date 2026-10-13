@@ -5,6 +5,26 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 describe('search scope label animation', () => {
   beforeEach(resetBrowserWorkspace);
 
+  it('keeps a phone query readable without an image-upload control', async () => {
+    await browser.setWindowSize(393, 852);
+    const input = $('[data-testid="note-search-input"]');
+    await input.setValue('a recipe for dinner');
+    await waitForWorkspaceAnimationSettled();
+    const geometry = await browser.execute(() => {
+      const shell = document.querySelector('.notepad-search-bar')!;
+      const field = shell.querySelector('input[type="text"]')!.getBoundingClientRect();
+      const controls = shell.querySelector('.shared-search-controls')!.getBoundingClientRect();
+      return { width: field.width, right: controls.right, viewport: innerWidth, top: field.top, controlsTop: controls.top };
+    });
+    expect(geometry.width).toBeGreaterThan(120);
+    expect(geometry.right).toBeLessThanOrEqual(geometry.viewport);
+    expect(geometry.controlsTop).toBeGreaterThan(geometry.top);
+    await expect($('button[aria-label="Search with an image"]')).not.toExist();
+    await expect($('.notepad-search-bar input[type="file"]')).not.toExist();
+    await $('button[aria-label="Clear search"]').click();
+    await expect(input).toHaveValue('');
+  });
+
   for (const query of ['', 'Alpha']) {
     it(`fades ${query ? 'populated' : 'idle'} editor search into chat without changing the outgoing scope-label widths`, async () => {
       await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());

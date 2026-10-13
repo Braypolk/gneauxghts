@@ -34,6 +34,19 @@ describe('workspace dock motion', () => {
     expect(compact.rightNeck).toBeGreaterThan(0);
     expect(compact.textShift).toBeGreaterThan(0);
   });
+  it('fits a two-row search without resizing the detached circles or their travel', () => {
+    const twoRows = { ...measure, searchBodyHeight: 88 };
+    const search = workspaceDockGeometry({ presence: 1, input: 0 }, twoRows);
+    expect(search.bodyHeight).toBe(88);
+    for (const input of [0, 0.3, 0.5, 0.7, 1]) {
+      const actual = workspaceDockGeometry({ presence: 1, input }, twoRows);
+      const singleRow = workspaceDockGeometry({ presence: 1, input }, measure);
+      expect(actual.searchSize).toBe(40);
+      expect(actual.bodyX).toBe(singleRow.bodyX);
+      expect(actual.rightShellX).toBe(singleRow.rightShellX);
+      if (input >= 0.3 && input <= 0.7) expect(actual.bodyHeight).toBe(40);
+    }
+  });
   it('anchors opaque circle shells and moves the send glyph in one direction through the exchange', () => {
     const frames = Array.from({ length: 101 }, (_, i) => workspaceDockGeometry({ presence: 1, input: i / 100 }, measure));
     expect(new Set(frames.map(frame => frame.searchCircleX)).size).toBe(1);

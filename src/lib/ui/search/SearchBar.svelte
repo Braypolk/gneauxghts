@@ -246,9 +246,10 @@
 <div
   bind:this={shellEl}
   class={`shared-search-bar-shell pointer-events-auto relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border pl-3 pr-1 shadow-sm backdrop-blur-md sm:gap-3 sm:pl-5 ${className}`}
+  style={`--search-mode-count:${searchTypeOptions.length + scopeOptions.length}`}
   data-search-tone={activeTone}
   data-search-expanded={(presentationExpanded ?? isExpanded) ? 'true' : 'false'}
-  data-search-layout-expanded={isExpanded ? 'true' : 'false'}
+  data-search-layout-expanded={(presentationExpanded ?? isExpanded) ? 'true' : 'false'}
   data-search-active={visuallyOpen ? 'true' : 'false'}
   data-search-open={isOpen ? 'true' : 'false'}
   onfocusin={handleFocusIn}
@@ -269,7 +270,7 @@
     {#if queryPreview}
       {@render queryPreview()}
     {/if}
-    <div class="min-w-0 flex-1">
+    <div class="shared-search-text-field min-w-0 flex-1">
       <input
         bind:this={inputEl}
         type="text"

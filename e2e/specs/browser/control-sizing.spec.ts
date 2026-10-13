@@ -92,7 +92,7 @@ describe('mobile control sizing', () => {
         for (const label of ['Search all notes', 'Search this note only', 'Enable match case', 'Enable match whole word']) {
           const size = await dimensions(`button[aria-label="${label}"]`);
           expect(size.width).toBe(size.height);
-          expect(size.height).toBe(width < 640 && width > 320 ? 40 : 32);
+          expect(size.height).toBe(width < 640 ? 40 : 32);
         }
       }
     }

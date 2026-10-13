@@ -6,9 +6,6 @@ const paneId = 'pane-1';
 function setup() {
   let canSplit = true;
   const splitWorkspace = vi.fn(async () => undefined);
-  const resolvePaneCommandChoice = vi.fn(
-    async () => undefined
-  );
   const setPaneKind = vi.fn(async () => true);
   const goToPreviousLocation = vi.fn(
     async () => undefined
@@ -16,8 +13,6 @@ function setup() {
   const controller = createWorkspaceChoiceController({
     canSplitWorkspace: () => canSplit,
     splitWorkspace,
-    getPendingPaneCommandId: () => paneId,
-    resolvePaneCommandChoice,
     getActivePaneId: () => paneId,
     setPaneKind,
     goToPreviousLocation
@@ -25,7 +20,6 @@ function setup() {
   return {
     controller,
     splitWorkspace,
-    resolvePaneCommandChoice,
     setPaneKind,
     goToPreviousLocation,
     disableSplit: () => {
@@ -44,23 +38,19 @@ describe('workspace choice controller', () => {
     );
 
     expect(harness.splitWorkspace).not.toHaveBeenCalled();
-    expect(
-      harness.resolvePaneCommandChoice
-    ).not.toHaveBeenCalled();
   });
 
-  it('delegates Previous resolution to the pane command transition', async () => {
+  it('passes the destination into one split command', async () => {
     const harness = setup();
     await harness.controller.splitWorkspaceIfAllowed('previous');
     expect(harness.splitWorkspace).toHaveBeenCalledOnce();
-    expect(harness.resolvePaneCommandChoice).toHaveBeenCalledWith(paneId, 'previous');
+    expect(harness.splitWorkspace).toHaveBeenCalledWith('previous');
   });
 
   it('creates a chat destination without an intermediate pane command', async () => {
     const harness = setup();
     await harness.controller.splitWorkspaceIfAllowed('thoughtPartner');
-    expect(harness.splitWorkspace).toHaveBeenCalledWith('chat');
-    expect(harness.resolvePaneCommandChoice).not.toHaveBeenCalled();
+    expect(harness.splitWorkspace).toHaveBeenCalledWith('thoughtPartner');
   });
 
   it('maps current-pane choices to editor, chat, and history transitions', async () => {

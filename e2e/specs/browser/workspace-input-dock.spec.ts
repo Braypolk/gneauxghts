@@ -96,6 +96,101 @@ describe('shared workspace input dock', () => {
       .filter(item => ['chat_create_conversation', 'chat_send_message'].includes(item.command)))).toHaveLength(0);
   });
 
+  it('follows pointer and keyboard pane switches in wide splits while retaining both input drafts', async () => {
+    const search = $('[data-testid="note-search-input"]');
+    await search.setValue('Alpha');
+    await openChat();
+    const composer = $(composerSelector);
+    await composer.setValue('Keep my unsent thought');
+
+    await $('[data-pane-kind="editor"] .pane-header-title-wrap').click();
+    await expectMode('search');
+    await expect(search).toHaveValue('Alpha');
+    await $('[data-pane-kind="editor"] .pane-header-title-wrap').click();
+    await expectMode('search');
+
+    await $('[data-pane-kind="chat"] .pane-header-title-wrap').click();
+    await expectMode('chat');
+    await expect(composer).toHaveValue('Keep my unsent thought');
+    // Repeated activation within a pane must preserve an explicit mode choice.
+    await $('button[aria-label="Expand search"]').click();
+    await expectMode('search');
+    await $('[data-pane-kind="chat"] .pane-header-title-wrap').click();
+    await expectMode('search');
+    for (const mode of ['search', 'chat'] as const) {
+      await browser.execute(() => window.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'Tab', code: 'Tab', ctrlKey: true, bubbles: true, cancelable: true
+      })));
+      await expectMode(mode);
+    }
+    await expect(composer).toHaveValue('Keep my unsent thought');
+    await expect(search).toHaveValue('Alpha');
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations
+      .filter(item => ['chat_create_conversation', 'chat_send_message'].includes(item.command)))).toHaveLength(0);
+  });
+
+  for (const width of [1440, 390]) for (const query of ['', 'Alpha']) {
+    it(`retains the chat button without flashing ${query ? 'populated' : 'idle'} search controls when switching to an editor at ${width}px`, async () => {
+      if (query) await $('[data-testid="note-search-input"]').setValue(query);
+      await openChat();
+      await browser.setWindowSize(width, 1000);
+      await waitForWorkspaceAnimationSettled();
+      await $(composerSelector).setValue('Retain my draft');
+      type Frame = { state: string; placeholder: string; active: string; matchOpacity: number;
+        left: number; width: number; time: number };
+      const capture = await browser.executeAsync((done: (capture: { before: number[]; frames: Frame[] }) => void) => {
+        const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
+        const shell = dock.querySelector<HTMLElement>('.shared-search-bar-shell')!;
+        const input = shell.querySelector<HTMLInputElement>('input')!;
+        const match = shell.querySelector<HTMLElement>('.shared-search-match-options')!;
+        const body = dock.querySelector<HTMLElement>(':scope > .dock-body')!;
+        const origin = body.getBoundingClientRect();
+        const before = [origin.left, origin.width, performance.now()];
+        const frames: Frame[] = [];
+        const started = performance.now();
+        const editor = document.querySelector<HTMLElement>('[data-pane-kind="editor"] .cm-content')!;
+        const rail = document.querySelector<HTMLElement>('[data-pane-kind="editor"] .pane-rail');
+        if (rail) rail.click();
+        else {
+          editor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
+          editor.focus({ preventScroll: true });
+        }
+        const sample = () => setTimeout(() => {
+          let opacity = 1;
+          for (let element: HTMLElement | null = match; element; element = element.parentElement) {
+            opacity *= Number(getComputedStyle(element).opacity);
+          }
+          const rect = body.getBoundingClientRect();
+          frames.push({ state: dock.dataset.dockState!, placeholder: input.placeholder,
+            active: shell.dataset.searchActive!, matchOpacity: opacity,
+            left: rect.left, width: rect.width, time: performance.now() });
+          if (performance.now() - started < 850) requestAnimationFrame(sample);
+          else done({ before, frames });
+        }, 0);
+        requestAnimationFrame(sample);
+      });
+      const { before, frames } = capture;
+      expect(frames.length).toBeGreaterThan(10);
+      expect([...new Set(frames.map(frame => frame.state))]).toEqual(['chat-search']);
+      expect(frames.every(frame => frame.placeholder === '' && frame.active === 'false')).toBe(true);
+      expect(Math.max(...frames.map(frame => frame.matchOpacity))).toBe(0);
+      for (const [index, field] of ['left', 'width'].entries()) {
+        const samples = [[before[index], before[2]], ...frames.map(frame => [frame[field as 'left' | 'width'], frame.time])];
+        const travel = Math.abs(samples.at(-1)![0] - samples[0][0]);
+        for (let i = 1; i < samples.length; i++) {
+          expect(Math.abs(samples[i][0] - samples[i - 1][0]))
+            .toBeLessThanOrEqual(1 + travel * 3 * (samples[i][1] - samples[i - 1][1]) / dockMorphDuration);
+        }
+      }
+      await expect($('[data-testid="note-search-input"]')).toHaveValue(query);
+      await $('button[aria-label="Expand chat input"]').click();
+      await expectMode('chat');
+      await expect($(composerSelector)).toBeFocused();
+      await expect($('[data-pane-kind="chat"]')).not.toHaveAttribute('data-pane-collapsed');
+      await expect($(composerSelector)).toHaveValue('Retain my draft');
+    });
+  }
+
   it('expands hidden search with its shortcut and restores focus to the chat composer on dismissal', async () => {
     await openChat();
     await $(composerSelector).setValue('Return here');
@@ -232,8 +327,10 @@ describe('shared workspace input dock', () => {
       expect(opening.frames.at(-1)![3]).toBeLessThan(opening.before[3] - 30);
       await expectMode('chat');
       await expect($('[data-testid="note-search-input"]')).toHaveValue('Alpha');
-      // The neighboring note does not dismiss an open chat's dock.
+      // Selecting the neighboring note shows search; selecting chat restores its input.
       await $('[data-pane-kind="editor"] .pane-header-title-wrap').click();
+      await expectMode('search');
+      await $('[data-pane-kind="chat"] .pane-header-title-wrap').click();
       await expectMode('chat');
       if (mode === 'search') {
         await $('button[aria-label="Expand search"]').click();
