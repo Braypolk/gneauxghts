@@ -323,6 +323,7 @@ mod tests {
                 requires_restart: true,
                 can_configure_path: true,
                 can_pick_arbitrary_path: true,
+                can_relaunch: true,
                 vault_container_path: None,
                 path_configuration_note: Some("Restart to finish switching vaults.".to_string()),
             }),

@@ -355,7 +355,7 @@
               </p>
               <p class="mt-0.5 text-xs text-muted-foreground">
                 {#if settings.usesVaultContainer}
-                  Choose a vault in Files → On My iPhone → Gneauxghts. Changes require a restart.
+                  Choose a vault in Files → On My iPhone → Gneauxghts. Apply your choice, then fully close and reopen the app.
                 {:else if settings.vaultInfo?.canConfigurePath ?? true}
                   Folder changes take effect after restarting.
                 {:else}
@@ -376,7 +376,7 @@
             </p>
             {#if hasUnsavedVaultChange}
               <p class="mt-2 text-xs text-amber-700 dark:text-amber-300">
-                Not applied. Apply for next launch, then restart.
+                Not applied. Apply for next launch, then {settings.canRelaunch ? 'restart' : 'fully close and reopen the app'}.
               </p>
             {/if}
           </SettingsCard>
@@ -502,25 +502,35 @@
 
           {#if vaultNeedsRestart}
             <div class="rounded-xl border border-amber-300/70 bg-amber-50 px-5 py-4 text-sm text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-100">
-              <p class="font-medium">Restart required</p>
+              <p class="font-medium">{settings.canRelaunch ? 'Restart required' : 'Open selected vault on next launch'}</p>
               <p class="mt-1 text-sm text-amber-800 dark:text-amber-200">
                 The app is still using
                 <span class="font-medium break-all">{settings.vaultInfo?.runningPath}</span>.
-                Restart now to open notes from
+                {settings.canRelaunch ? 'Restart now to open notes from' : 'Your next launch will open notes from'}
                 <span class="font-medium break-all">{savedVaultPath}</span>.
               </p>
-              <button
-                class="mt-4 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
-                type="button"
-                disabled={settings.isRestarting}
-                onclick={() => void settings.restartApp()}
-              >
-                {settings.isRestarting
-                  ? 'Preparing restart…'
-                  : settings.restartReady
-                    ? 'Retry Restart'
-                    : 'Restart app'}
-              </button>
+              {#if settings.canRelaunch}
+                <button
+                  class="mt-4 rounded-full bg-foreground px-4 py-2 text-sm font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-60"
+                  type="button"
+                  disabled={settings.isRestarting}
+                  onclick={() => void settings.restartApp()}
+                >
+                  {settings.isRestarting
+                    ? 'Preparing restart…'
+                    : settings.restartReady
+                      ? 'Retry Restart'
+                      : 'Restart app'}
+                </button>
+              {:else}
+                <p class="mt-3">
+                  When you are ready, swipe Gneauxghts away in the App Switcher, then open it again.
+                  Returning to the Home Screen keeps the current vault open.
+                </p>
+                <p class="mt-2">
+                  You can keep working in the current vault, choose another vault, or apply the current vault again to cancel this change.
+                </p>
+              {/if}
             </div>
           {/if}
 

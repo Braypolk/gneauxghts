@@ -113,6 +113,10 @@ export class SettingsStore {
     return this.vaultInfo != null && this.vaultInfo.canPickArbitraryPath === false;
   }
 
+  get canRelaunch() {
+    return this.vaultInfo?.canRelaunch === true;
+  }
+
   get isRestarting() {
     return restartLifecycle.phase === 'preparing';
   }
@@ -254,6 +258,10 @@ export class SettingsStore {
 
   async restartApp() {
     if (this.#disposed) return;
+    if (!this.canRelaunch) {
+      this.vaultSaveError = 'To open the selected vault, swipe Gneauxghts away in the App Switcher, then open it again. Returning to the Home Screen keeps the current vault open.';
+      return;
+    }
     const lifetime = this.#lifetime;
     await restartLifecycle.restart();
     if (lifetime === this.#lifetime) this.vaultSaveError = restartLifecycle.error;

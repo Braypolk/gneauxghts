@@ -204,6 +204,7 @@ function vaultInfo() {
     noteCount: notes.size,
     requiresRestart: false,
     canConfigurePath: false,
+    canRelaunch: false,
     canPickArbitraryPath: false,
     vaultContainerPath: '/e2e',
     pathConfigurationNote: null
@@ -524,6 +525,7 @@ function historicalDiff(
     const args = (rawArgs ?? {}) as Record<string, unknown>;
     invocations.push({ command, args });
     if (Object.hasOwn(overrides, command)) return overrides[command](args);
+    if (command === 'list_vault_folders') return [];
 
     if (command === 'read_image_asset_fingerprint') {
       const asset = imageAssets.get(String(args.fileName));

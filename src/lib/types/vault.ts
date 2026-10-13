@@ -7,6 +7,7 @@ export interface VaultInfo {
   noteCount: number;
   requiresRestart: boolean;
   canConfigurePath: boolean;
+  canRelaunch: boolean;
   canPickArbitraryPath: boolean;
   vaultContainerPath: string | null;
   pathConfigurationNote: string | null;

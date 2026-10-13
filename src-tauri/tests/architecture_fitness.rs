@@ -704,6 +704,10 @@ fn explicit_restart_has_one_joining_frontend_action_and_one_backend_owner() {
     );
     assert_contains_all(
         rust_function(&commands, "prepare_restart"),
+        &["prepare_restart_with_relaunch"],
+    );
+    assert_contains_all(
+        rust_function(&commands, "prepare_restart_with_relaunch"),
         &["spawn_blocking", "prepare_restart(&app)"],
     );
     assert_contains_all(&app, &["api.prevent_exit()"]);

@@ -44,7 +44,7 @@ fn restart_quiescence_cancels_and_joins_admitted_request_and_title_work() {
         .is_ok());
 }
 
-fn seed_agent_run(
+pub(super) fn seed_agent_run(
     service: &ChatService,
     conversation_id: &str,
     suffix: &str,

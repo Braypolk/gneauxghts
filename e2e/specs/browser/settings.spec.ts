@@ -31,6 +31,35 @@ describe('searchable settings workspace', () => {
     await category('appearance').click();
   });
 
+  it('explains manual iOS reopening while keeping desktop restart available', async () => {
+    const selection = {
+      runningPath: '/e2e', selectedPath: '/next', defaultPath: '/e2e',
+      forgottenPath: '/e2e/.forgotten', isDefault: true, noteCount: 2,
+      requiresRestart: true, canConfigurePath: true, canPickArbitraryPath: false,
+      canRelaunch: false, vaultContainerPath: '/e2e', pathConfigurationNote: null
+    };
+    await browser.execute((vault) => window.__GNEAUXGHTS_E2E__!.emit('vault-changed', vault), selection);
+    await category('vault').click();
+    await $('p=Open selected vault on next launch').waitForDisplayed();
+    expect(await $('body').getText()).toContain('App Switcher');
+    expect(await $('body').getText()).toContain('Home Screen keeps the current vault open');
+    expect(await $('button=Restart app').isExisting()).toBe(false);
+    const calls = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.map(({ command }) => command));
+    expect(calls).not.toContain('prepare_restart');
+    expect(calls).not.toContain('plugin:process|restart');
+
+    await browser.execute((vault) => window.__GNEAUXGHTS_E2E__!.emit('vault-changed', vault), {
+      ...selection, canRelaunch: true, canPickArbitraryPath: true, vaultContainerPath: null
+    });
+    await $('button=Restart app').waitForDisplayed();
+    expect(await $('p=Restart required').isDisplayed()).toBe(true);
+    await browser.execute((vault) => window.__GNEAUXGHTS_E2E__!.emit('vault-changed', vault), {
+      ...selection, selectedPath: '/e2e', requiresRestart: false
+    });
+    expect(await $('p=Open selected vault on next launch').isExisting()).toBe(false);
+    expect(await $('p=Restart required').isExisting()).toBe(false);
+  });
+
   it('finds individual settings and keyboard actions, with keyboard and empty-state recovery', async () => {
     await search().setValue('font');
     await $('[data-settings-result="text-size"]').waitForDisplayed();

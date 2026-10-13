@@ -499,6 +499,9 @@ impl ChatService {
             )
             .map_err(|error| error.to_string())?;
         drop(connection);
+        // Paths must belong to this startup's Running Vault before either
+        // interrupted commits or transcript observations inspect the filesystem.
+        self.relocate_persisted_paths()?;
         self.recover_agent_proposal_commits()?;
         let interrupted_conversations = self.recover_interrupted_requests()?;
         for conversation_id in interrupted_conversations {

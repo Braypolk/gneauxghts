@@ -341,11 +341,31 @@ pub(crate) fn set_vault_directory(
     set_vault_directory_for_state(&state, path)
 }
 
-/// Cheap advisory observation: never resolve a path or authorize publication.
+/// Prepare ordered vault release only on platforms supporting process relaunch.
 #[tauri::command]
 pub(crate) async fn prepare_restart<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
 ) -> Result<crate::app::PrepareRestartReceipt, String> {
+    prepare_restart_with_relaunch(app, crate::state::can_relaunch_app()).await
+}
+
+async fn prepare_restart_with_relaunch<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    can_relaunch: bool,
+) -> Result<crate::app::PrepareRestartReceipt, String> {
+    // Reject before lifecycle admission: iOS cannot relaunch this process.
+    // Selection remains staged and the Running Vault must stay usable.
+    if !can_relaunch {
+        return Ok(crate::app::PrepareRestartReceipt {
+            status: "failed",
+            ready: false,
+            timeline_portable: false,
+            // An ordinary exit may already be releasing this vault. Rejecting
+            // this request alone cannot prove that admission can resume.
+            can_resume: false,
+            error: Some("Close Gneauxghts in the App Switcher, then open it again to use the selected vault.".into()),
+        });
+    }
     // The desktop runtime is the production target for restart. Keeping the
     // lifecycle on a blocking worker lets active async chat/tool tasks settle
     // without deadlocking Tauri's event loop.
@@ -886,6 +906,25 @@ mod tests {
     };
     use serde_json::json;
     use std::{fs, path::PathBuf};
+
+    #[test]
+    fn manual_reopen_rejects_restart_before_accessing_lifecycle_owners() {
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        // No lifecycle or vault is installed: rejection must precede owner lookup.
+        for _ in 0..2 {
+            let receipt = tauri::async_runtime::block_on(super::prepare_restart_with_relaunch(
+                app.handle().clone(),
+                false,
+            ))
+            .unwrap();
+            assert!(!receipt.ready);
+            assert!(!receipt.can_resume);
+            assert!(!receipt.timeline_portable);
+            assert!(receipt.error.unwrap().contains("App Switcher"));
+        }
+    }
 
     #[test]
     fn applying_vault_selection_keeps_the_running_vault_usable() {

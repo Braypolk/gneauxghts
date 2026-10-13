@@ -4,6 +4,7 @@ pub(crate) mod citations;
 pub(crate) mod date_time;
 mod projection;
 mod recovery;
+mod relocation;
 mod runtime;
 mod store;
 pub(crate) mod structured_answer;

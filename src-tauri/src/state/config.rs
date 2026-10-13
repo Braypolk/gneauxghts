@@ -115,6 +115,7 @@ pub(crate) struct VaultInfo {
     pub(crate) note_count: usize,
     pub(crate) requires_restart: bool,
     pub(crate) can_configure_path: bool,
+    pub(crate) can_relaunch: bool,
     /// When true, the UI may open an OS folder picker for any path.
     /// When false (iOS), selection is limited to folders under
     /// [`vault_container_path`].
@@ -306,6 +307,7 @@ pub(crate) fn current_vault_info(running: &RunningVault) -> Result<VaultInfo, St
         note_count,
         requires_restart: selected_path != running.root,
         can_configure_path: true,
+        can_relaunch: can_relaunch_app(),
         can_pick_arbitrary_path: can_pick_arbitrary_vault_path(),
         vault_container_path,
         path_configuration_note: vault_path_configuration_note(),
@@ -708,6 +710,10 @@ fn home_dir() -> Option<PathBuf> {
 /// are immediate child folders. Desktop may pick any folder.
 fn uses_vault_container() -> bool {
     cfg!(target_os = "ios")
+}
+
+pub(crate) fn can_relaunch_app() -> bool {
+    !cfg!(target_os = "ios")
 }
 
 fn can_pick_arbitrary_vault_path() -> bool {

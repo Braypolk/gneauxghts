@@ -53,6 +53,27 @@ function missingNote(timeline: HistoryModePage = { records: [], nextCursor: 'pag
 }
 
 describe('SettingsStore actions', () => {
+  it('keeps iOS vault selection usable without preparing an automatic restart', async () => {
+    const { createSettingsStore } = await import('./store.svelte');
+    const { restartLifecycle } = await import('$lib/app/restartLifecycle.svelte');
+    const restart = vi.spyOn(restartLifecycle, 'restart').mockResolvedValue();
+    const store = createSettingsStore(appStoreMock);
+    responses.set_vault_directory = {
+      ...vaultFixture, runningPath: '/running', selectedPath: '/next',
+      requiresRestart: true, canRelaunch: false
+    };
+    store.setVaultPathInput('/next');
+    await store.saveVaultDirectory();
+    expect(store.canRelaunch).toBe(false);
+    await Promise.all([store.restartApp(), store.restartApp()]);
+    expect(restart).not.toHaveBeenCalled();
+    expect(store.vaultSaveError).toContain('App Switcher');
+    expect(store.vaultInfo?.runningPath).toBe('/running');
+    expect(store.vaultInfo?.selectedPath).toBe('/next');
+    expect(restartLifecycle.workspaceMutationsBlocked).toBe(false);
+    restart.mockRestore();
+  });
+
   it('keeps component-passed actions bound to the settings store', async () => {
     const { createSettingsStore } = await import('./store.svelte');
     const store = createSettingsStore(appStoreMock);

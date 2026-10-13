@@ -79,6 +79,7 @@ export const vaultFixture: VaultInfo = {
   "noteCount": 12,
   "requiresRestart": true,
   "canConfigurePath": true,
+  "canRelaunch": true,
   "canPickArbitraryPath": true,
   "vaultContainerPath": null,
   "pathConfigurationNote": "Restart to finish switching vaults."

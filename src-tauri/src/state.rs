@@ -4,12 +4,12 @@ pub(crate) mod task_projection;
 
 #[allow(unused_imports)]
 pub(crate) use config::{
-    advance_vault_history_generation, app_data_dir, create_vault_folder, current_vault_info,
-    default_notes_root, ensure_vault_scaffold_for_history, forgotten_notes_root,
-    initialize_app_data_dir, initialize_documents_dir, list_vault_folders, read_vault_config,
-    read_vault_manifest_for, set_notes_root_override, stage_notes_root, vault_data_dir_for,
-    vault_manifest_path_for, write_vault_config, CreateVaultFolderResult, RunningVault,
-    VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
+    advance_vault_history_generation, app_data_dir, can_relaunch_app, create_vault_folder,
+    current_vault_info, default_notes_root, ensure_vault_scaffold_for_history,
+    forgotten_notes_root, initialize_app_data_dir, initialize_documents_dir, list_vault_folders,
+    read_vault_config, read_vault_manifest_for, set_notes_root_override, stage_notes_root,
+    vault_data_dir_for, vault_manifest_path_for, write_vault_config, CreateVaultFolderResult,
+    RunningVault, VaultConfig, VaultFolderInfo, VaultInfo, VaultManifest, VAULT_CACHE_DIR_NAME,
 };
 #[cfg(test)]
 pub(crate) use config::{
