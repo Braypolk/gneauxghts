@@ -229,7 +229,7 @@ const CAPACITY_RETRY_DELAY: std::time::Duration = std::time::Duration::from_secs
 /// One HTTP client per runtime. Successful observations are always refreshed;
 /// only unavailable metadata backs off, using the existing unknown-capacity policy.
 pub(super) struct CapacityProbe {
-    client: Option<reqwest::Client>,
+    client: super::model_metadata::ModelMetadataClient,
     base: String,
     key: Option<String>,
     retry_after: Mutex<Option<(String, std::time::Instant)>>,
@@ -237,11 +237,7 @@ pub(super) struct CapacityProbe {
 impl CapacityProbe {
     pub(super) fn new(base: String, key: Option<String>) -> Self {
         Self {
-            client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(2))
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
-                .ok(),
+            client: super::model_metadata::ModelMetadataClient::new(),
             base,
             key,
             retry_after: Mutex::new(None),
@@ -267,32 +263,8 @@ impl CapacityProbe {
         capacity
     }
     async fn fetch(&self, model: &str) -> Option<u64> {
-        let mut url = Url::parse(&self.base).ok()?;
-        if !matches!(url.scheme(), "http" | "https")
-            || !url.username().is_empty()
-            || url.password().is_some()
-        {
-            return None;
-        }
-        url.set_path("/api/v1/models");
-        url.set_query(None);
-        url.set_fragment(None);
-        let client = self.client.as_ref()?;
-        let mut request = client.get(url);
-        if let Some(key) = &self.key {
-            request = request.bearer_auth(key);
-        }
-        let response = request.send().await.ok()?.error_for_status().ok()?;
-        let mut stream = response.bytes_stream();
-        let mut body = Vec::new();
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk.ok()?;
-            if body.len().saturating_add(chunk.len()) > 256_000 {
-                return None;
-            }
-            body.extend_from_slice(&chunk);
-        }
-        capacity_from_models(&serde_json::from_slice::<Value>(&body).ok()?, model)
+        let value = self.client.fetch(&self.base, self.key.as_deref()).await?;
+        capacity_from_models(&value, model)
     }
 }
 

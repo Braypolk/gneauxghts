@@ -1,0 +1,37 @@
+{
+  "version": 1,
+  "cases": [
+    {
+      "legacy": {"type":"toolCallUpdated","call_id":"read-call","name":"read_notes","title":"Read notes","status":"running","step_index":0},
+      "wire": {"type":"toolCallUpdated","callId":"read-call","name":"read_notes","title":"Read notes","status":"running","stepIndex":0}
+    },
+    {
+      "legacy": {"type":"toolCallUpdated","call_id":"read-call","name":"read_notes","title":"Read notes","status":"success","step_index":0,"input_summary":"Selected note","output_summary":"Read 2 passages","duration_millis":25},
+      "wire": {"type":"toolCallUpdated","callId":"read-call","name":"read_notes","title":"Read notes","status":"success","stepIndex":0,"inputSummary":"Selected note","outputSummary":"Read 2 passages","durationMillis":25}
+    },
+    {
+      "legacy": {"type":"toolCallUpdated","call_id":"research-call","name":"research_notes","title":"Research across notes","status":"running","step_index":1},
+      "wire": {"type":"toolCallUpdated","callId":"research-call","name":"research_notes","title":"Research across notes","status":"running","stepIndex":1}
+    },
+    {
+      "legacy": {"type":"toolCallUpdated","call_id":"research-call","name":"research_notes","title":"Research across notes","status":"error","step_index":1,"output_summary":"The shared evidence allowance is exhausted. Use delivered evidence and explain gaps; do not retry retrieval in this run.","duration_millis":47572},
+      "wire": {"type":"toolCallUpdated","callId":"research-call","name":"research_notes","title":"Research across notes","status":"error","stepIndex":1,"outputSummary":"The shared evidence allowance is exhausted. Use delivered evidence and explain gaps; do not retry retrieval in this run.","durationMillis":47572}
+    },
+    {
+      "legacy": {"type":"proposalLinked","proposal_id":"proposal-1","title":"Review changes","kind":"update"},
+      "wire": {"type":"proposalLinked","proposalId":"proposal-1","title":"Review changes","kind":"update"}
+    },
+    {
+      "legacy": {"type":"contextUpdated","compacted":true,"selected_note_titles":["Selected note"]},
+      "wire": {"type":"contextUpdated","compacted":true,"selectedNoteTitles":["Selected note"]}
+    },
+    {
+      "legacy": {"type":"usageUpdated","call_index":1,"aggregate":{"inputTokens":8,"outputTokens":5,"totalTokens":13,"cachedInputTokens":0,"cacheCreationInputTokens":0,"toolUsePromptTokens":0,"reasoningTokens":0}},
+      "wire": {"type":"usageUpdated","callIndex":1,"aggregate":{"inputTokens":8,"outputTokens":5,"totalTokens":13,"cachedInputTokens":0,"cacheCreationInputTokens":0,"toolUsePromptTokens":0,"reasoningTokens":0}}
+    },
+    {
+      "legacy": {"type":"permissionResolved","permission_id":"permission-1","resolution":"denied"},
+      "wire": {"type":"permissionResolved","permissionId":"permission-1","resolution":"denied"}
+    }
+  ]
+}

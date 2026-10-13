@@ -690,7 +690,7 @@ fn openai_synthetic_chat_behavior() {
         let lifecycle = Arc::new(Mutex::new(Vec::new()));
         let guard =
             crate::agent_guardrails::AgentRunGuard::new(crate::agent_guardrails::AgentRunLimits {
-                max_elapsed: Duration::from_secs(60),
+                max_elapsed: Some(Duration::from_secs(60)),
                 max_context_bytes: 64000,
                 max_tool_calls: 8,
                 max_aggregate_tokens: 40_000,
@@ -1035,7 +1035,7 @@ fn openai_rig_upgrade_smoke() {
         };
         let guard =
             crate::agent_guardrails::AgentRunGuard::new(crate::agent_guardrails::AgentRunLimits {
-                max_elapsed: Duration::from_secs(90),
+                max_elapsed: Some(Duration::from_secs(90)),
                 max_context_bytes: 64000,
                 max_tool_calls: 4,
                 max_aggregate_tokens: 12000,

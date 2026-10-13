@@ -72,6 +72,7 @@ impl PassageReferences {
                     return Err("Passage bytes do not match the delivered source".into());
                 }
                 let reference = self.register(id);
+                item["sourceId"] = json!(reference.trim_start_matches('[').trim_end_matches(']'));
                 item["citation"] = json!(reference);
             }
         }
@@ -84,6 +85,15 @@ impl PassageReferences {
         reference: &str,
         sources: &'a [ChatSource],
     ) -> Option<&'a ChatSource> {
+        let id = self.passage_id(reference)?;
+        sources
+            .iter()
+            .find(|source| source.passage.as_ref().is_some_and(|p| &p.id == id))
+    }
+
+    /// Distinguish an invented model selection from an issued source that has
+    /// since failed freshness or access checks. Never infer an ID from its title.
+    pub(crate) fn passage_id(&self, reference: &str) -> Option<&String> {
         let index = reference
             .strip_prefix('S')?
             .parse::<usize>()
@@ -92,10 +102,20 @@ impl PassageReferences {
         if reference != format!("S{}", index + 1) {
             return None;
         }
-        let id = self.ids.get(index)?;
-        sources
+        self.ids.get(index)
+    }
+
+    pub(crate) fn source_ids(&self, sources: &[ChatSource]) -> Vec<String> {
+        let delivered: HashSet<_> = sources
             .iter()
-            .find(|source| source.passage.as_ref().is_some_and(|p| &p.id == id))
+            .filter_map(|s| s.passage.as_ref().map(|p| p.id.as_str()))
+            .collect();
+        self.ids
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| delivered.contains(id.as_str()))
+            .map(|(index, _)| format!("S{}", index + 1))
+            .collect()
     }
 
     /// Only references issued to this run AND delivered as sources may become links.
@@ -247,8 +267,22 @@ mod tests {
         let mut payload = json!({"items":[{"evidenceId":"proof","excerpt":"Evidence"}]});
         refs.prepare(&mut payload, &sources).unwrap();
         assert_eq!(payload["items"][0]["citation"], "[S1]");
+        assert_eq!(payload["items"][0]["sourceId"], "S1");
         assert_eq!(payload["items"][0]["excerpt"], "Evidence");
         assert!(payload["items"][0].get("clauses").is_none());
+    }
+
+    #[test]
+    fn selectable_ids_preserve_the_issued_numbers_and_exclude_undelivered_passages() {
+        let mut refs = PassageReferences::default();
+        refs.register("earlier");
+        refs.register("withdrawn");
+        refs.register("later");
+        assert_eq!(
+            refs.source_ids(&[source("later"), source("earlier")]),
+            vec!["S1", "S3"]
+        );
+        assert!(refs.source_ids(&[]).is_empty());
     }
 
     #[test]

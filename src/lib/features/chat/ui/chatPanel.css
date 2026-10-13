@@ -130,6 +130,19 @@
 .chat-model-name > span {
   max-width: 9rem;
 }
+.chat-model-effort-label {
+  display: inline-grid;
+  min-width: 0;
+}
+.chat-model-effort-label > span {
+  grid-area: 1 / 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.chat-model-effort-measure {
+  visibility: hidden;
+}
 .chat-model-control:hover:not(:disabled),
 .chat-model-control[aria-expanded="true"] {
   background: color-mix(in oklab, var(--foreground) 8%, transparent);

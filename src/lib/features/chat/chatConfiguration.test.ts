@@ -83,8 +83,32 @@ describe('chat configuration', () => {
     expect(chatReasoningChoices('openai', 'gpt-5.4').map((choice) => choice.value))
       .toEqual(['low', 'medium', 'high', 'xhigh']);
     expect(chatReasoningChoices('local', 'qwen3-8b')).toEqual([]);
-    expect(chatReasoningChoices('local', 'qwen/Qwen3.8-27B').map((choice) => choice.value))
-      .toEqual(['low', 'medium', 'xhigh']);
+    expect(chatReasoningChoices('local', 'qwen/Qwen3.8-27B')).toEqual([]);
     expect(normalizeChatReasoningEffort('openai', 'gpt-5.4', 'max')).toBe('medium');
+  });
+
+  it('uses advertised local reasoning choices and replaces an unsupported saved level', () => {
+    const capabilities = { reasoningOptions: ['off', 'on'], defaultReasoningEffort: 'on' };
+    expect(chatReasoningChoices('local', 'any-model-name', capabilities))
+      .toEqual([{ value: 'off', label: 'Off' }, { value: 'on', label: 'On (server default)' }]);
+    expect(normalizeChatReasoningEffort('local', 'any-model-name', 'medium', capabilities)).toBe('on');
+    expect(normalizeChatReasoningEffort('local', 'any-model-name', 'off', capabilities)).toBe('off');
+  });
+
+  it('retains server-provided levels without a model-name or level allowlist', () => {
+    const capabilities = { reasoningOptions: ['off', 'brief', 'deep'], defaultReasoningEffort: 'deep' };
+    expect(chatReasoningChoices('local', 'custom', capabilities).map((choice) => choice.value))
+      .toEqual(['off', 'brief', 'deep']);
+    expect(normalizeChatReasoningEffort('local', 'custom', 'medium', capabilities)).toBe('deep');
+  });
+
+  it('uses the server fallback for an unsupported conversation value while preserving valid profile choices', () => {
+    const capabilities = {
+      reasoningOptions: ['off', 'on'],
+      defaultReasoningEffort: 'off',
+      serverReasoningDefault: 'on'
+    };
+    expect(normalizeChatReasoningEffort('local', 'custom', 'medium', capabilities)).toBe('on');
+    expect(normalizeChatReasoningEffort('local', 'custom', 'off', capabilities)).toBe('off');
   });
 });

@@ -146,6 +146,7 @@ export function fakeApi() {
     listPendingProposals: vi.fn<ChatApi['listPendingProposals']>(async () => []),
     commitAgentProposal: vi.fn<ChatApi['commitAgentProposal']>(async () => ({
       status: 'committed' as const,
+      committedMarkdown: '# Edited',
       applied: { kind: 'updateNote', path: '/vault/Plan.md', previousPath: '/vault/Plan.md' },
       noteId: 'note-1',
       message: null

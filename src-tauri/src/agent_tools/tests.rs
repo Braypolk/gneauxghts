@@ -4,6 +4,8 @@ mod context_selection_audit;
 mod coverage_regressions;
 mod interface_contracts;
 mod reliability_eval;
+mod research_compaction_live;
+mod source_ids_live;
 
 #[cfg(target_os = "macos")]
 mod context_selection_live;

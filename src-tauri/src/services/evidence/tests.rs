@@ -2,6 +2,47 @@ use super::*;
 mod coverage;
 
 #[test]
+fn expiring_search_cursors_keeps_earlier_scope_freshness_checks() {
+    let vault = crate::test_support::TestVault::new("retired-search-scope");
+    let state = &vault.state;
+    let mut notes = Vec::new();
+    for title in ["Earlier research", "Later research"] {
+        notes.push(
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                state,
+                title.into(),
+                "Original contents".into(),
+                None,
+            )
+            .unwrap()
+            .unwrap(),
+        );
+    }
+    let mut session = EvidenceSession::default();
+    let excluded = HashSet::new();
+    for i in 0..33 {
+        session
+            .search(
+                state,
+                None,
+                &excluded,
+                SearchRequest {
+                    query: format!("missing-{i}"),
+                    mode: SearchMode::Literal,
+                    note_ids: Some(vec![notes[usize::from(i > 0)].note_id.clone().unwrap()]),
+                    ..Default::default()
+                },
+            )
+            .unwrap();
+    }
+    assert_eq!(session.searches.len(), 32);
+    assert_eq!(session.retired_search_scopes.len(), 1);
+    assert!(session.is_current(state, None, &excluded));
+    fs::write(notes[0].path.as_ref().unwrap(), "Changed earlier scope").unwrap();
+    assert!(!session.is_current(state, None, &excluded));
+}
+
+#[test]
 fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
     let vault = crate::test_support::TestVault::new("evidence");
     let state = &vault.state;
@@ -25,8 +66,8 @@ fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
         .lexical
         .sync_with_notes_index(&state.notes_index.lock().unwrap().entries)
         .unwrap();
-    // Empty searches consume a search slot but no evidence bytes. The issued
-    // cursor from slot 32 must remain usable even when new searches are refused.
+    // Search cursors occupy a bounded cache, not a cumulative research quota.
+    // Adding another query keeps the newest cursor and evicts the oldest.
     let mut capacity = EvidenceSession::default();
     for index in 0..31 {
         capacity
@@ -52,19 +93,15 @@ fn evidence_fixture_scopes_pages_reads_and_invalidates_current_passages() {
         .search(&state, None, &HashSet::new(), last.clone())
         .unwrap();
     last.cursor = Some(first["nextCursor"].as_str().unwrap().to_string());
-    assert_eq!(
-        capacity
-            .search(&state, None, &HashSet::new(), last.clone())
-            .unwrap()["items"]
-            .as_array()
-            .unwrap()
-            .len(),
-        1
-    );
+    capacity.configure_allowance(Some(62_080));
+    let next = capacity
+        .search(&state, None, &HashSet::new(), last.clone())
+        .unwrap();
+    assert_eq!(next["items"].as_array().unwrap().len(), 1);
+    assert_eq!(next["coverage"]["budget"]["evidenceBytes"], 62_080);
+    assert_eq!(next["coverage"]["budget"]["usedBytes"], capacity.used());
     last.cursor = None;
-    assert!(capacity
-        .search(&state, None, &HashSet::new(), last)
-        .is_err());
+    assert!(capacity.search(&state, None, &HashSet::new(), last).is_ok());
 
     let excluded = HashSet::from([id_map["private"].clone()]);
     for q in fixture["questions"].as_array().unwrap() {
@@ -218,6 +255,72 @@ fn budgets_preserve_utf8_and_rank_fusion_rewards_agreement() {
 }
 
 #[test]
+fn resized_evidence_allowance_keeps_shared_spending_and_parent_reserve() {
+    let mut parent = EvidenceSession::default();
+    parent.configure_allowance(Some(62_080));
+    let mut worker = parent.fork_for_period(false);
+    let delivered = worker.admit_context(&"x".repeat(100_000), 100_000).unwrap();
+    assert_eq!(delivered.len(), 50_080);
+    assert!(worker.admit_context("more", 4).is_err());
+    assert_eq!(parent.admit_context("handoff", 7).unwrap(), "handoff");
+    parent.configure_allowance(Some(13_824));
+    assert!(parent.admit_context("more", 4).is_err());
+    assert!(worker.admit_context("more", 4).is_err());
+    parent.configure_allowance(None);
+    assert!(parent.admit_context("more", 4).is_err());
+    assert_eq!(
+        parent.used(),
+        50_087,
+        "Capacity refresh must never forgive spending"
+    );
+}
+
+#[test]
+fn adaptive_allowance_delivers_more_than_24kb_with_bounded_truthful_read_pages() {
+    let vault = crate::test_support::TestVault::new("adaptive-read-budget");
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Large synthetic record".into(),
+        "A synthetic project records its review decisions and remaining tasks.\n\n".repeat(600),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let mut session = EvidenceSession::default();
+    session.configure_allowance(Some(250_000));
+    let mut request = ReadRequest {
+        note_id: saved.note_id,
+        ..Default::default()
+    };
+    let mut read_bytes = 0;
+    loop {
+        let (page, _) = session
+            .read_request(&vault.state, None, &HashSet::new(), request)
+            .unwrap();
+        assert!(page.to_string().len() <= READ_BYTES);
+        assert_eq!(
+            page["remainingEvidenceBytes"].as_u64().unwrap() as usize + session.used(),
+            250_000
+        );
+        read_bytes += page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["excerpt"].as_str().map_or(0, str::len))
+            .sum::<usize>();
+        let Some(cursor) = page["nextCursor"].as_str() else {
+            break;
+        };
+        request = ReadRequest {
+            cursor: Some(cursor.into()),
+            ..Default::default()
+        };
+    }
+    assert!(read_bytes > EVIDENCE_BYTES);
+    assert!(session.used() > EVIDENCE_BYTES);
+}
+
+#[test]
 fn shared_worker_budget_does_not_copy_admitted_context_or_search_transcripts() {
     let mut parent = EvidenceSession::default();
     parent.admit_context("parent context", 100).unwrap();
@@ -329,7 +432,7 @@ fn read_budget_never_charges_passages_discarded_by_response_overhead() {
     for remaining in (100..5000).step_by(100) {
         let mut session = EvidenceSession::default();
         let used_before = EVIDENCE_BYTES - remaining;
-        session.used_bytes.store(used_before, Ordering::SeqCst);
+        session.budget.used.store(used_before, Ordering::SeqCst);
         let result = session.read_request(
             &state,
             None,
@@ -415,7 +518,8 @@ fn research_and_mixed_read_pages_preserve_deliverable_evidence_within_budget() {
             let mut session = EvidenceSession::default();
             session.candidates = initial.candidates.clone();
             session
-                .used_bytes
+                .budget
+                .used
                 .store(EVIDENCE_BYTES - remaining, Ordering::SeqCst);
             let before = session.used();
             let result = if research {

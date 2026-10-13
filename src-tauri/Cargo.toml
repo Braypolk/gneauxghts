@@ -27,6 +27,8 @@ tauri-build = { version = "2", features = [] }
 [features]
 default = []
 e2e-wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
+# Debug-only loopback endpoint for native OpenAI protocol fixture tests.
+e2e-chat-fixture = []
 
 [dependencies]
 tauri = { version = "2.11", features = [] }

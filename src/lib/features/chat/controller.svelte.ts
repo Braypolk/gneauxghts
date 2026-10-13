@@ -221,7 +221,7 @@ export class ChatControllerStore implements ChatController {
     const configured = provider === 'local'
       ? capabilities?.defaultReasoningEffort ?? fallback
       : fallback;
-    return normalizeChatReasoningEffort(provider, model, configured);
+    return normalizeChatReasoningEffort(provider, model, configured, capabilities);
   }
 
   async #loadDraftModelCapabilities(revision: number, provider: ChatProvider, model: string) {
@@ -760,7 +760,7 @@ export class ChatControllerStore implements ChatController {
     const revision = admitted.configurationRevision;
     const provider = conversation?.provider ?? this.conversationDraft.provider;
     const model = conversation?.model ?? this.conversationDraft.model;
-    const normalized = normalizeChatReasoningEffort(provider, model, reasoningEffort);
+    const normalized = normalizeChatReasoningEffort(provider, model, reasoningEffort, this.#state.modelCapabilities);
     if (!conversation) {
       this.#dispatch({
         type: 'configurationReceived',

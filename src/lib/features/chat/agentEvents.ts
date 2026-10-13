@@ -147,6 +147,13 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
     }
     case 'contextMeasured': {
       const details = event.details;
+      if (details.worker === false && details.mode === 'compaction' && details.phase === 'completed') {
+        const context = parts.find((part) => part.type === 'context');
+        return upsertPart(parts, {
+          id: 'context', type: 'context', compacted: true,
+          selectedNoteTitles: context?.selectedNoteTitles ?? []
+        });
+      }
       // Optional measurements can supply loaded capacity. Never display byte
       // estimates or a worker's separate context as the conversation's usage.
       const usage = details.reportedUsage;

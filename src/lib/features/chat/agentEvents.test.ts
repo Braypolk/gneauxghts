@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   initialAgentEventState,
   materializeDurableChatParts,
@@ -28,6 +29,37 @@ function envelope(
 }
 
 describe('agent event reducer', () => {
+  it('marks successful parent compaction without losing selected note titles during live updates or replay', () => {
+    const events = [
+      envelope(1, { type: 'contextUpdated', compacted: false, selectedNoteTitles: ['Project plan'] }),
+      envelope(2, { type: 'contextMeasured', details: { worker: true, mode: 'compaction', phase: 'completed' } }),
+      envelope(3, { type: 'contextMeasured', details: { worker: false, mode: 'compaction', phase: 'failed' } }),
+      envelope(4, { type: 'contextMeasured', details: { worker: false, mode: 'compaction', phase: 'completed' } })
+    ];
+    let live = initialAgentEventState('');
+    for (const event of events.slice(0, 3)) live = reduceAgentEvent(live, event);
+    expect(live.parts.find((part) => part.type === 'context')).toMatchObject({ compacted: false });
+    live = reduceAgentEvent(live, events[3]);
+    for (const state of [live, replayAgentEvents('', events)]) {
+      expect(state.parts.find((part) => part.type === 'context')).toMatchObject({ compacted: true, selectedNoteTitles: ['Project plan'] });
+    }
+  });
+  it('keeps separate calls and failure details from the Rust wire contract during live updates and replay', () => {
+    const fixture = JSON.parse(readFileSync(new URL('../../../../src-tauri/test-fixtures/contracts/agent-events.json', import.meta.url).pathname, 'utf8'));
+    const events: ChatAgentEventEnvelope[] = fixture.cases
+      .filter((entry: { wire: ChatAgentEventEnvelope['event'] }) => entry.wire.type === 'toolCallUpdated')
+      .map((entry: { wire: ChatAgentEventEnvelope['event'] }, index: number) => envelope(index + 1, entry.wire));
+    let live = initialAgentEventState('Answer');
+    for (const event of events) live = reduceAgentEvent(live, event);
+    const replay = replayAgentEvents('Answer', events);
+    for (const state of [live, replay]) {
+      const tools = state.parts.filter((part) => part.type === 'tool');
+      expect(tools).toHaveLength(2);
+      expect(tools[0]).toMatchObject({ callId: 'read-call', status: 'success', outputSummary: 'Read 2 passages', durationMillis: 25 });
+      expect(tools[1]).toMatchObject({ callId: 'research-call', status: 'error', stepIndex: 1, durationMillis: 47572 });
+      expect(tools[1].outputSummary).toContain('shared evidence allowance is exhausted');
+    }
+  });
   it('uses the latest parent input as context occupancy instead of accumulated run spending', () => {
     const usage = { inputTokens: 8000, outputTokens: 400, totalTokens: 8400, cachedInputTokens: 0, cacheCreationInputTokens: 0, toolUsePromptTokens: 0, reasoningTokens: 0 };
     const state = replayAgentEvents('', [

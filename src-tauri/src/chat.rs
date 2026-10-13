@@ -233,10 +233,10 @@ fn default_reasoning_effort() -> String {
 
 fn validate_reasoning_effort(value: &str) -> Result<&str, String> {
     let value = value.trim();
-    if matches!(value, "low" | "medium" | "high" | "xhigh" | "max") {
+    if crate::agent_runtime::local_reasoning::valid_option(value) {
         Ok(value)
     } else {
-        Err("Reasoning effort must be low, medium, high, xhigh, or max".to_string())
+        Err("Reasoning setting must be a nonempty identifier of at most 64 characters".to_string())
     }
 }
 
@@ -1612,7 +1612,15 @@ impl ChatService {
     ) -> Result<(), String> {
         let mut connection = self.connection()?;
         let transaction = connection.transaction().map_err(|e| e.to_string())?;
-        Self::store_terminal_message(&transaction, message_id, status, content, error, sources, &[])?;
+        Self::store_terminal_message(
+            &transaction,
+            message_id,
+            status,
+            content,
+            error,
+            sources,
+            &[],
+        )?;
         transaction.commit().map_err(|e| e.to_string())
     }
 
@@ -2558,9 +2566,13 @@ fn load_messages(
                 sources: Vec::new(),
                 has_revision_evidence: row.get(9)?,
                 note_reference_ids: serde_json::from_str(&row.get::<_, String>(10)?).map_err(
-                    |e| rusqlite::Error::FromSqlConversionFailure(
-                        10, rusqlite::types::Type::Text, Box::new(e),
-                    ),
+                    |e| {
+                        rusqlite::Error::FromSqlConversionFailure(
+                            10,
+                            rusqlite::types::Type::Text,
+                            Box::new(e),
+                        )
+                    },
                 )?,
                 attachments: Vec::new(),
                 agent_events: Vec::new(),

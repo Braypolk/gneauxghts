@@ -4,6 +4,7 @@ import type {
   ChatProvider,
   ChatReasoningEffort,
   ChatSettings,
+  ChatModelCapabilities,
   LocalModel
 } from './types';
 
@@ -41,20 +42,21 @@ const REASONING_LABELS: Record<ChatReasoningEffort, string> = {
   medium: 'Medium',
   high: 'High',
   xhigh: 'Extra High',
-  max: 'Maximum'
+  max: 'Maximum',
+  off: 'Off',
+  none: 'Off',
+  on: 'On (server default)'
 };
 
 export function chatReasoningChoices(
   provider: ChatProvider,
-  model: string
+  model: string,
+  capabilities?: Pick<ChatModelCapabilities, 'reasoningOptions' | 'defaultReasoningEffort' | 'serverReasoningDefault'> | null
 ): ChatReasoningChoice[] {
   if (provider === 'local') {
-    const normalized = model.trim().toLowerCase();
-    const efforts: ChatReasoningEffort[] =
-      normalized.includes('qwen3.8') || normalized.includes('qwen-3.8')
-        ? ['low', 'medium', 'xhigh']
-        : [];
-    return efforts.map((value) => ({ value, label: REASONING_LABELS[value] }));
+    return (capabilities?.reasoningOptions ?? []).map((value) => ({
+      value, label: REASONING_LABELS[value] ?? value
+    }));
   }
   const catalogModel = OPENAI_CHAT_MODELS.find((candidate) => candidate.id === model.trim());
   const efforts = catalogModel?.reasoningEfforts ??
@@ -65,10 +67,15 @@ export function chatReasoningChoices(
 export function normalizeChatReasoningEffort(
   provider: ChatProvider,
   model: string,
-  effort: ChatReasoningEffort
+  effort: ChatReasoningEffort,
+  capabilities?: Pick<ChatModelCapabilities, 'reasoningOptions' | 'defaultReasoningEffort' | 'serverReasoningDefault'> | null
 ): ChatReasoningEffort {
-  const choices = chatReasoningChoices(provider, model);
+  const choices = chatReasoningChoices(provider, model, capabilities);
   if (choices.length === 0 || choices.some((choice) => choice.value === effort)) return effort;
+  const localDefault = capabilities?.serverReasoningDefault ?? capabilities?.defaultReasoningEffort;
+  if (provider === 'local' && choices.some((choice) => choice.value === localDefault)) {
+    return localDefault!;
+  }
   return choices.some((choice) => choice.value === 'medium') ? 'medium' : choices[0].value;
 }
 

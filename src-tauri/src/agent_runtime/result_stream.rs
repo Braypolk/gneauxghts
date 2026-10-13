@@ -15,6 +15,23 @@ struct State {
     rejected: bool,
 }
 impl ResultStream {
+    pub(super) fn constrain_sources(
+        &self,
+        request: &mut rig_core::completion::CompletionRequest,
+        tools: &crate::agent_tools::AgentToolContext,
+    ) -> Result<(), String> {
+        if self.schema == crate::chat::structured_answer::schema()
+            && usage_context::result_formatter_name(request, Some(&self.schema)).is_some()
+        {
+            let ids = tools.answer_source_ids()?;
+            crate::chat::structured_answer::constrain_sources(
+                &mut request.tools.last_mut().unwrap().parameters,
+                ids,
+            );
+        }
+        Ok(())
+    }
+
     pub(super) fn new(schema: Value) -> Arc<Self> {
         Arc::new(Self {
             schema,

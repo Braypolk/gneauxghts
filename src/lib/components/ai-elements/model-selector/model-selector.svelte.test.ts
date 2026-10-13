@@ -36,13 +36,13 @@ describe('ModelSelector', () => {
 
     expect(body).toContain('AI provider picker');
     expect(body).toContain('ChatGPT');
-    expect(body).toContain('Local');
+    expect(body).toContain('Server');
     expect(body).not.toContain('qwen3-8b');
-    expect(body).not.toContain('Discover local models');
+    expect(body).not.toContain('Discover server models');
     expect(body).toContain('aria-label="Custom model ID"');
     expect(body).toContain('Hosted Default');
     expect(body).toContain('Reasoning effort picker');
-    expect(body).toContain('Use a ChatGPT model ID');
+    expect(body).toContain('Use a model ID');
   });
 
   it('offers discovery only in the local model picker', () => {
@@ -67,7 +67,7 @@ describe('ModelSelector', () => {
     }).body;
 
     expect(body).toContain('qwen3-8b');
-    expect(body).toContain('Discover local models');
-    expect(body).toContain('Use a Local model ID');
+    expect(body).toContain('Discover server models');
+    expect(body).toContain('Use a model ID');
   });
 });

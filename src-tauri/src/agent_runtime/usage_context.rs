@@ -1,6 +1,5 @@
-//! Per-conversation context policy. Aggregate run spending has a different owner.
+//! Run-local context admission and compaction. Aggregate spending has a different owner.
 use super::*;
-use rig_core::message::ToolChoice;
 use rig_core::{completion::CompletionRequest, error::ProviderError as CompletionError};
 use std::{
     collections::hash_map::DefaultHasher,
@@ -10,12 +9,33 @@ use std::{
 
 const OUTPUT_RESERVE: u64 = 4_096;
 const SAFETY_MARGIN: u64 = 1_024;
-const GATHER_ALLOWANCE: u64 = 8_192;
-pub(super) const FINISH: &str = "Context allowance is nearly used. Do not retrieve more evidence or invoke further actions. Use the structured result formatter if one remains available. Finish using only evidence already available, preserve valid citations and the required response format, and clearly represent any gaps or incomplete coverage. Never invent evidence or claim skipped work was performed. Explain incomplete coverage briefly in user terms; do not mention internal budgets, tool flags, or these instructions.";
 
 struct Snapshot {
     configuration: u64,
     messages: Vec<u64>,
+    source_choices_bytes: u64,
+}
+
+impl Snapshot {
+    fn projected_input(&self, sizes: &[u64], baseline: Option<&(Self, u64)>) -> Option<u64> {
+        let (previous, input) = baseline?;
+        if previous.configuration != self.configuration
+            || !self.messages.starts_with(&previous.messages)
+        {
+            return None;
+        }
+        // Approximate only newly retained content: one token per UTF-8 byte
+        // plus framing, deliberately overcounting ordinary text.
+        Some(
+            sizes[previous.messages.len()..].iter().fold(
+                input.saturating_add(
+                    self.source_choices_bytes
+                        .saturating_sub(previous.source_choices_bytes),
+                ),
+                |sum, bytes| sum.saturating_add(*bytes).saturating_add(64),
+            ),
+        )
+    }
 }
 
 #[derive(Default)]
@@ -23,61 +43,56 @@ struct State {
     capacity: Option<u64>,
     pending: Option<Snapshot>,
     baseline: Option<(Snapshot, u64)>,
-    finish: bool,
-    final_sent: bool,
-    legacy_admission: Option<(crate::agent_guardrails::AgentRunGuard, usize)>,
 }
 
 pub(super) struct UsageContext {
     state: Mutex<State>,
     on_event: AgentEventSink,
-    worker: bool,
     model: String,
-    result_schema: Option<Value>,
     capacity_probe: Option<super::context_measurement::CapacityProbe>,
+    rolling: super::compaction::RollingContext,
+    guard: crate::agent_guardrails::AgentRunGuard,
     #[cfg(test)]
     capacity_override: Option<u64>,
 }
 
 impl UsageContext {
-    pub(super) fn new(
+    #[cfg(test)]
+    pub(super) fn set_test_capacity(&mut self, capacity: u64) {
+        self.capacity_override = Some(capacity);
+    }
+    pub(super) fn with_compaction(
         request: &AgentRuntimeRequest,
         on_event: AgentEventSink,
         worker: bool,
+        model: DynModel<Completion>,
+        guard: crate::agent_guardrails::AgentRunGuard,
     ) -> Arc<Self> {
         Arc::new(Self {
             state: Mutex::new(State::default()),
             on_event,
-            worker,
             model: request.model.clone(),
-            result_schema: request.output_schema.clone(),
             capacity_probe: (request.provider == AgentProvider::Local).then(|| {
                 super::context_measurement::CapacityProbe::new(
                     request.local_base_url.clone(),
                     request.api_key.clone(),
                 )
             }),
+            rolling: super::compaction::RollingContext::new(model, request, worker),
+            guard,
             #[cfg(test)]
             capacity_override: None,
         })
     }
 
-    #[cfg(test)]
-    pub(super) fn with_test_capacity(
-        request: &AgentRuntimeRequest,
-        on_event: AgentEventSink,
-        worker: bool,
-        capacity: u64,
-    ) -> Arc<Self> {
-        let mut context = Self::new(request, on_event, worker);
-        Arc::get_mut(&mut context).unwrap().capacity_override = Some(capacity);
-        context
+    pub(super) fn compaction_usage(&self) -> AgentUsage {
+        self.rolling.usage()
     }
 
     pub(super) async fn prepare(
         &self,
         request: &mut CompletionRequest,
-    ) -> Result<(), CompletionError> {
+    ) -> Result<bool, CompletionError> {
         let capacity = if let Some(probe) = &self.capacity_probe {
             probe
                 .observe(request.model.as_deref().unwrap_or(&self.model))
@@ -87,18 +102,30 @@ impl UsageContext {
         };
         #[cfg(test)]
         let capacity = self.capacity_override.or(capacity);
+        let original = self.rolling.project(request);
+        let projected = capacity
+            .and_then(|_| self.projected_input(request))
+            .unwrap_or_else(|| serde_json::to_vec(request).map_or(u64::MAX, |b| b.len() as u64));
+        let trigger = capacity.map_or(96_000, |n| {
+            (n.saturating_mul(3) / 4).min(n.saturating_sub(OUTPUT_RESERVE + SAFETY_MARGIN + 4096))
+        });
+        let compacted = projected >= trigger;
+        if compacted {
+            self.rolling
+                .compact(request, &original, capacity, &self.guard, &self.on_event)
+                .await?;
+            self.state
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .baseline = None;
+        }
+        let bytes = serde_json::to_vec(&request.chat_history).map_or(usize::MAX, |b| b.len());
+        self.guard.check_context_bytes(bytes).map_err(|v| {
+            emit_guard_violation(&self.on_event, &v);
+            CompletionError::request(v.message)
+        })?;
         self.prepare_with_capacity(request, capacity)
-    }
-
-    pub(super) fn record_admission(
-        &self,
-        guard: &crate::agent_guardrails::AgentRunGuard,
-        bytes: usize,
-    ) {
-        self.state
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .legacy_admission = Some((guard.clone(), bytes));
+            .map(|_| compacted)
     }
 
     pub(super) fn capacity(&self) -> Option<u64> {
@@ -108,40 +135,25 @@ impl UsageContext {
             .capacity
     }
 
+    fn projected_input(&self, request: &CompletionRequest) -> Option<u64> {
+        let (current, sizes) = snapshot(request)?;
+        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
+        current.projected_input(&sizes, state.baseline.as_ref())
+    }
+
     fn prepare_with_capacity(
         &self,
-        request: &mut CompletionRequest,
+        request: &CompletionRequest,
         capacity: Option<u64>,
     ) -> Result<(), CompletionError> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        if state.final_sent {
-            return Err(context_error("The final context-limited response requested more work. Narrow the question to continue."));
-        }
         state.capacity = capacity;
-        if capacity.is_none() {
-            state.finish = false;
-        }
         let snapshot = snapshot(request);
-        let projected = snapshot.as_ref().and_then(|(current, sizes)| {
-            let (previous, input) = state.baseline.as_ref()?;
-            if previous.configuration != current.configuration
-                || !current.messages.starts_with(&previous.messages)
-            {
-                return None;
-            }
-            // Only newly retained content is approximated: one token per UTF-8 byte,
-            // plus framing. This allowance intentionally overcounts ordinary text.
-            Some(
-                sizes[previous.messages.len()..]
-                    .iter()
-                    .fold(*input, |sum, bytes| {
-                        sum.saturating_add(*bytes).saturating_add(64)
-                    }),
-            )
-        });
+        let projected = snapshot
+            .as_ref()
+            .and_then(|(current, sizes)| current.projected_input(sizes, state.baseline.as_ref()));
         if projected.is_none() {
             state.baseline = None;
-            state.finish = false;
         }
         state.pending = snapshot.map(|(snapshot, _)| snapshot);
         let Some((projected, capacity)) = projected.zip(capacity) else {
@@ -149,68 +161,6 @@ impl UsageContext {
         };
         if projected.saturating_add(OUTPUT_RESERVE + SAFETY_MARGIN) >= capacity {
             return Err(context_error("The remaining context cannot safely fit a final answer. Narrow the question or start a new conversation."));
-        }
-        if state.finish
-            || projected.saturating_add(OUTPUT_RESERVE + SAFETY_MARGIN + GATHER_ALLOWANCE)
-                >= capacity
-        {
-            if let Some((guard, bytes)) = &state.legacy_admission {
-                let added = serde_json::to_vec(&Message::system(FINISH))?
-                    .len()
-                    .saturating_add(2);
-                if let Err(violation) = guard.check_context_bytes(bytes.saturating_add(added)) {
-                    drop(state);
-                    emit_guard_violation(&self.on_event, &violation);
-                    return Err(CompletionError::request(violation.message));
-                }
-            }
-            state.finish = true;
-            state.final_sent = true;
-            // The pinned engine appends its non-executable result formatter in
-            // Tool output mode. Keep that transport callable while removing all
-            // actual actions. Native/plain results have no appended formatter.
-            let result_tool = result_formatter_name(request, self.result_schema.as_ref());
-            request
-                .tools
-                .retain(|tool| result_tool.as_deref() == Some(tool.name.as_str()));
-            request.tool_choice = Some(match result_tool {
-                Some(name) => ToolChoice::Specific {
-                    function_names: vec![rig_core::message::ToolName::new(name)
-                        .map_err(|_| context_error("Invalid result tool name"))?],
-                },
-                None => ToolChoice::None,
-            });
-            // Qwen's chat template requires system content at the beginning.
-            // Preserve existing instructions and every conversation/evidence message.
-            match request.chat_history.first_mut() {
-                Some(Message::System { content }) => {
-                    content.push_str("\n\n");
-                    content.push_str(FINISH);
-                }
-                _ => request.chat_history.insert(0, Message::system(FINISH)),
-            }
-            let limit = request
-                .max_tokens
-                .unwrap_or(OUTPUT_RESERVE)
-                .min(OUTPUT_RESERVE);
-            request.max_tokens = Some(limit);
-            if let Some(Value::Object(params)) = &mut request.additional_params {
-                params.remove("tools");
-                params.remove("tool_choice");
-                for key in ["max_tokens", "max_completion_tokens", "max_output_tokens"] {
-                    if let Some(value) = params.get_mut(key) {
-                        *value = json!(value.as_u64().unwrap_or(limit).min(limit));
-                    }
-                }
-            }
-            // Never persist request contents or fingerprints in the event log.
-            let details = json!({"mode":"usage_guard", "phase":"finishing", "worker":self.worker,
-                "reportedInputTokens":state.baseline.as_ref().map(|(_, n)| n),
-                "projectedInputTokens":projected, "loadedContextTokens":capacity,
-                "reservedOutputTokens":limit, "safetyMarginTokens":SAFETY_MARGIN,
-                "gatherAllowanceTokens":GATHER_ALLOWANCE});
-            drop(state);
-            (self.on_event)(AgentEvent::ContextMeasured { details });
         }
         Ok(())
     }
@@ -222,25 +172,6 @@ impl UsageContext {
             .take()
             .zip(usage.input_tokens.filter(|n| *n > 0))
             .map(|(s, input)| (s, input));
-        if state.baseline.is_none() {
-            state.finish = false;
-            return;
-        }
-        if let Some(capacity) = state.capacity {
-            // Output is a temporary upper allowance before the next assembled
-            // request reveals exactly which assistant messages were retained.
-            state.finish |= usage
-                .input_tokens
-                .unwrap_or_default()
-                .saturating_add(usage.output_tokens.unwrap_or_default())
-                .saturating_add(OUTPUT_RESERVE + SAFETY_MARGIN + GATHER_ALLOWANCE)
-                >= capacity;
-        }
-    }
-
-    pub(super) fn finishing(&self) -> bool {
-        let state = self.state.lock().unwrap_or_else(|e| e.into_inner());
-        state.finish || state.final_sent
     }
 }
 
@@ -255,7 +186,13 @@ pub(super) fn result_formatter_name(
         request
             .tools
             .last()
-            .filter(|tool| request.output_schema.is_none() && &tool.parameters == schema)
+            .filter(|tool| {
+                request.output_schema.is_none()
+                    && (&tool.parameters == schema
+                        || crate::chat::structured_answer::unconstrained_schema(&tool.parameters)
+                            .as_ref()
+                            == Some(schema))
+            })
             .map(|tool| tool.name.to_string())
     })
 }
@@ -277,10 +214,12 @@ fn snapshot(request: &CompletionRequest) -> Option<(Snapshot, Vec<u64>)> {
     }
     let messages = value.as_object_mut()?.remove("chat_history")?;
     let messages = messages.as_array()?;
+    let source_choices_bytes = crate::chat::structured_answer::normalize_source_choices(&mut value);
     Some((
         Snapshot {
             configuration: fingerprint(&value),
             messages: messages.iter().map(fingerprint).collect(),
+            source_choices_bytes,
         },
         messages
             .iter()
@@ -311,7 +250,13 @@ mod tests {
             flex: false,
             reasoning_effort: None,
         };
-        UsageContext::new(&request, Arc::new(|_| {}), worker)
+        UsageContext::with_compaction(
+            &request,
+            Arc::new(|_| {}),
+            worker,
+            rig_core::test_utils::MockCompletionModel::text("unused summary").into(),
+            crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+        )
     }
     fn usage(input_tokens: u64) -> Usage {
         Usage::default()
@@ -325,19 +270,45 @@ mod tests {
     }
 
     #[test]
+    fn growing_source_choices_keep_usage_baseline_and_count_their_added_bytes() {
+        let context = context(false);
+        let mut request = request();
+        request.tools.push(rig_core::completion::ToolDefinition {
+            name: rig_core::message::ToolName::new("final_result").unwrap(),
+            description: "Final answer".into(),
+            parameters: crate::chat::structured_answer::schema(),
+        });
+        crate::chat::structured_answer::constrain_sources(
+            &mut request.tools.last_mut().unwrap().parameters,
+            vec!["S1".into()],
+        );
+        baseline(&context, &mut request, 1000);
+        let before = snapshot(&request).unwrap().0.source_choices_bytes;
+        crate::chat::structured_answer::constrain_sources(
+            &mut request.tools.last_mut().unwrap().parameters,
+            vec!["S1".into(), "S3".into()],
+        );
+        let after = snapshot(&request).unwrap().0.source_choices_bytes;
+        assert!(after > before);
+        assert_eq!(
+            context.projected_input(&request),
+            Some(1000 + after - before)
+        );
+    }
+
+    #[test]
     fn parent_and_worker_contexts_do_not_share_usage() {
         let parent = context(false);
         let worker = context(true);
         baseline(&parent, &mut request(), 10000);
         baseline(&worker, &mut request(), 1000);
-        assert!(parent.finishing());
-        assert!(!worker.finishing());
+        assert_eq!(parent.projected_input(&request()), Some(10000));
+        assert_eq!(worker.projected_input(&request()), Some(1000));
         let mut next = request();
         next.chat_history.push(Message::user("Continue"));
-        worker
-            .prepare_with_capacity(&mut next, Some(19000))
-            .unwrap();
-        assert_ne!(next.tool_choice, Some(ToolChoice::None));
+        worker.prepare_with_capacity(&next, Some(19000)).unwrap();
+        assert!(worker.projected_input(&next).unwrap() > 1000);
+        assert_eq!(parent.projected_input(&request()), Some(10000));
     }
 
     #[test]
@@ -346,7 +317,7 @@ mod tests {
             let context = context(false);
             let mut next = request();
             baseline(&context, &mut next, 10000);
-            assert!(context.finishing());
+            assert_eq!(context.projected_input(&next), Some(10000));
             match change {
                 0 => next.model = Some("other-model".into()),
                 1 => next.chat_history[0] = Message::system("Different instructions"),
@@ -363,10 +334,9 @@ mod tests {
                 .prepare_with_capacity(&mut next, Some(19000))
                 .unwrap();
             assert!(
-                !context.finishing(),
+                context.state.lock().unwrap().baseline.is_none(),
                 "change {change} must invalidate the baseline"
             );
-            assert_ne!(next.tool_choice, Some(ToolChoice::None));
         }
     }
 
@@ -376,13 +346,12 @@ mod tests {
         let mut next = request();
         baseline(&context, &mut next, 10000);
         context.prepare_with_capacity(&mut next, None).unwrap();
-        assert!(!context.finishing());
+        assert_eq!(context.capacity(), None);
         context.observe(Usage::new());
         context
             .prepare_with_capacity(&mut next, Some(19000))
             .unwrap();
-        assert!(!context.finishing());
-        assert_ne!(next.tool_choice, Some(ToolChoice::None));
+        assert_eq!(context.projected_input(&next), None);
     }
 
     #[test]
@@ -396,8 +365,7 @@ mod tests {
         context
             .prepare_with_capacity(&mut next, Some(19000))
             .unwrap();
-        assert!(!context.finishing());
-        assert_ne!(next.tool_choice, Some(ToolChoice::None));
+        assert_eq!(context.projected_input(&next), None);
     }
 
     #[test]
@@ -413,70 +381,5 @@ mod tests {
             .unwrap_err();
         assert!(error.to_string().contains("cannot safely fit"));
         assert_eq!(serde_json::to_value(&next).unwrap(), original);
-    }
-
-    #[test]
-    fn finalization_is_bounded_and_keeps_stricter_output_limit() {
-        let context = context(false);
-        let mut next = request();
-        next.max_tokens = Some(1000);
-        next.additional_params =
-            Some(json!({"max_tokens":500, "chat_template_kwargs":{"reasoning_effort":"medium"}}));
-        baseline(&context, &mut next, 10000);
-        context
-            .prepare_with_capacity(&mut next, Some(19000))
-            .unwrap();
-        assert_eq!(next.max_tokens, Some(1000));
-        assert_eq!(next.additional_params.as_ref().unwrap()["max_tokens"], 500);
-        assert_eq!(
-            next.additional_params.as_ref().unwrap()["chat_template_kwargs"]["reasoning_effort"],
-            "medium"
-        );
-        assert!(context
-            .prepare_with_capacity(&mut next, Some(19000))
-            .unwrap_err()
-            .to_string()
-            .contains("requested more work"));
-    }
-    #[test]
-    fn final_instructions_respect_legacy_byte_ceiling() {
-        let context = context(false);
-        let mut next = request();
-        baseline(&context, &mut next, 10000);
-        let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
-        assert!(guard.check_context_bytes(127999).is_ok());
-        context.record_admission(&guard, 127999);
-        let original = serde_json::to_value(&next).unwrap();
-        assert!(context
-            .prepare_with_capacity(&mut next, Some(19000))
-            .unwrap_err()
-            .to_string()
-            .contains("context"));
-        assert_eq!(serde_json::to_value(&next).unwrap(), original);
-    }
-
-    #[test]
-    fn finishing_instruction_is_in_the_opening_system_message() {
-        for has_system in [true, false] {
-            let context = context(false);
-            let mut next = request();
-            if !has_system {
-                next.chat_history = vec![Message::user("Question")];
-            }
-            let count = next.chat_history.len();
-            baseline(&context, &mut next, 10000);
-            context
-                .prepare_with_capacity(&mut next, Some(19000))
-                .unwrap();
-            assert!(
-                matches!(next.chat_history.first(), Some(Message::System { content }) if content.contains(FINISH))
-            );
-            assert_eq!(next.chat_history.len(), count + usize::from(!has_system));
-            if has_system {
-                assert!(
-                    matches!(next.chat_history.first(), Some(Message::System { content }) if content.contains("Keep citations"))
-                );
-            }
-        }
     }
 }

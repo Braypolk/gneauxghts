@@ -5,7 +5,7 @@
 
   const providers: { value: ChatProvider; label: string }[] = [
     { value: 'openai', label: 'ChatGPT' },
-    { value: 'local', label: 'Local' }
+    { value: 'local', label: 'Server' }
   ];
 
   let {
@@ -53,6 +53,10 @@
 
   const menuProvider = $derived(browsingProvider ?? provider);
   let previewReasoningEffort = $state<ChatReasoningEffort | null>(null);
+  let reasoningSelectionSequence = 0;
+  let pendingReasoning = $state<{
+    id: number; provider: ChatProvider; model: string; effort: ChatReasoningEffort;
+  } | null>(null);
 
   $effect(() => {
     model;
@@ -84,12 +88,32 @@
   const selectedModelLabel = $derived(
     options.find((option) => option.provider === provider && option.model === model)?.displayName ?? model
   );
+  const committedReasoningEffort = $derived(
+    pendingReasoning?.provider === provider && pendingReasoning.model === model
+      ? pendingReasoning.effort : reasoningEffort
+  );
+  const committedReasoningLabel = $derived(
+    reasoningOptions.find((option) => option.value === committedReasoningEffort)?.label ?? committedReasoningEffort
+  );
   const selectedReasoningLabel = $derived(
-    reasoningOptions.find((option) => option.value === (previewReasoningEffort ?? reasoningEffort))?.label ?? reasoningEffort
+    reasoningOptions.find((option) => option.value === (previewReasoningEffort ?? committedReasoningEffort))?.label ?? committedReasoningEffort
   );
   const selectedReasoningIndex = $derived(
-    Math.max(0, reasoningOptions.findIndex((option) => option.value === (previewReasoningEffort ?? reasoningEffort)))
+    Math.max(0, reasoningOptions.findIndex((option) => option.value === (previewReasoningEffort ?? committedReasoningEffort)))
   );
+
+  async function selectReasoning(effort: ChatReasoningEffort) {
+    if (disabled) return;
+    const id = ++reasoningSelectionSequence;
+    // Keep the accepted label through the parent's asynchronous save. Closing
+    // the popup clears its preview before the persisted prop reaches us.
+    pendingReasoning = { id, provider, model, effort };
+    try {
+      await onSelectReasoning(effort);
+    } finally {
+      if (pendingReasoning?.id === id) pendingReasoning = null;
+    }
+  }
 </script>
 
 <div class="chat-model-selector" data-slot="model-selector">
@@ -99,7 +123,7 @@
       class="chat-model-control chat-model-name"
       {disabled}
       aria-label="AI model"
-      title={`${provider === 'local' ? 'Local' : 'ChatGPT'} · ${selectedModelLabel || 'Choose model'}`}
+      title={`${provider === 'local' ? 'Server' : 'ChatGPT'} · ${selectedModelLabel || 'Choose model'}`}
       aria-expanded={modelOpen}
       aria-haspopup="dialog"
       onclick={() => !disabled && onModelOpenChange(!modelOpen)}
@@ -162,7 +186,7 @@
                 <span>Discovering models…</span>
               {:else}
                 <RefreshCw class="h-3.5 w-3.5 shrink-0" />
-                <span>Discover local models</span>
+                <span>Discover server models</span>
               {/if}
             </button>
           {/if}
@@ -187,7 +211,7 @@
 
         <form class="mt-1 space-y-2 border-t border-border/70 px-2 pb-1 pt-2" onsubmit={useCustomModel}>
           <div class="text-[11px] font-medium text-muted-foreground">
-            Use a {providerLabel} model ID
+            Use a model ID
           </div>
           <div class="flex gap-1.5">
             <input
@@ -219,7 +243,12 @@
         aria-haspopup="dialog"
         onclick={() => !disabled && onReasoningOpenChange(!reasoningOpen)}
       >
-        <span class="chat-model-effort-label">{selectedReasoningLabel}</span>
+        <span class="chat-model-effort-label">
+          {#each reasoningOptions as option (option.value)}
+            <span class="chat-model-effort-measure" aria-hidden="true">{option.label}</span>
+          {/each}
+          <span>{committedReasoningLabel}</span>
+        </span>
         <ChevronDown class="h-3 w-3 opacity-60" />
       </button>
       {#if reasoningOpen}
@@ -245,7 +274,7 @@
               }}
               onchange={(event) => {
                 const option = reasoningOptions[Number(event.currentTarget.value)];
-                if (option && !disabled) void onSelectReasoning(option.value);
+                if (option) void selectReasoning(option.value);
               }}
             />
           {/if}
@@ -254,9 +283,9 @@
               <button
                 type="button"
                 class="chat-effort-option"
-                class:chat-effort-option--active={option.value === (previewReasoningEffort ?? reasoningEffort)}
+                class:chat-effort-option--active={option.value === (previewReasoningEffort ?? committedReasoningEffort)}
                 role="menuitem"
-                onclick={() => void onSelectReasoning(option.value)}
+                onclick={() => void selectReasoning(option.value)}
               >
                 <span>{option.label}</span>
               </button>

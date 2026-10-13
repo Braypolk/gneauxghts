@@ -52,7 +52,7 @@ impl Draft {
 }
 
 // Readable schema; source identities are issued by reads later in the same run.
-pub(super) fn schema() -> Value {
+pub(crate) fn schema() -> Value {
     json!({"type":"object","additionalProperties":false,"required":["segments"],"properties":{
     "segments":{"type":"array","minItems":1,"maxItems":24,"items":{"type":"object",
     "additionalProperties":false,"required":["text","sources"],"properties":{
@@ -61,7 +61,54 @@ pub(super) fn schema() -> Value {
             "items":{"type":"string","pattern":"^S[1-9][0-9]*$"}}
     }}}}})
 }
-pub(super) const INSTRUCTIONS: &str = "Return the final answer as segments. Each segment has Markdown text and sources: an array of exact source IDs from evidence reads (citation [S1] becomes S1). Put each note-supported claim beside its supporting sources; use separate segments for claims with different support. Put no note citation markers or note links inside text. Use sources: [] for conversation-only text, uncertainty, or text supported by web links. Keep web citations as Markdown HTTPS links beside their claims. Do not invent source IDs. Return no text outside the result formatter.";
+pub(super) const INSTRUCTIONS: &str = "Return the final answer as segments. Each segment has Markdown text and sources: an array copied exactly from evidence reads' sourceId fields. Only the current formatter's allowed source IDs are selectable. Discovery evidenceId and noteId fields are retrieval selectors, never answer source IDs. Put each note-supported claim beside its supporting sources; use separate segments for claims with different support. Put no note citation markers or note links inside text. Use sources: [] for conversation-only text, uncertainty, or text supported by web links. Keep web citations as Markdown HTTPS links beside their claims. Do not invent or renumber source IDs. Return no text outside the result formatter.";
+
+/// Constrain the app's answer formatter, never a worker's selection schema or
+/// executable tool. Empty arrays remain valid before evidence has been read.
+pub(crate) fn constrain_sources(parameters: &mut Value, ids: Vec<String>) {
+    let sources = &mut parameters["properties"]["segments"]["items"]["properties"]["sources"];
+    sources["items"].as_object_mut().unwrap().remove("enum");
+    sources["maxItems"] = json!(if ids.is_empty() { 0 } else { 24 });
+    if !ids.is_empty() {
+        sources["items"]["enum"] = json!(ids);
+    }
+}
+
+/// Strip only our run-local selection annotation when matching the static
+/// formatter or fingerprinting configuration across context compactions.
+pub(crate) fn unconstrained_schema(parameters: &Value) -> Option<Value> {
+    let mut original = parameters.clone();
+    let sources = original
+        .get_mut("properties")?
+        .get_mut("segments")?
+        .get_mut("items")?
+        .get_mut("properties")?
+        .get_mut("sources")?;
+    sources.get_mut("items")?.as_object_mut()?.remove("enum");
+    if sources.get("maxItems") == Some(&json!(0)) {
+        sources["maxItems"] = json!(24);
+    }
+    (original == schema()).then_some(original)
+}
+
+pub(crate) fn normalize_source_choices(configuration: &mut Value) -> u64 {
+    let Some(tool) = configuration
+        .get_mut("tools")
+        .and_then(Value::as_array_mut)
+        .and_then(|tools| tools.last_mut())
+    else {
+        return 0;
+    };
+    let Some(schema) = unconstrained_schema(&tool["parameters"]) else {
+        return 0;
+    };
+    let added_bytes = tool["parameters"]
+        .to_string()
+        .len()
+        .saturating_sub(schema.to_string().len()) as u64;
+    tool["parameters"] = schema;
+    added_bytes
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -100,13 +147,25 @@ pub(crate) fn render(
         }
         let mut ids = HashSet::new();
         let mut links = Vec::new();
+        let mut unavailable = false;
         for id in segment.sources {
             if !ids.insert(id.clone()) {
                 return Err("Duplicate answer source".into());
             }
+            let number = id.strip_prefix('S').and_then(|n| n.parse::<usize>().ok());
+            if !number.is_some_and(|n| n > 0 && id == format!("S{n}")) {
+                return Err("Invalid answer source ID".into());
+            }
+            if references.passage_id(&id).is_none() {
+                // An invented selection grants no source authority. Match the
+                // ordinary-text citation path's visible unavailable marker
+                // instead of discarding every valid segment in the answer.
+                unavailable = true;
+                continue;
+            }
             let source = references
                 .source(&id, sources)
-                .ok_or("An answer source is unknown, stale, or no longer allowed")?;
+                .ok_or("An answer source is stale or no longer allowed")?;
             let number = delivered.entry(id).or_insert_with(|| {
                 selected.push(source.clone());
                 selected.len()
@@ -116,6 +175,9 @@ pub(crate) fn render(
                 .as_ref()
                 .ok_or("Passage identity unavailable")?;
             links.push(format!("[Source {number}](passage:{})", passage.id));
+        }
+        if unavailable {
+            links.push("[citation unavailable]".into());
         }
         let mut text = segment.text.trim().to_string();
         if !links.is_empty() {
@@ -185,7 +247,6 @@ mod tests {
         assert_eq!(selected.len(), 1);
         for invalid in [
             json!({"segments":[]}),
-            json!({"segments":[{"text":"Answer","sources":["S999"]}]}),
             json!({"segments":[{"text":"Answer","sources":["[S1]"]}]}),
             json!({"segments":[{"text":"Answer","sources":["S01"]}]}),
             json!({"segments":[{"text":"Answer","sources":["S1","S1"]}]}),
@@ -201,6 +262,27 @@ mod tests {
         assert!(render(&raw, &refs, &[]).is_err());
         assert!(render(r#"{"segments":[],"segments":[]}"#, &refs, &sources).is_err());
         assert!(render("broken JSON", &refs, &sources).is_err());
+    }
+    #[test]
+    fn unissued_selections_keep_text_and_valid_sources_without_inventing_links() {
+        let mut refs = PassageReferences::default();
+        refs.register("proof");
+        let raw = json!({"segments":[
+            {"text":"Conversation context","sources":[]},
+            {"text":"First claim","sources":["S999","S1","S998"]},
+            {"text":"Unverified claim","sources":["S999"]},
+            {"text":"Last claim","sources":["S1"]}
+        ]})
+        .to_string();
+        let (text, selected) = render(&raw, &refs, &[source()]).unwrap();
+        assert_eq!(text, "Conversation context\n\nFirst claim [Source 1](passage:proof) [citation unavailable]\n\nUnverified claim [citation unavailable]\n\nLast claim [Source 1](passage:proof)");
+        assert_eq!(selected.len(), 1);
+        // Losing an actually issued passage still blocks delivery, even when
+        // another selection in the same answer was invented.
+        assert_eq!(
+            render(&raw, &refs, &[]).unwrap_err(),
+            "An answer source is stale or no longer allowed"
+        );
     }
     #[test]
     fn structured_answer_numbers_only_selected_sources_in_display_order() {

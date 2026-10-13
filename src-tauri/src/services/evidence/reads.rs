@@ -173,7 +173,7 @@ impl EvidenceSession {
         mut continuation: ReadContinuation,
         presentation: ReadPresentation,
     ) -> Result<(Value, Vec<(PassageCitation, PathBuf, String)>), ToolError> {
-        let capacity = READ_BYTES.min(EVIDENCE_BYTES.saturating_sub(self.used()));
+        let capacity = READ_BYTES.min(self.limit().saturating_sub(self.used()));
         let mut items = Vec::new();
         let mut guidance_items = Vec::new();
         let mut sources = Vec::new();
@@ -297,7 +297,7 @@ impl EvidenceSession {
                         .len();
                     if bootstrap <= capacity
                         && following <= READ_BYTES
-                        && bootstrap + following <= EVIDENCE_BYTES.saturating_sub(self.used())
+                        && bootstrap + following <= self.limit().saturating_sub(self.used())
                     {
                         guidance_items = proposed;
                         reason = Some("guidance");
@@ -364,7 +364,11 @@ impl EvidenceSession {
             self.sequence += 1;
             self.read_continuations.insert(cursor, continuation);
         }
-        payload["remainingEvidenceBytes"] = json!(EVIDENCE_BYTES.saturating_sub(self.used()));
+        payload["remainingEvidenceBytes"] = if self.limit() == usize::MAX {
+            Value::Null
+        } else {
+            json!(self.limit().saturating_sub(self.used()))
+        };
         Ok((payload, sources))
     }
 
@@ -450,13 +454,15 @@ fn read_payload(
         .filter_map(|i| i["noteId"].as_str())
         .collect::<HashSet<_>>()
         .len();
+    // Reserve the full integer width while sizing. Admission replaces this
+    // placeholder with the actual remainder, whose digits can never cost more.
     json!({"status":if items.is_empty() && !failures.is_empty() {"limited"} else if !failures.is_empty() {"partial"} else {"ready"},
         "items":items,"failures":failures,"nextCursor":cursor,"truncated":more,"truncationReason":reason,
         "notesRead":notes,"delivery":{"complete":!more && failures.is_empty(),"hasMore":more},
         "provenance":{"hasMore":items.iter().any(|i| !i["nextProvenanceOffset"].is_null())},
         "supportingContextMeaning":"Current context does not establish activity during the requested period",
         "statusMeaning":"Recorded status is not independent proof of real-world completion. Historical text requires a current-status check; an unchanged proposal is not an outstanding commitment",
-        "remainingEvidenceBytes":24000})
+        "remainingEvidenceBytes":usize::MAX})
 }
 
 // The complete parent-facing envelope is sized before evidence is charged or admitted.

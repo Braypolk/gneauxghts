@@ -171,6 +171,7 @@ describe('chat controller configuration', () => {
       acceptedMimeTypes: ['text/plain'],
       tools: true,
       defaultReasoningEffort: 'xhigh',
+      reasoningOptions: ['off', 'low', 'medium', 'xhigh', 'on'],
     });
     const controller = createChatController(fake.api);
     await controller.initialize('conversation-1');
@@ -186,5 +187,27 @@ describe('chat controller configuration', () => {
     expect(controller.getSnapshot().conversation?.reasoningEffort).toBe('xhigh');
   });
 
+  it('persists advertised toggles and normalizes an unsupported old level on model selection', async () => {
+    const fake = fakeApi();
+    vi.mocked(fake.api.getModelCapabilities).mockResolvedValue({
+      images: false, audio: false, video: false, files: true, acceptedMimeTypes: [], tools: true,
+      defaultReasoningEffort: 'on', reasoningOptions: ['off', 'on']
+    });
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    await controller.setProvider('local', 'arbitrary-server-model');
+    expect(fake.api.setConversationProvider).toHaveBeenLastCalledWith(
+      'conversation-1', 'local', 'arbitrary-server-model', 'on'
+    );
+    await controller.setReasoningEffort('off');
+    expect(fake.api.setConversationProvider).toHaveBeenLastCalledWith(
+      'conversation-1', 'local', 'arbitrary-server-model', 'off'
+    );
+    expect(controller.getSnapshot().conversation?.reasoningEffort).toBe('off');
+    await controller.setReasoningEffort('medium');
+    expect(fake.api.setConversationProvider).toHaveBeenLastCalledWith(
+      'conversation-1', 'local', 'arbitrary-server-model', 'on'
+    );
+  });
 
 });

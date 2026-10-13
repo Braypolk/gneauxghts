@@ -76,7 +76,7 @@ impl EvidenceSession {
         mut request: SearchRequest,
         resolved: ResolvedPeriod,
     ) -> Result<Value, ToolError> {
-        if self.used() >= EVIDENCE_BYTES {
+        if self.used() >= self.limit() {
             return Err(ToolError::evidence_budget());
         }
         request.limit = Some(request.limit.unwrap_or(8).clamp(1, 20));
@@ -277,7 +277,7 @@ impl EvidenceSession {
         stop_reasons.sort();
         stop_reasons.dedup();
         let budgets = json!({
-            "modelEvidence": {"usedBytes": self.used(), "limitBytes": EVIDENCE_BYTES},
+            "modelEvidence": {"usedBytes": self.used(), "limitBytes": self.reported_limit()},
             "inventory": {"usedBytes": inventory_bytes, "limitBytes": INVENTORY_BYTES, "accounting": "conservative serialized rows and sources allowance"},
             "display": {"rows": rows.len(), "limitRows": limit},
             "retrieval": {"candidateLimit": WORK_LIMIT, "coverage": gathered["coverage"]},

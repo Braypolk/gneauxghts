@@ -47,6 +47,7 @@
 
   let discoveredModels = $state<LocalModel[]>([]);
   let capabilitiesByModel = $state<Record<string, LocalModelCapabilitySelection>>({});
+  let metadataByModel = $state<Record<string, ChatModelCapabilities>>({});
   let isDiscovering = $state(false);
   let discoveryError = $state<string | null>(null);
   let showManualEntry = $state(false);
@@ -58,7 +59,7 @@
 
   const models = $derived(mergeLocalModels(discoveredModels, selectedModel));
   const reasoningOptions = $derived(
-    editingModel ? chatReasoningChoices('local', editingModel) : []
+    editingModel ? chatReasoningChoices('local', editingModel, metadataByModel[editingModel]) : []
   );
 
   function errorText(value: unknown, fallback: string) {
@@ -80,9 +81,11 @@
   }
 
   async function loadCapabilities(model: string) {
-    const capabilities = capabilitySelection(
-      await api.getModelCapabilities('local', model)
-    );
+    const endpoint = baseUrl;
+    const metadata = await api.getModelCapabilities('local', model, endpoint);
+    if (endpoint !== baseUrl) throw new Error('Server endpoint changed while loading model capabilities.');
+    metadataByModel = { ...metadataByModel, [model]: metadata };
+    const capabilities = capabilitySelection(metadata);
     capabilitiesByModel = { ...capabilitiesByModel, [model]: capabilities };
     return capabilities;
   }
@@ -206,8 +209,8 @@
       <button
         type="button"
         class="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
-        aria-label="Refresh local models"
-        title="Refresh models from the local endpoint"
+        aria-label="Refresh server models"
+        title="Refresh models from the server endpoint"
         disabled={isDiscovering}
         onclick={() => void refreshModels()}
       >
@@ -232,12 +235,12 @@
 
   {#if showManualEntry}
     <form class="flex gap-2 border-b border-border/70 bg-muted/20 p-3" onsubmit={(event) => { event.preventDefault(); void addManualModel(); }}>
-      <label class="sr-only" for="manual-local-model">Local model ID</label>
+      <label class="sr-only" for="manual-local-model">Server model ID</label>
       <input
         id="manual-local-model"
         class="settings-control min-w-0 flex-1"
         bind:value={manualModel}
-        placeholder="Model ID from LM Studio"
+        placeholder="Model ID from your server"
         spellcheck="false"
       />
       <button
@@ -275,7 +278,7 @@
                 {#if capabilities.images}<Eye class="h-3.5 w-3.5" aria-label="Vision" />{/if}
                 {#if capabilities.audio}<Headphones class="h-3.5 w-3.5" aria-label="Audio" />{/if}
                 {#if capabilities.video}<Video class="h-3.5 w-3.5" aria-label="Video" />{/if}
-                {#if chatReasoningChoices('local', model.id).length}
+                {#if chatReasoningChoices('local', model.id, metadataByModel[model.id]).length}
                   <Brain class="h-3.5 w-3.5" aria-label={`Reasoning: ${capabilities.reasoningEffort}`} />
                 {/if}
               </span>

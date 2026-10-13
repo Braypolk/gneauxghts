@@ -16,7 +16,7 @@ use crate::{
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{HashMap, HashSet, VecDeque},
     fs,
     path::PathBuf,
     sync::{
@@ -29,6 +29,19 @@ const WORK_LIMIT: usize = 4096;
 pub(crate) const EVIDENCE_BYTES: usize = 24_000;
 pub(crate) const READ_BYTES: usize = 6_000;
 const PREVIEW_BYTES: usize = 480;
+
+struct EvidenceBudget {
+    used: AtomicUsize,
+    limit: AtomicUsize,
+}
+impl Default for EvidenceBudget {
+    fn default() -> Self {
+        Self {
+            used: AtomicUsize::new(0),
+            limit: AtomicUsize::new(EVIDENCE_BYTES),
+        }
+    }
+}
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(default, deny_unknown_fields)]
@@ -103,11 +116,17 @@ pub(crate) struct EvidenceSession {
     delivered_guidance: guidance::Guidance,
     candidates: HashMap<String, Candidate>,
     searches: HashMap<String, (String, String, Vec<String>, Value)>,
+    search_order: VecDeque<String>,
+    // Cursor eviction must not forget the scope/version behind earlier findings.
+    retired_search_scopes: Vec<(String, String)>,
     admitted: HashMap<String, PassageCitation>,
     // Text delivered into this runtime's context, separate from discovery's
     // freshness proofs. Forked workers have independent histories.
     read_passages: HashMap<String, PassageCitation>,
-    used_bytes: Arc<AtomicUsize>,
+    budget: Arc<EvidenceBudget>,
+    // Independent worker histories spend the same budget but cannot spend the
+    // room retained for their parent-facing handoff and a subsequent read.
+    reserved_for_parent: usize,
     sequence: usize,
     blocked_reads: HashSet<String>,
     read_continuations: HashMap<String, reads::ReadContinuation>,
@@ -265,12 +284,14 @@ impl EvidenceSession {
         Self {
             anchor: self.anchor.clone(),
             candidates: self.candidates.clone(),
-            used_bytes: self.used_bytes.clone(),
+            budget: self.budget.clone(),
+            reserved_for_parent: self.reserved_for_parent,
             ..Default::default()
         }
     }
     pub(crate) fn fork_for_period(&self, temporal: bool) -> Self {
         let mut fork = self.fork();
+        fork.reserved_for_parent = READ_BYTES * 2;
         if temporal {
             fork.candidates.clear();
         }
@@ -404,18 +425,40 @@ impl EvidenceSession {
     }
 
     pub(super) fn used(&self) -> usize {
-        self.used_bytes.load(Ordering::SeqCst)
+        self.budget.used.load(Ordering::SeqCst)
+    }
+    pub(crate) fn configure_allowance(&self, bytes: Option<usize>) {
+        // Refresh the limit without resetting spending, including when capacity
+        // shrinks or disappears. Workers must never renew the parent's allowance.
+        self.budget
+            .limit
+            .store(bytes.unwrap_or(EVIDENCE_BYTES), Ordering::SeqCst);
+    }
+    pub(super) fn limit(&self) -> usize {
+        let limit = self.budget.limit.load(Ordering::SeqCst);
+        if limit == usize::MAX {
+            limit
+        } else {
+            limit.saturating_sub(self.reserved_for_parent)
+        }
+    }
+    pub(super) fn reported_limit(&self) -> Value {
+        if self.limit() == usize::MAX {
+            Value::Null
+        } else {
+            json!(self.limit())
+        }
     }
     fn reserve(&self, bytes: usize) -> bool {
-        self.used_bytes
+        self.budget
+            .used
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |used| {
-                used.checked_add(bytes)
-                    .filter(|next| *next <= EVIDENCE_BYTES)
+                used.checked_add(bytes).filter(|next| *next <= self.limit())
             })
             .is_ok()
     }
     pub(crate) fn admit_context(&mut self, text: &str, max: usize) -> Result<String, ToolError> {
-        let remaining = EVIDENCE_BYTES.saturating_sub(self.used());
+        let remaining = self.limit().saturating_sub(self.used());
         if remaining == 0 {
             return Err(ToolError::evidence_budget());
         }
@@ -445,17 +488,16 @@ impl EvidenceSession {
     ) -> Result<Value, ToolError> {
         let resolved = self.normalize_request(&mut request)?;
         check_cancelled(&request)?;
-        if !collect_only && self.used() >= EVIDENCE_BYTES {
+        if !collect_only && self.used() >= self.limit() {
             return Err(ToolError::evidence_budget());
         }
         if request
             .note_ids
             .as_ref()
             .is_some_and(|ids| ids.len() > WORK_LIMIT)
-            || (request.cursor.is_none() && self.searches.len() >= 32)
         {
             return Err(ToolError::work_budget(
-                "Search scope or session work budget exceeded",
+                "Search scope exceeds the per-query work allowance",
             ));
         }
         if request.query.len() > 1024 {
@@ -1019,7 +1061,18 @@ impl EvidenceSession {
         for c in candidates {
             self.candidates.insert(c.citation.id.clone(), c);
         }
-        let coverage = json!({"kind":"retrieval","historyScope":if request.include_history {"Retained body and property line changes; excludes discarded within-window states, cleared history, title and lifecycle events"} else {"Current content only; activity dates apply to surviving ranges"},"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":EVIDENCE_BYTES,"usedBytes":self.used()}});
+        let coverage = json!({"kind":"retrieval","historyScope":if request.include_history {"Retained body and property line changes; excludes discarded within-window states, cleared history, title and lifecycle events"} else {"Current content only; activity dates apply to surviving ranges"},"lexical":lexical,"semantic":semantic,"notesInspected":inspected,"notesInspectedMeaning":"Current documents inspected, not the number searched by the lexical index; lexical queries cover the scoped index","notesInScope":ids.len(),"candidatesMatched":result_ids.len(),"gaps":gaps,"complete":gaps.is_empty() && semantic != "error" && semantic != "warming" && semantic != "unavailable" && semantic != "degraded" && semantic != "disabled", "period":period,"scope":{"noteIds":request.note_ids,"folder":request.folder},"budget":{"evidenceBytes":self.reported_limit(),"usedBytes":self.used()}});
+        if !self.searches.contains_key(&key) {
+            while self.search_order.len() >= 32 {
+                if let Some(expired) = self.search_order.pop_front() {
+                    if let Some((version, binding, _, _)) = self.searches.remove(&expired) {
+                        self.retired_search_scopes.push((version, binding));
+                    }
+                    self.inventories.remove(&expired);
+                }
+            }
+            self.search_order.push_back(key.clone());
+        }
         self.searches.insert(
             key.clone(),
             (version, binding, result_ids.clone(), coverage.clone()),
@@ -1038,7 +1091,7 @@ impl EvidenceSession {
         ids: &[String],
         offset: usize,
         limit: usize,
-        coverage: Value,
+        mut coverage: Value,
     ) -> Result<Value, ToolError> {
         if offset > ids.len() {
             return Err(ToolError::invalid("Invalid search offset"));
@@ -1062,6 +1115,7 @@ impl EvidenceSession {
             self.admit(c.citation.clone());
             items.push(json!({"evidenceId":id,"noteId":c.citation.note_id,"title":bounded(&c.title,240),"section":bounded(&c.section,160),"preview":preview,"score":c.score,"location":c.citation.location,"hasTemporalEvidence":c.provenance.is_some(),"sourceKind":if c.citation.historical.is_some() {"retained_note_change"} else {"current_note"},"historical":c.citation.historical,"task":c.task,"alreadyRead":self.already_read(&c.citation)}));
         }
+        coverage["budget"] = json!({"evidenceBytes":self.reported_limit(),"usedBytes":self.used()});
         Ok(
             json!({"status":"ready","items":items,"nextCursor":(next<ids.len()).then(|| format!("{key}:{next}")),"truncated":next<ids.len(),"budgetExhausted":next==offset && next<ids.len(),"delivery":{"kind":"previews","complete":next>=ids.len(),"hasMore":next<ids.len()},"coverage":coverage}),
         )
@@ -1233,27 +1287,36 @@ impl EvidenceSession {
         self.admitted
             .values()
             .all(|c| validate_citation(state, c, allowed, excluded).is_some())
-            && self.searches.values().all(|(version, binding, _, _)| {
-                let Some(ids) = serde_json::from_str::<SearchBinding>(binding)
-                    .ok()
-                    .and_then(|r| scope_ids(state, allowed, excluded, &r.request).ok())
-                else {
-                    return false;
-                };
-                let mut key: Vec<_> = ids.iter().cloned().collect();
-                key.sort();
-                // Only share disk work within this validation pass. The next
-                // boundary must observe edits and permission changes again.
-                let current = if let Some(current) = versions.get(&key) {
-                    current
-                } else {
-                    let Ok(current) = fingerprint(state, &ids) else {
+            && self
+                .searches
+                .values()
+                .map(|(version, binding, _, _)| (version, binding))
+                .chain(
+                    self.retired_search_scopes
+                        .iter()
+                        .map(|(version, binding)| (version, binding)),
+                )
+                .all(|(version, binding)| {
+                    let Some(ids) = serde_json::from_str::<SearchBinding>(binding)
+                        .ok()
+                        .and_then(|r| scope_ids(state, allowed, excluded, &r.request).ok())
+                    else {
                         return false;
                     };
-                    versions.entry(key).or_insert(current)
-                };
-                current == version
-            })
+                    let mut key: Vec<_> = ids.iter().cloned().collect();
+                    key.sort();
+                    // Only share disk work within this validation pass. The next
+                    // boundary must observe edits and permission changes again.
+                    let current = if let Some(current) = versions.get(&key) {
+                        current
+                    } else {
+                        let Ok(current) = fingerprint(state, &ids) else {
+                            return false;
+                        };
+                        versions.entry(key).or_insert(current)
+                    };
+                    current == version
+                })
     }
 }
 

@@ -7,7 +7,7 @@ use std::{
 
 #[derive(Clone, Debug)]
 pub(crate) struct AgentRunLimits {
-    pub(crate) max_elapsed: Duration,
+    pub(crate) max_elapsed: Option<Duration>,
     pub(crate) max_context_bytes: usize,
     pub(crate) max_tool_calls: usize,
     pub(crate) max_aggregate_tokens: u64,
@@ -17,10 +17,10 @@ pub(crate) struct AgentRunLimits {
 impl Default for AgentRunLimits {
     fn default() -> Self {
         Self {
-            max_elapsed: Duration::from_secs(15 * 60),
-            max_context_bytes: 128_000,
-            max_tool_calls: 96,
-            max_aggregate_tokens: 400_000,
+            max_elapsed: None,
+            max_context_bytes: usize::MAX,
+            max_tool_calls: usize::MAX,
+            max_aggregate_tokens: u64::MAX,
             max_repeated_tool_calls: 3,
         }
     }
@@ -64,10 +64,13 @@ impl AgentRunGuard {
         }
     }
 
-    pub(crate) fn deadline_remaining(&self) -> Result<Duration, AgentGuardViolation> {
-        self.limits
-            .max_elapsed
+    pub(crate) fn deadline_remaining(&self) -> Result<Option<Duration>, AgentGuardViolation> {
+        let Some(max_elapsed) = self.limits.max_elapsed else {
+            return Ok(None);
+        };
+        max_elapsed
             .checked_sub(self.started.elapsed())
+            .map(Some)
             .ok_or_else(|| AgentGuardViolation {
                 reason: "timeBudgetExceeded",
                 message: "The agent stopped after reaching its time limit.".to_string(),
@@ -90,6 +93,11 @@ impl AgentRunGuard {
             });
         }
         let signature = format!("{name}:{}", canonical_json(args));
+        // Detect a stalled sequence, rather than banning a legitimate re-read
+        // later in a long run or after compaction.
+        if !state.tool_signatures.contains_key(&signature) {
+            state.tool_signatures.clear();
+        }
         let repeated = state.tool_signatures.entry(signature).or_default();
         *repeated += 1;
         if *repeated > self.limits.max_repeated_tool_calls {
@@ -202,6 +210,28 @@ mod tests {
         assert!(parent.add_tokens(1).is_err());
         assert!(worker.check_context_bytes(21).is_err());
         assert!(worker.check_context_bytes(20).is_ok());
+    }
+
+    #[test]
+    fn rereads_after_other_progress_are_not_a_cumulative_loop_quota() {
+        let guard = AgentRunGuard::new(Default::default());
+        for index in 0..8 {
+            guard
+                .begin_tool(
+                    &format!("read-{index}"),
+                    "read_notes",
+                    r#"{"note_id":"one"}"#,
+                )
+                .unwrap();
+            guard
+                .begin_tool(
+                    &format!("next-{index}"),
+                    "read_notes",
+                    &format!(r#"{{"cursor":"page-{index}"}}"#),
+                )
+                .unwrap();
+        }
+        assert!(guard.deadline_remaining().unwrap().is_none());
     }
 
     #[test]

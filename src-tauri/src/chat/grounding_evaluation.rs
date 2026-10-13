@@ -98,7 +98,7 @@ fn live_answer_grounding_comparison() {
                         cancelled: tokio_util::sync::CancellationToken::new(),
                         on_event: Arc::new(|_| {}), permissions: None,
                     },
-                    AgentRunGuard::new(AgentRunLimits { max_elapsed: Duration::from_secs(90), ..Default::default() }),
+                    AgentRunGuard::new(AgentRunLimits { max_elapsed: Some(Duration::from_secs(90)), ..Default::default() }),
                 ));
                 let mut row = json!({"case":case["id"],"variant":label,"repeat":repeat+1,"latencyMillis":start.elapsed().as_millis(),"rubric":case["expected"],"candidatePreamble":candidate});
                 match response {

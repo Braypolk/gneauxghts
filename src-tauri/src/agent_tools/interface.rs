@@ -31,6 +31,40 @@ fn variant_schema(mut schema: Value, tag: &str, variant: &str) -> Value {
     schema
 }
 
+fn tagged_object_schema(tag: &str, variants: Vec<(&str, Value)>) -> Value {
+    // Compatible servers require root properties even when oneOf fully
+    // describes the object. Expose the union while keeping each closed branch
+    // authoritative. Shared arguments can have different constraints (e.g.
+    // create allows empty markdown, while replace requires a nonempty body).
+    let tags: Vec<_> = variants.iter().map(|(name, _)| *name).collect();
+    let mut arguments = std::collections::BTreeMap::<String, Vec<Value>>::new();
+    let variants: Vec<_> = variants
+        .iter()
+        .map(|(name, schema)| {
+            for (argument, schema) in schema["properties"].as_object().unwrap() {
+                let choices = arguments.entry(argument.clone()).or_default();
+                if !choices.contains(schema) {
+                    choices.push(schema.clone());
+                }
+            }
+            variant_schema(schema.clone(), tag, name)
+        })
+        .collect();
+    let mut properties: serde_json::Map<String, Value> = arguments
+        .into_iter()
+        .map(|(argument, mut choices)| {
+            let schema = if choices.len() == 1 {
+                choices.remove(0)
+            } else {
+                json!({"anyOf": choices})
+            };
+            (argument, schema)
+        })
+        .collect();
+    properties.insert(tag.into(), json!({"type":"string","enum":tags}));
+    json!({"type":"object","properties":properties,"required":[tag],"oneOf":variants,"additionalProperties":false})
+}
+
 fn require_capability(
     context: &AgentToolContext,
     capability: Capability,
@@ -53,7 +87,7 @@ impl Tool for ReadNotesTool {
     fn description(&self) -> String {
         let mut description = String::new();
         if self.0.capabilities.contains(Capability::Evidence) {
-            description.push_str("purpose=answer: Read evidence IDs or a known canonical note; continue with purpose and cursor only. Cite exact returned [S#] references; the app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status. coverage.complete applies to coverage.scope across pages. Only wholeNoteComplete establishes a complete current note in this read; nextReads supplies selectors when needed. Coverage excludes cleared history and discarded Editing Window states; it is not a complete real-world record.");
+            description.push_str("purpose=answer: Read evidence IDs or a known canonical note; continue with purpose and cursor only. Copy each returned sourceId into final segment sources; citation is its Markdown label. evidenceId and noteId are retrieval selectors, not citation IDs. The app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status. coverage.complete applies to coverage.scope across pages. Only wholeNoteComplete establishes a complete current note in this read; nextReads supplies selectors when needed. Coverage excludes cleared history and discarded Editing Window states; it is not a complete real-world record.");
         }
         if self.0.capabilities.contains(Capability::WorkingNotes) {
             description.push_str(" purpose=edit: Read bounded working-copy pages for reviewed changes; lines are 1-based. pendingChanges is unapproved content, not answer evidence. Use returned contentHash when proposing changes.");
@@ -64,20 +98,12 @@ impl Tool for ReadNotesTool {
     fn parameters(&self) -> Value {
         let mut variants = Vec::new();
         if self.0.capabilities.contains(Capability::Evidence) {
-            variants.push(variant_schema(
-                ReadEvidenceTool(self.0.clone()).parameters(),
-                "purpose",
-                "answer",
-            ));
+            variants.push(("answer", ReadEvidenceTool(self.0.clone()).parameters()));
         }
         if self.0.capabilities.contains(Capability::WorkingNotes) {
-            variants.push(variant_schema(
-                ReadNoteTool(self.0.clone()).parameters(),
-                "purpose",
-                "edit",
-            ));
+            variants.push(("edit", ReadNoteTool(self.0.clone()).parameters()));
         }
-        json!({"type":"object","oneOf":variants})
+        tagged_object_schema("purpose", variants)
     }
 
     async fn call(
@@ -161,11 +187,17 @@ impl Tool for ProposeNoteChangeTool {
     }
 
     fn parameters(&self) -> Value {
-        json!({"type":"object","oneOf":[
-            variant_schema(ProposeNoteEditsTool(self.0.clone()).parameters(), "operation", "edit"),
-            variant_schema(ProposeNoteRewriteTool(self.0.clone()).parameters(), "operation", "replace"),
-            variant_schema(ProposeCreateNoteTool(self.0.clone()).parameters(), "operation", "create")
-        ]})
+        tagged_object_schema(
+            "operation",
+            vec![
+                ("edit", ProposeNoteEditsTool(self.0.clone()).parameters()),
+                (
+                    "replace",
+                    ProposeNoteRewriteTool(self.0.clone()).parameters(),
+                ),
+                ("create", ProposeCreateNoteTool(self.0.clone()).parameters()),
+            ],
+        )
     }
 
     async fn call(

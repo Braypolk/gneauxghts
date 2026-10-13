@@ -103,6 +103,15 @@ impl AgentToolContext {
         crate::chat::structured_answer::render(text, &references, &sources)
     }
 
+    pub(crate) fn answer_source_ids(&self) -> Result<Vec<String>, String> {
+        let sources = self.sources();
+        let references = self
+            .passage_references
+            .lock()
+            .map_err(|_| "Citations unavailable")?;
+        Ok(references.source_ids(&sources))
+    }
+
     pub(super) fn admit_context(&self, text: &str, max: usize) -> Result<String, AgentToolError> {
         self.evidence
             .lock()
@@ -479,7 +488,7 @@ impl Tool for ReadEvidenceTool {
     type Args = ReadEvidenceArgs;
     type Output = Value;
     fn description(&self) -> String {
-        "Read evidence IDs or a known canonical note; continue with cursor only. Cite returned [S#] references; the app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status before answering. Coverage excludes cleared history and discarded Editing Window states, and cannot establish a complete real-world record.".into()
+        "Read evidence IDs or a known canonical note; continue with cursor only. Copy returned sourceId into final segment sources; the app builds links. evidenceId and noteId are retrieval selectors, not citation IDs. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status before answering. Coverage excludes cleared history and discarded Editing Window states, and cannot establish a complete real-world record.".into()
     }
     fn parameters(&self) -> Value {
         json!({"type":"object","properties":{

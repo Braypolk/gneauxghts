@@ -1,4 +1,8 @@
+mod compaction;
+mod compatible_chat;
 mod context_measurement;
+pub(crate) mod local_reasoning;
+mod model_metadata;
 mod openai_model;
 mod result_stream;
 mod usage_context;
@@ -24,9 +28,9 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use url::Url;
 
-// High enough for long research/editing runs while retaining a final guard
-// against a provider getting stuck in an unbounded tool-call loop.
-pub(crate) const MAX_MODEL_CALLS: usize = 64;
+// Progress can continue across context compactions. Malformed output and
+// repeated identical actions retain their separate recovery guards.
+pub(crate) const MAX_MODEL_CALLS: usize = usize::MAX;
 pub(crate) const MAX_INVALID_TOOL_RETRIES: usize = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -84,6 +88,21 @@ pub(crate) struct AgentUsage {
     pub(crate) reasoning_tokens: u64,
 }
 
+impl AgentUsage {
+    fn add(&mut self, other: &Self) {
+        macro_rules! add { ($($field:ident),*) => { $(self.$field = self.$field.saturating_add(other.$field);)* }; }
+        add!(
+            input_tokens,
+            output_tokens,
+            total_tokens,
+            cached_input_tokens,
+            cache_creation_input_tokens,
+            tool_use_prompt_tokens,
+            reasoning_tokens
+        );
+    }
+}
+
 impl From<Usage> for AgentUsage {
     fn from(value: Usage) -> Self {
         Self {
@@ -109,7 +128,11 @@ pub(crate) struct AgentPlanEntry {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(tag = "type", rename_all = "camelCase")]
+#[serde(
+    tag = "type",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
 pub(crate) enum AgentEvent {
     /// Internal transient result arguments; chat decodes them before UI delivery.
     ResultStream {
@@ -120,17 +143,30 @@ pub(crate) enum AgentEvent {
         delta: String,
     },
     ToolCallUpdated {
+        #[serde(alias = "call_id")]
         call_id: String,
         name: String,
         title: String,
         status: String,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(default, alias = "step_index", skip_serializing_if = "Option::is_none")]
         step_index: Option<usize>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            alias = "input_summary",
+            skip_serializing_if = "Option::is_none"
+        )]
         input_summary: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            alias = "output_summary",
+            skip_serializing_if = "Option::is_none"
+        )]
         output_summary: Option<String>,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[serde(
+            default,
+            alias = "duration_millis",
+            skip_serializing_if = "Option::is_none"
+        )]
         duration_millis: Option<u64>,
     },
     StepUpdated {
@@ -144,18 +180,21 @@ pub(crate) enum AgentEvent {
         message: String,
     },
     ProposalLinked {
+        #[serde(alias = "proposal_id")]
         proposal_id: String,
         title: String,
         kind: String,
     },
     ContextUpdated {
         compacted: bool,
+        #[serde(alias = "selected_note_titles")]
         selected_note_titles: Vec<String>,
     },
     PlanUpdated {
         entries: Vec<AgentPlanEntry>,
     },
     UsageUpdated {
+        #[serde(alias = "call_index")]
         call_index: usize,
         aggregate: AgentUsage,
     },
@@ -175,6 +214,7 @@ pub(crate) enum AgentEvent {
         request: crate::agent_permissions::AgentPermissionRequest,
     },
     PermissionResolved {
+        #[serde(alias = "permission_id")]
         permission_id: String,
         resolution: crate::agent_permissions::AgentPermissionResolution,
     },
@@ -203,6 +243,7 @@ pub(crate) struct AgentRuntimeObserver {
 
 #[derive(Clone)]
 struct RuntimeEventHook {
+    compatible_chat: bool,
     web_search_selection: Arc<openai_model::WebSearchSelection>,
     on_event: AgentEventSink,
     cancelled: CancellationToken,
@@ -221,15 +262,15 @@ impl AgentHook for RuntimeEventHook {
         _context: &HookContext,
         event: HookCompletionCall<'_>,
     ) -> CompletionCallAction {
-        let bytes = serde_json::to_vec(&(event.prompt, event.history))
-            .map(|b| b.len())
-            .unwrap_or(usize::MAX);
-        if let Err(violation) = self.guard.check_context_bytes(bytes) {
-            emit_guard_violation(&self.on_event, &violation);
-            return CompletionCallAction::stop(violation.message);
-        }
-        if let Some(context) = &self.context {
-            context.record_admission(&self.guard, bytes);
+        // Context-managed runs check the projected context after compaction.
+        if self.context.is_none() {
+            let bytes = serde_json::to_vec(&(event.prompt, event.history))
+                .map(|b| b.len())
+                .unwrap_or(usize::MAX);
+            if let Err(violation) = self.guard.check_context_bytes(bytes) {
+                emit_guard_violation(&self.on_event, &violation);
+                return CompletionCallAction::stop(violation.message);
+            }
         }
         if let Some(context) = &self.evidence_context {
             if let Err(error) = context.validate_context() {
@@ -255,9 +296,33 @@ impl AgentHook for RuntimeEventHook {
     ) -> DispatchAction {
         if let EffectKind::Completion { request, stream } = event.kind {
             let mut request = request.clone();
+            if self.compatible_chat {
+                compatible_chat::merge_system_messages(&mut request.chat_history);
+            }
+            if let (Some(result_stream), Some(tools)) = (&self.result_stream, &self.tools) {
+                if let Err(error) = result_stream.constrain_sources(&mut request, tools) {
+                    return DispatchAction::stop(error);
+                }
+            }
             if let Some(context) = &self.context {
-                if let Err(error) = context.prepare(&mut request).await {
-                    return DispatchAction::stop(error.to_string());
+                let compacted = match context.prepare(&mut request).await {
+                    Ok(compacted) => compacted,
+                    Err(error) => return DispatchAction::stop(error.to_string()),
+                };
+                // Summary inference can take time. Recheck sources after that
+                // await before sending the continuation to the provider.
+                if compacted {
+                    if let Some(evidence) = &self.evidence_context {
+                        if let Err(error) = evidence.validate_context() {
+                            return DispatchAction::stop(error);
+                        }
+                    }
+                }
+                if self.cancelled.is_cancelled() {
+                    return DispatchAction::stop("Request cancelled");
+                }
+                if let Some(tools) = self.tools.as_ref().or(self.evidence_context.as_ref()) {
+                    tools.configure_evidence_allowance(Some(usize::MAX));
                 }
             }
             self.web_search_selection.prepare(&mut request);
@@ -281,15 +346,8 @@ impl AgentHook for RuntimeEventHook {
             .call_id
             .expect("tool dispatch has call identity")
             .to_string();
-        if self
-            .context
-            .as_ref()
-            .is_some_and(|context| context.finishing())
-        {
-            return DispatchAction::skip(usage_context::FINISH);
-        }
         if let Some(tools) = &self.tools {
-            if let Err(error) = tools.check_worker_call() {
+            if let Err(error) = tools.check_cancelled() {
                 return DispatchAction::skip(error.payload().to_string());
             }
         }
@@ -693,7 +751,9 @@ impl AgentRuntime {
                     .take()
                     .filter(|value| !value.trim().is_empty())
                     .ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
-                let client = openai::OpenAI::new(key);
+                let client = openai::OpenAIConfig::new(key)
+                    .with_base_url(openai_api_base_url()?)
+                    .client();
                 let mut model = client.responses(&request.model);
                 if request.enable_web {
                     model.wire = model
@@ -709,7 +769,7 @@ impl AgentRuntime {
                 run_model(model, request, tools, params, observer, guard).await
             }
             AgentProvider::Local => {
-                ensure_local_desktop()?;
+                ensure_compatible_chat_supported()?;
                 validate_local_base_url(&request.local_base_url)?;
                 // Rig requires a bearer token even when the compatible server
                 // does not. Use the provider's credential when configured and
@@ -723,7 +783,16 @@ impl AgentRuntime {
                     .with_base_url(&request.local_base_url)
                     .client();
                 let model = client.chat(&request.model);
-                let params = local_parameters(request.reasoning_effort.as_deref());
+                let reasoning = local_reasoning::discover(
+                    &request.local_base_url,
+                    request.api_key.as_deref(),
+                    &request.model,
+                )
+                .await;
+                let params = local_parameters(local_reasoning::wire_effort(
+                    reasoning.as_ref(),
+                    request.reasoning_effort.as_deref(),
+                ));
                 run_model(model, request, tools, params, observer, guard).await
             }
         }
@@ -875,10 +944,13 @@ async fn run_model_with_measurement(
         .output_schema
         .clone()
         .map(result_stream::ResultStream::new);
-    let context = usage_context::UsageContext::new(
+    let model = model.into();
+    let context = usage_context::UsageContext::with_compaction(
         &request,
         observer.on_event.clone(),
         tools.as_ref().is_some_and(|t| t.is_research_worker()),
+        model.clone(),
+        guard.clone(),
     );
     let hook_context = tools.clone();
     let hook_tools = tools.clone();
@@ -890,6 +962,7 @@ async fn run_model_with_measurement(
         builder
     };
     let builder = builder.add_hook(RuntimeEventHook {
+        compatible_chat: request.provider == AgentProvider::Local,
         web_search_selection: Arc::default(),
         on_event: Arc::clone(&observer.on_event),
         cancelled: observer.cancelled.clone(),
@@ -987,7 +1060,7 @@ async fn drive_agent(
             _ = observer.cancelled.cancelled() => {
                 return Err("Request cancelled".to_string());
             },
-            _ = tokio::time::sleep(remaining) => {
+            _ = async { match remaining { Some(duration) => tokio::time::sleep(duration).await, None => std::future::pending::<()>().await } } => {
                 let violation = crate::agent_guardrails::AgentGuardViolation {
                     reason: "timeBudgetExceeded",
                     message: "The agent stopped after reaching its time limit.".to_string(),
@@ -1035,9 +1108,13 @@ async fn drive_agent(
                     status: "completed".to_string(),
                     usage: Some(call.usage.into()),
                 });
+                let mut reported = aggregate_usage.clone();
+                if let Some(context) = &context {
+                    reported.add(&context.compaction_usage());
+                }
                 (observer.on_event)(AgentEvent::UsageUpdated {
                     call_index: call.call_index,
-                    aggregate: aggregate_usage.clone(),
+                    aggregate: reported,
                 });
                 if let Err(violation) =
                     guard.add_tokens(call.usage.total_tokens.unwrap_or_default())
@@ -1059,9 +1136,13 @@ async fn drive_agent(
     let Some(response) = response else {
         return Err("Agent run ended without a final response".to_string());
     };
+    let mut usage: AgentUsage = response.usage().into();
+    if let Some(context) = &context {
+        usage.add(&context.compaction_usage());
+    }
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),
-        usage: response.usage().into(),
+        usage,
         stats: guard.stats(),
     })
 }
@@ -1091,11 +1172,6 @@ fn local_parameters(reasoning_effort: Option<&str>) -> Option<Value> {
     reasoning_effort.map(|effort| json!({ "reasoning_effort": effort }))
 }
 
-fn local_model_supports_reasoning_effort(model: &str) -> bool {
-    let normalized = model.trim().to_ascii_lowercase();
-    normalized.contains("qwen3.8") || normalized.contains("qwen-3.8")
-}
-
 pub(crate) fn supported_reasoning_effort(
     provider: &AgentProvider,
     model: &str,
@@ -1109,20 +1185,45 @@ pub(crate) fn supported_reasoning_effort(
         AgentProvider::Openai if model.starts_with("gpt-5") => {
             matches!(effort, "low" | "medium" | "high" | "xhigh")
         }
-        AgentProvider::Local if local_model_supports_reasoning_effort(&model) => {
-            matches!(effort, "low" | "medium" | "xhigh")
-        }
+        AgentProvider::Local => local_reasoning::valid_option(effort),
         _ => false,
     };
     supported.then(|| effort.to_string())
 }
 
-pub(crate) fn ensure_local_desktop() -> Result<(), String> {
-    if cfg!(any(target_os = "ios", target_os = "android")) {
-        Err("Local model chat is available on desktop only".to_string())
+pub(crate) fn ensure_compatible_chat_supported() -> Result<(), String> {
+    if cfg!(target_os = "android") {
+        Err("OpenAI-compatible server chat is available on desktop and iOS".to_string())
     } else {
         Ok(())
     }
+}
+
+pub(crate) fn openai_api_base_url() -> Result<String, String> {
+    // A separate opt-in test build can exercise the Responses wire protocol
+    // without live credentials. Ordinary and release builds always use OpenAI.
+    #[cfg(all(debug_assertions, feature = "e2e-chat-fixture"))]
+    if let Ok(value) = std::env::var("GNEAUXGHTS_OPENAI_FIXTURE_URL") {
+        validate_openai_fixture_url(&value)?;
+        return Ok(value);
+    }
+    Ok("https://api.openai.com/v1".to_string())
+}
+
+#[cfg(any(test, all(debug_assertions, feature = "e2e-chat-fixture")))]
+fn validate_openai_fixture_url(value: &str) -> Result<(), String> {
+    validate_local_base_url(value)?;
+    let parsed = Url::parse(value).map_err(|_| "Invalid fixture URL".to_string())?;
+    let loopback = match parsed.host() {
+        Some(url::Host::Domain(host)) => host == "localhost",
+        Some(url::Host::Ipv4(host)) => host.is_loopback(),
+        Some(url::Host::Ipv6(host)) => host.is_loopback(),
+        None => false,
+    };
+    if !loopback {
+        return Err("OpenAI protocol fixtures must use a loopback address".to_string());
+    }
+    Ok(())
 }
 
 pub(crate) fn validate_local_base_url(value: &str) -> Result<(), String> {
@@ -1172,6 +1273,7 @@ mod tests {
             configured_builder(model, request, None)
                 .unwrap()
                 .add_hook(RuntimeEventHook {
+                    compatible_chat: request.provider == AgentProvider::Local,
                     web_search_selection: Arc::default(),
                     on_event: self.observer.on_event.clone(),
                     cancelled: self.observer.cancelled.clone(),
@@ -1448,6 +1550,25 @@ mod tests {
     }
 
     #[test]
+    fn protocol_fixture_endpoint_cannot_send_credentials_to_a_remote_host() {
+        for endpoint in [
+            "http://127.0.0.1:18440/v1",
+            "http://localhost:18440/v1",
+            "http://[::1]:18440/v1",
+        ] {
+            assert!(validate_openai_fixture_url(endpoint).is_ok());
+        }
+        for endpoint in [
+            "https://models.example.com/v1",
+            "http://192.168.1.5/v1",
+            "http://user@localhost/v1",
+            "http://localhost/v1?key=secret",
+        ] {
+            assert!(validate_openai_fixture_url(endpoint).is_err());
+        }
+    }
+
+    #[test]
     fn forced_openai_web_selects_the_hosted_tool_and_flex_tier() {
         let params = openai_parameters(true, true, true, Some("high")).unwrap();
         assert_eq!(params["tool_choice"], json!({"type": "web_search"}));
@@ -1456,14 +1577,14 @@ mod tests {
     }
 
     #[test]
-    fn qwen_local_reasoning_uses_openai_compatible_request_field() {
+    fn local_reasoning_is_not_gated_by_model_names() {
         assert_eq!(
             supported_reasoning_effort(&AgentProvider::Local, "qwen/Qwen3.8-27B", "xhigh"),
             Some("xhigh".to_string())
         );
         assert_eq!(
             supported_reasoning_effort(&AgentProvider::Local, "qwen3-8b", "medium"),
-            None
+            Some("medium".to_string())
         );
         assert_eq!(
             supported_reasoning_effort(&AgentProvider::Openai, "gpt-5.4", "max"),
@@ -1530,12 +1651,16 @@ mod tests {
     }
 
     #[test]
-    fn structured_results_compose_with_tools_and_reject_prose_as_the_final_result() {
+    fn structured_results_handle_tool_name_collisions_and_reject_prose_as_the_final_result() {
         tauri::async_runtime::block_on(async {
             let selected = json!({"evidence_ids":["read-id"],"gaps":[]});
             let model = MockCompletionModel::from_stream_turns([
                 vec![
-                    MockStreamEvent::tool_call("read", "echo", json!({"value":"Verified passage"})),
+                    MockStreamEvent::tool_call(
+                        "read",
+                        "final_result",
+                        json!({"evidence_ids":["private-executable-id"],"gaps":[]}),
+                    ),
                     MockStreamEvent::final_response(Usage::new()),
                 ],
                 vec![
@@ -1543,7 +1668,7 @@ mod tests {
                     MockStreamEvent::final_response(Usage::new()),
                 ],
                 vec![
-                    MockStreamEvent::tool_call("result", "final_result", selected.clone()),
+                    MockStreamEvent::tool_call("result", "final_result_1", selected.clone()),
                     MockStreamEvent::final_response(Usage::new()),
                 ],
             ]);
@@ -1568,9 +1693,25 @@ mod tests {
                 guard: guard.clone(),
                 context: None,
             };
+            let result_schema = request.output_schema.clone().unwrap();
+            let counter = calls.clone();
+            let evidence = selected.clone();
+            let action = rig_agent::tool::DynamicTool::new(
+                rig_core::message::ToolName::new("final_result").unwrap(),
+                "Read evidence",
+                request.output_schema.clone().unwrap(),
+                move |_| {
+                    let counter = counter.clone();
+                    let evidence = evidence.clone();
+                    Box::pin(async move {
+                        counter.fetch_add(1, Ordering::Relaxed);
+                        Ok(rig_core::tool::ToolOutput::json(evidence))
+                    })
+                },
+            );
             let agent = harness
                 .builder(model.clone(), &request)
-                .tool(EchoTool(calls.clone()))
+                .dynamic_tool(action)
                 .build();
             let response = harness.run(agent, request).await.unwrap();
             assert_eq!(
@@ -1580,8 +1721,12 @@ mod tests {
             assert_eq!(calls.load(Ordering::Relaxed), 1);
             assert_eq!(model.request_count(), 3);
             for request in model.requests() {
-                assert!(request.tools.iter().any(|t| t.name == "echo"));
-                assert_eq!(request.tools.last().unwrap().name, "final_result");
+                assert!(request.tools.iter().any(|t| t.name == "final_result"));
+                assert_eq!(request.tools.last().unwrap().name, "final_result_1");
+                assert_eq!(
+                    usage_context::result_formatter_name(&request, Some(&result_schema)).as_deref(),
+                    Some("final_result_1"),
+                );
                 assert!(
                     request.output_schema.is_none(),
                     "Tool output must not impose native JSON on gathering turns"
@@ -1591,222 +1736,156 @@ mod tests {
     }
 
     #[test]
-    fn context_finish_preserves_the_structured_formatter_without_more_actions() {
+    fn streaming_run_compacts_repeatedly_and_keeps_tool_results_and_original_request() {
         tauri::async_runtime::block_on(async {
-            let model = MockCompletionModel::from_stream_turns([
-                vec![
-                    MockStreamEvent::tool_call(
-                        "read",
-                        "final_result",
-                        json!({"value":"Verified evidence"}),
-                    ),
-                    MockStreamEvent::final_response(
-                        Usage::default()
-                            .input_tokens(4_000)
-                            .output_tokens(30)
-                            .total_tokens(4_030),
-                    ),
-                ],
-                vec![
-                    MockStreamEvent::tool_call(
-                        "skipped",
-                        "final_result",
-                        json!({"value":"Do not read"}),
-                    ),
-                    MockStreamEvent::final_response(
-                        Usage::default()
-                            .input_tokens(10_000)
-                            .output_tokens(30)
-                            .total_tokens(10_030),
-                    ),
-                ],
-                vec![
-                    MockStreamEvent::tool_call(
-                        "result",
-                        "final_result_1",
-                        json!({"value":"Verified evidence; coverage partial"}),
-                    ),
-                    MockStreamEvent::final_response(
-                        Usage::default()
-                            .input_tokens(11_000)
-                            .output_tokens(30)
-                            .total_tokens(11_030),
-                    ),
-                ],
-            ]);
-            let mut request = fake_request("Gather bounded evidence");
-            request.provider = AgentProvider::Openai; // Mock provider; controlled capacity at production adapter.
-            request.output_schema = Some(
-                json!({"type":"object","required":["value"],"properties":{"value":{"type":"string"}},"additionalProperties":false}),
-            );
-            let sink: AgentEventSink = Arc::new(|_| {});
-            let context = usage_context::UsageContext::with_test_capacity(
-                &request,
-                sink.clone(),
-                true,
-                19_000,
-            );
-            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
-            let cancelled = CancellationToken::new();
-            let calls = Arc::new(AtomicUsize::new(0));
-            let counter = calls.clone();
-            // Collision with the engine's default result name, deliberately
-            // sharing the result schema: only its appended formatter may remain.
-            let action = rig_agent::tool::DynamicTool::new(
-                rig_core::message::ToolName::new("final_result").unwrap(),
-                "Read evidence",
-                request.output_schema.clone().unwrap(),
-                move |_| {
-                    let counter = counter.clone();
-                    Box::pin(async move {
-                        counter.fetch_add(1, Ordering::Relaxed);
-                        Ok(rig_core::tool::ToolOutput::json(
-                            json!({"value":"Verified evidence"}),
-                        ))
-                    })
-                },
-            );
-            let harness = RuntimeHarness {
-                observer: AgentRuntimeObserver {
-                    evidence_context: None,
-                    on_event: sink.clone(),
-                    cancelled: cancelled.clone(),
-                    permissions: None,
-                },
-                guard: guard.clone(),
-                context: Some(context.clone()),
-            };
-            let agent = harness
-                .builder(model.clone(), &request)
-                .dynamic_tool(action)
-                .build();
-            let result = harness.run(agent, request).await.unwrap();
-            assert_eq!(
-                serde_json::from_str::<Value>(&result.output).unwrap(),
-                json!({"value":"Verified evidence; coverage partial"})
-            );
-            assert_eq!(calls.load(Ordering::Relaxed), 1);
-            let requests = model.requests();
-            assert_eq!(requests.len(), 3);
-            assert_eq!(requests[2].tools.len(), 1);
-            assert_eq!(requests[2].tools[0].name, "final_result_1");
-            assert_eq!(
-                requests[2].tool_choice,
-                Some(rig_core::message::ToolChoice::Specific {
-                    function_names: vec![
-                        rig_core::message::ToolName::new("final_result_1").unwrap()
-                    ]
-                })
-            );
-        });
-    }
-
-    #[test]
-    fn usage_guard_finishes_with_existing_citation_and_skips_pending_gathering() {
-        tauri::async_runtime::block_on(async {
-            let usage = |input| {
+            use rig_core::test_utils::MockTurn;
+            let compact_model = MockCompletionModel::from_turns((0..8).map(|_| MockTurn::text(
+                r#"{"summary":"The original request is still active. Verified launch record [S1]: Tuesday. Continue the next evidence page."}"#
+            ).with_usage(Usage::default().input_tokens(2_000).output_tokens(20).total_tokens(2_020))));
+            let mut turns = (0..9).map(|i| vec![
+                MockStreamEvent::tool_call(format!("page-{i}"), "echo", json!({"value":format!("page-{i} {}", "synthetic context ".repeat(120))})),
+                MockStreamEvent::final_response(Usage::default().input_tokens(if i % 2 == 0 { 4_000 } else { 12_000 }).output_tokens(30).total_tokens(if i % 2 == 0 { 4_030 } else { 12_030 })),
+            ]).collect::<Vec<_>>();
+            turns.push(vec![
+                MockStreamEvent::text("Tuesday [S1]"),
                 MockStreamEvent::final_response(
                     Usage::default()
-                        .input_tokens(input)
-                        .output_tokens(30)
-                        .total_tokens(input + 30),
-                )
-            };
-            let model = MockCompletionModel::from_stream_turns([
-                vec![
-                    MockStreamEvent::tool_call(
-                        "read-1",
-                        "echo",
-                        json!({"value":"Verified evidence [source](note://citation-one)"}),
-                    ),
-                    usage(4000),
-                ],
-                vec![
-                    MockStreamEvent::tool_call(
-                        "read-2",
-                        "echo",
-                        json!({"value":"Should not be read"}),
-                    ),
-                    usage(10000),
-                ],
-                vec![
-                    MockStreamEvent::text(
-                        "Supported answer [source](note://citation-one). Coverage is partial.",
-                    ),
-                    usage(11000),
-                ],
+                        .input_tokens(5_000)
+                        .output_tokens(10)
+                        .total_tokens(5_010),
+                ),
             ]);
+            let model = MockCompletionModel::from_stream_turns(turns);
+            let request = fake_request("ORIGINAL-USER-REQUIREMENT: Find the launch day, cite [S1], then check every requested page.");
+            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
             let events = Arc::new(Mutex::new(Vec::new()));
             let capture = events.clone();
-            let sink: AgentEventSink = Arc::new(move |e| {
-                capture
-                    .lock()
-                    .unwrap()
-                    .push(serde_json::to_value(e).unwrap())
-            });
-            let mut request = fake_request("Find evidence");
-            request.provider = AgentProvider::Openai; // Mock only: no metadata HTTP request.
-            let context = usage_context::UsageContext::with_test_capacity(
+            let sink: AgentEventSink = Arc::new(move |event| capture.lock().unwrap().push(event));
+            let mut context = usage_context::UsageContext::with_compaction(
                 &request,
                 sink.clone(),
                 false,
-                19000,
+                compact_model.clone().into(),
+                guard.clone(),
             );
-            let guard = crate::agent_guardrails::AgentRunGuard::new(Default::default());
-            let cancelled = CancellationToken::new();
+            Arc::get_mut(&mut context)
+                .unwrap()
+                .set_test_capacity(19_000);
             let calls = Arc::new(AtomicUsize::new(0));
             let harness = RuntimeHarness {
                 observer: AgentRuntimeObserver {
                     evidence_context: None,
-                    on_event: sink.clone(),
-                    cancelled: cancelled.clone(),
+                    on_event: sink,
+                    cancelled: CancellationToken::new(),
                     permissions: None,
                 },
-                guard: guard.clone(),
+                guard,
                 context: Some(context.clone()),
             };
             let agent = harness
                 .builder(model.clone(), &request)
                 .tool(EchoTool(calls.clone()))
                 .build();
-            let result = harness.run(agent, request).await.unwrap();
+            let response = harness.run(agent, request).await.unwrap();
+            assert_eq!(response.output, "Tuesday [S1]");
             assert_eq!(
-                calls.load(Ordering::Relaxed),
-                1,
-                "the second pending tool must be skipped after high reported usage"
+                response.usage.total_tokens,
+                73_280 + compact_model.request_count() as u64 * 2_020
             );
-            assert_eq!(model.request_count(), 3);
-            assert!(result.output.contains("note://citation-one"));
+            assert_eq!(calls.load(Ordering::Relaxed), 9);
+            assert!(
+                compact_model.request_count() >= 2,
+                "Long work must continue across multiple compactions"
+            );
             let requests = model.requests();
-            let final_request = &requests[2];
-            assert!(final_request.tools.is_empty());
-            assert_eq!(
-                final_request.tool_choice,
-                Some(rig_core::message::ToolChoice::None)
+            let mut result_pairs = 0;
+            for request in &requests {
+                let text = serde_json::to_string(&request.chat_history).unwrap();
+                assert!(text.contains("ORIGINAL-USER-REQUIREMENT"));
+                assert_eq!(
+                    request
+                        .chat_history
+                        .iter()
+                        .filter(|m| matches!(m, Message::System { .. }))
+                        .count(),
+                    1
+                );
+                // Every retained result must still have its call in this context.
+                let value = serde_json::to_value(&request.chat_history).unwrap();
+                let mut calls = std::collections::HashSet::new();
+                for message in value.as_array().unwrap() {
+                    for content in message["content"].as_array().into_iter().flatten() {
+                        if content["type"] == "toolcall" {
+                            calls.insert(content["id"].clone().to_string());
+                        }
+                        if content["type"] == "toolresult" {
+                            result_pairs += 1;
+                            assert!(calls.contains(&content["call"].clone().to_string()));
+                        }
+                    }
+                }
+            }
+            assert!(
+                result_pairs >= 9,
+                "Pair validation must observe actual retained tool results"
             );
-            assert_eq!(final_request.max_tokens, Some(4096));
-            let history = serde_json::to_value(&final_request.chat_history)
-                .unwrap()
-                .to_string();
-            assert!(history.contains("Verified evidence"));
-            assert!(history.contains("note://citation-one"));
-            // Rig 0.44's generic mock replay represents exchanges as text.
-            // Keep both action records, the successful result, and the skipped
-            // action's error; only the first action may actually execute.
-            assert_eq!(history.matches("[called tool echo with").count(), 2);
-            assert!(history.contains("[tool echo result]"));
-            assert!(history.contains("[tool echo error]"));
-            assert!(history.contains("Should not be read"));
-            assert!(history.contains("Context allowance"));
-            assert_eq!(
-                events
-                    .lock()
-                    .unwrap()
-                    .iter()
-                    .filter(|e| e["details"]["phase"] == "finishing")
-                    .count(),
-                1
+            assert!(
+                requests.last().unwrap().chat_history.len() < requests[3].chat_history.len() + 4
             );
+            assert!(events.lock().unwrap().iter().any(|e| matches!(e, AgentEvent::ContextMeasured { details } if details["mode"] == "compaction" && details["phase"] == "completed")));
+            assert_eq!(
+                response.stats.model_calls,
+                model.request_count() + compact_model.request_count()
+            );
+        });
+    }
+
+    #[test]
+    fn productive_tool_runs_continue_past_old_cumulative_quotas() {
+        tauri::async_runtime::block_on(async {
+            let mut turns = (0..110)
+                .map(|i| {
+                    vec![
+                        MockStreamEvent::tool_call(
+                            format!("read-{i}"),
+                            "echo",
+                            json!({"value":format!("page-{i}")}),
+                        ),
+                        MockStreamEvent::final_response(
+                            Usage::default()
+                                .input_tokens(5_000)
+                                .output_tokens(20)
+                                .total_tokens(5_020),
+                        ),
+                    ]
+                })
+                .collect::<Vec<_>>();
+            turns.push(vec![
+                MockStreamEvent::text("Research complete"),
+                MockStreamEvent::final_response(Usage::new()),
+            ]);
+            let model = MockCompletionModel::from_stream_turns(turns);
+            let request = fake_request("Continue through every distinct evidence page");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let harness = RuntimeHarness {
+                observer: AgentRuntimeObserver {
+                    evidence_context: None,
+                    on_event: Arc::new(|_| {}),
+                    cancelled: CancellationToken::new(),
+                    permissions: None,
+                },
+                guard: crate::agent_guardrails::AgentRunGuard::new(Default::default()),
+                context: None,
+            };
+            let agent = harness
+                .builder(model.clone(), &request)
+                .tool(EchoTool(calls.clone()))
+                .build();
+            let response = harness.run(agent, request).await.unwrap();
+            assert_eq!(response.output, "Research complete");
+            assert_eq!(calls.load(Ordering::Relaxed), 110);
+            assert_eq!(model.request_count(), 111);
+            assert!(response.usage.total_tokens > 400_000);
         });
     }
 

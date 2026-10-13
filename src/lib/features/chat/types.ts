@@ -1,6 +1,7 @@
 export type VaultAccess = 'none' | 'approved' | 'full';
 export type ChatProvider = 'openai' | 'local';
-export type ChatReasoningEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
+// Local servers advertise their own values; OpenAI retains its curated choices.
+export type ChatReasoningEffort = string;
 export type WebAccess = 'off' | 'auto';
 export type ChatStatus = 'active' | 'archived' | 'projectionConflict';
 export type MessageStatus = 'pending' | 'streaming' | 'completed' | 'cancelled' | 'error';
@@ -246,6 +247,8 @@ export interface ChatModelCapabilities {
   acceptedMimeTypes: string[];
   tools: boolean;
   defaultReasoningEffort?: ChatReasoningEffort | null;
+  reasoningOptions?: ChatReasoningEffort[];
+  serverReasoningDefault?: ChatReasoningEffort | null;
 }
 
 export interface LocalModelCapabilitySelection {

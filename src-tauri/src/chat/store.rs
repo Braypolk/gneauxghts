@@ -117,7 +117,15 @@ impl ChatService {
         if changed != 1 {
             return Err("The current chat run is unavailable".into());
         }
-        Self::store_terminal_message(&tx, message_id, status, content, error, sources, note_reference_ids)?;
+        Self::store_terminal_message(
+            &tx,
+            message_id,
+            status,
+            content,
+            error,
+            sources,
+            note_reference_ids,
+        )?;
         tx.commit().map_err(|e| e.to_string())
     }
     // Best-effort terminal recovery after source/receipt persistence fails.

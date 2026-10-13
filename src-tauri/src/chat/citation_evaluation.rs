@@ -254,7 +254,7 @@ fn live_citation_fixed_evidence_baseline() {
                     permissions: None,
                 },
                 AgentRunGuard::new(AgentRunLimits {
-                    max_elapsed: Duration::from_secs(120),
+                    max_elapsed: Some(Duration::from_secs(120)),
                     max_aggregate_tokens: 12_000,
                     ..Default::default()
                 }),

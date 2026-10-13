@@ -291,6 +291,50 @@ fn structured_agent_events_are_durable_and_idempotent() {
 }
 
 #[test]
+fn agent_event_wire_contract_preserves_details_and_reopens_legacy_records() {
+    use crate::agent_runtime::AgentEvent;
+    let fixture = load_json_fixture("contracts/agent-events.json");
+    let cases = fixture["cases"].as_array().unwrap();
+    assert_eq!(fixture["version"], 1);
+    for case in cases {
+        let event: AgentEvent = serde_json::from_value(case["legacy"].clone()).unwrap();
+        assert_eq!(serde_json::to_value(&event).unwrap(), case["wire"]);
+        assert_eq!(
+            serde_json::from_value::<AgentEvent>(case["wire"].clone()).unwrap(),
+            event
+        );
+    }
+
+    let (root, service) = service("legacy-agent-event-contract");
+    let conversation = service.create_conversation(None, None).unwrap();
+    let (run, assistant) = seed_agent_run(&service, &conversation.summary.id, "legacy", 1);
+    let connection = service.connection().unwrap();
+    // Simulate records written by the previous app, rather than serializing
+    // through the corrected type before exercising the actual reload path.
+    for (index, case) in cases.iter().take(4).enumerate() {
+        connection.execute(
+            "INSERT INTO chat_agent_events (run_id, sequence, request_id, conversation_id, message_id, event_json, created_at_millis) VALUES (?1, ?2, 'legacy-request', ?3, ?4, ?5, ?2)",
+            params![run, index as i64 + 1, conversation.summary.id, assistant, case["legacy"].to_string()],
+        ).unwrap();
+    }
+    drop(connection);
+    drop(service);
+    let reopened = ChatService::new(root.path().into(), root.path().join(".gneauxghts")).unwrap();
+    let conversation = reopened.get_conversation(&conversation.summary.id).unwrap();
+    let message = conversation
+        .messages
+        .iter()
+        .find(|m| m.id == assistant)
+        .unwrap();
+    let serialized = serde_json::to_value(message).unwrap();
+    let events = serialized["agentEvents"].as_array().unwrap();
+    assert_eq!(events.len(), 4);
+    for (event, case) in events.iter().zip(cases) {
+        assert_eq!(event["event"], case["wire"]);
+    }
+}
+
+#[test]
 fn retired_agent_event_variants_do_not_prevent_conversation_replay() {
     let (_root, service) = service("chat-retired-agent-event");
     let conversation = service.create_conversation(None, None).unwrap();
@@ -752,9 +796,47 @@ fn draft_chat_configuration_is_applied_when_the_conversation_is_created() {
 }
 
 #[test]
-fn reasoning_effort_rejects_values_outside_the_supported_contract() {
+fn reasoning_settings_accept_server_identifiers_and_reject_malformed_values() {
     assert_eq!(validate_reasoning_effort(" xhigh ").unwrap(), "xhigh");
-    assert!(validate_reasoning_effort("extreme").is_err());
+    assert_eq!(validate_reasoning_effort("on").unwrap(), "on");
+    assert_eq!(
+        validate_reasoning_effort("future_level").unwrap(),
+        "future_level"
+    );
+    assert!(validate_reasoning_effort("").is_err());
+    assert!(validate_reasoning_effort("bad value").is_err());
+    assert!(validate_reasoning_effort(&"a".repeat(65)).is_err());
+}
+
+#[test]
+fn local_toggle_reasoning_survives_profile_conversation_and_reload() {
+    let (_root, service) = service("chat-local-reasoning-toggle");
+    let mut selection = LocalModelCapabilitySelection::default();
+    selection.reasoning_effort = "on".into();
+    service
+        .set_local_model_capabilities("custom-model", selection)
+        .unwrap();
+    let conversation = service
+        .create_conversation_with_config(
+            None,
+            None,
+            Some("local".into()),
+            Some("custom-model".into()),
+            None,
+        )
+        .unwrap();
+    assert_eq!(conversation.summary.reasoning_effort, "on");
+    service
+        .update_conversation_provider(&conversation.summary.id, "local", "custom-model", "off")
+        .unwrap();
+    assert_eq!(
+        service
+            .get_conversation(&conversation.summary.id)
+            .unwrap()
+            .summary
+            .reasoning_effort,
+        "off"
+    );
 }
 
 #[test]
@@ -2449,6 +2531,42 @@ fn deleting_an_archived_conversation_takes_its_draft_with_it() {
 mod lifecycle;
 
 impl ChatService {
+    pub(crate) fn test_store_structured_answer(
+        &self,
+        tools: &crate::agent_tools::AgentToolContext,
+        message: &str,
+        run: &str,
+        output: String,
+    ) -> Result<(), String> {
+        let success = Self::finalize_agent_response(
+            tools,
+            crate::agent_runtime::AgentRuntimeResponse {
+                output,
+                usage: Default::default(),
+                stats: Default::default(),
+            },
+            true,
+            &CancellationToken::new(),
+        )
+        .map_err(|failure| failure.error)?;
+        self.persist_terminal_outcome(
+            message,
+            run,
+            "complete",
+            &success.content,
+            None,
+            &success.sources,
+            &success.note_reference_ids,
+            &(0, 0),
+            &success.stats,
+            None,
+        )
+    }
+
+    pub(crate) fn test_structured_answer_contract() -> (serde_json::Value, &'static str) {
+        (structured_answer::schema(), structured_answer::INSTRUCTIONS)
+    }
+
     pub(crate) fn test_store_structured_edit_answer(
         &self,
         tools: &crate::agent_tools::AgentToolContext,

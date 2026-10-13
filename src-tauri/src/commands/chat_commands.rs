@@ -187,6 +187,10 @@ pub(crate) struct ChatModelCapabilities {
     accepted_mime_types: Vec<String>,
     tools: bool,
     default_reasoning_effort: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    reasoning_options: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    server_reasoning_default: Option<String>,
 }
 
 const IMAGE_MIME_TYPES: &[&str] = &["image/png", "image/jpeg", "image/webp", "image/gif"];
@@ -267,6 +271,8 @@ fn model_capabilities(
                 ),
                 tools: true,
                 default_reasoning_effort: None,
+                reasoning_options: Vec::new(),
+                server_reasoning_default: None,
             })
         }
         "local" => {
@@ -286,6 +292,8 @@ fn model_capabilities(
                 ),
                 tools: selection.tools,
                 default_reasoning_effort: Some(selection.reasoning_effort),
+                reasoning_options: Vec::new(),
+                server_reasoning_default: None,
             })
         }
         other => Err(format!("Unsupported chat provider '{other}'")),
@@ -582,7 +590,7 @@ pub(crate) async fn chat_list_local_models(
     app: AppHandle,
     base_url: String,
 ) -> Result<Vec<LocalModel>, String> {
-    crate::agent_runtime::ensure_local_desktop()?;
+    crate::agent_runtime::ensure_compatible_chat_supported()?;
     crate::agent_runtime::validate_local_base_url(&base_url)?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
@@ -624,7 +632,10 @@ pub(crate) async fn chat_list_openai_models(app: AppHandle) -> Result<Vec<LocalM
         .build()
         .map_err(|error| format!("Unable to configure OpenAI model client: {error}"))?;
     let response = client
-        .get("https://api.openai.com/v1/models")
+        .get(format!(
+            "{}/models",
+            crate::agent_runtime::openai_api_base_url()?.trim_end_matches('/')
+        ))
         .bearer_auth(api_key)
         .send()
         .await
@@ -643,12 +654,34 @@ pub(crate) async fn chat_list_openai_models(app: AppHandle) -> Result<Vec<LocalM
 }
 
 #[tauri::command]
-pub(crate) fn chat_get_model_capabilities(
+pub(crate) async fn chat_get_model_capabilities(
+    app: AppHandle,
     service: State<'_, ChatService>,
     provider: String,
     model: String,
+    base_url: Option<String>,
 ) -> Result<ChatModelCapabilities, String> {
-    model_capabilities(&service, &provider, &model)
+    let mut capabilities = model_capabilities(&service, &provider, &model)?;
+    if provider.trim() == "local" {
+        let base = base_url.unwrap_or(service.get_settings()?.local_base_url);
+        crate::agent_runtime::validate_local_base_url(&base)?;
+        let key = crate::secrets::read_provider_api_key(&app, "local")?;
+        if let Some(reasoning) =
+            crate::agent_runtime::local_reasoning::discover(&base, key.as_deref(), &model).await
+        {
+            capabilities.default_reasoning_effort = reasoning
+                .selected(
+                    capabilities
+                        .default_reasoning_effort
+                        .as_deref()
+                        .unwrap_or(""),
+                )
+                .map(str::to_string);
+            capabilities.server_reasoning_default = reasoning.selected("").map(str::to_string);
+            capabilities.reasoning_options = reasoning.options;
+        }
+    }
+    Ok(capabilities)
 }
 
 #[tauri::command]
@@ -1461,6 +1494,8 @@ mod attachment_capability_tests {
             accepted_mime_types: accepted_mime_types(false, false, false, true, false),
             tools: true,
             default_reasoning_effort: None,
+            reasoning_options: Vec::new(),
+            server_reasoning_default: None,
         };
         let attachment = ChatAttachmentInput {
             kind: "image".to_string(),

@@ -111,12 +111,12 @@ describe('chat mounted controls', () => {
     await composer.setValue('Keep this thought while choosing a provider');
     await expect($$('.chat-model-selector > div > button')).toBeElementsArrayOfSize(2);
     await $('button[aria-label="AI model"]').click();
-    await $('[aria-label="AI provider picker"]').$('button=Local').click();
+    await $('[aria-label="AI provider picker"]').$('button=Server').click();
     await expect($('button[aria-label="AI model"]')).toHaveText('5.6 Sol');
     await browser.keys('Escape');
     await $('button[aria-label="AI model"]').click();
     await expect($('[aria-label="AI provider picker"]').$('button=ChatGPT')).toHaveAttribute('aria-pressed', 'true');
-    await $('[aria-label="AI provider picker"]').$('button=Local').click();
+    await $('[aria-label="AI provider picker"]').$('button=Server').click();
     await $('[aria-label="AI model picker"]').$('button*=fixture-local').click();
     await expect($('button[aria-label="AI model"]')).toHaveText('fixture-local');
     await expect($('button[aria-label="Reasoning effort"]')).not.toExist();

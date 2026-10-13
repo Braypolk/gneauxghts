@@ -236,7 +236,7 @@ export interface ChatApi {
   ): Promise<ChatConversationSummary>;
   listOpenAiModels(): Promise<LocalModel[]>;
   listLocalModels(baseUrl: string): Promise<LocalModel[]>;
-  getModelCapabilities(provider: ChatProvider, model: string): Promise<ChatModelCapabilities>;
+  getModelCapabilities(provider: ChatProvider, model: string, baseUrl?: string): Promise<ChatModelCapabilities>;
   setLocalModelCapabilities(
     model: string,
     capabilities: LocalModelCapabilitySelection
@@ -432,8 +432,8 @@ export class TauriChatApi implements ChatApi {
   listLocalModels(baseUrl: string) {
     return invoke<LocalModel[]>(CHAT_COMMANDS.listLocalModels, { baseUrl });
   }
-  getModelCapabilities(provider: ChatProvider, model: string) {
-    return invoke<ChatModelCapabilities>(CHAT_COMMANDS.getModelCapabilities, { provider, model });
+  getModelCapabilities(provider: ChatProvider, model: string, baseUrl?: string) {
+    return invoke<ChatModelCapabilities>(CHAT_COMMANDS.getModelCapabilities, { provider, model, ...(baseUrl ? { baseUrl } : {}) });
   }
   setLocalModelCapabilities(model: string, capabilities: LocalModelCapabilitySelection) {
     return invoke<LocalModelCapabilitySelection>(CHAT_COMMANDS.setLocalModelCapabilities, {

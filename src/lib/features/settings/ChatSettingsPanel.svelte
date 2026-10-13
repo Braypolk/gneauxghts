@@ -63,7 +63,7 @@
       keyStatuses[credentialProvider] = status.configured;
       apiKey = '';
       revealKey = false;
-      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key saved securely on this machine.`;
+      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key saved securely on this device.`;
     } catch (saveError) {
       error = String(saveError);
     } finally {
@@ -80,7 +80,7 @@
       keyStatuses[credentialProvider] = status.configured;
       apiKey = '';
       revealKey = false;
-      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key removed.`;
+      message = `${credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key removed.`;
     } catch (removeError) {
       error = String(removeError);
     } finally {
@@ -147,7 +147,7 @@
             }}
           >
             <option value="openai">OpenAI Responses API</option>
-            <option value="local">Local OpenAI-compatible</option>
+            <option value="local">OpenAI-compatible server</option>
           </select>
         </SettingsField>
       </div>
@@ -161,7 +161,7 @@
 
       <div class="mt-4 flex flex-col gap-2 sm:flex-row">
         <div class="relative min-w-0 flex-1">
-          <label class="sr-only" for="provider-api-key">{credentialProvider === 'openai' ? 'OpenAI' : 'Local provider'} API key</label>
+          <label class="sr-only" for="provider-api-key">{credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key</label>
           <input
             id="provider-api-key"
             class="h-10 w-full rounded-xl border border-border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring"
@@ -202,7 +202,7 @@
       </div>
       {#if credentialProvider === 'local'}
         <p class="mt-3 text-xs leading-relaxed text-muted-foreground">
-          Optional. Only needed if your local server requires authentication.
+          Optional. Only needed if your server requires authentication.
         </p>
       {/if}
     </section>
@@ -216,7 +216,7 @@
           <SettingsField label="Provider" anchor="chat-provider">
             <select class="settings-control" bind:value={settings.provider}>
               <option value="openai">OpenAI Responses API</option>
-              <option value="local">Local OpenAI-compatible</option>
+              <option value="local">OpenAI-compatible server</option>
             </select>
           </SettingsField>
           {#if settings.provider === 'openai'}
@@ -250,8 +250,11 @@
               </select>
             </SettingsField>
           {:else}
-            <SettingsField label="Local endpoint" anchor="chat-endpoint">
-              <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="http://localhost:1234/v1" />
+            <SettingsField label="Server endpoint" anchor="chat-endpoint">
+              <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="https://models.example.com/v1" />
+              <p class="mt-2 text-xs leading-relaxed text-muted-foreground">
+                Chat runs on this server. On iPhone, use an address reachable from the phone; localhost refers to the phone itself. A server on your local network requires Local Network access.
+              </p>
             </SettingsField>
             <div class="sm:col-span-2" data-settings-anchor="chat-model">
               <LocalModelSettings

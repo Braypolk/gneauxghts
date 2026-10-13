@@ -62,7 +62,7 @@ describe('mobile control sizing', () => {
     await $(toggle).waitForExist();
     const provider = await $('[data-settings-anchor="chat-provider"] select');
     await provider.selectByAttribute('value', 'local');
-    const selectors = [toggle, 'button[aria-label="Refresh local models"]', 'button[aria-label="Add a model manually"]'];
+    const selectors = [toggle, 'button[aria-label="Refresh server models"]', 'button[aria-label="Add a model manually"]'];
     await $(selectors[1]).waitForExist();
     await viewport(1280);
     const desktop = await Promise.all(selectors.map(dimensions));

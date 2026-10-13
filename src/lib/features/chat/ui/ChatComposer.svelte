@@ -39,7 +39,8 @@
   import {
     chatModelChoices,
     type ChatModelChoice,
-    chatReasoningChoices
+    chatReasoningChoices,
+    normalizeChatReasoningEffort
   } from '../chatConfiguration';
   import ModelSelector from '$lib/components/ai-elements/model-selector/model-selector.svelte';
 
@@ -109,7 +110,9 @@
     conversation?.model ?? snapshot.conversationDraft.model
   );
   const effectiveReasoningEffort = $derived(
-    conversation?.reasoningEffort ?? snapshot.conversationDraft.reasoningEffort
+    normalizeChatReasoningEffort(effectiveProvider, effectiveModel,
+      conversation?.reasoningEffort ?? snapshot.conversationDraft.reasoningEffort,
+      snapshot.modelCapabilities)
   );
   const modelOptions = $derived<ChatModelChoice[]>(
     chatModelChoices({
@@ -121,7 +124,7 @@
     })
   );
   const reasoningOptions = $derived(
-    chatReasoningChoices(effectiveProvider, effectiveModel)
+    chatReasoningChoices(effectiveProvider, effectiveModel, snapshot.modelCapabilities)
   );
   const effectiveVaultAccess = $derived(
     conversation?.vaultAccess ??
@@ -387,7 +390,7 @@
       }
     } catch (error) {
       onActionError(
-        error instanceof Error ? error.message : 'Unable to discover local models.'
+        error instanceof Error ? error.message : 'Unable to discover server models.'
       );
     } finally {
       isDiscoveringLocalModels = false;

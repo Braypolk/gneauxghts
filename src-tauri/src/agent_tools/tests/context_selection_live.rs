@@ -301,7 +301,7 @@ fn openai_context_selection_comparison() {
                 let lifecycle = Arc::new(Mutex::new(Vec::new()));
                 let guard = crate::agent_guardrails::AgentRunGuard::new(
                     crate::agent_guardrails::AgentRunLimits {
-                        max_elapsed: Duration::from_secs(60),
+                        max_elapsed: Some(Duration::from_secs(60)),
                         max_context_bytes: 64000,
                         max_tool_calls: 8,
                         max_aggregate_tokens: 40000,

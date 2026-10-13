@@ -20,66 +20,67 @@ impl ChatService {
         // Run-scoped grants and any unresolved waiters are strictly ephemeral.
         // Resolve them before terminal UI events so no control remains actionable.
         self.inner.permission_broker.finish_run(&run.run_id);
-        let (status, content, error, sources, note_reference_ids, usage, stats, reason) = match result {
-            Ok(success) => {
-                let cancelled = run.cancelled.is_cancelled();
-                (
-                    if cancelled { "cancelled" } else { "complete" },
-                    if cancelled && success.structured {
-                        String::new()
+        let (status, content, error, sources, note_reference_ids, usage, stats, reason) =
+            match result {
+                Ok(success) => {
+                    let cancelled = run.cancelled.is_cancelled();
+                    (
+                        if cancelled { "cancelled" } else { "complete" },
+                        if cancelled && success.structured {
+                            String::new()
+                        } else {
+                            success.content
+                        },
+                        None,
+                        if cancelled && success.structured {
+                            Vec::new()
+                        } else {
+                            success.sources
+                        },
+                        if cancelled {
+                            Vec::new()
+                        } else {
+                            success.note_reference_ids
+                        },
+                        (success.usage.input_tokens, success.usage.output_tokens),
+                        success.stats,
+                        cancelled.then_some("userCancelled"),
+                    )
+                }
+                Err(failure) => {
+                    let content = failure.partial.unwrap_or_else(|| {
+                        self.connection()
+                            .and_then(|connection| {
+                                connection
+                                    .query_row(
+                                        "SELECT content FROM chat_messages WHERE id = ?1",
+                                        [&run.assistant_message_id],
+                                        |row| row.get::<_, String>(0),
+                                    )
+                                    .map_err(|e| e.to_string())
+                            })
+                            .unwrap_or_default()
+                    });
+                    let mut sources = failure.sources;
+                    sources.extend(web_sources_from_text(&content));
+                    let cancelled = run.cancelled.is_cancelled();
+                    let reason = if cancelled {
+                        "userCancelled"
                     } else {
-                        success.content
-                    },
-                    None,
-                    if cancelled && success.structured {
-                        Vec::new()
-                    } else {
-                        success.sources
-                    },
-                    if cancelled {
-                        Vec::new()
-                    } else {
-                        success.note_reference_ids
-                    },
-                    (success.usage.input_tokens, success.usage.output_tokens),
-                    success.stats,
-                    cancelled.then_some("userCancelled"),
-                )
-            }
-            Err(failure) => {
-                let content = failure.partial.unwrap_or_else(|| {
-                    self.connection()
-                        .and_then(|connection| {
-                            connection
-                                .query_row(
-                                    "SELECT content FROM chat_messages WHERE id = ?1",
-                                    [&run.assistant_message_id],
-                                    |row| row.get::<_, String>(0),
-                                )
-                                .map_err(|e| e.to_string())
-                        })
-                        .unwrap_or_default()
-                });
-                let mut sources = failure.sources;
-                sources.extend(web_sources_from_text(&content));
-                let cancelled = run.cancelled.is_cancelled();
-                let reason = if cancelled {
-                    "userCancelled"
-                } else {
-                    terminal_reason_from_error(&failure.error)
-                };
-                (
-                    if cancelled { "cancelled" } else { "error" },
-                    content,
-                    Some(failure.error),
-                    sources,
-                    Vec::new(),
-                    (0, 0),
-                    failure.stats,
-                    Some(reason),
-                )
-            }
-        };
+                        terminal_reason_from_error(&failure.error)
+                    };
+                    (
+                        if cancelled { "cancelled" } else { "error" },
+                        content,
+                        Some(failure.error),
+                        sources,
+                        Vec::new(),
+                        (0, 0),
+                        failure.stats,
+                        Some(reason),
+                    )
+                }
+            };
         let mut payload = stream_payload(
             &run.request_id,
             &run.conversation_id,
