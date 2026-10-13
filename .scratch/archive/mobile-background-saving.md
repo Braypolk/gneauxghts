@@ -21,6 +21,6 @@ Current ownership and guarantees are documented in [ARCHITECTURE.md](../../ARCHI
 
 ## Material limits
 
-Only the macOS Rust target was installed, so the `cfg(mobile)` suspension branch has not been compiled here. Browser fixtures do not exercise actual WKWebView suspension, native SQLite durability, or OS termination. No physical iPhone tests were performed. Saving remains best effort: iOS can suspend or terminate the process before asynchronous writes complete. Unsent attachments and protected proposal working copies are outside this durability improvement.
+At the initial implementation checkpoint, only the macOS Rust target was installed. A subsequent [iPhone simulator smoke test](../mobile-ios-readiness/simulator-validation.md) compiled the `cfg(mobile)` branch and verified note/chat text in the native vault across backgrounding and process relaunch. That test used temporary icon/launch-screen substitutions and did not isolate event timing or exercise abrupt termination. No physical iPhone tests were performed. Saving remains best effort: iOS can suspend or terminate the process before asynchronous writes complete. Unsent attachments and protected proposal working copies are outside this durability improvement.
 
 The [device release gate](../mobile-ios-readiness/issues/08-ios-device-release-gate.md) retains mobile compilation and real background, lock, kill and resume validation. Sync, sharing and older-device compatibility remain deferred.

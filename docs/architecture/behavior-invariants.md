@@ -19,6 +19,15 @@ applying the running vault, including a canonical alias, clears the pending
 restart. A failed selection leaves the running vault editable. A newly started
 process resolves and binds only the persisted selection.
 
+On iOS, Settings offers manual close/reopen instructions rather than automatic
+restart. Returning to the Home Screen keeps the Running Vault open. The native
+`prepare_restart` command rejects a platform without relaunch capability before
+quiescing any owner. Settings avoids dispatching that command, retaining editing;
+the native rejection cannot authorize resume if an ordinary exit is already
+releasing the vault. The selection remains
+replaceable or cancellable until the next process starts. Manual force-quit
+does not establish a portable clean close or guarantee pending draft durability.
+
 App-state schema initialization acquires SQLite's write reservation before
 inspecting or changing the schema, including when independent connections open
 the same vault concurrently. Bootstrap and migrations commit together; failure
@@ -153,6 +162,10 @@ partial history rendering cannot overwrite a retained reading position.
 
 Retiring an editor closes its pane-owned transient menus before disconnecting
 its view bridges, so its formatting popup cannot remain over chat content.
+Touch external-link actions use the same pane transient owner and a keyed Svelte
+surface. Pane collapse, retirement, History entry and competing editor menus close
+them; editor document, selection and configuration changes invalidate their saved
+range. Opening a URL remains an explicit choice separate from editing its Markdown.
 
 After the active pane closes, the pane immediately to its right becomes active
 when present; otherwise the pane immediately to its left becomes active.
@@ -195,13 +208,22 @@ outward while the outgoing frame holds its captured wrapping and outer edge.
 Clip widths clamp at zero without shifting the frame, and use overflow clipping
 so header backdrop sampling remains intact. Opening, exchange and closing share
 one presentation coordinator and cancellation path.
+Every split-opening choice (options, current location, previous location, and
+new chat) uses that coordinator and the existing 380ms editor easing at wide and
+compact widths. The destination kind is selected before the new pane becomes
+visible; duplicating or restoring chat cannot introduce a temporary editor.
 Related's bottom-sheet insets and width share the same geometry clock, including
 interrupted switches. Note-to-note
 rail exchanges use the dock's morph duration and editor curve even when the
 dock itself remains settled. Closing from rail layout retains that same duration
-and curve after the surviving pane returns to solo layout. Its editor/chat handoff selects the ordinary
-`editor-search`/`chat-input` dock edge. A collapsed chat keeps its mounted composer
-and expanded reading clearance even while the editor search is presented.
+and curve after the surviving pane returns to solo layout. While a chat remains
+open, its editor/chat handoff reuses the ordinary `chat-search`/`chat-input` dock
+edge. A collapsed chat keeps its mounted composer, expanded reading clearance,
+and visible dock button while search is presented for the editor.
+Narrow header controls retain their sizes and action spacing across solo and
+split layouts. The compact tab selector shares the pane presentation clock and
+cancellation path; retiring a rail releases its space in the closing destination,
+without another selector jump after the pane is removed.
 
 ### History browsing leaves the workspace untouched
 
@@ -254,6 +276,15 @@ content that is already current asks the user to choose another revision; it
 does not require lifecycle recovery.
 
 ## Documents, tasks, and persistence
+
+### Cancelled block gestures preserve authored content
+
+The explicit Move block handle owns touch dragging; surrounding note content
+retains native scrolling and selection. Only a matching pointerup commits a
+drop or opens the formatting menu after a tap. Pointer cancellation, capture
+loss, window blur, hidden visibility, document changes and editor teardown
+discard the drag and its preview without publishing a move. A later pointerup
+cannot revive it. Successful moves retain ordinary Undo behavior.
 
 ### Optional note tags are authored content
 
@@ -672,8 +703,16 @@ Local search setup stays inside Settings. Its explicit setup action installs
 any missing device-local runtime and model, starts the model, and schedules
 indexing. Ordinary embedding requests never download executable code. Runtime
 downloads are pinned and checksum-verified. For Gemma LiteRT, extraction and
-native-library loading/symbol verification succeed before the runtime directory
-is published; model installation and initialization complete before setup reports
+native-library loading/symbol verification succeed before the desktop runtime directory
+is published. iOS builds stage the checksum-pinned official XCFramework through
+`scripts/ios_litert_runtime.py`; Xcode embeds and signs the matching slice. The
+provider resolves only `Frameworks/CLiteRTLM.framework/CLiteRTLM` beside the app
+executable and verifies its required C symbols. iOS setup never downloads an
+executable, including when the bundle is missing; Settings reports that case as
+an app-build repair. Simulator admission uses a separate representation namespace,
+four CPU threads and the existing serialized provider/workqueue. Physical iPhone
+admission remains disabled pending full-app device validation. Model installation
+and initialization complete before setup reports
 success. These stages belong to `semantic/litert_install.rs` and `semantic/litert.rs`.
 Interrupted setup remains retryable, and keyword search stays available.
 The provider owns setup progress independently of its inference lock. Settings
@@ -709,6 +748,19 @@ window; A → B → A creates no revision. Its private identity never escapes as
 revision, and stale generation/window callbacks cannot resurrect deleted history.
 
 ## Chat
+
+### Vault relocation preserves chat authorization and conflict boundaries
+
+Chat startup rebinds known vault-owned locations before interrupted-run/commit
+recovery or transcript observation. Location changes and the recorded vault root
+commit atomically. Legacy migration requires a surviving managed transcript
+identity at the generated relative location; arbitrary external paths and parent
+traversal do not acquire vault authority. Relocation changes no authored content,
+permission, hash or proposal status. Missing or edited transcripts remain conflicts;
+a stale detached flag clears only after every relocated publication hash matches.
+Pending proposals still require explicit Keep. Interrupted commits converge from
+filesystem proof without replay, and update commits retain Note Identity and base
+hash validation through NoteTimeline.
 
 ### Surviving transcripts recover missing conversations
 
@@ -784,8 +836,13 @@ answer. `chat/citations.rs` constructs durable destinations; recognized but unis
 malformed model citation text is not automatically recognized. References are
 never resolved by title or fuzzy matching. Worker references are remapped on
 parent admission. Tool-capable chat selects exact run-local IDs in structured
-answer segments; the app rejects unknown, duplicate, stale or excluded references
-before constructing any durable citation. This validates the citation selection,
+answer segments. Reads return exact `sourceId` fields and the dispatched answer
+formatter enumerates only currently validated IDs issued to that run, preserving
+their original numbers. Discovery selectors and worker-local IDs grant no answer
+selection authority. The app rejects malformed or duplicate references and stale or
+excluded sources before constructing any durable citation. A well-formed unissued
+selection becomes inert `[citation unavailable]` text; other segments and validated
+sources survive without granting authority to the invented selection. This validates the citation selection,
 not whether the source entails the claim. Structured drafts render decoded text
 literally with no Markdown or clickable links. Draft snapshots are transient and
 scoped by request/message identity, dispatch attempt and sequence. Retry resets
@@ -951,9 +1008,10 @@ do not replace backend validation of actually read IDs and closed gap codes.
 It shares parent budgets and
 cancellation, cannot delegate or mutate notes, and cannot change provider routing.
 Only backend-validated selected passages and gap codes return to the parent.
-Research may be invoked repeatedly within shared run budgets, with at most one
-active worker. Each invocation has its own tool-call and timeout limits in
-`agent_tools/research.rs`. Its
+Research may be invoked repeatedly, with at most one active worker. Production
+has no cumulative evidence, tool-call, token or elapsed-time quota. Explicit
+caller limits, cancellation and stalled-call detection remain authoritative.
+`agent_tools/research.rs` supports an optional caller-supplied timeout. Its
 lease releases on every exit, including failure/cancellation, and all invocations
 contribute to cumulative usage without double-counting streaming usage updates.
 A standalone JSON fence may be removed before strict selection validation;
@@ -992,15 +1050,25 @@ headroom; parent/worker aggregate spending is not context occupancy. Capacity
 must come from a fresh loaded-model observation; unavailable metadata may defer
 retries briefly but cannot reuse an earlier positive capacity. New retained messages receive a
 conservative allowance; changed instructions/tools/model/history invalidate the
-baseline. Unknown usage or capacity retains existing limits. Near capacity,
-pending tools are skipped and at most one final model request retains evidence,
-citation identities and tool-call/result pairs with executable tools disabled and bounded
-output. Recent user and source-free assistant messages are not individually
-clipped to fit; existing recent-message and compaction rules still apply. The app
-never drops history silently to make a request fit. Cancellation,
-permissions, scope and final evidence-currentness checks remain authoritative.
-An existing non-executable structured result formatter may remain callable on the
-final request; no evidence retrieval or other application action remains callable.
+baseline. Near capacity, run-local compaction replaces older provider-facing
+context with a bounded continuation summary and lets tools continue. The original
+user prompt, system instructions and latest assistant/tool-result group remain
+verbatim. A checkpoint is reusable only against its matching original prefix and
+configuration. Invalid, oversized or insufficient summaries never install partial
+state. Malformed summaries receive bounded retries; every attempt contributes to
+usage. A failed compaction stops explicitly with original history retained.
+Unknown capacity uses a conservative serialized-byte working-context threshold,
+not an invented context window or cumulative quota. Summary inference uses the
+same provider/model without executable tools and contributes to run usage. Local
+summary requests disable reasoning. Source freshness is rechecked after summary
+inference before dispatching the continuation.
+Cancellation and explicit deadlines interrupt it. Completed parent compaction is
+visible without discarding selected-note metadata; worker summaries stay private.
+Summaries preserve continuation state but confer no evidence or action authority.
+Existing durable history compaction remains app-owned between user messages.
+Permissions, scope, proposal read coverage and final evidence-currentness checks
+remain authoritative even for sources summarized out of provider context. Search
+cursor eviction must retain earlier scope/version validation bindings.
 
 ### Tool failures preserve safe recovery instructions
 
@@ -1078,14 +1146,28 @@ choices affect only the current conversation or draft.
 Provider and model remain separate choices, supported reasoning effort is
 validated for the selected model, and a model cannot change during an active
 response. Backend-resolved settings are the source of default model identity.
+Local reasoning choices come from server capability metadata, independent of
+model names. The runtime revalidates persisted choices against that metadata;
+unsupported choices use its default, and unavailable metadata sends no override.
+The picker must represent the compatible transport honestly: `off` disables
+reasoning, while `on` preserves an enabled server default without sending a
+literal unsupported `on` value.
 
 ### Search and chat share a dock without replacing their drafts
 
 When a chat pane is open, search and the selected chat composer share the bottom
 dock. Expanding one collapses the other to an icon. Explicit mode selection
-survives clicks in the same conversation or its neighboring note; selecting a
-different chat expands that pane's composer. Switching modes keeps the mounted
-search and composer, preserving the search query, unsent text, attachments, and
+survives repeated activation within the same pane. Switching the active pane
+shows search for an editor and the selected composer for chat, at every width.
+Replacing the active pane’s kind applies the same selection even when its ID
+is unchanged and another chat remains open.
+While any chat pane remains open, the dock retains its chat/search presentation
+and chat button, including when that pane is collapsed to a rail. Clicking the
+chat button activates its pane and focuses its retained composer. Incoming
+search follows its own focus state throughout the existing handoff; switching
+panes cannot briefly reveal an idle placeholder or match options.
+Switching modes keeps the mounted search and composer, preserving the search
+query, unsent text, attachments, and
 configuration without creating or sending a conversation. Search shortcuts can
 expand hidden search, and returning focus to chat expands its composer.
 The presentation machine has three settled states: editor search, chat search,
@@ -1100,7 +1182,9 @@ placeholders are shown only for empty inputs.
 Returning to editor search keeps scope-label widths consistent with its focus
 and query state throughout the handoff; idle labels never briefly expand.
 Opening chat retains the outgoing scope-label widths until search has faded
-away, so the icons do not jump sideways as the handoff starts.
+away, including the phone's two-row control layout, so controls do not reflow
+as the handoff starts. Split header pointer actions preserve input focus until
+navigation takes over, matching solo header actions.
 Bar, circles, and controls share one correlated frame clock through
 compression, exchange, and settling. A separate material layer joins the shapes;
 its filter never applies to text or controls. Entry begins at the visible editor
@@ -1113,6 +1197,12 @@ bar settles without restarting. Another morph fades from the displayed opacity;
 reduced motion reveals the selected surface immediately. Glyphs hand off
 sequentially; editor transitions never detour through a chat glyph.
 Circle exchange finishes at compact bar height before the composer unfolds.
+Wrapped search controls grow the main bar's height independently of the circular
+actions. Focus, blur and pane changes cannot resize those circles or change the
+horizontal search/chat travel distance. In the compact search layout, scope
+buttons stay anchored at the right on the same bottom baseline. Match options
+reveal toward the left while the query row and measured dock background unfold
+on the existing search expansion curve; a retained query keeps its row on blur.
 The same background/outline renderer remains mounted in settled and moving
 states. The shared results panel reveals upward from its existing base over
 350ms and collapses over 275ms without moving or rewrapping its text. Its reveal
@@ -1126,11 +1216,17 @@ During search/chat exchange the main bar and foreground glyph paths are monotoni
 both background circle shells stay full-size and opaque. Editor/chat paths use
 measured endpoints rather than recomputing against the moving flex width, so the
 first painted frame retains the displayed origin and width-cap changes do not hitch.
+Standalone editor search balances Related’s reservation using the drawer’s
+existing layout curve. Settled search geometry stays relative to its available
+flex space; resizing that space does not restart search expansion. Chat input
+and chat search use the card’s available space with balanced gaps beside the
+adjacent actions.
 Ordinary editor-search CSS transitions resume only after projected margins are
 released and the settled local coordinates have flushed, avoiding a second
 transition from stale bounds at the end of the shared morph.
-Editor/chat edges use a shared cubic Bézier easing for the pane and dock: gentle
-departure and arrival with a faster middle. Input switching retains its pinch
+All pane entry and departure use a shared cubic Bézier easing for the pane and dock: gentle
+departure and arrival with a faster middle. Measured dock bounds travel directly
+between endpoints even when its input mode stays unchanged. Input switching retains its pinch
 pacing, and the selected curve follows the remaining clock when interrupted.
 Content scrolls beneath the shared dock fade. With a chat open, end padding
 reserves the measured expanded composer height in both chat input and search.
@@ -1177,8 +1273,11 @@ Repeated recovery is idempotent and never reapplies content blindly.
 
 After a verified proposal commit, an open document adopts the committed
 Markdown as its saved baseline instead of treating the write as external.
-Local edits made after commit began remain dirty. If disk no longer matches the
-committed Markdown, ordinary external-conflict protection applies.
+The commit receipt supplies editor-visible Markdown from the canonical publication;
+read-back compares against that receipt so title-heading and newline normalization
+cannot manufacture a conflict. The submitted working text separately identifies
+local edits made after commit began, which remain dirty. If disk no longer matches
+the committed Markdown, ordinary external-conflict protection applies.
 
 ### Proposal arrival does not navigate
 

@@ -50,7 +50,7 @@ concrete state references, independently of Tauri dispatch.
 | One active proposal review | `ProposalReviewSession.workflow` owns admission/commit; the retained document runtime owns editable body and hunk state |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
-| Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; its private installer verifies pinned native LiteRT/model bytes, explicit Settings setup uses semantic work admission, and shared semantic snapshots expose setup phases and byte progress independently of inference |
+| Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; desktop setup verifies pinned native LiteRT/model bytes; iOS loads the build-verified, signed framework from the app bundle and setup installs model data only. Explicit Settings setup uses semantic work admission; shared snapshots expose setup phases and byte progress independently of inference |
 | Compatible semantic generation and query admission | `SemanticGeneration` gates the vault-lifetime provider/database/ANN bundle; the semantic worker publishes after source/recall reconciliation through NoteTimeline source admission |
 | Next-launch semantic recovery | Vault-local `semantic-provider.json` stages Gemma or retained Jina; composition selects one provider on launch |
 | Running vault root, vault-data paths, and app-local observation path | Immutable `RunningVault`, resolved once at composition and retained by `AppState` and startup-bound services |
@@ -59,7 +59,14 @@ concrete state references, independently of Tauri dispatch.
 Compact pane rails derive their geometry from measured workspace space and
 WorkspaceStore's active pane. They retain editor/chat mounts and share the
 existing pane layout motion seam. The shared dock keeps its workspace width;
-its actions follow the expanded pane.
+its actions follow the expanded pane. At every width, dock presentation follows
+active-pane changes while preserving explicit mode choices within the same pane.
+An open chat keeps the dock's existing chat/search presentation and return
+button at every width; that button activates the retained chat pane and composer.
+Compact header controls retain their geometry across split membership changes;
+the global compact tab selector participates in that same pane presentation
+coordinator. Search content height is separate from the dock's circular action
+size, so wrapping controls cannot change the circle exchange endpoints.
 
 `NotepadState` owns documents and its one vault-scoped canonical identity/path
 to handle lookup, while `WorkspaceStore` owns ephemeral handle references from
@@ -106,8 +113,11 @@ Frontend adoption of a committed result enters `DocumentEditingService` through
 an operation-specific method. That boundary locates any retained document and
 shared runtime, atomically adopts identity, saved baseline, publication warning,
 and the canonical open-document lookup, and preserves edits that remain newer
-than the committed operation. Save and rename never replace the document handle,
-shared editor root, timers, save queue, or pane references. If a committed result
+than the committed operation. Proposal acknowledgement verifies read-back against
+the canonical editor-visible Markdown returned by publication, retaining the
+submitted working text separately to recognize later typing. Save and rename
+never replace the document handle, shared editor root, timers, save queue, or pane
+references. If a committed result
 collides with another independently dirty open document, both documents remain
 open and the collision blocks later persistence; the already completed canonical
 write is not retried. A dirty participant cannot leave. Once one participant
@@ -319,6 +329,11 @@ validates, scaffolds, and atomically publishes only the next-launch selection. R
 selection is allowed, and selecting the running vault by a canonical alias clears
 the pending-restart indication. The running vault remains usable until explicit
 Restart performs the clean-close lifecycle; this is not live multi-vault support.
+On iOS, `VaultInfo.canRelaunch` is false: Settings explains manually closing the
+app in the App Switcher and reopening it. `prepare_restart` rejects automatic
+restart before accessing lifecycle owners, without authorizing resume; Apply and
+backgrounding retain the Running Vault. A manual force-quit does not claim a
+portable clean close or guaranteed completion of frontend background saves.
 One frontend `RestartLifecycle` action closes workspace mutation admission, joins
 the existing restore/save/departure barrier, and only requests process relaunch
 after the backend returns an explicit ready receipt. The backend `AppLifecycle`
@@ -616,10 +631,13 @@ search, chat search, and chat input. One correlated frame clock drives the bar,
 circles, joining material, and controls; input contents reveal near settling and
 finish fading after motion completes. The dock adapter measures mounted
 inputs and blends coordinate spaces, including the adjacent actions, when
-Related layout changes during a morph. Pane layout changes accompanying an
-editor/chat edge sample the dock's remaining clock and shared easing, and publish
-the dock's final flex bounds in a correlated presentation event after installing
-their effects.
+Related layout changes during a morph. `paneLayoutMotion` coordinates every split
+entry and departure on the dock's existing editor transition clock, regardless
+of pane kind or viewport width. It interpolates the measured dock flex bounds
+alongside the panes, keeping width caps from reversing the bar during expansion.
+When a dock morph accompanies the layout change, both sample the same remaining
+clock and easing; the coordinator publishes the dock's final flex bounds in a
+correlated presentation event after installing their effects.
 The dock interpolates its displayed origin to that endpoint directly, avoiding
 temporary destination measurements and width-cap discontinuities, and balances
 Related against the displayed margins. Search/chat exchange anchors full-size
@@ -639,6 +657,11 @@ chat search, so switching modes preserves the reading surface's scroll extent.
 Draft growth and shrinkage update that clearance; editor/chat morphs reserve
 their maximum clearance until settling.
 The reading surfaces extend behind its shared fade rather than clipping above it.
+Split choices enter through one `notepadWorkspaceSession.splitWorkspace` command.
+Current and previous locations determine the new pane's kind before completing
+creation, then use the same location application as the pane picker. A chat
+destination therefore mounts directly as chat, without a temporary editor or a
+second layout transition. Focus waits for the shared presentation barrier.
 
 ## Agent runtime
 
@@ -662,6 +685,14 @@ projection bytes after publication; queued own-write events cannot detach chats.
 Provider client/model construction belongs to `agent_runtime.rs`. The internal
 chat/runtime request still uses Rig messages; usage, persisted chat and frontend
 contracts use app-owned types.
+Agent event variant fields serialize in the frontend's camelCase contract;
+deserialization also accepts the earlier snake_case fields so saved activity
+retains tool identities, outcome details and timing when reopened.
+For OpenAI-compatible chat, `agent_runtime/compatible_chat.rs` combines all
+assembled system content into one opening system message on every completion
+dispatch, before context admission and measurement. App context and formatter
+instructions retain their order and text; dialogue and tool-result ordering is
+preserved. This accommodates templates that reject additional system messages.
 
 At startup, `ChatService` recovers missing conversation identities from surviving
 managed Markdown in `Chats` through its private transcript recovery module.
@@ -670,6 +701,17 @@ rewriting files or replacing existing database conversations. Legacy transcripts
 cannot reconstruct runtime events, attachment bytes, permissions, or evidence
 provenance; recovered chats start with no vault access and conservative assistant
 history evidence markers. SQLite remains authoritative after recovery.
+
+Before startup recovery, private `chat/relocation.rs` atomically rebinds the closed
+set of vault-owned chat location fields and its vault-root receipt to the Running
+Vault. Absolute IPC paths remain unchanged in shape. Legacy roots require the
+generated transcript layout and a surviving managed conversation identity in the
+current vault; unknown roots remain unresolved. Authored text, URLs, hashes and
+proposal statuses are not rewritten. A previously detached relocated transcript
+is readmitted only when all publication receipts still match current bytes.
+Interrupted proposal commits still require filesystem proof and never replay;
+update commits resolve their Note Identity in the current vault before entering
+the existing NoteTimeline write path.
 
 `services/evidence.rs` owns current evidence search, ranking, scoped/versioned
 cursors, passage reads and canonical citation validation. `find_notes` uses
@@ -732,6 +774,15 @@ choose tools inside the runtime. Ordinary chat grants the complete set when
 executable tools are enabled; local model capability settings can disable them. The
 agent chooses and sequences available tools to fulfill the user's objective;
 retrieval never chooses a final response format or terminates a successful run.
+
+`agent_runtime/local_reasoning.rs` discovers local reasoning choices from LM
+Studio's `/api/v1/models` metadata, matching the selected model or loaded instance.
+Settings and the composer display those choices; the runtime independently
+revalidates saved preferences before inference. Unsupported preferences fall back
+to the advertised default. Missing metadata leaves reasoning to the server.
+The compatible transport maps `off` to `reasoning_effort=none` and offers `on`
+only when omitting the override preserves an enabled server default. Official
+OpenAI reasoning choices continue to use the curated catalog.
 
 The model-facing interface exposes five tools: `find_notes`, `read_notes`,
 `propose_note_change`, `research_notes`, and `update_plan`. The private interface
@@ -896,8 +947,8 @@ versions and admitted citations are checked; stale evidence stops the answer.
 Historical UI transcripts are not fresh evidence. Each validation pass assembles
 permissions once, validates each admitted passage identity with all delivered
 provenance proofs, and fingerprints each distinct search scope once. These are
-per-operation reuse rules, never caches across freshness boundaries. Repeated
-payloads still consume the model evidence allowance.
+per-operation reuse rules, never caches across freshness boundaries. Search
+cursor eviction retains earlier scope/version bindings for final validation.
 
 The runtime's `research_notes` worker has a separate prompt/history and only
 evidence discovery/read tools. Its role contract gathers and selects evidence rather
@@ -909,8 +960,9 @@ are not model inputs. It retains the parent's provider/model routing, shares the
 run guard and evidence-byte budget, and returns selected issued/read IDs and gap
 codes. The backend resolves passages; worker prose and intermediate transcripts
 never enter parent context. One worker may run at a time, with invocation-specific
-tool-call and timeout limits owned by `agent_tools/research.rs`, under shared
-parent call/token/time and evidence limits. The agent may invoke research again
+optional caller-supplied timeout limits owned by `agent_tools/research.rs`, under
+the shared parent guard. Production has no cumulative research-call, token,
+evidence-byte or elapsed-time quota. The agent may invoke research again
 for another question or scope; a lease is released on every exit, and cumulative
 usage includes all invocations. Period-scoped workers
 must obtain their own temporal candidates; direct canonical reads for current-status checks remain with the parent. Provider failure remains explicit;
@@ -933,15 +985,20 @@ Isolation clears any parent result schema before assigning the worker contract.
 OpenAI forced web search selects the hosted tool on the initial completion only.
 The app-owned dispatch policy releases that raw selection on subsequent requests,
 including output retries, so gathering tools and the result formatter can run.
-During context finishing, only this appended formatter remains callable; all
-executable tools are removed. The private compatibility check matches the final
+The private compatibility check matches the final
 definition's exact result schema, including collision-renamed formatters, and is
 covered through the production streaming runner. Measurement separates formatter
 count from executable tool count without recording their definitions or content.
 
 Tool-capable chat uses a readable `segments`/`text`/`sources` answer schema.
-`agent_runtime/result_stream.rs` identifies the appended formatter by its exact
-schema on each actual dispatch (including output retries and renamed formatters),
+Read payloads supply a bare `sourceId` alongside the Markdown citation label;
+discovery `evidenceId` and note identities remain separate retrieval selectors.
+Before each dispatch, `agent_runtime/result_stream.rs` restricts the answer
+formatter's source selections to an enum of currently validated IDs issued to
+that run. Before any read, its sources array permits only an empty selection.
+Worker selection schemas and executable tools are unchanged. The runtime
+identifies the appended formatter by its exact schema after removing only this
+run-local selection annotation (including output retries and renamed formatters),
 then emits internal, non-durable `ResultStream` fragments for that part only.
 Executable arguments and ordinary formatter commentary are not draft answer text.
 `chat/structured_answer.rs` decodes only segment text from bounded JSON prefixes;
@@ -949,14 +1006,21 @@ Executable arguments and ordinary formatter commentary are not draft answer text
 identity, dispatch attempt and sequence. Raw JSON never enters frontend activity
 or durable event history. The controller rejects old attempts, sequences and
 terminal-run events; draft text has no Markdown, links or citation controls.
-At finalization the app independently rejects malformed/unknown fields, duplicate
-or unissued IDs and stale/excluded passages, then constructs Markdown links and
+At finalization the app independently rejects malformed/unknown fields, malformed
+or duplicate IDs and stale/excluded passages. Well-formed but unissued selections
+become explicit, inert `[citation unavailable]` markers while preserving other
+segments; they never acquire a source card or link. The app constructs Markdown links and
 persists only selected validated sources. Rig Tool mode retries malformed JSON;
 it does not enforce the app's closed schema. App validation failures are terminal
 and retryable by the user, without an extra automatic model call. Final Markdown
 replaces the draft only after terminal persistence succeeds. Local models without
 tool support keep their ordinary text path. These checks establish source identity
 and shape, not semantic entailment of a model's claims.
+
+Growing source choices do not invalidate rolling context checkpoints or usage
+baselines. Configuration comparison normalizes only this formatter annotation;
+usage projection counts added choice bytes conservatively, and actual dispatch
+measurement includes the constrained schema.
 
 An empty resolved research scope returns `empty_scope` without starting worker
 inference or widening access. Selection accepts raw JSON or one standalone JSON
@@ -969,14 +1033,27 @@ delivered evidence. Empty selection preserves a supplied closed gap code; absent
 one it reports unavailable rather than asserting no matching evidence. Events never contain worker text, identifiers, scope
 values or raw provider errors, and do not add user-visible answer parts.
 
-Evidence limits are byte-based allowances owned by `services/evidence.rs` and
-its read implementation; they are not token counts or quality guarantees.
+`services/evidence.rs` owns delivery accounting and optional finite byte
+allowances; they are not token counts or quality guarantees. Production runtime
+dispatch enables cumulative evidence delivery without a byte quota because
+provider context is compacted during the run. Budget fields report null for an
+unlimited allowance. Workers share the counter and cannot reconfigure it.
+Explicit finite allowances remain available to focused callers/tests, preserving
+spending across changes and reserving two read pages for parent delivery.
+Each read page remains bounded to 6,000 bytes, including its serialized envelope
+and interpretation guidance; remaining-budget fields are sized conservatively
+before admission even when the allowance has more digits than the fallback.
+Per-page bounds limit individual context growth without limiting total research.
+Search cursors use a bounded cache; eviction does not discard freshness bindings
+or impose a cumulative query limit.
 Model-facing search and read cursors retain their configuration inside the evidence
 session; internal provenance offsets are not model inputs. Historical proofs are
 persisted additively in passage JSON and navigation opens their content revision.
-`agent_guardrails.rs::AgentRunLimits` owns shared context-byte, aggregate-token,
-tool-call and elapsed-time ceilings; `agent_runtime.rs` owns model-call and retry
-limits.
+`agent_guardrails.rs::AgentRunLimits` owns optional shared context-byte,
+aggregate-token, tool-call and elapsed-time ceilings; production defaults leave
+these unlimited. Consecutive identical tool calls still detect a stalled run;
+legitimate rereads after other progress are allowed. `agent_runtime.rs` retains
+bounded invalid-output retries without a cumulative model-call ceiling.
 Opt-in `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` wraps the completion model inside the
 runtime seam and observes assembled instructions, messages, tools, documents,
 output schema and provider parameters. ContextMeasured events contain counters
@@ -987,7 +1064,7 @@ reported without inventing an output reserve or substituting advertised capacity
 The read-only metadata probe is bounded, nonredirecting and nonfatal; its result
 is shared with the usage-driven guard on each local completion attempt. Research forwards these counters but never its
 prose or raw tool content. A pending attempt closes with unknown usage on dropped
-or superseded work. Existing byte admission and cumulative limits remain ceilings.
+or superseded work. Explicit caller-supplied limits remain authoritative.
 
 A separate per-runtime usage context guard uses reported input tokens and observed
 loaded capacity. Parent and research worker baselines are independent. Only new
@@ -997,14 +1074,36 @@ baseline. Each local runtime reuses one metadata HTTP client. Successful loaded
 capacity observations are refreshed on every request, so server reloads can
 change the allowance. Unavailable metadata uses the model-specific retry backoff
 in `agent_runtime/context_measurement.rs`; a different model probes immediately.
-No positive capacity is cached. Unknown capacity keeps existing fallback limits.
-`agent_runtime/usage_context.rs` owns the answer/reasoning reserve, safety margin,
-and allowance for another gathering step. Near capacity it skips pending tools,
-preserves history/evidence and sends at most one final request with tools disabled and an
-explicit output cap. If the final reserve cannot fit it stops explicitly. This
-is conservative prevention, not exact tokenization or automatic history trimming.
-Counter-only ContextMeasured finishing events are emitted even with optional
-request diagnostics off; worker events retain their worker identity.
+No positive capacity is cached. `agent_runtime/usage_context.rs` triggers rolling
+compaction at 75% of observed loaded capacity, or earlier to retain a 4,096-token
+answer reserve, 1,024-token margin and 4,096-token compaction reserve. Unknown
+capacity/usage uses serialized request bytes conservatively; unknown capacity
+uses a 96,000-byte trigger rather than guessing a model window. These are working
+context thresholds, not cumulative research quotas or exact tokenization.
+
+`agent_runtime/compaction.rs` owns ephemeral run checkpoints. It asks the same
+provider/model for a bounded, closed-schema summary with no executable tools
+(local summary requests disable reasoning to preserve room for summary text),
+retains the original user prompt and latest assistant/tool-result group verbatim,
+and preserves the opening system instructions. Subsequent requests project this
+summary plus new work from the engine's original transcript. Prefix/configuration
+changes invalidate the checkpoint. A replacement installs atomically only after
+validating its shape, size and reduction. Invalid summaries receive up to two
+retries, each accounted for; failures stop explicitly while retaining
+the original transcript. Cancellation and explicit deadlines also interrupt
+compaction. Summary calls contribute to model-call/token accounting. Source
+freshness is rechecked after summary inference before dispatching the continuation.
+Counter-only
+ContextMeasured events report started/completed/failed/interrupted outcomes even
+when optional diagnostics are off; worker identity remains separate. The frontend
+marks parent compaction without replacing selected-note metadata.
+
+Summaries are fallible working memory, never source evidence, authorization or
+durable resume checkpoints. Scope, source identity, canonical read requirements,
+proposal rules and final freshness checks continue to apply. Existing ChatService
+compaction owns persisted history between user messages; run compaction does not
+rewrite it. The engine retains its original in-memory transcript, so physical
+memory and provider availability still constrain a run.
 
 These bounds are implementation defaults, not measured quality guarantees.
 

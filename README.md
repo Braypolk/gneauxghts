@@ -205,6 +205,26 @@ ordinary debug executables, which must be rebuilt before running them again.
 The separately pinned native E2E copies remain; rebuild those whenever their
 source changes.
 
+### iOS simulator builds
+
+For the experimental iOS app, install the matching Xcode simulator runtime and
+build with Xcode's normal signing enabled:
+
+```bash
+pnpm tauri ios build --debug --target aarch64-sim --ci
+```
+
+The wrapper stages the pinned semantic framework before building. Install the
+resulting `src-tauri/gen/apple/build/arm64-sim/Gneauxghts.app` with `xcrun simctl
+install <simulator-udid> <app-path>`.
+
+Keychain tests require this signed build path. `--no-sign` omits Xcode's
+simulator application identity; manually signing that output afterward does
+not restore the embedded simulator entitlements. Xcode uses its local
+simulator signature without a device provisioning profile. Physical iPhone
+and distribution builds still require appropriate signing and provisioning.
+See the bounded [Keychain validation](.scratch/mobile-ios-readiness/keychain-validation.md).
+
 ## Semantic Search
 
 The semantic layer is local-first and optional.
