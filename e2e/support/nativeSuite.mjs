@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 
 // Keep deterministic UI contracts separate from provider and measurement opt-ins.
 export const nativeSuites = {
-  smoke: ['app-lifecycle', 'command-events', 'note-timeline-phase-1-3', 'editing-windows', 'image-interactions', 'pane-animation', 'chat-pane-animation'],
+  smoke: ['app-lifecycle', 'command-events', 'note-timeline-phase-1-3', 'editing-windows', 'image-interactions', 'search-focus', 'pane-animation', 'chat-pane-animation'],
   measurement: ['editing-windows', 'chat-typing'],
   live: ['activity-followups', 'query-inventory', 'chat-dates', 'research-worker', 'research-comparison', 'agent-date-evidence']
 };
