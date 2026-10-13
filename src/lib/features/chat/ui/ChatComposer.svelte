@@ -362,7 +362,11 @@
   }
 
   function onComposerKeydown(event: KeyboardEvent) {
-    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    // iPhone Return (including a hardware keyboard) edits the draft. Submission
+    // remains explicit through Send; desktop keeps Enter / Shift+Enter.
+    // Safari can finish composition before delivering its final Enter event.
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing || event.keyCode === 229 ||
+      window.matchMedia('(any-pointer: coarse)').matches) return;
     event.preventDefault();
     void submit();
   }
@@ -527,6 +531,7 @@
       bind:this={composerElement}
       bind:value={draft}
       rows={1}
+      enterkeyhint="enter"
       aria-label="Message"
       class="chat-composer-input"
       {placeholder}

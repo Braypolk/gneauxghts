@@ -159,6 +159,10 @@ export function createBlockHandleExtension(
               'pointerdown',
               this.#handleDragPointerDown
             );
+            refs.dragButton.addEventListener(
+              'lostpointercapture',
+              this.#handleWindowPointerCancel
+            );
           }
         );
 
@@ -181,6 +185,11 @@ export function createBlockHandleExtension(
       }
 
       update(update: ViewUpdate) {
+        if (update.docChanged) {
+          this.#cancelDrag();
+          this.#pendingAnchor = null;
+          this.#dropSlotsDirty = true;
+        }
         // Pane/Related transitions can move the centered text column without
         // changing the document or the visible range of document positions.
         if (update.geometryChanged || update.viewportChanged) {
@@ -198,6 +207,11 @@ export function createBlockHandleExtension(
 
       destroy() {
         this.#destroyed = true;
+        this.#clearDrag();
+        this.#dragButton?.removeEventListener(
+          'lostpointercapture',
+          this.#handleWindowPointerCancel
+        );
         this.#editorRoot.removeEventListener(
           'mousemove',
           this.#handleMouseMove,
@@ -214,21 +228,6 @@ export function createBlockHandleExtension(
           true
         );
         window.removeEventListener('resize', this.#handleResize);
-        window.removeEventListener(
-          'pointermove',
-          this.#handleWindowPointerMove,
-          true
-        );
-        window.removeEventListener(
-          'pointerup',
-          this.#handleWindowPointerUp,
-          true
-        );
-        window.removeEventListener(
-          'pointercancel',
-          this.#handleWindowPointerUp,
-          true
-        );
         this.#dropIndicator.remove();
         this.#extentIndicator.remove();
         this.#content?.removeEventListener(
@@ -323,7 +322,10 @@ export function createBlockHandleExtension(
       };
 
       #handleDragPointerDown = (event: PointerEvent) => {
-        if (!this.#currentBlock || !this.#dragButton) return;
+        if (
+          event.button !== 0 || this.#drag ||
+          !this.#currentBlock || !this.#dragButton
+        ) return;
 
         event.preventDefault();
         this.#hideExtentIndicator();
@@ -350,8 +352,12 @@ export function createBlockHandleExtension(
         );
         window.addEventListener(
           'pointercancel',
-          this.#handleWindowPointerUp,
+          this.#handleWindowPointerCancel,
           true
+        );
+        window.addEventListener('blur', this.#cancelDrag);
+        document.addEventListener(
+          'visibilitychange', this.#handleVisibilityChange
         );
       };
 
@@ -382,6 +388,49 @@ export function createBlockHandleExtension(
         const drag = this.#drag;
         if (!drag || event.pointerId !== drag.pointerId) return;
 
+        this.#clearDrag();
+
+        if (!drag.dragging) {
+          if (!this.#selectionIncludesBlock(drag.source)) {
+            this.#focusBlock(drag.source);
+          }
+          if (this.#dragButton) {
+            setSlashMenuFloatingReference(this.#view, this.#dragButton);
+          }
+          showSlashMenu(this.#view, drag.source.from);
+          this.#syncCurrentBlock();
+          return;
+        }
+
+        if (
+          drag.target &&
+          (drag.target.from !== drag.source.from ||
+            drag.target.to !== drag.source.to)
+        ) {
+          moveBlockTo(this.#view, drag.source, drag.target, drag.before);
+        }
+        this.#syncCurrentBlock();
+      };
+
+      #handleWindowPointerCancel = (event: PointerEvent) => {
+        if (event.pointerId === this.#drag?.pointerId) this.#cancelDrag();
+      };
+
+      #handleVisibilityChange = () => {
+        if (document.visibilityState === 'hidden') this.#cancelDrag();
+      };
+
+      #cancelDrag = () => {
+        if (!this.#drag) return;
+        this.#clearDrag();
+        // Cancellation may run during a document update, when CodeMirror
+        // prohibits synchronous layout reads.
+        this.#scheduleCurrentBlockSync();
+      };
+
+      #clearDrag() {
+        this.#drag = null;
+
         window.removeEventListener(
           'pointermove',
           this.#handleWindowPointerMove,
@@ -394,41 +443,17 @@ export function createBlockHandleExtension(
         );
         window.removeEventListener(
           'pointercancel',
-          this.#handleWindowPointerUp,
+          this.#handleWindowPointerCancel,
           true
+        );
+        window.removeEventListener('blur', this.#cancelDrag);
+        document.removeEventListener(
+          'visibilitychange', this.#handleVisibilityChange
         );
 
         this.#content?.setAttribute('data-dragging', 'false');
         this.#hideDropIndicator();
-
-        if (!drag.dragging) {
-          if (!this.#selectionIncludesBlock(drag.source)) {
-            this.#focusBlock(drag.source);
-          }
-          if (this.#dragButton) {
-            setSlashMenuFloatingReference(this.#view, this.#dragButton);
-          }
-          showSlashMenu(this.#view, drag.source.from);
-          this.#drag = null;
-          this.#syncCurrentBlock();
-          return;
-        }
-
-        if (
-          drag.target &&
-          (drag.target.from !== drag.source.from ||
-            drag.target.to !== drag.source.to)
-        ) {
-          moveBlockTo(
-            this.#view,
-            drag.source,
-            drag.target,
-            drag.before
-          );
-        }
-        this.#drag = null;
-        this.#syncCurrentBlock();
-      };
+      }
 
       #focusBlock(block: BlockDescriptor) {
         this.#view.dispatch({

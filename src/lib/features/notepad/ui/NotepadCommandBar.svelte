@@ -952,4 +952,15 @@
       animation: none;
     }
   }
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true']) .notepad-command-bar-content {
+      --workspace-dock-action-height: 2.875rem;
+      --search-dock-padding: 0px;
+      min-height: 2.875rem;
+      padding-block: 0;
+    }
+    :global(.app-shell[data-keyboard-open='true']) .notepad-command-bar-content > :global(:first-child),
+    :global(.app-shell[data-keyboard-open='true']) .notepad-command-bar-content > :global(:last-child) { padding: 0; }
+    :global(.app-shell[data-keyboard-open='true']) .notepad-command-bar-content :global(.workspace-input-dock) { --dock-circle-inset: 0px; }
+  }
 </style>

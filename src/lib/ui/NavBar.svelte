@@ -54,7 +54,7 @@
     }`;
 
   // Match the note card's edge-to-edge breakpoint.
-  const compact = new MediaQuery('(max-width: 639px)');
+  const compact = new MediaQuery('(max-width: 639px), (any-pointer: coarse) and (max-height: 559px)');
   let menuOpen = $state(false);
   let navigationButton = $state<HTMLButtonElement | null>(null);
   let selectionPointer: number | null = null;
@@ -283,7 +283,7 @@
   }
   .app-navigation-header--compact.app-navigation-header--editor {
     position: absolute;
-    inset: var(--app-shell-top-inset, env(safe-area-inset-top, 0px)) 0 auto;
+    inset: var(--app-shell-top-inset, 0px) var(--app-safe-area-right, 0px) auto var(--app-safe-area-left, 0px);
   }
   .app-navigation-header--compact.app-navigation-header--editor .app-window-drag-region { height: 0.5rem; }
   .app-window-drag-region { position: absolute; inset: 0 0 auto; height: 2rem; pointer-events: auto; }
@@ -344,5 +344,8 @@
   :global(.app-navigation-item[data-highlighted]), :global(.app-navigation-item--touch) { background: var(--accent); color: var(--accent-foreground); }
   @media (max-height: 559px) {
     .app-navigation-header:not(.app-navigation-header--compact) { min-height: 3.5rem; padding: 0.25rem 0.75rem; }
+  }
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true']) .app-navigation-header--compact { height: 2.75rem; }
   }
 </style>

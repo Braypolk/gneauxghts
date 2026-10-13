@@ -164,7 +164,7 @@
           <label class="sr-only" for="provider-api-key">{credentialProvider === 'openai' ? 'OpenAI' : 'Compatible server'} API key</label>
           <input
             id="provider-api-key"
-            class="h-10 w-full rounded-xl border border-border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring"
+            class="h-10 w-full rounded-xl border border-border bg-background px-3 pr-10 text-sm outline-none focus:ring-2 focus:ring-ring [@media(any-pointer:coarse)]:h-11 [@media(any-pointer:coarse)]:pr-12"
             type={revealKey ? 'text' : 'password'}
             bind:value={apiKey}
             autocomplete="off"
@@ -176,7 +176,7 @@
           />
           <button
             type="button"
-            class="absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground"
+            class="coarse-touch-target absolute right-1 top-1 inline-flex h-8 w-8 items-center justify-center rounded-lg text-muted-foreground hover:bg-muted hover:text-foreground [@media(any-pointer:coarse)]:right-0 [@media(any-pointer:coarse)]:top-0"
             aria-label={revealKey ? 'Hide API key' : 'Show API key'}
             onclick={() => revealKey = !revealKey}
           >

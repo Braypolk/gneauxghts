@@ -138,19 +138,39 @@ export function createLayoutTheme() {
 }
 
 export function createOverlayScrollMargins(editorRoot: HTMLDivElement) {
-  return EditorView.scrollMargins.of((view) => {
+  return [EditorView.scrollMargins.of((view) => {
     const topOverlay = editorRoot
       .closest('[role="group"]')
       ?.querySelector<HTMLElement>('.notepad-editor-top-overlay');
-
-    if (!topOverlay) {
-      return null;
-    }
-
-    const scrollerTop = view.scrollDOM.getBoundingClientRect().top;
-    const overlayBottom = topOverlay.getBoundingClientRect().bottom;
-    const top = Math.max(0, Math.ceil(overlayBottom - scrollerTop));
-
-    return top > 0 ? { top } : null;
-  });
+    const scroller = view.scrollDOM.getBoundingClientRect();
+    const top = topOverlay
+      ? Math.max(0, Math.ceil(topOverlay.getBoundingClientRect().bottom - scroller.top))
+      : 0;
+    const dock = document.documentElement.dataset.keyboardOpen === 'true'
+      ? editorRoot.closest('.notepad-shell')?.querySelector<HTMLElement>('[data-notepad-command-bar]')
+      : null;
+    const bottom = dock ? Math.max(0, Math.ceil(scroller.bottom - dock.getBoundingClientRect().top)) : 0;
+    return top || bottom ? { top, bottom } : null;
+  }), EditorView.updateListener.of((update) => {
+    // A keyboard resize does not change the selection. Keep the focused caret
+    // in the remaining band without changing authored text or saved selection.
+    if (!update.geometryChanged || !update.view.hasFocus
+      || document.documentElement.dataset.keyboardOpen !== 'true') return;
+    update.view.requestMeasure({
+      read(view) {
+        const cursor = view.coordsAtPos(view.state.selection.main.head);
+        if (!cursor) return 0;
+        const port = view.scrollDOM.getBoundingClientRect();
+        let top = port.top, bottom = port.bottom;
+        for (const source of view.state.facet(EditorView.scrollMargins)) {
+          const margins = source(view);
+          top = Math.max(top, port.top + (margins?.top ?? 0));
+          bottom = Math.min(bottom, port.bottom - (margins?.bottom ?? 0));
+        }
+        return cursor.bottom > bottom ? cursor.bottom - bottom
+          : cursor.top < top ? cursor.top - top : 0;
+      },
+      write(delta, view) { if (Math.abs(delta) > 1) view.scrollDOM.scrollTop += delta; }
+    });
+  })];
 }

@@ -208,7 +208,7 @@
     <div class="flex items-center gap-1.5">
       <button
         type="button"
-        class="inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
+        class="coarse-touch-target inline-flex h-9 w-9 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50"
         aria-label="Refresh server models"
         title="Refresh models from the server endpoint"
         disabled={isDiscovering}
@@ -222,7 +222,7 @@
       </button>
       <button
         type="button"
-        class="inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:text-foreground"
+        class="coarse-touch-target inline-flex h-9 w-9 items-center justify-center rounded-full bg-muted text-muted-foreground transition-colors hover:text-foreground"
         aria-label="Add a model manually"
         title="Add a model manually"
         aria-expanded={showManualEntry}
@@ -315,7 +315,7 @@
 </div>
 
 {#if editingModel}
-  <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+  <div class="safe-area-overlay fixed z-50 flex items-center justify-center">
     <button
       type="button"
       class="absolute inset-0 cursor-default bg-background/70 backdrop-blur-sm"
@@ -323,7 +323,7 @@
       onclick={closeEditor}
     ></button>
     <div
-      class="relative z-10 max-h-[calc(100dvh-2rem)] w-full max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
+      class="relative z-10 max-h-full w-full max-w-lg overflow-y-auto overscroll-contain rounded-lg border border-border bg-card p-5 text-card-foreground shadow-2xl sm:p-6"
       role="dialog"
       aria-modal="true"
       aria-labelledby="local-model-editor-title"

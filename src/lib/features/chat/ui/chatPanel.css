@@ -70,6 +70,23 @@
 .chat-composer-input::placeholder {
   color: color-mix(in oklab, var(--muted-foreground) 75%, transparent);
 }
+
+@media (any-pointer: coarse) and (orientation: landscape) {
+  .app-shell[data-keyboard-open='true'] .chat-composer-slot--docked .chat-composer-surface {
+    display: grid;
+    grid-template-columns: minmax(5rem, 1fr) auto;
+    align-items: center;
+    padding: 0;
+    gap: 0.25rem;
+    /* Attachments retain full touch targets in the short keyboard viewport. */
+    max-height: max(44px, calc(var(--app-viewport-height, 100dvh) - var(--pane-header-block-size, 44px) - 8px));
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+  .app-shell[data-keyboard-open='true'] .chat-composer-slot--docked .chat-composer-input { max-height: 2.75rem; }
+  .app-shell[data-keyboard-open='true'] .chat-composer-toolbar { flex-wrap: nowrap; }
+  .app-shell[data-keyboard-open='true'] [aria-label="Pending attachments"] { grid-column: 1 / -1; max-height: 2rem; overflow-y: auto; }
+}
 .chat-composer-surface--inline .chat-composer-input {
   min-height: 2rem;
 }
@@ -693,6 +710,29 @@
 .chat-send-button:disabled {
   cursor: default;
   opacity: 0.4;
+}
+@media (any-pointer: coarse) {
+  .chat-icon-button,
+  .chat-composer-toolbar .chat-icon-button,
+  .chat-composer-chip,
+  .chat-model-control,
+  .chat-message-action,
+  .chat-context-trigger,
+  .chat-selection-action,
+  .chat-attachment-file,
+  .chat-pending-attachment-preview,
+  .chat-pending-attachment .chat-pending-attachment-remove,
+  .chat-grant-dismiss,
+  .chat-send-button,
+  .chat-menu-item,
+  .chat-model-provider-option {
+    min-width: 44px;
+    min-height: 44px;
+  }
+  .chat-message-branch { opacity: 1; pointer-events: auto; }
+  .chat-grant-dismiss { opacity: .7; }
+  .chat-composer-slot--docked { --chat-composer-toolbar-row-height: 2.75rem; }
+  .app-shell[data-keyboard-open='true'] [aria-label="Pending attachments"] { max-height: 3.5rem; }
 }
 @media (max-width: 639px) {
   .chat-send-button {

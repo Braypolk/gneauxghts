@@ -134,6 +134,12 @@
     height: 1.15rem;
   }
 
+  /* Only the explicit move handle owns touch dragging. Note content keeps
+     native scrolling and selection gestures. */
+  .notepad-block-handle__action[data-role='drag'] {
+    touch-action: none;
+  }
+
   .notepad-block-handle__action:hover,
   .notepad-block-handle__action:focus-visible,
   .notepad-block-handle__action:global(.active) {

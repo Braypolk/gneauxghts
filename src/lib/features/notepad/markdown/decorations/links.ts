@@ -57,6 +57,8 @@ class LinkTextWidget extends WidgetType {
   toDOM(view: EditorView): HTMLElement {
     const span = document.createElement('span');
     span.className = 'cm-gn-link-styled';
+    span.dataset.linkFrom = String(this.from);
+    span.dataset.linkTo = String(this.to);
     span.textContent = this.text;
     span.style.cursor = 'pointer';
     if (this.title) {

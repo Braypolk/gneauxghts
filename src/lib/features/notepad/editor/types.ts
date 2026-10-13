@@ -4,6 +4,7 @@ import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { EditorDocumentRuntime } from './editorDocumentRuntime';
 import type { ImageViewerSession } from '../images/imageViewerModel';
+import type { ExternalLinkActionsSession } from './externalLinkExtension';
 
 export interface EditorSelection {
   anchor: number;
@@ -27,6 +28,7 @@ export interface EditorController {
 }
 
 export interface EditorViewCallbacks {
+  onOpenExternalLinkActions?: (session: ExternalLinkActionsSession) => void;
   onOpenImageViewer?: (session: ImageViewerSession) => void;
   onOpenLink: (rawTarget: string) => void;
   onActiveWikilinkChange: (activeWikilink: ActiveWikilink | null) => void;

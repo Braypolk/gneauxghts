@@ -13,8 +13,10 @@ export function positionFloatingPanel(
   } = {}
 ): () => void {
   let disposed = false;
-  const collision = { padding: 16, ...(options.boundsElement ? { boundary: options.boundsElement } : {}) };
   const update = async () => {
+    const style = getComputedStyle(document.documentElement);
+    const inset = (edge: string) => Math.max(16, parseFloat(style.getPropertyValue(`--app-safe-area-${edge}`)) || 0);
+    const collision = { padding: { top: inset('top'), right: inset('right'), bottom: inset('bottom'), left: inset('left') }, ...(options.boundsElement ? { boundary: options.boundsElement } : {}) };
     const { x, y } = await computePosition(reference, panel, {
       strategy: 'fixed',
       placement: 'bottom-start',

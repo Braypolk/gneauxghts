@@ -149,3 +149,12 @@
     </form>
   </dialog>
 </div>
+
+<style>
+  @media (any-pointer: coarse) {
+    .date-time-picker { width: min(24rem, calc(100vw - 2rem)); padding: .75rem; }
+    .date-time-picker :global(button), .date-time-picker :global(input), .date-time-picker :global(select) { min-height: 44px; }
+    .date-time-picker :global(button) { min-width: 44px; }
+    .date-time-picker :global([data-bits-day]) { width: 100%; min-height: 44px; }
+  }
+</style>

@@ -1,5 +1,6 @@
 import type { EditorView } from '@codemirror/view';
 import type { ImageViewerSession } from '../images/imageViewerModel';
+import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import {
   slashMenuHideFromUi,
@@ -41,7 +42,7 @@ export interface PaneTransientUiDeps<TPaneId extends string> {
   getWikilinkController: (paneId: TPaneId) => WikilinkController;
 }
 
-/** Mutual exclusion and pane ownership for slash, selection and wikilink UI. */
+/** Mutual exclusion and pane ownership for editor transient UI. */
 export class PaneTransientUiController<TPaneId extends string> {
   active = $state.raw<PaneTransientUiState<TPaneId>>({
     kind: 'none'
@@ -58,6 +59,7 @@ export class PaneTransientUiController<TPaneId extends string> {
   }
 
   openImageViewer(paneId: TPaneId, session: ImageViewerSession) {
+    this.closeExternalLinkActions();
     this.closeImageViewer();
     this.closeSlashMenu(); this.closeSelectionMenu(); this.closeWikilinkAutocomplete();
     this.transition({ type: 'open-image-viewer', paneId, session });
@@ -65,6 +67,18 @@ export class PaneTransientUiController<TPaneId extends string> {
 
   closeImageViewer(paneId: TPaneId | null = null) {
     this.transition({ type: 'close', kind: 'image-viewer', paneId });
+  }
+
+  openExternalLinkActions(paneId: TPaneId, session: ExternalLinkActionsSession) {
+    this.closeImageViewer();
+    this.closeSlashMenu();
+    this.closeSelectionMenu();
+    this.closeWikilinkAutocomplete();
+    this.transition({ type: 'open-external-link-actions', paneId, session });
+  }
+
+  closeExternalLinkActions(paneId: TPaneId | null = null) {
+    this.transition({ type: 'close', kind: 'external-link-actions', paneId });
   }
 
   registerBridgeListeners(
@@ -143,6 +157,7 @@ export class PaneTransientUiController<TPaneId extends string> {
     for (const id of this.deps.getVisiblePaneIds()) {
       if (id === paneId) continue;
       this.deps.getEditorCapabilities(id)?.closeDatePicker();
+      this.closeExternalLinkActions(id);
       this.closeImageViewer(id);
       this.closeSlashMenu(id);
       this.closeSelectionMenu(id);
@@ -175,6 +190,7 @@ export class PaneTransientUiController<TPaneId extends string> {
     }
     this.closeWikilinkAutocomplete();
     this.closeImageViewer();
+    this.closeExternalLinkActions();
     this.transition({
         type: 'open',
         kind: 'slash-menu',
@@ -216,6 +232,7 @@ export class PaneTransientUiController<TPaneId extends string> {
     }
     this.closeWikilinkAutocomplete();
     this.closeImageViewer();
+    this.closeExternalLinkActions();
     this.closeSlashMenu(paneId);
     this.transition({
         type: 'open',
@@ -237,6 +254,7 @@ export class PaneTransientUiController<TPaneId extends string> {
 
   updateWikilinkState(paneId: TPaneId, next: WikilinkAutocompleteState) {
     if (next.active) {
+      this.closeExternalLinkActions();
       this.closeImageViewer();
       this.closeSlashMenu();
       this.closeSelectionMenu();

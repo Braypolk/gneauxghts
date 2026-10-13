@@ -385,6 +385,12 @@
 .cm-gn-date-chip:focus-visible, .cm-gn-date-add:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
 .cm-gn-date-add { margin-left: 1.5rem; color: var(--muted-foreground); opacity: 0; }
 .cm-line:hover .cm-gn-date-add, .cm-gn-date-add:focus-visible { opacity: 1; }
+.cm-gn-date-add-label { display: none; }
+@media (any-pointer: coarse) {
+  .cm-gn-date-add { opacity: 1; min-width: 44px; min-height: 44px; margin-left: .5rem; padding-inline: .4rem; font-size: .8em; }
+  .cm-gn-date-add-label { display: inline; }
+  .cm-gn-date-chip { min-height: 44px; }
+}
 
 /* Each editor view owns its image elements; block widgets have no vertical margins. */
 .notepad-editor-shell .gn-editor-root .cm-editor.cm-gn .gn-image-embed {
@@ -417,3 +423,14 @@
 .gn-image-resize-ne { top:-5px; right:-5px; cursor:nesw-resize; }
 .gn-image-resize-sw { bottom:-5px; left:-5px; cursor:nesw-resize; }
 .gn-image-resize-se { bottom:-5px; right:-5px; cursor:nwse-resize; }
+@media (any-pointer: coarse) {
+  .gn-image-toolbar { flex-wrap: wrap; max-width: 100%; z-index: 3; }
+  .gn-image-toolbar button, .gn-image-status button, .gn-image-upload-placeholder button { min-width: 44px; min-height: 44px; }
+  /* Keep the 12px corner marks while extending their touch area. */
+  .gn-image-resize-handle { width: 44px; height: 44px; border: 0; background: transparent; touch-action: none; }
+  .gn-image-resize-handle::after { content: ''; position: absolute; inset: 16px; border: 1px solid var(--background); border-radius: 2px; background: var(--ring, #829aff); }
+  .gn-image-resize-nw { top: -21px; left: -21px; }
+  .gn-image-resize-ne { top: -21px; right: -21px; }
+  .gn-image-resize-sw { bottom: -21px; left: -21px; }
+  .gn-image-resize-se { bottom: -21px; right: -21px; }
+}

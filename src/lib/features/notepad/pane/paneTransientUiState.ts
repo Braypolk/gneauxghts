@@ -1,9 +1,11 @@
 import type { ImageViewerSession } from '../images/imageViewerModel';
+import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
 export const PANE_TRANSIENT_UI_KINDS = [
   'slash-menu',
   'selection-menu',
   'wikilink-autocomplete',
-  'image-viewer'
+  'image-viewer',
+  'external-link-actions'
 ] as const;
 
 export type PaneTransientUiKind =
@@ -17,6 +19,7 @@ export type PaneTransientUiKind =
 export type PaneTransientUiState<TPaneId extends string> =
   | { kind: 'none' }
   | { kind: 'image-viewer'; paneId: TPaneId; session: ImageViewerSession }
+  | { kind: 'external-link-actions'; paneId: TPaneId; session: ExternalLinkActionsSession }
   | {
       kind: 'slash-menu';
       paneId: TPaneId;
@@ -33,10 +36,11 @@ export type PaneTransientUiState<TPaneId extends string> =
 export type PaneTransientUiAction<TPaneId extends string> =
   | {
       type: 'open';
-      kind: Exclude<PaneTransientUiKind, 'image-viewer'>;
+      kind: Exclude<PaneTransientUiKind, 'image-viewer' | 'external-link-actions'>;
       paneId: TPaneId;
     }
   | { type: 'open-image-viewer'; paneId: TPaneId; session: ImageViewerSession }
+  | { type: 'open-external-link-actions'; paneId: TPaneId; session: ExternalLinkActionsSession }
   | {
       type: 'close';
       kind: PaneTransientUiKind;
@@ -50,6 +54,7 @@ export function transitionPaneTransientUi<
   action: PaneTransientUiAction<TPaneId>
 ): PaneTransientUiState<TPaneId> {
   if (action.type === 'open-image-viewer') return { kind: 'image-viewer', paneId: action.paneId, session: action.session };
+  if (action.type === 'open-external-link-actions') return { kind: 'external-link-actions', paneId: action.paneId, session: action.session };
   if (action.type === 'open') {
     return {
       kind: action.kind,

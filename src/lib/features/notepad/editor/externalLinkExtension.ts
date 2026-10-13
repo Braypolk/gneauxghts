@@ -1,5 +1,15 @@
-import { EditorView, ViewPlugin } from '@codemirror/view';
+import { EditorView, ViewPlugin, type ViewUpdate } from '@codemirror/view';
 import { openUrl } from '@tauri-apps/plugin-opener';
+import type { EditorViewCallbacks } from './types';
+
+export interface ExternalLinkActionsSession {
+  anchor: HTMLElement;
+  rawUrl: string;
+  open: () => void;
+  edit: () => void;
+  focus: () => void;
+  subscribe: (close: () => void) => () => void;
+}
 
 export function findRenderedMarkdownLinkUrl(
   target: EventTarget | null
@@ -45,28 +55,87 @@ async function openExternalLink(rawUrl: string) {
   }
 }
 
-export function createExternalLinkClickExtension() {
+export function createExternalLinkClickExtension(
+  callbacks: (view: EditorView) => EditorViewCallbacks | null
+) {
   return ViewPlugin.fromClass(
     class {
       readonly #view: EditorView;
+      #invalidateActions: (() => void) | null = null;
 
       constructor(view: EditorView) {
         this.#view = view;
         this.#view.dom.addEventListener('click', this.#handleClick, {
           capture: true
         });
+        this.#view.dom.addEventListener('mousedown', this.#handleMouseDown, true);
       }
 
       destroy() {
+        this.#invalidateActions?.();
         this.#view.dom.removeEventListener('click', this.#handleClick, {
           capture: true
+        });
+        this.#view.dom.removeEventListener('mousedown', this.#handleMouseDown, true);
+      }
+
+      update(update: ViewUpdate) {
+        if (update.docChanged || update.selectionSet || update.transactions.some(tr => tr.reconfigured)) {
+          this.#invalidateActions?.();
+        }
+      }
+
+      #handleMouseDown = (event: MouseEvent) => {
+        // A tap's compatibility mousedown must not move the native selection
+        // into the widget before the Open/Edit choice. Touch scrolling is free
+        // to proceed; actions are only shown by the eventual click.
+        const url = findRenderedMarkdownLinkUrl(event.target);
+        if (window.matchMedia('(any-pointer: coarse)').matches && url && normalizeExternalLinkUrl(url)) event.preventDefault();
+      };
+
+      #showActions(link: HTMLElement, rawUrl: string) {
+        this.#invalidateActions?.();
+        const from = Number(link.dataset.linkFrom);
+        const to = Number(link.dataset.linkTo);
+        if (!Number.isInteger(from) || !Number.isInteger(to) || from < 0 || to <= from || to > this.#view.state.doc.length) return;
+
+        // The editor owns validity and actions; the pane owner controls the
+        // surface lifetime, including retained-pane collapse and mutual exclusion.
+        let alive = true;
+        let close: (() => void) | null = null;
+        const invalidate = () => { alive = false; close?.(); };
+        this.#invalidateActions = invalidate;
+        callbacks(this.#view)?.onOpenExternalLinkActions?.({
+          anchor: link,
+          rawUrl,
+          open: () => { if (alive) void openExternalLink(rawUrl); },
+          edit: () => {
+            if (!alive) return;
+            this.#view.dispatch({ selection: { anchor: from, head: to }, scrollIntoView: true });
+            this.#view.focus();
+          },
+          focus: () => { if (alive) this.#view.focus(); },
+          subscribe: (onClose) => {
+            close = onClose;
+            if (!alive) onClose();
+            return () => {
+              alive = false;
+              close = null;
+              if (this.#invalidateActions === invalidate) this.#invalidateActions = null;
+            };
+          }
         });
       }
 
       #handleClick = (event: MouseEvent) => {
-        if (event.button !== 0 || (!event.metaKey && !event.ctrlKey)) {
+        if (event.button !== 0) {
           return;
         }
+
+        const modifier = event.metaKey || event.ctrlKey;
+        const touch = (event instanceof PointerEvent && (event.pointerType === 'touch' || event.pointerType === 'pen')) ||
+          window.matchMedia('(any-pointer: coarse)').matches;
+        if (!modifier && !touch) return;
 
         const rawUrl = findRenderedMarkdownLinkUrl(event.target);
         if (!rawUrl || !normalizeExternalLinkUrl(rawUrl)) {
@@ -75,7 +144,12 @@ export function createExternalLinkClickExtension() {
 
         event.preventDefault();
         event.stopImmediatePropagation();
-        void openExternalLink(rawUrl);
+        if (modifier) void openExternalLink(rawUrl);
+        else {
+          const target = event.target instanceof HTMLElement ? event.target : (event.target as Text).parentElement;
+          const link = target?.closest<HTMLElement>('.cm-gn-link-styled');
+          if (link) this.#showActions(link, rawUrl);
+        }
       };
     }
   );

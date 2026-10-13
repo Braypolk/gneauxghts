@@ -122,24 +122,35 @@
 
 <style>
   .app-shell {
-    --app-shell-top-inset: env(safe-area-inset-top, 0px);
+    --app-shell-top-inset: var(--app-safe-area-top);
+    --app-content-safe-bottom: 0px;
     padding-top: var(--app-shell-top-inset);
+    padding-left: var(--app-safe-area-left);
+    padding-right: var(--app-safe-area-right);
+    padding-bottom: var(--app-safe-area-bottom);
   }
   .compact-window-drag-region { display: none; }
   .mobile-workspace-title-slot { display: none; }
-  @media (max-width: 639px) {
+  .app-shell:global([data-mobile-viewport='true']) {
+    position: fixed;
+    top: var(--app-viewport-top, 0px);
+    left: 0;
+    right: 0;
+  }
+  .app-shell:global([data-keyboard-open='true']) { padding-bottom: 0; }
+  @media (max-width: 639px), (any-pointer: coarse) and (max-height: 559px) {
     .app-shell {
-      --app-shell-top-inset: calc(env(safe-area-inset-top, 0px) + var(--native-window-controls-height, 0px));
+      --app-shell-top-inset: calc(var(--app-safe-area-top) + var(--native-window-controls-height, 0px));
     }
     .app-shell:has(:global(.notepad-shell)) {
-      --app-shell-top-inset: calc(env(safe-area-inset-top, 0px) + max(2.75rem, var(--native-window-controls-height, 0px)));
+      --app-shell-top-inset: calc(var(--app-safe-area-top) + max(2.75rem, var(--native-window-controls-height, 0px)));
       /* Let pane content scroll behind one backdrop all the way to the top. */
       padding-top: 0;
     }
     .app-shell:has(:global(.notepad-shell)) .mobile-workspace-title-slot {
       display: flex;
       position: absolute;
-      inset: env(safe-area-inset-top, 0px) 0 auto;
+      inset: var(--app-safe-area-top) var(--app-safe-area-right) auto var(--app-safe-area-left);
       height: max(2.75rem, var(--native-window-controls-height, 0px));
       /* Reserve matching space on both sides to center the title in the window. */
       padding: 0 calc(0.75rem + var(--native-window-controls-width, 0px));
@@ -153,5 +164,11 @@
       height: var(--app-shell-top-inset);
       z-index: 40;
     }
+  }
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    .app-shell:global([data-keyboard-open='true']):has(:global(.notepad-shell)) {
+      --app-shell-top-inset: var(--app-safe-area-top);
+    }
+    .app-shell:global([data-keyboard-open='true']) .mobile-workspace-title-slot { display: none; }
   }
 </style>

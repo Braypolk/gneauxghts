@@ -56,7 +56,7 @@
     <button
       bind:this={trigger}
       type="button"
-      class="w-full px-3 py-3 pr-9 text-left"
+      class="w-full px-3 py-3 pr-9 text-left [@media(any-pointer:coarse)]:pr-12"
       aria-pressed={selected}
       aria-disabled={busy}
       data-revision-id={revision.revisionId}
@@ -75,7 +75,7 @@
     </button>
     <button
       type="button"
-      class="absolute top-2 right-1 inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-accent hover:text-foreground [@media(hover:none)]:opacity-100"
+      class="coarse-touch-target absolute top-2 right-1 inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 hover:bg-accent hover:text-foreground [@media(hover:none)]:opacity-100 [@media(any-pointer:coarse)]:opacity-100"
       aria-label="Rename revision"
       title="Rename revision"
       onclick={() => (renamingRevisionId = revision.revisionId)}

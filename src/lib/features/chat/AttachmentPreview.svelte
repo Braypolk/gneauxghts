@@ -98,7 +98,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
   use:portal
-  class="attachment-preview-backdrop"
+  class="attachment-preview-backdrop safe-area-overlay"
   role="presentation"
   onclick={onBackdropClick}
 >
@@ -183,12 +183,10 @@
 <style>
   .attachment-preview-backdrop {
     position: fixed;
-    inset: 0;
     z-index: 2147483647;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 1rem;
     background: color-mix(in oklab, black 55%, transparent);
     backdrop-filter: blur(8px);
     isolation: isolate;
@@ -196,8 +194,8 @@
   .attachment-preview-dialog {
     display: flex;
     width: min(64rem, 100%);
-    height: min(48rem, calc(100vh - 2rem));
-    min-height: 18rem;
+    height: min(48rem, 100%);
+    min-height: 0;
     flex-direction: column;
     overflow: hidden;
     border: 1px solid var(--border);
@@ -229,6 +227,9 @@
     background: var(--accent);
     color: var(--accent-foreground);
     outline: none;
+  }
+  @media (any-pointer: coarse) {
+    .attachment-preview-action { min-width: 44px; min-height: 44px; }
   }
   .attachment-preview-content {
     display: flex;
@@ -295,7 +296,7 @@
 
   @media (max-width: 640px) {
     .attachment-preview-backdrop {
-      padding: 0;
+      padding: var(--app-safe-area-top, 0px) var(--app-safe-area-right, 0px) var(--app-safe-area-bottom, 0px) var(--app-safe-area-left, 0px);
     }
     .attachment-preview-dialog {
       height: 100%;

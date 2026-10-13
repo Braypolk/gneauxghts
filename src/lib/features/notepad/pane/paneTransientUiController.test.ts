@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { PaneRuntime } from './paneRuntime.svelte';
 import { PaneTransientUiController } from './paneTransientUiController.svelte';
+import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
 
 type PaneId = 'left' | 'right';
 
@@ -22,10 +23,12 @@ function createHarness() {
   const editors = {
     left: {
       closeSlashMenu: vi.fn(),
+      closeDatePicker: vi.fn(),
       closeSelectionMenu: vi.fn()
     },
     right: {
       closeSlashMenu: vi.fn(),
+      closeDatePicker: vi.fn(),
       closeSelectionMenu: vi.fn()
     }
   };
@@ -55,6 +58,21 @@ function createHarness() {
 }
 
 describe('PaneTransientUiController', () => {
+  it('retires link actions when their pane collapses or another transient opens', () => {
+    const { controller } = createHarness();
+    const session = {} as ExternalLinkActionsSession;
+    controller.openExternalLinkActions('left', session);
+    controller.closeExcept('right');
+    expect(controller.active).toEqual({ kind: 'none' });
+
+    controller.openExternalLinkActions('left', session);
+    controller.closeExternalLinkActions('right');
+    expect(controller.active).toEqual({ kind: 'external-link-actions', paneId: 'left', session });
+    controller.applySlashMenuSnapshot('left', { open: true, anchorPos: 0, groups: [], hoverIndex: 0 }, {} as EditorView);
+    expect(controller.active).toEqual({ kind: 'slash-menu', paneId: 'left' });
+    controller.openExternalLinkActions('left', session);
+    expect(controller.active).toEqual({ kind: 'external-link-actions', paneId: 'left', session });
+  });
   it('publishes only the owner selected by the discriminated state', () => {
     const { controller } = createHarness();
     const view = {} as EditorView;

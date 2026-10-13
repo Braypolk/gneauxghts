@@ -1,87 +1,73 @@
+/** Keep the shell inside the visual viewport. Its children must not subtract
+ * keyboard height again: their containing block already ends above it. */
 export function mobileViewport(node: HTMLElement) {
   let animationFrameId = 0;
-  let maxViewportHeight = 0;
-  let lastViewportWidth = 0;
-  let lastOrientation = '';
-
-  function getOrientation() {
-    return window.innerWidth >= window.innerHeight ? 'landscape' : 'portrait';
-  }
+  const viewport = window.visualViewport;
+  const touchMedia = window.matchMedia('(any-pointer: coarse)');
+  const root = document.documentElement;
+  const properties = ['--app-viewport-height', '--app-viewport-top'] as const;
+  const previous = properties.map(property => root.style.getPropertyValue(property));
+  const previousKeyboard = root.dataset.keyboardOpen;
 
   function writeMetrics() {
     animationFrameId = 0;
-
-    const visualViewport = window.visualViewport;
-    const viewportHeight = Math.round(visualViewport?.height ?? window.innerHeight);
-    const viewportOffsetTop = Math.round(visualViewport?.offsetTop ?? 0);
-    const viewportWidth = Math.round(visualViewport?.width ?? window.innerWidth);
-    const orientation = getOrientation();
-    const viewportBottom = viewportHeight + viewportOffsetTop;
-    // CSS handles ordinary viewport resizing with 100dvh. Only override the
-    // shell height on touch devices, where the on-screen keyboard shrinks the
-    // visual viewport and we need to keep the document height stable.
-    const canHaveOnScreenKeyboard = window.matchMedia('(any-pointer: coarse)').matches;
-
-    if (!canHaveOnScreenKeyboard) {
-      maxViewportHeight = 0;
-      node.style.removeProperty('--app-shell-height');
-      node.style.setProperty('--keyboard-inset-height', '0px');
-      node.dataset.keyboardOpen = 'false';
-      lastViewportWidth = viewportWidth;
-      lastOrientation = orientation;
-      return;
-    }
-
-    if (
-      maxViewportHeight === 0
-      || (lastViewportWidth !== 0 && Math.abs(viewportWidth - lastViewportWidth) > 120)
-      || (lastOrientation !== '' && orientation !== lastOrientation)
-    ) {
-      maxViewportHeight = viewportBottom;
+    const visual = window.visualViewport;
+    const touch = touchMedia.matches;
+    const height = Math.round(visual?.height ?? window.innerHeight);
+    const top = Math.round(visual?.offsetTop ?? 0);
+    // Compare with the layout viewport, not a remembered maximum. Rotation
+    // and mounting with the keyboard already visible must work immediately.
+    const keyboardOpen = touch && (visual?.scale ?? 1) === 1
+      && window.innerHeight - height - top > 80;
+    node.dataset.mobileViewport = String(touch);
+    node.dataset.keyboardOpen = String(keyboardOpen);
+    root.dataset.keyboardOpen = String(keyboardOpen);
+    node.style.setProperty('--keyboard-inset-height', '0px');
+    if (touch) {
+      node.style.setProperty('--app-shell-height', `${height}px`);
+      node.style.setProperty('--app-viewport-top', `${top}px`);
+      root.style.setProperty('--app-viewport-height', `${height}px`);
+      root.style.setProperty('--app-viewport-top', `${top}px`);
     } else {
-      maxViewportHeight = Math.max(maxViewportHeight, viewportBottom);
+      node.style.removeProperty('--app-shell-height');
+      node.style.removeProperty('--app-viewport-top');
+      properties.forEach((property, index) => {
+        if (previous[index]) root.style.setProperty(property, previous[index]);
+        else root.style.removeProperty(property);
+      });
     }
-
-    const rawKeyboardInset = Math.max(0, maxViewportHeight - viewportBottom);
-    const keyboardInset = rawKeyboardInset > 80 ? rawKeyboardInset : 0;
-
-    node.style.setProperty('--app-shell-height', `${maxViewportHeight}px`);
-    node.style.setProperty('--keyboard-inset-height', `${keyboardInset}px`);
-    node.dataset.keyboardOpen = keyboardInset > 0 ? 'true' : 'false';
-
-    lastViewportWidth = viewportWidth;
-    lastOrientation = orientation;
   }
 
   function scheduleMetricsWrite() {
-    if (animationFrameId !== 0) {
-      return;
-    }
-
-    animationFrameId = window.requestAnimationFrame(writeMetrics);
+    if (animationFrameId === 0) animationFrameId = window.requestAnimationFrame(writeMetrics);
   }
 
   scheduleMetricsWrite();
-
+  touchMedia.addEventListener('change', scheduleMetricsWrite);
   window.addEventListener('resize', scheduleMetricsWrite);
   window.addEventListener('orientationchange', scheduleMetricsWrite);
-  window.visualViewport?.addEventListener('resize', scheduleMetricsWrite);
-  window.visualViewport?.addEventListener('scroll', scheduleMetricsWrite);
+  viewport?.addEventListener('resize', scheduleMetricsWrite);
+  viewport?.addEventListener('scroll', scheduleMetricsWrite);
 
   return {
     destroy() {
-      if (animationFrameId !== 0) {
-        window.cancelAnimationFrame(animationFrameId);
-      }
-
+      if (animationFrameId !== 0) window.cancelAnimationFrame(animationFrameId);
+      touchMedia.removeEventListener('change', scheduleMetricsWrite);
       window.removeEventListener('resize', scheduleMetricsWrite);
       window.removeEventListener('orientationchange', scheduleMetricsWrite);
-      window.visualViewport?.removeEventListener('resize', scheduleMetricsWrite);
-      window.visualViewport?.removeEventListener('scroll', scheduleMetricsWrite);
-
-      node.style.removeProperty('--app-shell-height');
-      node.style.removeProperty('--keyboard-inset-height');
+      viewport?.removeEventListener('resize', scheduleMetricsWrite);
+      viewport?.removeEventListener('scroll', scheduleMetricsWrite);
+      for (const property of ['--app-shell-height', '--keyboard-inset-height', '--app-viewport-top']) {
+        node.style.removeProperty(property);
+      }
+      properties.forEach((property, index) => {
+        if (previous[index]) root.style.setProperty(property, previous[index]);
+        else root.style.removeProperty(property);
+      });
+      if (previousKeyboard === undefined) delete root.dataset.keyboardOpen;
+      else root.dataset.keyboardOpen = previousKeyboard;
       delete node.dataset.keyboardOpen;
+      delete node.dataset.mobileViewport;
     }
   };
 }

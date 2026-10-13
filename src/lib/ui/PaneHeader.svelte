@@ -5,7 +5,7 @@
   import { MediaQuery } from 'svelte/reactivity';
 
   // Match the note card's edge-to-edge breakpoint.
-  const compact = new MediaQuery('(max-width: 639px)');
+  const compact = new MediaQuery('(max-width: 639px), (any-pointer: coarse) and (max-height: 559px)');
 
   interface Props {
     titleText: string;
@@ -157,7 +157,7 @@
   .pane-header :global(.pane-header-action[aria-expanded="true"]) { background: var(--accent); color: var(--accent-foreground); }
   .pane-header :global(.pane-header-action:focus-visible) { outline: 2px solid var(--ring); outline-offset: 2px; }
   .pane-header :global(.pane-header-action:disabled) { opacity: 0.35; }
-  @media (max-width: 639px) {
+  @media (max-width: 639px), (any-pointer: coarse) and (max-height: 559px) {
     :global(.pane-header-host) { --pane-header-block-size: 4rem; }
     :global(.pane-header-host:has(> .pane-header--subtitle)) { --pane-header-block-size: 4.5rem; }
     :global(.pane-header-host:has(> .pane-header--workspace)) { --pane-header-block-size: calc(4rem + var(--app-shell-top-inset, 0px)); }
@@ -204,6 +204,13 @@
     :global(.pane-header-host:has(> .pane-header--subtitle)) { --pane-header-block-size: 4.5rem; }
     .pane-header { gap: 0.5rem; padding: 0.75rem 0.75rem 0.5rem; }
     .pane-header-title-wrap { top: 0.75rem; left: 3.5rem; right: 3.5rem; }
+  }
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true'] .pane-header-host) { --pane-header-block-size: 2.75rem; }
+    :global(.app-shell[data-keyboard-open='true']) .pane-header--workspace {
+      min-height: 2.75rem;
+      padding: 0 0.75rem;
+    }
   }
   @media (min-width: 640px) {
     /* Split headers use the space in their pane, even in a wide window. */

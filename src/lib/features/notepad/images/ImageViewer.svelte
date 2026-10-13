@@ -12,7 +12,10 @@
   let panning = $state(false);
   let request = 0, alive = true;
   let suppressClick = false;
-  let drag: { id: number; x: number; y: number; startX: number; startY: number } | null = null;
+  type Point = { x: number; y: number };
+  const pointers = new Map<number, Point>();
+  let gesture: { kind: 'pan' | 'swipe'; start: Point; x: number; y: number } |
+    { kind: 'pinch'; midpoint: Point; distance: number; scale: number; x: number; y: number } | null = null;
   const image = $derived(session.images[index]);
   const fit = $derived(viewerFit(naturalWidth, naturalHeight, availableWidth, availableHeight));
   function close() { onClose(); }
@@ -20,11 +23,16 @@
     const pan = boundedPan(x, y, naturalWidth * scale, naturalHeight * scale, availableWidth, availableHeight);
     x = pan.x; y = pan.y;
   }
-  function reset() { scale = fit; x = y = 0; }
+  function clearGesture() {
+    const captured = [...pointers.keys()];
+    pointers.clear(); gesture = null; panning = false;
+    for (const id of captured) if (stage?.hasPointerCapture(id)) stage.releasePointerCapture(id);
+  }
+  function reset() { clearGesture(); scale = fit; x = y = 0; }
   function zoom(factor: number) { scale = Math.min(8, Math.max(fit, scale * factor)); clampPan(); }
   async function load(refresh = false) {
     const generation = ++request;
-    loading = true; error = ''; url = ''; drag = null; panning = false; x = y = 0;
+    loading = true; error = ''; url = ''; clearGesture(); x = y = 0;
     const current = session.images[index];
     if (!current.assetName) { loading = false; error = current.error ?? 'Image unavailable'; return; }
     try {
@@ -48,17 +56,63 @@
     }
   }
   function pointerDown(event: PointerEvent) {
-    if (event.button !== 0 || scale <= fit || loading || error) return;
-    event.preventDefault(); stage.setPointerCapture(event.pointerId);
-    drag = { id: event.pointerId, x, y, startX: event.clientX, startY: event.clientY }; panning = true; suppressClick = false;
+    if (event.button !== 0 || loading || error || pointers.size >= 2 || (event.pointerType === 'mouse' && scale <= fit)) return;
+    event.preventDefault();
+    if (!pointers.size) suppressClick = false;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    stage.setPointerCapture(event.pointerId);
+    if (pointers.size === 1) {
+      gesture = { kind: scale > fit + .001 ? 'pan' : 'swipe', start: { x: event.clientX, y: event.clientY }, x, y };
+    } else if (pointers.size === 2) {
+      const [a, b] = [...pointers.values()];
+      gesture = { kind: 'pinch', midpoint: { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, distance: Math.max(1, Math.hypot(a.x - b.x, a.y - b.y)), scale, x, y };
+      suppressClick = true;
+    }
+    panning = gesture?.kind === 'pan';
   }
   function pointerMove(event: PointerEvent) {
-    if (!drag || drag.id !== event.pointerId) return;
-    x = drag.x + event.clientX - drag.startX; y = drag.y + event.clientY - drag.startY;
-    suppressClick ||= Math.abs(event.clientX - drag.startX) + Math.abs(event.clientY - drag.startY) > 3;
-    clampPan();
+    if (!pointers.has(event.pointerId) || !gesture) return;
+    pointers.set(event.pointerId, { x: event.clientX, y: event.clientY });
+    if (gesture.kind === 'pinch') {
+      const [a, b] = [...pointers.values()];
+      if (!a || !b) return;
+      const midpoint = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+      scale = Math.min(8, Math.max(fit, gesture.scale * Math.hypot(a.x - b.x, a.y - b.y) / gesture.distance));
+      // Keep the image point under the fingers stable as their midpoint moves.
+      const rect = stage.getBoundingClientRect();
+      const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      const ratio = scale / gesture.scale;
+      x = midpoint.x - center.x - (gesture.midpoint.x - center.x - gesture.x) * ratio;
+      y = midpoint.y - center.y - (gesture.midpoint.y - center.y - gesture.y) * ratio;
+      clampPan();
+    } else {
+      const dx = event.clientX - gesture.start.x, dy = event.clientY - gesture.start.y;
+      suppressClick ||= Math.hypot(dx, dy) > 6;
+      if (gesture.kind === 'pan') { x = gesture.x + dx; y = gesture.y + dy; clampPan(); }
+    }
   }
-  function pointerUp() { drag = null; panning = false; }
+  function pointerUp(event: PointerEvent) {
+    if (!pointers.has(event.pointerId)) return;
+    const current = gesture;
+    pointers.delete(event.pointerId);
+    if (stage.hasPointerCapture(event.pointerId)) stage.releasePointerCapture(event.pointerId);
+    if (!pointers.size) {
+      gesture = null; panning = false;
+      if (current?.kind === 'swipe') {
+        const dx = event.clientX - current.start.x, dy = event.clientY - current.start.y;
+        if (Math.abs(dx) >= 48 && Math.abs(dx) > Math.abs(dy) * 1.3) { suppressClick = true; step(dx < 0 ? 1 : -1); }
+      }
+    } else if (pointers.size === 1) {
+      // A remaining finger after pinch may pan, but cannot start a browse swipe.
+      gesture = { kind: 'pan', start: [...pointers.values()][0], x, y };
+      panning = true;
+    }
+  }
+  function cancelGesture(event: PointerEvent | undefined = undefined) {
+    if (event && !pointers.has(event.pointerId)) return;
+    suppressClick = true;
+    clearGesture();
+  }
   onMount(() => {
     // Props belong to the parent conditional; capture the origin for teardown.
     const origin = session;
@@ -67,14 +121,20 @@
     dialog.addEventListener('cancel', cancel);
     dialog.showModal();
     const observer = new ResizeObserver(() => {
+      if (pointers.size) cancelGesture();
       const wasFit = Math.abs(scale - fit) < .001;
       availableWidth = Math.max(1, stage.clientWidth - 48); availableHeight = Math.max(1, stage.clientHeight - 48);
       if (wasFit) reset(); else clampPan();
     });
     observer.observe(stage);
+    const hidden = () => { if (document.hidden) cancelGesture(); };
+    const blur = () => cancelGesture();
+    window.addEventListener('blur', blur);
+    document.addEventListener('visibilitychange', hidden);
     const unsubscribe = origin.subscribe(onClose);
     void load();
-    return () => { alive = false; request++; observer.disconnect(); unsubscribe();
+    return () => { alive = false; request++; clearGesture(); observer.disconnect(); unsubscribe();
+      window.removeEventListener('blur', blur); document.removeEventListener('visibilitychange', hidden);
       dialog.removeEventListener('keydown', onKey); dialog.removeEventListener('cancel', cancel);
       dialog.close(); origin.restore(); };
   });
@@ -92,7 +152,7 @@
   </header>
   <div bind:this={stage} class="stage" class:panning class:zoomed={scale > fit}
     role="presentation" onpointerdown={pointerDown} onpointermove={pointerMove}
-    onpointerup={pointerUp} onpointercancel={pointerUp} onlostpointercapture={pointerUp}
+    onpointerup={pointerUp} onpointercancel={cancelGesture} onlostpointercapture={cancelGesture}
     onclick={(event) => { if (event.target === stage && !suppressClick) onClose(); suppressClick = false; }}>
     {#if url}
       <img src={url} alt={image.target.fileName} draggable="false"
@@ -105,15 +165,19 @@
   </div>
   <footer>
     <button type="button" aria-label="Previous image" disabled={index === 0} onclick={() => step(-1)}>←</button>
-    <span>Arrow keys to browse · + / − to zoom · 0 to fit · Esc to close</span>
+    <span class="keyboard-help">Arrow keys to browse · + / − to zoom · 0 to fit · Esc to close</span>
+    <span class="touch-help">Pinch to zoom · Drag to pan · Swipe at fit to browse</span>
     <button type="button" aria-label="Next image" disabled={index === session.images.length - 1} onclick={() => step(1)}>→</button>
   </footer>
 </dialog>
 <style>
-  .gn-image-viewer { inset:0; width:100vw; height:100dvh; max-width:none; max-height:none; margin:0; padding:0; border:0; color:#eee; background:#171719; overflow:hidden; }
+  .gn-image-viewer { inset:var(--app-viewport-top, 0px) 0 auto; width:100vw; height:var(--app-viewport-height, 100dvh); max-width:none; max-height:none; margin:0; padding:0; border:0; color:#eee; background:#171719; overflow:hidden; }
   .gn-image-viewer[open] { display:flex; flex-direction:column; }
   .gn-image-viewer::backdrop { background:#171719; }
   header, footer { display:flex; align-items:center; gap:.75rem; padding:.75rem 1rem; flex:none; background:#202023; z-index:1; }
+  header, footer { padding-left: max(1rem, var(--app-safe-area-left)); padding-right: max(1rem, var(--app-safe-area-right)); }
+  header { padding-top: max(.75rem, var(--app-safe-area-top)); }
+  footer { padding-bottom: max(.75rem, var(--app-safe-area-bottom)); }
   header > span:first-child { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .counter, footer span { color:#bbb; font-size:.8rem; }
   button { border:1px solid #555; border-radius:.4rem; padding:.25rem .65rem; background:#303034; color:inherit; cursor:pointer; }
@@ -124,4 +188,13 @@
   img { max-width:none; max-height:none; flex:none; object-fit:contain; user-select:none; transform-origin:center; }
   p, .error { position:absolute; padding:1rem; background:#202023; border-radius:.4rem; }
   footer { justify-content:space-between; }
+  .touch-help { display:none; }
+  @media (any-pointer: coarse) {
+    button { min-width:44px; min-height:44px; }
+    header, footer { gap:.25rem; padding-block:.5rem; }
+    header { padding-top:max(.5rem, var(--app-safe-area-top)); }
+    footer { padding-bottom:max(.5rem, var(--app-safe-area-bottom)); }
+    .keyboard-help { display:none; }
+    .touch-help { display:block; text-align:center; }
+  }
 </style>

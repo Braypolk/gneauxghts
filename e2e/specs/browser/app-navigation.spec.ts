@@ -325,7 +325,9 @@ describe('compact app navigation', () => {
     }
     await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 640, height: 950, deviceScaleFactor: 1, mobile: false });
     await waitForWorkspaceAnimationSettled();
-    expect(await browser.execute((original: HTMLElement) => original === document.querySelector('[data-testid="note-title"]') && !!original.closest('.pane-header'), titleInput)).toBe(true);
+    await browser.waitUntil(async () => browser.execute((original: HTMLElement) =>
+      original === document.querySelector('[data-testid="note-title"]') && !!original.closest('.pane-header'), titleInput),
+    { timeoutMsg: 'Retained title did not return to the desktop pane header' });
     expect(await $$('.mobile-workspace-title-slot input')).toHaveLength(0);
     for (const width of [640, 1440]) {
       await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 950, deviceScaleFactor: 1, mobile: false });

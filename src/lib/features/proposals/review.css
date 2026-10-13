@@ -234,3 +234,11 @@
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
+
+@media (pointer: coarse) {
+  .cm-gn-proposal-undo,
+  .cm-gn-proposal-keep {
+    min-width: 44px;
+    min-height: 44px;
+  }
+}

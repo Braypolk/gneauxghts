@@ -98,7 +98,7 @@ export function createPaneExtensions(
     placeholder('Start typing here.'),
     createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
-    createExternalLinkClickExtension(),
+    createExternalLinkClickExtension((view) => sharedResources?.resolveViewCallbacks(view) ?? null),
     createImageEmbedsExtension(imagesConfig, (view) => sharedResources?.resolveViewCallbacks(view) ?? null),
     ...createImagePasteExtension(imagesConfig),
     ...slashMenuApi.extension,

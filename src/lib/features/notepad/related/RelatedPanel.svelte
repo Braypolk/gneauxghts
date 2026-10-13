@@ -69,7 +69,7 @@
       </div>
       <button
         type="button"
-        class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        class="coarse-touch-target inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
         onclick={onClose}
         aria-label="Close related panel"
         title="Close related panel"

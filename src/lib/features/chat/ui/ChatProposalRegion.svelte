@@ -93,14 +93,14 @@
             <div class="mt-2 flex justify-end gap-2">
               <button
                 type="button"
-                class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
+                class="coarse-touch-target rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
                 onclick={() => void dismissAgentProposal(proposal)}
               >
                 Undo
               </button>
               <button
                 type="button"
-                class="rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background"
+                class="coarse-touch-target rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background"
                 onclick={() => void keepAgentProposal(proposal)}
               >
                 Keep
@@ -114,14 +114,14 @@
             <div class="mt-2 flex justify-end gap-2">
               <button
                 type="button"
-                class="rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
+                class="coarse-touch-target rounded-full px-3 py-1.5 text-xs font-medium text-muted-foreground hover:bg-accent"
                 onclick={() => void dismissAgentProposal(proposal)}
               >
                 Undo
               </button>
               <button
                 type="button"
-                class="rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
+                class="coarse-touch-target rounded-full bg-foreground px-3 py-1.5 text-xs font-medium text-background disabled:opacity-50"
                 disabled={!onReviewAgentProposal}
                 onclick={() => void onReviewAgentProposal?.(proposal)}
               >

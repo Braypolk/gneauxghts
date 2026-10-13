@@ -73,6 +73,11 @@ class DateChip extends WidgetType {
     button.type = 'button';
     button.className = this.label === '+' ? 'cm-gn-date-add' : 'cm-gn-date-chip';
     button.textContent = this.label;
+    if (this.label === '+') {
+      const label = document.createElement('span');
+      label.className = 'cm-gn-date-add-label'; label.textContent = ' Due date';
+      button.appendChild(label);
+    }
     button.title = this.title;
     button.setAttribute('aria-label', this.title);
     button.setAttribute('aria-haspopup', 'dialog');

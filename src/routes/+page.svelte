@@ -28,6 +28,9 @@
 </div>
 
 <style>
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true']) .notepad-area-shell { padding-bottom: 0; }
+  }
   /* Normal (single-pane) max widths — unchanged from the original Tailwind
      `max-w-400` on the outer shell and `max-w-5xl` on the editor area. */
   .notepad-area-shell {

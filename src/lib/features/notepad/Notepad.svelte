@@ -8,6 +8,7 @@
   import { createNativeContractProbe, type NativeContractProbe } from "$lib/e2e/nativeContractProbe";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
+  import ExternalLinkActions from "./editor/ExternalLinkActions.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
   import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
@@ -130,6 +131,7 @@
     keyboardShortcuts,
   } from "$lib/keyboardShortcuts.svelte";
   import "$lib/features/notepad/editor/editor.css";
+  import "$lib/features/proposals/review.css";
   import "$lib/features/notepad/editor/editorTypography.css";
   import "$lib/features/notepad/markdown/inlineFormatting.css";
 
@@ -568,15 +570,22 @@
   // ---------------------------------------------------------------------------
   // Per-pane controllers (editor + wikilink) — built once, reused everywhere.
   // ---------------------------------------------------------------------------
-  $effect(() => { if (historyMode.isActive) transientUi.closeImageViewer(); });
+  $effect(() => {
+    if (historyMode.isActive) {
+      transientUi.closeImageViewer();
+      transientUi.closeExternalLinkActions();
+    }
+  });
 
   const paneControllerSetupDeps: PaneControllerSetupDeps<PaneId> = {
+    openExternalLinkActions: (paneId, session) => { if (!historyMode.isActive) transientUi.openExternalLinkActions(paneId, session); },
     openImageViewer: (paneId, session) => { if (!historyMode.isActive) transientUi.openImageViewer(paneId, session); },
     getPaneRuntime,
     getPaneDocument: getPaneDocumentSession,
     activatePaneSession,
     cancelPendingAutosave: (note) => cancelPendingAutosave(note),
     closeEditorTransientUi: (paneId) => {
+      transientUi.closeExternalLinkActions(paneId);
       transientUi.closeImageViewer(paneId);
       closeSlashMenu(paneId);
       closeSelectionMenu(paneId);
@@ -1369,7 +1378,12 @@
       const isPinned = searchState.pinnedNotes.some((item) => item.noteId === noteId);
       await searchState.setPinned(noteId, !isPinned);
     },
-    onNoteOptionsOpen: () => { transientUi.closeSlashMenu(); transientUi.closeSelectionMenu(); transientUi.closeWikilinkAutocomplete(); },
+    onNoteOptionsOpen: () => {
+      transientUi.closeExternalLinkActions();
+      transientUi.closeSlashMenu();
+      transientUi.closeSelectionMenu();
+      transientUi.closeWikilinkAutocomplete();
+    },
     onUpdateTags: (paneId, documentHandle, tags) => {
       const document = getPaneDocumentSession(paneId);
       if (document.handle === documentHandle) documentEditing.updateTags(document, tags);
@@ -1804,6 +1818,10 @@
     {#key activeTransientUi.session}
       <ImageViewer session={activeTransientUi.session} onClose={() => transientUi.closeImageViewer()} />
     {/key}
+  {:else if activeTransientUi.kind === "external-link-actions"}
+    {#key activeTransientUi.session}
+      <ExternalLinkActions session={activeTransientUi.session} onClose={() => transientUi.closeExternalLinkActions()} />
+    {/key}
   {/if}
 
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
@@ -1926,7 +1944,7 @@
     transition: none;
   }
 
-  @media (max-width: 639px) {
+  @media (max-width: 639px), (any-pointer: coarse) and (max-height: 559px) {
     .notepad-shell {
       --editor-overlay-inset: calc(4rem + var(--app-shell-top-inset, 0px));
       --related-sheet-top: var(--editor-overlay-inset);
@@ -1951,6 +1969,18 @@
     .notepad-shell {
       --editor-left-padding: 0.75rem;
     }
+  }
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true']) .notepad-shell {
+      --editor-top-breathing-room: 0.25rem;
+      --editor-chrome-clearance: var(--command-bar-clearance);
+      --related-sheet-top: 0px;
+      --related-bottom-offset: calc(100% - 2.75rem);
+    }
+  }
+
+  @media (any-pointer: coarse) and (orientation: landscape) {
+    :global(.app-shell[data-keyboard-open='true']) :global(.related-bottom-sheet > div > button) { right: 4rem; }
   }
 
   @media (min-width: 1280px) {
