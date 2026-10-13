@@ -14,6 +14,10 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
     state: 'unavailable', guidance: 'Unavailable on this device', title: 'Keyword search is available',
     description: status.disabledReason ?? 'Semantic search is not supported on this device.'
   };
+  if (status.model.runtimeBundled && !status.model.runtimeBinaryPath) return {
+    state: 'attention', guidance: 'App update required', title: 'The included search runtime is missing',
+    description: 'Reinstall this app build to restore local search. Downloading the model cannot repair the app runtime. Keyword search is available.'
+  };
   const setup = status.setupProgress;
   if (setup && setup.phase !== 'complete' && setup.phase !== 'failed') return {
     state: 'working', guidance: 'Local search setup',
@@ -40,6 +44,13 @@ export function searchReadiness(status: SemanticStatus, settings: SemanticSettin
   if (!status.model.runtimeBinaryPath) return {
     state: 'attention', guidance: 'Setup required', title: 'Set up local search',
     description: 'Download the files for private, on-device search here in the app. Keyword search works while you set up.',
+    action: 'download', actionLabel: 'Set up local search'
+  };
+  if (!status.model.modelPath) return {
+    state: 'attention', guidance: 'Setup required', title: 'Set up local search',
+    description: status.model.runtimeBundled
+      ? 'The search runtime is included in the app. Download the model to enable private, on-device search. Keyword search is available.'
+      : 'Download the model to enable private, on-device search. Keyword search is available.',
     action: 'download', actionLabel: 'Set up local search'
   };
   if (status.model.error) return {

@@ -18,7 +18,10 @@ impl CurrentContentItem for MediaSearchResult {
     fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         match self {
             Self::Image(item) => CurrentContentIdentity::Note {
-                note_id: Some(&item.note_id),
+                // Imported notes can have a current path before their first
+                // canonical save assigns a stable ID. Match passage admission:
+                // let NoteTimeline resolve the path, never assert an empty ID.
+                note_id: (!item.note_id.trim().is_empty()).then_some(item.note_id.as_str()),
                 note_path: Some(&item.note_path),
             },
             Self::Passage(item) => item.current_note_identity(),
@@ -195,6 +198,37 @@ fn decode_image(encoded: Option<String>, limit: usize) -> Result<Option<Vec<u8>>
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn imported_image_results_use_current_path_admission_until_identity_is_stable() {
+        let mut item = ImageMatch {
+            note_id: String::new(),
+            note_path: "/vault/Imported.md".into(),
+            note_title: "Imported".into(),
+            note_hash: "note".into(),
+            asset_name: "image.png".into(),
+            asset_hash: "image".into(),
+            source_start: 0,
+            source_end: 20,
+            score: 1.0,
+        };
+        let result = MediaSearchResult::Image(item.clone());
+        assert!(matches!(
+            result.current_note_identity(),
+            CurrentContentIdentity::Note {
+                note_id: None,
+                note_path: Some("/vault/Imported.md")
+            }
+        ));
+        item.note_id = "stable-id".into();
+        let result = MediaSearchResult::Image(item);
+        assert!(matches!(
+            result.current_note_identity(),
+            CurrentContentIdentity::Note {
+                note_id: Some("stable-id"),
+                note_path: Some("/vault/Imported.md")
+            }
+        ));
+    }
     #[test]
     fn query_payload_limit_counts_decoded_bytes_and_rejects_invalid_encoding() {
         assert_eq!(decode_image(None, 3).unwrap(), None);

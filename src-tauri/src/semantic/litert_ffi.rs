@@ -103,9 +103,13 @@ impl Engine {
             (api.settings_vision)(settings, i32::from(tokens));
             (api.settings_threads)(
                 settings,
-                std::thread::available_parallelism()
-                    .map(|n| n.get() as i32)
-                    .unwrap_or(4),
+                if cfg!(target_os = "ios") {
+                    4
+                } else {
+                    std::thread::available_parallelism()
+                        .map(|n| n.get() as i32)
+                        .unwrap_or(4)
+                },
             );
             let engine = (api.engine_create)(settings);
             (api.settings_delete)(settings);

@@ -325,8 +325,14 @@ impl SemanticState {
         let legacy = next_provider == generation::NextProvider::Jina
             || (!GemmaLiteRtEmbeddingProvider::supported()
                 && vault_data_dir.join("semantic.sqlite3").is_file());
-        if !legacy && !GemmaLiteRtEmbeddingProvider::supported() {
-            let mut disabled = Self::new_disabled("Gemma local search is unavailable on this device architecture. Keyword search remains available.");
+        if (!legacy && !GemmaLiteRtEmbeddingProvider::supported())
+            || (cfg!(target_os = "ios") && legacy)
+        {
+            let mut disabled = Self::new_disabled(if cfg!(target_os = "ios") && legacy {
+                "The retained desktop search provider cannot run on iOS. Select Gemma for the next launch. Keyword search remains available."
+            } else {
+                "Gemma local search is unavailable on this device architecture. Keyword search remains available."
+            });
             if let SemanticStateInner::Disabled(state) = &mut disabled.inner {
                 state.atlas_map = Some(Arc::new(atlas::AtlasMapStore::new(&vault_data_dir)));
             }
@@ -1695,6 +1701,7 @@ impl DisabledSemanticState {
                 id: "semantic-disabled".to_string(),
                 label: "Semantic Search Disabled".to_string(),
                 dimensions: 0,
+                runtime_bundled: false,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: String::new(),
@@ -1841,6 +1848,7 @@ mod health_tests {
                 id: "status-test".to_string(),
                 label: "Status Test".to_string(),
                 dimensions: 3,
+                runtime_bundled: false,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: "status-test".to_string(),

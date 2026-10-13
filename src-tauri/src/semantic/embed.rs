@@ -12,6 +12,8 @@ pub(crate) struct ModelInfo {
     pub(crate) label: String,
     pub(crate) dimensions: usize,
     pub(crate) runtime_binary_path: Option<String>,
+    #[serde(skip_serializing_if = "is_false")]
+    pub(crate) runtime_bundled: bool,
     pub(crate) model_path: Option<String>,
     pub(crate) model_repo_id: String,
     pub(crate) available: bool,
@@ -19,6 +21,10 @@ pub(crate) struct ModelInfo {
     pub(crate) ready: bool,
     pub(crate) status: String,
     pub(crate) error: Option<String>,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 impl ModelInfo {

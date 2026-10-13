@@ -9,6 +9,7 @@ const tauriBin = resolveTauriBinary();
 const finalArgs = withBundleConfig(args);
 
 syncIosAppIcons(finalArgs);
+prepareIosRuntime(finalArgs);
 validateMacReleaseEnvironment(finalArgs);
 
 const child = spawn(tauriBin, finalArgs, {
@@ -172,4 +173,14 @@ function syncIosAppIcons(cliArgs) {
       path.join(targetDir, entry.name)
     );
   }
+}
+
+function prepareIosRuntime(cliArgs) {
+  if (cliArgs.includes("--help") || cliArgs.includes("-h")) return;
+  if (cliArgs[0] !== "ios" || !["init", "build", "dev"].includes(cliArgs[1])) return;
+  const args = ["-B", "scripts/ios_litert_runtime.py"];
+  if (process.env.GNEAUXGHTS_IOS_LITERT_ARCHIVE) {
+    args.push("--archive", process.env.GNEAUXGHTS_IOS_LITERT_ARCHIVE);
+  }
+  runVerification("python3", args);
 }

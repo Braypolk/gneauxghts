@@ -190,8 +190,8 @@ pub fn run() {
             // every launch.
             services::note_timeline::ensure_vault_scaffold(&notes_dir)?;
             let vault_data_dir = running_vault.data_dir().to_path_buf();
-            let semantic = if cfg!(target_os = "ios") {
-                SemanticState::new_disabled("Semantic search is disabled on iPhone builds for now.")
+            let semantic = if cfg!(all(target_os = "ios", not(target_env = "sim"))) {
+                SemanticState::new_disabled("On-device semantic search awaits physical iPhone validation. Keyword search remains available.")
             } else {
                 let bundled_runtime_path = bundled_llama_server_path(app.handle());
                 SemanticState::new_with_runtime(

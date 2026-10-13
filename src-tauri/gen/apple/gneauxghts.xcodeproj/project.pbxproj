@@ -19,7 +19,22 @@
 		D1E1DF052D99C4E1C2599018 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9BE43B22A065CFBD4123F108 /* Metal.framework */; };
 		F0B97AD4709B7423DDA2247D /* LaunchScreen.storyboard in Resources */ = {isa = PBXBuildFile; fileRef = 5A7740A09C1C92A20645E584 /* LaunchScreen.storyboard */; };
 		F3BC6DD40B71F73FEBBEF2B5 /* main.mm in Sources */ = {isa = PBXBuildFile; fileRef = F4B8680A83F92491EDBC7600 /* main.mm */; };
+		32DBBF6220CC6E82436BA32E /* CLiteRTLM.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 95A1CD3CADB91ABD651F1EA2 /* CLiteRTLM.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 /* End PBXBuildFile section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		4DE084B9724513DA1A9F7BD3 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				32DBBF6220CC6E82436BA32E /* CLiteRTLM.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
 		04AA5792CC08C5F9C2AA41D0 /* assets */ = {isa = PBXFileReference; lastKnownFileType = folder; path = assets; sourceTree = SOURCE_ROOT; };
@@ -55,6 +70,7 @@
 		F4B8680A83F92491EDBC7600 /* main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = main.mm; sourceTree = "<group>"; };
 		F51549B50865C6071D8E0840 /* ann.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = ann.rs; sourceTree = "<group>"; };
 		F671555200248028F295E52E /* indexer.rs */ = {isa = PBXFileReference; lastKnownFileType = text; path = indexer.rs; sourceTree = "<group>"; };
+		95A1CD3CADB91ABD651F1EA2 /* CLiteRTLM.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = CLiteRTLM.xcframework; path = Externals/CLiteRTLM.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -167,6 +183,7 @@
 		C552BDCF85E3778B7FE9F8ED /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				95A1CD3CADB91ABD651F1EA2 /* CLiteRTLM.xcframework */,
 				8D7BBFB085A3EE6EE1088110 /* CoreGraphics.framework */,
 				BFD8120B81E17CB9F400CC7E /* libapp.a */,
 				9BE43B22A065CFBD4123F108 /* Metal.framework */,
@@ -199,6 +216,7 @@
 				7792FB1ECD6CA35876200F49 /* Sources */,
 				AC5515FD6C73C1114C9C745B /* Resources */,
 				2F789FDE6EADBB4E3663125B /* Frameworks */,
+				4DE084B9724513DA1A9F7BD3 /* Embed Frameworks */,
 			);
 			buildRules = (
 			);
@@ -301,6 +319,7 @@
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
+					"\"Externals\"",
 					"\".\"",
 				);
 				INFOPLIST_FILE = gneauxghts_iOS/Info.plist;
@@ -375,7 +394,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -437,7 +456,7 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 14.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -462,6 +481,7 @@
 				"EXCLUDED_ARCHS[sdk=iphoneos*]" = x86_64;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
+					"\"Externals\"",
 					"\".\"",
 				);
 				INFOPLIST_FILE = gneauxghts_iOS/Info.plist;

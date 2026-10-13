@@ -1,4 +1,4 @@
-//! Explicit Settings setup installs the pinned native library, not Python.
+//! Desktop setup installs a pinned library; iOS uses only its signed app bundle.
 use super::embed::SetupPhase;
 use reqwest::blocking::Client;
 use sha2::{Digest, Sha256};
@@ -53,9 +53,17 @@ impl Installer {
         }
     }
     pub(super) fn supported() -> bool {
-        Artifact::current().is_ok()
+        // Physical iPhone admission remains gated on full-app device evidence.
+        cfg!(all(
+            target_os = "ios",
+            target_arch = "aarch64",
+            target_env = "sim"
+        )) || Artifact::current().is_ok()
     }
     pub(super) fn library(&self) -> Option<PathBuf> {
+        if cfg!(target_os = "ios") {
+            return bundled_library_in(&std::env::current_exe().ok()?);
+        }
         let artifact = Artifact::current().ok()?;
         // Native filenames differ between the platform wheels; resolve within
         // the verified publication only, never PATH or a system Python install.
@@ -63,6 +71,13 @@ impl Installer {
         find_library(&dir, artifact.name)
     }
     pub(super) fn verified_library(&self) -> Result<PathBuf, String> {
+        if cfg!(target_os = "ios") {
+            let path = self.library().ok_or("The bundled search runtime is missing. Reinstall this app build; model setup cannot repair it.")?;
+            // Xcode signs the nested framework. Its build input is checksum-pinned;
+            // signing changes bytes, so desktop download receipts do not apply.
+            super::litert_ffi::verify_library(&path)?;
+            return Ok(path);
+        }
         let path = self.library().ok_or("LiteRT runtime is not installed")?;
         let expected = fs::read_to_string(self.root.join("installed/native.sha256"))
             .map_err(|_| "LiteRT verification receipt is missing; run setup again")?;
@@ -72,6 +87,9 @@ impl Installer {
         Ok(path)
     }
     pub(super) fn package_name() -> String {
+        if cfg!(target_os = "ios") {
+            return "CLiteRTLM.framework (included in app)".into();
+        }
         Artifact::current()
             .map(|a| {
                 a.url
@@ -88,6 +106,10 @@ impl Installer {
         progress: &mut ProgressCallback<'_>,
     ) -> Result<PathBuf, String> {
         progress(SetupPhase::Checking, 0, None);
+        if cfg!(target_os = "ios") {
+            // Never enter the wheel downloader on iOS, even for a damaged bundle.
+            return self.verified_library();
+        }
         if let Ok(path) = self.verified_library() {
             return Ok(path);
         }
@@ -163,6 +185,13 @@ impl Installer {
         let _ = fs::remove_dir_all(stage);
         result
     }
+}
+
+fn bundled_library_in(executable: &Path) -> Option<PathBuf> {
+    let path = executable
+        .parent()?
+        .join("Frameworks/CLiteRTLM.framework/CLiteRTLM");
+    path.is_file().then_some(path)
 }
 
 fn find_library(root: &Path, name: &str) -> Option<PathBuf> {
@@ -251,6 +280,20 @@ pub(super) fn matches_checksum(path: &Path, sha: &str) -> Result<bool, String> {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn bundled_runtime_resolves_only_inside_the_executable_bundle() {
+        let temp = crate::test_support::TestDir::new("litert-bundle");
+        let executable = temp.path().join("App.app/Gneauxghts");
+        let framework = temp.path().join("App.app/Frameworks/CLiteRTLM.framework");
+        assert!(bundled_library_in(&executable).is_none());
+        fs::create_dir_all(&framework).unwrap();
+        fs::write(framework.join("CLiteRTLM"), b"fixture").unwrap();
+        assert_eq!(
+            bundled_library_in(&executable),
+            Some(framework.join("CLiteRTLM"))
+        );
+        assert!(bundled_library_in(&temp.path().join("Other.app/App")).is_none());
+    }
     #[test]
     fn progress_reports_transferred_bytes_before_verification_and_cleans_up_interruptions() {
         struct Interrupted {

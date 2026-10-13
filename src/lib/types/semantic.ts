@@ -10,6 +10,7 @@ export interface SemanticModelInfo {
   label: string;
   dimensions: number;
   runtimeBinaryPath: string | null;
+  runtimeBundled?: boolean;
   modelPath: string | null;
   modelRepoId: string;
   available: boolean;

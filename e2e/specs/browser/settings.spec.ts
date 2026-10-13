@@ -187,6 +187,7 @@ describe('searchable settings workspace', () => {
     status.model.error = null;
     status.model.label = 'EmbeddingGemma 2 · LiteRT · text + images';
     await browser.execute(async (initial) => {
+      window.__GNEAUXGHTS_E2E__!.restoreIpc();
       const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string) => Promise<Record<string, unknown>> };
       const view = await native.invoke('get_settings_view');
       let finishDownload: (() => void) | null = null;

@@ -174,6 +174,25 @@ describe('semantic search readiness', () => {
     expect(html).not.toContain('Reinstall');
   });
 
+  it('downloads a missing model when the runtime is already bundled, even after warmup failed', () => {
+    const status = { ...freshStatus, modelAvailable: false, model: {
+      ...freshStatus.model, label: 'EmbeddingGemma 2', runtimeBundled: true, modelPath: null, error: 'Gemma search needs setup'
+    } };
+    expect(searchReadiness(status, status.settings)).toMatchObject({ action: 'download', actionLabel: 'Set up local search' });
+    const html = renderPanel(status).split('<details')[0];
+    expect(html).toContain('The search runtime is included in this app. Setup downloads only the model data.');
+    expect(html).not.toContain('>Prepare local model</button>');
+  });
+
+  it('does not offer a runtime download to repair a missing bundled framework', () => {
+    const status = { ...freshStatus, modelAvailable: false, model: {
+      ...freshStatus.model, runtimeBundled: true, runtimeBinaryPath: null
+    } };
+    expect(searchReadiness(status, status.settings)).toMatchObject({ guidance: 'App update required' });
+    expect(searchReadiness(status, status.settings).action).toBeUndefined();
+    expect(renderPanel(status)).toContain('Reinstall this app build');
+  });
+
   it('does not confuse queued work with active indexing', () => {
     expect(readiness({ health: 'working', indexingInProgress: false })).toMatchObject({ state: 'waiting', title: 'Updates queued' });
     expect(readiness({ health: 'working', indexingInProgress: true })).toMatchObject({ state: 'working', guidance: 'No action needed' });

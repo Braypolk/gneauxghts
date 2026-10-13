@@ -25,12 +25,26 @@ pub(super) const TEXT_REPRESENTATION: &str = "embeddinggemma2-litert018-qat-768-
 // Platform namespaces prevent a portable vault from silently importing vectors
 // from an unvalidated device backend pair.
 pub(super) fn text_namespace() -> String {
-    format!(
+    let namespace = format!(
         "{TEXT_REPRESENTATION}-{}-{}-{}",
         &MODEL_SHA[..16],
         std::env::consts::OS,
         std::env::consts::ARCH
-    )
+    );
+    if cfg!(all(target_os = "ios", target_env = "sim")) {
+        format!("{namespace}-simulator")
+    } else {
+        namespace
+    }
+}
+
+fn vision_supported() -> bool {
+    cfg!(all(target_os = "macos", target_arch = "aarch64"))
+        || cfg!(all(
+            target_os = "ios",
+            target_arch = "aarch64",
+            target_env = "sim"
+        ))
 }
 
 pub(crate) struct GemmaLiteRtEmbeddingProvider {
@@ -93,7 +107,11 @@ impl GemmaLiteRtEmbeddingProvider {
                 phase,
                 failed_phase: None,
                 file_label: if file_index == 1 {
-                    "LiteRT 0.18.0 search runtime"
+                    if cfg!(target_os = "ios") {
+                        "Bundled search runtime"
+                    } else {
+                        "LiteRT 0.18.0 search runtime"
+                    }
                 } else {
                     "EmbeddingGemma 2 text and image model"
                 }
@@ -218,8 +236,7 @@ impl GemmaLiteRtEmbeddingProvider {
         let cache = self.model_dir.join(format!("litert-cache-{tokens}"));
         fs::create_dir_all(&cache).map_err(|e| e.to_string())?;
         let started = Instant::now();
-        let vision = cfg!(all(target_os = "macos", target_arch = "aarch64"))
-            && !self.vision_disabled.load(Ordering::Acquire);
+        let vision = vision_supported() && !self.vision_disabled.load(Ordering::Acquire);
         let (engine, backend, degraded) = initialize_modalities(vision, |backend, vision| {
             Engine::new_with_vision(&library, &model, &cache, backend, tokens, vision)
         })?;
@@ -309,9 +326,7 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
             .runtime
             .lock()
             .map_err(|_| "Gemma runtime lock poisoned")?;
-        if self.vision_disabled.swap(false, Ordering::AcqRel)
-            && cfg!(all(target_os = "macos", target_arch = "aarch64"))
-        {
+        if self.vision_disabled.swap(false, Ordering::AcqRel) && vision_supported() {
             runtime.engine.take();
             runtime.backend = None;
         }
@@ -373,7 +388,7 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
     }
 
     fn image_capability(&self) -> &'static str {
-        if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        if !vision_supported() {
             "unsupported"
         } else if self.vision_disabled.load(Ordering::Acquire) {
             "failed"
@@ -387,7 +402,7 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
         }
         // Vision parity/resource validation currently covers Apple Silicon.
         // Other packaged platforms expose text-only search until validated.
-        if !cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        if !vision_supported() {
             return None;
         }
         self.tokens().ok().map(|tokens| {
@@ -411,6 +426,7 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
             id: format!("{}-{MODEL_SHA}", text_namespace()),
             label: "EmbeddingGemma 2 · LiteRT · text + images".into(),
             dimensions: 768,
+            runtime_bundled: cfg!(target_os = "ios"),
             runtime_binary_path: self
                 .installer
                 .library()
@@ -439,13 +455,20 @@ impl EmbeddingProvider for GemmaLiteRtEmbeddingProvider {
                     if busy {
                         "Gemma is working".into()
                     } else {
-                        "waiting for Gemma setup".into()
+                        if cfg!(target_os = "ios") && self.installer.library().is_some() {
+                            "Search runtime included · model setup required".into()
+                        } else {
+                            "waiting for Gemma setup".into()
+                        }
                     }
                 }),
             error: if poisoned {
                 Some("Gemma runtime lock poisoned".into())
             } else {
-                runtime.as_ref().and_then(|r| r.error.clone())
+                runtime.as_ref().and_then(|r| r.error.clone()).or_else(|| {
+                    (cfg!(target_os = "ios") && self.installer.library().is_none())
+                        .then(|| "The bundled search runtime is missing. Reinstall this app build; model setup cannot repair it.".into())
+                })
             },
         }
     }

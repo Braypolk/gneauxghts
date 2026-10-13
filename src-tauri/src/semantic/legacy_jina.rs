@@ -744,6 +744,7 @@ impl EmbeddingProvider for JinaLlamaEmbeddingProvider {
             id: MODEL_REPO_ID.to_string(),
             label: "Jina Embeddings v5 Text Nano Retrieval".to_string(),
             dimensions: self.dimensions,
+            runtime_bundled: false,
             runtime_binary_path: runtime_binary_path
                 .as_ref()
                 .map(|path| path.to_string_lossy().into_owned()),

@@ -228,7 +228,11 @@
         </div>
       {:else if readiness.action === 'download' && semanticStatus.model.label.includes('Gemma')}
         <div class="semantic-setup-progress">
-          <p><strong>LiteRT 0.18.0 runtime</strong> runs the search model on your device.</p>
+          {#if semanticStatus.model.runtimeBundled}
+            <p>The search runtime is included in this app. Setup downloads only the model data.</p>
+          {:else}
+            <p><strong>LiteRT 0.18.0 runtime</strong> runs the search model on your device.</p>
+          {/if}
           <p><strong>EmbeddingGemma 2 model · 387.7 MB</strong> enables search by meaning across text and images.</p>
           <p>Only missing or damaged files are downloaded. Your notes stay on this device.</p>
         </div>

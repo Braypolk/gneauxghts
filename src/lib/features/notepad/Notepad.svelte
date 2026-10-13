@@ -280,7 +280,7 @@
   async function openSearchedImage(item: ImageSearchItem) {
     const request = ++imageNavigation;
     try {
-      await commands.openNotePath(item.notePath, { noteId: item.noteId });
+      await commands.openNotePath(item.notePath, { noteId: item.noteId || null });
       await tick();
       if (request !== imageNavigation || getDocumentPath(getDocumentSession()) !== item.notePath) return;
       const currentMarkdown = getCurrentMarkdown();

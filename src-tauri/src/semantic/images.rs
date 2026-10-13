@@ -364,6 +364,7 @@ mod tests {
                 id: "test".into(),
                 label: "test".into(),
                 dimensions: 3,
+                runtime_bundled: false,
                 runtime_binary_path: None,
                 model_path: None,
                 model_repo_id: "test".into(),

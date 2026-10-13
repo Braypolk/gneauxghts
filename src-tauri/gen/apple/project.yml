@@ -2,7 +2,7 @@ name: gneauxghts
 options:
   bundleIdPrefix: com.braypolkinghorne.gneauxghts
   deploymentTarget:
-    iOS: 14.0
+    iOS: 15.0
 fileGroups: [../../src]
 configs:
   debug: debug
@@ -10,6 +10,7 @@ configs:
 settingGroups:
   app:
     base:
+      DEVELOPMENT_TEAM: 6ZTMQAJ826
       PRODUCT_NAME: Gneauxghts
       PRODUCT_BUNDLE_IDENTIFIER: com.braypolkinghorne.gneauxghts
 targetTemplates:
@@ -30,7 +31,6 @@ targets:
     sources:
       - path: Sources
       - path: Assets.xcassets
-      - path: Externals
       - path: gneauxghts_iOS
       - path: assets
         buildPhase: resources
@@ -43,6 +43,7 @@ targets:
         LSSupportsOpeningDocumentsInPlace: true
         UILaunchStoryboardName: LaunchScreen
         UIFileSharingEnabled: true
+        NSLocalNetworkUsageDescription: Connect to the chat server you configure on your local network.
         UIRequiredDeviceCapabilities: [arm64, metal]
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
@@ -72,6 +73,10 @@ targets:
         EXCLUDED_ARCHS[sdk=iphoneos*]: x86_64
       groups: [app]
     dependencies:
+      - framework: Externals/CLiteRTLM.xcframework
+        embed: true
+        link: false
+        codeSign: true
       - framework: libapp.a
         embed: false
       - sdk: CoreGraphics.framework
