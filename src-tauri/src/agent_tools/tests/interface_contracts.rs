@@ -19,6 +19,85 @@ async fn change(context: &AgentToolContext, args: Value) -> Value {
         .await
         .unwrap()
 }
+
+#[test]
+fn proposal_commit_repairs_retained_identity_but_preserves_later_external_changes() {
+    for change_after_review in [false, true] {
+        let (vault, context, id) = fixture();
+        let (path, _, _) = context.resolve_note(&id).unwrap();
+        let damaged = "Current content without managed metadata";
+        fs::write(&path, damaged).unwrap();
+        let now = crate::time::current_time_millis().unwrap();
+        vault
+            .state
+            .note_timeline()
+            .observe(
+                crate::services::note_timeline::VaultObservation::external_edit(
+                    path.clone(),
+                    now,
+                    Some(now),
+                ),
+            )
+            .unwrap();
+        vault
+            .state
+            .upsert_note_indexes(
+                path.clone(),
+                crate::index::build_indexed_note(&path, damaged, now),
+            )
+            .unwrap();
+        assert_eq!(
+            vault.state.indexed_note_identity(&path).unwrap().as_deref(),
+            Some(id.as_str())
+        );
+
+        let current = tauri::async_runtime::block_on(read(
+            &context,
+            json!({
+                "purpose":"edit", "note_id":id,
+            }),
+        ));
+        let proposal = tauri::async_runtime::block_on(change(
+            &context,
+            json!({
+                "operation":"replace", "note_id":id,
+                "expected_content_hash":current["contentHash"], "markdown":"Reviewed replacement",
+            }),
+        ));
+        assert_eq!(proposal["status"], "pending_review");
+        if change_after_review {
+            fs::write(&path, "Later external change").unwrap();
+        }
+        let result = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+            &vault.state,
+            &context.service,
+            proposal["proposalId"].as_str().unwrap().into(),
+            None,
+        )
+        .unwrap();
+        let raw = fs::read_to_string(&path).unwrap();
+        if change_after_review {
+            assert_eq!(result.status, "conflict");
+            assert_eq!(raw, "Later external change");
+        } else {
+            assert_eq!(result.status, "committed");
+            assert_eq!(result.note_id.as_deref(), Some(id.as_str()));
+            assert_eq!(
+                result.committed_markdown.as_deref(),
+                Some("Reviewed replacement")
+            );
+            assert_eq!(
+                crate::note::parse_note(&raw)
+                    .frontmatter
+                    .managed
+                    .unwrap()
+                    .id,
+                id
+            );
+        }
+    }
+}
+
 fn registry(context: AgentToolContext) -> Vec<rig_core::completion::ToolDefinition> {
     use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
     let model = MockCompletionModel::from_stream_turns([vec![

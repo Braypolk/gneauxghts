@@ -52,7 +52,18 @@ pub(crate) fn commit_agent_proposal_with_state(
         let preview: ProposalPreview = serde_json::from_value(proposal.preview.clone())
             .map_err(|error| format!("Stored proposal preview is invalid: {error}"))?;
         let committed_markdown = markdown.unwrap_or(preview.proposed_editor_markdown);
-        let plan = plan_agent_update_commit(&notes_dir, &preview.note_path, &committed_markdown)?;
+        let note_id = proposal
+            .note_id
+            .as_deref()
+            .expect("validated update identity");
+        let target = super::note_session::resolve_note_path_by_id_with_state(
+            Some(state),
+            &notes_dir,
+            note_id,
+        )?
+        .ok_or_else(|| "The proposed note is no longer in the running vault".to_string())?;
+        let plan =
+            plan_agent_update_commit(&notes_dir, &target.to_string_lossy(), &committed_markdown)?;
         (
             plan,
             committed_markdown,
@@ -132,6 +143,7 @@ pub(crate) fn commit_agent_proposal_with_state(
                 status: "conflict".into(),
                 applied: None,
                 note_id: None,
+                committed_markdown: None,
                 commit_warning: None,
                 message: Some(
                     if proposal.kind == "update" {
@@ -158,6 +170,9 @@ pub(crate) fn commit_agent_proposal_with_state(
                     .then(|| intent.target_path.to_string_lossy().into_owned()),
             }),
             note_id: Some(outcome.note_id().as_str().into()),
+            committed_markdown: Some(
+                super::note_persistence::build_note_session_from_mutation(&outcome).markdown,
+            ),
             message: None,
             commit_warning: outcome.warning().cloned(),
         })

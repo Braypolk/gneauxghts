@@ -50,7 +50,7 @@ function setup() {
     proposalId: `proposal-${id}`, noteId: id,
     preview: { reviewId: `review-${id}`, notePath: `/vault/${id}.md`, title: id, baseContentHash: 'hash', baseEditorMarkdown: id, proposedEditorMarkdown: 'proposed',
       hunks: [{ id: `hunk-${id}`, baseFrom: 0, baseTo: id.length, proposedFrom: 0, proposedTo: 8, oldText: id, newText: 'proposed' }] },
-    commit: vi.fn<DurableProposalReviewRequest['commit']>(async () => ({ status: 'committed', applied: { kind: 'updateNote', path: `/vault/${id}.md`, previousPath: `/vault/${id}.md` }, noteId: id, message: null })),
+    commit: vi.fn<DurableProposalReviewRequest['commit']>(async () => ({ status: 'committed', applied: { kind: 'updateNote', path: `/vault/${id}.md`, previousPath: `/vault/${id}.md` }, noteId: id, message: null, committedMarkdown: 'proposed' })),
     dismiss: vi.fn(async () => {})
   });
   const remount = () => {
@@ -68,6 +68,62 @@ beforeEach(() => {
 afterEach(async () => { for (const f of fixtures.splice(0)) await f.dispose(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
 
 describe('proposal workspace composition', () => {
+  it.each([false, true])('adopts normalized proposal text and preserves later typing (%s)', async laterTyping => {
+    const f = setup();
+    const request = f.request();
+    const submitted = '# a\n\nSee [[Plan]]';
+    const canonical = 'See [[Plan]]';
+    request.preview.proposedEditorMarkdown = submitted;
+    request.preview.hunks[0].newText = submitted;
+    request.preview.hunks[0].proposedTo = submitted.length;
+    const publishing = deferred<Awaited<ReturnType<typeof request.commit>>>();
+    vi.mocked(request.commit).mockReturnValueOnce(publishing.promise);
+    vi.mocked(readNoteSession).mockResolvedValue(persistedSession('a', canonical));
+    await f.orchestration.loadDurableProposalIfOpen(request);
+    const keeping = f.orchestration.keepAll();
+    if (laterTyping) f.getEditor(f.first)!.insertMarkdown(' later', { target: 'end' });
+    publishing.resolve({
+      status: 'committed', applied: { kind: 'updateNote', path: '/vault/a.md', previousPath: '/vault/a.md' },
+      noteId: 'a', message: null, committedMarkdown: canonical
+    });
+    await keeping;
+    expect(request.commit).toHaveBeenCalledExactlyOnceWith(submitted);
+    expect(f.initialDocument.externalSync.kind).toBe('noConflict');
+    expect(f.orchestration.session.workflow.kind).toBe('idle');
+    if (laterTyping) {
+      expect(f.initialDocument.working.markdown).toBe(`${submitted} later`);
+      expect(f.save).toHaveBeenCalledExactlyOnceWith('a', `${submitted} later`, '/vault/a.md');
+    } else {
+      expect(f.initialDocument.savedBaseline?.content.markdown).toBe(canonical);
+      expect(f.initialDocument.working.markdown).toBe(canonical);
+      expect(documentRegistry.get(f.initialDocument.handle)?.resources()?.runtime.markdown).toBe(canonical);
+      expect(f.save).not.toHaveBeenCalled();
+    }
+  });
+
+  it('still protects reviewed text when disk changes after a normalized publication', async () => {
+    const f = setup();
+    const request = f.request();
+    const submitted = '# a\n\nSee [[Plan]]';
+    request.preview.proposedEditorMarkdown = submitted;
+    request.preview.hunks[0].newText = submitted;
+    request.preview.hunks[0].proposedTo = submitted.length;
+    vi.mocked(request.commit).mockResolvedValue({
+      status: 'committed', applied: { kind: 'updateNote', path: '/vault/a.md', previousPath: '/vault/a.md' },
+      noteId: 'a', message: null, committedMarkdown: 'See [[Plan]]'
+    });
+    vi.mocked(readNoteSession).mockResolvedValue(persistedSession('a', 'Actual external edit'));
+    await f.orchestration.loadDurableProposalIfOpen(request);
+    await f.orchestration.keepAll();
+    expect(f.initialDocument.working.markdown).toBe(submitted);
+    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('a');
+    expect(f.initialDocument.externalSync).toMatchObject({
+      kind: 'conflict', external: { document: { content: { markdown: 'Actual external edit' } } }
+    });
+    expect(f.save).not.toHaveBeenCalled();
+    expect(request.commit).toHaveBeenCalledOnce();
+  });
+
   it('installs a passive proposal in an existing editor without activating it from chat', async () => {
     const f = setup(); await f.commands.splitWorkspace('chat'); const active = f.workspace.activePaneId;
     const order = [...f.workspace.paneOrder];
@@ -162,7 +218,7 @@ describe('proposal workspace composition', () => {
     f.getEditor(f.first)!.insertMarkdown(' later', { target: 'end' });
     await remounted.keepAll();
     expect(remounted.session.workflow.kind).toBe('committing');
-    committed.resolve({ status: 'committed', applied: { kind: 'updateNote', path: '/vault/a.md', previousPath: '/vault/a.md' }, noteId: 'a', message: null });
+    committed.resolve({ status: 'committed', applied: { kind: 'updateNote', path: '/vault/a.md', previousPath: '/vault/a.md' }, noteId: 'a', message: null, committedMarkdown: 'proposed' });
     await pending;
     expect(request.commit).toHaveBeenCalledExactlyOnceWith('proposed');
     expect(remounted.session.workflow.kind).toBe('idle');

@@ -375,23 +375,24 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   }
   /**
   * Reconciles a successful app-owned proposal write with its open document.
-  * The commit's exact editor markdown is the ownership proof: if disk matches
-  * it, advance the saved baseline without manufacturing an external conflict.
-  * Any local edit made after the commit remains as a dirty working copy.
+  * The publication's canonical editor markdown is the ownership proof: when
+  * disk matches it, advance the saved baseline without an external conflict.
+  * Keep the submitted markdown separately to detect typing during publication.
   */
   async function acknowledgeDocumentCommit(commit: {
     document: NoteDraftState;
     path: string;
     markdown: string;
+    committedMarkdown: string;
     commitWarning: CommittedMutationWarning | null;
   }) {
-    const { document, path, markdown, commitWarning } = commit;
+    const { document, path, markdown, committedMarkdown, commitWarning } = commit;
     // Durable publication outlives the route that requested it. Adopt only into
     // the same retained document, while navigation callbacks remain retired.
     if (state.documentsByHandle[document.handle] !== document) return;
     const snapshot = await readNoteSession(getDocumentNoteId(document), path);
     if (state.documentsByHandle[document.handle] !== document) return;
-    if (snapshot.markdown !== markdown) {
+    if (snapshot.markdown !== committedMarkdown) {
       // The file no longer contains the bytes this app committed. Route the
       // mismatch through normal external-change protection instead of claiming
       // ownership of a racing write.

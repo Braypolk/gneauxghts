@@ -1524,6 +1524,74 @@ fn durable_proposals_supersede_the_same_target_across_runs() {
 }
 
 #[test]
+fn proposal_command_returns_published_editor_text_after_title_normalization() {
+    let fixture = crate::test_support::TestVault::new("proposal-normalized-receipt");
+    let service = ChatService::new(
+        fixture.notes.path().to_path_buf(),
+        fixture.notes.path().join(".gneauxghts"),
+    )
+    .unwrap();
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let path = fixture.notes.path().join("Plan.md");
+    let original = fixture
+        .state
+        .note_timeline()
+        .create_note_at(
+            crate::services::note_timeline::MutationSource::Editor,
+            &path,
+            "Old body",
+        )
+        .unwrap()
+        .unwrap();
+    let submitted = "# Plan\n\nSee [[Details]]";
+    let preview = crate::proposals::preview_note_rewrite(
+        fixture.notes.path(),
+        &path.to_string_lossy(),
+        submitted,
+    )
+    .unwrap();
+    let (run_id, assistant_id) =
+        seed_agent_run(&service, &conversation.summary.id, "normalized", 1);
+    let proposal = service
+        .stage_agent_proposal(
+            &run_id,
+            &conversation.summary.id,
+            &assistant_id,
+            "update",
+            Some(original.note_id().as_str()),
+            None,
+            "Plan",
+            Some(&preview.base_content_hash),
+            &json!({"title": "Plan", "markdown": submitted}),
+            &serde_json::to_value(&preview).unwrap(),
+        )
+        .unwrap();
+    let result = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id.clone(),
+        Some(submitted.into()),
+    )
+    .unwrap();
+    assert_eq!(result.status, "committed");
+    assert_eq!(
+        result.committed_markdown.as_deref(),
+        Some("See [[Details]]")
+    );
+    let reread = crate::commands::read_note_session_from_path(&path).unwrap();
+    assert_eq!(
+        result.committed_markdown.as_deref(),
+        Some(reread.markdown.as_str())
+    );
+    assert_eq!(
+        service.get_agent_proposal(&proposal.id).unwrap().status,
+        "committed"
+    );
+}
+
+#[test]
 fn proposal_commit_intent_converges_to_committed_after_success() {
     let fixture = crate::test_support::TestVault::new("chat-proposal-commit-success");
     let root = &fixture.notes;

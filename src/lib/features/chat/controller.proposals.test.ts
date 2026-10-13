@@ -80,6 +80,7 @@ describe('chat controller proposals', () => {
     vi.mocked(fake.api.listPendingProposals).mockResolvedValue([proposal()]);
     vi.mocked(fake.api.commitAgentProposal).mockResolvedValue({
       status: 'committed',
+      committedMarkdown: '# Edited',
       applied: {
         kind: 'updateNote',
         path: '/vault/Project plan.md',
@@ -133,6 +134,7 @@ describe('chat controller proposals', () => {
     vi.mocked(fake.api.listPendingProposals).mockResolvedValue([proposal()]);
     vi.mocked(fake.api.commitAgentProposal).mockResolvedValue({
       status: 'conflict',
+      committedMarkdown: null,
       applied: null,
       noteId: null,
       message: 'Note changed on disk.'

@@ -41,6 +41,7 @@ export interface ProposalOrchestrationDeps {
     document: NoteDraftState;
     path: string;
     markdown: string;
+    committedMarkdown: string;
     commitWarning: NonNullable<CommitNoteReviewResult['commitWarning']> | null;
   }) => void | Promise<void>;
   reloadReviewDocument: (document: NoteDraftState) => Promise<void>;
@@ -200,6 +201,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         document: review.document,
         path: result.applied?.path ?? review.request.preview.notePath,
         markdown,
+        committedMarkdown: result.committedMarkdown,
         commitWarning: result.commitWarning ?? null
       });
       await closeReview(review);

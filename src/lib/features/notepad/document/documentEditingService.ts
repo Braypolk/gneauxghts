@@ -168,7 +168,7 @@ export function createDocumentEditingService<TPaneId extends string>(
   async function adoptAcceptedProposal(
     document: NoteDraftState,
     committed: NoteSession,
-    committedMarkdown: string,
+    submittedMarkdown: string,
     commitWarning: CommittedMutationWarning | null
   ) {
     const authoritative = {
@@ -176,7 +176,7 @@ export function createDocumentEditingService<TPaneId extends string>(
       commitWarning: commitWarning ?? undefined
     };
     const preserveWorking =
-      getDocumentMarkdown(document) !== committedMarkdown ||
+      getDocumentMarkdown(document) !== submittedMarkdown ||
       getDocumentTitle(document) !== committed.title ||
       !tagsEqual(document.working.tags, document.savedBaseline?.content.tags);
     const previousMarkdown = getDocumentMarkdown(document);

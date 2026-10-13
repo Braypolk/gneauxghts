@@ -24,11 +24,14 @@ export interface ProposalPreview {
   hunks: ProposalPreviewHunk[];
 }
 
-export interface CommitNoteReviewResult {
-  status: 'committed' | 'conflict';
+export type CommitNoteReviewResult = {
   applied: AppliedNoteChange | null;
   noteId: string | null;
   message: string | null;
   commitWarning?: CommittedMutationWarning | null;
-}
+} & (
+  /** Editor-visible text derived from the exact canonical publication. */
+  | { status: 'committed'; committedMarkdown: string }
+  | { status: 'conflict'; committedMarkdown: null }
+);
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';

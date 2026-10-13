@@ -60,7 +60,7 @@ impl<'a> NoteSessionLookup<'a> {
     }
 }
 
-fn resolve_note_path_by_id_with_state(
+pub(super) fn resolve_note_path_by_id_with_state(
     state: Option<&AppState>,
     notes_dir: &Path,
     note_id: &str,

@@ -86,6 +86,8 @@ pub(crate) struct CommitNoteReviewResult {
     pub(crate) status: String,
     pub(crate) applied: Option<AppliedNoteChange>,
     pub(crate) note_id: Option<String>,
+    /// Editor-visible text derived from the exact canonical publication.
+    pub(crate) committed_markdown: Option<String>,
     pub(crate) message: Option<String>,
     pub(crate) commit_warning: Option<NoteMutationWarning>,
 }

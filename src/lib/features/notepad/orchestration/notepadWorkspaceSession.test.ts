@@ -385,7 +385,7 @@ it.each(['committed', 'external race'] as const)('reconciles an admitted durable
   vi.mocked(readNoteSession).mockResolvedValueOnce(snapshot);
   f.commands.dispose();
   await f.commands.acknowledgeDocumentCommit({
-    document: f.initialDocument, path: '/vault/a.md', markdown: 'accepted text', commitWarning: null
+    document: f.initialDocument, path: '/vault/a.md', markdown: 'accepted text', committedMarkdown: 'accepted text', commitWarning: null
   });
   if (outcome === 'committed') {
     expect(f.persistence.hasCleanBuffer(f.initialDocument)).toBe(true);

@@ -62,6 +62,7 @@ function setup(options: { opened?: boolean; sibling?: boolean } = {}) {
   const commit = vi.fn<() => Promise<CommitNoteReviewResult>>(
     async () => ({
       status: 'committed',
+      committedMarkdown: 'After',
       applied: {
         kind: 'updateNote',
         path,
@@ -332,7 +333,7 @@ describe('durable proposal editor review', () => {
     expect(test.session.workflow.kind).toBe('committing');
     documentRegistry.dispose(test.document.handle);
     expect(documentRegistry.get(test.document.handle)).not.toBeNull();
-    finish({ status: 'committed', applied: { kind: 'updateNote', path, previousPath: path }, noteId: 'note-1', message: null });
+    finish({ status: 'committed', committedMarkdown: 'After', applied: { kind: 'updateNote', path, previousPath: path }, noteId: 'note-1', message: null });
     await pending;
     expect(test.acknowledgeDocumentCommit).toHaveBeenCalledOnce();
     expect(test.session.workflow.kind).toBe('idle');
@@ -344,6 +345,7 @@ describe('durable proposal editor review', () => {
     const test = setup();
     test.commit.mockResolvedValueOnce({
       status: 'conflict',
+      committedMarkdown: null,
       applied: null,
       noteId: null,
       message: 'Changed on disk.'
