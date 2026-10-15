@@ -1,6 +1,6 @@
 # Replace pending approval coordination with Pi documents and tasks
 
-Status: ready-for-agent
+Status: claimed
 Type: prototype
 Blocked by: 02
 

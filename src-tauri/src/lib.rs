@@ -16,6 +16,10 @@ mod path_utils;
 mod proposals;
 #[cfg(feature = "pi-prototype")]
 mod pi_prototype;
+#[cfg(feature = "pi-prototype")]
+mod pi_prototype_transport;
+#[cfg(feature = "pi-prototype")]
+mod pi_prototype_notes;
 mod search;
 mod secrets;
 mod semantic;
@@ -189,7 +193,7 @@ pub fn run() {
         .plugin(tauri_plugin_wdio_webdriver::init());
 
     #[cfg(feature = "pi-prototype")]
-    let builder = builder.manage(pi_prototype::NativeDatabase::default());
+    let builder = builder.manage(pi_prototype::NativeDatabase::default()).manage(pi_prototype_transport::NativeTransport::default());
 
     let app = builder
         .setup(move |app| {
@@ -230,6 +234,9 @@ pub fn run() {
                 if !app.config().identifier.ends_with(".pi-prototype") {
                     return Err("Pi prototype requires its isolated app identity".into());
                 }
+                #[cfg(target_os = "ios")]
+                let root = app.path().document_dir()?.join("PROTOTYPE-wipe-me");
+                #[cfg(not(target_os = "ios"))]
                 let root = app_data_dir.join("PROTOTYPE-wipe-me/vault");
                 std::fs::create_dir_all(&root)?;
                 set_notes_root_override(Some(root))?;
@@ -343,6 +350,18 @@ pub fn run() {
             pi_prototype::pi_sql,
             #[cfg(feature = "pi-prototype")]
             pi_prototype::pi_probe_report,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype::pi_probe_config,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_transport::pi_fetch,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_transport::pi_cancel_fetch,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_notes::pi_read_note,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_notes::pi_validate_sources,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_notes::pi_admit_answer,
             commands::bootstrap_app,
             commands::get_settings_view,
             commands::load_note_session,

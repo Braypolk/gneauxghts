@@ -1,7 +1,7 @@
 # Native Pi validation (in progress)
 
 2026-10-15. Branch `codex/pi-durable-native-prototype`. Baseline plan/research
-checkpoint `c9d949f`; implementation currently uncommitted. Published Pi
+checkpoint `c9d949f`; bridge checkpoint `d96eff8`; provider extension checkpoint in progress. Published Pi
 Durable/AI/Chord are pinned at 1.3.0 in the application lockfile.
 
 ## Environment and isolation
@@ -9,11 +9,11 @@ Durable/AI/Chord are pinned at 1.3.0 in the application lockfile.
 Apple Silicon host, Xcode 27.0 (27A266a), Simulator SDK 27.0. Installed
 runtimes include 18.5, 26.1 and 26.4/26.4.1; no 27.0 runtime. Dedicated
 simulator created for this experiment: `FBAC4D90-9149-4B49-B40D-EA5B90B7069C`
-(`Gneauxghts Pi Prototype`, iPhone 17 Pro, 26.4 runtime).
+(`Gneauxghts Pi Prototype`, iPhone 17 Pro, 26.4.1 runtime).
 
 `pi-prototype` Rust feature plus `VITE_PI_PROTOTYPE=true`; separate bundle ID
 `com.braypolkinghorne.gneauxghts.pi-prototype`, separate Keychain service,
-forced `PROTOTYPE-wipe-me/vault`. Native desktop uses the background E2E
+forced disposable vault (desktop app-data `PROTOTYPE-wipe-me/vault`; iOS Documents `PROTOTYPE-wipe-me`). Native desktop uses the background E2E
 presentation policy. No ordinary vault, app, credentials, or original checkout
 files were edited. Build artifacts were APFS-cloned into this worktree.
 
@@ -28,10 +28,12 @@ files were edited. Build artifacts were APFS-cloned into this worktree.
 | Competing facade operations | Pass: ordinary query waits for transaction commit, reads committed row |
 | Stale facade transaction handle | Pass: escaped handle rejects after callback settlement |
 | Pi submit/committed history | Pass: `pi.user`/`pi.assistant` entries, submission 8 `done` |
-| Pi document/receipt close-reopen | Pass in the same process; process termination is a separate pending check |
+| Pi document/receipt close-reopen and process relaunch | Pass on desktop (SIGKILL) and actual iOS simulator (terminate/relaunch); prior committed submission receipt restored |
 | iOS Tauri CLI build | Tooling failure before Rust compilation: SDK/runtime preflight requires runtime >=27.0 |
-| iOS Xcode build targeting installed simulator | In progress; no mobile acceptance claimed |
-| Providers, read/citation, proposals, interruption matrix | Not yet tested |
+| iOS Xcode build targeting installed simulator | Pass: actual signed simulator app, observed WKWebView diagnostic and native SQLite |
+| Native provider protocols | Pass on desktop and simulator: Responses and compatible Chat SSE; split tool arguments, streamed text, scoped read, follow-up, cancellation and broken stream |
+| Native storage unit probes | Pass: 2 focused rollback/stale-owner tests; 956 unrelated tests filtered |
+| Real chat/review UI and publication matrix | Pending issue 03/04; diagnostics are not chat UI acceptance |
 
 Initial native probe diagnostic (before disposable-root correction) is in the
 separate prototype bundle's Application Support directory. Subsequent runs use
@@ -66,3 +68,9 @@ cost, not evidence of stock Tauri CLI compatibility.
 
 Physical-device, live-provider, radio, lock/suspension and physical memory
 acceptance are unverified. Simulator checks cannot establish those behaviors.
+
+## Bridge protocol evidence
+
+Synthetic requests and actual webview reports: [desktop](evidence/desktop-bridge.json), [simulator](evidence/ios-bridge.json), [simulator relaunch screenshot](evidence/ios-bridge-relaunch.png). Twenty native HTTP requests per gate cover first launch and relaunch. Fixtures reject Authorization headers; no live provider was called. Native inference retains credentials and owns only one HTTP request at a time per call; Pi owns tool/model coordination.
+
+iOS startup initially failed because the prototype vault was under Application Support, violating the existing iOS immediate-Documents-child policy. The prototype now selects Documents/PROTOTYPE-wipe-me inside its separate bundle container; no policy bypass was added. WKWebView reports a compatibility user agent (`iPhone OS 18_7`); runtime identity comes from simctl/Xcode, not that string.

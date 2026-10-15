@@ -5,7 +5,11 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 
 const mode = process.argv[2] ?? 'desktop';
-if (!['desktop', 'build', 'ios'].includes(mode)) throw new Error('Use desktop, build or ios');
+if (!['desktop', 'build', 'ios', 'gate', 'ios-gate'].includes(mode)) throw new Error('Use desktop, build, gate, ios or ios-gate');
+if (mode === 'gate' || mode === 'ios-gate') {
+  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode === 'gate' ? 'desktop' : 'ios'}-gate.mjs`], { stdio: 'inherit', env: process.env });
+  process.exit(result.status ?? 1);
+}
 const root = process.env.PI_PROTOTYPE_DATA ?? mkdtempSync(join(tmpdir(), 'gneauxghts-pi-native-'));
 mkdirSync(root, { recursive: true });
 const config = resolve('scripts/pi-prototype/tauri.prototype.conf.json');
@@ -29,6 +33,8 @@ if (mode === 'ios') {
   rmSync(generated, { recursive: true, force: true });
   cpSync(join(apple, 'gneauxghts.xcodeproj'), generated, { recursive: true });
   const project = join(generated, 'project.pbxproj');
+  const scheme = join(generated, 'xcshareddata/xcschemes/gneauxghts_iOS.xcscheme');
+  writeFileSync(scheme, readFileSync(scheme, 'utf8').replaceAll('container:gneauxghts.xcodeproj', 'container:pi-prototype.xcodeproj'));
   writeFileSync(project, readFileSync(project, 'utf8').replace(/shellScript = "pnpm tauri ios xcode-script[^\n]+;/,
     'shellScript = "echo Pi Rust library built by scripts/pi-prototype/run.mjs";'));
   run('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--target', 'aarch64-apple-ios-sim', '--lib', '--features', 'pi-prototype,tauri/custom-protocol'],
