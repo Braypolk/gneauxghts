@@ -1,10 +1,13 @@
-import { mkdirSync, readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, readFileSync, existsSync } from 'node:fs';
 import { basename, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import assert from 'node:assert/strict';
 import type { Capabilities, Options } from '@wdio/types';
 import { createNativeFixture } from './support/nativeFixture.mjs';
 import { startVite, stopVite } from './support/viteServer';
 import { nativeE2EBinary, nativeE2EPorts } from './support/nativeE2EBinary.mjs';
+import { admitNativePresentation } from './support/nativePresentation.mjs';
 
 type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunnerCapabilities;
 
@@ -43,13 +46,24 @@ export const config: TestrunnerConfig = {
     fileURLToPath(new URL('./support/nativeTauriService.mjs', import.meta.url)),
     {
       nativeHarness: {
-        async prepare() {
+        async prepare(resolvedConfig: TestrunnerConfig) {
+          admitNativePresentation(resolvedConfig.specs ?? []);
           nativeE2EBinary(profile, application);
           await startVite(optimized ? 'native-preview' : 'native', ports.dev);
         },
         async cleanup() {
           try { await stopVite(); }
-          finally { ownedFixture?.cleanup(); }
+          finally {
+            const receipt = join(fixtureRoot, 'restarted-app.pid');
+            if (ownedFixture && existsSync(receipt)) {
+              const pid = Number(readFileSync(receipt, 'utf8'));
+              const command = execFileSync('ps', ['-axo', 'pid=,command='], {encoding: 'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[0]) === pid);
+              if (command?.includes(basename(fixtureRoot)) && command.includes('--e2e-vault-root') && command.includes('gneauxghts')) {
+                try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+              }
+            }
+            ownedFixture?.cleanup();
+          }
         }
       },
       driverProvider: 'embedded',
@@ -83,6 +97,13 @@ export const config: TestrunnerConfig = {
           typeof window.__TAURI_INTERNALS__?.invoke === 'function'), {
           timeout: 30_000, timeoutMsg: 'Native main webview did not publish its IPC bridge'
         });
+      },
+      async afterEach() {
+        if (process.env.GNEAUXGHTS_E2E_FOREGROUND === '1') return;
+        const { browser } = await import('@wdio/globals');
+        const focused = await browser.execute(() => window.__TAURI_INTERNALS__!.invoke<boolean>(
+          'plugin:window|is_focused', {label: 'main'}));
+        assert.equal(focused, false, 'Background native test acquired OS window focus');
       }
     }
   },

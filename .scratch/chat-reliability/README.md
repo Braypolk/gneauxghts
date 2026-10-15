@@ -13,8 +13,10 @@ citation navigation, cross-note follow-ups and parent fallback.
 
 ## Open follow-ups
 
-- [06: request latency](issues/06-live-repeat-latency.md): measure provider,
-  polling and repeated history-validation costs separately.
+- [06: request latency](issues/06-live-repeat-latency.md): the [current native sample](latency-probe/README.md)
+  is 97–98% provider/transport time; tools and IPC polls take milliseconds.
+  The original timeout was not reproduced. Preserve diagnostics if it recurs;
+  long-history scaling remains unmeasured.
 - [07: citation entailment](issues/07-citation-entailment.md): verify that cited
   passages support the associated claims; resolving a citation alone is not
   sufficient. The [offline baseline](citation-entailment/validation.md) now has
@@ -37,8 +39,14 @@ citation navigation, cross-note follow-ups and parent fallback.
   Next: a fresh live provider/native UI comparison and claim-support evaluation;
   precise selected-range behavior remains a separate open issue.
 
-All other issues in this folder are resolved. Their original problem statements
-and proposed steps are retained with their answers as implementation history.
+The [resolved issue outcomes](../archive/chat-reliability-resolved-issues.md)
+consolidate completed tickets; their validation reports and raw evidence remain
+available. They are implementation history, not an additional work queue.
+
+2026-10-14: [False evidence-change rejection corrected](../archive/chat-evidence-freshness.md).
+Unrelated legacy identity assignment, timestamp-only updates and overlapping
+internal operations no longer invalidate unchanged evidence. Actual bytes,
+identity, access and retained-proof checks remain enforced.
 
 ## Earlier completed milestones
 
@@ -69,7 +77,7 @@ answers. Both formats still fail excerpt-only attribution. Keep compact out of
 production. Readable streaming was subsequently integrated; live native quality
 and selected-range scope remain follow-ups.
 
-[Three existing evidence test failures](issues/10-existing-evidence-regression-failures.md)
+[Three existing evidence test failures](../archive/chat-reliability-resolved-issues.md#10-investigate-three-existing-evidence-regression-failures)
 were independently reproduced on Rig 0.41 during the 0.44 migration and are now
 resolved as fixture assumptions about pagination and shared budgets. Production
 limits are unchanged; the full backend suite passes. See the

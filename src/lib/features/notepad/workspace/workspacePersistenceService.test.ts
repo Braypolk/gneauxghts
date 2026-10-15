@@ -23,6 +23,7 @@ describe('workspacePersistenceService', () => {
       });
     });
     const service = createWorkspacePersistenceService({
+      flushReviews: async () => { throw new Error('review checkpoint unavailable'); },
       flushAllPaneCursorSaves: vi.fn(), getDocuments: () => [failed, conflict, review, healthy],
       cancelPendingAutosave: vi.fn(), enqueueSave, isReviewingDocument: note => note === review
     });
@@ -35,6 +36,31 @@ describe('workspacePersistenceService', () => {
     expect(failed.savedBaseline).toBeNull();
     expect(review.savedBaseline).toBeNull();
     expect(conflict.working.markdown).toBe('keep these edits');
+  });
+
+  it('saves ordinary notes before reporting a failed navigation review checkpoint', async () => {
+    const note = createNoteDraftState();
+    const review = createNoteDraftState();
+    updateDocumentMarkdown(note, 'ordinary edits');
+    updateDocumentMarkdown(review, 'pending review');
+    const service = createWorkspacePersistenceService({
+      flushReviews: async () => { throw new Error('review checkpoint unavailable'); },
+      flushAllPaneCursorSaves: vi.fn(),
+      getDocuments: () => [review, note],
+      cancelPendingAutosave: vi.fn(),
+      isReviewingDocument: document => document === review,
+      enqueueSave: async document => {
+        await Promise.resolve();
+        applySessionSnapshotToDocument(document, {
+          ...createEmptySessionSnapshot(),
+          bodyMarkdown: document.working.markdown,
+          lastSavedMarkdown: document.working.markdown
+        });
+      }
+    });
+    await expect(service.flushAllForNavigation()).rejects.toThrow('review checkpoint unavailable');
+    expect(note.savedBaseline?.content.markdown).toBe('ordinary edits');
+    expect(review.savedBaseline).toBeNull();
   });
 
   it('flushes ordinary edits while retaining a pending proposal at the navigation barrier', async () => {

@@ -163,6 +163,38 @@ fn structured_answer_keeps_valid_output_when_the_model_selects_an_unissued_sourc
         ))
         .unwrap();
         assert_eq!(model.request_count(), 2);
+        let read_sources = events
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|event| match event {
+                AgentEvent::ToolCallUpdated {
+                    call_id,
+                    status,
+                    read_sources,
+                    ..
+                } if call_id == "read" && status == "success" => Some(read_sources.clone()),
+                _ => None,
+            })
+            .expect("Successful read activity");
+        assert!(
+            !read_sources.is_empty(),
+            "Activity retains actually delivered reads"
+        );
+        assert!(read_sources.iter().all(|source| {
+            source.title == "Tool note"
+                && source.note_id.as_deref() == Some(&id)
+                && source.passage.is_some()
+        }));
+        assert!(context
+            .activity_read_sources("find_notes", &json!({"items":[{"sourceId":"S1"}]}))
+            .is_empty());
+        assert!(context
+            .activity_read_sources(
+                "read_notes",
+                &json!({"items":[{"sourceId":"S999","title":"Invented"}]})
+            )
+            .is_empty());
         let requests = model.requests();
         let selections = |index: usize| {
             requests[index].tools.last().unwrap().parameters["properties"]["segments"]["items"]
@@ -269,7 +301,10 @@ fn source_changed_during_compaction_stops_before_the_next_model_dispatch() {
     ));
     assert!(changed.load(std::sync::atomic::Ordering::Relaxed));
     let error = result.unwrap_err();
-    assert!(error.contains("changed"), "{error}");
+    assert!(
+        error.contains("Note evidence could not be reverified"),
+        "{error}"
+    );
     assert_eq!(model.request_count(), 1, "Only summary inference may run");
 }
 
@@ -556,7 +591,10 @@ fn compatible_chat_wire_exposes_granted_tool_arguments_at_the_schema_root() {
 
     let (_vault, context, _) = fixture();
     for (capabilities, purposes) in [
-        (context.capabilities.clone(), json!(["answer", "edit"])),
+        (
+            context.capabilities.clone(),
+            json!(["answer", "edit", "draft", "chat"]),
+        ),
         (
             context.capabilities.restricted_to(&[Capability::Evidence]),
             json!(["answer"]),
@@ -565,7 +603,7 @@ fn compatible_chat_wire_exposes_granted_tool_arguments_at_the_schema_root() {
             context
                 .capabilities
                 .restricted_to(&[Capability::WorkingNotes]),
-            json!(["edit"]),
+            json!(["edit", "draft", "chat"]),
         ),
     ] {
         let mut scoped = context.clone();
@@ -626,7 +664,7 @@ fn compatible_chat_wire_exposes_granted_tool_arguments_at_the_schema_root() {
                 let schema = &change["parameters"];
                 assert_eq!(
                     schema["properties"]["operation"]["enum"],
-                    json!(["edit", "replace", "create"])
+                    json!(["edit", "replace", "create", "save", "refine"])
                 );
                 assert_eq!(schema["required"], json!(["operation"]));
                 for argument in [
@@ -641,7 +679,7 @@ fn compatible_chat_wire_exposes_granted_tool_arguments_at_the_schema_root() {
                         "Missing proposal argument {argument}"
                     );
                 }
-                assert_eq!(schema["oneOf"].as_array().unwrap().len(), 3);
+                assert_eq!(schema["oneOf"].as_array().unwrap().len(), 5);
             }
         }
     }
@@ -867,4 +905,143 @@ fn unified_find_retains_activity_presentation_in_cursor_only_continuations() {
             .await;
         assert!(mixed.is_err());
     });
+}
+
+#[test]
+fn conversational_save_and_refinement_use_the_latest_durable_draft() {
+    let (_vault, context, _) = fixture();
+    context.service.test_complete_answer(
+        &context.assistant_message_id,
+        "# Pilot\n\nKeep this detail.\n\nA longer explanation.",
+    );
+    tauri::async_runtime::block_on(async {
+        let saved = change(
+            &context,
+            json!({"operation":"save","message_id":context.assistant_message_id}),
+        )
+        .await;
+        assert_eq!(saved["status"], "pending_review");
+        let id = saved["proposalId"].as_str().unwrap();
+        let read_draft = read(&context, json!({"purpose":"draft","proposal_id":id})).await;
+        let version = read_draft["version"].as_i64().unwrap();
+        let refined=change(&context,json!({"operation":"refine","proposal_id":id,"expected_version":version,"edits":[{"kind":"replace","oldText":"A longer explanation.","newText":"Short.","contextBefore":null,"contextAfter":null}]})).await;
+        assert_eq!(refined["proposalId"], id);
+        let draft = context.service.proposal_draft(id).unwrap();
+        assert!(draft.markdown.contains("Keep this detail."));
+        assert!(draft.markdown.contains("Short."));
+        assert!(context
+            .service
+            .refine_proposal_draft(id, version, "Late output", &context.run_id)
+            .is_err());
+        assert!(context
+            .service
+            .proposal_draft(id)
+            .unwrap()
+            .markdown
+            .contains("Short."));
+    });
+}
+
+#[test]
+fn scripted_runtime_saves_reads_and_refines_one_current_draft() {
+    use rig_core::test_utils::{MockCompletionModel, MockStreamEvent};
+    let (_vault, context, _) = fixture();
+    context.service.test_complete_answer(
+        &context.assistant_message_id,
+        "# Pilot\n\nA longer explanation.",
+    );
+    let proposal = context
+        .service
+        .prepare_note_save(
+            &context.conversation_id,
+            &context.assistant_message_id,
+            None,
+        )
+        .unwrap();
+    let draft = context.service.proposal_draft(&proposal.id).unwrap();
+    let edited = format!("{}\n\nMy handwritten detail.", draft.markdown);
+    let edited = context
+        .service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            draft.version,
+            &edited,
+            &draft.title,
+            None,
+            &json!([]),
+        )
+        .unwrap();
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call(
+                "save",
+                "propose_note_change",
+                json!({"operation":"save","message_id":context.assistant_message_id}),
+            ),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::tool_call(
+                "read",
+                "read_notes",
+                json!({"purpose":"draft","proposal_id":proposal.id}),
+            ),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::tool_call(
+                "refine",
+                "propose_note_change",
+                json!({"operation":"refine","proposal_id":proposal.id,"expected_version":edited.version,"edits":[{"kind":"replace","oldText":"A longer explanation.","newText":"Short.","contextBefore":null,"contextAfter":null}]}),
+            ),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+        vec![
+            MockStreamEvent::text("Ready for review"),
+            MockStreamEvent::final_response_with_default_usage(),
+        ],
+    ]);
+    let result = tauri::async_runtime::block_on(crate::agent_runtime::measure_test_model(
+        model.clone(),
+        request(),
+        Some(context.clone()),
+        crate::agent_runtime::AgentRuntimeObserver {
+            evidence_context: None,
+            cancelled: tokio_util::sync::CancellationToken::new(),
+            permissions: None,
+            on_event: Arc::new(|_| {}),
+        },
+    ))
+    .unwrap();
+    assert!(result.output.contains("Ready for review"));
+    assert_eq!(model.requests().len(), 4);
+    let latest = context.service.proposal_draft(&proposal.id).unwrap();
+    assert!(latest.markdown.contains("Short."));
+    assert!(latest.markdown.contains("My handwritten detail."));
+    assert!(latest.markdown.contains("|Open in chat]]"));
+    assert_eq!(
+        context
+            .service
+            .list_pending_agent_proposals(&context.conversation_id)
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn conversational_save_reports_an_ambiguous_destination_heading() {
+    let (_vault, context, target) = fixture();
+    context
+        .service
+        .test_complete_answer(&context.assistant_message_id, "Authored answer.");
+    let result = tauri::async_runtime::block_on(ProposeNoteChangeTool(context.clone()).call(&mut ToolContext::new(), serde_json::from_value(json!({"operation":"save","message_id":context.assistant_message_id,"target_note_id":target,"heading":"Missing"})).unwrap())).unwrap_err();
+    assert!(
+        result.payload()["message"]
+            .as_str()
+            .unwrap()
+            .contains("unique heading"),
+        "{}",
+        result.payload()
+    );
 }

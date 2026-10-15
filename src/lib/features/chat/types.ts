@@ -69,6 +69,19 @@ export interface AgentPermissionRequest extends AgentPermissionIdentity {
   scope: string;
 }
 
+/** App-admitted destinations for delivered reads; independent of answer citations. */
+export interface ChatReadSource {
+  kind: string;
+  noteId?: string | null;
+  notePath?: string | null;
+  title: string;
+  excerpt: string;
+  url?: string | null;
+  anchor?: string | null;
+  revision?: RevisionCitation | null;
+  passage?: PassageCitation | null;
+}
+
 export type AgentEvent =
   | { type: 'textDelta'; delta: string }
   | {
@@ -81,6 +94,7 @@ export type AgentEvent =
       inputSummary?: string;
       outputSummary?: string;
       durationMillis?: number;
+      readSources?: ChatReadSource[];
     }
   | {
       type: 'stepUpdated';
@@ -128,6 +142,7 @@ export type ChatPart =
       inputSummary?: string;
       outputSummary?: string;
       durationMillis?: number;
+      readSources?: Extract<ChatCitation, { kind: 'note' }>[];
     }
   | { id: 'plan'; type: 'plan'; entries: AgentPlanEntry[] }
   | { id: 'usage'; type: 'usage'; callIndex: number; usage: AgentUsage }
@@ -261,7 +276,7 @@ export interface LocalModelCapabilitySelection {
 
 export interface ChatAgentProposal {
   id: string;
-  runId: string;
+  runId: string | null;
   conversationId: string;
   assistantMessageId: string;
   kind: 'update' | 'create';
@@ -332,6 +347,7 @@ export type ChatCitation =
     };
 
 export interface ChatMessage {
+  savedNote?: { noteId: string; path: string };
   /** Transient decoded output; never persisted or treated as evidence. */
   answerDraft?: { attempt: number; sequence: number; text: string };
   id: string;
@@ -475,10 +491,18 @@ export interface ChatSelection {
   linkTarget: string | null;
 }
 
+export interface ChatProposalDraft {
+  version: number;
+  markdown: string;
+  title: string;
+  path: string;
+  decisions: import('$lib/types/proposals').ReviewHunkState[];
+}
+
 export interface ChatSelectionActions {
+  onSaveToNote?: (selection: { conversationId: string; messageId: string; selection?: { markdown: string; text: string; occurrence?: number }; copyIntent?: string; targetNoteId?: string; heading?: string }) => void | Promise<void>;
   onCopy?: (selection: ChatSelection) => void | Promise<void>;
   onCopyLink?: (selection: ChatSelection) => void | Promise<void>;
-  onInsertIntoNote?: (selection: ChatSelection) => void | Promise<void>;
   onRemember?: (selection: ChatSelection, excerpt: ChatExcerpt) => void | Promise<void>;
   onUnremember?: (selection: ChatSelection, excerpt: ChatExcerpt) => void | Promise<void>;
 }

@@ -45,6 +45,33 @@ fn resolve_note_link_target_prefers_paragraph_numbers_and_falls_back_to_title() 
 }
 
 #[test]
+fn promoted_body_positions_round_trip_through_ordinary_wikilink_navigation() {
+    let path = PathBuf::from("/tmp/Source.md");
+    for (raw, expected) in [
+        ("# Source\n\nFirst.\n\nTarget éclair.\n", "Paragraph 2"),
+        (
+            "\r\n# Source\r\n\r\nFirst.\r\n\r\nTarget éclair.\r\n",
+            "Paragraph 2",
+        ),
+        ("## Heading\n\nFirst.\n\nTarget éclair.\n", "Paragraph 3"),
+        ("First.\n\nTarget éclair. ^stable_1\n", "^stable_1"),
+        (
+            "First. ^duplicate\n\nTarget éclair. ^duplicate\n",
+            "Paragraph 2",
+        ),
+        ("First.\n\nTarget éclair. ^invalid!\n", "Paragraph 2"),
+    ] {
+        let body = crate::note::parse_note(raw).body;
+        let start = body.find("Target éclair.").unwrap();
+        let reference = crate::index::body_link_reference(raw, "Source", start).unwrap();
+        assert_eq!(reference, expected, "{raw:?}");
+        let note = build_indexed_note(&path, raw, 10);
+        let resolved = resolve_note_link_target(&path, &note, Some(&reference));
+        assert!(resolved.match_text.starts_with("Target éclair."), "{raw:?}");
+    }
+}
+
+#[test]
 fn resolve_note_link_target_supports_stable_block_ids() {
     let note_path = PathBuf::from("/tmp/Chats/2026-07-12-planning/Part 001.md");
     let note = build_indexed_note(

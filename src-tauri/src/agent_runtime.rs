@@ -168,6 +168,9 @@ pub(crate) enum AgentEvent {
             skip_serializing_if = "Option::is_none"
         )]
         duration_millis: Option<u64>,
+        /// App-admitted read destinations, never raw provider/tool output.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        read_sources: Vec<crate::chat::ChatSource>,
     },
     StepUpdated {
         index: usize,
@@ -363,6 +366,7 @@ impl AgentHook for RuntimeEventHook {
                 input_summary: tool_input_summary(name, args),
                 output_summary: Some(violation.message.clone()),
                 duration_millis: self.guard.finish_tool(&call_id),
+                read_sources: Vec::new(),
             });
             return DispatchAction::stop(violation.message);
         }
@@ -390,6 +394,7 @@ impl AgentHook for RuntimeEventHook {
                     input_summary: tool_input_summary(name, args),
                     output_summary: Some("Permission denied".to_string()),
                     duration_millis: self.guard.finish_tool(&call_id),
+                    read_sources: Vec::new(),
                 });
                 return DispatchAction::skip("The user denied this permission request");
             }
@@ -408,6 +413,7 @@ impl AgentHook for RuntimeEventHook {
             input_summary: tool_input_summary(name, args),
             output_summary: None,
             duration_millis: None,
+            read_sources: Vec::new(),
         });
         DispatchAction::proceed()
     }
@@ -430,6 +436,19 @@ impl AgentHook for RuntimeEventHook {
             input_summary: tool_input_summary(name, args),
             output_summary: Some(tool_output_summary(name, result)),
             duration_millis: self.guard.finish_tool(&call_id),
+            read_sources: if presented_tool_status(result) != "error" {
+                self.tools
+                    .as_ref()
+                    .and_then(|tools| {
+                        result
+                            .output()
+                            .as_json()
+                            .map(|output| tools.activity_read_sources(name, output))
+                    })
+                    .unwrap_or_default()
+            } else {
+                Vec::new()
+            },
         });
         OutcomeAction::proceed()
     }
@@ -1048,6 +1067,9 @@ async fn drive_agent(
     let mut response = None;
     let mut aggregate_usage = AgentUsage::default();
     loop {
+        if observer.cancelled.is_cancelled() {
+            return Err("Request cancelled".into());
+        }
         let remaining = match guard.deadline_remaining() {
             Ok(remaining) => remaining,
             Err(violation) => {
@@ -1139,6 +1161,9 @@ async fn drive_agent(
     let mut usage: AgentUsage = response.usage().into();
     if let Some(context) = &context {
         usage.add(&context.compaction_usage());
+    }
+    if observer.cancelled.is_cancelled() {
+        return Err("Request cancelled".into());
     }
     Ok(AgentRuntimeResponse {
         output: response.output().to_string(),

@@ -2,17 +2,19 @@
   import { ChevronDown, LoaderCircle, Wrench } from '@lucide/svelte';
   import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '$lib/components/ui/collapsible';
   import { cn } from '$lib/utils';
-  import type { ChatPart } from '$lib/features/chat/types';
+  import type { ChatPart, ChatCitation } from '$lib/features/chat/types';
 
   type Step = Extract<ChatPart, { type: 'tool' }>;
   let {
     steps,
     open = $bindable(false),
-    class: className
+    class: className,
+    onOpenCitation
   }: {
     steps: Step[];
     open?: boolean;
     class?: string;
+    onOpenCitation?: (citation: Extract<ChatCitation, {kind: 'note'}>) => void | Promise<void>;
   } = $props();
 
   const active = $derived(steps.findLast((step) => step.status === 'running'));
@@ -21,7 +23,7 @@
   );
   const failed = $derived(steps.filter((step) => step.status === 'error' || step.status === 'denied').length);
   const total = $derived(steps.length);
-  const expandable = $derived(total > 1 || steps.some((step) => details(step).length > 0));
+  const expandable = $derived(total > 1 || steps.some((step) => details(step).length > 0 || (step.readSources?.length ?? 0) > 0));
   const title = $derived(active?.title ?? (total === 1 ? steps[0].title : 'Activity'));
 
   function statusLabel(status: Step['status']) {
@@ -70,6 +72,24 @@
             {#each details(step) as detail}
               <p class="whitespace-pre-wrap break-words text-muted-foreground">{detail}</p>
             {/each}
+            {#if step.readSources?.length}
+              <ul class="space-y-2 pt-1" aria-label="Notes and passages read">
+                {#each step.readSources as source (source.id)}
+                  <li class="min-w-0">
+                    <button
+                      type="button"
+                      class="max-w-full break-words text-left text-foreground underline decoration-muted-foreground/50 underline-offset-2 hover:decoration-foreground disabled:no-underline"
+                      aria-label={`Open ${source.label}${source.passage ? ', read passage' : ''}`}
+                      disabled={!onOpenCitation}
+                      onclick={() => void onOpenCitation?.(source)}
+                    >{source.label}</button>
+                    {#if source.excerpt}
+                      <p class="line-clamp-2 break-words text-muted-foreground">{source.excerpt}</p>
+                    {/if}
+                  </li>
+                {/each}
+              </ul>
+            {/if}
           </li>
         {/each}
       </ol>

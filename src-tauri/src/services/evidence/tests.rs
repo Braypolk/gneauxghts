@@ -2,6 +2,123 @@ use super::*;
 mod coverage;
 
 #[test]
+fn search_freshness_survives_unrelated_legacy_note_identity_assignment() {
+    let vault = crate::test_support::TestVault::new("evidence-legacy-identity");
+    crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Supporting note".into(),
+        "Supporting passage".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let legacy = vault.notes.path().join("Legacy.md");
+    fs::write(&legacy, "Unrelated legacy content").unwrap();
+    vault
+        .state
+        .upsert_note_indexes(
+            legacy.clone(),
+            crate::index::build_indexed_note(&legacy, "Unrelated legacy content", 1),
+        )
+        .unwrap();
+    assert!(vault
+        .state
+        .indexed_note_identity(&legacy)
+        .unwrap()
+        .is_none());
+    let mut session = EvidenceSession::default();
+    session
+        .search(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            SearchRequest {
+                query: "Supporting".into(),
+                mode: SearchMode::Literal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(session.is_current(&vault.state, None, &HashSet::new()));
+    let original = fs::read(&legacy).unwrap();
+    vault
+        .state
+        .note_timeline()
+        .observe(
+            crate::services::note_timeline::VaultObservation::external_edit(
+                legacy.clone(),
+                2,
+                Some(1),
+            ),
+        )
+        .unwrap();
+    vault
+        .state
+        .upsert_note_indexes(
+            legacy.clone(),
+            crate::index::build_indexed_note(&legacy, "Unrelated legacy content", 1),
+        )
+        .unwrap();
+    assert!(vault
+        .state
+        .indexed_note_identity(&legacy)
+        .unwrap()
+        .is_some());
+    assert_eq!(fs::read(&legacy).unwrap(), original);
+    assert!(
+        session.is_current(&vault.state, None, &HashSet::new()),
+        "Assigning identity to an unchanged unrelated legacy note is not changed search content"
+    );
+}
+
+#[test]
+fn search_freshness_tracks_content_instead_of_file_timestamps() {
+    let vault = crate::test_support::TestVault::new("evidence-unchanged-timestamp");
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &vault.state,
+        "Unchanged".into(),
+        "Supporting passage".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let path = saved.path.unwrap();
+    let mut session = EvidenceSession::default();
+    session
+        .search(
+            &vault.state,
+            None,
+            &HashSet::new(),
+            SearchRequest {
+                query: "Supporting".into(),
+                mode: SearchMode::Literal,
+                ..Default::default()
+            },
+        )
+        .unwrap();
+    assert!(session.is_current(&vault.state, None, &HashSet::new()));
+    let original = fs::read(&path).unwrap();
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    let changed_time =
+        file.metadata().unwrap().modified().unwrap() + std::time::Duration::from_secs(1);
+    file.set_times(fs::FileTimes::new().set_modified(changed_time))
+        .unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+    assert!(
+        session.is_current(&vault.state, None, &HashSet::new()),
+        "Identical canonical bytes must remain current after a timestamp-only change"
+    );
+    // Same-length content changes cannot hide behind the original timestamp.
+    let changed = String::from_utf8(original)
+        .unwrap()
+        .replace("Supporting", "Contradict");
+    fs::write(&path, changed).unwrap();
+    file.set_times(fs::FileTimes::new().set_modified(changed_time))
+        .unwrap();
+    assert!(!session.is_current(&vault.state, None, &HashSet::new()));
+}
+
+#[test]
 fn expiring_search_cursors_keeps_earlier_scope_freshness_checks() {
     let vault = crate::test_support::TestVault::new("retired-search-scope");
     let state = &vault.state;

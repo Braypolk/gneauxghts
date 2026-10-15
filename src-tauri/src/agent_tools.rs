@@ -1,6 +1,7 @@
 mod capabilities;
 mod feedback;
 mod interface;
+mod note_saves;
 use capabilities::{Capabilities, Capability};
 use feedback::ModelTool;
 use interface::{ProposeNoteChangeTool, ReadNotesTool};

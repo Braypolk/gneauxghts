@@ -147,7 +147,7 @@ impl MutationSource {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum MutationWarningStage {
     CanonicalRead,
@@ -177,7 +177,7 @@ impl MutationWarningStage {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteTimelineIssue {
     pub(super) stage: MutationWarningStage,
@@ -202,14 +202,18 @@ impl NoteTimelineIssue {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteMutationWarning {
-    #[serde(skip)]
+    #[serde(skip, default = "warning_payload_version")]
     pub(super) payload_version: PayloadVersion,
     #[serde(serialize_with = "serialize_warning_recovery_message")]
     pub(super) message: String,
     pub(super) issues: Vec<NoteTimelineIssue>,
+}
+
+fn warning_payload_version() -> PayloadVersion {
+    PayloadVersion::V1
 }
 
 pub(super) fn serialize_warning_recovery_message<S>(

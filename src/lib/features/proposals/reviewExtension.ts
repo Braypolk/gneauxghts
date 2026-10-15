@@ -11,13 +11,8 @@ import { Decoration, EditorView, WidgetType, type DecorationSet } from '@codemir
 import MarkdownIt from 'markdown-it';
 import type { ProposalPreviewHunk } from '$lib/types/proposals';
 
-export type ReviewHunkStatus = 'pending' | 'kept' | 'undone' | 'modified';
-
-export interface ReviewHunkState extends ProposalPreviewHunk {
-  from: number;
-  to: number;
-  status: ReviewHunkStatus;
-}
+import type { ReviewHunkState, ReviewHunkStatus } from '$lib/types/proposals';
+export type { ReviewHunkState, ReviewHunkStatus } from '$lib/types/proposals';
 
 export interface ProposalReviewState {
   reviewId: string;

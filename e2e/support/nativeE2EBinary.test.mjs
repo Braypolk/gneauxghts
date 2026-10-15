@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { nativeE2EBinary, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
 
-const e2eBytes = Buffer.from('--e2e-app-data-root --e2e-documents-root --e2e-vault-root TAURI_WEBDRIVER_PORT');
+const e2eBytes = Buffer.from('--e2e-app-data-root --e2e-documents-root --e2e-vault-root TAURI_WEBDRIVER_PORT GNEAUXGHTS_E2E_FOREGROUND');
 const ordinaryBytes = Buffer.from('ordinary executable without E2E override handling');
 function fixture(run) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), 'gneauxghts-binary-preflight-')));
@@ -55,4 +55,10 @@ test('debug artifact admission rejects a different dev server port', () => fixtu
     if (previous === undefined) delete process.env.GNEAUXGHTS_E2E_PORT;
     else process.env.GNEAUXGHTS_E2E_PORT = previous;
   }
+}));
+
+test('older E2E executables without background protection are rejected', () => fixture(root => {
+  const source = join(root, 'old-e2e');
+  writeFileSync(source, e2eBytes.toString().replace('GNEAUXGHTS_E2E_FOREGROUND', ''));
+  assert.throws(() => pinNativeE2EBinary(source, join(root, 'copy'), 'debug'), /GNEAUXGHTS_E2E_FOREGROUND/);
 }));

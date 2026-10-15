@@ -151,6 +151,8 @@ export type ChatControllerMachineEvent = LifecycleEvent | RequestEvent | Backend
   type: 'metadata';
   data: Metadata;
 } | {
+  type: 'savedNoteLinked'; messageId: string; noteId: string; path: string;
+} | {
   type: 'proposalSettled';
   proposalId: string;
   conflict?: boolean;
@@ -287,6 +289,8 @@ export function transitionChatControllerMachine(state: ChatControllerMachineStat
         ...(event.type === 'initializationFailed' ? { error: event.error ?? state.error } : {})
       };
     }
+    case 'savedNoteLinked':
+      return state.conversation ? { ...state, conversation: { ...state.conversation, messages: state.conversation.messages.map(message => message.id === event.messageId ? { ...message, savedNote: {noteId:event.noteId,path:event.path} } : message) } } : state;
     case 'proposalSettled':
       if (!state.proposals.some(proposal => proposal.id === event.proposalId))
         return state;
@@ -462,8 +466,7 @@ function reduceBackend(state: ChatControllerMachineState, event: BackendChatEven
   if (event.channel === 'chat://proposal')
     return {
       ...state,
-      proposals: [...state.proposals.filter(item => item.id !== event.payload.id && !(item.kind === event.payload.kind &&
-        (item.noteId ?? item.suggestedPath) === (event.payload.noteId ?? event.payload.suggestedPath))), event.payload]
+      proposals: [...state.proposals.filter(item => item.id !== event.payload.id && item.id !== event.payload.payload.supersedesProposalId), event.payload]
     };
   const payload = event.payload;
   const existing = conversation.messages.find(message => message.id === payload.messageId);

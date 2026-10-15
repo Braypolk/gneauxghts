@@ -13,6 +13,9 @@ import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { listenerPids, waitUntil as until, createWebDriverRequest } from './nativeTransport.mjs';
 import { createOwnedServerOwner } from './ownedServer.mjs';
+import { requireNativeForeground } from './nativePresentation.mjs';
+
+requireNativeForeground('Native scale paint measurement');
 
 const ports = nativeE2EPorts();
 const request = createWebDriverRequest(ports.driver, 180000);

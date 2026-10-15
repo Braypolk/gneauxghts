@@ -22,7 +22,7 @@
     positionInitialChatScroll,
     type ChatScrollPosition
   } from './chatMessageScroll';
-  import { chatSelectionToMarkdown } from './chatSelectionMarkdown';
+  import { chatSelectionToMarkdown, chatSelectionDescriptor } from './chatSelectionMarkdown';
 
   interface Props {
     controller: ChatController;
@@ -61,6 +61,7 @@
   let messagesElement = $state<HTMLElement | null>(null);
   let selected = $state<ChatSelection | null>(null);
   let selectedMarkdown = $state<string | null>(null);
+  let selectedDescriptor = $state<{text: string; occurrence: number} | null>(null);
   let selectedExcerpt = $state<ChatExcerpt | null>(null);
   // One-shot guards are deliberately non-reactive to avoid effect↔state loops.
   let positionedConversationId: string | null = null;
@@ -300,6 +301,7 @@
       const current = controller.getSnapshot().conversation;
       const message = current?.messages.find((item) => item.id === messageId);
       if (!current || !message || !messageElement) return;
+      selectedDescriptor = chatSelectionDescriptor(browserSelection, messageElement);
       selectedMarkdown = chatSelectionToMarkdown(
         browserSelection,
         messageElement
@@ -381,21 +383,18 @@
     }
   }
 
-  async function insertSelection() {
-    if (!selected) return;
-    try {
-      const excerpt = await ensureExcerpt();
-      await selectionActions.onInsertIntoNote?.({
-        ...selected,
-        linkTarget: excerpt?.linkTarget ?? selected.linkTarget
-      });
-    } catch (error) {
-      onActionError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to insert this passage.'
-      );
-    }
+  async function saveMessage(message: ChatMessageModel, selection: { markdown: string; text: string; occurrence?: number } | undefined = undefined, copyIntent: string | undefined = undefined) {
+    if (!conversation) return;
+    const origin = { conversationId: conversation.id, messageId: message.id, selection, copyIntent };
+    try { await selectionActions.onSaveToNote?.(origin); onActionError(null); }
+    catch (error) { onActionError(error instanceof Error ? error.message : String(error)); }
+  }
+
+  async function saveSelection() {
+    const chosen = selected;
+    const message = conversation?.messages.find(item => item.id === chosen?.messageId);
+    if (!chosen || !message) return;
+    await saveMessage(message, { ...selectedDescriptor, text: selectedDescriptor?.text ?? chosen.text, markdown: selectedMarkdown ?? chosen.text });
   }
 
   async function openCitation(
@@ -486,7 +485,7 @@
           {activity}
           {selected}
           {selectedExcerpt}
-          canInsertSelection={Boolean(selectionActions.onInsertIntoNote)}
+          canSaveSelection={Boolean(selectionActions.onSaveToNote) && message.role === 'assistant' && message.status === 'completed'}
           canDecidePermission={Boolean(
             conversation.activeRequestId &&
             conversation.activeRequestId === message.requestId &&
@@ -498,9 +497,11 @@
           onRetry={() => controller.retry(message.id)}
           onBranch={async () => { await controller.branchFromMessage(message.id); }}
           onCopyMessage={() => copyMessage(message)}
+          onSaveMessage={selectionActions.onSaveToNote ? () => saveMessage(message) : undefined}
+          onSaveAnotherCopy={selectionActions.onSaveToNote ? () => saveMessage(message, undefined, crypto.randomUUID()) : undefined}
           onCopySelection={copySelection}
           onCopyLink={copyLink}
-          onInsertSelection={insertSelection}
+          onSaveSelection={saveSelection}
           onToggleRemember={toggleRemember}
           onDecidePermission={async (request, decision) => {
             await controller.decidePermission(request, decision);

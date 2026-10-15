@@ -228,7 +228,7 @@ fn structured_streaming_rejects_stale_and_excluded_sources_after_real_reads() {
             !arguments.contains("note_id"),
             "Executable read arguments must not become draft data"
         );
-        let (valid, sources) = tools.render_structured_answer(&result.output).unwrap();
+        let (valid, sources, _) = tools.render_structured_answer(&result.output).unwrap();
         assert!(valid.contains("[Source 1](passage:"));
         assert_eq!(sources.len(), 1);
         if exclusion {

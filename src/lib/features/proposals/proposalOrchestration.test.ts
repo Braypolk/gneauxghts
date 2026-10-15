@@ -8,7 +8,7 @@ import type {
 import { createReviewEditorForTest as fakeEditor } from './proposalEditorTestSupport';
 import { createProposalReviewSession } from './reviewSession.svelte';
 import { createProposalOrchestration } from './proposalOrchestration';
-import { documentHasCleanBuffer, updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
+import { documentHasCleanBuffer, updateDocumentMarkdown, updateDocumentTitle } from '$lib/features/notepad/document/documentState';
 import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
 import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
 import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
@@ -42,6 +42,7 @@ function note() {
     bodyMarkdown: 'Before',
     currentNoteId: 'note-1',
     currentNotePath: path,
+    lastSavedNoteId: 'note-1',
     lastSavedTitle: 'Plan',
     lastSavedMarkdown: 'Before',
     lastSavedPath: path
@@ -131,6 +132,37 @@ afterEach(() => {
 });
 
 describe('durable proposal editor review', () => {
+  it('reviews a new note in a draft document, checkpoints edits and discards without autosave', async () => {
+    const document = createNoteDraftState(createEmptySessionSnapshot());
+    const editor = fakeEditor(document);
+    const session = createProposalReviewSession();
+    const checkpoint = vi.fn(async () => undefined);
+    const finish = vi.fn(async () => { expect(documentHasCleanBuffer(document)).toBe(true); });
+    const dismiss = vi.fn(async () => undefined);
+    const commit = vi.fn();
+    const orchestration = createProposalOrchestration({
+      getEditorPaneDocument: () => null,
+      getEditorForDocument: () => editor.adapter,
+      presentReviewDocument: async () => document,
+      onReviewMarkdownChange: updateDocumentMarkdown,
+      finishReviewDocument: finish,
+      acknowledgeDocumentCommit: vi.fn(), reloadReviewDocument: vi.fn(), session
+    });
+    const creation = { ...preview, baseEditorMarkdown: '', proposedEditorMarkdown: 'Draft',
+      hunks: [{ ...preview.hunks[0], baseTo: 0, oldText: '', newText: 'Draft' }] };
+    expect(await orchestration.loadDurableProposal({ proposalId: 'new', noteId: null,
+      kind: 'create', preview: creation, checkpoint, commit, dismiss })).toBe(true);
+    expect(document.working.title).toBe('Plan');
+    editor.runtime.replaceMarkdown('My edited draft');
+    await orchestration.flushCheckpoint();
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'My edited draft', title: 'Plan' }));
+    await orchestration.undoAll();
+    expect(dismiss).toHaveBeenCalledOnce();
+    expect(commit).not.toHaveBeenCalled();
+    expect(finish).toHaveBeenCalledOnce();
+    orchestration.dispose();
+  });
+
   it('allows workspace flush with an unaccepted review and remounts it without saving', async () => {
       const test = setup();
       await test.orchestration.loadDurableProposal(test.request);
@@ -341,6 +373,129 @@ describe('durable proposal editor review', () => {
     expect(await test.orchestration.loadDurableProposal(test.request)).toBe(false);
   });
 
+  it.each(['explicit', 'passive'])('preserves an unsaved title during %s review admission', async mode => {
+    const test = setup({ opened: true });
+    updateDocumentTitle(test.document, 'My unsaved title');
+    const request = { ...test.request, checkpoint: async () => undefined,
+      working: { markdown: 'After', title: 'Persisted title', path, decisions: [] } };
+    const opened = mode === 'passive'
+      ? await test.orchestration.loadDurableProposalIfOpen(request)
+      : await test.orchestration.loadDurableProposal(request);
+    expect(opened).toBe(false);
+    expect(test.document.working.title).toBe('My unsaved title');
+    expect(test.firstEditor.markdown).toBe('Before');
+    expect(test.firstEditor.review).toBeNull();
+  });
+
+  it('coalesces edits behind a location write without reapplying its old filename', async () => {
+    const test = setup();
+    let release!: () => void;
+    const blocked = new Promise<void>(resolve => { release = resolve; });
+    const checkpoint = vi.fn(async () => { if (checkpoint.mock.calls.length === 1) await blocked; });
+    await test.orchestration.loadDurableProposal({ ...test.request, kind: 'create', checkpoint });
+    const location = test.session.snapshot.changeLocation;
+    const moved = location!('/vault/Moved.md');
+    await vi.waitFor(() => expect(checkpoint).toHaveBeenCalledOnce());
+    updateDocumentTitle(test.document, 'Newest title');
+    for (const text of ['First edit', 'Second edit', 'Newest edit']) test.firstEditor.runtime.replaceMarkdown(text);
+    const flushed = test.orchestration.flushCheckpoint();
+    release();
+    await Promise.all([moved, flushed]);
+    expect(checkpoint).toHaveBeenCalledTimes(2);
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'Newest edit', title: 'Newest title', requestedPath: undefined }));
+  });
+
+  it('retains an undispatched location when newer body edits coalesce with it', async () => {
+    const test = setup();
+    const checkpoint = vi.fn(async () => undefined);
+    await test.orchestration.loadDurableProposal({ ...test.request, kind: 'create', checkpoint });
+    const moved = test.session.snapshot.changeLocation!('/vault/Moved.md');
+    test.firstEditor.runtime.replaceMarkdown('Newest body');
+    await Promise.all([moved, test.orchestration.flushCheckpoint()]);
+    expect(checkpoint).toHaveBeenCalledOnce();
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'Newest body', requestedPath: '/vault/Moved.md' }));
+  });
+
+  it('reports a failed location even when a newer body checkpoint succeeds', async () => {
+    const test = setup();
+    let rejectLocation!: (error: Error) => void;
+    const blocked = new Promise<void>((_resolve, reject) => { rejectLocation = reject; });
+    const checkpoint = vi.fn(async () => { if (checkpoint.mock.calls.length === 1) await blocked; });
+    await test.orchestration.loadDurableProposal({ ...test.request, kind: 'create', checkpoint });
+    const moved = test.session.snapshot.changeLocation!('/vault/Moved.md');
+    const rejectedMove = expect(moved).rejects.toThrow('location unavailable');
+    await vi.waitFor(() => expect(checkpoint).toHaveBeenCalledOnce());
+    test.firstEditor.runtime.replaceMarkdown('Newest body');
+    const rejectedFlush = expect(test.orchestration.flushCheckpoint()).rejects.toThrow('location unavailable');
+    rejectLocation(new Error('location unavailable'));
+    await Promise.all([rejectedMove, rejectedFlush]);
+    expect(checkpoint).toHaveBeenCalledTimes(2);
+    expect(checkpoint).toHaveBeenLastCalledWith(expect.objectContaining({ markdown: 'Newest body', requestedPath: undefined }));
+  });
+
+  it('keeps ordinary edits outside a legacy proposal when all hunks are undone', async () => {
+    const test = setup();
+    await test.orchestration.loadDurableProposal(test.request);
+    test.firstEditor.view.dispatch({ changes: { from: 5, insert: '\nOrdinary addition' } });
+    await test.orchestration.undoAll();
+    expect(test.dismiss).toHaveBeenCalledOnce();
+    expect(test.firstEditor.markdown).toBe('Before\nOrdinary addition');
+    expect(test.finishReviewDocument).toHaveBeenCalledOnce();
+  });
+
+  it('reopens an older durable draft over a clean newer destination without writing the older base on discard', async () => {
+    const test = setup();
+    const newer = { ...preview, baseEditorMarkdown: 'Before', proposedEditorMarkdown: 'After' };
+    test.firstEditor.runtime.replaceMarkdown('Before');
+    const old = { ...newer, baseEditorMarkdown: 'Old base' };
+    await expect(test.orchestration.loadDurableProposal({ ...test.request, preview: old,
+      checkpoint: async () => undefined,
+      working: { markdown: 'My retained addition', title: 'Plan', path, decisions: [] } })).resolves.toBe(true);
+    expect(test.firstEditor.markdown).toBe('My retained addition');
+    await test.orchestration.discard();
+    expect(test.firstEditor.markdown).toBe('Before');
+    expect(test.commit).not.toHaveBeenCalled();
+  });
+
+  it('retains the edited review and reports checkpoint failure when switching', async () => {
+    const test = setup();
+    const checkpoint = vi.fn(async () => { throw new Error('Draft storage unavailable'); });
+    await test.orchestration.loadDurableProposal({ ...test.request, checkpoint });
+    test.firstEditor.view.dispatch({ changes: { from: 0, to: 5, insert: 'My edited answer' } });
+    const opened = await test.orchestration.loadDurableProposal({ ...test.request,
+      proposalId: 'proposal-2', preview: { ...preview, reviewId: 'review-2' }, checkpoint });
+    expect(opened).toBe(false);
+    expect(test.orchestration.activeProposalId).toBe('proposal-1');
+    expect(test.firstEditor.markdown).toBe('My edited answer');
+    expect(test.firstEditor.review?.reviewId).toBe('review-1');
+    expect(test.session.snapshot.error).toContain('Draft storage unavailable');
+    expect(test.finishReviewDocument).not.toHaveBeenCalled();
+  });
+
+  it('checkpoints partial decisions before switching and restores them with the edited body', async () => {
+    const test = setup();
+    const checkpoint = vi.fn(async (_state: unknown) => undefined);
+    const multi: ProposalPreview = { ...preview, proposedEditorMarkdown: 'After\nNew', hunks: [
+      preview.hunks[0],
+      { id: 'second', baseFrom: 6, baseTo: 6, proposedFrom: 5, proposedTo: 9, oldText: '', newText: '\nNew' }
+    ] };
+    await test.orchestration.loadDurableProposal({ ...test.request, preview: multi, checkpoint });
+    test.firstEditor.runtime.resolveReview('review-1', ['hunk-1'], 'kept');
+    test.firstEditor.view.dispatch({changes: {from: 6, to: 9, insert: 'My new detail'}});
+    await test.orchestration.loadDurableProposal({ ...test.request, proposalId: 'proposal-2',
+      preview: { ...preview, reviewId: 'review-2' }, checkpoint });
+    const saved = checkpoint.mock.calls.at(-1)?.[0] as unknown as {
+      markdown: string; title: string; decisions: import('$lib/types/proposals').ReviewHunkState[]
+    };
+    expect(saved.markdown).toBe('After\nMy new detail');
+    expect(saved.decisions).toMatchObject([{status: 'kept'}, {status: 'modified'}]);
+    await test.orchestration.loadDurableProposal({ ...test.request, preview: multi, checkpoint,
+      working: {...saved, path}, draftVersion: 3 });
+    expect(test.firstEditor.markdown).toBe(saved.markdown);
+    expect(test.firstEditor.review?.hunks).toEqual(saved.decisions);
+    expect(test.commit).not.toHaveBeenCalled();
+  });
+
   it('recovers a commit conflict through the same review state', async () => {
     const test = setup();
     test.commit.mockResolvedValueOnce({
@@ -360,6 +515,19 @@ describe('durable proposal editor review', () => {
     await test.orchestration.retryCommit();
     expect(test.orchestration.activeProposalId).toBeNull();
     expect(test.commit).toHaveBeenCalledTimes(2);
+  });
+
+  it('retains the working review if loading a refreshed destination fails', async () => {
+    const test = setup();
+    test.commit.mockResolvedValueOnce({status: 'conflict', message: 'Changed', applied: null, noteId: null, committedMarkdown: null});
+    test.reloadReviewDocument.mockRejectedValueOnce(new Error('Destination unavailable'));
+    const refresh = async () => ({...test.request, preview: {...preview, baseContentHash: 'new-hash'}});
+    await test.orchestration.loadDurableProposal({...test.request, refresh});
+    await test.orchestration.keepAll();
+    expect(test.firstEditor.markdown).toBe('After');
+    expect(test.firstEditor.review?.reviewId).toBe('review-1');
+    expect(test.session.snapshot.error).toContain('Destination unavailable');
+    expect(documentRegistry.isReviewing(test.document.handle)).toBe(true);
   });
 
   it('does not replace a dismissal in progress', async () => {

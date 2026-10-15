@@ -13,10 +13,15 @@ not established. See `../artifacts/native-ui-and-followup-passed.json` for compl
 
 ## Next step
 
-The helper now saves partial answer status/events when a request times out.
-Run a bounded latency sample against the configured local model, inspect provider
-latency and tool steps, and distinguish slow inference from runtime stalls.
-Do not increase budgets or change the selected model merely to hide the failure.
+The [bounded native timing sample](../latency-probe/README.md) is complete.
+Current activity requests are 97–98% provider/transport time, with milliseconds
+spent in search/read tools and conversation polling. Production chat and research
+workers already have no cumulative time, model-turn, tool-call or token ceiling;
+the five-minute deadline belongs to the diagnostic harness. Avoid speculative
+retrieval changes. If a slow request recurs, use the retained
+probe to capture its provider intervals, tool durations and IPC costs. The
+historical five-minute timeout remains unattributed; long-history scaling and
+competing/cold inference are not measured by this small fixture.
 
 ## Further observation
 
@@ -52,3 +57,24 @@ masked the provider failure. The shared live wait helper and new probe now
 recognize error; support33 and TypeScript checks pass. No paid rerun. This is a
 demonstrated harness wait in a separate hosted request, not a diagnosis of the
 older five-minute local request. Provider/retrieval/UI measurement remains open.
+
+## Current native diagnosis — 2026-10-14
+
+Three fresh conversations on the configured `qwen3.8-27b-gsq-rco` local server
+completed in 6.064 seconds (short reply), 74.097 seconds and 37.086 seconds
+(independent activity questions). The activity requests made five/four provider
+completion calls; 97.91%/96.61% of send-to-terminal observation fell inside those
+HTTP intervals. Search/read durations summed to 184/133 ms. Poll medians were
+34/33 ms, p95 80/86 ms, with maximum 103/93 ms. Polling overlaps inference and
+is not additive to that partition. About 80% of reported activity output tokens
+were reasoning; the server's default enabled reasoning was preserved.
+
+This supports local generation/reasoning and repeated model turns as the current
+cost, with no reproduced runtime stall. It does not prove the old timeout's
+cause: the original model variant and runtime differ, and large histories/cold
+loads/concurrent inference were not tested. No production limits, model settings
+or storage behavior changed. The original 300-second harness deadline remained.
+The opt-in native spec passes all three timing cases; E2E TypeScript checks pass.
+See the [report and reproduction](../latency-probe/README.md) for artifacts,
+measurement boundaries and preserved uncertainty. Original issue stays open for
+the unproven timeout, rather than claiming a speculative performance fix.

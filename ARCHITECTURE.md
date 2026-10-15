@@ -492,6 +492,40 @@ rejects stale read completion. Terminal resolution releases review retention, sa
 any remaining ordinary edits, and then reclaims a clean unreferenced document.
 Follow-on save errors remain visible without retrying the durable proposal action.
 
+`chat/note_proposals.rs` owns deterministic answer/selection promotion, durable
+origin deduplication, versioned working checkpoints, addition placement and commit
+receipts. Direct Save creates no model run. `ChatService` permits an optional real
+run for those origins and retains distinct saves to one destination. The live
+body, title and hunk decisions remain document-owned; SQLite checkpoints are
+recovery versions. Navigation/background/restart and pre-send barriers join their
+writes. `reviewCheckpoints.ts` serializes recovery writes across route remounts
+and coalesces the latest waiting snapshot without losing location intent or its
+failure. Opening another review checkpoints and releases the outgoing review;
+failed checkpoints block that handoff. Terminal work cannot be checkpointed or
+refined back into a pending state.
+
+Creation review uses a protected empty draft document and the same global review
+workflow as updates. Keep publishes through NoteTimeline; Discard clears the
+creation document before ordinary persistence can resume. Changed destinations
+reconstruct a separable saved addition against the latest identity-bound note;
+ambiguous placement or edits to the surrounding base retain an explicit conflict.
+Refreshed additions and new names after a collision require another Keep.
+Publication/checkpoint/refinement settlement is serialized, and cached commit
+receipts make repeat Keep idempotent. Open note follows the committed identity.
+
+Structured answer finalization records authored segment ranges and their selected
+citation links atomically with terminal content. Selection transfer uses those
+recorded associations (legacy answers use their attached Markdown markers),
+verifies contiguous author text and binds repeated occurrences captured in the
+rendered selection. Promotion resolves recorded source identities to ordinary
+wikilinks plus one transcript/excerpt backlink under [ADR 0011](docs/adr/0011-use-ordinary-note-links-for-chat-promotion.md).
+Passage destinations use ordinary block/paragraph fragments from the source's
+current editor body, with paragraph numbering shared with normal link navigation.
+Edited/historical sources require a unique surviving excerpt to derive a
+position; unavailable or ambiguous passages retain a note-level link.
+These links have ordinary user-maintained semantics; they confer no live citation
+authority or claim-support guarantee.
+
 Agent tools create durable proposals rather than writing notes. Keeping a
 proposal commits through the proposal domain and `NoteTimeline`, then
 synchronizes durable proposal status.
@@ -788,11 +822,14 @@ The model-facing interface exposes five tools: `find_notes`, `read_notes`,
 `propose_note_change`, `research_notes`, and `update_plan`. The private interface
 adapter groups operations without moving evidence or proposal ownership.
 `read_notes` requires `purpose=answer` for canonical evidence or `purpose=edit`
-for the current working copy. Schemas expose only granted branches, and handlers
+for the current working copy. `purpose=draft` reads versioned unapproved reviews;
+`purpose=chat` reads completed authored answers for faithful transfer. Schemas expose only granted branches, and handlers
 recheck capability grants; an evidence-only research worker cannot regain edit
 reads through the shared tool name. `propose_note_change` requires an explicit
-edit, replace or create operation and retains existing stored proposal formats,
+edit, replace, create, save or refine operation and retains existing stored proposal formats,
 full-read replacement requirements, current hashes and Keep before publication.
+Save and explicit refinement cross the same chat proposal seam as message actions;
+refinement requires a read of the current working version and rejects stale output.
 There is no separate active-note tool; the editor hint supplies identity and
 selection, and ordinary reads obtain the needed content.
 
@@ -949,6 +986,11 @@ permissions once, validates each admitted passage identity with all delivered
 provenance proofs, and fingerprints each distinct search scope once. These are
 per-operation reuse rules, never caches across freshness boundaries. Search
 cursor eviction retains earlier scope/version bindings for final validation.
+Search versions bind scoped paths and hashes of actual file bytes; timestamp-only
+updates, delayed derived-index refresh and identity assignment to unrelated legacy
+notes do not imply changed search content. Admitted citations retain exact source
+identity. Citation validation uses NoteTimeline's refreshable current-content read
+to settle overlapping internal operations and repeat canonical/proof checks.
 
 The runtime's `research_notes` worker has a separate prompt/history and only
 evidence discovery/read tools. Its role contract gathers and selects evidence rather
@@ -1113,6 +1155,13 @@ unknown dependency diagnostics retain redacted feedback. Parent and research use
 the same registration seam. Durable activity summaries consume only model-safe
 feedback (including text errors), count distinct delivered notes, and distinguish
 incomplete delivery. They do not persist raw arguments or internal error strings.
+Successful read outcomes additionally carry app-admitted source destinations in
+`ToolCallUpdated.readSources`. These structured records preserve note names and
+bounded passage previews independently of final answer citations. They replay
+from the existing event store and do not enter model-history context. Discovery
+previews and unissued source IDs cannot become read links. Conversation delivery
+reapplies source policy/freshness; passage navigation resolves both cited and
+read-only sources through the same validated conversation-bound command.
 
 The protocol keeps run identity, structured activity, plans, usage,
 cancellation, bounded guardrails, and transient permission requests under

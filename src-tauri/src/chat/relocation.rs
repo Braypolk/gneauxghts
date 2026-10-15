@@ -55,6 +55,7 @@ impl ChatService {
                 ("chat_projection_files", "path"),
                 ("chat_agent_proposals", "suggested_path"),
                 ("chat_agent_proposals", "commit_target_path"),
+                ("chat_proposal_drafts", "path"),
                 ("chat_sources", "note_path"),
                 ("chat_agent_run_context", "note_path"),
             ] {
@@ -74,6 +75,11 @@ impl ChatService {
                     &["notePath", "suggestedPath"][..],
                 ),
                 ("chat_agent_runs", "active_note_json", &["path"][..]),
+                (
+                    "chat_agent_proposals",
+                    "payload_json",
+                    &["committedPath"][..],
+                ),
             ] {
                 relocate_column(
                     &transaction,
@@ -379,11 +385,13 @@ mod tests {
         assert!(fs::read_to_string(moved.join("Existing.md"))
             .unwrap()
             .ends_with("Updated\n\nUnrelated stays.\n"));
-        assert!(
+        assert_eq!(
             crate::commands::proposal_commands::commit_agent_proposal_with_state(
                 &state, &service, create.id, None
             )
-            .is_err()
+            .unwrap()
+            .status,
+            "committed"
         );
         // Occupancy and base-hash checks remain owned by the canonical command.
         let occupied = pending(&service, "create", &moved.join("Occupied.md"));

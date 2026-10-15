@@ -2,6 +2,7 @@ mod admission;
 mod answer_stream;
 pub(crate) mod citations;
 pub(crate) mod date_time;
+pub(crate) mod note_proposals;
 mod projection;
 mod recovery;
 mod relocation;
@@ -253,6 +254,8 @@ pub(crate) struct ChatMessage {
     pub(crate) part: i64,
     pub(crate) created_at_millis: u64,
     pub(crate) sources: Vec<ChatSource>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) saved_note: Option<Value>,
     #[serde(skip)]
     has_revision_evidence: bool,
     // Navigation metadata only: never expose working-copy text as a source.
@@ -302,7 +305,7 @@ pub(crate) struct ChatAttachment {
     pub(crate) data_base64: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatSource {
     pub(crate) kind: String,
@@ -438,6 +441,7 @@ struct AgentResponseFailure {
 }
 
 struct AgentResponseSuccess {
+    associations: Vec<structured_answer::CitationAssociation>,
     structured: bool,
     content: String,
     sources: Vec<ChatSource>,
@@ -499,7 +503,7 @@ fn terminal_reason_from_error(error: &str) -> &'static str {
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatAgentProposal {
     pub(crate) id: String,
-    pub(crate) run_id: String,
+    pub(crate) run_id: Option<String>,
     pub(crate) conversation_id: String,
     pub(crate) assistant_message_id: String,
     pub(crate) kind: String,
@@ -567,6 +571,7 @@ struct ChatServiceInner {
     permission_broker: crate::agent_permissions::AgentPermissionBroker,
     projection_sink: Arc<dyn ChatProjectionSink>,
     projection_publication: Mutex<()>,
+    proposal_publication: Mutex<()>,
 }
 
 #[derive(Default)]
@@ -746,6 +751,7 @@ impl ChatService {
                 permission_broker: crate::agent_permissions::AgentPermissionBroker::default(),
                 projection_sink: Arc::new(FilesystemChatProjectionSink { app_handle }),
                 projection_publication: Mutex::new(()),
+                proposal_publication: Mutex::new(()),
             }),
         };
         service.initialize()?;
@@ -2042,12 +2048,17 @@ impl ChatService {
                 "SELECT id FROM chat_agent_proposals
                  WHERE status IN ('pending', 'conflict')
                    AND COALESCE(note_id, suggested_path) = ?1
+                   AND NOT EXISTS(SELECT 1 FROM chat_note_saves s WHERE s.proposal_id=chat_agent_proposals.id)
                  ORDER BY created_at_millis DESC LIMIT 1",
                 [target],
                 |row| row.get(0),
             )
             .optional()
             .map_err(|error| error.to_string())?;
+        let mut payload = payload.clone();
+        if let Some(id) = &existing {
+            payload["supersedesProposalId"] = serde_json::json!(id);
+        }
         let id = generate_id("proposal");
         let now = to_i64(now_millis())?;
         transaction
@@ -2149,16 +2160,19 @@ impl ChatService {
         proposal_id: &str,
         status: &str,
     ) -> Result<ChatAgentProposal, String> {
+        let _guard = self.lock_proposal_publication()?;
         if !matches!(status, "committed" | "dismissed" | "conflict") {
-            return Err("Invalid proposal resolution".to_string());
+            return Err("Invalid proposal resolution".into());
         }
-        self.connection()?
-            .execute(
-                "UPDATE chat_agent_proposals SET status = ?2, updated_at_millis = ?3
-                 WHERE id = ?1 AND status IN ('pending', 'conflict')",
-                params![proposal_id, status, to_i64(now_millis())?],
-            )
-            .map_err(|error| error.to_string())?;
+        let mut connection = self.connection()?;
+        let tx = connection
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
+        tx.execute("UPDATE chat_agent_proposals SET status=?2,updated_at_millis=?3 WHERE id=?1 AND status IN ('pending','conflict')",params![proposal_id,status,to_i64(now_millis())?]).map_err(|e|e.to_string())?;
+        if status == "dismissed" {
+            tx.execute("DELETE FROM chat_proposal_drafts WHERE proposal_id=?1 AND EXISTS(SELECT 1 FROM chat_agent_proposals WHERE id=?1 AND status='dismissed')",[proposal_id]).map_err(|e|e.to_string())?;
+        }
+        tx.commit().map_err(|e| e.to_string())?;
         self.get_agent_proposal(proposal_id)
     }
 
@@ -2546,14 +2560,18 @@ fn load_messages(
 ) -> Result<Vec<ChatMessage>, String> {
     let mut statement = connection
         .prepare(
-            "SELECT id, conversation_id, ordinal, role, status, content, error, part, created_at_millis,
-                    has_revision_evidence, note_reference_ids_json
-             FROM chat_messages WHERE conversation_id = ?1 ORDER BY ordinal",
+            "SELECT m.id,m.conversation_id,m.ordinal,m.role,m.status,m.content,m.error,m.part,m.created_at_millis,
+                    m.has_revision_evidence,m.note_reference_ids_json,p.payload_json
+             FROM chat_messages m
+             LEFT JOIN chat_note_saves s ON s.save_key=m.id || ':whole:new:append:original'
+             LEFT JOIN chat_agent_proposals p ON p.id=s.proposal_id AND p.status='committed'
+             WHERE m.conversation_id=?1 ORDER BY m.ordinal",
         )
         .map_err(|error| error.to_string())?;
     let rows = statement
         .query_map([conversation_id], |row| {
             Ok(ChatMessage {
+                saved_note: row.get::<_,Option<String>>(11)?.and_then(|s|serde_json::from_str::<Value>(&s).ok()).and_then(|p|Some(serde_json::json!({"noteId":p["committedNoteId"].as_str()?,"path":p["committedPath"].as_str()?}))),
                 id: row.get(0)?,
                 conversation_id: row.get(1)?,
                 ordinal: row.get(2)?,
@@ -2594,6 +2612,13 @@ fn load_agent_events(
     connection: &Connection,
     message_id: &str,
 ) -> Result<Vec<ChatAgentEventEnvelope>, String> {
+    let excluded: HashSet<String> = connection
+        .prepare("SELECT note_id FROM chat_note_policies WHERE disposition = 'excluded'")
+        .map_err(|error| error.to_string())?
+        .query_map([], |row| row.get(0))
+        .map_err(|error| error.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|error| error.to_string())?;
     let mut statement = connection
         .prepare(
             "SELECT request_id, conversation_id, message_id, run_id, sequence, created_at_millis, event_json
@@ -2628,9 +2653,18 @@ fn load_agent_events(
         // Structured events are a replayable projection, not canonical chat
         // content. Retired or future event variants must not prevent an
         // existing vault from opening after the event contract changes.
-        let Ok(event) = serde_json::from_str(&event_json) else {
+        let Ok(mut event) = serde_json::from_str::<crate::agent_runtime::AgentEvent>(&event_json)
+        else {
             continue;
         };
+        if let crate::agent_runtime::AgentEvent::ToolCallUpdated { read_sources, .. } = &mut event {
+            read_sources.retain(|source| {
+                source
+                    .note_id
+                    .as_ref()
+                    .is_some_and(|id| !excluded.contains(id))
+            });
+        }
         events.push(ChatAgentEventEnvelope {
             schema_version: 2,
             request_id,

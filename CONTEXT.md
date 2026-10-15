@@ -32,6 +32,10 @@ _Avoid_: Metadata revision
 The local origin through which a revision or lifecycle event entered the timeline, such as the editor, a task action, an accepted chat proposal, an external edit, or a restore.
 _Avoid_: Author, collaborator
 
+**Note Proposal**:
+A proposed note creation or change held for user review before becoming canonical note content. Its editable draft and review choices remain pending until the user keeps or discards them.
+_Avoid_: Generated note, unpublished note
+
 **Current-Content Provenance**:
 Retained revision evidence about when and how content still present in a note was introduced, most recently changed, or returned through a Version Restore. Editing Windows supply intervals rather than exact within-window introduction or retyping history.
 _Avoid_: Historical recall, history context

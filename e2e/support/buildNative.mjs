@@ -32,7 +32,6 @@ const e2eTauriConfig = {
             'core:app:allow-set-app-theme',
             'core:window:allow-start-dragging',
             'core:window:allow-show',
-            'core:window:allow-set-focus',
             'dialog:default',
             'opener:default',
             'process:default',

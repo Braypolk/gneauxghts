@@ -235,7 +235,7 @@ Prototype capture commit: `95aaa36e2cf3b984bc88845f9432077fd590a0aa`.
 
 ## Evidence regression fixtures
 
-2026-10-11: The [three existing failures](../chat-reliability/issues/10-existing-evidence-regression-failures.md)
+2026-10-11: The [three existing failures](chat-reliability-resolved-issues.md#10-investigate-three-existing-evidence-regression-failures)
 were reproduced and traced to test assumptions. Provenance and weekly-task reads
 now follow guidance/continuation pages before inspecting delivered evidence.
 The prose fixture keeps its exhaustive temporal inspection and separately

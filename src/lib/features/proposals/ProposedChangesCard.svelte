@@ -22,6 +22,7 @@
     onReloadDisk
   }: Props = $props();
 
+  let locationError = $state<string | null>(null);
   const hasReview = $derived(snapshot.notePath !== null);
   const batchDisabled = $derived(
     snapshot.unresolvedHunks === 0 || snapshot.isApplying
@@ -45,6 +46,7 @@
   <div
     class="mx-4 mb-1 rounded-[1.1rem] border border-border/70 bg-background/70 px-3 py-2.5 sm:mx-6"
     data-proposal-strip="active"
+    data-proposal-id={snapshot.proposalId}
   >
     <div class="flex items-start gap-2">
       <div class="flex min-w-0 flex-1 items-start gap-1.5">
@@ -72,7 +74,7 @@
           disabled={batchDisabled}
           onclick={() => void onUndoAll()}
         >
-          {snapshot.unresolvedHunks === snapshot.totalHunks ? 'Undo All' : 'Undo Remaining'}
+          {snapshot.creation ? 'Discard' : snapshot.unresolvedHunks === snapshot.totalHunks ? 'Undo All' : 'Undo Remaining'}
         </button>
         <button
           type="button"
@@ -85,6 +87,14 @@
       </div>
     </div>
 
+    {#if snapshot.creation && snapshot.changeLocation}
+      <label class="mt-2 flex items-center gap-2 text-xs">Location
+        <input aria-label="New note location" class="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1"
+          value={snapshot.notePath ?? ''} disabled={snapshot.isApplying}
+          onchange={async event => { try { locationError = null; await snapshot.changeLocation?.(event.currentTarget.value); } catch (error) { locationError = String(error); } }} />
+      </label>
+    {/if}
+    {#if locationError}<p role="alert" class="text-xs text-destructive">{locationError}</p>{/if}
     {#if snapshot.error}
       <div
         class="mt-2 rounded-xl bg-destructive/10 px-3 py-2 text-xs text-destructive"

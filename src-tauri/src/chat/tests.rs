@@ -11,6 +11,184 @@ pub(super) fn service(name: &str) -> (TestDir, ChatService) {
 }
 
 #[test]
+fn activity_read_sources_survive_restart_without_becoming_answer_citations() {
+    use crate::agent_runtime::{
+        AgentEvent, AgentProvider, AgentRuntimeObserver, AgentRuntimeRequest,
+    };
+    use rig_core::{
+        completion::{Message, Usage},
+        test_utils::{MockCompletionModel, MockStreamEvent},
+    };
+    let (vault, tools, note_id, service) = crate::agent_tools::AgentToolContext::test_fixture();
+    let conversation_id = service.list_conversations().unwrap()[0].id.clone();
+    let conversation = service.get_conversation(&conversation_id).unwrap();
+    let message_id = conversation
+        .messages
+        .iter()
+        .find(|m| m.role == "assistant")
+        .unwrap()
+        .id
+        .clone();
+    let run_id: String = service
+        .connection()
+        .unwrap()
+        .query_row(
+            "SELECT id FROM chat_agent_runs WHERE assistant_message_id = ?1",
+            [&message_id],
+            |row| row.get(0),
+        )
+        .unwrap();
+    let capture = service.clone();
+    let event_conversation = conversation_id.clone();
+    let event_message = message_id.clone();
+    let sequence = AtomicU64::new(1);
+    let model = MockCompletionModel::from_stream_turns([
+        vec![
+            MockStreamEvent::tool_call(
+                "read",
+                "read_notes",
+                json!({"purpose":"answer","note_id":note_id}),
+            ),
+            MockStreamEvent::final_response(Usage::new()),
+        ],
+        vec![
+            MockStreamEvent::text("Completed."),
+            MockStreamEvent::final_response(Usage::new()),
+        ],
+    ]);
+    let response = tauri::async_runtime::block_on(crate::agent_runtime::measure_test_model(
+        model,
+        AgentRuntimeRequest {
+            provider: AgentProvider::Openai,
+            model: "mock".into(),
+            api_key: None,
+            local_base_url: "http://localhost:1234/v1".into(),
+            preamble: "Read the note.".into(),
+            output_schema: None,
+            prompt: Message::user("Read this note"),
+            history: vec![],
+            enable_web: false,
+            require_web: false,
+            flex: false,
+            reasoning_effort: None,
+        },
+        Some(tools.clone()),
+        AgentRuntimeObserver {
+            evidence_context: Some(tools.clone()),
+            cancelled: CancellationToken::new(),
+            permissions: None,
+            on_event: Arc::new(move |event| {
+                if event.is_durable() {
+                    capture
+                        .append_agent_event(&ChatAgentEventEnvelope {
+                            schema_version: 2,
+                            request_id: "activity-test".into(),
+                            conversation_id: event_conversation.clone(),
+                            message_id: event_message.clone(),
+                            run_id: run_id.clone(),
+                            sequence: sequence.fetch_add(1, Ordering::Relaxed),
+                            created_at_millis: now_millis(),
+                            event,
+                        })
+                        .unwrap();
+                }
+            }),
+        },
+    ))
+    .unwrap();
+    service
+        .finish_message(&message_id, "complete", &response.output, None, &[])
+        .unwrap();
+    drop(tools);
+    drop(service);
+    let service = ChatService::new(vault.notes.path().into(), vault.data.path().into()).unwrap();
+    let reopened = service.get_conversation(&conversation_id).unwrap();
+    let assistant = reopened
+        .messages
+        .iter()
+        .find(|m| m.id == message_id)
+        .unwrap();
+    assert!(assistant.sources.is_empty());
+    let read_sources = assistant
+        .agent_events
+        .iter()
+        .find_map(|envelope| match &envelope.event {
+            AgentEvent::ToolCallUpdated {
+                call_id,
+                status,
+                read_sources,
+                ..
+            } if call_id == "read" && status == "success" => Some(read_sources),
+            _ => None,
+        })
+        .unwrap();
+    assert!(!read_sources.is_empty());
+    assert!(read_sources
+        .iter()
+        .all(|s| s.title == "Tool note" && s.passage.is_some()));
+    let source = &read_sources[0];
+    assert!(crate::services::evidence::validate_citation(
+        &vault.state,
+        source.passage.as_ref().unwrap(),
+        None,
+        &HashSet::new()
+    )
+    .is_some());
+    let mut allowed = read_sources.clone();
+    crate::agent_tools::filter_revision_sources(
+        &vault.state,
+        &service,
+        &VaultAccess::None,
+        &HashSet::new(),
+        &mut allowed,
+    )
+    .unwrap();
+    assert!(
+        allowed.is_empty(),
+        "Revoked access hides activity destinations too"
+    );
+    service
+        .set_note_excluded(&note_id, "Tool note", true)
+        .unwrap();
+    let hidden = service.get_conversation(&conversation_id).unwrap();
+    assert!(hidden
+        .messages
+        .iter()
+        .flat_map(|m| &m.agent_events)
+        .all(|envelope| match &envelope.event {
+            AgentEvent::ToolCallUpdated { read_sources, .. } => read_sources.is_empty(),
+            _ => true,
+        }));
+    service
+        .set_note_excluded(&note_id, "Tool note", false)
+        .unwrap();
+    let path = vault
+        .state
+        .notes_index
+        .lock()
+        .unwrap()
+        .get_note_by_note_id(&note_id)
+        .map(|(path, _)| path.clone())
+        .unwrap();
+    let mut changed = fs::read_to_string(&path).unwrap();
+    changed.push_str("\nSource changed after this read.\n");
+    fs::write(&path, changed).unwrap();
+    let mut stale = read_sources.clone();
+    crate::agent_tools::filter_revision_sources(
+        &vault.state,
+        &service,
+        &VaultAccess::Full,
+        &HashSet::new(),
+        &mut stale,
+    )
+    .unwrap();
+    assert!(
+        stale.is_empty(),
+        "Changed passages cannot remain navigation authority"
+    );
+}
+
+#[test]
 fn restart_quiescence_cancels_and_joins_admitted_request_and_title_work() {
     let tracker = Arc::new(ChatWorkTracker::new());
     let request_cancel = CancellationToken::new();
@@ -107,6 +285,255 @@ fn stage_test_proposal(
             &json!({"proposedEditorMarkdown":proposed_markdown}),
         )
         .unwrap()
+}
+
+#[test]
+fn saved_addition_refreshes_against_changed_note_before_another_keep() {
+    let fixture = crate::test_support::TestVault::new("promotion-append-refresh");
+    let service = ChatService::new(
+        fixture.notes.path().to_path_buf(),
+        fixture.notes.path().join(".gneauxghts"),
+    )
+    .unwrap();
+    let path = fixture.notes.path().join("Target.md");
+    let initial = fixture
+        .state
+        .note_timeline()
+        .create_note_at(
+            crate::services::note_timeline::MutationSource::Editor,
+            &path,
+            "Original",
+        )
+        .unwrap()
+        .unwrap();
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (_, message) = seed_agent_run(&service, &conversation.summary.id, "save-addition", 1);
+    let proposal = service
+        .prepare_note_save_target(
+            &conversation.summary.id,
+            &message,
+            None,
+            None,
+            Some(initial.note_id().as_str()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    fixture
+        .state
+        .note_timeline()
+        .edit_note(
+            crate::services::note_timeline::MutationSource::Editor,
+            &path,
+            Some(initial.note_id()),
+            |_| Ok("Original\n\nExternal addition".into()),
+        )
+        .unwrap();
+    let result = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id.clone(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(result.status, "conflict");
+    assert!(!fs::read_to_string(&path).unwrap().contains("response"));
+    let draft = service.proposal_draft(&proposal.id).unwrap();
+    assert!(draft.markdown.contains("External addition"));
+    assert!(draft.markdown.contains("response"));
+    let kept = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id.clone(),
+        Some(draft.markdown),
+    )
+    .unwrap();
+    assert_eq!(kept.status, "committed");
+    let again = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id,
+        None,
+    )
+    .unwrap();
+    assert_eq!(again.note_id, kept.note_id);
+    assert!(fs::read_to_string(&path)
+        .unwrap()
+        .contains("External addition"));
+}
+
+#[test]
+fn populated_legacy_proposals_migrate_without_losing_work_or_foreign_keys() {
+    let (root, service) = service("populated-proposal-migration");
+    let proposal = stage_test_proposal(
+        &service,
+        "create",
+        None,
+        Some(&root.path().join("Legacy.md")),
+        "Legacy",
+        "Retained body",
+    );
+    let db = service.inner.db_path.clone();
+    drop(service);
+    let connection = Connection::open(&db).unwrap();
+    connection.execute_batch("PRAGMA foreign_keys=OFF; DROP TABLE chat_proposal_drafts; DROP TABLE chat_note_saves; DROP TABLE chat_proposal_receipts; ALTER TABLE chat_agent_proposals RENAME TO proposals_copy;
+        CREATE TABLE chat_agent_proposals (id TEXT PRIMARY KEY,run_id TEXT NOT NULL REFERENCES chat_agent_runs(id) ON DELETE CASCADE,conversation_id TEXT NOT NULL REFERENCES chat_conversations(id) ON DELETE CASCADE,assistant_message_id TEXT NOT NULL REFERENCES chat_messages(id) ON DELETE CASCADE,kind TEXT NOT NULL,note_id TEXT,suggested_path TEXT,title TEXT NOT NULL,base_hash TEXT,payload_json TEXT NOT NULL,preview_json TEXT NOT NULL,status TEXT NOT NULL,superseded_by TEXT,commit_target_path TEXT,intended_editor_content_hash TEXT,created_at_millis INTEGER NOT NULL,updated_at_millis INTEGER NOT NULL);
+        INSERT INTO chat_agent_proposals SELECT * FROM proposals_copy; DROP TABLE proposals_copy;").unwrap();
+    drop(connection);
+    let reopened = ChatService::new(root.path().into(), root.path().join(".gneauxghts")).unwrap();
+    let loaded = reopened.get_agent_proposal(&proposal.id).unwrap();
+    assert_eq!(loaded.run_id, proposal.run_id);
+    assert_eq!(loaded.payload, proposal.payload);
+    assert_eq!(
+        reopened.proposal_draft(&proposal.id).unwrap().markdown,
+        "Retained body"
+    );
+    assert!(!reopened
+        .connection()
+        .unwrap()
+        .prepare("PRAGMA foreign_key_check")
+        .unwrap()
+        .exists([])
+        .unwrap());
+    reopened
+        .resolve_agent_proposal(&proposal.id, "dismissed")
+        .unwrap();
+    assert!(reopened.proposal_draft(&proposal.id).is_err());
+    assert_eq!(
+        reopened
+            .connection()
+            .unwrap()
+            .query_row("SELECT count(*) FROM chat_proposal_drafts", [], |r| r
+                .get::<_, i64>(0))
+            .unwrap(),
+        0
+    );
+}
+
+#[test]
+fn action_note_save_is_durable_deduplicated_and_has_no_synthetic_run() {
+    let (root, service) = service("action-note-save");
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (_, message) = seed_agent_run(&service, &conversation.summary.id, "save", 1);
+    service
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE chat_messages SET content='# Decision\n\nKeep the pilot.' WHERE id=?1",
+            [&message],
+        )
+        .unwrap();
+    let proposal = service
+        .prepare_note_save(&conversation.summary.id, &message, None)
+        .unwrap();
+    assert_eq!(proposal.title, "Decision");
+    assert!(proposal.run_id.is_none());
+    assert!(!root.path().join("Decision.md").exists());
+    assert_eq!(
+        service
+            .prepare_note_save(&conversation.summary.id, &message, None)
+            .unwrap()
+            .id,
+        proposal.id
+    );
+    let draft = service.proposal_draft(&proposal.id).unwrap();
+    let changed = service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            draft.version,
+            "Edited body",
+            "Edited title",
+            None,
+            &json!([]),
+        )
+        .unwrap();
+    assert_eq!(changed.version, draft.version + 1);
+    assert!(service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            draft.version,
+            "stale",
+            "stale",
+            None,
+            &json!([])
+        )
+        .is_err());
+    let reopened = ChatService::new(root.path().into(), root.path().join(".gneauxghts")).unwrap();
+    let recovered = reopened.proposal_draft(&proposal.id).unwrap();
+    assert_eq!(recovered.markdown, "Edited body");
+    assert_eq!(recovered.title, "Edited title");
+    assert_eq!(
+        reopened.get_agent_proposal(&proposal.id).unwrap().run_id,
+        None
+    );
+}
+
+#[test]
+fn selected_save_intents_and_backlinks_bind_the_verified_occurrence() {
+    let (_root, service) = service("save-repeated-selection");
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (_, message_id) =
+        seed_agent_run(&service, &conversation.summary.id, "repeated-selection", 1);
+    let answer = "Same pilot. Same pilot.";
+    service
+        .connection()
+        .unwrap()
+        .execute(
+            "UPDATE chat_messages SET content=?1 WHERE id=?2",
+            params![answer, message_id],
+        )
+        .unwrap();
+    let select = |occurrence| note_proposals::SaveSelection {
+        text: "Same pilot.".into(),
+        markdown: "Same pilot.".into(),
+        occurrence: Some(occurrence),
+    };
+    let first = service
+        .prepare_note_save_selection(
+            &conversation.summary.id,
+            &message_id,
+            None,
+            Some(&select(0)),
+        )
+        .unwrap();
+    let second = service
+        .prepare_note_save_selection(
+            &conversation.summary.id,
+            &message_id,
+            None,
+            Some(&select(1)),
+        )
+        .unwrap();
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        service
+            .prepare_note_save_selection(
+                &conversation.summary.id,
+                &message_id,
+                None,
+                Some(&select(1))
+            )
+            .unwrap()
+            .id,
+        second.id
+    );
+    let connection = service.connection().unwrap();
+    let mut stmt = connection.prepare("SELECT start_offset, end_offset FROM chat_excerpts WHERE message_id=?1 ORDER BY start_offset").unwrap();
+    let positions = stmt
+        .query_map([&message_id], |row| {
+            Ok((row.get::<_, usize>(0)?, row.get::<_, usize>(1)?))
+        })
+        .unwrap()
+        .map(Result::unwrap)
+        .collect::<Vec<_>>();
+    assert_eq!(positions, vec![(0, 11), (12, 23)]);
 }
 
 fn seed_streaming_agent_run(
@@ -1026,6 +1453,7 @@ fn web_sources_are_normalized_from_plain_and_markdown_urls() {
 fn normalized_history_excludes_latest_user_and_provider_payloads() {
     let messages = vec![
         ChatMessage {
+            saved_note: None,
             id: "m1".to_string(),
             conversation_id: "conversation".into(),
             ordinal: 1,
@@ -1042,6 +1470,7 @@ fn normalized_history_excludes_latest_user_and_provider_payloads() {
             agent_events: Vec::new(),
         },
         ChatMessage {
+            saved_note: None,
             id: "m2".to_string(),
             conversation_id: "conversation".into(),
             ordinal: 2,
@@ -1574,7 +2003,7 @@ fn durable_proposals_supersede_the_same_target_across_runs() {
         "superseded"
     );
     assert_eq!(folded.status, "pending");
-    assert_eq!(folded.run_id, later_run);
+    assert_eq!(folded.run_id, Some(later_run));
     assert_eq!(
         service
             .pending_agent_proposal_for_note("note-1")
@@ -2657,6 +3086,11 @@ impl ChatService {
             .summary
     }
 
+    pub(crate) fn test_complete_answer(&self, id: &str, body: &str) {
+        self.finish_message(id, "complete", body, None, &[])
+            .unwrap();
+    }
+
     pub(crate) fn test_tool_run(&self) -> (String, String, String) {
         let conversation = self.create_conversation(None, None).unwrap();
         let admission = self
@@ -2688,6 +3122,7 @@ fn history_note_references_preserve_turns_and_stay_bounded_without_old_claims() 
     let mut messages = Vec::new();
     for ordinal in 1..=20 {
         messages.push(ChatMessage {
+            saved_note: None,
             id: format!("m-{ordinal}"),
             conversation_id: conversation.summary.id.clone(),
             ordinal,
@@ -2781,4 +3216,207 @@ fn history_note_references_preserve_turns_and_stay_bounded_without_old_claims() 
         .unwrap()
         .messages;
     assert!(content_bytes(&history) - content_bytes(&plain_history) <= 2400);
+}
+
+#[test]
+fn promotion_checkpoint_failure_retains_previous_version_and_terminal_work_rejects_late_output() {
+    let (root, service) = service("promotion-checkpoint-fault");
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (run, message) = seed_agent_run(&service, &conversation.summary.id, "draft-fault", 1);
+    let proposal = service
+        .prepare_note_save(&conversation.summary.id, &message, None)
+        .unwrap();
+    let before = service.proposal_draft(&proposal.id).unwrap();
+    service.connection().unwrap().execute_batch("CREATE TRIGGER fail_checkpoint BEFORE UPDATE ON chat_proposal_drafts BEGIN SELECT RAISE(FAIL,'injected checkpoint failure'); END;").unwrap();
+    assert!(service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            before.version,
+            "New typing",
+            &before.title,
+            None,
+            &json!([])
+        )
+        .is_err());
+    let unchanged = service.proposal_draft(&proposal.id).unwrap();
+    assert_eq!(unchanged.markdown, before.markdown);
+    assert_eq!(unchanged.version, before.version);
+    service
+        .connection()
+        .unwrap()
+        .execute_batch("DROP TRIGGER fail_checkpoint")
+        .unwrap();
+    let current = service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            before.version,
+            "New typing",
+            &before.title,
+            None,
+            &json!([]),
+        )
+        .unwrap();
+    assert!(service
+        .refine_proposal_draft(&proposal.id, before.version, "Late model output", &run)
+        .is_err());
+    assert_eq!(
+        service.proposal_draft(&proposal.id).unwrap().markdown,
+        "New typing"
+    );
+    service
+        .resolve_agent_proposal(&proposal.id, "dismissed")
+        .unwrap();
+    assert!(service
+        .refine_proposal_draft(&proposal.id, current.version, "Late model output", &run)
+        .is_err());
+    assert!(service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            current.version,
+            "Late checkpoint",
+            &before.title,
+            None,
+            &json!([])
+        )
+        .is_err());
+    assert!(!root.path().join(format!("{}.md", before.title)).exists());
+}
+
+#[test]
+fn concurrent_promotion_keep_returns_one_identity_and_late_collision_requires_new_approval() {
+    let fixture = crate::test_support::TestVault::new("promotion-keep-race");
+    let service = ChatService::new(
+        fixture.notes.path().into(),
+        fixture.notes.path().join(".gneauxghts"),
+    )
+    .unwrap();
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (_, message) = seed_agent_run(&service, &conversation.summary.id, "race", 1);
+    let proposal = service
+        .prepare_note_save(&conversation.summary.id, &message, None)
+        .unwrap();
+    let before = service.proposal_draft(&proposal.id).unwrap();
+    fs::write(&before.path, "Occupied while reviewing").unwrap();
+    let collision = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id.clone(),
+        None,
+    )
+    .unwrap();
+    assert_eq!(collision.status, "conflict");
+    assert_eq!(
+        fs::read_to_string(&before.path).unwrap(),
+        "Occupied while reviewing"
+    );
+    let refreshed = service.proposal_draft(&proposal.id).unwrap();
+    assert_ne!(refreshed.path, before.path);
+    assert!(!Path::new(&refreshed.path).exists());
+    let (one, two) = std::thread::scope(|scope| {
+        let one = scope.spawn(|| {
+            crate::commands::proposal_commands::commit_agent_proposal_with_state(
+                &fixture.state,
+                &service,
+                proposal.id.clone(),
+                None,
+            )
+            .unwrap()
+        });
+        let two = scope.spawn(|| {
+            crate::commands::proposal_commands::commit_agent_proposal_with_state(
+                &fixture.state,
+                &service,
+                proposal.id.clone(),
+                None,
+            )
+            .unwrap()
+        });
+        (one.join().unwrap(), two.join().unwrap())
+    });
+    assert_eq!(one.status, "committed");
+    assert_eq!(one.note_id, two.note_id);
+    assert_eq!(one.committed_markdown, two.committed_markdown);
+    assert_eq!(
+        fs::read_to_string(&before.path).unwrap(),
+        "Occupied while reviewing"
+    );
+    assert!(fs::read_to_string(&refreshed.path)
+        .unwrap()
+        .contains("response"));
+    assert_eq!(
+        service.get_agent_proposal(&proposal.id).unwrap().status,
+        "committed"
+    );
+    assert_eq!(
+        service
+            .resolve_agent_proposal(&proposal.id, "dismissed")
+            .unwrap()
+            .status,
+        "committed"
+    );
+    assert!(service.proposal_draft(&proposal.id).is_err());
+}
+
+#[test]
+fn promoted_existing_note_keep_without_a_body_uses_the_latest_checkpoint() {
+    let fixture = crate::test_support::TestVault::new("promotion-latest-body");
+    let service = ChatService::new(
+        fixture.notes.path().into(),
+        fixture.notes.path().join(".gneauxghts"),
+    )
+    .unwrap();
+    let path = fixture.notes.path().join("Target.md");
+    let initial = fixture
+        .state
+        .note_timeline()
+        .create_note_at(
+            crate::services::note_timeline::MutationSource::Editor,
+            &path,
+            "Original",
+        )
+        .unwrap()
+        .unwrap();
+    let conversation = service
+        .create_conversation(None, Some(VaultAccess::Full))
+        .unwrap();
+    let (_, message) = seed_agent_run(&service, &conversation.summary.id, "latest-body", 1);
+    let proposal = service
+        .prepare_note_save_target(
+            &conversation.summary.id,
+            &message,
+            None,
+            None,
+            Some(initial.note_id().as_str()),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+    let draft = service.proposal_draft(&proposal.id).unwrap();
+    let revised = draft.markdown.replace("response", "My reviewed addition");
+    service
+        .checkpoint_proposal_draft(
+            &proposal.id,
+            draft.version,
+            &revised,
+            &draft.title,
+            None,
+            &json!([]),
+        )
+        .unwrap();
+    let receipt = crate::commands::proposal_commands::commit_agent_proposal_with_state(
+        &fixture.state,
+        &service,
+        proposal.id,
+        None,
+    )
+    .unwrap();
+    assert_eq!(
+        receipt.committed_markdown.as_deref(),
+        Some(revised.as_str())
+    );
 }

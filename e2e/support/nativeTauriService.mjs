@@ -11,7 +11,7 @@ export class launcher extends TauriLauncher {
 
   async onPrepare(config, capabilities) {
     try {
-      await this.nativeHarness.prepare();
+      await this.nativeHarness.prepare(config, capabilities);
       await super.onPrepare(config, capabilities);
     } catch (cause) {
       let failureCause = cause;
@@ -19,7 +19,7 @@ export class launcher extends TauriLauncher {
       catch (cleanupError) {
         failureCause = new AggregateError([cause, cleanupError], 'Native preparation and cleanup failed');
       }
-      const failure = new Error('Native E2E preparation failed', { cause: failureCause });
+      const failure = new Error(`Native E2E preparation failed: ${failureCause.message}`, { cause: failureCause });
       failure.name = 'SevereServiceError';
       throw failure;
     }

@@ -83,8 +83,9 @@ are retired with their owners, including late native listener attachment.
 
 These signals admit best-effort saves while JavaScript is available. They do not
 guarantee durability after immediate OS suspension or termination, persist
-unsent attachments or protected review edits, or establish a portable clean
-close. Physical iPhone background/lock/termination recovery remains a separate
+unsent attachments, or establish a portable clean close. Protected review edits
+are checkpointed through the proposal owner while JavaScript is available; a failed
+checkpoint remains visible and cannot be reported as durable. Physical iPhone background/lock/termination recovery remains a separate
 release-validation requirement.
 
 ### Bootstrap admits one coherent backend snapshot
@@ -867,10 +868,12 @@ instructions owned by `chat/assistant_instructions.txt` and
 `services/evidence/guidance.rs`; a valid citation does not verify those conclusions.
 The five model-facing tools group operations without merging their authority.
 read_notes purpose=answer returns canonical evidence; purpose=edit returns the
-current working copy for proposals. The schema exposes only granted purposes and
+current working copy for proposals. purpose=draft reads versioned pending working
+content; purpose=chat reads authored completed answers for transfer, not evidence.
+The schema exposes only granted purposes and
 the handler rejects unavailable branches. An evidence-only child cannot access
 working content or proposals through a combined tool. propose_note_change keeps
-edit/replace/create validation, exact current hashes, full current read coverage
+edit/replace/create/save/refine validation, exact current hashes, versioned drafts, full current read coverage
 for replacements, existing stored proposal formats and explicit Keep before writes.
 Adjacent-editor identity and selection come from the hint; content comes from
 ordinary reads, with no separate active-note tool.
@@ -971,7 +974,12 @@ enforce the retry requirement; see `agent_tools/evidence.rs` and the research
 handoff in `agent_tools/research.rs`.
 Research workers receive their own contracts under the shared allowance.
 Revalidation before each model call and final delivery stops
-an answer if admitted bytes or scoped search versions change.
+an answer if admitted bytes or scoped search versions change. Scoped search
+versions compare actual paths and file bytes, not filesystem timestamps or
+derived index digests. Assigning an internal identity to an unchanged unrelated
+legacy note cannot invalidate that search. Citation delivery waits for internal
+current-content operations to settle and repeats canonical identity, byte,
+access and proof checks; settlement cannot authorize genuinely stale evidence.
 
 Read coverage identifies canonical-note versus selected-passage scope and carries
 that scope through continuations. Completeness applies to the selected read across
@@ -1128,6 +1136,15 @@ against current canonical content; it does not rerun suggestions. Context
 use and compaction are observable through provider-safe activity; raw model
 reasoning and tool arguments are not exposed.
 
+Activity lists the notes and passages actually delivered by each successful read,
+including reads not selected as final answer citations. Named destinations and
+bounded passage previews survive chat reopening in the existing event history;
+they do not add answer sources or model-history context. Discovery previews,
+invented references and failed reads cannot acquire links. Source access,
+exclusions and passage freshness are rechecked before delivery/navigation, using
+the same current or retained-revision navigation as answer citations. Older
+count-only events remain count-only rather than guessing what was read.
+
 ### Draft chats expose their complete configuration
 
 Starting a new draft or selecting another conversation retires pending selection
@@ -1251,17 +1268,50 @@ document. Failed follow-on persistence leaves that document available and report
 an error without repeating the already completed durable proposal action.
 
 At most one proposal is editable globally. Other pending proposals remain
-queued and durable, and unresolved proposals survive restart. An edited, partially
-resolved or conflicted review must be resolved before another proposal replaces it.
+queued and durable, and unresolved proposals survive restart. Opening a different
+review first durably checkpoints the current body, title, location and hunk choices,
+then releases its live review. A failed checkpoint blocks handoff and retains text.
+Two saves to the same note remain distinct; target identity cannot supersede them.
 Confirmed Reload Disk reads the reviewed document even when another note is visible;
 it discards review text through canonical adoption and cannot save that discarded text.
 Repeated clicks while dismissal or reload is pending do not repeat those operations.
 
 Navigating away from an unresolved review retains its working copy and hunk
-choices for return. Pane and workspace save barriers do not persist or require
-a clean baseline for that retained review. Ordinary edits in other documents
-still flush, and external-change conflicts and canonical collisions still block
-departure of a dirty document.
+choices for return. Pane and workspace save barriers checkpoint the working
+review without publishing it or requiring a clean canonical baseline. Ordinary edits in other documents
+still flush even if the independent review checkpoint fails. External-change
+conflicts and canonical collisions still block departure of a dirty document.
+
+### Chat content becomes notes only through review
+
+Whole completed answers and verified selections default to new notes; an adjacent
+editor never supplies an implicit destination. Direct Save makes no model call.
+Existing destinations require explicit user intent and follow Note Identity.
+Selected Markdown and recorded sources transfer faithfully, with ordinary source
+wikilinks and one Open in chat backlink under ADR 0011. Repeated selections bind
+the captured occurrence; source controls outside the highlight remain associated
+without copying neighboring claims. App-generated passage labels, including
+unavailable-passage placeholders, are excluded from both selection matching and
+selected Markdown; recorded answer associations recover their source links.
+Authored note and web links remain authored selection content.
+Saved links are user-maintained and do not
+retain live chat evidence semantics. Authored heading/block fragments survive
+promotion; passage citations retain the located block/paragraph destination.
+Old offsets cannot select a position in edited or historical content; only a
+unique surviving excerpt can establish it. Otherwise the source-note link remains.
+
+Title/location/body and decisions survive acknowledged checkpoints and restart.
+Keep alone publishes through NoteTimeline; Discard cannot autosave a creation.
+Initial occupied filenames get an unused suggestion; a collision at Keep retains
+text, suggests another path and requires another Keep. Changed existing notes
+refresh only separable additions on the latest base. Ambiguous headings, missing
+or revoked targets, overlapping edits and failed persistence retain the draft.
+
+Repeated Save reopens the same pending origin, or opens its committed Note Identity.
+An additional copy requires a new explicit intent. Keep retries/concurrent calls
+return the authoritative receipt without replaying publication. Explicit model
+refinement reads the latest version and revises the same proposal; late output
+cannot replace newer checkpoints or revive kept/discarded work.
 
 ### Proposal recovery converges without duplicate writes
 
@@ -1276,7 +1326,9 @@ Markdown as its saved baseline instead of treating the write as external.
 The commit receipt supplies editor-visible Markdown from the canonical publication;
 read-back compares against that receipt so title-heading and newline normalization
 cannot manufacture a conflict. The submitted working text separately identifies
-local edits made after commit began, which remain dirty. If disk no longer matches
+local edits made after commit began, which remain dirty. The submitted title
+likewise distinguishes later user edits from the canonical filename chosen for
+sanitation or a collision; receipt adoption cannot rename that file back. If disk no longer matches
 the committed Markdown, ordinary external-conflict protection applies.
 
 ### Proposal arrival does not navigate
@@ -1284,14 +1336,12 @@ the committed Markdown, ordinary external-conflict protection applies.
 Receiving a proposal adds it to the pending queue without opening, activating,
 focusing, or repurposing a pane. If its target is already open and clean, review
 content may appear there without changing the active pane. Navigation begins
-only when the user explicitly chooses to review the target in an editor.
+only when the user explicitly chooses to review the target in an editor, saves a
+message/selection, or asks conversationally for a save/refinement. Passive replay
+of a historical requested-review event does not authorize new navigation.
 
-**Implementation gap:** passive admission in
-`src/lib/features/proposals/proposalOrchestration.ts` compares only Markdown with
-the saved baseline. Canonical cleanliness in
-`src/lib/features/notepad/document/documentState.ts::documentHasCleanBuffer` also
-includes title, tags, and identity, so the clean-document requirement is not fully checked at
-this boundary. This source-level gap has not been reproduced in a running UI.
+Passive admission and final review installation check complete document cleanliness,
+including title, tags, and identity, through the canonical document predicate.
 
 ## Image interactions
 

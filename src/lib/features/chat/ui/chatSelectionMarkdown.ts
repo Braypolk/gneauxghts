@@ -7,6 +7,10 @@ interface MarkdownElementOptions {
   classes?: readonly string[];
 }
 
+// App-generated passage labels are controls; their links are recovered from the
+// answer's recorded associations after the authored selection is validated.
+const ignoredSelectionElements = '[data-chat-selection-ignore], .gn-markdown-inline-citation, .gn-markdown-task-checkbox';
+
 function inlineCodeFence(content: string) {
   const longestRun = Math.max(
     0,
@@ -34,7 +38,8 @@ export function wrapChatMarkdownElement(
 
   if (options.codeLanguage !== undefined) {
     const language = options.codeLanguage?.trim() ?? '';
-    return `\`\`\`${language}\n${content.replace(/^\n+|\n+$/g, '')}\n\`\`\`\n\n`;
+    const fence = inlineCodeFence(content).padEnd(3, '`');
+    return `${fence}${language}\n${content.replace(/^\n+|\n+$/g, '')}\n${fence}\n\n`;
   }
   if (options.wikilinkTarget) return `[[${options.wikilinkTarget}]]`;
   if (/^h[1-6]$/.test(tag)) {
@@ -46,7 +51,8 @@ export function wrapChatMarkdownElement(
   if (tag === 'mark') return `==${content}==`;
   if (tag === 'code' && !classes.has('cm-content')) {
     const fence = inlineCodeFence(content);
-    return `${fence}${content}${fence}`;
+    const padding = /^`|`$/.test(content) || (/^ .* $/s.test(content) && content.trim()) ? ' ' : '';
+    return `${fence}${padding}${content}${padding}${fence}`;
   }
   if (tag === 'a' && options.href) return `[${content}](${options.href})`;
   if (tag === 'blockquote') return `${prefixLines(content, '> ')}\n\n`;
@@ -60,6 +66,7 @@ export function wrapChatMarkdownElement(
     const lines = content.replace(/^\n+|\n+$/g, '').split('\n');
     return `${marker}${lines[0] ?? ''}${lines.slice(1).map((line) => `\n  ${line}`).join('')}\n`;
   }
+  if (tag === 'td' || tag === 'th') return `${content} `;
   if (tag === 'p') return `${content}\n\n`;
   if (tag === 'br') return '\n';
   if (classes.has('cm-line')) return `${content}\n`;
@@ -100,26 +107,30 @@ function serializeTable(table: Element) {
   return `${serialized.join('\n')}\n\n`;
 }
 
-function serializeNode(node: Node): string {
+export function escapeChatMarkdownText(text: string) {
+  return text.replace(/[\\`*_{}[\]<>#!|~=&]/g, '\\$&')
+    .replace(/^(\s*)([-+]|\d+[.)])(?=\s)/gm, (_match, space, marker: string) =>
+      `${space}${marker.slice(0, -1)}\\${marker.slice(-1)}`);
+}
+
+function serializeNode(node: Node, literal = false): string {
   if (node.nodeType === Node.TEXT_NODE) {
     const text = node.textContent ?? '';
-    return /^\s*\n\s*$/.test(text) ? '' : text.replaceAll('\u00a0', ' ');
+    const normalized = text.replaceAll('\u00a0', ' ');
+    return /^\s*\n\s*$/.test(text) ? '' : literal ? normalized : escapeChatMarkdownText(normalized);
   }
-  if (!(node instanceof Element)) return serializeChildren(node);
+  if (!(node instanceof Element)) return serializeChildren(node, literal);
   if (node.tagName === 'TABLE') return serializeTable(node);
-  if (node.classList.contains('gn-markdown-inline-citation')) return '';
-  if (node.tagName === 'INPUT' && node.classList.contains('gn-markdown-task-checkbox')) {
-    return '';
-  }
+  if (node.matches(ignoredSelectionElements)) return '';
   return wrapChatMarkdownElement(
     node.tagName,
-    serializeChildren(node),
+    serializeChildren(node, literal || node.matches('code, mark, [data-markdown-code-language]')),
     elementOptions(node)
   );
 }
 
-function serializeChildren(node: Node) {
-  return Array.from(node.childNodes).map(serializeNode).join('');
+function serializeChildren(node: Node, literal = false) {
+  return Array.from(node.childNodes).map(child => serializeNode(child, literal)).join('');
 }
 
 function commonElement(range: Range) {
@@ -158,8 +169,9 @@ export function chatSelectionToMarkdown(
   const surface = startElement?.closest<HTMLElement>('.gn-markdown-surface');
   if (!surface || endElement?.closest('.gn-markdown-surface') !== surface) return null;
 
-  let markdown = serializeChildren(range.cloneContents());
   let ancestor = commonElement(range);
+  const literal = Boolean(ancestor?.closest('code, mark, [data-markdown-code-language]'));
+  let markdown = serializeChildren(range.cloneContents(), literal);
   while (ancestor && ancestor !== surface) {
     markdown = wrapChatMarkdownElement(
       ancestor.tagName,
@@ -169,4 +181,28 @@ export function chatSelectionToMarkdown(
     ancestor = ancestor.parentElement;
   }
   return normalizeCopiedMarkdown(markdown);
+}
+
+/** Authored text and repeated-occurrence selector, captured before focus moves. */
+export function chatSelectionDescriptor(selection: Selection, message: HTMLElement) {
+  if (!selection.rangeCount || selection.isCollapsed) return null;
+  const range = selection.getRangeAt(0);
+  const start = range.startContainer instanceof Element ? range.startContainer : range.startContainer.parentElement;
+  const surface = start?.closest<HTMLElement>('.gn-markdown-surface');
+  if (!surface || !message.contains(surface) || !surface.contains(range.endContainer)) return null;
+  function text(node: Node): string {
+    if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? '';
+    if (node instanceof Element && node.matches(ignoredSelectionElements)) return '';
+    const content = Array.from(node.childNodes).map(text).join('');
+    return node instanceof Element && /^(P|DIV|LI|H[1-6]|TR|TD|TH|PRE|BR|BLOCKQUOTE)$/.test(node.tagName) ? content + ' ' : content;
+  }
+  const normalize = (value: string) => value.replaceAll('\u200b', '').replace(/\s+/g, ' ').trim();
+  const chosen = normalize(text(range.cloneContents()));
+  if (!chosen) return null;
+  const prefix = document.createRange();
+  prefix.setStart(surface, 0); prefix.setEnd(range.startContainer, range.startOffset);
+  const before = normalize(text(prefix.cloneContents()));
+  let occurrence = 0, at = 0;
+  while ((at = before.indexOf(chosen, at)) >= 0) { occurrence++; at += chosen.length; }
+  return {text: chosen, occurrence};
 }

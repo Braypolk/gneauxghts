@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn chat_search_and_reads_survive_unrelated_legacy_identity_bookkeeping() {
+    let (vault, context, _) = fixture();
+    let legacy = vault.notes.path().join("Legacy.md");
+    std::fs::write(&legacy, "Unrelated legacy content").unwrap();
+    vault
+        .state
+        .upsert_note_indexes(
+            legacy.clone(),
+            crate::index::build_indexed_note(&legacy, "Unrelated legacy content", 1),
+        )
+        .unwrap();
+    tauri::async_runtime::block_on(async {
+        let found = FindNotesTool(context.clone())
+            .call(
+                &mut ToolContext::new(),
+                serde_json::from_value(json!({"query":"first line","mode":"literal"})).unwrap(),
+            )
+            .await
+            .unwrap();
+        let selector = found["items"][0]["evidenceId"].as_str().unwrap();
+        let args = json!({"purpose":"answer","evidence_ids":[selector]});
+        let before = ReadNotesTool(context.clone())
+            .call(
+                &mut ToolContext::new(),
+                serde_json::from_value(args.clone()).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(before["status"], "ready");
+        context.validate_context().unwrap();
+        vault
+            .state
+            .note_timeline()
+            .observe(
+                crate::services::note_timeline::VaultObservation::external_edit(
+                    legacy.clone(),
+                    2,
+                    Some(1),
+                ),
+            )
+            .unwrap();
+        vault
+            .state
+            .upsert_note_indexes(
+                legacy.clone(),
+                crate::index::build_indexed_note(&legacy, "Unrelated legacy content", 1),
+            )
+            .unwrap();
+        let after = ReadNotesTool(context.clone())
+            .call(
+                &mut ToolContext::new(),
+                serde_json::from_value(args).unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(after["status"], "ready");
+        assert_eq!(before["items"][0]["excerpt"], after["items"][0]["excerpt"]);
+        context
+            .validate_context()
+            .expect("The next model call must admit unchanged evidence");
+    });
+}
+
+#[test]
 fn structured_edit_followup_keeps_note_identity_after_editor_switch_and_branch() {
     let (vault, context, id) = fixture();
     tauri::async_runtime::block_on(async {

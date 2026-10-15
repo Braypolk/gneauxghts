@@ -44,6 +44,7 @@ describe('chat controller proposals', () => {
       'chat://proposal',
       proposal({
         id: 'proposal-new',
+        payload: { supersedesProposalId: 'proposal-old' },
         runId: 'run-2',
         preview: { proposedEditorMarkdown: '# Project plan\n\nLatest' }
       })
@@ -52,6 +53,7 @@ describe('chat controller proposals', () => {
     expect(controller.getSnapshot().proposals).toEqual([
       proposal({
         id: 'proposal-new',
+        payload: { supersedesProposalId: 'proposal-old' },
         runId: 'run-2',
         preview: { proposedEditorMarkdown: '# Project plan\n\nLatest' }
       })

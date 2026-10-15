@@ -42,8 +42,10 @@ export function createProposalReviewSession() {
       notePath:
         workflow.kind === 'idle'
           ? null
-          : workflow.identity.notePath,
-      title: review?.request.preview.title ?? null,
+          : review?.request.preview.notePath ?? workflow.identity.notePath,
+      title: review?.document.working.title ?? null,
+      creation: review?.request.kind === 'create',
+      changeLocation: review?.request.changeLocation,
       totalHunks: review?.request.preview.hunks.length ?? 0,
       unresolvedHunks,
       isApplying:

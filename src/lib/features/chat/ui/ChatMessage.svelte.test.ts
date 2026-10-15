@@ -21,7 +21,7 @@ function renderMessage(
       activity: null,
       selected: null,
       selectedExcerpt: null,
-      canInsertSelection: false,
+      canSaveSelection: false,
       canDecidePermission,
       onPreviewAttachment: noop,
       onRetry: noop,
@@ -29,7 +29,7 @@ function renderMessage(
       onCopyMessage: noop,
       onCopySelection: noop,
       onCopyLink: noop,
-      onInsertSelection: noop,
+      onSaveSelection: noop,
       onToggleRemember: noop,
       onDecidePermission: noop,
       onReviewProposal: noop

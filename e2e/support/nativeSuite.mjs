@@ -1,12 +1,14 @@
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
+import { foregroundNativeSpecs, requireNativeForeground } from './nativePresentation.mjs';
 
 // Keep deterministic UI contracts separate from provider and measurement opt-ins.
 export const nativeSuites = {
-  smoke: ['app-lifecycle', 'command-events', 'note-timeline-phase-1-3', 'editing-windows', 'image-interactions', 'search-focus', 'pane-animation', 'chat-pane-animation'],
+  smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'chat-to-note'],
+  foreground: [...foregroundNativeSpecs.filter(name => name !== 'chat-typing'), 'chat-to-note'],
   measurement: ['editing-windows', 'chat-typing'],
-  live: ['activity-followups', 'query-inventory', 'chat-dates', 'research-worker', 'research-comparison', 'agent-date-evidence']
+  live: ['activity-followups', 'query-inventory', 'chat-dates', 'research-worker', 'research-comparison', 'agent-date-evidence', 'chat-to-note-live']
 };
 
 export async function runNativeSpecs(files, {
@@ -66,6 +68,7 @@ export async function runNativeSpecs(files, {
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const lane = process.argv[2] ?? 'smoke';
   if (!Object.hasOwn(nativeSuites, lane)) throw new Error(`Unknown native test lane: ${lane}`);
+  if (!process.argv.includes('--list') && ['foreground', 'measurement'].includes(lane)) requireNativeForeground(`Native ${lane} lane`);
   const files = nativeSuites[lane].map(name => `e2e/specs/native/${name}.spec.ts`);
   if (process.argv.includes('--list')) console.log(files.join('\n'));
   else process.exitCode = await runNativeSpecs(files, {

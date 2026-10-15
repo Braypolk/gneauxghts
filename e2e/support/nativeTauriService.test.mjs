@@ -2,6 +2,20 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import TauriWorkerService, { launcher as TauriLauncher } from '@wdio/tauri-service';
 import WorkerService, { launcher as NativeLauncher } from './nativeTauriService.mjs';
+import { admitNativePresentation } from './nativePresentation.mjs';
+
+test('resolved CLI foreground spec is rejected before the app launcher runs', async t => {
+  let launched = false;
+  t.mock.method(TauriLauncher.prototype, 'onPrepare', async () => { launched = true; });
+  t.mock.method(TauriLauncher.prototype, 'onComplete', async () => {});
+  const service = new NativeLauncher({ nativeHarness: {
+    async prepare(config) { admitNativePresentation(config.specs, {}); },
+    async cleanup() {}
+  } }, [], {specs: ['./specs/native/**/*.spec.ts']});
+  await assert.rejects(service.onPrepare({specs: ['search-focus.spec.ts']}, []),
+    error => error.name === 'SevereServiceError' && /requires actual OS focus/.test(error.cause.message));
+  assert.equal(launched, false);
+});
 
 test('native service retains the worker and awaits server admission before app launch', async t => {
   const events = [];

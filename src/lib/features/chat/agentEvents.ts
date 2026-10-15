@@ -5,6 +5,7 @@ import type {
   ChatPart,
   MessageStatus
 } from './types';
+import { normalizeSource } from './sources';
 
 export interface AgentEventState {
   parts: ChatPart[];
@@ -76,6 +77,9 @@ function applyEvent(parts: ChatPart[], event: AgentEvent): ChatPart[] {
         ...(event.stepIndex !== undefined ? { stepIndex: event.stepIndex } : {}),
         ...(event.inputSummary ? { inputSummary: event.inputSummary } : {}),
         ...(event.outputSummary ? { outputSummary: event.outputSummary } : {}),
+        ...(event.readSources?.length ? {
+          readSources: event.readSources.map(normalizeSource).filter(source => source.kind === 'note')
+        } : {}),
         ...(event.durationMillis !== undefined
           ? { durationMillis: event.durationMillis }
           : {})

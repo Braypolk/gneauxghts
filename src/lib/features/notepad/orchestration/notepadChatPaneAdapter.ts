@@ -26,6 +26,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
   proposal: Pick<ProposalOrchestration,
     "keepAll" | "undoAll" | "reviewNext" | "retryCommit" | "copyCurrent" | "reloadDisk"> & {
       session: Pick<ProposalOrchestration["session"], "snapshot">;
+      flushCheckpoint?: () => Promise<void>;
     };
   getPaneOrder: () => TPaneId[];
   getPaneKind: (paneId: TPaneId) => PaneKind;
@@ -140,6 +141,7 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
       context: {
         note: getContextNote(contextDocument),
         getActiveNoteSnapshot: async () => {
+          await deps.proposal.flushCheckpoint?.();
           // Body, path, and selection all come from the same pane so a message
           // can never quote one note while describing another.
           const contextPaneId = getContextPaneId(paneId);

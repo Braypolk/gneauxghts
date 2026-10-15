@@ -333,6 +333,18 @@ describe('documentEditingService', () => {
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
   });
 
+  it('adopts the published collision filename while retaining only later body edits', async () => {
+    const harness = createHarness({}, { ...createEmptySessionSnapshot(),
+      title: 'Plan', bodyMarkdown: 'Later typing', lastSavedMarkdown: '' });
+    await harness.service.adoptAcceptedProposal(harness.note, {
+      noteId: 'created-id', title: 'Plan 2', markdown: 'Reviewed body', path: '/vault/Plan 2.md'
+    }, 'Reviewed body', null, 'Plan');
+    expect(harness.note.working.title).toBe('Plan 2');
+    expect(harness.note.working.markdown).toBe('Later typing');
+    expect(harness.note.savedBaseline?.content.title).toBe('Plan 2');
+    expect(harness.scheduleAutosave).toHaveBeenCalledOnce();
+  });
+
   it('preserves a later proposal title edit and schedules only that dirty work', async () => {
     const harness = createHarness({}, {
       ...createEmptySessionSnapshot(),

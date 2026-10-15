@@ -6,6 +6,7 @@ import {
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 
 export interface WorkspacePersistenceServiceDeps {
+  flushReviews?: () => Promise<void>;
   flushAllPaneCursorSaves: () => void;
   getDocuments: () => Iterable<NoteDraftState>;
   cancelPendingAutosave: (document: NoteDraftState) => void;
@@ -41,6 +42,18 @@ export function createWorkspacePersistenceService(
       deps.cancelPendingAutosave(document);
     }
 
+    // Review drafts and canonical notes have independent persistence owners.
+    // Join both before vetoing navigation, so a failed checkpoint cannot leave
+    // unrelated dirty notes with cancelled autosave timers.
+    const results = await Promise.allSettled([
+      Promise.resolve().then(() => deps.flushReviews?.()),
+      flushCanonicalDocuments(documents)
+    ]);
+    const failure = results.find((result) => result.status === 'rejected');
+    if (failure?.status === 'rejected') throw failure.reason;
+  }
+
+  async function flushCanonicalDocuments(documents: NoteDraftState[]): Promise<void> {
     // A queue can still be publishing while its shared buffer looks clean.
     await awaitAllSaveQueues();
     for (let attempt = 0; attempt < 3; attempt += 1) {
@@ -73,13 +86,14 @@ export function createWorkspacePersistenceService(
     const documents = [...deps.getDocuments()];
     for (const document of documents) deps.cancelPendingAutosave(document);
 
+    const reviewCheckpoint = deps.flushReviews?.() ?? Promise.resolve();
     for (let attempt = 0; attempt < 3; attempt += 1) {
-      const results = await Promise.allSettled(documents.map((document) => {
+      const results = await Promise.allSettled([reviewCheckpoint, ...documents.map((document) => {
         if (needsCanonicalSave(document) && !documentHasUnresolvedConflict(document)) {
           return deps.enqueueSave(document);
         }
         return documentRegistry.get(document.handle)?.getSaveQueue() ?? Promise.resolve();
-      }));
+      })]);
       const failure = results.find((result) => result.status === 'rejected');
       if (failure?.status === 'rejected') throw failure.reason;
       const pending = documents.filter(needsCanonicalSave);

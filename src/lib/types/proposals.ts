@@ -35,3 +35,10 @@ export type CommitNoteReviewResult = {
   | { status: 'conflict'; committedMarkdown: null }
 );
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+
+export type ReviewHunkStatus = 'pending' | 'kept' | 'undone' | 'modified';
+export interface ReviewHunkState extends ProposalPreviewHunk {
+  from: number;
+  to: number;
+  status: ReviewHunkStatus;
+}

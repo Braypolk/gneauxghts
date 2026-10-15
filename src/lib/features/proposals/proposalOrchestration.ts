@@ -1,3 +1,5 @@
+import { checkpointProposalReview, awaitProposalCheckpoints } from './reviewCheckpoints';
+import { observeProposalTitle } from './observeProposalTitle.svelte';
 import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
@@ -9,7 +11,7 @@ import type {
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import type { ProposalReviewIdentity } from './proposalReviewMachine';
 import {
-  getDocumentPath
+  documentHasCleanBuffer, getDocumentPath, updateDocumentTitle
 } from '$lib/features/notepad/document/documentState';
 
 function proposalErrorMessage(error: unknown, fallback: string): string {
@@ -36,11 +38,13 @@ export interface ProposalOrchestrationDeps {
     document: NoteDraftState | null;
     noteId: string | null;
     path: string;
+    creation?: boolean;
   }) => Promise<NoteDraftState | null>;
   acknowledgeDocumentCommit: (commit: {
     document: NoteDraftState;
     path: string;
     markdown: string;
+    submittedTitle?: string;
     committedMarkdown: string;
     commitWarning: NonNullable<CommitNoteReviewResult['commitWarning']> | null;
   }) => void | Promise<void>;
@@ -53,6 +57,7 @@ export type { DurableProposalReviewRequest } from './types';
 export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   const session = deps.session ?? proposalReviewSession;
   let disposed = false;
+  let stopTitleObserver: (() => void) | null = null;
   let durableLoadQueue: Promise<void> = Promise.resolve();
 
   function identityFor(
@@ -109,8 +114,37 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     return runtime;
   }
 
+  function checkpoint(review: ProposalReviewRuntime, requestedPath?: string): Promise<void> {
+    if (!review.request.checkpoint) return Promise.resolve();
+    return checkpointProposalReview(review, {
+      markdown: root(review).markdown,
+      title: review.document.working.title,
+      path: review.request.preview.notePath,
+      requestedPath,
+      decisions: hunks(review).map(hunk => ({ ...hunk }))
+    });
+  }
+  function flushCheckpoint() {
+    const review = currentReview();
+    return review ? checkpoint(review) : Promise.resolve();
+  }
+  function restoreSavedBase(review: ProposalReviewRuntime) {
+    root(review).replaceMarkdown(review.request.checkpoint
+      ? review.document.savedBaseline?.content.markdown ?? ''
+      : review.request.preview.baseEditorMarkdown);
+    if (review.request.checkpoint) updateDocumentTitle(review.document,
+      review.document.savedBaseline?.content.title ?? '');
+  }
+  function clearCreation(review: ProposalReviewRuntime) {
+    if (review.request.kind !== 'create') return;
+    root(review).replaceMarkdown('');
+    updateDocumentTitle(review.document, '');
+  }
+
   async function closeReview(review: ProposalReviewRuntime) {
     if (currentReview() !== review) return;
+    stopTitleObserver?.();
+    stopTitleObserver = null;
     root(review).endReview(review.request.preview.reviewId);
     session.dispatchWorkflow({
       type: 'completionSucceeded',
@@ -129,9 +163,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   }
 
   async function releaseReplacedReview(review: ProposalReviewRuntime) {
+    stopTitleObserver?.();
+    stopTitleObserver = null;
     const runtime = documentRegistry.get(review.document.handle)?.resources()?.runtime;
     if (runtime?.review?.reviewId === review.request.preview.reviewId) {
-      runtime.replaceMarkdown(review.request.preview.baseEditorMarkdown);
+      restoreSavedBase(review);
       runtime.endReview(review.request.preview.reviewId);
     }
     await deps.finishReviewDocument(review.document);
@@ -182,14 +218,39 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
 
     try {
       if (resolution === 'dismiss') {
-        await review.request.dismiss();
-        await closeReview(review);
+        await dismissReview(review);
         return;
       }
       const markdown = root(review).markdown;
+      const submittedTitle = review.document.working.title;
+      if (review.request.checkpoint) await checkpoint(review);
       const result = await review.request.commit(markdown);
       if (currentReview() !== review) return;
       if (result.status === 'conflict') {
+        const refreshed = await review.request.refresh?.();
+        if (refreshed && (refreshed.preview.baseContentHash !== review.request.preview.baseContentHash ||
+          refreshed.preview.notePath !== review.request.preview.notePath)) {
+          const previousRequest = review.request;
+          const previousWorking = { markdown: root(review).markdown,
+            decisions: hunks(review).map(hunk => ({...hunk})) };
+          stopTitleObserver?.();
+          root(review).endReview(previousRequest.preview.reviewId);
+          try {
+            if (refreshed.kind === 'create') {
+              root(review).replaceMarkdown('');
+              updateDocumentTitle(review.document, refreshed.working?.title ?? refreshed.preview.title);
+            } else await deps.reloadReviewDocument(review.document);
+            review.request = refreshed;
+            root(review).beginReview(refreshed.preview, reviewCallbacks(review), refreshed.working);
+          } catch (error) {
+            review.request = previousRequest;
+            root(review).replaceMarkdown(previousRequest.preview.baseEditorMarkdown);
+            root(review).beginReview(previousRequest.preview, reviewCallbacks(review), previousWorking);
+            throw error;
+          } finally {
+            bindCheckpointEffects(review);
+          }
+        }
         session.dispatchWorkflow({
           type: 'completionConflicted',
           reviewId: review.request.preview.reviewId,
@@ -201,6 +262,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         document: review.document,
         path: result.applied?.path ?? review.request.preview.notePath,
         markdown,
+        submittedTitle,
         committedMarkdown: result.committedMarkdown,
         commitWarning: result.commitWarning ?? null
       });
@@ -252,8 +314,22 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       onChange: () => {
         if (!reviewIsCurrent(review)) return;
         session.notifyReviewRuntimeChanged();
+        if (session.workflow.kind === 'reviewing') void checkpoint(review).catch(error => setReviewError(review, proposalErrorMessage(error, 'Unable to save review draft.')));
         if (session.workflow.kind === 'reviewing') void finishIfResolved();
       }
+    };
+  }
+
+  function bindCheckpointEffects(review: ProposalReviewRuntime) {
+    stopTitleObserver?.();
+    stopTitleObserver = null;
+    if (!review.request.checkpoint) return;
+    stopTitleObserver = observeProposalTitle(review.document, () => {
+      if (reviewIsCurrent(review) && !reviewIsResolving(review)) void checkpoint(review).catch(error => setReviewError(review, proposalErrorMessage(error, 'Unable to save review draft.')));
+    });
+    if (review.request.kind === 'create') review.request.changeLocation = async path => {
+      await checkpoint(review, path);
+      session.notifyReviewRuntimeChanged();
     };
   }
 
@@ -271,8 +347,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       return false;
     }
     if (
-      document.working.markdown !==
-      (document.savedBaseline?.content.markdown ?? '')
+      !documentHasCleanBuffer(document)
     ) {
       session.dispatchWorkflow({
         type: 'openFailed',
@@ -292,11 +367,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       return false;
     }
     try {
-      root(review).beginReview(preview, reviewCallbacks(review));
-      session.dispatchWorkflow({
-        type: 'openSucceeded',
-        identity
-      });
+      if (request.working && request.checkpoint) root(review).replaceMarkdown(preview.baseEditorMarkdown);
+      if (request.working || request.kind === 'create') updateDocumentTitle(document, request.working?.title ?? preview.title);
+      root(review).beginReview(preview, reviewCallbacks(review), request.working);
+      session.dispatchWorkflow({ type: 'openSucceeded', identity });
+      bindCheckpointEffects(review);
       return true;
     } catch (error) {
       await releaseReplacedReview(review);
@@ -315,13 +390,20 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   async function beginOpening(request: DurableProposalReviewRequest) {
     if (disposed) return false;
     const current = currentReview();
-    if (current && (
+    if (current && !current.request.checkpoint && (
       root(current).markdown !== current.request.preview.proposedEditorMarkdown ||
       hunks(current).some(hunk => hunk.status !== 'pending') ||
       session.workflow.kind === 'conflicted' || session.workflow.kind === 'confirmingDiscard'
     )) {
       setReviewError(current, 'Finish the current review before opening another proposal; it contains edits or review decisions.');
       return false;
+    }
+    if (current) {
+      try { await checkpoint(current); }
+      catch (error) {
+        setReviewError(current, proposalErrorMessage(error, 'Unable to save review draft.'));
+        return false;
+      }
     }
     const identity = identityFor(request);
     if (
@@ -353,6 +435,22 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     if (disposed) return false;
     const current = currentReview();
     if (current?.request.proposalId === request.proposalId) {
+      if (request.draftVersion !== undefined && request.draftVersion !== current.request.draftVersion) {
+        const previous = current.request.working;
+        if (root(current).markdown !== (previous?.markdown ?? current.request.preview.proposedEditorMarkdown) ||
+          current.document.working.title !== (previous?.title ?? current.request.preview.title)) {
+          setReviewError(current, 'This review has newer local edits. Save them before reopening the updated draft.');
+          return false;
+        }
+        const document = current.document;
+        const identity = identityFor(request);
+        if (!session.dispatchWorkflow({ type: 'openRequested', identity })) return false;
+        stopTitleObserver?.();
+        root(current).endReview(current.request.preview.reviewId);
+        root(current).replaceMarkdown(request.preview.baseEditorMarkdown);
+        updateDocumentTitle(document, document.savedBaseline?.content.title ?? '');
+        return start(request, document);
+      }
       await reviewNext();
       return true;
     }
@@ -361,11 +459,11 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       const document = await deps.presentReviewDocument({
         document: deps.getEditorPaneDocument(request.preview.notePath),
         noteId: request.noteId,
-        path: request.preview.notePath
+        path: request.preview.notePath, creation: request.kind === 'create'
       });
       if (
         !document ||
-        getDocumentPath(document) !== request.preview.notePath
+        (request.kind !== 'create' && getDocumentPath(document) !== request.preview.notePath)
       ) {
         failOpening(
           request,
@@ -411,8 +509,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     if (
       !document ||
       getDocumentPath(document) !== request.preview.notePath ||
-      document.working.markdown !==
-        (document.savedBaseline?.content.markdown ?? '')
+      !documentHasCleanBuffer(document)
     ) {
       return false;
     }
@@ -461,9 +558,30 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     return finishIfResolved();
   }
 
+  async function dismissReview(review: ProposalReviewRuntime, restoreBase = Boolean(review.request.checkpoint)) {
+    await awaitProposalCheckpoints(review);
+    await review.request.dismiss();
+    if (restoreBase) restoreSavedBase(review);
+    clearCreation(review);
+    await closeReview(review);
+  }
+
+  async function discard() {
+    const review = currentReview();
+    if (disposed || !review || reviewIsResolving(review)) return;
+    if (!session.dispatchWorkflow({ type: 'resolutionRequested', reviewId: review.request.preview.reviewId, resolution: 'dismiss' })) return;
+    try {
+      await dismissReview(review, true);
+    } catch (error) {
+      session.dispatchWorkflow({ type: 'completionFailed', reviewId: review.request.preview.reviewId,
+        error: proposalErrorMessage(error, 'Unable to discard this draft.') });
+    }
+  }
+
   function undoAll() {
     const review = currentReview();
     if (disposed || !review || reviewIsResolving(review)) return;
+    if (review.request.kind === 'create') return discard();
     cancelDiscardConfirmation(review);
     const pending = hunks(review).filter((hunk) => hunk.status === 'pending');
     root(review).resolveReview(review.request.preview.reviewId, pending.map((hunk) => hunk.id), 'undone',
@@ -486,7 +604,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       const document = await deps.presentReviewDocument({
         document: review.document,
         noteId: review.request.noteId,
-        path: review.request.preview.notePath
+        path: review.request.preview.notePath, creation: review.request.kind === 'create'
       });
       if (!reviewIsCurrent(review)) return;
       const editor = document && deps.getEditorForDocument(document);
@@ -509,14 +627,21 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
   // Route components may be recreated while the document review remains live.
   // Rebind only its effects; root text, history, hunk state and workflow persist.
   const retainedReview = currentReview();
-  if (retainedReview) root(retainedReview).bindReviewCallbacks(
-    retainedReview.request.preview.reviewId, reviewCallbacks(retainedReview)
-  );
+  if (retainedReview) {
+    root(retainedReview).bindReviewCallbacks(retainedReview.request.preview.reviewId, reviewCallbacks(retainedReview));
+    bindCheckpointEffects(retainedReview);
+  }
 
   return {
     session,
     dispose: () => {
       if (disposed) return;
+      stopTitleObserver?.();
+      stopTitleObserver = null;
+      const review = currentReview();
+      if (review?.request.checkpoint) void checkpoint(review).catch(error => {
+        setReviewError(review, proposalErrorMessage(error, 'Unable to save review draft.'));
+      });
       disposed = true;
       const state = session.workflow;
       if (state.kind === 'opening') session.dispatchWorkflow({
@@ -525,6 +650,8 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     },
     loadDurableProposal,
     loadDurableProposalIfOpen,
+    flushCheckpoint,
+    discard,
     keepAll,
     undoAll,
     reviewNext,

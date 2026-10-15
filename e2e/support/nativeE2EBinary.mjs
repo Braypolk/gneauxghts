@@ -4,7 +4,7 @@ import { copyFileSync, lstatSync, mkdirSync, readFileSync, realpathSync, writeFi
 import { dirname, resolve } from 'node:path';
 
 const kind = 'gneauxghts-native-e2e-v1';
-const markers = ['--e2e-app-data-root', '--e2e-documents-root', '--e2e-vault-root', 'TAURI_WEBDRIVER_PORT'];
+const markers = ['--e2e-app-data-root', '--e2e-documents-root', '--e2e-vault-root', 'TAURI_WEBDRIVER_PORT', 'GNEAUXGHTS_E2E_FOREGROUND'];
 const sha256 = bytes => createHash('sha256').update(bytes).digest('hex');
 function assertProfile(profile) { assert(['release', 'debug'].includes(profile), 'Native E2E profile must be release or debug'); }
 function assertMarkers(bytes) {

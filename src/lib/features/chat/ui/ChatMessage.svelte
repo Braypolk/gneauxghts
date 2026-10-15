@@ -43,7 +43,7 @@
     activity: string | null;
     selected: ChatSelection | null;
     selectedExcerpt: ChatExcerpt | null;
-    canInsertSelection: boolean;
+    canSaveSelection: boolean;
     canDecidePermission: boolean;
     onPreviewAttachment: (attachment: ChatAttachmentInput) => void;
     onOpenCitation?: (
@@ -52,10 +52,12 @@
     onOpenWikilink?: (rawTarget: string) => void | Promise<void>;
     onRetry: () => void | Promise<void>;
     onBranch: () => void | Promise<void>;
+    onSaveAnotherCopy?: () => void | Promise<void>;
+    onSaveMessage?: () => void | Promise<void>;
     onCopyMessage: () => void | Promise<void>;
     onCopySelection: () => void | Promise<void>;
     onCopyLink: () => void | Promise<void>;
-    onInsertSelection: () => void | Promise<void>;
+    onSaveSelection: () => void | Promise<void>;
     onToggleRemember: () => void | Promise<void>;
     onDecidePermission: (
       request: AgentPermissionRequest,
@@ -69,7 +71,7 @@
     activity,
     selected,
     selectedExcerpt,
-    canInsertSelection,
+    canSaveSelection,
     canDecidePermission,
     onPreviewAttachment,
     onOpenCitation,
@@ -77,9 +79,11 @@
     onRetry,
     onBranch,
     onCopyMessage,
+    onSaveMessage,
+    onSaveAnotherCopy,
     onCopySelection,
     onCopyLink,
-    onInsertSelection,
+    onSaveSelection,
     onToggleRemember,
     onDecidePermission,
     onReviewProposal
@@ -162,7 +166,7 @@
 >
   <div class="chat-message-body flex w-full flex-col gap-2.5">
     {#if toolParts.length > 0}
-      <ChainOfThought steps={toolParts} />
+      <ChainOfThought steps={toolParts} onOpenCitation={onOpenCitation} />
     {/if}
     {#each visibleParts as part (part.id)}
       {#if part.type === 'text' && (part.text || message.answerDraft?.text)}
@@ -371,6 +375,14 @@
         <Copy class="h-3.5 w-3.5" />
       </button>
     {/if}
+    {#if message.role === 'assistant' && message.status === 'completed' && message.content && onSaveMessage}
+      <button type="button" class="chat-message-action" aria-label={message.savedNote ? "Open note" : "Save to note"} title={message.savedNote ? "Open note" : "Save to note"} onclick={() => void onSaveMessage?.()}>
+        <FileInput class="h-3.5 w-3.5" />
+      </button>
+      {#if message.savedNote && onSaveAnotherCopy}
+        <button type="button" class="chat-message-action" aria-label="Save another copy" title="Save another copy" onclick={() => void onSaveAnotherCopy?.()}>Save copy</button>
+      {/if}
+    {/if}
     {#if checkpoint?.type === 'checkpoint'}
       <button
         type="button"
@@ -406,13 +418,13 @@
       >
         <Link class="h-3.5 w-3.5" /> Copy link
       </button>
-      {#if canInsertSelection}
+      {#if canSaveSelection}
         <button
           type="button"
           class="chat-selection-action"
-          onclick={() => void onInsertSelection()}
+          onclick={() => void onSaveSelection()}
         >
-          <FileInput class="h-3.5 w-3.5" /> Insert
+          <FileInput class="h-3.5 w-3.5" /> Save to note
         </button>
       {/if}
       <button

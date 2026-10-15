@@ -1,10 +1,28 @@
 import { describe, expect, it } from 'vitest';
 import {
+  escapeChatMarkdownText,
   normalizeCopiedMarkdown,
   wrapChatMarkdownElement
 } from './chatSelectionMarkdown';
 
 describe('chat selection Markdown', () => {
+  it('round trips literal Markdown punctuation through chat rendering', async () => {
+    const { renderChatMarkdown } = await import('./chatMarkdown');
+    const literal = '*literal* [brackets] [[Note]] ==plain== <tag> `code`';
+    const html = renderChatMarkdown(escapeChatMarkdownText(literal));
+    expect(html).toContain('*literal* [brackets] [[Note]] ==plain== &lt;tag&gt; `code`');
+    expect(html).not.toMatch(/<em>|<mark>|<code>|data-wikilink-target/);
+  });
+
+  it('keeps displayed list markers and entity spellings literal', async () => {
+    const { renderChatMarkdown } = await import('./chatMarkdown');
+    for (const text of ['1. literal', '2) literal', '- literal', '+ literal', '&amp;']) {
+      const html = renderChatMarkdown(escapeChatMarkdownText(text));
+      expect(html).not.toMatch(/<ol>|<ul>/);
+      expect(html).toContain(text.replace('&', '&amp;'));
+    }
+  });
+
   it('restores headings and nested inline formatting', () => {
     const bold = wrapChatMarkdownElement('strong', 'Important');
     expect(wrapChatMarkdownElement('h1', bold)).toBe(
@@ -25,8 +43,16 @@ describe('chat selection Markdown', () => {
 
   it('uses safe inline-code fences when the selection contains backticks', () => {
     expect(wrapChatMarkdownElement('code', 'value `inside`')).toBe(
-      '``value `inside```'
+      '`` value `inside` ``'
     );
+  });
+
+  it('preserves code fences embedded inside selected code', async () => {
+    const { renderChatMarkdown } = await import('./chatMarkdown');
+    const selected = wrapChatMarkdownElement('div', '```\ncontent\n```', { codeLanguage: 'md' });
+    expect(selected).toBe('````md\n```\ncontent\n```\n````\n\n');
+    const inline = wrapChatMarkdownElement('code', 'value `inside`');
+    expect(renderChatMarkdown(inline)).toContain('<code>value `inside`</code>');
   });
 
   it('restores tasks, quotes, links, and fenced code', () => {

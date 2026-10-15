@@ -10,27 +10,125 @@ use crate::{
 use tauri::{Manager, State};
 
 #[tauri::command]
+pub(crate) async fn chat_prepare_note_save<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    conversation_id: String,
+    message_id: String,
+    copy_intent: Option<String>,
+    selection: Option<crate::chat::note_proposals::SaveSelection>,
+    target_note_id: Option<String>,
+    heading: Option<String>,
+    title: Option<String>,
+    path: Option<String>,
+) -> Result<ChatAgentProposal, String> {
+    super::on_app_worker(app.clone(), move |_| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or("Application state unavailable")?;
+        service.prepare_note_save_target(
+            &conversation_id,
+            &message_id,
+            copy_intent.as_deref(),
+            selection.as_ref(),
+            target_note_id.as_deref(),
+            heading.as_deref(),
+            title.as_deref(),
+            path.as_deref(),
+        )
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn chat_get_proposal_draft<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    proposal_id: String,
+) -> Result<crate::chat::note_proposals::ProposalDraft, String> {
+    super::on_app_worker(app.clone(), move |_| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or("Application state unavailable")?;
+        service.proposal_draft(&proposal_id)
+    })
+    .await?
+}
+
+#[tauri::command]
+pub(crate) async fn chat_checkpoint_proposal_draft<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    proposal_id: String,
+    version: i64,
+    markdown: String,
+    title: String,
+    path: Option<String>,
+    decisions: serde_json::Value,
+) -> Result<crate::chat::note_proposals::ProposalDraft, String> {
+    super::on_app_worker(app.clone(), move |_| {
+        let service = app
+            .try_state::<ChatService>()
+            .ok_or("Application state unavailable")?;
+        service.checkpoint_proposal_draft(
+            &proposal_id,
+            version,
+            &markdown,
+            &title,
+            path.as_deref(),
+            &decisions,
+        )
+    })
+    .await?
+}
+
+#[tauri::command]
 pub(crate) async fn commit_agent_proposal<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     proposal_id: String,
     markdown: Option<String>,
+    expected_version: Option<i64>,
 ) -> Result<CommitNoteReviewResult, String> {
     super::on_app_worker(app.clone(), move |state| {
         let service = app
             .try_state::<ChatService>()
             .ok_or_else(|| "Application state unavailable".to_string())?;
-        commit_agent_proposal_with_state(state, &service, proposal_id, markdown)
+        commit_agent_proposal_with_version(state, &service, proposal_id, markdown, expected_version)
     })
     .await?
 }
 
+#[cfg(test)]
 pub(crate) fn commit_agent_proposal_with_state(
     state: &AppState,
     service: &ChatService,
     proposal_id: String,
     markdown: Option<String>,
 ) -> Result<CommitNoteReviewResult, String> {
-    let proposal = service.get_agent_proposal(&proposal_id)?;
+    commit_agent_proposal_with_version(state, service, proposal_id, markdown, None)
+}
+
+fn commit_agent_proposal_with_version(
+    state: &AppState,
+    service: &ChatService,
+    proposal_id: String,
+    markdown: Option<String>,
+    expected_version: Option<i64>,
+) -> Result<CommitNoteReviewResult, String> {
+    let _publication = service.lock_proposal_publication()?;
+    if let Some(receipt) = service.proposal_receipt(&proposal_id)? {
+        return Ok(receipt);
+    }
+    let mut proposal = service.get_agent_proposal(&proposal_id)?;
+    if proposal.status == "committing" {
+        service.recover_agent_proposal_commit(&proposal_id)?;
+        proposal = service.get_agent_proposal(&proposal_id)?;
+    }
+    if proposal.status == "committed" {
+        return service.recovered_proposal_receipt(&proposal_id);
+    }
+    if let Some(version) = expected_version {
+        if service.proposal_draft(&proposal_id)?.version != version {
+            return Err("The draft changed before Keep; reopen its latest version.".into());
+        }
+    }
     if proposal.status != "pending" && proposal.status != "conflict" {
         return Err("That proposal is no longer unresolved".to_string());
     }
@@ -46,6 +144,10 @@ pub(crate) fn commit_agent_proposal_with_state(
     } else if proposal.kind == "create" && conversation.summary.access == VaultAccess::None {
         return Err("Vault access is disabled for this conversation".to_string());
     }
+    let markdown = Some(match markdown {
+        Some(markdown) => markdown,
+        None => service.proposal_draft(&proposal_id)?.markdown,
+    });
     let notes_dir = state.running_vault().root().to_path_buf();
     let (plan, committed_markdown, create_title, expected_base_hash) = if proposal.kind == "update"
     {
@@ -177,7 +279,7 @@ pub(crate) fn commit_agent_proposal_with_state(
             commit_warning: outcome.warning().cloned(),
         })
     })();
-    let result = match commit_result {
+    let mut result = match commit_result {
         Ok(result) => result,
         Err(error) => {
             converge_agent_proposal_status(&service, &proposal_id, "conflict", false)?;
@@ -189,7 +291,27 @@ pub(crate) fn commit_agent_proposal_with_state(
     } else {
         "conflict"
     };
+    if result.status == "committed" {
+        if let Err(error) = service.save_proposal_receipt(&proposal_id, &result) {
+            eprintln!("Proposal receipt recovery required: {error}");
+        }
+    }
     converge_agent_proposal_status(&service, &proposal_id, resolution, result.applied.is_some())?;
+    if result.status == "conflict" {
+        if proposal.kind == "create" {
+            service.refresh_creation_collision(&proposal_id)?;
+        } else {
+            match service.refresh_saved_addition(&proposal_id) {
+                Ok(true) => {
+                    result.message = Some(
+                        "Destination changed. Review the refreshed addition and Keep again.".into(),
+                    )
+                }
+                Err(error) => result.message = Some(error),
+                _ => {}
+            }
+        }
+    }
     Ok(result)
 }
 

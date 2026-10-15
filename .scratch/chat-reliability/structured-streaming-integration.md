@@ -1,7 +1,7 @@
 # Structured chat streaming on Rig 0.44
 
 Final follow-up: the three evidence fixture failures below are
-[resolved](issues/10-existing-evidence-regression-failures.md). The full backend
+[resolved](../archive/chat-reliability-resolved-issues.md#10-investigate-three-existing-evidence-regression-failures). The full backend
 suite now passes **861 tests, 0 failures, 27 ignored** with loopback binding
 permitted for its local HTTP fixture. Earlier run counts remain checkpoint records.
 
@@ -43,7 +43,7 @@ extra automatic call. The user can retry the resulting failed message.
   source-backed Markdown test was then added and passed in the focused chat run.
 - Svelte/TypeScript check: zero errors/warnings. Architecture fitness: 21 pass. Python support: 16 pass.
 - Full Rust run: 853 pass, 27 ignored, the same three independently reproduced
-  [existing evidence regressions](issues/10-existing-evidence-regression-failures.md)
+  [existing evidence regressions](../archive/chat-reliability-resolved-issues.md#10-investigate-three-existing-evidence-regression-failures)
   fail. Three final focused tests were added afterward; all 15 focused checks pass.
 
 Logs are local ignored artifacts under `artifacts/structured-streaming-2026-10-11/`.

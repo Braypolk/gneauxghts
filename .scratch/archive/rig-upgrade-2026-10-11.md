@@ -50,7 +50,7 @@ See [raw upgrade evidence](../rig-upgrade/README.md) and
   The structured case performs two `find_notes` calls and one `read_notes` call;
   this is a compatibility check, not an efficiency improvement claim.
 - Three existing evidence-service failures reproduce identically on the isolated
-  Rig 0.41 baseline; tracked in [issue 10](../chat-reliability/issues/10-existing-evidence-regression-failures.md).
+  Rig 0.41 baseline; tracked in [issue 10](chat-reliability-resolved-issues.md#10-investigate-three-existing-evidence-regression-failures).
   Provenance absence, early evidence-budget exhaustion and a missing weekly-task
   item were undiagnosed at this checkpoint. Subsequent investigation resolved
   fixture assumptions about continuations and budgets, with no production limit

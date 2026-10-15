@@ -1,6 +1,12 @@
 import { browser, expect, $ } from '@wdio/globals';
+import assert from 'node:assert/strict';
 
 describe('native Tauri lifecycle', () => {
+  (process.env.GNEAUXGHTS_E2E_FOREGROUND === '1' ? it.skip : it)('denies native focus requests in background mode', async () => {
+    await assert.rejects(browser.execute(() => window.__TAURI_INTERNALS__!.invoke(
+      'plugin:window|set_focus', {label: 'main'})), /window.set_focus not allowed/);
+  });
+
   it('preserves stable geometry across embedded driver reconnection', async () => {
     const target = { x: 140, y: 120, width: 980, height: 700 };
     await browser.setWindowRect(target.x, target.y, target.width, target.height);

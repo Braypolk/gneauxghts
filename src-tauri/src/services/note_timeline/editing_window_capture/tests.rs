@@ -210,6 +210,62 @@ fn task_read_retries_a_save_that_overlaps_the_projection_query() {
 }
 
 #[test]
+fn chat_evidence_waits_for_internal_settlement_without_claiming_notes_changed() {
+    let _guard = crate::test_support::lock_test_env();
+    for changed in [false, true] {
+        let f = Fixture::new();
+        f.save("An unchanged supporting passage.");
+        let mut evidence = crate::services::evidence::EvidenceSession::default();
+        f.read_evidence_pages(
+            &mut evidence,
+            crate::services::evidence::ReadRequest {
+                note_id: Some(f.note.as_str().into()),
+                ..Default::default()
+            },
+        );
+        assert!(evidence.is_current(&f.state, None, &HashSet::new()));
+        let bytes = fs::read(&f.path).unwrap();
+        let timeline = f.state.note_timeline();
+        let mutation = timeline.begin_current_content_mutation().unwrap();
+        let (started, ready) = std::sync::mpsc::channel();
+        let (finished, result) = std::sync::mpsc::channel();
+        std::thread::scope(|scope| {
+            let state = &f.state;
+            scope.spawn(move || {
+                started.send(()).unwrap();
+                finished
+                    .send(evidence.is_current(state, None, &HashSet::new()))
+                    .unwrap();
+            });
+            ready
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap();
+            assert!(
+                matches!(
+                    result.recv_timeout(std::time::Duration::from_millis(50)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ),
+                "Internal settlement must not immediately invalidate unchanged evidence"
+            );
+            if changed {
+                fs::write(&f.path, "A changed supporting passage.").unwrap();
+            }
+            drop(mutation);
+            assert_eq!(
+                result
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .unwrap(),
+                !changed,
+                "Settlement must recheck the actual canonical bytes"
+            );
+        });
+        if !changed {
+            assert_eq!(fs::read(&f.path).unwrap(), bytes);
+        }
+    }
+}
+
+#[test]
 fn task_read_waits_for_active_mutations_to_settle() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();

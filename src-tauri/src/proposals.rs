@@ -80,7 +80,7 @@ pub(crate) struct CreationProposalPreview {
     pub(crate) proposed_editor_markdown: String,
 }
 
-#[derive(Clone, Debug, Serialize, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct CommitNoteReviewResult {
     pub(crate) status: String,
@@ -238,7 +238,7 @@ pub(crate) fn preview_note_change_from_working(
 /// Small changed regions use LCS so independent edits remain independent
 /// review hunks. Very large regions degrade to one bounded hunk rather than
 /// allocating an unbounded matrix.
-fn diff_preview_hunks(base: &str, proposed: &str) -> Vec<ProposalPreviewHunk> {
+pub(crate) fn diff_preview_hunks(base: &str, proposed: &str) -> Vec<ProposalPreviewHunk> {
     if base == proposed {
         return Vec::new();
     }
@@ -470,7 +470,7 @@ pub(crate) fn canonical_agent_commit_target(
     Ok(target)
 }
 
-fn unique_creation_path(notes_dir: &Path, stem: &str) -> PathBuf {
+pub(crate) fn unique_creation_path(notes_dir: &Path, stem: &str) -> PathBuf {
     let base = if stem.trim().is_empty() {
         "Untitled"
     } else {
@@ -478,11 +478,23 @@ fn unique_creation_path(notes_dir: &Path, stem: &str) -> PathBuf {
     };
     let mut candidate = notes_dir.join(format!("{base}.md"));
     let mut suffix = 2usize;
-    while candidate.exists() {
+    while fs::symlink_metadata(&candidate).is_ok() {
         candidate = notes_dir.join(format!("{base} {suffix}.md"));
         suffix += 1;
     }
     candidate
+}
+
+pub(crate) fn apply_proposed_text_edits(
+    body: &str,
+    edits: &[ProposedTextEdit],
+) -> Result<String, String> {
+    let resolved = resolve_text_edits(body, edits)?;
+    let mut result = body.to_string();
+    for edit in resolved.iter().rev() {
+        result.replace_range(edit.from..edit.to, &edit.new_text);
+    }
+    Ok(result)
 }
 
 fn resolve_text_edits(

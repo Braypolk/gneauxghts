@@ -95,8 +95,12 @@ async function connect(child) {
   assert.equal(realpathSync(vault.runningPath), realpathSync(join(child.fixtureRoot, 'vault')), 'Production running vault must be the disposable fixture before any write');
   record('vault-bound', { pid: child.pid, root: vault.runningPath });
   await invoke('plugin:window|show', { label: 'main' });
-  await invoke('plugin:window|set_focus', { label: 'main' });
-  await until(() => execute('return document.visibilityState === "visible" && document.hasFocus();'), 'genuinely visible, focused webview');
+  if (process.env.GNEAUXGHTS_E2E_FOREGROUND === '1') {
+    await invoke('plugin:window|set_focus', { label: 'main' });
+    await until(() => execute('return document.visibilityState === "visible" && document.hasFocus();'), 'genuinely visible, focused webview');
+  } else {
+    assert.equal(await invoke('plugin:window|is_focused', { label: 'main' }), false);
+  }
   const visibility = await execute('return {visibility:document.visibilityState,focus:document.hasFocus(),href:location.href};');
   record('visible', { pid: child.pid, ...visibility });
   return { invoke, execute, child };

@@ -4,7 +4,9 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { nativeE2EBinary, nativeE2EPorts } from './nativeE2EBinary.mjs';
+import { requireNativeForeground } from './nativePresentation.mjs';
 
+requireNativeForeground('First-visible window paint probe');
 if (process.platform !== 'darwin') throw new Error('Window visibility probe requires macOS');
 const { binary } = nativeE2EBinary('debug');
 const response = await fetch(`http://127.0.0.1:${nativeE2EPorts().dev}`, { signal: AbortSignal.timeout(3000) });

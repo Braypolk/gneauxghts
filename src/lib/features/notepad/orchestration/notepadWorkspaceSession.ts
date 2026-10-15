@@ -111,6 +111,7 @@ export interface NotepadWorkspaceSessionOptions {
   canSplitWorkspace: () => boolean;
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
   isReviewingDocument?: (document: NoteDraftState) => boolean;
+  checkpointReview?: () => Promise<void>;
   onNavigationBlocked?: () => void;
 }
 class SupersededNavigation extends Error {
@@ -275,6 +276,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     await persistence.getNoteSaveQueue(getPaneDocument(paneId).handle);
     let document = getPaneDocument(paneId);
     const retainsReview = () => options.isReviewingDocument?.(document) === true && !documentHasUnresolvedConflict(document);
+    if (retainsReview()) await options.checkpointReview?.();
     if (!documentCanLeaveWithoutCanonicalWrite(document) && !retainsReview()) {
       await persistence.enqueueSave(document);
     }
@@ -383,6 +385,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     document: NoteDraftState;
     path: string;
     markdown: string;
+    submittedTitle?: string;
     committedMarkdown: string;
     commitWarning: CommittedMutationWarning | null;
   }) {
@@ -413,7 +416,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     }
     persistence.cancelPendingAutosave(document);
     persistence.invalidatePendingSaveResults(document);
-    await documentEditing.adoptAcceptedProposal(document, snapshot, markdown, commitWarning);
+    await documentEditing.adoptAcceptedProposal(document, snapshot, markdown, commitWarning, commit.submittedTitle);
   }
 
   function bumpEpoch() {
@@ -661,6 +664,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     document: NoteDraftState | null;
     noteId: string | null;
     path: string;
+    creation?: boolean;
   }): Promise<NoteDraftState | null> {
     if (disposed) return null;
     let retained = target.document ?? findOpenDocument(state, target);
@@ -690,6 +694,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         if (retained && !state.documentsByHandle[retained.handle]) {
           retained = null;
         }
+        if (target.creation && !retained) retained = createFreshDraftNote(state);
         if (createTargetPane) {
           const initial = retained ?? createFreshDraftNote(state);
           workspace.dispatchPaneMembership(paneId, {

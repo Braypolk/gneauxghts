@@ -6,8 +6,8 @@
       "wire": {"type":"toolCallUpdated","callId":"read-call","name":"read_notes","title":"Read notes","status":"running","stepIndex":0}
     },
     {
-      "legacy": {"type":"toolCallUpdated","call_id":"read-call","name":"read_notes","title":"Read notes","status":"success","step_index":0,"input_summary":"Selected note","output_summary":"Read 2 passages","duration_millis":25},
-      "wire": {"type":"toolCallUpdated","callId":"read-call","name":"read_notes","title":"Read notes","status":"success","stepIndex":0,"inputSummary":"Selected note","outputSummary":"Read 2 passages","durationMillis":25}
+      "legacy": {"type":"toolCallUpdated","call_id":"read-call","name":"read_notes","title":"Read notes","status":"success","step_index":0,"input_summary":"Selected note","output_summary":"Read 2 passages","duration_millis":25,"readSources":[{"kind":"passage","noteId":"note-launch","notePath":"Plans/Launch.md","title":"Launch","excerpt":"Approved","url":null,"anchor":"passage-approved","passage":{"id":"passage-approved","noteId":"note-launch","contentHash":"recorded-hash","location":"body","start":10,"end":18,"excerpt":"Approved","revisions":[]}}]},
+      "wire": {"type":"toolCallUpdated","callId":"read-call","name":"read_notes","title":"Read notes","status":"success","stepIndex":0,"inputSummary":"Selected note","outputSummary":"Read 2 passages","durationMillis":25,"readSources":[{"kind":"passage","noteId":"note-launch","notePath":"Plans/Launch.md","title":"Launch","excerpt":"Approved","url":null,"anchor":"passage-approved","passage":{"id":"passage-approved","noteId":"note-launch","contentHash":"recorded-hash","location":"body","start":10,"end":18,"excerpt":"Approved","revisions":[]}}]}
     },
     {
       "legacy": {"type":"toolCallUpdated","call_id":"research-call","name":"research_notes","title":"Research across notes","status":"running","step_index":1},

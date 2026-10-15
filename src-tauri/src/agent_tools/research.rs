@@ -747,6 +747,7 @@ mod tests {
                 input_summary: Some("PRIVATE_QUERY".into()),
                 output_summary: Some("PRIVATE_TEXT".into()),
                 duration_millis: None,
+                read_sources: Vec::new(),
             });
         }
         progress.observe(&AgentEvent::TextDelta {

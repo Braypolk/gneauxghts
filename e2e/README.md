@@ -22,11 +22,19 @@ GNEAUXGHTS_E2E_HEADED=1 pnpm test:e2e:browser
 ```
 
 Ordinary frontend, support, Python and Rust tests also run without desktop
-windows. Native Tauri tests are a separate, visible-app opt-in: several assert
-actual OS focus and visible rendering, and can take focus repeatedly. The headed
-browser flag does not change native behavior. Run native checks when the desktop
-is available, or in a separate machine/VM desktop session; do not hide/minimize
-them to claim a passing focus or paint check.
+windows. Native Tauri tests run the real app in the background by default. On
+macOS, the E2E executable prevents application activation and initially orders
+its window behind other windows, including after process restarts. Background
+WebKit throttling is disabled in the E2E build. This is native background
+automation, not a headless app or a simulated focus state; ordinary app builds
+keep their normal presentation.
+
+Dedicated tests that assert actual OS focus or focused paint require explicit
+`GNEAUXGHTS_E2E_FOREGROUND=1` and otherwise fail before launching the app.
+Do not enable this flag automatically: arrange a separate desktop session or
+obtain permission to interrupt the current desktop. The headed browser flag
+does not change native behavior. Hiding/minimizing a focus or paint check does
+not establish that its assertions passed.
 
 Covered regressions:
 
@@ -44,9 +52,9 @@ Run:
 pnpm test:e2e:native
 ```
 
-The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The seven deterministic smoke specs (lifecycle, command/event transport, timeline, editing windows, images, pane motion and chat pane motion) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`.
+The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The four deterministic background smoke specs (lifecycle, command/event transport, images and chat-to-note) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`. Native focus IPC is denied by default; its permission is added only when the E2E process starts with explicit foreground opt-in. The lifecycle spec verifies that denial, and background scenarios check native focus after each test.
 
-Covered checks:
+Native coverage across the background and explicit foreground lanes:
 
 - Real application startup through the embedded driver.
 - Stable window geometry across embedded WebDriver reconnection (this does not restart the native process).
@@ -63,7 +71,8 @@ Keep this suite focused. Add native cases only for behavior that depends on real
 
 Build with `node e2e/support/buildNative.mjs`, then run a native Vite server in
 another terminal with `pnpm exec vite --strictPort --host 127.0.0.1 --port 1430`.
-On an unlocked macOS display, run `node e2e/support/windowRestore.mjs`.
+On an available, unlocked macOS display, explicitly run
+`GNEAUXGHTS_E2E_FOREGROUND=1 node e2e/support/windowRestore.mjs`.
 The probe launches fresh processes with disposable saved window states and
 samples WindowServer every 5 ms from process creation through two seconds after
 the window appears. Every observed visible frame must have the final bounds.
@@ -120,7 +129,7 @@ passage resolves through production validation and an excluded canary must never
 appear. These model-dependent checks complement deterministic selection,
 isolation and budget contracts; one passing run does not guarantee all goals.
 
-## Full Phase 1–3 gate
+## Default automated gate
 
 ```bash
 pnpm check
@@ -142,12 +151,22 @@ the corresponding environment and remain explicit.
 Run `pnpm test:build:artifacts` when changing Rust build profiles or artifact
 handling; it deliberately performs repeated Cargo builds on macOS. Live-provider
 and large-history release probes below remain opt-in and are not part of this gate.
+Complete native focus, History and paint verification additionally requires the
+foreground lane on an available desktop; the background gate does not claim
+those focus/paint checks passed.
 
 ## Execution lanes
 
 `pnpm test:e2e:native:list` lists the deterministic smoke files without building
 or launching the app. `pnpm test:e2e:native:run` runs exactly those files in fresh
-invocations. `pnpm test:e2e:native:measurement` selects measurement scenarios;
+background invocations. Search focus, pane motion, populated chat motion, dock
+outline and the History/Editing Window journeys that assert editor focus are
+retained in `node e2e/support/nativeSuite.mjs foreground`.
+That lane also reruns chat-to-note with its native painted block-cursor assertion
+enabled; the background run reports that assertion as pending while checking
+real source navigation, durable block links and saved-note retention.
+That lane and `pnpm test:e2e:native:measurement` require an explicit
+`GNEAUXGHTS_E2E_FOREGROUND=1`. The measurement lane selects measurement scenarios;
 its 1 MiB sustained-edit case reports observations and has no latency pass/fail
 budget. Chat typing additionally requires the explicit context-delay setting
 below. `node e2e/support/nativeSuite.mjs live --list` lists the provider-dependent
@@ -228,7 +247,7 @@ For native paint on an unlocked desktop, build the optimized E2E artifact and na
 
 ```sh
 node e2e/support/buildNative.mjs --release
-GNEAUXGHTS_SCALE_NATIVE_BINARY="$PWD/src-tauri/target/e2e/release/gneauxghts" python3 scripts/timeline_fixture.py native-scale --cache /tmp/gneauxghts-current-scale-100k
+GNEAUXGHTS_E2E_FOREGROUND=1 GNEAUXGHTS_SCALE_NATIVE_BINARY="$PWD/src-tauri/target/e2e/release/gneauxghts" python3 scripts/timeline_fixture.py native-scale --cache /tmp/gneauxghts-current-scale-100k
 ```
 
 The runner checks actual visible/focused state at the start and final animation frame, owns its native/Vite PIDs, and verifies its embedded listener and selected disposable vault before any write. Backend page/diff p95 budgets are 250 ms and reconstruction/restore-preview budgets are 1 s; native entry/page/diff have separate 250 ms p95 paint gates. Fixture construction, process startup, full traversal and observed memory have no invented SLA. Probe output records precise workload counts, samples, limitations and failed attempts.
@@ -251,6 +270,7 @@ from `CITATION_SAMPLES`. Preserved arrays are
 also emitted by the citation probe. With the actual desktop unlocked:
 
 ```sh
+GNEAUXGHTS_E2E_FOREGROUND=1 \
 GNEAUXGHTS_SCALE_NATIVE_BINARY="$PWD/src-tauri/target/e2e/release/gneauxghts" \
 GNEAUXGHTS_CITATION_SELECTIONS=/tmp/gneauxghts-citation-context-50-evidence/selections-10k.json \
 node e2e/support/currentScaleNative.mjs <canonical-disposable-clone>
@@ -276,7 +296,7 @@ If the native test ports are occupied, set `GNEAUXGHTS_E2E_PORT` (Vite) for both
 
 ### Chat typing responsiveness
 
-After building the native E2E binary, run `GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS=2000 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-typing.spec.ts` (add matching dev/driver port overrides when used). This opt-in test delays real related-note searches in the E2E-only worker path, types through the Svelte composer, and asserts input-to-paint latency, a single in-flight search and eventual search of the latest draft. It uses a disposable vault, disabled semantic search and no model calls. The normal app build contains no delay/event probe.
+After building the native E2E binary, run `GNEAUXGHTS_E2E_FOREGROUND=1 GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS=2000 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-typing.spec.ts` (add matching dev/driver port overrides when used). This opt-in test delays real related-note searches in the E2E-only worker path, types through the Svelte composer, and asserts input-to-paint latency, a single in-flight search and eventual search of the latest draft. It uses a disposable vault, disabled semantic search and no model calls. The normal app build contains no delay/event probe.
 
 ### Inventory budget regression
 
@@ -315,7 +335,7 @@ It also checks activation during entrance; the chat suite checks that a direct
 chat split neither mounts a temporary editor nor republishes unchanged insets.
 
 For the native WebKit check, build with `node e2e/support/buildNative.mjs`, then
-run `pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/pane-animation.spec.ts`.
+run `GNEAUXGHTS_E2E_FOREGROUND=1 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/pane-animation.spec.ts`.
 It uses the isolated native fixture, explicitly shows/focuses its window, and
 records frame intervals and widths for both close directions. Keep the desktop
 unlocked and avoid concurrent builds or benchmarks during this measurement.
@@ -384,3 +404,11 @@ Inspect saved answers for correct overdue/today/tomorrow classification, complet
 and undated children, invalid/code examples and stated coverage. Citation checks
 alone do not prove those claims. Each request records partial output on its
 300-second deadline; the model endpoint and output path must be explicit.
+
+### Request latency diagnostics
+
+The opt-in `request-latency.spec.ts` records real native request and polling
+costs. Reusable metadata-only transport capture and offline analysis live in
+`support/latency/`. The [measurement report and reproduction](../.scratch/chat-reliability/latency-probe/README.md)
+retain the original results and limitations. No live inference is part of the
+ordinary smoke suite.

@@ -17,6 +17,44 @@ enum FindResult {
 type ReadEvidenceArgs = crate::services::evidence::ReadRequest;
 
 impl AgentToolContext {
+    /// Only app-issued sources actually delivered by this read become activity
+    /// destinations. Discovery previews and arbitrary output titles are inert.
+    pub(crate) fn activity_read_sources(&self, name: &str, output: &Value) -> Vec<ChatSource> {
+        if !matches!(
+            name,
+            "read_notes" | "read_evidence" | "read_note" | "read_working_note" | "research_notes"
+        ) {
+            return Vec::new();
+        }
+        let sources = self.sources();
+        if let Some(items) = output["items"].as_array() {
+            let Ok(references) = self.passage_references.lock() else {
+                return Vec::new();
+            };
+            let mut seen = HashSet::new();
+            return items
+                .iter()
+                .filter_map(|item| {
+                    let source = references.source(item["sourceId"].as_str()?, &sources)?;
+                    let id = &source.passage.as_ref()?.id;
+                    seen.insert(id.clone()).then(|| source.clone())
+                })
+                .collect();
+        }
+        if output["sourceKind"] == "working_note" {
+            let anchor = format!("lines {}-{}", output["startLine"], output["endLine"]);
+            return sources
+                .into_iter()
+                .filter(|source| {
+                    source.note_id.as_deref() == output["noteId"].as_str()
+                        && source.anchor.as_deref() == Some(anchor.as_str())
+                        && source.passage.is_none()
+                })
+                .collect();
+        }
+        Vec::new()
+    }
+
     pub(crate) fn query_anchor_label(&self) -> String {
         let mut label = self
             .evidence
@@ -94,13 +132,20 @@ impl AgentToolContext {
     pub(crate) fn render_structured_answer(
         &self,
         text: &str,
-    ) -> Result<(String, Vec<ChatSource>), String> {
+    ) -> Result<
+        (
+            String,
+            Vec<ChatSource>,
+            Vec<crate::chat::structured_answer::CitationAssociation>,
+        ),
+        String,
+    > {
         let sources = self.sources();
         let references = self
             .passage_references
             .lock()
             .map_err(|_| "Citations unavailable")?;
-        crate::chat::structured_answer::render(text, &references, &sources)
+        crate::chat::structured_answer::render_with_associations(text, &references, &sources)
     }
 
     pub(crate) fn answer_source_ids(&self) -> Result<Vec<String>, String> {
@@ -182,8 +227,7 @@ impl AgentToolContext {
             .is_current(&state, allowed.as_ref(), &excluded)
         {
             return Err(
-                "Current note evidence changed during this answer. Search again to verify it."
-                    .into(),
+                "Note evidence could not be reverified. Retry to read current sources.".into(),
             );
         }
         let versions = self

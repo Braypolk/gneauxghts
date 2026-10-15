@@ -1,8 +1,10 @@
+import { normalizeSource } from './sources';
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import type {
   ChatConversation,
   ChatCitation,
+  ChatReadSource,
   RevisionCitation,
   PassageCitation,
   ChatConversationSummary,
@@ -60,15 +62,13 @@ interface RawSummary {
   createdAtMillis: number; updatedAtMillis: number; messageCount: number; detached: boolean;
   provider?: ChatProvider; model?: string; reasoningEffort?: ChatReasoningEffort;
 }
-interface RawSource {
-  kind: string; noteId?: string | null; notePath?: string | null; title: string; excerpt: string;
-  url?: string | null; anchor?: string | null; revision?: RevisionCitation | null; passage?: PassageCitation | null;
-}
+type RawSource = ChatReadSource;
 interface RawMessage {
   id: string; conversationId: string; ordinal: number; role: string; status: string; content: string;
   error?: string | null; part: number; createdAtMillis: number; sources: RawSource[];
   attachments?: ChatAttachment[];
   agentEvents?: ChatAgentEventEnvelope[];
+  savedNote?: { noteId: string; path: string };
 }
 interface RawExcerpt {
   id: string; conversationId: string; messageId: string; startOffset: number; endOffset: number;
@@ -122,24 +122,6 @@ function normalizeSummary(raw: RawSummary): ChatConversationSummary {
   };
 }
 
-function normalizeSource(raw: RawSource, index = 0): ChatCitation {
-  const id = `${raw.kind}:${raw.noteId ?? raw.url ?? raw.title}:${raw.anchor ?? index}`;
-  if (raw.kind === 'web' && raw.url) {
-    return { id, kind: 'web' as const, label: raw.title, url: raw.url, excerpt: raw.excerpt || null };
-  }
-  return {
-    id,
-    kind: 'note' as const,
-    label: raw.title,
-    noteId: raw.noteId ?? '',
-    notePath: raw.notePath ?? '',
-    ...(raw.revision ? { revision: raw.revision } : {}),
-    ...(raw.passage ? { passage: raw.passage } : {}),
-    sectionLabel: raw.anchor ?? null,
-    startLine: null,
-    excerpt: raw.excerpt || null
-  };
-}
 
 function normalizeMessage(raw: RawMessage) {
   const agentState = replayAgentEvents(raw.content, raw.agentEvents ?? [], {
@@ -157,6 +139,7 @@ function normalizeMessage(raw: RawMessage) {
     : raw.status as ChatMessage['status'];
   return {
     id: raw.id,
+    savedNote: raw.savedNote,
     conversationId: raw.conversationId,
     role,
     content: raw.content,
@@ -272,9 +255,13 @@ export interface ChatApi {
   listNotePolicies(): Promise<ChatNotePolicy[]>;
   searchNotesForPolicy(query: string, limit?: number): Promise<ChatNoteCandidate[]>;
   listPendingProposals(conversationId: string): Promise<ChatAgentProposal[]>;
+  prepareNoteSave?(conversationId: string, messageId: string, selection?: { markdown: string; text: string; occurrence?: number }, options?: { copyIntent?: string; targetNoteId?: string; heading?: string }): Promise<ChatAgentProposal>;
+  getProposalDraft?(proposalId: string): Promise<import('./types').ChatProposalDraft>;
+  checkpointProposalDraft?(proposalId: string, draft: import('./types').ChatProposalDraft, path?: string): Promise<import('./types').ChatProposalDraft>;
   commitAgentProposal(
     proposalId: string,
-    markdown?: string
+    markdown?: string,
+    expectedVersion?: number
   ): Promise<CommitNoteReviewResult>;
   dismissAgentProposal(proposalId: string): Promise<ChatAgentProposal>;
   resolveProjectionConflict(conversationId: string, resolution: ProjectionConflictResolution): Promise<ChatConversation>;
@@ -570,10 +557,21 @@ export class TauriChatApi implements ChatApi {
   listPendingProposals(conversationId: string) {
     return invoke<ChatAgentProposal[]>(CHAT_COMMANDS.listPendingProposals, { conversationId });
   }
-  commitAgentProposal(proposalId: string, markdown?: string) {
+  prepareNoteSave(conversationId: string, messageId: string, selection?: { markdown: string; text: string; occurrence?: number }, options?: { copyIntent?: string; targetNoteId?: string; heading?: string }) {
+    return invoke<ChatAgentProposal>('chat_prepare_note_save', { conversationId, messageId, selection, ...options });
+  }
+  getProposalDraft(proposalId: string) {
+    return invoke<import('./types').ChatProposalDraft>('chat_get_proposal_draft', { proposalId });
+  }
+  checkpointProposalDraft(proposalId: string, draft: import('./types').ChatProposalDraft, path?: string) {
+    return invoke<import('./types').ChatProposalDraft>('chat_checkpoint_proposal_draft', {
+      proposalId, ...draft, path
+    });
+  }
+  commitAgentProposal(proposalId: string, markdown?: string, expectedVersion?: number) {
     return invoke<CommitNoteReviewResult>(CHAT_COMMANDS.commitAgentProposal, {
       proposalId,
-      markdown
+      markdown, expectedVersion
     });
   }
   dismissAgentProposal(proposalId: string) {

@@ -22,13 +22,21 @@ and reproducible fixtures belong in Git.
 ## Deferred or awaiting fresh triage
 
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.
-- [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): discovery only.
+- [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is implemented.
 - [Settings checkpoint](settings-redesign/README.md): further design deferred.
 - [Pane animation](pane-animation/validation.md#remaining-profiling): completed corrections with explicitly limited native verification and remaining profiling suggestions.
 - [Workspace dock motion](workspace-dock-motion/spec.md), [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools
+
+- [Background native testing](archive/native-background-testing.md): native E2E startup/restarts and focus permissions default to background operation; four smoke files pass, while actual focus/paint checks require explicit foreground opt-in.
+
+- [Activity read links](archive/chat-activity-read-links.md): actual note and passage reads show clickable note names and previews, with durable replay and normal citation navigation; frontend, backend and native macOS coverage completed.
+
+- [Chat evidence freshness](archive/chat-evidence-freshness.md): corrected false change detection from legacy identity bookkeeping, timestamps and internal settlement; actual source changes and access revocation remain blocked.
+
+- [Chat-to-note](archive/chat-to-note.md): faithful whole-answer/selection saves, normal-editor review, durable pending drafts, explicit existing-note additions and conversational refinement. Native review-switching fixture readiness and Retina restoration are corrected. The [cleanup audit](archive/chat-cleanup-audit.md) records the current gate. Local-model journeys pass; physical iOS validation remains unverified.
 
 - [Structured answer source recovery](archive/structured-answer-source-recovery.md): unissued selections become explicit unavailable markers while preserving valid answer text and citations; stale or revoked real evidence still blocks delivery.
 - [Server reasoning options](archive/server-reasoning-options.md): local controls use advertised LM Studio options and defaults; outgoing reasoning is revalidated and mapped to the compatible transport.

@@ -375,8 +375,13 @@
     resolvePaneCommandChoice: (paneId, choice) =>
       commands.resolvePaneCommandChoice(paneId, choice),
     focusPane: (paneId) => commands.focusPaneAfterShortcut(paneId),
-    insertMarkdown: (request) => featureHost.insertMarkdown(request),
     getProposalOrchestration,
+    openSavedNote: async proposal => {
+      const noteId = proposal.payload.committedNoteId;
+      const path = proposal.payload.committedPath;
+      if (typeof noteId !== 'string' || typeof path !== 'string') throw new Error('The saved note could not be located.');
+      await commands.openNotePath(path, { noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: false });
+    },
     clearRecentlyForgottenNote: () => setRecentlyForgotten(null),
     forgottenNoteRetentionPreference: () =>
       appSettings.forgottenNoteRetentionPreference,
@@ -743,6 +748,7 @@
     });
 
   const workspacePersistence = createWorkspacePersistenceService({
+    flushReviews: () => getProposalOrchestration().flushCheckpoint(),
     flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
     getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
@@ -1043,6 +1049,7 @@
     },
     forgottenNoteRetentionPreference: () =>
       appSettings.forgottenNoteRetentionPreference,
+    checkpointReview: () => getProposalOrchestration().flushCheckpoint(),
     isReviewingDocument: (document) =>
       getProposalOrchestration().isReviewingDocument(document),
 

@@ -29,6 +29,18 @@ function envelope(
 }
 
 describe('agent event reducer', () => {
+  it('keeps read destinations separate from answer citations during live updates and replay', () => {
+    const passage = { id: 'read-only', noteId: 'launch', contentHash: 'hash', location: 'body', start: 10, end: 18, excerpt: 'Approved', revisions: [] };
+    const event = envelope(1, Object.assign({ type: 'toolCallUpdated' as const, callId: 'read', name: 'read_notes', title: 'Read selected passages', status: 'success' as const }, {
+      readSources: [{ kind: 'passage', noteId: 'launch', notePath: 'Launch.md', title: 'Launch', excerpt: 'Approved', passage }]
+    }));
+    for (const state of [reduceAgentEvent(initialAgentEventState('Answer'), event), replayAgentEvents('Answer', [event])]) {
+      expect(state.parts.find(part => part.type === 'tool')).toMatchObject({
+        readSources: [{ kind: 'note', noteId: 'launch', notePath: 'Launch.md', label: 'Launch', passage }]
+      });
+      expect(state.parts.some(part => part.type === 'sources')).toBe(false);
+    }
+  });
   it('marks successful parent compaction without losing selected note titles during live updates or replay', () => {
     const events = [
       envelope(1, { type: 'contextUpdated', compacted: false, selectedNoteTitles: ['Project plan'] }),
@@ -56,6 +68,7 @@ describe('agent event reducer', () => {
       const tools = state.parts.filter((part) => part.type === 'tool');
       expect(tools).toHaveLength(2);
       expect(tools[0]).toMatchObject({ callId: 'read-call', status: 'success', outputSummary: 'Read 2 passages', durationMillis: 25 });
+      expect(tools[0].readSources?.[0]).toMatchObject({ label: 'Launch', noteId: 'note-launch', passage: { id: 'passage-approved' } });
       expect(tools[1]).toMatchObject({ callId: 'research-call', status: 'error', stepIndex: 1, durationMillis: 47572 });
       expect(tools[1].outputSummary).toContain('shared evidence allowance is exhausted');
     }

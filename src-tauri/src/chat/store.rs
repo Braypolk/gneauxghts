@@ -101,6 +101,35 @@ impl ChatService {
         stats: &crate::agent_guardrails::AgentRunStats,
         reason: Option<&str>,
     ) -> Result<(), String> {
+        self.persist_terminal_with_associations(
+            message_id,
+            run_id,
+            status,
+            content,
+            error,
+            sources,
+            note_reference_ids,
+            usage,
+            stats,
+            reason,
+            &[],
+        )
+    }
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn persist_terminal_with_associations(
+        &self,
+        message_id: &str,
+        run_id: &str,
+        status: &str,
+        content: &str,
+        error: Option<&str>,
+        sources: &[ChatSource],
+        note_reference_ids: &[String],
+        usage: &(u64, u64),
+        stats: &crate::agent_guardrails::AgentRunStats,
+        reason: Option<&str>,
+        associations: &[structured_answer::CitationAssociation],
+    ) -> Result<(), String> {
         let mut connection = self.connection()?;
         let tx = connection.transaction().map_err(|e| e.to_string())?;
         let run_status = if status == "complete" {
@@ -126,6 +155,7 @@ impl ChatService {
             sources,
             note_reference_ids,
         )?;
+        tx.execute("INSERT OR REPLACE INTO chat_answer_associations(message_id,content_hash,associations_json) VALUES(?1,?2,?3)",params![message_id,crate::semantic::db::content_hash(content),serde_json::to_string(associations).map_err(|e|e.to_string())?]).map_err(|e|e.to_string())?;
         tx.commit().map_err(|e| e.to_string())
     }
     // Best-effort terminal recovery after source/receipt persistence fails.
@@ -460,6 +490,7 @@ impl ChatService {
             [],
         );
         let defaults = ChatSettings::default();
+        super::note_proposals::initialize(&connection)?;
         connection
             .execute(
                 "INSERT OR IGNORE INTO chat_settings (id, provider, model, default_access)

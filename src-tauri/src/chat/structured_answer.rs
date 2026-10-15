@@ -122,11 +122,28 @@ struct Segment {
     sources: Vec<String>,
 }
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct CitationAssociation {
+    pub(crate) start: usize,
+    pub(crate) end: usize,
+    pub(crate) links: Vec<String>,
+}
+
+#[cfg(test)]
 pub(crate) fn render(
     raw: &str,
     references: &PassageReferences,
     sources: &[ChatSource],
 ) -> Result<(String, Vec<ChatSource>), String> {
+    render_with_associations(raw, references, sources).map(|(text, sources, _)| (text, sources))
+}
+
+pub(crate) fn render_with_associations(
+    raw: &str,
+    references: &PassageReferences,
+    sources: &[ChatSource],
+) -> Result<(String, Vec<ChatSource>, Vec<CitationAssociation>), String> {
     if raw.len() > MAX_BYTES {
         return Err("Structured answer exceeds the size limit".into());
     }
@@ -138,6 +155,8 @@ pub(crate) fn render(
     let mut selected = Vec::new();
     let mut delivered = HashMap::new();
     let mut blocks = Vec::new();
+    let mut associations = Vec::new();
+    let mut offset = 0;
     for segment in answer.segments {
         if segment.text.trim().is_empty() || segment.sources.len() > 24 {
             return Err("Invalid answer segment".into());
@@ -197,9 +216,15 @@ pub(crate) fn render(
             );
             text.push_str(&links.join(" "));
         }
+        associations.push(CitationAssociation {
+            start: offset,
+            end: offset + segment.text.trim().len(),
+            links,
+        });
+        offset += text.len() + 2;
         blocks.push(text);
     }
-    Ok((blocks.join("\n\n"), selected))
+    Ok((blocks.join("\n\n"), selected, associations))
 }
 
 #[cfg(test)]

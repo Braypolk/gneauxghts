@@ -20,73 +20,88 @@ impl ChatService {
         // Run-scoped grants and any unresolved waiters are strictly ephemeral.
         // Resolve them before terminal UI events so no control remains actionable.
         self.inner.permission_broker.finish_run(&run.run_id);
-        let (status, content, error, sources, note_reference_ids, usage, stats, reason) =
-            match result {
-                Ok(success) => {
-                    let cancelled = run.cancelled.is_cancelled();
-                    (
-                        if cancelled { "cancelled" } else { "complete" },
-                        if cancelled && success.structured {
-                            String::new()
-                        } else {
-                            success.content
-                        },
-                        None,
-                        if cancelled && success.structured {
-                            Vec::new()
-                        } else {
-                            success.sources
-                        },
-                        if cancelled {
-                            Vec::new()
-                        } else {
-                            success.note_reference_ids
-                        },
-                        (success.usage.input_tokens, success.usage.output_tokens),
-                        success.stats,
-                        cancelled.then_some("userCancelled"),
-                    )
-                }
-                Err(failure) => {
-                    let content = failure.partial.unwrap_or_else(|| {
-                        self.connection()
-                            .and_then(|connection| {
-                                connection
-                                    .query_row(
-                                        "SELECT content FROM chat_messages WHERE id = ?1",
-                                        [&run.assistant_message_id],
-                                        |row| row.get::<_, String>(0),
-                                    )
-                                    .map_err(|e| e.to_string())
-                            })
-                            .unwrap_or_default()
-                    });
-                    let mut sources = failure.sources;
-                    sources.extend(web_sources_from_text(&content));
-                    let cancelled = run.cancelled.is_cancelled();
-                    let reason = if cancelled {
-                        "userCancelled"
+        let (
+            status,
+            content,
+            error,
+            sources,
+            note_reference_ids,
+            usage,
+            stats,
+            reason,
+            associations,
+        ) = match result {
+            Ok(success) => {
+                let cancelled = run.cancelled.is_cancelled();
+                (
+                    if cancelled { "cancelled" } else { "complete" },
+                    if cancelled && success.structured {
+                        String::new()
                     } else {
-                        terminal_reason_from_error(&failure.error)
-                    };
-                    (
-                        if cancelled { "cancelled" } else { "error" },
-                        content,
-                        Some(failure.error),
-                        sources,
-                        Vec::new(),
-                        (0, 0),
-                        failure.stats,
-                        Some(reason),
-                    )
-                }
-            };
+                        success.content
+                    },
+                    None,
+                    if cancelled && success.structured {
+                        Vec::new()
+                    } else {
+                        success.sources
+                    },
+                    if cancelled {
+                        Vec::new()
+                    } else {
+                        success.note_reference_ids
+                    },
+                    (success.usage.input_tokens, success.usage.output_tokens),
+                    success.stats,
+                    cancelled.then_some("userCancelled"),
+                    if cancelled {
+                        Vec::new()
+                    } else {
+                        success.associations
+                    },
+                )
+            }
+            Err(failure) => {
+                let content = failure.partial.unwrap_or_else(|| {
+                    self.connection()
+                        .and_then(|connection| {
+                            connection
+                                .query_row(
+                                    "SELECT content FROM chat_messages WHERE id = ?1",
+                                    [&run.assistant_message_id],
+                                    |row| row.get::<_, String>(0),
+                                )
+                                .map_err(|e| e.to_string())
+                        })
+                        .unwrap_or_default()
+                });
+                let mut sources = failure.sources;
+                sources.extend(web_sources_from_text(&content));
+                let cancelled = run.cancelled.is_cancelled();
+                let reason = if cancelled {
+                    "userCancelled"
+                } else {
+                    terminal_reason_from_error(&failure.error)
+                };
+                (
+                    if cancelled { "cancelled" } else { "error" },
+                    content,
+                    Some(failure.error),
+                    sources,
+                    Vec::new(),
+                    (0, 0),
+                    failure.stats,
+                    Some(reason),
+                    Vec::new(),
+                )
+            }
+        };
         let mut payload = stream_payload(
             &run.request_id,
             &run.conversation_id,
             &run.assistant_message_id,
         );
-        if let Err(error) = self.persist_terminal_outcome(
+        if let Err(error) = self.persist_terminal_with_associations(
             &run.assistant_message_id,
             &run.run_id,
             status,
@@ -97,6 +112,7 @@ impl ChatService {
             &usage,
             &stats,
             reason,
+            &associations,
         ) {
             // Never acknowledge an undurable success or emit its sources.
             let failure = format!("Could not save the final chat response: {error}");
@@ -255,6 +271,25 @@ impl ChatService {
             prompt.push_str("\n\nNotes explicitly included for this turn:\n");
             prompt.push_str(&selected_context);
         }
+        let answers = conversation
+            .messages
+            .iter()
+            .filter(|m| m.role == "assistant" && m.status == "complete")
+            .rev()
+            .take(6)
+            .map(|m| serde_json::json!({"messageId":m.id,"ordinal":m.ordinal}))
+            .collect::<Vec<_>>();
+        let drafts = self
+            .list_pending_agent_proposals(&run.conversation_id)?
+            .into_iter()
+            .rev()
+            .take(6)
+            .map(|p| serde_json::json!({"proposalId":p.id,"title":p.title,"kind":p.kind}))
+            .collect::<Vec<_>>();
+        if !answers.is_empty() || !drafts.is_empty() {
+            prompt.push_str("\n\nChat transfer references (navigation and unapproved draft identity only; not note evidence): ");
+            prompt.push_str(&serde_json::json!({"recentCompletedAnswersNewestFirst":answers,"pendingDrafts":drafts}).to_string());
+        }
         // Keep turn-local context before the explicitly labeled authored request.
         prompt.push_str("\n\nUser request:\n");
         prompt.push_str(&latest_user.content);
@@ -400,7 +435,7 @@ impl ChatService {
         structured: bool,
         cancelled: &CancellationToken,
     ) -> Result<AgentResponseSuccess, AgentResponseFailure> {
-        let finalize = || -> Result<(String, Vec<ChatSource>), String> {
+        let finalize = || -> Result<(String, Vec<ChatSource>, Vec<structured_answer::CitationAssociation>), String> {
             if cancelled.is_cancelled() {
                 return Err("Request cancelled".into());
             }
@@ -411,15 +446,17 @@ impl ChatService {
                 Ok((
                     tools.render_passage_references(&response.output)?,
                     tools.sources(),
+                    Vec::new(),
                 ))
             }
         };
-        let (content, mut sources) = finalize().map_err(|error| AgentResponseFailure {
-            partial: structured.then(String::new),
-            error,
-            sources: Vec::new(),
-            stats: response.stats.clone(),
-        })?;
+        let (content, mut sources, associations) =
+            finalize().map_err(|error| AgentResponseFailure {
+                partial: structured.then(String::new),
+                error,
+                sources: Vec::new(),
+                stats: response.stats.clone(),
+            })?;
         sources.extend(web_sources_from_text(&content));
         // Working-note reads identify editing targets but cannot supply canonical
         // citations. Keep only their identities for fresh, policy-checked follow-ups.
@@ -436,6 +473,7 @@ impl ChatService {
             }
         }
         Ok(AgentResponseSuccess {
+            associations,
             structured,
             content,
             sources,

@@ -211,8 +211,13 @@ it('binds app-constructed links to exact passage identities and leaves stale lin
   const content = '[Source 1](passage:durable-one)';
   expect(renderChatMarkdown(content, citations)).toContain('data-chat-note-citation-id="passage:note:hash"');
   expect(renderChatMarkdown(content, citations)).toContain('>Title with ] punctuation</button>');
+  expect(renderChatMarkdown(content, citations)).toContain('data-chat-selection-ignore');
   const stale = renderChatMarkdown(content, []);
   expect(stale).not.toContain('href=');
   expect(stale).not.toContain('data-chat-note-citation-id=');
   expect(stale).toContain('[citation unavailable]');
+  expect(stale).toContain('<span data-chat-selection-ignore>[citation unavailable]</span>');
+  // Authored links keep their selected label even when they refer to this note.
+  expect(renderChatMarkdown('See [[Note|the note]] or [the note](https://example.com).', citations))
+    .not.toContain('data-chat-selection-ignore');
 });

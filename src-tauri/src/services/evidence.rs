@@ -70,7 +70,7 @@ pub(crate) enum SearchMode {
     Regex,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PassageCitation {
     pub(crate) id: String,
@@ -239,17 +239,22 @@ fn fingerprint(state: &AppState, ids: &HashSet<String>) -> Result<String, ToolEr
         .map_err(|_| "Notes index unavailable")?;
     let mut keys = Vec::new();
     for id in ids {
-        if let Some((path, n)) = index.get_note_by_note_id(id) {
-            let signature = fs::metadata(path)
-                .ok()
-                .map(|m| (m.len(), m.modified().ok()));
-            keys.push(format!(
-                "{}:{}:{}:{:?}",
-                id,
-                path.display(),
-                n.canonical_digest(),
-                signature
-            ));
+        if let Some((path, _)) = index.get_note_by_note_id(id) {
+            // Filesystem timestamps, delayed index refreshes and assignment of
+            // catalog identities to legacy files are not changes to search
+            // content. Bind the scope to actual paths/bytes instead. A changed
+            // embedded identity is still detected because it changes the bytes;
+            // admitted citations separately retain their exact note identity.
+            let mut file = fs::File::open(path)
+                .map_err(|_| ToolError::stale("Search scope unavailable; search again"))?;
+            let mut content = blake3::Hasher::new();
+            content
+                .update_reader(&mut file)
+                .map_err(|_| ToolError::stale("Search scope unavailable; search again"))?;
+            keys.push(
+                serde_json::to_string(&(path, content.finalize().to_hex().as_str()))
+                    .map_err(|e| e.to_string())?,
+            );
         }
     }
     keys.sort();
@@ -1602,6 +1607,39 @@ pub(crate) fn validate_citation(
     allowed: Option<&HashSet<String>>,
     excluded: &HashSet<String>,
 ) -> Option<(PathBuf, String)> {
+    let timeline = state.note_timeline();
+    let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
+    // An overlapping observation/publication can invalidate a one-shot read
+    // without changing this source. Wait for settlement and repeat all canonical
+    // and proof checks, never merely retry an already captured projection.
+    let mut current = access
+        .read_refreshable(|| {
+            Ok(
+                validate_citation_snapshot(state, citation, allowed, excluded)
+                    .map(|(path, title)| Candidate {
+                        citation: citation.clone(),
+                        path,
+                        title,
+                        section: String::new(),
+                        score: 0.0,
+                        provenance: None,
+                        context: String::new(),
+                        task: None,
+                    })
+                    .into_iter()
+                    .collect::<Vec<_>>(),
+            )
+        })
+        .ok()?;
+    current.pop().map(|c| (c.path, c.title))
+}
+
+fn validate_citation_snapshot(
+    state: &AppState,
+    citation: &PassageCitation,
+    allowed: Option<&HashSet<String>>,
+    excluded: &HashSet<String>,
+) -> Option<(PathBuf, String)> {
     if excluded.contains(&citation.note_id)
         || allowed.is_some_and(|ids| !ids.contains(&citation.note_id))
     {
@@ -1649,19 +1687,6 @@ pub(crate) fn validate_citation(
     }
     let timeline = state.note_timeline();
     let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
-    let target = Candidate {
-        citation: citation.clone(),
-        path: path.clone(),
-        title: title.clone(),
-        section: String::new(),
-        score: 0.0,
-        provenance: None,
-        context: String::new(),
-        task: None,
-    };
-    if access.read(|| Ok(vec![target])).ok()?.is_empty() {
-        return None;
-    }
     if !citation.revisions.is_empty()
         && access.current_citations(&citation.revisions).ok()?.len() != citation.revisions.len()
     {

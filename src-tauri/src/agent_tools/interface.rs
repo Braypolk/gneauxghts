@@ -15,6 +15,14 @@ pub(super) enum ReadNotesArgs {
         include_provenance: Option<bool>,
         activity_range: Option<ActivityRange>,
     },
+    Draft {
+        proposal_id: Option<String>,
+        start_line: Option<usize>,
+        max_chars: Option<usize>,
+    },
+    Chat {
+        message_id: Option<String>,
+    },
     Edit {
         note_id: String,
         start_line: Option<usize>,
@@ -90,7 +98,7 @@ impl Tool for ReadNotesTool {
             description.push_str("purpose=answer: Read evidence IDs or a known canonical note; continue with purpose and cursor only. Copy each returned sourceId into final segment sources; citation is its Markdown label. evidenceId and noteId are retrieval selectors, not citation IDs. The app builds links. activity_range assesses temporal support separately from meaning: qualify uncertainty; never attribute not_established passages or supporting context to that period. Resolve actor, event date, negation and status. coverage.complete applies to coverage.scope across pages. Only wholeNoteComplete establishes a complete current note in this read; nextReads supplies selectors when needed. Coverage excludes cleared history and discarded Editing Window states; it is not a complete real-world record.");
         }
         if self.0.capabilities.contains(Capability::WorkingNotes) {
-            description.push_str(" purpose=edit: Read bounded working-copy pages for reviewed changes; lines are 1-based. pendingChanges is unapproved content, not answer evidence. Use returned contentHash when proposing changes.");
+            description.push_str(" purpose=edit: Read bounded working-copy pages for reviewed changes; lines are 1-based. pendingChanges is unapproved content, not answer evidence. Use returned contentHash when proposing changes. purpose=draft lists pending reviews or reads proposal_id pages with a version for explicit refinement, including new notes. purpose=chat reads a completed message_id (default latest) for faithful transfer only; it is not current note evidence.");
         }
         description.trim().into()
     }
@@ -102,6 +110,8 @@ impl Tool for ReadNotesTool {
         }
         if self.0.capabilities.contains(Capability::WorkingNotes) {
             variants.push(("edit", ReadNoteTool(self.0.clone()).parameters()));
+            variants.push(("draft", note_saves::draft_schema()));
+            variants.push(("chat", note_saves::chat_schema()));
         }
         tagged_object_schema("purpose", variants)
     }
@@ -112,6 +122,20 @@ impl Tool for ReadNotesTool {
         args: Self::Args,
     ) -> Result<Value, AgentToolError> {
         match args {
+            ReadNotesArgs::Draft {
+                proposal_id,
+                start_line,
+                max_chars,
+            } => {
+                require_capability(&self.0, Capability::WorkingNotes)?;
+                let tool = self.0.clone();
+                run_blocking_tool(move || tool.read_draft(proposal_id, start_line, max_chars)).await
+            }
+            ReadNotesArgs::Chat { message_id } => {
+                require_capability(&self.0, Capability::WorkingNotes)?;
+                let tool = self.0.clone();
+                run_blocking_tool(move || tool.read_chat_answer(message_id)).await
+            }
             ReadNotesArgs::Answer {
                 note_id,
                 evidence_ids,
@@ -170,6 +194,20 @@ pub(super) enum NoteChangeArgs {
         expected_content_hash: String,
         markdown: String,
     },
+    Save {
+        message_id: Option<String>,
+        selection: Option<crate::chat::note_proposals::SaveSelection>,
+        target_note_id: Option<String>,
+        heading: Option<String>,
+        title: Option<String>,
+        path: Option<String>,
+    },
+    Refine {
+        proposal_id: String,
+        expected_version: i64,
+        markdown: Option<String>,
+        edits: Option<Vec<ProposedTextEdit>>,
+    },
     Create {
         title: String,
         markdown: String,
@@ -183,7 +221,7 @@ impl Tool for ProposeNoteChangeTool {
     type Output = Value;
 
     fn description(&self) -> String {
-        "Stage a reviewed change; the user must Keep before disk changes. operation=edit applies targeted edits to a surfaced note. replace supplies its complete body: first read every current purpose=edit page in this run, including pendingChanges; retain all desired content and omit managed frontmatter. Both fold pending content into the combined preview. create stages a uniquely named new note. Submit through this tool. Deadlines: @due(YYYY-MM-DD), Gregorian years 0001-9999, on the exact checkbox line. Preserve unrelated/child text; when changing/removing a deadline consolidate only supported valid annotations on that line. No stored slash commands, due times or reminders.".into()
+        "Stage a reviewed change; the user must Keep before disk changes. operation=edit applies targeted edits to a surfaced note. replace supplies its complete body: first read every current purpose=edit page in this run, including pendingChanges; retain all desired content and omit managed frontmatter. Both fold pending content into the combined preview. create stages a uniquely named new note. save faithfully transfers a completed message_id (default latest); default is a new note, target_note_id only for an explicitly requested existing destination, heading only when specified. Do not retype the answer. refine changes an identified pending proposal from its purpose=draft version, using targeted edits to preserve unrelated text or a complete body after reading all pages; only on explicit user request. Submit through this tool. Deadlines: @due(YYYY-MM-DD), Gregorian years 0001-9999, on the exact checkbox line. Preserve unrelated/child text; when changing/removing a deadline consolidate only supported valid annotations on that line. No stored slash commands, due times or reminders.".into()
     }
 
     fn parameters(&self) -> Value {
@@ -196,6 +234,8 @@ impl Tool for ProposeNoteChangeTool {
                     ProposeNoteRewriteTool(self.0.clone()).parameters(),
                 ),
                 ("create", ProposeCreateNoteTool(self.0.clone()).parameters()),
+                ("save", note_saves::save_schema()),
+                ("refine", note_saves::refine_schema(&self.0)),
             ],
         )
     }
@@ -207,6 +247,39 @@ impl Tool for ProposeNoteChangeTool {
     ) -> Result<Value, AgentToolError> {
         require_capability(&self.0, Capability::Proposals)?;
         match args {
+            NoteChangeArgs::Save {
+                message_id,
+                selection,
+                target_note_id,
+                heading,
+                title,
+                path,
+            } => {
+                let tool = self.0.clone();
+                run_blocking_tool(move || {
+                    tool.save_chat_answer(
+                        message_id,
+                        selection,
+                        target_note_id,
+                        heading,
+                        title,
+                        path,
+                    )
+                })
+                .await
+            }
+            NoteChangeArgs::Refine {
+                proposal_id,
+                expected_version,
+                markdown,
+                edits,
+            } => {
+                let tool = self.0.clone();
+                run_blocking_tool(move || {
+                    tool.refine_chat_draft(proposal_id, expected_version, markdown, edits)
+                })
+                .await
+            }
             NoteChangeArgs::Edit {
                 note_id,
                 expected_content_hash,

@@ -7,11 +7,9 @@ import {
 } from '$lib/features/chat/controller.svelte';
 import type {
   ChatAgentProposal,
-  ChatSelection,
   ChatSelectionActions,
   ChatSurfaceHandle
 } from '$lib/features/chat/types';
-import type { NotepadFeatureHost } from '$lib/features/notepad/host';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
 import { getDocumentPath } from '$lib/features/notepad/document/documentState';
 import type {
@@ -53,7 +51,6 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
     choice: 'thoughtPartner'
   ) => Promise<void>;
   focusPane: (paneId: TPaneId) => void;
-  insertMarkdown: NotepadFeatureHost['insertMarkdown'];
   getProposalOrchestration: () => ReturnType<
     typeof createProposalOrchestration
   >;
@@ -63,6 +60,7 @@ export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
   forgetNote: () => Promise<void>;
   unforgetNote: () => Promise<void>;
   api?: ChatApi;
+  openSavedNote?: (proposal: ChatAgentProposal) => Promise<void>;
 }
 
 /**
@@ -90,8 +88,19 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     this.api = deps.api ?? chatApi;
     for (const paneId of initialPaneIds) this.ensureController(paneId);
     this.selectionActions = {
-      onInsertIntoNote: (selection) =>
-        this.insertSelectionIntoNote(selection)
+      onSaveToNote: async ({ conversationId, messageId, selection, copyIntent, targetNoteId, heading }) => {
+        if (!this.api.prepareNoteSave) throw new Error('Saving chat answers is unavailable.');
+        const proposal = await this.api.prepareNoteSave(conversationId, messageId, selection, { copyIntent, targetNoteId, heading });
+        const controller = [...this.controllers.values()].find(c => c.getSnapshot().conversation?.id === conversationId);
+        if (proposal.status !== 'committed') controller?.acceptProposal(proposal);
+        if (proposal.status === 'committed') {
+          // The receipt is resolved by Note Identity in the ordinary note opener.
+          await this.deps.openSavedNote?.(proposal);
+          return;
+        }
+        const request = await this.durableProposalReviewRequest(proposal);
+        if (request) await this.deps.getProposalOrchestration().loadDurableProposal(request);
+      }
     };
   }
 
@@ -99,6 +108,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     let controller = this.controllers.get(paneId);
     if (!controller) {
       controller = createChatController(this.api, {
+        onRequestedProposal: async proposal => { await this.reviewAgentProposal(paneId, proposal); },
         onProposalAvailable: async (proposal) => {
           await this.showAgentProposalIfOpen(paneId, proposal);
         },
@@ -242,24 +252,51 @@ export class NotepadChatCoordinator<TPaneId extends string> {
       // failure should not prevent immediate review.
     }
 
-    const preview = storedUpdatePreview(pendingProposal);
+    let draft = this.api.getProposalDraft ? await this.api.getProposalDraft(pendingProposal.id) : undefined;
+    const preview = pendingProposal.kind === 'create' ? {
+      reviewId: String(pendingProposal.preview.reviewId ?? pendingProposal.id),
+      notePath: draft?.path ?? pendingProposal.suggestedPath!,
+      title: draft?.title ?? pendingProposal.title,
+      baseContentHash: '', baseEditorMarkdown: '',
+      proposedEditorMarkdown: String(pendingProposal.preview.proposedEditorMarkdown ?? pendingProposal.payload.markdown ?? ''),
+      hunks: [{ id: `${pendingProposal.id}-creation`, baseFrom: 0, baseTo: 0,
+        proposedFrom: 0, proposedTo: String(pendingProposal.preview.proposedEditorMarkdown ?? pendingProposal.payload.markdown ?? '').length,
+        oldText: '', newText: String(pendingProposal.preview.proposedEditorMarkdown ?? pendingProposal.payload.markdown ?? '') }]
+    } : storedUpdatePreview(pendingProposal);
     if (!preview) return null;
-    return {
+    const request: DurableProposalReviewRequest = {
+      draftVersion: draft?.version,
+      kind: pendingProposal.kind,
+      refresh: () => this.durableProposalReviewRequest(pendingProposal),
+      working: draft,
+      checkpoint: this.api.checkpointProposalDraft && draft ? async (working) => {
+        draft = await this.api.checkpointProposalDraft!(pendingProposal.id, { ...working, version: draft!.version },
+          working.requestedPath);
+        preview.notePath = draft.path;
+        preview.title = draft.title;
+        request.working = draft;
+        request.draftVersion = draft.version;
+      } : undefined,
       proposalId: pendingProposal.id,
       noteId: pendingProposal.noteId,
       preview,
       // A document review outlives its originating chat pane and route. Its
       // durable settlement must not call a disposed pane controller.
       commit: async (markdown: string) => {
-        const result = await this.api.commitAgentProposal(pendingProposal.id, markdown);
-        if (result.status === 'committed') this.removeResolvedProposal(pendingProposal.id);
+        const result = draft ? await this.api.commitAgentProposal(pendingProposal.id, markdown, draft.version) : await this.api.commitAgentProposal(pendingProposal.id, markdown);
+        if (result.status === 'committed') {
+          if (pendingProposal.kind === 'create' && pendingProposal.payload.wholeAnswer === true && pendingProposal.payload.originalSave !== false && result.noteId && result.applied?.path) for (const controller of this.controllers.values()) controller.recordSavedNote(pendingProposal.assistantMessageId, result.noteId, result.applied.path);
+          this.removeResolvedProposal(pendingProposal.id);
+        }
         return result;
       },
       dismiss: async () => {
-        await this.api.dismissAgentProposal(pendingProposal.id);
+        const dismissed = await this.api.dismissAgentProposal(pendingProposal.id);
+        if (dismissed.status !== 'dismissed') throw new Error('This review was already resolved; reopen its saved note.');
         this.removeResolvedProposal(pendingProposal.id);
       }
     };
+    return request;
   }
 
   async openProjection(
@@ -412,33 +449,7 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     }
   }
 
-  private async insertSelectionIntoNote(selection: ChatSelection) {
-    const destinationPaneId = this.deps.getEditorPaneIds()[0];
-    if (!destinationPaneId) {
-      throw new Error(
-        'Open a note beside the conversation before inserting.'
-      );
-    }
-    const document = this.deps.getPaneDocument(destinationPaneId);
-    const result = this.deps.insertMarkdown({
-      documentHandle: document.handle,
-      expectedDocumentRevision: document.operation.revision,
-      markdown: formatChatInsertion(selection),
-      target: 'selection',
-      focus: true,
-      scrollIntoView: true
-    });
-    if (result.status === 'target-changed') {
-      throw new Error(
-        'The destination note changed. Choose the note and try again.'
-      );
-    }
-    if (result.status === 'editor-unavailable') {
-      throw new Error(
-        'The destination note is not ready for insertion.'
-      );
-    }
-  }
+
 }
 
 function storedUpdatePreview(
@@ -458,16 +469,4 @@ function storedUpdatePreview(
     return null;
   }
   return preview as ProposalPreview;
-}
-
-function formatChatInsertion(selection: ChatSelection) {
-  const quote = selection.text
-    .trim()
-    .split('\n')
-    .map((line) => `> ${line}`)
-    .join('\n');
-  const backlink = selection.linkTarget
-    ? `[[${selection.linkTarget}|Open in chat]]`
-    : '';
-  return `${quote}${backlink ? `\n> — ${backlink}` : ''}\n\n`;
 }

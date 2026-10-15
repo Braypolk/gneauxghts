@@ -169,15 +169,20 @@ export function createDocumentEditingService<TPaneId extends string>(
     document: NoteDraftState,
     committed: NoteSession,
     submittedMarkdown: string,
-    commitWarning: CommittedMutationWarning | null
+    commitWarning: CommittedMutationWarning | null,
+    submittedTitle: string = committed.title
   ) {
     const authoritative = {
       ...committed,
       commitWarning: commitWarning ?? undefined
     };
+    const titleChangedAfterKeep = getDocumentTitle(document) !== submittedTitle;
+    // A collision or sanitization can change the published filename. That is
+    // the accepted title unless the user edited it after Keep was captured.
+    if (!titleChangedAfterKeep) updateDocumentTitle(document, committed.title);
     const preserveWorking =
       getDocumentMarkdown(document) !== submittedMarkdown ||
-      getDocumentTitle(document) !== committed.title ||
+      titleChangedAfterKeep ||
       !tagsEqual(document.working.tags, document.savedBaseline?.content.tags);
     const previousMarkdown = getDocumentMarkdown(document);
     adoptCommittedDocument(deps.state, document, authoritative, {

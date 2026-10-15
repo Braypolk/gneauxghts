@@ -176,7 +176,7 @@ function installNoteCitationLinkRule(markdown: any) {
       if (!citation) {
         if (!destination || !/^(passage|source):/.test(destination)) return false;
         if (!silent) {
-          const token = state.push('text', '', 0);
+          const token = state.push(destination.startsWith('passage:') ? 'chat_unavailable_passage' : 'text', '', 0);
           token.content = '[citation unavailable]';
         }
         state.pos = destinationEnd + 1;
@@ -185,7 +185,7 @@ function installNoteCitationLinkRule(markdown: any) {
 
       if (!silent) {
         const token = state.push('chat_note_citation_link', 'button', 0);
-        token.meta = { citation, label };
+        token.meta = { citation, label, passageControl: destination?.startsWith('passage:') === true };
       }
       state.pos = hasDestination ? destinationEnd + 1 : labelEnd + 1;
       return true;
@@ -301,13 +301,16 @@ function createChatMarkdown() {
     return `<button type="button" class="gn-markdown-wikilink" data-wikilink-target="${markdown.utils.escapeHtml(rawTarget)}">${markdown.utils.escapeHtml(label)}</button>`;
   };
   markdown.renderer.rules.chat_note_citation_link = (tokens: any[], index: number) => {
-    const { citation, label } = tokens[index].meta as {
+    const { citation, label, passageControl } = tokens[index].meta as {
       citation: Extract<ChatCitation, { kind: 'note' }>;
       label: string;
+      passageControl: boolean;
     };
     const displayLabel = citation.passage && /^Source \d+$/.test(label) ? citation.label : label;
-    return `<button type="button" class="gn-markdown-wikilink" data-chat-note-citation-id="${markdown.utils.escapeHtml(citation.id)}">${markdown.utils.escapeHtml(displayLabel)}</button>`;
+    return `<button type="button" class="gn-markdown-wikilink" data-chat-note-citation-id="${markdown.utils.escapeHtml(citation.id)}"${passageControl ? ' data-chat-selection-ignore' : ''}>${markdown.utils.escapeHtml(displayLabel)}</button>`;
   };
+  markdown.renderer.rules.chat_unavailable_passage = () =>
+    '<span data-chat-selection-ignore>[citation unavailable]</span>';
   markdown.renderer.rules.chat_task_checkbox = (tokens: any[], index: number) => {
     const checked = Boolean(tokens[index].meta?.checked);
     return `<input class="gn-markdown-task-checkbox" type="checkbox" disabled aria-label="${checked ? 'Completed task' : 'Incomplete task'}"${checked ? ' checked' : ''}>`;

@@ -153,13 +153,13 @@ export class EditorDocumentRuntime {
 
   get review() { return this.#rootState.field(documentReviewField); }
 
-  beginReview(preview: ProposalPreview, callbacks: ReviewCallbacks) {
+  beginReview(preview: ProposalPreview, callbacks: ReviewCallbacks, working?: { markdown: string; decisions: import('$lib/features/proposals/reviewExtension').ReviewHunkState[] }) {
     if (this.review) throw new Error('A review is already active for this document.');
     if (this.markdown !== preview.baseEditorMarkdown) throw new Error('Note changed before review.');
     this.#reviewCallbacks = callbacks;
     this.applyRootTransactions([this.#rootState.update({
-      changes: preview.hunks.map(hunk => ({ from: hunk.baseFrom, to: hunk.baseTo, insert: hunk.newText })),
-      effects: setDocumentReview.of({ reviewId: preview.reviewId, hunks: preview.hunks.map(hunk => ({ ...hunk, from: hunk.proposedFrom, to: hunk.proposedTo, status: 'pending' })) }),
+      changes: working ? { from: 0, to: this.markdown.length, insert: working.markdown } : preview.hunks.map(hunk => ({ from: hunk.baseFrom, to: hunk.baseTo, insert: hunk.newText })),
+      effects: setDocumentReview.of({ reviewId: preview.reviewId, hunks: working?.decisions.length ? working.decisions : preview.hunks.map(hunk => ({ ...hunk, from: hunk.proposedFrom, to: hunk.proposedTo, status: 'pending' })) }),
       annotations: [proposalTransaction.of(true), Transaction.addToHistory.of(false), isolateHistory.of('full')]
     })], null);
   }

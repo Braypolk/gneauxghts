@@ -82,6 +82,19 @@ fn startup_path_overrides() -> Result<StartupPathOverrides, String> {
     Ok(StartupPathOverrides::default())
 }
 
+// Feature-gated native automation must never activate the user's desktop by
+// default, including direct launches and process-plugin restarts.
+fn e2e_background() -> bool {
+    #[cfg(feature = "e2e-wdio")]
+    {
+        std::env::var_os("GNEAUXGHTS_E2E_FOREGROUND").as_deref() != Some(std::ffi::OsStr::new("1"))
+    }
+    #[cfg(not(feature = "e2e-wdio"))]
+    {
+        false
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     if let Some(code) = semantic::owned_process::run_if_requested() {
@@ -95,6 +108,12 @@ pub fn run() {
         for window in &mut context.config_mut().app.windows {
             if window.label == "main" {
                 window.visible = false;
+                if e2e_background() {
+                    window.focus = false;
+                    window.focusable = false;
+                    window.background_throttling =
+                        Some(tauri::utils::config::BackgroundThrottlingPolicy::Disabled);
+                }
             }
         }
         context
@@ -136,11 +155,24 @@ pub fn run() {
                 // macOS applies the restore plugin's bounds asynchronously.
                 // Page completion lets those native operations settle before reveal.
                 reveal_main_window.call_once(|| {
-                    if let Err(error) = webview
-                        .window()
-                        .show()
-                        .and_then(|_| webview.window().set_focus())
-                    {
+                    let reveal = webview.window().show().and_then(|_| {
+                        if e2e_background() {
+                            #[cfg(target_os = "macos")]
+                            {
+                                let native_window = webview.window().ns_window()?;
+                                // SAFETY: the page-load callback runs on the main
+                                // thread and the webview retains its NSWindow.
+                                unsafe {
+                                    (&*native_window.cast::<objc2_app_kit::NSWindow>())
+                                        .orderBack(None);
+                                }
+                            }
+                            Ok(())
+                        } else {
+                            webview.window().set_focus()
+                        }
+                    });
+                    if let Err(error) = reveal {
                         eprintln!("main window reveal failed: {error}");
                     }
                 });
@@ -156,6 +188,18 @@ pub fn run() {
 
     let app = builder
         .setup(move |app| {
+            #[cfg(feature = "e2e-wdio")]
+            if !e2e_background() {
+                app.add_capability(
+                    tauri::ipc::CapabilityBuilder::new("e2e-foreground")
+                        .window("main")
+                        .permission("core:window:allow-set-focus"),
+                )?;
+            }
+            #[cfg(target_os = "macos")]
+            if e2e_background() {
+                app.set_activation_policy(tauri::ActivationPolicy::Prohibited);
+            }
             #[cfg(target_os = "macos")]
             if let Some(window) = app.get_webview_window("main") {
                 // AppKit's automatic opening animation scales even a correctly
@@ -397,6 +441,9 @@ pub fn run() {
             commands::chat_commands::chat_revoke_note,
             commands::chat_commands::chat_resolve_projection_conflict,
             commands::proposal_commands::commit_agent_proposal,
+            commands::proposal_commands::chat_prepare_note_save,
+            commands::proposal_commands::chat_get_proposal_draft,
+            commands::proposal_commands::chat_checkpoint_proposal_draft,
             commands::proposal_commands::dismiss_agent_proposal,
             commands::get_semantic_settings,
             commands::set_semantic_settings,

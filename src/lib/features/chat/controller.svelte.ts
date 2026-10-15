@@ -56,6 +56,8 @@ export interface ChatController extends Readable<ChatControllerState> {
   listLocalModels(): Promise<LocalModel[]>;
   keepProposal(proposalId: string, markdown?: string): Promise<CommitNoteReviewResult>;
   dismissProposal(proposalId: string): Promise<void>;
+  acceptProposal(proposal: ChatAgentProposal): void;
+  recordSavedNote(messageId: string, noteId: string, path: string): void;
   removeResolvedProposal(proposalId: string): void;
   setNoteExcluded(noteId: string, title: string, excluded: boolean): Promise<void>;
   grantNote(noteId: string): Promise<void>;
@@ -84,6 +86,7 @@ export interface ChatControllerOptions {
   }) => void | Promise<void>;
   /** Announces a durable proposal available for passive editor display. */
   onProposalAvailable?: (proposal: ChatAgentProposal) => void | Promise<void>;
+  onRequestedProposal?: (proposal: ChatAgentProposal) => void | Promise<void>;
   onProposalResolved?: (proposalId: string) => void;
 }
 const chatChannels = {
@@ -197,7 +200,9 @@ export class ChatControllerStore implements ChatController {
       }
     }
     else if (channel === 'chat://proposal') {
-      void this.#options.onProposalAvailable?.(payload as ChatAgentProposal);
+      const proposal = payload as ChatAgentProposal;
+      if (proposal.payload.reviewIntent === 'requested') void this.#options.onRequestedProposal?.(proposal);
+      else void this.#options.onProposalAvailable?.(proposal);
     }
   }
 
@@ -849,6 +854,13 @@ export class ChatControllerStore implements ChatController {
       this.#metadata({ error: errorText(error, 'Unable to dismiss this proposal.') });
       throw error;
     }
+  }
+
+  recordSavedNote(messageId: string, noteId: string, path: string) {
+    this.#dispatch({type:'savedNoteLinked',messageId,noteId,path});
+  }
+  acceptProposal(proposal: ChatAgentProposal) {
+    this.#dispatch({ type: 'backend', channel: 'chat://proposal', payload: proposal, now: Date.now() });
   }
 
   removeResolvedProposal(proposalId: string) {

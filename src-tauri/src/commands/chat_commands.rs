@@ -425,13 +425,30 @@ fn current_conversation(
     mut conversation: ChatConversation,
 ) -> Result<ChatConversation, String> {
     for message in &mut conversation.messages {
+        let run_grants = service.source_run_grants(&message.id)?;
         crate::agent_tools::filter_revision_sources(
             state,
             service,
             &conversation.summary.access,
-            &service.source_run_grants(&message.id)?,
+            &run_grants,
             &mut message.sources,
         )?;
+        for envelope in &mut message.agent_events {
+            if let crate::agent_runtime::AgentEvent::ToolCallUpdated { read_sources, .. } =
+                &mut envelope.event
+            {
+                if read_sources.is_empty() {
+                    continue;
+                }
+                crate::agent_tools::filter_revision_sources(
+                    state,
+                    service,
+                    &conversation.summary.access,
+                    &run_grants,
+                    read_sources,
+                )?;
+            }
+        }
     }
     Ok(conversation)
 }
@@ -1548,7 +1565,14 @@ pub(crate) fn chat_resolve_passage(
     let source = conversation
         .messages
         .into_iter()
-        .flat_map(|m| m.sources)
+        .flat_map(|m| {
+            m.sources.into_iter().chain(m.agent_events.into_iter().flat_map(|envelope| {
+                match envelope.event {
+                    crate::agent_runtime::AgentEvent::ToolCallUpdated { read_sources, .. } => read_sources,
+                    _ => Vec::new(),
+                }
+            }))
+        })
         .find(|s| s.passage.as_ref().is_some_and(|p| p.id == evidence_id))
         .ok_or("This passage changed or is unavailable. Refresh the answer to obtain current evidence.")?;
     let passage = source.passage.as_ref().ok_or("Missing passage")?;
