@@ -1,6 +1,7 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
 import { clickPaneAction, navigateAppTab } from '../../support/appNavigation';
+import type { ChatProposalDraft } from '../../../src/lib/features/chat/types';
 
 type EditorWindow = typeof window & { __GNEAUXGHTS_NATIVE_E2E__: {
   readEditorState(): { editor: { markdown: string } };
@@ -162,21 +163,30 @@ describe('secondary touch controls and image gestures', () => {
     await $('textarea[aria-label="Message"]').setValue('Review a proposal');
     await $('button[aria-label="Send message"]').click();
     await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
+    const originalNotes = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes);
     await browser.execute(() => {
       const proposal = {
         id: 'touch-proposal', runId: 'controls-run', conversationId: 'controls-chat',
         assistantMessageId: 'controls-assistant-1', kind: 'create', noteId: null,
-        suggestedPath: null, title: 'Touch proposal', baseHash: null,
+        suggestedPath: '/e2e/touch-proposal.md', title: 'Touch proposal', baseHash: null,
         payload: { markdown: 'Review before writing.' }, preview: {},
         status: 'pending', createdAtMillis: 1, updatedAtMillis: 1
       };
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_list_pending_proposals = () => [proposal];
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.dismiss_agent_proposal = () => ({ ...proposal, status: 'dismissed' });
+      let pending = true;
+      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_list_pending_proposals = () => pending ? [proposal] : [];
+      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_get_proposal_draft = () => ({
+        version: 0, markdown: proposal.payload.markdown, title: proposal.title,
+        path: proposal.suggestedPath, decisions: []
+      } satisfies ChatProposalDraft);
+      window.__GNEAUXGHTS_E2E_COMMANDS__!.dismiss_agent_proposal = () => {
+        pending = false;
+        return { ...proposal, status: 'dismissed' };
+      };
       window.__GNEAUXGHTS_E2E__!.emit('chat://proposal', proposal);
     });
     const region = await $('[aria-label="Pending note proposals"]');
     await region.waitForDisplayed();
-    for (const label of ['Keep', 'Undo']) {
+    for (const label of ['Discard', 'Review in editor']) {
       const button = await region.$(`button=${label}`);
       const size = await button.getSize();
       expect(size.width).toBeGreaterThanOrEqual(44);
@@ -189,8 +199,9 @@ describe('secondary touch controls and image gestures', () => {
       }, label)).toBe(true);
     }
     await expect($('button[aria-label="Expand related notes"]')).not.toExist();
-    await region.$('button=Undo').click();
+    await region.$('button=Discard').click();
     await region.waitForExist({ reverse: true });
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes)).toEqual(originalNotes);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(i => i.command === 'commit_agent_proposal'))).toHaveLength(0);
   });
 
@@ -200,6 +211,7 @@ describe('secondary touch controls and image gestures', () => {
     await $('textarea[aria-label="Message"]').setValue('Review an update');
     await $('button[aria-label="Send message"]').click();
     await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
+    const originalNotes = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes);
     await browser.execute(() => {
       const note = window.__GNEAUXGHTS_E2E__!.snapshot().notes.find(n => n.noteId === 'note-alpha')!;
       const proposal = {
@@ -213,8 +225,28 @@ describe('secondary touch controls and image gestures', () => {
             proposedTo: 21, oldText: note.markdown, newText: 'Reviewed replacement.' }] },
         status: 'pending', createdAtMillis: 1, updatedAtMillis: 1
       };
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_list_pending_proposals = () => [proposal];
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.dismiss_agent_proposal = () => ({ ...proposal, status: 'dismissed' });
+      let pending = true;
+      let draft: ChatProposalDraft = {
+        version: 0, markdown: proposal.preview.proposedEditorMarkdown,
+        title: note.title, path: note.path, decisions: []
+      };
+      const commands = window.__GNEAUXGHTS_E2E_COMMANDS__!;
+      commands.chat_list_pending_proposals = () => pending ? [proposal] : [];
+      commands.chat_get_proposal_draft = ({ proposalId }) => {
+        if (proposalId !== proposal.id || !pending) throw new Error('Proposal is not pending');
+        return draft;
+      };
+      commands.chat_checkpoint_proposal_draft = ({ proposalId, version, markdown, title, path, decisions }) => {
+        if (proposalId !== proposal.id || !pending || version !== draft.version) throw new Error('Stale proposal draft');
+        draft = { version: draft.version + 1, markdown: markdown as string,
+          title: title as string, path: (path as string | undefined) ?? draft.path,
+          decisions: decisions as ChatProposalDraft['decisions'] };
+        return draft;
+      };
+      commands.dismiss_agent_proposal = () => {
+        pending = false;
+        return { ...proposal, status: 'dismissed' };
+      };
       window.__GNEAUXGHTS_E2E__!.emit('chat://proposal', proposal);
     });
     await $('[aria-label="Pending note proposals"]').$('button=Review in editor').click();
@@ -225,7 +257,8 @@ describe('secondary touch controls and image gestures', () => {
     expect((await $('.cm-gn-proposal-removed-block').getCSSProperty('background-color')).value).not.toBe('rgba(0,0,0,0)');
     await $('.cm-gn-proposal-undo').click();
     await $('.cm-editor[data-proposal-review="true"]').waitForExist({ reverse: true });
-    expect(await authoredText()).not.toContain('Reviewed replacement.');
+    expect(await authoredText()).toBe(originalNotes.find(note => note.noteId === 'note-alpha')!.markdown);
+    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes)).toEqual(originalNotes);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(i => i.command === 'commit_agent_proposal'))).toHaveLength(0);
   });
 

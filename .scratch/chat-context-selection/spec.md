@@ -46,3 +46,9 @@ exposed an explicit excerpt-only answer that broadens to the full canonical
 note and misattributes the result to the excerpt. The unrestricted companion
 correctly gathers the full-note answer. [Issue 09](issues/09-selection-only-answer-scope.md)
 tracks that task-scope distinction; production context policy remains unchanged.
+
+2026-10-14: [Issue 09 is resolved](../archive/excerpt-only-answer-scope.md).
+Selections now expose exact-range canonical answer reads and excerpt-only scope
+guidance. Native acceptance verifies the original restricted question, its
+unrestricted full-note companion, and selection through the editor hint alone.
+General semantic citation entailment and issue 08 remain separate follow-ups.

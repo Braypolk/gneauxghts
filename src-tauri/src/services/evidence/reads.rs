@@ -23,9 +23,90 @@ pub(super) struct ReadContinuation {
 enum ReadScope {
     CanonicalNote(String),
     SelectedPassages,
+    SelectedExcerpt,
 }
 
 impl EvidenceSession {
+    /// Issue a read of exactly the supplied canonical body range. Registering
+    /// it grants no citation or read coverage; ordinary read admission does that.
+    pub(crate) fn register_body_selection(
+        &mut self,
+        state: &AppState,
+        note_id: &str,
+        excerpt: &str,
+        exact_start: Option<usize>,
+    ) -> Result<Value, ToolError> {
+        if self.read_continuations.len() >= 128 {
+            return Err(ToolError::work_budget("Read continuation budget exhausted"));
+        }
+        let snapshot = CanonicalSnapshot::load(state, note_id)
+            .ok_or_else(|| ToolError::unavailable("Selected note unavailable"))?;
+        let body = &snapshot.locations["body"];
+        if excerpt.trim().is_empty() {
+            return Err(ToolError::invalid("Select a nonempty excerpt"));
+        }
+        let start = if let Some(start) = exact_start {
+            start
+        } else {
+            let start = body
+                .find(excerpt)
+                .ok_or_else(|| ToolError::stale("Selected excerpt changed; select it again"))?;
+            // Search from the next character, including overlapping occurrences.
+            let next = start + body[start..].chars().next().unwrap().len_utf8();
+            if body[next..].contains(excerpt) {
+                return Err(ToolError::invalid(
+                    "Selected excerpt is ambiguous; select its exact range again",
+                ));
+            }
+            start
+        };
+        if start
+            .checked_add(excerpt.len())
+            .and_then(|end| body.get(start..end))
+            != Some(excerpt)
+        {
+            return Err(ToolError::stale(
+                "Selected excerpt changed; select it again",
+            ));
+        }
+        let mut candidates = Vec::new();
+        let mut offset = start;
+        for text in passage_slices(excerpt) {
+            candidates.push(
+                snapshot
+                    .candidate(note_id, text, "body", "Selected excerpt", 1.0, Some(offset))
+                    .ok_or_else(|| ToolError::stale("Selected excerpt changed; select it again"))?,
+            );
+            offset += text.len();
+        }
+        if offset - start != excerpt.len() {
+            return Err(ToolError::read_capacity(
+                "Selection exceeds bounded read capacity; select a smaller excerpt",
+            ));
+        }
+        let pending = candidates
+            .iter()
+            .map(|c| (c.citation.id.clone(), 0))
+            .collect();
+        for candidate in candidates {
+            self.candidates
+                .entry(candidate.citation.id.clone())
+                .or_insert(candidate);
+        }
+        let cursor = format!("selection:{}", note::generate_unique_id());
+        self.read_continuations.insert(
+            cursor.clone(),
+            ReadContinuation {
+                pending,
+                provenance: false,
+                range: None,
+                scope: ReadScope::SelectedExcerpt,
+                failed: false,
+            },
+        );
+        Ok(json!({"purpose":"answer","cursor":cursor}))
+    }
+
     pub(crate) fn remember_search(
         &mut self,
         result: &Value,
@@ -494,6 +575,8 @@ impl ReadPresentation {
             }
             ReadScope::SelectedPassages => json!({"scope":"selected_passages","complete":complete,
                 "meaning":"Only selected passages across this read; not the whole note or a complete real-world record"}),
+            ReadScope::SelectedExcerpt => json!({"scope":"selected_excerpt","complete":complete,
+                "meaning":"Only the exact selected excerpt across this read. It cannot establish facts or absence elsewhere in the note."}),
         };
         // This read's delivery can be complete without establishing a whole note.
         // Recovery selectors are suggestions, never extra retrieval authority.
@@ -503,7 +586,7 @@ impl ReadPresentation {
         let mut next_reads = Vec::new();
         if matches!(self, Self::Normal) {
             match &continuation.scope {
-                ReadScope::CanonicalNote(_) if more => {
+                ReadScope::CanonicalNote(_) | ReadScope::SelectedExcerpt if more => {
                     if let Some(cursor) = cursor {
                         next_reads.push(json!({"purpose":"answer","cursor":cursor}));
                     }

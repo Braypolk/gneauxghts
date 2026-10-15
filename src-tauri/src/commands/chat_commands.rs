@@ -1135,7 +1135,7 @@ fn resolve_selected_context(
                 .skip(start_line.saturating_sub(1))
                 .take(requested_end.saturating_sub(start_line) + 1)
             {
-                let separator = usize::from(!excerpt.is_empty());
+                let separator = usize::from(actual_end >= start_line);
                 if excerpt.chars().count() + separator + line.chars().count() > MAX_CONTEXT_CHARS {
                     break;
                 }
@@ -1427,6 +1427,49 @@ pub(crate) fn chat_resolve_projection_conflict(
         );
     }
     Ok(converted)
+}
+
+#[cfg(test)]
+mod selected_context_tests {
+    use super::*;
+
+    #[test]
+    fn selected_context_preserves_leading_blank_lines_through_prompt_assembly() {
+        let (vault, mut tools, id, service) = crate::agent_tools::AgentToolContext::test_fixture();
+        let path = vault.notes.path().join("Tool note.md");
+        crate::test_support::save_and_finalize(
+            &vault.state,
+            "Tool note".into(),
+            "Prefix.\n\n\nDeployment approval was discussed.\n\nDeployment approval was discussed."
+                .into(),
+            Some(path.to_string_lossy().into_owned()),
+        )
+        .unwrap();
+        let selected = resolve_selected_context(
+            &service,
+            &vault.state,
+            &VaultAccess::Full,
+            &[ChatContextSelectionInput {
+                note_id: id,
+                section_label: None,
+                start_line: Some(2),
+                end_line: Some(4),
+                block_anchor: None,
+                reason: None,
+            }],
+        )
+        .unwrap();
+        assert_eq!(
+            selected[0].excerpt,
+            "\n\nDeployment approval was discussed."
+        );
+        assert_eq!(selected[0].start_line, Some(2));
+        let prompt = tools.test_selected_context_prompt(&selected).unwrap();
+        assert!(prompt.contains("selection:"));
+        assert!(!prompt.contains("Prefix."));
+        assert!(tools.answer_source_ids().unwrap().is_empty());
+        tools.validate_context().unwrap();
+    }
 }
 
 #[cfg(test)]

@@ -1534,7 +1534,9 @@ impl CanonicalSnapshot {
         score: f32,
         exact_start: Option<usize>,
     ) -> Option<Candidate> {
-        if excerpt.trim().is_empty() {
+        // Exact canonical ranges can contain whitespace-only chunks between
+        // authored text. Discovery still needs a nonblank match.
+        if excerpt.is_empty() || (exact_start.is_none() && excerpt.trim().is_empty()) {
             return None;
         }
         let body = self.locations.get(location)?;

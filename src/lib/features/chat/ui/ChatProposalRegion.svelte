@@ -83,3 +83,12 @@
     onReloadDisk={onProposalReloadDisk}
   />
 {/if}
+
+<style>
+  @media (any-pointer: coarse) {
+    button {
+      min-width: 44px;
+      min-height: 44px;
+    }
+  }
+</style>

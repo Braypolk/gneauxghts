@@ -225,6 +225,414 @@ fn explicit_context_reports_its_scope_and_only_counts_delivered_body_text() {
 }
 
 #[test]
+fn selected_excerpt_reads_only_its_exact_range_without_locking_the_note() {
+    let (vault, mut context, _) = fixture();
+    let excerpt = "Deployment approval was discussed.";
+    let id = crate::test_support::save_and_finalize(
+        &vault.state,
+        "Meridian retrospective".into(),
+        format!("{excerpt}\n\nJordan approved deployment."),
+        None,
+    )
+    .unwrap()
+    .unwrap()
+    .note_id
+    .unwrap();
+    Arc::make_mut(&mut context.run_grants).insert(id.clone());
+    let selected = context
+        .selected_context_prompt(&[crate::chat::ChatRunContextItem {
+            note_id: id.clone(),
+            note_path: "Meridian retrospective.md".into(),
+            title: "Meridian retrospective".into(),
+            section_label: None,
+            excerpt: excerpt.into(),
+            content_hash: String::new(),
+            reason: "selected excerpt".into(),
+            start_line: Some(1),
+            end_line: Some(1),
+            block_anchor: None,
+        }])
+        .unwrap();
+    let selector = context_coverage(&selected)["read"].clone();
+    assert!(
+        selector.is_object(),
+        "The selected excerpt needs an exact answer-read selector"
+    );
+    assert!(context.answer_source_ids().unwrap().is_empty());
+    tauri::async_runtime::block_on(async {
+        let page = read(&context, selector).await;
+        assert_eq!(page["items"].as_array().unwrap().len(), 1);
+        assert_eq!(page["items"][0]["excerpt"], excerpt);
+        assert_eq!(page["coverage"]["scope"], "selected_excerpt");
+        assert_eq!(page["coverage"]["complete"], true);
+        assert_eq!(page["coverage"]["wholeNoteComplete"], false);
+        assert_eq!(page["coverage"]["nextReads"], json!([]));
+        assert!(!page.to_string().contains("Jordan"));
+        let source = context
+            .sources()
+            .into_iter()
+            .find_map(|s| s.passage)
+            .unwrap();
+        assert_eq!((source.start, source.end), (0, excerpt.len()));
+        assert_eq!(source.excerpt, excerpt);
+        assert!(context
+            .render_passage_references(page["items"][0]["citation"].as_str().unwrap())
+            .unwrap()
+            .contains(&source.id));
+        context.validate_context().unwrap();
+        let whole = read(&context, json!({"purpose":"answer","note_id":id})).await;
+        assert!(whole["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["excerpt"].as_str().unwrap().contains("Jordan")));
+        assert_eq!(whole["coverage"]["wholeNoteComplete"], true);
+    });
+}
+
+fn selected_context_item(
+    id: &str,
+    excerpt: &str,
+    start_line: Option<usize>,
+) -> crate::chat::ChatRunContextItem {
+    crate::chat::ChatRunContextItem {
+        note_id: id.into(),
+        note_path: "Tool note.md".into(),
+        title: "Tool note".into(),
+        section_label: None,
+        excerpt: excerpt.into(),
+        content_hash: String::new(),
+        reason: "selected excerpt".into(),
+        start_line,
+        end_line: None,
+        block_anchor: None,
+    }
+}
+
+#[test]
+fn selected_excerpt_retries_restore_legacy_blank_line_offsets_without_guessing() {
+    let (vault, mut context, id) = fixture();
+    crate::test_support::save_and_finalize(
+        &vault.state,
+        "Tool note".into(),
+        "Prefix.\n\n\nSelected text\n\nSelected text".into(),
+        Some(
+            vault
+                .notes
+                .path()
+                .join("Tool note.md")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    )
+    .unwrap();
+    Arc::make_mut(&mut context.run_grants).insert(id.clone());
+    let mut selected = selected_context_item(&id, "Selected text", Some(2));
+    selected.end_line = Some(4);
+    let prompt = context
+        .selected_context_prompt(&[selected.clone()])
+        .unwrap();
+    tauri::async_runtime::block_on(async {
+        let page = read(&context, context_coverage(&prompt)["read"].clone()).await;
+        assert_eq!(page["items"][0]["excerpt"], "Selected text");
+        let passage = context
+            .sources()
+            .into_iter()
+            .find_map(|s| s.passage)
+            .unwrap();
+        assert_eq!((passage.start, passage.end), (10, 23));
+        context.validate_context().unwrap();
+    });
+    selected.end_line = Some(3);
+    assert!(
+        context.selected_context_prompt(&[selected]).is_err(),
+        "Recovery must not cross the stored selected line range"
+    );
+}
+
+#[test]
+fn selected_excerpt_preserves_whitespace_only_pages_for_explicit_and_editor_selections() {
+    for editor_hint in [false, true] {
+        let (vault, mut context, id) = fixture();
+        let excerpt = format!("A{}B", " ".repeat(4799));
+        crate::test_support::save_and_finalize(
+            &vault.state,
+            "Tool note".into(),
+            format!("Prefix.\n{excerpt}\nOUTSIDE"),
+            Some(
+                vault
+                    .notes
+                    .path()
+                    .join("Tool note.md")
+                    .to_string_lossy()
+                    .into_owned(),
+            ),
+        )
+        .unwrap();
+        context.evidence.lock().unwrap().configure_allowance(None);
+        let selector = if editor_hint {
+            context.active_note = Some(ActiveNoteSnapshot {
+                note_id: Some(id.clone()),
+                title: "Tool note".into(),
+                path: None,
+                body: String::new(),
+                body_hash: String::new(),
+                selection: Some(excerpt.clone()),
+            });
+            let hint = context.active_note_context().unwrap();
+            let hint: Value = serde_json::from_str(hint.split_once('\n').unwrap().1).unwrap();
+            assert_eq!(hint["selectionComplete"], false);
+            assert!(hint["selectionRead"].is_object());
+            hint["selectionRead"].clone()
+        } else {
+            Arc::make_mut(&mut context.run_grants).insert(id.clone());
+            let prompt = context
+                .selected_context_prompt(&[selected_context_item(&id, &excerpt, Some(2))])
+                .unwrap();
+            context_coverage(&prompt)["read"].clone()
+        };
+        assert!(context.answer_source_ids().unwrap().is_empty());
+        tauri::async_runtime::block_on(async {
+            let mut selector = selector;
+            let mut delivered = String::new();
+            for _ in 0..8 {
+                let page = read(&context, selector).await;
+                assert_eq!(page["coverage"]["scope"], "selected_excerpt");
+                assert_eq!(page["coverage"]["wholeNoteComplete"], false);
+                for item in page["items"].as_array().unwrap() {
+                    delivered.push_str(item["excerpt"].as_str().unwrap());
+                }
+                if let Some(cursor) = page["nextCursor"].as_str() {
+                    selector = json!({"purpose":"answer","cursor":cursor});
+                } else {
+                    assert_eq!(page["coverage"]["complete"], true);
+                    assert_eq!(delivered, excerpt);
+                    for passage in context.sources().into_iter().filter_map(|s| s.passage) {
+                        assert!(passage.start >= 8 && passage.end <= 4809);
+                    }
+                    context.validate_context().unwrap();
+                    return;
+                }
+            }
+            panic!("Selection did not finish within its expected pages");
+        });
+        assert!(
+            context
+                .selection_read(&id, &" ".repeat(2400), Some(9))
+                .is_err(),
+            "A wholly whitespace selection is still invalid"
+        );
+    }
+}
+
+#[test]
+fn clipped_selected_excerpt_continues_inside_the_selection_in_utf8_coordinates() {
+    let (vault, mut context, id) = fixture();
+    let excerpt = format!("{}SELECTED END", "Café 茶. ".repeat(550));
+    let saved = crate::test_support::save_and_finalize(
+        &vault.state,
+        "Tool note".into(),
+        format!("Unselected prefix.\n\n{excerpt}\n\nOUTSIDE SECRET"),
+        Some(
+            vault
+                .notes
+                .path()
+                .join("Tool note.md")
+                .to_string_lossy()
+                .into_owned(),
+        ),
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(saved.note_id.as_deref(), Some(id.as_str()));
+    Arc::make_mut(&mut context.run_grants).insert(id.clone());
+    context.evidence.lock().unwrap().configure_allowance(None);
+    let prompt = context
+        .selected_context_prompt(&[selected_context_item(&id, &excerpt, Some(3))])
+        .unwrap();
+    assert!(!prompt.contains("SELECTED END"));
+    let coverage = context_coverage(&prompt);
+    assert_eq!(coverage["complete"], false);
+    assert_eq!(coverage["nextRead"], coverage["read"]);
+    tauri::async_runtime::block_on(async {
+        let mut selector = coverage["nextRead"].clone();
+        let mut delivered = String::new();
+        for _ in 0..12 {
+            let page = read(&context, selector).await;
+            assert_eq!(page["coverage"]["scope"], "selected_excerpt");
+            assert_eq!(page["coverage"]["wholeNoteComplete"], false);
+            for item in page["items"].as_array().unwrap() {
+                delivered.push_str(item["excerpt"].as_str().unwrap());
+            }
+            if let Some(cursor) = page["nextCursor"].as_str() {
+                selector = json!({"purpose":"answer","cursor":cursor});
+                assert_eq!(page["coverage"]["nextReads"], json!([selector]));
+            } else {
+                assert_eq!(page["coverage"]["complete"], true);
+                assert_eq!(page["coverage"]["nextReads"], json!([]));
+                assert_eq!(delivered, excerpt);
+                for source in context.sources().into_iter().filter_map(|s| s.passage) {
+                    assert!(source.start >= "Unselected prefix.\n\n".len());
+                    assert!(source.end <= "Unselected prefix.\n\n".len() + excerpt.len());
+                }
+                context.validate_context().unwrap();
+                return;
+            }
+        }
+        panic!("Selection did not finish within its expected pages");
+    });
+}
+
+#[test]
+fn selected_excerpt_line_range_disambiguates_repeated_text() {
+    let (_vault, mut context, id) = fixture();
+    Arc::make_mut(&mut context.run_grants).insert(id.clone());
+    // Both occurrences have the same text, but only the second is selected.
+    let (path, _, _) = context.resolve_note(&id).unwrap();
+    let raw = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        raw.replace(
+            "first line\nsecond line",
+            "same text\nother text\nsame text",
+        ),
+    )
+    .unwrap();
+    let prompt = context
+        .selected_context_prompt(&[selected_context_item(&id, "same text", Some(3))])
+        .unwrap();
+    tauri::async_runtime::block_on(async {
+        let page = read(&context, context_coverage(&prompt)["read"].clone()).await;
+        assert_eq!(page["items"][0]["excerpt"], "same text");
+        let source = context
+            .sources()
+            .into_iter()
+            .find_map(|s| s.passage)
+            .unwrap();
+        assert_eq!(source.start, "same text\nother text\n".len());
+    });
+    assert!(context
+        .selected_context_prompt(&[selected_context_item(&id, "same text", None)])
+        .is_err());
+    assert!(context
+        .selected_context_prompt(&[selected_context_item(&id, "same text", Some(2))])
+        .is_err());
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id.clone()),
+        title: "Tool note".into(),
+        path: None,
+        body: String::new(),
+        body_hash: String::new(),
+        selection: Some("same text".into()),
+    });
+    let hint = context.active_note_context().unwrap();
+    let hint: Value = serde_json::from_str(hint.split_once('\n').unwrap().1).unwrap();
+    assert_eq!(hint["selection"], "same text");
+    assert!(
+        hint["selectionRead"].is_null(),
+        "Ambiguous text cannot select an arbitrary occurrence or prevent ordinary chat"
+    );
+    let raw = fs::read_to_string(&path).unwrap();
+    fs::write(
+        &path,
+        raw.replace("same text\nother text\nsame text", "banana"),
+    )
+    .unwrap();
+    context.active_note.as_mut().unwrap().selection = Some("ana".into());
+    let hint = context.active_note_context().unwrap();
+    let hint: Value = serde_json::from_str(hint.split_once('\n').unwrap().1).unwrap();
+    assert!(
+        hint["selectionRead"].is_null(),
+        "Overlapping occurrences are ambiguous too"
+    );
+}
+
+#[test]
+fn clipped_adjacent_selection_retains_a_read_of_the_full_selection() {
+    let (vault, mut context, _) = fixture();
+    let excerpt = format!("{}SELECTED END", "Café 茶. ".repeat(80));
+    let id = crate::test_support::save_and_finalize(
+        &vault.state,
+        "Long selection".into(),
+        format!("{excerpt}\n\nOUTSIDE SECRET"),
+        None,
+    )
+    .unwrap()
+    .unwrap()
+    .note_id
+    .unwrap();
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id),
+        title: "Long selection".into(),
+        path: None,
+        body: String::new(),
+        body_hash: String::new(),
+        selection: Some(excerpt.clone()),
+    });
+    let hint = context.active_note_context().unwrap();
+    let hint: Value = serde_json::from_str(hint.split_once('\n').unwrap().1).unwrap();
+    assert_eq!(hint["selectionComplete"], false);
+    assert!(!hint["selection"].as_str().unwrap().contains("SELECTED END"));
+    assert!(context.sources().is_empty());
+    tauri::async_runtime::block_on(async {
+        let page = read(&context, hint["selectionRead"].clone()).await;
+        assert_eq!(page["items"][0]["excerpt"], excerpt);
+        assert!(!page.to_string().contains("OUTSIDE SECRET"));
+    });
+}
+
+#[test]
+fn adjacent_selection_read_is_exact_and_hint_registration_is_not_evidence() {
+    let (_vault, mut context, id) = fixture();
+    context.active_note = Some(ActiveNoteSnapshot {
+        note_id: Some(id.clone()),
+        title: "Tool note".into(),
+        path: None,
+        body: "untrusted editor copy".into(),
+        body_hash: String::new(),
+        selection: Some("second line".into()),
+    });
+    let hint = context.active_note_context().unwrap();
+    let hint: Value = serde_json::from_str(hint.split_once('\n').unwrap().1).unwrap();
+    assert!(context.sources().is_empty());
+    assert!(context.answer_source_ids().unwrap().is_empty());
+    tauri::async_runtime::block_on(async {
+        let page = read(&context, hint["selectionRead"].clone()).await;
+        assert_eq!(page["items"][0]["excerpt"], "second line");
+        assert!(!page.to_string().contains("first line"));
+        assert_eq!(page["coverage"]["wholeNoteComplete"], false);
+    });
+}
+
+#[test]
+fn selected_excerpt_reads_recheck_canonical_bytes_and_exclusions() {
+    for excluded in [false, true] {
+        let (_vault, mut context, id) = fixture();
+        Arc::make_mut(&mut context.run_grants).insert(id.clone());
+        let prompt = context
+            .selected_context_prompt(&[selected_context_item(&id, "first line", Some(1))])
+            .unwrap();
+        if excluded {
+            context
+                .service
+                .set_note_excluded(&id, "Tool note", true)
+                .unwrap();
+        } else {
+            let (path, _, _) = context.resolve_note(&id).unwrap();
+            let raw = fs::read_to_string(&path).unwrap();
+            fs::write(path, raw.replace("first line", "changed line")).unwrap();
+        }
+        let result = tauri::async_runtime::block_on(ReadNotesTool(context.clone()).call(
+            &mut ToolContext::new(),
+            serde_json::from_value(context_coverage(&prompt)["read"].clone()).unwrap(),
+        ));
+        assert!(result.is_err());
+        assert!(context.answer_source_ids().unwrap().is_empty());
+        assert!(context.sources().iter().all(|s| s.passage.is_none()));
+    }
+}
+
+#[test]
 fn clipped_link_discloses_its_limit_and_continues_with_canonical_reads() {
     let (vault, context, _) = fixture();
     let body = format!(

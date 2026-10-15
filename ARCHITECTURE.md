@@ -845,6 +845,20 @@ hash/access revalidation without marking a hint-only response as note evidence.
 The automatic editor hint is an app context message before conversation history,
 separate from the authored user message. Other turn-local app context precedes
 an explicitly labeled authored request, keeping the user's question last.
+Validated selections also supply an exact body-range read cursor through the
+existing `read_notes` answer branch. `services/evidence/reads.rs` registers the
+canonical range without admitting citations, then ordinary read admission checks
+access, freshness, budgets and source references. Selected-excerpt continuations
+stay inside that range and never claim whole-note coverage or suggest a wider
+read. Clipped hints retain a cursor for the full selection; recorded line starts
+disambiguate repeated explicit excerpts. Ambiguous editor text has no guessed
+selector. Selected-context resolution preserves leading empty lines; older
+stored excerpts can correct their start past omitted empty lines only within
+their stored line range. Exact canonical ranges retain whitespace-only chunks
+during paging.
+Excerpt-only intent is an attribution rule in app context and existing
+source guidance, not a permission restriction: ordinary questions can still read
+the canonical note or discover related evidence.
 Delivered note content keeps a durable history marker even when its sources are
 later hidden, so ordinary dialogue remains usable while note-based answers require
 fresh evidence. Working-copy content is read through `read_notes` with `purpose=edit` when relevant.

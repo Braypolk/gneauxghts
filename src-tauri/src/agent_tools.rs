@@ -379,15 +379,45 @@ impl AgentToolContext {
             let Ok(raw) = fs::read_to_string(&current_path) else {
                 continue;
             };
-            if !note::parse_note(&raw).body.contains(&item.excerpt) {
-                continue;
-            }
+            let body = note::parse_note(&raw).body;
+            let start = item.start_line.map(|line| {
+                let mut start: usize = body
+                    .split_inclusive('\n')
+                    .take(line.saturating_sub(1))
+                    .map(str::len)
+                    .sum();
+                // Older stored selections omitted leading empty lines while
+                // retaining their line range. Recover only that exact prefix,
+                // never search for another occurrence or leave the stored range.
+                if !item.excerpt.starts_with('\n') {
+                    if let Some(end) = item.end_line {
+                        let skipped = body[start..].bytes().take_while(|b| *b == b'\n').count();
+                        let selected_lines = end.saturating_sub(line).saturating_add(1);
+                        if skipped + item.excerpt.split('\n').count() <= selected_lines {
+                            start += skipped;
+                        }
+                    }
+                }
+                start
+            });
+            let read = self.selection_read(&item.note_id, &item.excerpt, start)?;
             let Ok(excerpt) = self.admit_context(&item.excerpt, 2400) else {
                 break;
             };
-            let coverage = self
-                .context_coverage(&item.note_id, "selected_excerpt", excerpt == item.excerpt)
-                .map_err(|e| e.to_string())?;
+            let mut coverage = json!({"scope":"selected_excerpt","complete":excerpt == item.excerpt,"read":read,
+                "meaning":"For an explicit excerpt-only request, use only this range; whole-note facts remain unknown. Otherwise read the note as needed."});
+            if excerpt != item.excerpt {
+                coverage["nextRead"] = coverage["read"].clone();
+            }
+            let coverage = format!("coverage: {coverage}\n");
+            if self
+                .admit_context(&coverage, coverage.len())
+                .map_err(|e| e.to_string())?
+                .len()
+                != coverage.len()
+            {
+                return Err("Insufficient note context allowance".into());
+            }
             self.surface(&item.note_id);
             let path = current_path;
             self.add_source(
@@ -400,11 +430,16 @@ impl AgentToolContext {
                     .clone()
                     .or_else(|| item.section_label.clone()),
             )?;
-            self.record_body_context(&item.note_id, &raw, &excerpt, None)
+            self.record_body_context(&item.note_id, &raw, &excerpt, start)
                 .map_err(|e| e.to_string())?;
             attached.push(format!(
                 "[[{}]] (noteId: {}, contentHash: {}, reason: {})\n{}{}",
-                item.title, item.note_id, item.content_hash, item.reason, coverage, excerpt
+                item.title,
+                item.note_id,
+                content_hash(&raw),
+                item.reason,
+                coverage,
+                excerpt
             ));
         }
         Ok(attached.join("\n\n"))
@@ -487,14 +522,23 @@ impl AgentToolContext {
         let (path, title, _) = self.resolve_note(note_id).map_err(|e| e.to_string())?;
         let raw = fs::read_to_string(&path).map_err(|e| e.to_string())?;
         let body = note::strip_frontmatter(&raw);
-        let selection = snapshot
+        let full_selection = snapshot
             .selection
             .as_ref()
-            .filter(|selection| !selection.is_empty() && body.contains(selection.as_str()))
-            .map(|selection| crate::services::evidence::bounded(selection, 480));
-        let hint = json!({"noteId":note_id,
+            .filter(|selection| !selection.is_empty() && body.contains(selection.as_str()));
+        let selection =
+            full_selection.map(|selection| crate::services::evidence::bounded(selection, 480));
+        let selection_read =
+            full_selection.and_then(|selection| self.selection_read(note_id, selection, None).ok());
+        let mut hint = json!({"noteId":note_id,
             "title":crate::services::evidence::bounded(&title, 256),"selection":selection,
-            "meaning":"Adjacent editor context is a relevance hint, not a fixed subject or read evidence."}).to_string();
+            "meaning":"Adjacent editor context is a relevance hint, not a fixed subject or read evidence."});
+        if let Some(full) = full_selection {
+            hint["selectionRead"] = json!(selection_read);
+            hint["selectionComplete"] = json!(full.len() <= 480);
+            hint["meaning"] = json!("Adjacent editor context is a relevance hint, not a fixed subject or read evidence. For an explicit excerpt-only request, use selectionRead; facts elsewhere remain unknown. If a selection has no read selector, its exact range is unavailable; do not substitute a whole-note read.");
+        }
+        let hint = hint.to_string();
         let admitted = self
             .admit_context(&hint, hint.len())
             .map_err(|e| e.to_string())?;
@@ -504,6 +548,20 @@ impl AgentToolContext {
         self.bind_context_version(note_id, &raw);
         self.surface(note_id);
         Ok(format!("Allowed adjacent editor hint:\n{hint}"))
+    }
+
+    fn selection_read(
+        &self,
+        note_id: &str,
+        excerpt: &str,
+        start: Option<usize>,
+    ) -> Result<Value, String> {
+        let state = self.host.state().ok_or("Notes index unavailable")?;
+        self.evidence
+            .lock()
+            .map_err(|_| "Evidence unavailable")?
+            .register_body_selection(&state, note_id, excerpt, start)
+            .map_err(|e| e.to_string())
     }
 
     fn activity(&self, status: &str) {
@@ -1383,5 +1441,13 @@ impl AgentToolContext {
         let (vault, tools, id) = tests::fixture();
         let service = tools.service.clone();
         (vault, tools, id, service)
+    }
+
+    pub(crate) fn test_selected_context_prompt(
+        &mut self,
+        items: &[crate::chat::ChatRunContextItem],
+    ) -> Result<String, String> {
+        self.run_grants = Arc::new(items.iter().map(|item| item.note_id.clone()).collect());
+        self.selected_context_prompt(items)
     }
 }

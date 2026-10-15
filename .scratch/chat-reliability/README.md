@@ -37,7 +37,9 @@ citation navigation, cross-note follow-ups and parent fallback.
   streaming is now [integrated on Rig 0.44](structured-streaming-integration.md),
   with automated publication, cancellation, retry and citation checks passing.
   Next: a fresh live provider/native UI comparison and claim-support evaluation;
-  precise selected-range behavior remains a separate open issue.
+  [Selected-range scope is corrected](../archive/excerpt-only-answer-scope.md),
+  with native excerpt-only and unrestricted acceptance; general claim support
+  remains open.
 
 The [resolved issue outcomes](../archive/chat-reliability-resolved-issues.md)
 consolidate completed tickets; their validation reports and raw evidence remain

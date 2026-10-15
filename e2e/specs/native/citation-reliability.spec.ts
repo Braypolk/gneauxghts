@@ -6,7 +6,7 @@ import { createLiveNativeEvaluation, invokeNative as invoke, passageIds, resolve
 import { isTerminalAssistant } from '../../support/liveEvaluationArtifacts.mjs';
 
 type Note = { noteId: string; path: string; title: string; markdown: string };
-type Event = { type: string; call_id?: string; aggregate?: { totalTokens?: number }; details?: Record<string, unknown> };
+type Event = { type: string; callId?: string; call_id?: string; aggregate?: { totalTokens?: number }; details?: Record<string, unknown> };
 type Answer = { id: string; role: string; status: string; content: string; error?: string; sources: { noteId?: string; excerpt: string; passage?: { id: string; location: string; start: number; end: number; excerpt: string } }[]; agentEvents: { requestId: string; event: Event }[] };
 type Result = { caseId: string; question: string; conversationId: string; requestId?: string; answer?: Answer; rawStream?: string; resolutions?: unknown[]; stopped?: boolean; cancellationError?: string; elapsedMillis?: number };
 const live = process.env.GNEAUX_CITATION_NATIVE === '1' ? describe : describe.skip;
@@ -17,14 +17,18 @@ live('Citation reliability with native read/tool context', function () {
   evaluation.installHooks();
   it('retains raw references for deadline lists and bounded excerpt answers', async () => {
     const settings = JSON.parse(process.env.GNEAUX_CITATION_NATIVE_SETTINGS!);
-    assert.equal(settings.provider, 'openai');
+    assert(['openai', 'local'].includes(settings.provider));
+    if (settings.provider === 'local') {
+      await evaluation.configure({ lexicalOnly: true });
+      assert.equal(settings.model, process.env.GNEAUX_LIVE_MODEL);
+    }
     const selectedCases: string[] = JSON.parse(process.env.GNEAUX_CITATION_NATIVE_CASES!);
     await $('[data-testid="note-title"]').waitForExist({ timeout: 30_000 });
     const { atlasVisibility: _visibility, ...defaults } = await invoke<Record<string, unknown>>('chat_get_settings');
-    await invoke('chat_set_defaults', { defaults: { ...defaults, provider: settings.provider, model: settings.model, openaiModel: settings.model, defaultAccess: 'approved', webAccess: 'off', reasoningEffort: settings.reasoning_effort, serviceTier: settings.service_tier } });
+    if (settings.provider === 'openai') await invoke('chat_set_defaults', { defaults: { ...defaults, provider: settings.provider, model: settings.model, openaiModel: settings.model, defaultAccess: 'approved', webAccess: 'off', reasoningEffort: settings.reasoning_effort, serviceTier: settings.service_tier } });
     const actualSettings = await invoke<Record<string, unknown>>('chat_get_settings');
     assert.equal(actualSettings.model, settings.model);
-    assert.equal(actualSettings.serviceTier, settings.service_tier);
+    if (settings.provider === 'openai') assert.equal(actualSettings.serviceTier, settings.service_tier);
     assert.equal(actualSettings.reasoningEffort, settings.reasoning_effort);
     const semantic = await invoke<Record<string, unknown>>('get_semantic_settings');
     await invoke('set_semantic_settings', { settings: { ...semantic, semanticSearchEnabled: false } });
@@ -42,7 +46,7 @@ live('Citation reliability with native read/tool context', function () {
     const record = () => evaluation.artifact.write({
       method: 'Real native app and production chat_send_message IPC, canonical synthetic notes, full production tool definitions/preamble, actual source admission and reference rendering. Lexical-only retrieval; no semantic quality or UI navigation claim. Semantic judgments recorded separately.',
       settings: actualSettings, notes: [deadlines, retrospective], selectedExcerpt: excerpt,
-      limits: { maxCases: 4, modelCallsPerAnswer: 4, toolCallsPerAnswer: 6, reportedTokensPerAnswer: 24000, timeoutMillisPerAnswer: 120000, note: 'Observed cancellation bounds; an in-flight call can exceed a token threshold before usage is reported.' }, results
+      limits: { maxCases: selectedCases.length, modelCallsPerAnswer: 4, toolCallsPerAnswer: 6, reportedTokensPerAnswer: 24000, timeoutMillisPerAnswer: 120000, note: 'Observed cancellation bounds; an in-flight call can exceed a token threshold before usage is reported.' }, results
     });
     const listenerError = await browser.executeAsync((done: (error: string | null) => void) => {
       const host = window as typeof window & { __GNEAUX_CITATION_STREAMS__?: Record<string, string>; __TAURI__: { event: { listen: (name: string, callback: (event: { payload: { messageId: string; delta?: string } }) => void) => Promise<() => void> } } };
@@ -58,6 +62,7 @@ live('Citation reliability with native read/tool context', function () {
       { id: 'deadline-1', note: deadlines, question: deadlineQuestion, selected: false },
       { id: 'partial-selected', note: retrospective, question: 'Using only the selected excerpt, can you tell whether Meridian retrospective names an approver anywhere?', selected: true },
       { id: 'partial-unrestricted', note: retrospective, question: 'Does Meridian retrospective name an approver anywhere?', selected: true },
+      { id: 'partial-hint-only', note: retrospective, question: 'Using only the highlighted text, does it say who approved deployment?', selected: true, hintOnly: true },
       { id: 'deadline-2', note: deadlines, question: deadlineQuestion, selected: false }
     ];
     const dateTimeContext = { locale: 'en-US', timeZone: 'America/Denver', dateOrder: ['month', 'day', 'year'], hourCycle: 'h12' };
@@ -67,7 +72,7 @@ live('Citation reliability with native read/tool context', function () {
       const conversation = await invoke<{ id: string }>('chat_create_conversation', { request: { title: `Citation check ${scenario.id}`, provider: settings.provider, model: settings.model, access: 'approved', reasoningEffort: settings.reasoning_effort } });
       const result: Result = { caseId: scenario.id, question: scenario.question, conversationId: conversation.id };
       results.push(result); record();
-      const selectedContext = scenario.selected ? [{ noteId: retrospective.noteId, notePath: retrospective.path, title: retrospective.title, sectionLabel: null, excerpt, contentHash: createHash('sha256').update(retrospective.markdown).digest('hex'), reason: 'selected excerpt', startLine: 1, endLine: 1, blockAnchor: null }] : [];
+      const selectedContext = scenario.selected && !('hintOnly' in scenario && scenario.hintOnly) ? [{ noteId: retrospective.noteId, notePath: retrospective.path, title: retrospective.title, sectionLabel: null, excerpt, contentHash: createHash('sha256').update(retrospective.markdown).digest('hex'), reason: 'selected excerpt', startLine: 1, endLine: 1, blockAnchor: null }] : [];
       const activeNote = { noteId: scenario.note.noteId, title: scenario.note.title, path: scenario.note.path, body: scenario.note.markdown, bodyHash: '', selection: scenario.selected ? excerpt : null };
       const started = Date.now();
       try {
@@ -79,7 +84,7 @@ live('Citation reliability with native read/tool context', function () {
           if (!result.answer) return false;
           const events = result.answer.agentEvents.map(e => e.event);
           const modelCalls = events.filter(e => e.type === 'contextMeasured' && e.details?.phase === 'request').length;
-          const tools = new Set(events.filter(e => e.type === 'toolCallUpdated').map(e => e.call_id)).size;
+          const tools = new Set(events.filter(e => e.type === 'toolCallUpdated').map(e => e.callId ?? e.call_id)).size;
           const tokens = Math.max(0, ...events.filter(e => e.type === 'usageUpdated').map(e => e.aggregate?.totalTokens ?? 0));
           if (modelCalls > 4 || tools > 6 || tokens > 24000) throw new Error('Bounded native citation evaluation reached its spending limit');
           return isTerminalAssistant(result.answer);
@@ -87,6 +92,19 @@ live('Citation reliability with native read/tool context', function () {
         assert.equal(result.answer?.status, 'complete', result.answer?.error);
         // Preserve semantic/citation omissions as evidence; do not stop at the first omission.
         result.resolutions = await resolvePassages(conversation.id, passageIds(result.answer!.content));
+        if (scenario.id.startsWith('partial-')) {
+          assert(passageIds(result.answer!.content).length > 0, 'Excerpt and full-note answers must cite their supporting read');
+          assert(result.resolutions.every(r => (r as { status: string }).status === 'resolved'));
+          if (scenario.id === 'partial-unrestricted') {
+            assert(result.answer!.content.includes('Jordan'), 'An unrestricted question must still recover the outside approver');
+            assert(result.answer!.sources.some(s => s.passage?.excerpt.includes('Jordan approved deployment.')));
+          } else {
+            assert(!result.answer!.content.includes('Jordan'), 'An excerpt-only answer must not import the outside approver');
+            const passages = result.answer!.sources.filter(s => s.passage);
+            assert(passages.length > 0);
+            assert(passages.every(s => s.passage!.excerpt === excerpt), 'Citations must bind the selected sentence, not the whole note');
+          }
+        }
       } finally {
         if (result.requestId && !isTerminalAssistant(result.answer)) {
           // A provider may finish between polling and cancellation. Preserve the

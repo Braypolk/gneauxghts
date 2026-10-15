@@ -24,8 +24,8 @@ confirmed raw omissions with faithful rendering; a short reminder did not improv
 reliably and was not promoted. The subsequent
 [native reproduction](../citation-entailment/native-validation.md) captures a
 malformed marker and an excerpt-only scope failure with valid full-body citation.
-Inspect [precise selected-range reads](../../chat-context-selection/issues/09-selection-only-answer-scope.md)
-and narrow reference-format handling before another prompt change. Retain
+Use the [corrected selected-range reads](../../archive/excerpt-only-answer-scope.md)
+for excerpt-scope cases; general claim support still needs evaluation. Retain
 raw/reference/rendered output; avoid hard-coded workflow responses. The subsequent
 [structured-answer prototype](../structured-answer-prototype/README.md) established
 explicit citation associations. The [completed streaming comparison](../structured-answer-streaming/completion/README.md)

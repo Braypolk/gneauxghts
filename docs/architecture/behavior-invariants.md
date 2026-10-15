@@ -1131,6 +1131,18 @@ bounds the excerpt, and stores its hash for that run. Global exclusion always
 wins. The current composer has no suggestion picker; this is the selected-context
 API contract in `commands/chat_commands.rs`.
 
+Validated selected excerpts and editor selections expose exact canonical-range
+answer reads, separately from the canonical whole-note selector. Registration
+alone grants no passage citation or full-read coverage. Reads and continuations
+preserve the selected range, UTF-8 coordinates, access, freshness and budget
+checks. Clipping cannot silently substitute whole-note content; ambiguous text
+cannot select an arbitrary occurrence. Leading empty lines and whitespace-only
+chunks inside a selection remain part of its exact range. Older stored excerpts
+may correct their start past omitted empty lines only within their recorded
+line range. Explicit excerpt-only requests leave facts elsewhere unknown.
+A selection does not restrict ordinary questions from
+reading the permitted full note or related evidence.
+
 Retry reuses the original run's stored selection, then validates its excerpts
 against current canonical content; it does not rerun suggestions. Context
 use and compaction are observable through provider-safe activity; raw model

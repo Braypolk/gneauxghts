@@ -1,8 +1,8 @@
 # Preserve explicit excerpt-only answer scope
 
-Status: ready-for-agent
+Status: resolved
 Type: task
-Resolution: open
+Resolution: implemented and native-verified (2026-10-14)
 
 ## Evidence
 
@@ -50,3 +50,20 @@ note. No implicit note lock should prevent that useful behavior.
 behavior/instructions unchanged. Canonical source admission explains how the
 full-body answer became citable; it does not establish why the model ignored the
 explicit request constraint. Inspect the context/read seam before choosing a fix.
+
+2026-10-14: Implemented exact canonical-range answer reads for explicit and
+adjacent-editor selections, preserving range through clipping/pagination and
+ordinary source admission. Existing source guidance now explicitly leaves
+whole-note facts unknown for excerpt-only requests; unrestricted reads remain
+available. The original native question, unrestricted companion and editor-hint
+selection case all pass on the configured local model, with resolving supporting
+passages and unchanged canonical fixtures. Six focused regressions and the
+repository checks are recorded in the
+[completion record](../../archive/excerpt-only-answer-scope.md). General semantic
+citation entailment remains a separate investigation.
+
+2026-10-15: Commit audit found and corrected leading-empty-line resolution and
+whitespace-only pagination-chunk failures. Three additional red/green regressions
+cover the production resolver-to-prompt path, older stored selections and both
+explicit/editor selection reads. Independent Standards and Spec follow-up
+reviews find no remaining actionable issues; details are in the completion record.
