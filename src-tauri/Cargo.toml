@@ -29,6 +29,8 @@ default = []
 e2e-wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 # Debug-only loopback endpoint for native OpenAI protocol fixture tests.
 e2e-chat-fixture = []
+# Disposable native Pi experiment; never enabled by default.
+pi-prototype = []
 
 [dependencies]
 tauri = { version = "2.11", features = [] }

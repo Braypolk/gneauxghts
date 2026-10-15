@@ -1,6 +1,6 @@
 # Run Pi-owned sessions through native desktop and iOS bridges
 
-Status: ready-for-agent
+Status: claimed
 Type: prototype
 Blocked by: 01
 

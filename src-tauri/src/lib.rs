@@ -14,6 +14,8 @@ mod lexical;
 mod note;
 mod path_utils;
 mod proposals;
+#[cfg(feature = "pi-prototype")]
+mod pi_prototype;
 mod search;
 mod secrets;
 mod semantic;
@@ -186,6 +188,9 @@ pub fn run() {
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
 
+    #[cfg(feature = "pi-prototype")]
+    let builder = builder.manage(pi_prototype::NativeDatabase::default());
+
     let app = builder
         .setup(move |app| {
             #[cfg(feature = "e2e-wdio")]
@@ -220,6 +225,15 @@ pub fn run() {
                 None => app.path().app_data_dir().map_err(|err| err.to_string())?,
             };
             initialize_app_data_dir(app_data_dir.clone())?;
+            #[cfg(feature = "pi-prototype")]
+            {
+                if !app.config().identifier.ends_with(".pi-prototype") {
+                    return Err("Pi prototype requires its isolated app identity".into());
+                }
+                let root = app_data_dir.join("PROTOTYPE-wipe-me/vault");
+                std::fs::create_dir_all(&root)?;
+                set_notes_root_override(Some(root))?;
+            }
             if let Some(documents_dir) = startup_paths.documents_dir.clone() {
                 initialize_documents_dir(documents_dir)?;
             } else if let Ok(documents_dir) = app.path().document_dir() {
@@ -325,6 +339,10 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(keyring_plugin.build())
         .invoke_handler(tauri::generate_handler![
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype::pi_sql,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype::pi_probe_report,
             commands::bootstrap_app,
             commands::get_settings_view,
             commands::load_note_session,
