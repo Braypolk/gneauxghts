@@ -1,6 +1,6 @@
 # Pi Durable native integration prototype
 
-Status: ready-for-agent
+Status: resolved
 Date: 2026-10-15
 Type: prototype
 
@@ -100,3 +100,11 @@ Stop broadening after the slice resolves the question. Recommend adoption only i
 - Worktree commits preserving the prototype and a concise handoff; authoritative production docs remain unchanged unless a clearly labeled prototype reference is needed.
 
 Success is demonstrated simplification and preserved behavior. Passing a fake model, adding wrappers, or a lower line count alone is not sufficient.
+
+## Recorded outcome
+
+Completed bounded experiment at implementation checkpoint `833c933`; recommend
+**defer production adoption**. Actual desktop/iOS simulator storage, protocol and
+real editor review/relaunch gates pass. Full parity is not claimed. Read
+[results](results.md), [validation](validation.md) and [run instructions](README.md).
+Production modules removed: zero; retained/bypassed costs are explicitly listed.

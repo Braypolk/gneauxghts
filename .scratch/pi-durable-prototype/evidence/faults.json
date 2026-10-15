@@ -1,0 +1,343 @@
+{
+  "status": "passed",
+  "binarySha256": "c08b4fba17959969c54e77dcec1b587f0e3eca404cc14f0d758473711c05ef80",
+  "evidence": [
+    {
+      "fault": "after-intent",
+      "code": null,
+      "signal": "SIGABRT",
+      "first": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "model proposal survives failed generation; two-session isolation, malformed checkpoint, concurrent/duplicate Keep, settled callback rejection",
+          "model update, changed-target conflict and explicit reapproval through NoteTimeline",
+          "current access rechecked at publication; Discard settles denied review",
+          "issued citation navigation/exclusion and current access change during final inference",
+          "existing ChatApi projection, direct Save without model, edited durable review and stale checkpoint rejection"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 8,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "pending",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0
+        },
+        "status": "passed"
+      },
+      "second": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "prior process submission receipt restored",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "Pi review checkpoint/title/hunks restored after process relaunch",
+          "restored Keep native receipt, duplicate Keep, restored Discard"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant",
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 154,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "settled",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0,
+          "keepNoteId": "01M50WJQFE3W9PVK0TBRC913N2",
+          "keepPath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-faults-NiMdIS/after-intent/PROTOTYPE-wipe-me/vault/Edited Pi title.md"
+        },
+        "status": "passed"
+      },
+      "singlePublicationProof": {
+        "effectRows": 1,
+        "canonicalFilesWithIdentity": 1,
+        "noteTimelinePublicationReceipts": 1,
+        "noteId": "01M50WJQFE3W9PVK0TBRC913N2"
+      }
+    },
+    {
+      "fault": "after-publication",
+      "code": null,
+      "signal": "SIGABRT",
+      "first": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "model proposal survives failed generation; two-session isolation, malformed checkpoint, concurrent/duplicate Keep, settled callback rejection",
+          "model update, changed-target conflict and explicit reapproval through NoteTimeline",
+          "current access rechecked at publication; Discard settles denied review",
+          "issued citation navigation/exclusion and current access change during final inference",
+          "existing ChatApi projection, direct Save without model, edited durable review and stale checkpoint rejection"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 8,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "pending",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0
+        },
+        "status": "passed"
+      },
+      "second": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "prior process submission receipt restored",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "Pi review checkpoint/title/hunks restored after process relaunch",
+          "restored Keep native receipt, duplicate Keep, restored Discard"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant",
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 154,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "settled",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0,
+          "keepNoteId": "01M50WK03HEQEX691228F04F5B",
+          "keepPath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-faults-NiMdIS/after-publication/PROTOTYPE-wipe-me/vault/Edited Pi title.md"
+        },
+        "status": "passed"
+      },
+      "singlePublicationProof": {
+        "effectRows": 1,
+        "canonicalFilesWithIdentity": 1,
+        "noteTimelinePublicationReceipts": 1,
+        "noteId": "01M50WK03HEQEX691228F04F5B"
+      }
+    },
+    {
+      "fault": "after-receipt",
+      "code": null,
+      "signal": "SIGABRT",
+      "first": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "model proposal survives failed generation; two-session isolation, malformed checkpoint, concurrent/duplicate Keep, settled callback rejection",
+          "model update, changed-target conflict and explicit reapproval through NoteTimeline",
+          "current access rechecked at publication; Discard settles denied review",
+          "issued citation navigation/exclusion and current access change during final inference",
+          "existing ChatApi projection, direct Save without model, edited durable review and stale checkpoint rejection"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 8,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "pending",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0
+        },
+        "status": "passed"
+      },
+      "second": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "prior process submission receipt restored",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "Pi review checkpoint/title/hunks restored after process relaunch",
+          "restored Keep native receipt, duplicate Keep, restored Discard"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant",
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 154,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "settled",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0,
+          "keepNoteId": "01M50WK8R5HXDB4CS4YCVHP2J4",
+          "keepPath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-faults-NiMdIS/after-receipt/PROTOTYPE-wipe-me/vault/Edited Pi title.md"
+        },
+        "status": "passed"
+      },
+      "singlePublicationProof": {
+        "effectRows": 1,
+        "canonicalFilesWithIdentity": 1,
+        "noteTimelinePublicationReceipts": 1,
+        "noteId": "01M50WK8R5HXDB4CS4YCVHP2J4"
+      }
+    },
+    {
+      "fault": "during-model",
+      "first": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "model proposal survives failed generation; two-session isolation, malformed checkpoint, concurrent/duplicate Keep, settled callback rejection",
+          "model update, changed-target conflict and explicit reapproval through NoteTimeline",
+          "current access rechecked at publication; Discard settles denied review",
+          "issued citation navigation/exclusion and current access change during final inference",
+          "existing ChatApi projection, direct Save without model, edited durable review and stale checkpoint rejection"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 8,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "pending",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0
+        },
+        "status": "passed"
+      },
+      "second": {
+        "pin": "1.3.0",
+        "userAgent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko)",
+        "checks": [
+          "native callback rollback",
+          "serialized competing access and stale handle rejection",
+          "prior process submission receipt restored",
+          "Pi submission and committed assistant through native SQLite",
+          "Pi close/reopen document and receipt",
+          "local: native streamed turn, scoped read/citation, follow-up",
+          "local: native inference cancellation",
+          "local: partial stream fails terminally",
+          "openai: native streamed turn, scoped read/citation, follow-up",
+          "openai: native inference cancellation",
+          "openai: partial stream fails terminally",
+          "Pi review checkpoint/title/hunks restored after process relaunch",
+          "restored Keep native receipt, duplicate Keep, restored Discard"
+        ],
+        "entryKinds": [
+          "pi.user",
+          "pi.assistant",
+          "pi.user",
+          "pi.assistant"
+        ],
+        "submissionId": 166,
+        "ui": {
+          "conversationId": "pi-134",
+          "keepId": "pi-review-148",
+          "discardId": "pi-review-150",
+          "phase": "settled",
+          "uiBody": "",
+          "uiTitle": "",
+          "uiCheckpointVersion": 0,
+          "keepNoteId": "01M50WKM2ZG9RNHWAH2CEFR9V0",
+          "keepPath": "/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-faults-NiMdIS/during-model/PROTOTYPE-wipe-me/vault/Edited Pi title.md"
+        },
+        "status": "passed"
+      },
+      "interruptedStatus": "error",
+      "retriedStatus": "completed",
+      "nativeRequests": 2
+    }
+  ],
+  "requestCount": 122,
+  "implementationCheckpoint": "833c933"
+}

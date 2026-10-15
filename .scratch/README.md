@@ -7,8 +7,6 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
-- [Pi Durable native prototype](pi-durable-prototype/spec.md): active isolated desktop/iOS session-owner experiment; pinned 1.3.0, disposable data, default runtime unchanged. [Research](chat-reuse-research/engine-decision.md).
-
 - [iOS readiness](mobile-ios-readiness/spec.md): prioritized implementation plan for recent iPhones; background saves, safe next-launch vault selection and drag cancellation are implemented, with device validation pending. Landscape safe areas and keyboard layout are implemented and simulator-checked. Touch editing, secondary controls and image gestures are implemented. The on-device semantic runtime is bundled and product simulator workflows pass; physical memory/workflow acceptance remains open. Mobile chat now supports both desktop providers on iOS; both protocols pass bounded simulator checks. Keychain persistence, native deadlines/network failures and shared visual proposal review are simulator-checked. Review overlap/styling/touch defects are corrected. [Container relocation](archive/mobile-ios-container-relocation.md) is corrected and verified across legacy recovery and repeated signed simulator replacement, preserving real conflicts. Physical/distribution credentials and physical/live acceptance remain in the device gate. Sync and older-device compatibility are deferred.
 - [Chat reliability](chat-reliability/README.md): request latency and citation entailment are open; this index owns the next steps.
 - [Context selection](chat-context-selection/spec.md): completed selection work and retained follow-ups. Follow [issue 08](chat-context-selection/issues/08-inline-citation-omission.md) for native citation omissions. [Excerpt-only answer scope](archive/excerpt-only-answer-scope.md) is corrected and native-verified; ordinary full-note questions remain supported.
@@ -22,6 +20,8 @@ citation investigation needs them. Generated evidence is local; concise findings
 and reproducible fixtures belong in Git.
 
 ## Deferred or awaiting fresh triage
+
+- [Pi Durable native prototype](archive/pi-durable-native-prototype.md): completed isolated experiment; native desktop/iOS editor and recovery gates pass, but adoption is deferred. No production modules removed; parity and native adapter costs remain. Default runtime unchanged.
 
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.
 - [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is implemented.
