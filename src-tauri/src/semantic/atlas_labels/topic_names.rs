@@ -5,7 +5,7 @@ use super::*;
 
 // A general, explicit vocabulary lets embeddings select umbrella concepts that
 // are absent from the prose. This is deliberately inspectable, not generated.
-const TOPIC_NOUNS: &str = "academia adventure agriculture analytics applications architecture art astronomy athletics automation banking biology books business careers cars chemistry childhood cinema clients climate clothing coding collaboration commerce communication community computing conservation consulting cooking creativity culture cybersecurity data design development devops education electronics energy engineering entertainment entrepreneurship environment ethics family farming fashion fiction finance fitness food friendships gaming gardening geography government hardware health history hobbies housing humor infrastructure integration intelligence investing journalism language law leadership learning literature logistics love management marketing mathematics medicine meetings memories mentoring monitoring music nature networking nutrition operations parenting philosophy photography physics planning poetry politics productivity products projects psychology recruiting relationships religion reporting research retirement robotics roleplaying romance sales science security shopping software spirituality sports strategy support systems teaching technology theology training transportation travel vehicles volunteering weddings wellbeing workflows writing";
+pub(super) const TOPIC_NOUNS: &str = "academia adventure agriculture analytics applications architecture art astronomy athletics automation banking biology books business careers cars chemistry childhood cinema clients climate clothing coding collaboration commerce communication community computing conservation consulting cooking creativity culture cybersecurity data design development devops education electronics energy engineering entertainment entrepreneurship environment ethics family farming fashion fiction finance fitness food friendships gaming gardening geography government hardware health history hobbies housing humor infrastructure integration intelligence investing journalism language law leadership learning literature logistics love management marketing mathematics medicine meetings memories mentoring monitoring music nature networking nutrition operations parenting philosophy photography physics planning poetry politics productivity products projects psychology recruiting relationships religion reporting research retirement robotics roleplaying romance sales science security shopping software spirituality sports strategy support systems teaching technology theology training transportation travel vehicles volunteering weddings wellbeing workflows writing";
 const NON_TOPICS: &str = "able actually almost already always anything around available away back based best better big call called come coming complete completed current daily day days done down enough even example examples existing feel find found getting give given going good got great help high include including information item items keep last later less like likely little look looking lot made make makes making many might must new next note notes now often okay old open part parts please point possible probably put really right said say says second see seen set show simple simply since small start started still sure take taken tell text think time times today together tomorrow try trying two update updates updated used useful uses using value values way ways week weeks well went work works working yes yet yesterday able needs needed wants wanted";
 
 // Disambiguate broad or overloaded names in the embedding space while keeping
@@ -69,6 +69,7 @@ struct Evidence {
 struct Topic {
     id: String,
     parent: Option<String>,
+    displayed_name: Option<String>,
     centroid: Vec<f32>,
     terms: HashMap<String, Evidence>,
     members: usize,
@@ -160,6 +161,11 @@ fn prepare_topic(
     Topic {
         id: cloud.id.clone(),
         parent: cloud.parent_id.clone(),
+        displayed_name: cloud.user_name.clone().or_else(|| {
+            (cloud.label_source != "pending")
+                .then(|| cloud.label.clone())
+                .flatten()
+        }),
         centroid,
         terms,
         members: members.len(),
@@ -203,6 +209,31 @@ where
         .map(|cloud| prepare_topic(cloud, &notes, &chunks))
         .collect::<Vec<_>>();
     topics.sort_by(|a, b| a.id.cmp(&b.id));
+    let children = topics
+        .iter()
+        .map(|topic| {
+            topics
+                .iter()
+                .enumerate()
+                .filter_map(|(i, child)| (child.parent.as_ref() == Some(&topic.id)).then_some(i))
+                .collect::<Vec<_>>()
+        })
+        .collect::<Vec<_>>();
+    let depths = topics
+        .iter()
+        .map(|topic| {
+            let mut depth = 0;
+            let mut parent = topic.parent.as_ref();
+            while let Some(ancestor) = parent.and_then(|id| topics.iter().find(|t| &t.id == id)) {
+                depth += 1;
+                if depth >= topics.len() {
+                    break;
+                }
+                parent = ancestor.parent.as_ref();
+            }
+            depth
+        })
+        .collect::<Vec<_>>();
     let mut unique = topics
         .iter()
         .flat_map(|topic| topic.candidates.iter().cloned())
@@ -240,7 +271,7 @@ where
         embeddings.extend(rows);
     }
     // Compute similarities once: competing-cloud comparison shares this matrix.
-    let similarities = topics
+    let mut similarities = topics
         .iter()
         .map(|topic| {
             unique
@@ -249,6 +280,24 @@ where
                 .collect::<Vec<_>>()
         })
         .collect::<Vec<_>>();
+    // Each subtheme has an equal voice, regardless of note count. Reward words
+    // that fit even the least similar child, rather than one dominant subcloud.
+    let mut bottom_up = (0..topics.len()).collect::<Vec<_>>();
+    bottom_up.sort_by_key(|i| std::cmp::Reverse(depths[*i]));
+    for &i in &bottom_up {
+        if children[i].is_empty() {
+            continue;
+        }
+        for j in 0..unique.len() {
+            let mean = children[i].iter().map(|k| similarities[*k][j]).sum::<f32>()
+                / children[i].len() as f32;
+            let minimum = children[i]
+                .iter()
+                .map(|k| similarities[*k][j])
+                .fold(f32::INFINITY, f32::min);
+            similarities[i][j] = (mean + minimum) * 0.5;
+        }
+    }
     let vocabulary = TOPIC_NOUNS.split_whitespace().collect::<HashSet<_>>();
     let mut scores = vec![vec![-10_000.0; unique.len()]; topics.len()];
     for (i, topic) in topics.iter().enumerate() {
@@ -282,11 +331,14 @@ where
                 .map(|e| e.notes)
                 .sum::<usize>();
             let contrast = (coverage - other_support as f32 / other_members.max(1) as f32).max(0.0);
+            let lexical_support = if children[i].is_empty() {
+                coverage * 0.12 + title_coverage * 0.10 + tag_coverage * 0.08 + contrast * 0.08
+            } else {
+                // Note-level frequency must not reintroduce the largest-child bias.
+                0.0
+            };
             scores[i][j] = similarities[i][j] - competing_similarity * 0.65
-                + coverage * 0.12
-                + title_coverage * 0.10
-                + tag_coverage * 0.08
-                + contrast * 0.08
+                + lexical_support
                 + if vocabulary.contains(word.as_str()) {
                     0.035
                 } else {
@@ -294,22 +346,41 @@ where
                 };
         }
     }
-    // Parent labels and their children need not compete for the same word.
-    // Assign roots together and each parent's children together, maximizing
-    // total relevance instead of letting the first cloud claim every good name.
+    // Assign siblings together, children before parents. Reserve descendant
+    // names so the broader region receives a distinct umbrella word.
     let mut parents = topics
         .iter()
         .map(|topic| topic.parent.clone())
         .collect::<Vec<_>>();
-    parents.sort();
+    parents.sort_by_key(|parent| {
+        let depth = parent
+            .as_ref()
+            .and_then(|id| topics.iter().position(|topic| &topic.id == id))
+            .map_or(0, |i| depths[i] + 1);
+        (std::cmp::Reverse(depth), parent.clone())
+    });
     parents.dedup();
     let mut labels = HashMap::new();
+    let mut reserved = vec![HashSet::<String>::new(); topics.len()];
     for parent in parents {
         let indices = topics
             .iter()
             .enumerate()
             .filter_map(|(i, topic)| (topic.parent == parent).then_some(i))
             .collect::<Vec<_>>();
+        for &i in &indices {
+            reserved[i] = children[i]
+                .iter()
+                .flat_map(|k| reserved[*k].iter().cloned())
+                .collect();
+            for (j, word) in unique.iter().enumerate() {
+                if reserved[i].contains(word) && topics[i].candidates.contains(word) {
+                    // Exhausted vocabularies can reuse words; ordinary families
+                    // always prefer an unused, readable theme.
+                    scores[i][j] -= 1_000.0;
+                }
+            }
+        }
         let selected = maximum_assignment(
             &indices
                 .iter()
@@ -333,6 +404,10 @@ where
                 confidence: scores[i][j],
                 source: CloudLabelSource::Topic,
             };
+            reserved[i].insert(assignment.label.to_lowercase());
+            if let Some(name) = &topics[i].displayed_name {
+                reserved[i].insert(name.trim().to_lowercase());
+            }
             labels.insert(topics[i].id.clone(), assignment);
         }
     }

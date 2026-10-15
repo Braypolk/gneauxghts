@@ -16,7 +16,7 @@ mod topic_names;
 pub(crate) use topic_names::generate_labels_progressive;
 
 // Binds published labels and descriptor embeddings to this exact naming policy.
-pub(crate) const LABEL_ALGORITHM_VERSION: &str = "topic-atlas-v8";
+pub(crate) const LABEL_ALGORITHM_VERSION: &str = "topic-atlas-v9";
 
 const GENERIC_SECTION_LABELS: &[&str] = &["Title", "Overview", "Remembered passage"];
 

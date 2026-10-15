@@ -558,7 +558,7 @@ impl AtlasWorkerContext {
             return Err(ATLAS_SUPERSEDED.to_string());
         }
         let root = atlas_root(&self.cache_dir);
-        let structural =
+        let mut structural =
             read_json::<AtlasGenerationArtifact>(&root.join(&structural_pointer.artifact_file))?;
         let membership = cloud_membership_fingerprint(
             &structural.response.structural_generation,
@@ -624,7 +624,9 @@ impl AtlasWorkerContext {
                 .admission
                 .lock()
                 .map_err(|_| "Atlas admission unavailable")?;
-            self.current_label_map(generation_key, request, cache_epoch)?;
+            let map = self.current_label_map(generation_key, request, cache_epoch)?;
+            // Retained and user-authored child names also constrain umbrella names.
+            AtlasMapStore::overlay(&map, &mut structural.response);
             write_artifact(&HashMap::new(), false)?;
             atomic_write_json(
                 &label_ready_pointer_path(&self.cache_dir, generation_key),
@@ -690,6 +692,12 @@ impl AtlasWorkerContext {
             .lock()
             .map_err(|_| "Atlas admission unavailable")?;
         let mut map = self.current_label_map(generation_key, request, cache_epoch)?;
+        let parents = map
+            .clouds
+            .iter()
+            .filter(|c| c.active)
+            .filter_map(|c| c.parent.clone())
+            .collect::<HashSet<_>>();
         for cloud in map.clouds.iter_mut().filter(|c| c.active) {
             if let Some(label) = final_labels.get(&cloud.id) {
                 let similarity: f32 = cloud
@@ -698,7 +706,10 @@ impl AtlasWorkerContext {
                     .zip(&cloud.name_prototype)
                     .map(|(a, b)| a * b)
                     .sum();
-                if cloud.auto_name.is_none()
+                // Parents must adopt the umbrella policy even when their note
+                // centroid has not changed. User overrides remain independent.
+                if parents.contains(&cloud.id)
+                    || cloud.auto_name.is_none()
                     || cloud.name_prototype.len() != cloud.prototype.len()
                     || similarity < 0.94
                 {

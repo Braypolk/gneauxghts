@@ -411,52 +411,184 @@ fn atlas_visibility_filters_hidden_chat_rows_and_adds_navigation_only_chats() {
         .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX));
 }
 
-#[test]
-fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_cache_loss() {
+fn seed_atlas_garden_note(db: &mut rusqlite::Connection, root: &Path, i: usize) {
     use crate::semantic::chunking::SemanticChunk;
-    use crate::semantic::db::{
-        rebuild_edges_with_provenance, upsert_note_chunks, SemanticNoteMetadata,
-    };
+    use crate::semantic::db::{upsert_note_chunks, SemanticNoteMetadata};
+    let path = root.join(format!("garden-{i}.md"));
+    fs::write(&path, format!("# Garden {i}\nVegetables and garden soil")).unwrap();
+    let hash = format!("garden-{i}");
+    upsert_note_chunks(
+        db,
+        &path.to_string_lossy(),
+        &hash,
+        1,
+        &hash,
+        "",
+        "",
+        DocumentKind::Note,
+        &SemanticNoteMetadata {
+            note_id: hash.clone(),
+            semantic_input_hash: hash.clone(),
+            presentation_hash: hash.clone(),
+            ..Default::default()
+        },
+        &[SemanticChunk {
+            ordinal: 0,
+            section_label: "Garden".into(),
+            text: "Vegetables and garden soil".into(),
+            text_hash: hash.clone(),
+            start_line: 1,
+            end_line: 2,
+            block_anchor: None,
+        }],
+        &[vec![1.0, 0.0, 0.0]],
+    )
+    .unwrap();
+}
+
+#[test]
+fn label_publication_replaces_a_retained_duplicate_parent_name() {
     use crate::semantic::{health_tests::active_status_state, RuntimeState, SemanticStateInner};
     let (state, _signals, temp) = active_status_state(RuntimeState::default());
     let SemanticStateInner::Active(active) = &state.inner else {
         unreachable!()
     };
     let mut db = open_database(&active.db_path).unwrap();
-    let seed = |db: &mut rusqlite::Connection, i: usize| {
-        let path = temp.path().join(format!("garden-{i}.md"));
-        fs::write(&path, format!("# Garden {i}\nVegetables and garden soil")).unwrap();
-        let hash = format!("garden-{i}");
-        upsert_note_chunks(
-            db,
-            &path.to_string_lossy(),
-            &hash,
-            1,
-            &hash,
-            "",
-            "",
-            DocumentKind::Note,
-            &SemanticNoteMetadata {
-                note_id: hash.clone(),
-                semantic_input_hash: hash.clone(),
-                presentation_hash: hash.clone(),
-                ..Default::default()
-            },
-            &[SemanticChunk {
-                ordinal: 0,
-                section_label: "Garden".into(),
-                text: "Vegetables and garden soil".into(),
-                text_hash: hash.clone(),
-                start_line: 1,
-                end_line: 2,
-                block_anchor: None,
-            }],
-            &[vec![1.0, 0.0, 0.0]],
-        )
-        .unwrap();
-    };
     for i in 0..8 {
-        seed(&mut db, i);
+        seed_atlas_garden_note(&mut db, temp.path(), i);
+    }
+    active.note_ann.rebuild_from_connection(&db).unwrap();
+    crate::semantic::db::rebuild_edges_with_provenance(
+        &mut db,
+        8,
+        0.3,
+        &active.note_ann.generation_id().unwrap(),
+        "status-test",
+        |_, _| {},
+    )
+    .unwrap();
+    let key = AtlasGenerationKey::default();
+    let worker = AtlasWorkerContext {
+        map_store: active.atlas_map.clone(),
+        db_path: active.db_path.clone(),
+        cache_dir: active.atlas_cache_dir.clone(),
+        dimensions: 3,
+        provider: active.provider.clone(),
+        debug: active.debug.clone(),
+        note_ann: active.note_ann.clone(),
+        pending: Arc::new(Mutex::new(PendingIndexState::default())),
+    };
+    worker.build_and_publish(key, 0).unwrap();
+    let mut map = worker.map_store.load(key).unwrap().unwrap();
+    let mut structural = read_json::<AtlasGenerationArtifact>(&map.artifact_path).unwrap();
+    // Supply an accepted parent/child family with the legacy duplicate names.
+    // Graph clustering is outside this regression; publication and durable
+    // name admission, including unchanged prototypes, use the real owners.
+    let parent = structural.response.clouds[0].id.clone();
+    let child = "retained-child".to_string();
+    let mut child_cloud = structural.response.clouds[0].clone();
+    child_cloud.id = child.clone();
+    child_cloud.parent_id = Some(parent.clone());
+    child_cloud.level = 1;
+    child_cloud.child_cloud_ids.clear();
+    structural.response.clouds[0].child_cloud_ids = vec![child.clone()];
+    structural.response.clouds.push(child_cloud);
+    let parent_memory = map.clouds.iter_mut().find(|c| c.id == parent).unwrap();
+    parent_memory.auto_name = Some("gardening".into());
+    parent_memory.name_prototype = parent_memory.prototype.clone();
+    let mut child_memory = parent_memory.clone();
+    child_memory.id = child.clone();
+    child_memory.parent = Some(parent.clone());
+    map.clouds.push(child_memory);
+    atomic_write_json(&map.artifact_path, &structural).unwrap();
+    worker.map_store.save(key, &map).unwrap();
+    let request = AtlasLabelRequest {
+        structural_generation: map.generation.clone(),
+        membership_fingerprint: cloud_membership_fingerprint(
+            &map.generation,
+            &structural.response.clouds,
+        ),
+    };
+    worker.build_and_publish_labels(key, &request).unwrap();
+    let read = active.vault_atlas(key, HashMap::new(), 0).unwrap();
+    let parent_label = read
+        .clouds
+        .iter()
+        .find(|c| c.id == parent)
+        .unwrap()
+        .label
+        .clone();
+    assert!(parent_label.is_some());
+    assert_ne!(parent_label.as_deref(), Some("gardening"));
+    assert_eq!(
+        read.clouds
+            .iter()
+            .find(|c| c.id == child)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("gardening")
+    );
+    let reopened = AtlasMapStore::new(temp.path());
+    assert_eq!(
+        reopened
+            .load(key)
+            .unwrap()
+            .unwrap()
+            .clouds
+            .iter()
+            .find(|c| c.id == parent)
+            .unwrap()
+            .auto_name,
+        parent_label
+    );
+    assert_eq!(
+        read.nodes.iter().map(|n| (n.x, n.y)).collect::<Vec<_>>(),
+        structural
+            .response
+            .nodes
+            .iter()
+            .map(|n| (n.x, n.y))
+            .collect::<Vec<_>>()
+    );
+    worker
+        .map_store
+        .rename(key, &parent, Some("Kitchen garden".into()))
+        .unwrap();
+    worker.build_and_publish_labels(key, &request).unwrap();
+    let named = active.vault_atlas(key, HashMap::new(), 0).unwrap();
+    assert_eq!(
+        named
+            .clouds
+            .iter()
+            .find(|c| c.id == parent)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("Kitchen garden")
+    );
+    assert_ne!(
+        worker
+            .map_store
+            .rename(key, &parent, None)
+            .unwrap()
+            .label
+            .as_deref(),
+        Some("gardening")
+    );
+}
+
+#[test]
+fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_cache_loss() {
+    use crate::semantic::db::rebuild_edges_with_provenance;
+    use crate::semantic::{health_tests::active_status_state, RuntimeState, SemanticStateInner};
+    let (state, _signals, temp) = active_status_state(RuntimeState::default());
+    let SemanticStateInner::Active(active) = &state.inner else {
+        unreachable!()
+    };
+    let mut db = open_database(&active.db_path).unwrap();
+    for i in 0..8 {
+        seed_atlas_garden_note(&mut db, temp.path(), i);
     }
     let prepare = |db: &mut rusqlite::Connection| {
         active.note_ann.rebuild_from_connection(db).unwrap();
@@ -536,7 +668,7 @@ fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_ca
             .unwrap();
         assert_eq!((node.x, node.y), (next.x, next.y));
     }
-    seed(&mut db, 8);
+    seed_atlas_garden_note(&mut db, temp.path(), 8);
     prepare(&mut db);
     let added = worker.build_and_publish(key, 1).unwrap();
     assert_eq!(added.nodes.len(), 9);

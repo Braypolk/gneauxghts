@@ -604,6 +604,11 @@ Jina floor; provider-specific retrieval floors belong to `EmbeddingProvider` in
 `semantic/embed.rs` and its implementations. Atlas graph and layout policies live
 in `semantic/atlas.rs` and its private layout modules.
 
+Automatic cloud names belong to `semantic/atlas_labels/topic_names.rs`. Parents
+score umbrella words across equally weighted child themes and reserve descendant
+names before sibling assignment. Label publication refreshes automatic parent
+names under this policy while retaining independent user overrides.
+
 Atlas's private `map_store.rs` owns durable vault-local cloud identity, names,
 lineage and accepted world placements separately from rebuildable semantic data.
 `continuity.rs` reconciles current communities and candidate evidence with that

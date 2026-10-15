@@ -312,6 +312,108 @@ fn topic_names_reflect_member_content() {
 }
 
 #[test]
+fn parent_names_cover_subthemes_without_repeating_a_child() {
+    let mut connection = crate::semantic::test_support::memory_database();
+    let provider = MockProvider::new();
+    let vocabulary = topic_names::TOPIC_NOUNS
+        .split_whitespace()
+        .map(|word| {
+            let vector = match word {
+                "research" => vec![1.0, 0.0],
+                "history" => vec![0.0, 1.0],
+                "learning" => vec![1.0, 1.0],
+                "education" => vec![0.9, 1.0],
+                _ => vec![-1.0, -1.0],
+            };
+            (word.to_string(), vector)
+        })
+        .collect::<Vec<_>>();
+    save_atlas_label_embeddings(
+        &mut connection,
+        &vocabulary,
+        &model_cache_fingerprint(&provider),
+        LABEL_ALGORITHM_VERSION,
+    )
+    .unwrap();
+    let mut nodes = Vec::new();
+    let mut embeddings = HashMap::new();
+    let research_ids = (0..8).map(|i| format!("research-{i}")).collect::<Vec<_>>();
+    for id in &research_ids {
+        let (node, embedding) = atlas_node(id, "Research", &[1.0, 0.0]);
+        nodes.push(node);
+        embeddings.insert(id.clone(), embedding);
+    }
+    let (node, embedding) = atlas_node("history", "History", &[0.0, 1.0]);
+    nodes.push(node);
+    embeddings.insert("history".into(), embedding);
+    let mut member_ids = research_ids.iter().map(String::as_str).collect::<Vec<_>>();
+    let mut research = cloud(&member_ids);
+    member_ids.push("history");
+    let mut parent = cloud(&member_ids);
+    let mut history = cloud(&["history"]);
+    research.parent_id = Some(parent.id.clone());
+    history.parent_id = Some(parent.id.clone());
+    parent.child_cloud_ids = vec![research.id.clone(), history.id.clone()];
+    let mut clouds = vec![parent.clone(), research.clone(), history.clone()];
+    for _ in 0..2 {
+        let (labels, _) = generate_labels_progressive(
+            &mut connection,
+            &provider,
+            &clouds,
+            &nodes,
+            &embeddings,
+            |_, _| Ok(()),
+        )
+        .unwrap();
+        assert_eq!(labels[&research.id].label, "research");
+        assert_eq!(labels[&history.id].label, "history");
+        assert_eq!(labels[&parent.id].label, "learning");
+        // Input order and a warm embedding cache cannot change the names.
+        clouds.reverse();
+    }
+    // A user-authored child name is reserved too, even when its automatic
+    // topic would have been different. Comparison ignores case and whitespace.
+    clouds
+        .iter_mut()
+        .find(|c| c.id == research.id)
+        .unwrap()
+        .user_name = Some(" Learning ".into());
+    let (labels, _) = generate_labels_progressive(
+        &mut connection,
+        &provider,
+        &clouds,
+        &nodes,
+        &embeddings,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(labels[&parent.id].label, "education");
+    // The same rule works recursively, even when cloud IDs sort parents first.
+    let mut grandparent = parent.clone();
+    grandparent.id = "ancestor".into();
+    grandparent.child_cloud_ids = vec![parent.id.clone()];
+    for cloud in &mut clouds {
+        cloud.user_name = None;
+        if cloud.id == parent.id {
+            cloud.parent_id = Some(grandparent.id.clone());
+        }
+    }
+    clouds.push(grandparent.clone());
+    let (labels, _) = generate_labels_progressive(
+        &mut connection,
+        &provider,
+        &clouds,
+        &nodes,
+        &embeddings,
+        |_, _| Ok(()),
+    )
+    .unwrap();
+    assert_eq!(labels[&parent.id].label, "learning");
+    assert_eq!(labels[&grandparent.id].label, "education");
+    assert_eq!(provider.calls.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn phrase_cache_hit_skips_embedding_provider() {
     let mut connection = crate::semantic::test_support::memory_database();
     insert_chunk(
