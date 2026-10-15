@@ -41,7 +41,7 @@ function nativeFetch(provider: 'local' | 'openai'): typeof fetch {
   };
 }
 
-export type RequestPolicy = {access:VaultAccess;sources:ChatReadSource[];taskId:number};
+export type RequestPolicy = {access:VaultAccess;sources:ChatReadSource[];taskId:number;currentAccess?:()=>Promise<VaultAccess>};
 export type RequestPolicies = Map<string, RequestPolicy>;
 
 export function nativeModels(policies: RequestPolicies, persist?: (policy:RequestPolicy, answer:{text:string;sources:ChatReadSource[]}) => Promise<void>, modelId = 'pi-native-fixture') {
@@ -76,7 +76,7 @@ export function nativeModels(policies: RequestPolicies, persist?: (policy:Reques
         for await (const event of underlying) {
           if (event.type === 'done' && event.message.stopReason !== 'toolUse') {
             const raw = event.message.content.filter(block => block.type === 'text').map(block => block.text).join('');
-            const admitted = await invoke<{text:string;sources:ChatReadSource[]}>('pi_admit_answer',{raw,sources:policy.sources,access:policy.access});
+            const admitted = await invoke<{text:string;sources:ChatReadSource[]}>('pi_admit_answer',{raw,sources:policy.sources,access:await policy.currentAccess?.() ?? policy.access});
             await persist?.(policy,admitted);
             const message = {...event.message,content:[{type:'text' as const,text:admitted.text}]};
             output.push({type:'text_delta',contentIndex:0,delta:admitted.text,partial:message});

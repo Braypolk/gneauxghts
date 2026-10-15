@@ -36,6 +36,9 @@
   setContext(workspaceTitleSlotKey, () => workspaceTitleSlot);
 
   onMount(() => {
+    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && new URL(location.href).searchParams.has('piUiTest')) {
+      void import('$lib/prototypes/pi/uiProbe').then(({runUiProbe})=>runUiProbe());
+    }
     const disposeBackgroundPersistence = installBackgroundPersistence();
     if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && /Mac/i.test(navigator.platform)) {
       nativeWindowControlsHeight = 32;

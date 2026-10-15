@@ -616,7 +616,7 @@ impl ChatService {
     }
 }
 
-fn validate_decisions(decisions: &Value, markdown: &str) -> Result<(), String> {
+pub(crate) fn validate_decisions(decisions: &Value, markdown: &str) -> Result<(), String> {
     let hunks = decisions.as_array().ok_or("Invalid review decisions")?;
     let mut ids = std::collections::HashSet::new();
     let length = markdown.encode_utf16().count();

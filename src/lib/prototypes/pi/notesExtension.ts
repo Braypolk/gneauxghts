@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { defineDoc, defineExtension, defineTool, hook, GenerationTask, CompactionTask, ProviderDoc } from '@earendil-works/pi-durable';
+import { defineDoc, defineDocFamily, defineExtension, defineTool, hook, GenerationTask, CompactionTask, ProviderDoc } from '@earendil-works/pi-durable';
 import { Type } from '@earendil-works/pi-ai';
 import type { RequestPolicies } from './nativeProvider';
 import type { ChatReadSource, VaultAccess } from '$lib/features/chat/types';
@@ -8,8 +8,8 @@ export const Evidence = defineDoc({ kind: 'gneauxghts.pi.evidence', version: 1, 
   history: 'latest', fork: 'initial', initial: () => ({ access: 'none' as VaultAccess, sourcesJson: '[]' }) });
 
 export const evidenceSources = (binding: {sourcesJson: string}): ChatReadSource[] => JSON.parse(binding.sourcesJson);
-export const AdmittedAnswer = defineDoc({kind:'gneauxghts.pi.admitted-answer', version:1, scope:'task',
-  initial: () => ({ text:'', sourcesJson:'[]' })});
+export const AdmittedAnswer = defineDocFamily({family:true,kind:'gneauxghts.pi.admitted-answer', version:1, scope:'session',
+  initial: (_seed:string) => ({ text:'', sourcesJson:'[]' })});
 
 // Process-local permission is intentional: reopening a harness must not authorize
 // network continuation. The user grants a conversation permission by Send/Retry.
@@ -21,16 +21,17 @@ export function notesExtension(permitted: Set<number>, policies: RequestPolicies
     execute: async ({ noteId }, api, context) => {
       const binding = await api.snapshot(Evidence, api.conversationId, context);
       const result = await invoke<{payload: unknown; sources: ChatReadSource[]}>('pi_read_note', { noteId, access: binding?.access ?? 'none' });
+      let issued:ChatReadSource[]=[];
       await api.commit(async tx => {
         const evidence = await tx.doc(Evidence, api.conversationId);
         const sources = evidenceSources(evidence);
         for (const source of result.sources) {
           if (!sources.some(s => s.passage?.id === source.passage?.id)) sources.push(source);
         }
-        evidence.sourcesJson = JSON.stringify(sources);
+        evidence.sourcesJson = JSON.stringify(sources);issued=sources;
       }, context);
-      return { output: [{ type: 'text', text: JSON.stringify(result.sources.map((source, index) => ({
-        sourceId: `S${index + 1}`, citation: `[S${index + 1}]`, noteId: source.noteId, excerpt: source.excerpt,
+      return { output: [{ type: 'text', text: JSON.stringify(result.sources.map(source => ({
+        sourceId: `S${issued.findIndex(s=>s.passage?.id===source.passage?.id)+1}`, citation: `[S${issued.findIndex(s=>s.passage?.id===source.passage?.id)+1}]`, noteId: source.noteId, excerpt: source.excerpt,
         evidenceId: source.passage?.id
       }))) }] };
     }
@@ -42,7 +43,7 @@ export function notesExtension(permitted: Set<number>, policies: RequestPolicies
       if (!permitted.has(api.conversationId)) return {messages: []};
       const binding = await api.snapshot(Evidence, api.conversationId, context);
       if (binding && evidenceSources(binding).length) await invoke('pi_validate_sources', { sources: evidenceSources(binding), access: binding.access });
-      policies.set(provider.sessionId, {access:binding?.access ?? 'none', sources:binding ? evidenceSources(binding) : [], taskId:api.taskId});
+      policies.set(provider.sessionId, {access:binding?.access ?? 'none', sources:binding ? evidenceSources(binding) : [], taskId:api.taskId,currentAccess:async()=>(await api.snapshot(Evidence,api.conversationId,context))?.access ?? 'none'});
       return {messages}; // The mandatory provider boundary filters history too.
     }
   }), hook(CompactionTask, { beforeCompact: () => ({ decline: true }) })] });

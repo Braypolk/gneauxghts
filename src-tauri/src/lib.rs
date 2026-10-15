@@ -20,6 +20,8 @@ mod pi_prototype;
 mod pi_prototype_transport;
 #[cfg(feature = "pi-prototype")]
 mod pi_prototype_notes;
+#[cfg(feature = "pi-prototype")]
+mod pi_prototype_publication;
 mod search;
 mod secrets;
 mod semantic;
@@ -353,6 +355,8 @@ pub fn run() {
             #[cfg(feature = "pi-prototype")]
             pi_prototype::pi_probe_config,
             #[cfg(feature = "pi-prototype")]
+            pi_prototype::pi_ui_report,
+            #[cfg(feature = "pi-prototype")]
             pi_prototype_transport::pi_fetch,
             #[cfg(feature = "pi-prototype")]
             pi_prototype_transport::pi_cancel_fetch,
@@ -362,6 +366,14 @@ pub fn run() {
             pi_prototype_notes::pi_validate_sources,
             #[cfg(feature = "pi-prototype")]
             pi_prototype_notes::pi_admit_answer,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_notes::pi_resolve_passage,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_notes::pi_validate_review_checkpoint,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_publication::pi_prepare_review,
+            #[cfg(feature = "pi-prototype")]
+            pi_prototype_publication::pi_publish_review,
             commands::bootstrap_app,
             commands::get_settings_view,
             commands::load_note_session,

@@ -698,9 +698,22 @@ export class TauriChatApi implements ChatApi {
   }
 }
 
-export const chatApi = new TauriChatApi();
+const nativeChatApi = new TauriChatApi();
+let prototypeApi: Promise<ChatApi> | undefined;
+export const chatApi: ChatApi = import.meta.env.VITE_PI_PROTOTYPE === 'true'
+  ? new Proxy(nativeChatApi, { get(target, key) {
+      const value = Reflect.get(target, key);
+      if (typeof value !== 'function' && !(typeof key === 'string' && key.startsWith('prototype'))) return value;
+      return (...args: unknown[]) => {
+        prototypeApi ??= import('$lib/prototypes/pi/chatApi').then(({createPiChatApi}) => createPiChatApi(nativeChatApi));
+        return prototypeApi.then(api => Reflect.get(api,key).apply(api,args));
+      };
+    } }) : nativeChatApi;
 
 export async function resolveCurrentPassage(conversationId: string, evidenceId: string) {
-  const result = await invoke<{source: RawSource; markdown: string; historicalRevisionId?: string; selection: {anchor: number; head: number} | null}>("chat_resolve_passage", { conversationId, evidenceId });
+  type Resolved={source: RawSource; markdown: string; historicalRevisionId?: string; selection: {anchor: number; head: number} | null};
+  const result = import.meta.env.VITE_PI_PROTOTYPE === 'true' && conversationId.startsWith('pi-')
+    ? await (chatApi as ChatApi & {prototypeResolvePassage:(id:string,evidence:string)=>Promise<Resolved>}).prototypeResolvePassage(conversationId,evidenceId)
+    : await invoke<Resolved>('chat_resolve_passage', {conversationId,evidenceId});
   return {...result, source: normalizeSource(result.source)};
 }

@@ -9,4 +9,5 @@
 </script>
 
 <h1>Pi Durable native prototype — disposable data</h1>
+<a href="/">Open the existing app and chat UI</a>
 <pre>{typeof report === 'string' ? report : JSON.stringify(report, null, 2)}</pre>

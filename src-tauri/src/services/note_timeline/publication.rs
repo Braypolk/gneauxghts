@@ -274,6 +274,21 @@ impl<'a> NoteTimeline<'a> {
         path: &Path,
         markdown: &str,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.create_note_at_with_identity(source, path, markdown, None)
+    }
+
+    // A native publication intent may reserve the Note Identity before writing
+    // Markdown, so a crash cannot mistake unrelated equal text for its receipt.
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn create_prototype_note_at(
+        &self, path: &Path, markdown: &str, identity: &NoteIdentity,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.create_note_at_with_identity(MutationSource::AcceptedChatProposal, path, markdown, Some(identity))
+    }
+
+    fn create_note_at_with_identity(
+        &self, source: MutationSource, path: &Path, markdown: &str, retained_identity: Option<&NoteIdentity>,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
         let path = crate::state::validate_current_path(
             Some(path.to_string_lossy().into_owned()),
             self.runtime.store.vault_root(),
@@ -283,7 +298,7 @@ impl<'a> NoteTimeline<'a> {
         self.with_admitted_publication(
             PublicationPathScope::Parent,
             None,
-            None,
+            retained_identity,
             |_| Ok((path.clone(), markdown.to_string())),
             |path, raw, identity| {
                 // An occupied leaf, including an outward or dangling symlink,

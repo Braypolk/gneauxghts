@@ -1,0 +1,53 @@
+import assert from 'node:assert/strict';
+import {spawn,spawnSync} from 'node:child_process';
+import {createHash} from 'node:crypto';
+import {once} from 'node:events';
+import {mkdtempSync,readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join,resolve} from 'node:path';
+import {createWebDriverRequest,waitUntil} from '../../e2e/support/nativeTransport.mjs';
+import {startFixture} from './fixture.mjs';
+const root=mkdtempSync(join(tmpdir(),'gneauxghts-pi-faults-'));
+const binary=resolve('src-tauri/target/debug/gneauxghts');
+const fixture=await startFixture();
+const server=spawn('pnpm',['exec','vite','--host','127.0.0.1','--port','1442','--strictPort'],{env:{...process.env,VITE_PI_PROTOTYPE:'true'},stdio:'ignore',detached:true});
+const wd=createWebDriverRequest(4445);
+let app;
+const reportPath=data=>join(data,'PROTOTYPE-wipe-me/probe.json');
+const readReport=data=>waitUntil(()=>{try{const r=JSON.parse(readFileSync(reportPath(data),'utf8'));return r.status && r;}catch{return false;}},'native fault report',90000);
+const launch=data=>spawn(binary,['--e2e-app-data-root',data,'--e2e-documents-root',data],{stdio:'ignore',env:{...process.env,PI_PROTOTYPE_HTTP_FIXTURE:'http://127.0.0.1:1443'}});
+const evidence=[];
+try{
+ await waitUntil(async()=> (await fetch('http://127.0.0.1:1442/pi-prototype')).ok,'owned Vite');
+ for(const fault of ['after-intent','after-publication','after-receipt']){
+  const data=join(root,fault);app=launch(data);
+  const first=await readReport(data);assert.equal(first.status,'passed',JSON.stringify(first));
+  const session=await wd('/session',{capabilities:{alwaysMatch:{browserName:'wry'}}});
+  const call=(script,args=[])=>wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(async()=>{${script}})().then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error)}));`,args});
+  const prepared=await call("const {chatApi:api}=await import('/src/lib/features/chat/api.ts');const state=await api.prototypeState();const draft=await api.getProposalDraft(state.keepId);await api.prototypeFault(state.keepId,arguments[0]);window.__piFault={api,state,draft};return {state,draft};",[fault]);assert(prepared.ok,JSON.stringify(prepared));
+  const exited=once(app,'exit');
+  await wd(`/session/${session.sessionId}/execute/sync`,{script:'const {api,state,draft}=window.__piFault;void api.commitAgentProposal(state.keepId,draft.markdown,draft.version).catch(()=>{});return true;',args:[]}).catch(()=>{});
+  const [code,signal]=await Promise.race([exited,new Promise((_,reject)=>setTimeout(()=>reject(new Error('fault did not terminate app')),20000))]);app=undefined;assert(signal || code!==0,'Fault failed to crash');
+  unlinkSync(reportPath(data));app=launch(data);const second=await readReport(data);assert.equal(second.status,'passed',JSON.stringify(second));
+  assert(second.checks.includes('restored Keep native receipt, duplicate Keep, restored Discard'));
+  const receipt=second.ui;assert(receipt.keepNoteId && receipt.keepPath,'Recovered receipt missing');
+  const raw=readFileSync(receipt.keepPath,'utf8');assert(raw.includes('Edited checkpoint retained through restart.'));
+  evidence.push({fault,code,signal,first,second});app.kill('SIGTERM');await once(app,'exit');app=undefined;
+ }
+ const data=join(root,'during-model');app=launch(data);const first=await readReport(data);assert.equal(first.status,'passed',JSON.stringify(first));
+ const session=await wd('/session',{capabilities:{alwaysMatch:{browserName:'wry'}}});
+ const call=async(sessionId,script,args=[])=>{const result=await wd(`/session/${sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(async()=>{${script}})().then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error)}));`,args});assert(result.ok,JSON.stringify(result));return result.value;};
+ const token=`INTERRUPTED_SLOW_CANCEL:${Date.now()}`;
+ const sent=await call(session.sessionId,"const {chatApi:api}=await import('/src/lib/features/chat/api.ts');const conversation=await api.createConversation({title:'Interrupted explicit Retry',vaultAccess:'full'});return api.sendMessage({conversationId:conversation.id,content:arguments[0]});",[token]);
+ const matches=()=>fixture.requests.filter(r=>JSON.stringify(r.body).includes(token));
+ await waitUntil(()=>matches().length===1,'in-flight native request');
+ const exit=once(app,'exit');app.kill('SIGKILL');await exit;app=undefined;unlinkSync(reportPath(data));
+ app=launch(data);const second=await readReport(data);assert.equal(second.status,'passed',JSON.stringify(second));assert.equal(matches().length,1,'Relaunch silently resumed native network work');
+ const resumed=await wd('/session',{capabilities:{alwaysMatch:{browserName:'wry'}}});
+ const prior=await call(resumed.sessionId,"const {chatApi:api}=await import('/src/lib/features/chat/api.ts');return api.getConversation(arguments[0]);",[sent.conversationId]);
+ assert(['error','cancelled'].includes(prior.messages.at(-1).status),'Interrupted outcome not exposed');
+ const retried=await call(resumed.sessionId,"const {chatApi:api}=await import('/src/lib/features/chat/api.ts');const sent=await api.retryMessage(arguments[0]);const deadline=Date.now()+15000;while(Date.now()<deadline){const conversation=await api.getConversation(sent.conversationId);const answer=conversation.messages.find(m=>m.id===sent.assistantMessage.id);if(answer.status==='completed')return answer;if(answer.status==='error')throw new Error(answer.errorMessage);await new Promise(r=>setTimeout(r,100));}throw new Error('retry deadline');",[sent.assistantMessage.id]);
+ assert.equal(retried.status,'completed');assert.equal(matches().length,2,'Explicit Retry did not make exactly one fresh native request');
+ evidence.push({fault:'during-model',first,second,interruptedStatus:prior.messages.at(-1).status,retriedStatus:retried.status,nativeRequests:matches().length});app.kill('SIGTERM');await once(app,'exit');app=undefined;
+ writeFileSync(join(root,'fault-gate.json'),JSON.stringify({status:'passed',binarySha256:createHash('sha256').update(readFileSync(binary)).digest('hex'),evidence,requests:fixture.requests},null,2));const verified=spawnSync('python3',['scripts/pi-prototype/verify-effects.py',root],{stdio:'inherit'});assert.equal(verified.status,0,'Native single-publication proof failed');console.log(JSON.stringify({status:'passed',root}));
+}finally{if(app){app.kill('SIGTERM');await once(app,'exit');}try{process.kill(-server.pid,'SIGTERM');}catch{}await fixture.close();}

@@ -14,6 +14,13 @@ fn scope(service: &ChatService, access: &VaultAccess) -> Result<(Option<HashSet<
 }
 
 #[tauri::command]
+pub(crate) fn pi_validate_review_checkpoint(app:tauri::AppHandle,markdown:String,title:String,path:String,decisions:Value)->Result<(),String> {
+    if title.trim().is_empty() || title.len()>200 || markdown.len()>262144 {return Err("Invalid review draft".into());}
+    crate::proposals::canonical_agent_commit_target(app.state::<AppState>().running_vault().root(),std::path::Path::new(&path))?;
+    crate::chat::note_proposals::validate_decisions(&decisions,&markdown)
+}
+
+#[tauri::command]
 pub(crate) async fn pi_admit_answer(app: tauri::AppHandle, raw: String, sources: Vec<ChatSource>, access: VaultAccess) -> Result<Value, String> {
     let sources = pi_validate_sources(app, sources, access).await?;
     let mut references = crate::chat::citations::PassageReferences::default();
@@ -63,4 +70,17 @@ pub(crate) async fn pi_validate_sources(app: tauri::AppHandle, sources: Vec<Chat
             Ok(source)
         }).collect()
     }).await.map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+pub(crate) async fn pi_resolve_passage(app: tauri::AppHandle, source: ChatSource, access: VaultAccess) -> Result<Value,String> {
+    let source=pi_validate_sources(app,vec![source],access).await?.pop().ok_or("Source unavailable")?;
+    let citation=source.passage.as_ref().ok_or("Issued passage required")?;
+    if citation.historical.is_some() { return Err("Open the retained revision through the history UI".into()); }
+    let session=crate::commands::read_note_session_from_path(std::path::Path::new(source.note_path.as_deref().ok_or("Source path unavailable")?))?;
+    let selection=if citation.location=="body" {
+        session.markdown.get(..citation.start).zip(session.markdown.get(..citation.end))
+            .map(|(a,b)|json!({"anchor":a.encode_utf16().count(),"head":b.encode_utf16().count()}))
+    } else {None};
+    Ok(json!({"source":source,"markdown":session.markdown,"selection":selection}))
 }

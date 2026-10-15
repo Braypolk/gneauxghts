@@ -188,7 +188,15 @@ pub(crate) async fn pi_sql(app: tauri::AppHandle, request: SqlRequest) -> Result
 
 #[tauri::command]
 pub(crate) fn pi_probe_config() -> Value {
-    serde_json::json!({"fixture": std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some()})
+    serde_json::json!({"fixture": std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some(),
+        "uiGate":std::env::var_os("PI_PROTOTYPE_UI_GATE").is_some()})
+}
+
+#[tauri::command]
+pub(crate) async fn pi_ui_report(report:Value)->Result<(),String> {
+    let bytes=serde_json::to_vec_pretty(&report).map_err(|e|e.to_string())?;
+    if bytes.len()>16384{return Err("UI diagnostic too large".into());}
+    std::fs::write(crate::state::app_data_dir()?.join("PROTOTYPE-wipe-me/ui-report.json"),bytes).map_err(|e|e.to_string())
 }
 
 #[tauri::command]

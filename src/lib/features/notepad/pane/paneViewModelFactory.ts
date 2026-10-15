@@ -84,7 +84,7 @@ export function createPaneViewModelFactory(
           : 'Thought partner',
       titleReadonly:
         !panePolicy.capabilities['edit-title'] ||
-        deps.isReviewingDocument(document)
+        (deps.isReviewingDocument(document) && import.meta.env.VITE_PI_PROTOTYPE !== 'true')
     };
 
     if (paneKind === 'editor') {

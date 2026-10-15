@@ -5,9 +5,14 @@ import { tmpdir } from 'node:os';
 import { resolve, join } from 'node:path';
 
 const mode = process.argv[2] ?? 'desktop';
-if (!['desktop', 'build', 'ios', 'gate', 'ios-gate'].includes(mode)) throw new Error('Use desktop, build, gate, ios or ios-gate');
-if (mode === 'gate' || mode === 'ios-gate') {
-  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode === 'gate' ? 'desktop' : 'ios'}-gate.mjs`], { stdio: 'inherit', env: process.env });
+if (!['desktop', 'build', 'ios', 'gate', 'ios-gate','ui-gate','ios-ui-gate','fault-gate'].includes(mode)) throw new Error('Use desktop, build, gate, ios, ios-gate, ui-gate ios-ui-gate or fault-gate');
+if (mode.endsWith('gate')) {
+  if(!mode.startsWith('ios')){
+    const built=spawnSync('cargo',['build','--manifest-path','src-tauri/Cargo.toml','--features','pi-prototype,e2e-wdio'],{stdio:'inherit',env:{...process.env,TAURI_CONFIG:readFileSync('scripts/pi-prototype/tauri.prototype.conf.json','utf8')}});
+    if(built.status!==0)process.exit(built.status ?? 1);
+  }
+  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode.startsWith('ios') ? 'ios' : mode==='fault-gate' ? 'fault' : 'desktop'}-gate.mjs`], { stdio: 'inherit',
+    env: {...process.env,...(mode.includes('ui')?{PI_PROTOTYPE_UI_GATE:'true'}:{})} });
   process.exit(result.status ?? 1);
 }
 const root = process.env.PI_PROTOTYPE_DATA ?? mkdtempSync(join(tmpdir(), 'gneauxghts-pi-native-'));
