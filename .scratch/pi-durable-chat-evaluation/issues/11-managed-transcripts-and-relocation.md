@@ -1,0 +1,43 @@
+# Project Pi chats into managed Markdown and preserve relocation
+
+Status: ready-for-agent
+Type: task
+Milestone: phase-complete
+Blocked by: 08
+
+Follow [the spec](../spec.md), managed projection and Running Vault invariants.
+Pi is authoritative; transcripts are derived publication, not another session DB.
+Old-conversation import is deferred.
+
+## Work
+
+- Publish Markdown from committed Pi messages/sources/settled origins with identity/
+  hash receipts and serialized conflict classification. Later projection failure
+  cannot reject an accepted turn.
+- Preserve navigation, Save Open in chat, watchers/own-write handling, detached/
+  edited/missing transcript behavior and actionable warnings.
+- Support moving/reopening the evaluation vault, including Pi location references,
+  pending reviews and native intents. Resolve targets through Note Identity and
+  the Running Vault.
+- Recover Pi-owned state/receipts only. Legacy copied transcripts cannot import
+  conversations, grants, attachment bytes or evidence authority.
+
+## Acceptance
+
+- Committed chats produce readable Markdown and valid source/origin navigation after
+  restart. Publication failure neither rejects admission nor invents a receipt.
+- External edit/delete, watcher races and own writes preserve conflict/detachment
+  behavior without overwriting external content.
+- Relocation preserves identities/links/true conflicts; interrupted mutations
+  reconcile canonical receipts without duplicate publication. Unknown/out-of-root
+  locations are not rebound by guessed text replacement.
+- Legacy Chats artifacts do not activate old import/startup recovery. Generic
+  native lifecycle coordination remains excluded.
+
+## Starting points
+
+`src-tauri/src/chat/{projection,relocation,recovery}.rs`, Pi committed-state
+projection and native effect receipts. Extract publication policy without restoring
+ChatService lifecycle ownership.
+
+## Comments
