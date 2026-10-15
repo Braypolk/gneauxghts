@@ -44,3 +44,68 @@ app the user requested.
 composition and the previous prototype README.
 
 ## Comments
+
+### 2026-10-15 — isolated runner and safe setup implementation
+
+Implemented a stable native app-data default, direct workspace entry, separate
+fixture/diagnostic configurations and a fixture-only diagnostic mount guard, macOS `.app` output/installed entry, explicit
+setup/status/reset commands and an OS lock around runner-owned roots. The existing
+native fixed `PROTOTYPE-wipe-me/vault` override remains unchanged; no new Running
+Vault owner or ordinary-app root selection was introduced.
+
+The Python copy helper rejects symlinks/special files, overlapping roots, reported
+open handles, nonempty WAL, open/non-current/mismatched history metadata and
+unsettled history work. It never writes the source; staged publication validates
+source hashes again and preserves history identity/payloads while rebasing copied
+location columns. It omits app data/credentials, Chats and relocated managed chat
+Markdown. Reset requires an evaluation marker and refuses open/unrecognized roots.
+See [run instructions](../README.md) for private-data, retry and reset boundaries.
+
+Focused evidence: `python3 -B -W error::ResourceWarning -m unittest discover -s
+scripts/pi-prototype -p '*_test.py' -v` passes **12 tests**; `node --test
+scripts/pi-prototype/evaluation-data.test.mjs` passes **3 tests**. These cover
+copy/source isolation, retained payload/identity/path geometry, no legacy import,
+open marker without WAL, nonempty WAL, pending work, mismatched identity, actual
+open-file rejection, symlinks, nested/preexisting roots, atomic failure/retry and
+operation lock. The runner test uses a stub pnpm executable, verifies two invocations
+reuse one marker/root and normal UI config, and rejects fixture/gate use of the
+persistent root; it is not a native app launch. MacOS `lsof +D` can emit a PID with exit 1; the helper requires both
+exit 1 and empty PID output. Native builds/app launches were not performed by this
+implementation agent. Real source portability, two-launch persistence and copied
+edit/Keep isolation remain acceptance gates; a user statement that the vault is
+ready is not substituted for a portable store marker. Comparison baseline is
+tracked separately in [baseline](../baseline.md).
+
+Manual visibility review: the development desktop entry explicitly sets
+`GNEAUXGHTS_E2E_FOREGROUND=1` while diagnostic/gate environments remove that
+flag. Manual `.app` builds use only `pi-prototype`, excluding `e2e-wdio` and its
+automation server/background default; installed launch uses the native default
+root and rejects `PI_PROTOTYPE_DATA` because those overrides are E2E-only. The
+stub-pnpm runner test asserts this feature/visibility distinction and custom-root
+rejection. Native visible launch remains a separate acceptance gate.
+
+### 2026-10-15 — deliberate stopped-source quarantine recovery
+
+After the ordinary app could not establish a portable close, added explicit
+`setup --source ... --recover-stopped-source --observations ...` and
+`setup --adopt-recovered ...`. Recovery exports only to a fixed sibling quarantine
+with a distinct marker and no normal evaluation marker. It verifies immutable
+no-WAL SQLite integrity/schema/manifest identity, empty pending work, stopped
+handles, stable full source hashes, and an exactly matching original app-local
+observation whose full hash is stable. Only that existing vault entry is copied;
+no observation authority is synthesized, no credentials are copied, and neither
+source nor destination portability is forged through SQL.
+
+The native recovery utility must bind the isolated Running Vault/observation root
+and cross ordinary NoteTimeline recovery plus clean close. Adoption requires the
+same history identity, portable marker, higher clean-close watermark and matching
+quarantine observation watermark before normal staged publication. A quarantine
+cannot launch through the normal runner. ADR 0002/0005 guards remain intact.
+
+Focused checks now pass **17 Python tests + 3 Node tests**. New tests cover open
+quarantine preservation, exact existing-observation filtering, observation mismatch/
+race refusal, pending/WAL refusal and adoption/advanced-watermark gating. Synthetic
+close-receipt test writes do not establish native recovery. The orchestrator owns
+execution of the authorized original-source export, native recovery and adoption;
+this implementation agent performed none of those actions. See [recovery run
+instructions](../README.md) for exact commands and limits.

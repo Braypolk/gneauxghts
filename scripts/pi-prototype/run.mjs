@@ -1,26 +1,89 @@
-// Single opt-in entry point. Never launches against the ordinary app/vault.
+// Opt-in persistent evaluation entry. Fixture diagnostics always use separate data.
 import { spawnSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, copyFileSync, cpSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, copyFileSync, cpSync, rmSync, existsSync, readdirSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { resolve, join } from 'node:path';
+import { resolve, join, isAbsolute } from 'node:path';
+import { evaluationRoot, dataOperation } from './evaluation-data.mjs';
 
 const mode = process.argv[2] ?? 'desktop';
-if (!['desktop', 'build', 'ios', 'gate', 'ios-gate','ui-gate','ios-ui-gate','fault-gate'].includes(mode)) throw new Error('Use desktop, build, gate, ios, ios-gate, ui-gate ios-ui-gate or fault-gate');
-if (mode.endsWith('gate')) {
-  if(!mode.startsWith('ios')){
-    const built=spawnSync('cargo',['build','--manifest-path','src-tauri/Cargo.toml','--features','pi-prototype,e2e-wdio'],{stdio:'inherit',env:{...process.env,TAURI_CONFIG:readFileSync('scripts/pi-prototype/tauri.prototype.conf.json','utf8')}});
-    if(built.status!==0)process.exit(built.status ?? 1);
+const modes = ['desktop', 'installed', 'build', 'setup', 'status', 'reset', 'diagnostics', 'ios', 'gate', 'ios-gate', 'ui-gate', 'ios-ui-gate', 'fault-gate'];
+if (!modes.includes(mode)) throw new Error(`Use ${modes.join(', ')}`);
+const sourceArgs = process.argv.slice(3);
+if (mode === 'setup') {
+  const options = {};
+  for (let index = 0; index < sourceArgs.length; index++) {
+    const option = sourceArgs[index];
+    if (option === '--recover-stopped-source') {
+      if (options.recoverStoppedSource) throw new Error('Duplicate recovery flag');
+      options.recoverStoppedSource = true;
+      continue;
+    }
+    const key = { '--source': 'source', '--observations': 'observations', '--adopt-recovered': 'adoptRecovered' }[option];
+    const value = sourceArgs[++index];
+    if (!key || options[key] || !value || !isAbsolute(value)) throw new Error('Setup paths must be explicit absolute paths; use --source, optional --recover-stopped-source --observations, or --adopt-recovered');
+    options[key] = value;
   }
-  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode.startsWith('ios') ? 'ios' : mode==='fault-gate' ? 'fault' : 'desktop'}-gate.mjs`], { stdio: 'inherit',
-    env: {...process.env,...(mode.includes('ui')?{PI_PROTOTYPE_UI_GATE:'true'}:{})} });
+  if (options.adoptRecovered ? (options.source || options.recoverStoppedSource || options.observations)
+      : (!options.source || Boolean(options.recoverStoppedSource) !== Boolean(options.observations))) {
+    throw new Error('Use setup --source /vault [--recover-stopped-source --observations /original-observations.json], or setup --adopt-recovered /quarantine');
+  }
+  dataOperation('setup', evaluationRoot(), options);
+  process.exit(0);
+}
+if (sourceArgs.length) throw new Error('Unexpected arguments; only setup accepts --source');
+if (mode === 'installed' && process.env.PI_PROTOTYPE_DATA) {
+  throw new Error('The installed app uses its native default root; PI_PROTOTYPE_DATA is supported by desktop and setup, not installed');
+}
+if (['status', 'reset'].includes(mode)) {
+  dataOperation(mode, evaluationRoot());
+  process.exit(0);
+}
+const baseConfig = JSON.parse(readFileSync('scripts/pi-prototype/tauri.prototype.conf.json', 'utf8'));
+const diagnostic = mode.endsWith('gate') || mode === 'diagnostics' || (mode === 'ios' && process.env.PI_PROTOTYPE_DIAGNOSTICS === 'true');
+const nativeConfig = diagnostic ? { ...baseConfig, app: { ...baseConfig.app,
+  windows: baseConfig.app.windows.map(window => ({ ...window, url: 'pi-prototype', title: 'Pi fixture diagnostics — disposable synthetic data' })) } } : baseConfig;
+if (mode.endsWith('gate')) {
+  // A gate may not seed/kill/reset a private evaluation root. Explicit test roots
+  // must be empty; otherwise the gate scripts allocate their own temporary root.
+  if (process.env.PI_PROTOTYPE_DATA && existsSync(process.env.PI_PROTOTYPE_DATA)
+      && readdirSync(process.env.PI_PROTOTYPE_DATA).length) throw new Error('Fixture gates require an empty disposable root');
+  if (!mode.startsWith('ios')) {
+    const built = spawnSync('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--features', 'pi-prototype,e2e-wdio'],
+      { stdio: 'inherit', env: { ...process.env, TAURI_CONFIG: JSON.stringify(nativeConfig) } });
+    if (built.status !== 0) process.exit(built.status ?? 1);
+  }
+  const gateEnv = { ...process.env };
+  delete gateEnv.GNEAUXGHTS_E2E_FOREGROUND;
+  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode.startsWith('ios') ? 'ios' : mode === 'fault-gate' ? 'fault' : 'desktop'}-gate.mjs`], {
+    stdio: 'inherit', env: { ...gateEnv, PI_PROTOTYPE_DIAGNOSTICS: 'true', ...(mode.includes('ui') ? { PI_PROTOTYPE_UI_GATE: 'true' } : {}) }
+  });
   process.exit(result.status ?? 1);
 }
-const root = process.env.PI_PROTOTYPE_DATA ?? mkdtempSync(join(tmpdir(), 'gneauxghts-pi-native-'));
-mkdirSync(root, { recursive: true });
-const config = resolve('scripts/pi-prototype/tauri.prototype.conf.json');
-const env = { ...process.env, VITE_PI_PROTOTYPE: 'true' };
-console.log(`Disposable prototype data: ${root}`);
-writeFileSync(join(root, 'run.json'), JSON.stringify({ root, mode, date: new Date().toISOString() }));
+if (!diagnostic && (process.env.PI_PROTOTYPE_HTTP_FIXTURE || process.env.PI_PROTOTYPE_UI_GATE || process.env.PI_PROTOTYPE_FAULT || process.env.PI_PROTOTYPE_DIAGNOSTICS)) {
+  throw new Error('Fixture/fault environment is forbidden for manual evaluation; use a separate gate');
+}
+const root = mode === 'ios' || mode === 'diagnostics'
+  ? (mode === 'ios' && process.env.PI_PROTOTYPE_DATA ? resolve(process.env.PI_PROTOTYPE_DATA) : realpathSync(mkdtempSync(join(tmpdir(), 'gneauxghts-pi-native-'))))
+  : evaluationRoot();
+const configDirectory = mkdtempSync(join(tmpdir(), 'gneauxghts-pi-config-'));
+const config = join(configDirectory, 'tauri.prototype.conf.json');
+writeFileSync(config, JSON.stringify(nativeConfig));
+process.on('exit', () => rmSync(configDirectory, { recursive: true, force: true }));
+const env = { ...process.env, VITE_PI_PROTOTYPE: 'true',
+  ...(mode === 'desktop' ? { GNEAUXGHTS_E2E_FOREGROUND: '1' } : {}) };
+// Automation stays background even when the parent shell selected foreground.
+if (diagnostic) delete env.GNEAUXGHTS_E2E_FOREGROUND;
+console.log(`Pi evaluation data root: ${root}`);
+if (['desktop', 'installed', 'diagnostics'].includes(mode)) {
+  if (!existsSync(root) || readdirSync(root).length === 0) dataOperation('init', root);
+  else dataOperation('status', root);
+}
+if (mode === 'installed') {
+  const executable = resolve('src-tauri/target/debug/bundle/macos/Gneauxghts Pi Evaluation.app/Contents/MacOS/gneauxghts');
+  if (!existsSync(executable)) throw new Error('Build the isolated .app first: pnpm pi:prototype build');
+  dataOperation('launch', root, { command: [executable], env });
+  process.exit(0);
+}
 if (mode === 'ios') {
   // cargo-mobile2 requires a runtime >= the newest SDK. Xcode itself supports
   // the installed older simulator. Keep its normal compiler/linker/signing,
@@ -30,6 +93,7 @@ if (mode === 'ios') {
     const result = spawnSync(command, args, { env: { ...env, ...extra }, stdio: 'inherit' });
     if (result.status !== 0) process.exit(result.status ?? 1);
   };
+  mkdirSync(root, { recursive: true });
   run('python3', ['-B', 'scripts/ios_litert_runtime.py',
     ...(env.GNEAUXGHTS_IOS_LITERT_ARCHIVE ? ['--archive', env.GNEAUXGHTS_IOS_LITERT_ARCHIVE] : [])]);
   run('pnpm', ['build']);
@@ -49,14 +113,17 @@ if (mode === 'ios') {
   run('xcodebuild', ['-project', generated, '-scheme', 'gneauxghts_iOS', '-configuration', 'debug',
     '-sdk', 'iphonesimulator', '-destination', `id=${env.PI_PROTOTYPE_SIMULATOR ?? 'FBAC4D90-9149-4B49-B40D-EA5B90B7069C'}`,
     '-derivedDataPath', join(root, 'xcode'), 'PRODUCT_BUNDLE_IDENTIFIER=com.braypolkinghorne.gneauxghts.pi-prototype',
-    'PRODUCT_NAME=Gneauxghts Pi Prototype', 'build']);
-  console.log(`Simulator app: ${join(root, 'xcode/Build/Products/debug-iphonesimulator/Gneauxghts Pi Prototype.app')}`);
+    `PRODUCT_NAME=${diagnostic ? 'Gneauxghts Pi Prototype' : 'Gneauxghts Pi Evaluation'}`, 'build']);
+  console.log(`Simulator app: ${join(root, `xcode/Build/Products/debug-iphonesimulator/${diagnostic ? 'Gneauxghts Pi Prototype' : 'Gneauxghts Pi Evaluation'}.app`)}`);
   process.exit(0);
 }
-const args = mode === 'ios'
-  ? ['tauri', 'ios', 'build', '--debug', '--target', 'aarch64-sim', '--ci', '--features', 'pi-prototype', '--config', config]
-  : ['tauri', mode === 'build' ? 'build' : 'dev', ...(mode === 'build' ? ['--debug', '--no-bundle'] : []),
-    '--features', 'pi-prototype,e2e-wdio', '--config', config,
-    ...(mode === 'desktop' ? ['--', '--', '--e2e-app-data-root', root, '--e2e-documents-root', root] : [])];
-const result = spawnSync('pnpm', args, { env, stdio: 'inherit' });
-process.exit(result.status ?? 1);
+const args = ['tauri', mode === 'build' ? 'build' : 'dev',
+  ...(mode === 'build' ? ['--debug', '--bundles', 'app'] : []),
+  '--features', mode === 'build' ? 'pi-prototype' : 'pi-prototype,e2e-wdio', '--config', config,
+  ...(mode === 'desktop' || mode === 'diagnostics' ? ['--', '--', '--e2e-app-data-root', root, '--e2e-documents-root', root] : [])];
+if (mode === 'desktop' || mode === 'diagnostics') {
+  dataOperation('launch', root, { command: ['pnpm', ...args], env });
+} else {
+  const result = spawnSync('pnpm', args, { env, stdio: 'inherit' });
+  process.exit(result.status ?? 1);
+}
