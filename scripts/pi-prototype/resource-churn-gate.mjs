@@ -18,9 +18,28 @@ export function assertChurnRequests(requests,expected=3){
 }
 export function assertChurnMetadata(before,after){
   assert.equal(before.coverage,'closed-database-metadata-only');assert.equal(after.coverage,before.coverage);
-  assert(before.callerClosed&&after.callerClosed,'Both app writers must have exited');
-  assert.deepEqual(after.documentFamilies,before.documentFamilies,'Read/archive churn changed retained document family/revision counts');
-  assert.deepEqual(after.totals,before.totals,'Read/archive churn changed durable lifecycle row counts');
+  assert(before.callerClosed===true&&after.callerClosed===true,'Both app writers must have exited');
+  assert.deepEqual(after.documentFamilies,before.documentFamilies,'Read/restart churn changed retained document family/revision counts');
+  assert.deepEqual(after.totals,before.totals,'Read/restart churn changed durable lifecycle row counts');
+}
+export function assertArchiveMetadata(before,after){
+  // SQLite's indexed kind is JSON encoded. `latest` retains delta rows until a
+  // base checkpoint replaces them; these two explicit Meta commits add deltas.
+  const expected=structuredClone(before);
+  const presentation=expected.documentFamilies.filter(row=>row.kind===JSON.stringify('gneauxghts.pi.chat-presentation')&&row.family===0);
+  assert.equal(presentation.length,1,'Exactly one retained chat-presentation singleton family required');
+  assert(Number.isSafeInteger(presentation[0].revisions)&&presentation[0].revisions>=1,'Presentation revision baseline required');
+  assert(Number.isSafeInteger(expected.totals.document_revisions)&&expected.totals.document_revisions>=1,'Total revision baseline required');
+  presentation[0].revisions+=2;expected.totals.document_revisions+=2;
+  assertChurnMetadata(expected,after);
+}
+export function assertChurnVisibility({visible,retained},ids,archivedId=null){
+  assert.equal(new Set(ids).size,ids.length,'Distinct seeded conversations required');
+  if(archivedId!==null)assert(ids.includes(archivedId),'Archive target must be a seeded conversation');
+  assert.deepEqual(retained.map(row=>row.id).sort(),[...ids].sort(),'Archive must retain every seeded conversation exactly once');
+  assert.deepEqual(visible.map(row=>row.id).sort(),ids.filter(id=>id!==archivedId).sort(),'Public active list must hide only the archived conversation');
+  for(const row of retained)assert.equal(row.status,row.id===archivedId?'archived':'active','Public retained status must match archive state');
+  for(const row of visible)assert.equal(row.status,'active','Public visible conversation must be active');
 }
 
 const setup=`
@@ -37,6 +56,10 @@ const capture=`
     chats.push({id:chat.id,title:chat.title,messages:chat.messages.map(row=>({id:row.id,content:row.content,status:row.status})),
       pending:await Promise.all(pending.map(async row=>({id:row.id,status:row.status,draft:await api.getProposalDraft(row.id)})))});}
   return chats;`;
+const visibility=`
+  const api=window.__resourceApi;
+  const summarize=rows=>rows.map(({id,status})=>({id,status}));
+  return {visible:summarize(await api.listConversations()),retained:summarize(await api.listConversations(true))};`;
 const seed=`
   const api=window.__resourceApi,ids=[];
   if((await api.listConversations(true)).length)throw new Error('Fresh generated storage required');
@@ -91,16 +114,26 @@ export async function runResourceChurnGate(options){
     await waitUntil(async signal=>(await fetch('http://127.0.0.1:1442/',{signal})).ok,'owned churn frontend',30000);
     await launch('seed');const seeded=await execute(seed);writeNew(join(options.root,'private-identities.json'),seeded);
     const expected=await execute(capture,[seeded.ids]);writeNew(join(options.root,'private-expected-state.json'),expected);
-    assertChurnRequests(fixture.requests);report.before=await portableStop('before-churn');
+    assertChurnRequests(fixture.requests);report.before=await portableStop('before-churn');assertChurnRequests(fixture.requests);
     await launch('churn');assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Relaunch changed committed history/pending review');assertChurnRequests(fixture.requests);
     for(const id of seeded.ids)await execute(browserSelect,[id]);await delay(1000);
     report.churn=await execute(`const probe=await import('/src/lib/prototypes/pi/resourceChurnProbe.ts');
       return await probe.runResourceChurnProbe(window.__resourceApi,arguments[0],20,undefined,async function(){${browserSelect}});`,[seeded.ids]);
-    await execute('await window.__resourceApi.archiveConversation(arguments[0],true,1);await window.__resourceApi.archiveConversation(arguments[0],false,1);return true;',[seeded.ids[2]]);
-    assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Read/archive churn changed committed history/pending review');assertChurnRequests(fixture.requests);
-    report.after=await portableStop('after-churn');assertChurnMetadata(report.before,report.after);
+    assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Read churn changed committed history/pending review');assertChurnRequests(fixture.requests);
+    report.afterReadOnly=await portableStop('after-read-only-churn');assertChurnRequests(fixture.requests);assertChurnMetadata(report.before,report.afterReadOnly);
+    await launch('archive');assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Read-only restart changed history/pending review');assertChurnRequests(fixture.requests);
+    assertChurnVisibility(await execute(visibility),seeded.ids);
+    await execute('await window.__resourceApi.archiveConversation(arguments[0],true,1);return true;',[seeded.ids[2]]);
+    assertChurnVisibility(await execute(visibility),seeded.ids,seeded.ids[2]);
+    assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Archive changed committed history/pending review');assertChurnRequests(fixture.requests);
+    await execute('await window.__resourceApi.archiveConversation(arguments[0],false,1);return true;',[seeded.ids[2]]);
+    assertChurnVisibility(await execute(visibility),seeded.ids);
+    assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Restore changed committed history/pending review');assertChurnRequests(fixture.requests);
+    report.after=await portableStop('after-archive-restore');assertChurnRequests(fixture.requests);assertArchiveMetadata(report.afterReadOnly,report.after);
+    report.archiveRestore={archivedAndRestored:1,publicVisibilityVerified:true,expectedPresentationRevisionAdditions:2};
     await launch('verify');assert.deepEqual(await execute(capture,[seeded.ids]),expected,'Final restart changed history/pending review');assertChurnRequests(fixture.requests);
-    report.afterRestart=await portableStop('after-restart');assertChurnMetadata(report.after,report.afterRestart);
+    assertChurnVisibility(await execute(visibility),seeded.ids);
+    report.afterRestart=await portableStop('after-restart');assertChurnRequests(fixture.requests);assertChurnMetadata(report.after,report.afterRestart);
     assert.equal(hash(readFileSync(options.binary)),options.sha256,'Pinned artifact changed');
     assert.equal(frontendSourceDigest(options.source),report.frontendSourceSha256,'Served source changed');
     report.status='passed-bounded-owned-resources';report.noInferenceDuringChurnOrRestart=true;report.pendingReviewRetained=true;
