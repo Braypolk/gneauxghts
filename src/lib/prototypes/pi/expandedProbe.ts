@@ -3,9 +3,10 @@ import { invoke } from '@tauri-apps/api/core';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { runInteractiveProbe, captureSharedSuspensionUi } from './interactiveProbe';
 import { expandedPhases, expandedUnobserved, requireSharedReport, sharedProbeReport, type SharedProbeReport } from './expandedProbeContract';
+import { probeFixtureOrigin, type NativeProbeConfig } from './probeFixture';
 
 export async function runExpandedProbe() {
-  const config = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean; followonsGate?: boolean }>('pi_probe_config');
+  const config = await invoke<NativeProbeConfig>('pi_probe_config');
   if (!config.fixture || !config.interactiveGate || !config.expandedGate || !new URL(location.href).searchParams.has('piExpandedTest')) return;
   const {maybeRunIosPublicationFaultProbe}=await import('./iosPublicationFaultProbe');
   const publication=await maybeRunIosPublicationFaultProbe();
@@ -42,7 +43,7 @@ export async function runExpandedProbe() {
         report.followons=followons;
         if(!followons || followons.status!=='passed')throw new Error(followons?.error ?? 'Enabled native follow-on gate produced no passing report');
         const {runSupplementalEvidenceProbe}=await import('./supplementalEvidenceProbe');
-        const supplementalEvidence=await runSupplementalEvidenceProbe({api,fixtureBaseUrl:new URL((await api.getSettings()).localBaseUrl!).origin});
+        const supplementalEvidence=await runSupplementalEvidenceProbe({api,fixtureBaseUrl:probeFixtureOrigin(config)});
         report.supplementalEvidence=supplementalEvidence;
         if(!supplementalEvidence || supplementalEvidence.status!=='passed')throw new Error(supplementalEvidence?.error ?? 'Supplemental evidence gate failed');
       }

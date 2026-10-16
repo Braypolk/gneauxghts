@@ -1,8 +1,12 @@
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ChatMessage, ChatProposalDraft } from '$lib/features/chat/types';
-import { assertIosPublicationConfig, assertIosPublicationRestore, assertIosPublicationReceipt, runIosPublicationFaultJourney, assertIosCommandCrashRestored, assertIosPreparedPublication, runIosCommandCrashJourney,
+import { assertIosPublicationConfig, assertIosPublicationRestore, assertIosPublicationReceipt, runIosPublicationFaultJourney, assertIosCommandCrashRestored, assertIosPreparedPublication, runIosCommandCrashJourney, maybeRunIosPublicationFaultProbe,
   type IosPublicationConfig, type IosPublicationState } from './iosPublicationFaultProbe';
 import { expectedSharedKeepDraft } from './sharedKeepProof';
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), settings: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { getSettings: mocks.settings } }));
 
 const config: IosPublicationConfig = { gate: 'owned-ios-publication-fault-control', boundary: 'after-publication', scope: 'synthetic-scope-1234' };
 const draft: ChatProposalDraft = { version: 7, markdown: 'Exact reviewed bytes.', title: 'Reviewed', path: '/synthetic/Reviewed.md',
@@ -12,6 +16,41 @@ const state: IosPublicationState = { ...config, firstLaunchId: 'first-launch', c
   acceptedDraft: expectedSharedKeepDraft(draft, 'native-review'), expectedEditorMarkdown: draft.markdown, sourceMessageId: source.id, sourceContent: source.content };
 const receipt = { status: 'committed', noteId: 'native-note', message: null, committedMarkdown: draft.markdown, applied: { kind: 'createNote', path: draft.path, previousPath: null } } as const;
 const canonical = { noteId: 'native-note', path: draft.path, title: draft.title, markdown: draft.markdown };
+
+describe('actual publication startup lane and fixture admission', () => {
+  const gates = { fixture: true, interactiveGate: true, expandedGate: true, iosTarget: true, iosPublicationFaultGate: true, fixtureBaseUrl: 'http://127.0.0.1:1446' };
+  const fetchControl = vi.fn();
+  beforeEach(() => { vi.clearAllMocks(); fetchControl.mockReset(); vi.stubGlobal('fetch', fetchControl); mocks.settings.mockResolvedValue({ localBaseUrl: 'http://localhost:1234/v1' }); });
+  afterEach(() => vi.unstubAllGlobals());
+  it('skips shared iOS before endpoint validation or publication control discovery', async () => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosPublicationFaultGate: false, fixtureBaseUrl: null });
+    await expect(maybeRunIosPublicationFaultProbe()).resolves.toBeUndefined();
+    expect(fetchControl).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
+  });
+  it('skips desktop before contacting the iOS-only publication lane', async () => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosTarget: false, fixtureBaseUrl: null });
+    await expect(maybeRunIosPublicationFaultProbe()).resolves.toBeUndefined();
+    expect(fetchControl).not.toHaveBeenCalled();
+  });
+  it('rejects missing native admission rather than inferring an optional lane from failed discovery', async () => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosPublicationFaultGate: undefined });
+    await expect(maybeRunIosPublicationFaultProbe()).rejects.toThrow(/native target and lane admission/);
+    expect(fetchControl).not.toHaveBeenCalled();
+  });
+  it.each([null, 'http://localhost:1234/v1', 'http://127.0.0.1:8080'])('fails closed for configured publication with invalid fixture %s', async fixtureBaseUrl => {
+    mocks.invoke.mockResolvedValue({ ...gates, fixtureBaseUrl });
+    await expect(maybeRunIosPublicationFaultProbe()).rejects.toThrow(/fixture/);
+    expect(fetchControl).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
+  });
+  it.each(['unavailable', 'rejected', 'foreign'] as const)('fails closed when configured publication control is %s', async mode => {
+    mocks.invoke.mockResolvedValue(gates);
+    if (mode === 'unavailable') fetchControl.mockRejectedValue(new Error('Owned publication control unavailable'));
+    else fetchControl.mockResolvedValue({ ok: mode !== 'rejected', json: async () => ({ ...config, gate: 'foreign-control' }) });
+    await expect(maybeRunIosPublicationFaultProbe()).rejects.toThrow(mode === 'unavailable' ? /unavailable/ : mode === 'rejected' ? /rejected request/ : /Unrecognized/);
+    expect(fetchControl).toHaveBeenCalledWith('http://127.0.0.1:1447/pi-ios-publication/config', expect.anything());
+    expect(mocks.settings).not.toHaveBeenCalled();
+  });
+});
 
 describe('minimum actual iOS publication boundary contract', () => {
   it('accepts only the three existing native publication boundaries and a generated scope', () => {

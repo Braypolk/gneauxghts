@@ -5,6 +5,7 @@ import type { ChatMessage, ChatProposalDraft } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import { expectedSharedKeepDraft, expectedSharedEditorMarkdown, assertSharedKeepDraft, assertSharedMountedReview, type SharedCanonicalNote } from './sharedKeepProof';
 import { suspensionControlOrigin } from './supplementalSuspensionProbe';
+import { probeFixtureOrigin, type NativeProbeConfig } from './probeFixture';
 
 export const iosPublicationBoundaries = ['after-intent', 'after-publication', 'after-receipt'] as const;
 export const iosCommandCrashBoundaries = ['prepared-review', 'transport-completed'] as const;
@@ -166,14 +167,15 @@ async function requestControl<T>(origin: string, path: string, body?: unknown): 
 /** Expanded startup hook, before the ordinary shared journey phase selection. */
 export async function maybeRunIosPublicationFaultProbe() {
   const { invoke } = await import('@tauri-apps/api/core');
-  const gates = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean }>('pi_probe_config');
+  const gates = await invoke<NativeProbeConfig>('pi_probe_config');
   if (!gates.fixture || !gates.interactiveGate || !gates.expandedGate) return undefined;
+  assert(typeof gates.iosTarget === 'boolean' && typeof gates.iosPublicationFaultGate === 'boolean', 'Publication probe requires explicit native target and lane admission');
+  if (!gates.iosTarget || !gates.iosPublicationFaultGate) return undefined;
+  const origin = suspensionControlOrigin(probeFixtureOrigin(gates));
+  const config = await requestControl<IosPublicationConfig>(origin, 'config');
+  assertIosPublicationConfig(config);
   const { chatApi } = await import('$lib/features/chat/api');
   const api = chatApi as ProbeApi;
-  let origin: string, config: IosPublicationConfig;
-  try { origin = suspensionControlOrigin((await api.getSettings()).localBaseUrl); config = await requestControl(origin, 'config'); }
-  catch { return undefined; }
-  assertIosPublicationConfig(config);
   const { EditorView } = await import('@codemirror/view');
   const { openVisibleProbeChat, visibleProbeControl } = await import('./probeChatFocus');
   const { probePaneTitle } = await import('./probePaneTitle');

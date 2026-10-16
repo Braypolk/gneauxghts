@@ -3,6 +3,7 @@
 import type { ChatProposalDraft } from '$lib/features/chat/types';
 import type { ChatApi } from '$lib/features/chat/api';
 import type { EditorView } from '@codemirror/view';
+import { ownedFixtureOrigin, probeFixtureOrigin, type NativeProbeConfig } from './probeFixture';
 
 export type SuspensionSnapshot = {
   ordinary: { noteId: string | null; path: string | null; title: string; markdown: string; connected: boolean };
@@ -85,11 +86,7 @@ const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b)
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
 export function suspensionControlOrigin(endpoint: string | null | undefined) {
-  assert(endpoint, 'Suspension gate requires the explicit fixture endpoint');
-  const url = new URL(endpoint);
-  assert(url.protocol === 'http:' && url.hostname === '127.0.0.1' && !url.username && !url.password && !url.search && !url.hash,
-    'Suspension control requires an explicit IPv4 loopback HTTP fixture');
-  assert(url.port === '1443' || url.port === '1446', 'Suspension control requires an owned fixture port');
+  const url = new URL(ownedFixtureOrigin(endpoint));
   return `http://127.0.0.1:${Number(url.port) + 1}`;
 }
 
@@ -174,13 +171,13 @@ export async function runSupplementalSuspensionProbe(input: {
   emit(value: Record<string, unknown>): Promise<void>;
 }) {
   const { invoke } = await import('@tauri-apps/api/core');
-  const config = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean }>('pi_probe_config');
+  const config = await invoke<NativeProbeConfig>('pi_probe_config');
   assert(config.fixture && config.interactiveGate && config.expandedGate, 'Suspension probe requires explicit expanded synthetic gates');
-  const origin = suspensionControlOrigin((await input.api.getSettings()).localBaseUrl);
-  // Desktop expanded gates have no owned iOS control server and skip this lane.
-  let discovery: { gate: string; launchId: string };
-  try { discovery = await controlRequest(origin, `discover?launchId=${encodeURIComponent(input.launchId)}`); }
-  catch { return undefined; }
+  assert(typeof config.iosTarget === 'boolean', 'Suspension probe requires an explicit native target');
+  // Desktop targets never own this iOS-only lane.
+  if (!config.iosTarget) return undefined;
+  const origin = suspensionControlOrigin(probeFixtureOrigin(config));
+  const discovery = await controlRequest<{ gate: string; launchId: string }>(origin, `discover?launchId=${encodeURIComponent(input.launchId)}`);
   assert(discovery.gate === 'owned-ios-suspension-control' && discovery.launchId === input.launchId, 'Unrecognized iOS suspension control owner');
   const baseline = await input.capture();
   assertSuspensionSnapshot(baseline, baseline, 'foreground');

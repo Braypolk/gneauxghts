@@ -404,15 +404,22 @@ pub(crate) async fn pi_sql(app: tauri::AppHandle, request: SqlRequest) -> Result
 
 #[tauri::command]
 pub(crate) fn pi_probe_config() -> Value {
-    let followons = std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some()
-        && std::env::var_os("PI_PROTOTYPE_INTERACTIVE_GATE").is_some()
-        && std::env::var("PI_PROTOTYPE_EXPANDED_GATE").as_deref() == Ok("true")
+    let fixture = std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some();
+    let interactive = std::env::var_os("PI_PROTOTYPE_INTERACTIVE_GATE").is_some();
+    let expanded = std::env::var("PI_PROTOTYPE_EXPANDED_GATE").as_deref() == Ok("true");
+    let guarded = fixture && interactive && expanded;
+    let fixture_base_url = guarded.then(|| std::env::var("PI_PROTOTYPE_HTTP_FIXTURE").ok()).flatten();
+    let followons = guarded
         && std::env::var("PI_PROTOTYPE_FOLLOWONS_GATE").as_deref() == Ok("true");
-    serde_json::json!({"fixture": std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some(),
+    serde_json::json!({"fixture": fixture,
         "uiGate":std::env::var_os("PI_PROTOTYPE_UI_GATE").is_some(),
-        "interactiveGate":std::env::var_os("PI_PROTOTYPE_INTERACTIVE_GATE").is_some(),
-        "expandedGate":std::env::var("PI_PROTOTYPE_EXPANDED_GATE").as_deref()==Ok("true"),
-        "followonsGate":followons})
+        "interactiveGate":interactive,
+        "expandedGate":expanded,
+        "followonsGate":followons,
+        "iosTarget":cfg!(target_os = "ios"),
+        "iosPublicationFaultGate":cfg!(target_os = "ios") && guarded
+            && std::env::var("PI_PROTOTYPE_IOS_PUBLICATION_FAULT_GATE").as_deref() == Ok("true"),
+        "fixtureBaseUrl":fixture_base_url})
 }
 
 fn require_probe_close_fixture(

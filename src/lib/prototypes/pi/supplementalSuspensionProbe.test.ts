@@ -1,11 +1,56 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { armSuspensionLease, finishSuspensionLease, assertSuspensionSnapshot, suspensionControlOrigin,
-  verifySupplementalSuspensionRelaunch, type SuspensionSnapshot, type SuspensionSql, type SuspensionSqlRequest } from './supplementalSuspensionProbe';
+  runSupplementalSuspensionProbe, verifySupplementalSuspensionRelaunch, type SuspensionSnapshot, type SuspensionSql, type SuspensionSqlRequest } from './supplementalSuspensionProbe';
+
+const mocks = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 
 const snapshot = (): SuspensionSnapshot => ({ ordinary: { noteId: 'ordinary-1', path: '/synthetic/ordinary.md', title: 'Ordinary', markdown: 'Exact authored ordinary bytes.\n', connected: true },
   review: { proposalId: 'pi-review-1', reviewId: 'review-native-1', connected: true, markdown: 'Reviewed human bytes.', title: 'Reviewed', hunks: [],
     draft: { version: 9, markdown: 'Reviewed human bytes.', title: 'Reviewed', path: '/synthetic/Chats/Pi/Reviewed.md', decisions: [] } },
   partial: { conversationId: 'pi-1', messageId: 'pi-assistant-3', content: 'Acknowledged partial fixture text.', status: 'streaming', renderedPartial: true, normalControl: 'Stop response' } });
+
+describe('native target admission for the supplemental iOS suspension lane', () => {
+  const gates = { fixture: true, interactiveGate: true, expandedGate: true, fixtureBaseUrl: 'http://127.0.0.1:1443' };
+  const input = (localBaseUrl: string | undefined = 'http://127.0.0.1:1443/local/v1') => ({
+    api: { getSettings: vi.fn(async (): Promise<{ localBaseUrl: string | undefined }> => ({ localBaseUrl })), prototypeState: vi.fn(async () => undefined), prototypeCheckpoint: vi.fn(async () => {}) },
+    launchId: 'owned-launch', capture: vi.fn(async () => snapshot()), emit: vi.fn(async () => {}),
+  });
+  const fetchControl = vi.fn();
+  beforeEach(() => { mocks.invoke.mockReset(); fetchControl.mockReset(); vi.stubGlobal('fetch', fetchControl); });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it('skips an explicitly native desktop target before reading its journey-modified endpoint or contacting iOS control', async () => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosTarget: false });
+    const probe = input('https://journey-modified.invalid/v1');
+    await expect(runSupplementalSuspensionProbe(probe)).resolves.toBeUndefined();
+    expect(mocks.invoke).toHaveBeenCalledWith('pi_probe_config');
+    expect(probe.api.getSettings).not.toHaveBeenCalled(); expect(fetchControl).not.toHaveBeenCalled();
+    expect(probe.capture).not.toHaveBeenCalled(); expect(probe.api.prototypeCheckpoint).not.toHaveBeenCalled(); expect(probe.emit).not.toHaveBeenCalled();
+  });
+  it('fails closed when native target identity is absent', async () => {
+    mocks.invoke.mockResolvedValue(gates);
+    const probe = input();
+    await expect(runSupplementalSuspensionProbe(probe)).rejects.toThrow(/native target/);
+    expect(probe.api.getSettings).not.toHaveBeenCalled(); expect(fetchControl).not.toHaveBeenCalled();
+  });
+  it.each([undefined, 'https://127.0.0.1:1443', 'http://127.0.0.1:8080'])('rejects an iOS target with unavailable or invalid endpoint %s', async endpoint => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosTarget: true, fixtureBaseUrl: endpoint });
+    const probe = input();
+    await expect(runSupplementalSuspensionProbe(probe)).rejects.toThrow(/fixture/);
+    expect(fetchControl).not.toHaveBeenCalled(); expect(probe.capture).not.toHaveBeenCalled(); expect(probe.emit).not.toHaveBeenCalled();
+  });
+  it.each(['unavailable', 'rejected', 'foreign'] as const)('fails closed when iOS control is %s', async mode => {
+    mocks.invoke.mockResolvedValue({ ...gates, iosTarget: true });
+    if (mode === 'unavailable') fetchControl.mockRejectedValue(new Error('Owned control unavailable'));
+    else fetchControl.mockResolvedValue({ ok: mode !== 'rejected', json: async () => ({ gate: 'foreign-control', launchId: 'owned-launch' }) });
+    const probe = input('http://localhost:1234/v1');
+    await expect(runSupplementalSuspensionProbe(probe)).rejects.toThrow(mode === 'unavailable' ? /unavailable/ : mode === 'rejected' ? /rejected request/ : /Unrecognized/);
+    expect(fetchControl).toHaveBeenCalledWith('http://127.0.0.1:1444/pi-suspension/discover?launchId=owned-launch', expect.anything());
+    expect(probe.api.getSettings).not.toHaveBeenCalled();
+    expect(probe.capture).not.toHaveBeenCalled(); expect(probe.api.prototypeCheckpoint).not.toHaveBeenCalled(); expect(probe.emit).not.toHaveBeenCalled();
+  });
+});
 
 describe('fresh iOS foreground retention contract', () => {
   it('requires a guarded owned loopback fixture port for the control channel', () => {

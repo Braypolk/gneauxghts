@@ -123,6 +123,7 @@ export async function runIosPublicationFaultGate() {
       const launch = (armCrash = false) => captureOwnedIosProcess({ bundle: ownedIosBundle, installedExecutable: join(installed, info.CFBundleExecutable), inspect,
         launchOutput: run('xcrun', ['simctl', 'launch', simulator, ownedIosBundle], { ...fixtureConfig.launchEnv,
           SIMCTL_CHILD_PI_PROTOTYPE_INTERACTIVE_GATE: 'true', SIMCTL_CHILD_PI_PROTOTYPE_EXPANDED_GATE: 'true', SIMCTL_CHILD_PI_PROTOTYPE_FOLLOWONS_GATE: 'false',
+          SIMCTL_CHILD_PI_PROTOTYPE_IOS_PUBLICATION_FAULT_GATE: 'true',
           SIMCTL_CHILD_PI_PROTOTYPE_E2E_CRASH_BOUNDARY: armCrash ? boundary : '', SIMCTL_CHILD_PI_PROTOTYPE_E2E_CRASH_SCOPE: armCrash ? scope : '' }) });
       const phase = (name, prior) => waitUntil(() => {
         try {

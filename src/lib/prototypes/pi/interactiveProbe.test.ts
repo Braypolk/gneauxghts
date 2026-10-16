@@ -411,21 +411,25 @@ describe('interactive relaunch consumes independent normal Keep proof', () => {
     const published: Array<{ receipts: { publicationPlans?: { kept?: SharedKeepPlan }; kept?: unknown }; error?: string }> = [];
     const editorPane = { querySelector: () => ({ value: before.title }) };
     const state = EditorState.create({ doc: mounted.markdown, extensions: [documentReviewField] }).update({ effects: setDocumentReview.of({ reviewId: 'exact-review', hunks: mounted.decisions }) }).state;
-    const view = { dom: { isConnected: true, closest: () => editorPane }, state: { doc: state.doc, field: (field: unknown) => field === reviewProjection ? state.field(documentReviewField) : undefined } };
+    const visible = { isConnected: true, getClientRects: () => [1], closest: () => null };
+    const view = { dom: { ...visible, closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? editorPane : null }, state: { doc: state.doc, field: (field: unknown) => field === reviewProjection ? state.field(documentReviewField) : undefined } };
     vi.spyOn(EditorView, 'findFromDOM').mockReturnValue(view as unknown as EditorView);
     const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
     const item = { textContent: 'Pi interactive A', click: vi.fn() };
     Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] });
-    const keep = { disabled: false, textContent: 'Keep All', getAttribute: () => null, click: vi.fn(() => {
+    const keep = { ...visible, disabled: false, textContent: 'Keep All', getAttribute: () => null, click: vi.fn(() => {
       const plan = published.at(-1)?.receipts.publicationPlans?.kept;
       expect(plan).toMatchObject({ proposalId: 'keep', reviewId: 'exact-review', reviewedDraft: mounted, expectedKeepDraft: { version: expectedKeepVersion, decisions: [{ status: 'kept' }] } });
       clicked = true;
       durable = { ...structuredClone(mounted), version: corruption === 'version' ? 19 : expectedKeepVersion,
         decisions: mounted.decisions.map(hunk => ({ ...hunk, status: corruption === 'decisions' ? 'modified' : 'kept' })) };
     }) };
+    const strip = { ...visible, getAttribute: (name: string) => name === 'data-proposal-strip' ? 'active' : null,
+      querySelectorAll: () => [keep] };
     const queryAll = document.querySelectorAll.bind(document);
     Object.assign(document, {
-      querySelector: (selector: string) => selector.includes('data-proposal-strip') ? { querySelectorAll: () => [keep] } : {},
+      querySelector: (selector: string) => selector === '[data-testid="workspace-pane"]' ? editorPane
+        : selector.includes('data-proposal-strip') ? strip : null,
       querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' ? [view.dom] : queryAll(selector),
     });
     mocks.state.mockReturnValue({ interactiveStateJson: JSON.stringify({ a: 'a', keepId: 'keep', discardId: 'discard', interruptedId: 'interrupted', editedBody: before.markdown, editedTitle: before.title }) });

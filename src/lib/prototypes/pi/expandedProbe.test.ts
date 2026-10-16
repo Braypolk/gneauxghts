@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), shared: vi.fn(), followons: vi.fn(), storage: vi.fn(), evidence: vi.fn(), suspension: vi.fn(), restored: vi.fn(), publication: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), shared: vi.fn(), followons: vi.fn(), storage: vi.fn(), evidence: vi.fn(), suspension: vi.fn(), restored: vi.fn(), publication: vi.fn(), settings: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, getSettings: async()=>({localBaseUrl:'http://127.0.0.1:1443/local/v1'}), prototypeCheckpoint: vi.fn() } }));
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, getSettings: mocks.settings, prototypeCheckpoint: vi.fn() } }));
 vi.mock('./interactiveProbe', () => ({ runInteractiveProbe: mocks.shared, captureSharedSuspensionUi: vi.fn() }));
 vi.mock('./expandedFollowonsProbe', () => ({ runExpandedFollowonsProbe: mocks.followons }));
 vi.mock('./nativeStorageFaultProbe', () => ({ runNativeStorageFaultProbe: mocks.storage }));
@@ -13,10 +13,11 @@ import { runExpandedProbe } from './expandedProbe';
 describe('explicit native expanded journey wrapper', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.settings.mockResolvedValue({ localBaseUrl: 'http://localhost:1234/v1' });
     const location = { href: 'http://tauri.localhost/?piExpandedTest=1' };
     vi.stubGlobal('location', location);
     vi.stubGlobal('history', { state: null, replaceState: (_state: unknown, _title: string, url: string | URL) => { location.href = String(url); } });
-    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true } : undefined);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, fixtureBaseUrl: 'http://127.0.0.1:1443' } : undefined);
     mocks.state.mockResolvedValue({});
     mocks.evidence.mockResolvedValue({status:'passed'}); mocks.suspension.mockResolvedValue(undefined); mocks.restored.mockResolvedValue(undefined); mocks.publication.mockResolvedValue(undefined);
     mocks.storage.mockResolvedValue({ status: 'passed' });
@@ -53,7 +54,7 @@ describe('explicit native expanded journey wrapper', () => {
   const relaunchState = { interactiveStateJson: JSON.stringify({ a: 'a', b: 'b', source: { noteId: 'n' }, interruptedId: 'i', keepId: 'k', discardId: 'd' }) };
   it('runs opted-in follow-ons after shared UI and before storage closes owners', async () => {
     mocks.state.mockResolvedValue(relaunchState);
-    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, followonsGate: true } : undefined);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, fixtureBaseUrl: 'http://127.0.0.1:1443', followonsGate: true } : undefined);
     const result = await runExpandedProbe();
     expect(result?.shared.map(value => value.phase)).toEqual(['relaunch', 'failures']);
     expect(result).toMatchObject({ status: 'passed', followons: { status: 'passed' }, storageFaults: { status: 'passed' } });
@@ -62,17 +63,19 @@ describe('explicit native expanded journey wrapper', () => {
     expect(mocks.followons.mock.invocationCallOrder[0]).toBeLessThan(mocks.evidence.mock.invocationCallOrder[0]);
     expect(mocks.evidence.mock.invocationCallOrder[0]).toBeLessThan(mocks.storage.mock.invocationCallOrder[0]);
     expect(mocks.storage).toHaveBeenCalledWith({ phase: 'last-after-ui', generatedSyntheticRoot: true });
+    expect(mocks.evidence).toHaveBeenCalledWith({ api: expect.anything(), fixtureBaseUrl: 'http://127.0.0.1:1443' });
+    expect(mocks.settings).not.toHaveBeenCalled();
   });
   it.each([undefined, { status: 'failed', error: 'native follow-on admission failed' }])('never closes owners after an enabled absent or failed follow-on report', async followons => {
     mocks.state.mockResolvedValue(relaunchState);
-    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, followonsGate: true } : undefined);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, fixtureBaseUrl: 'http://127.0.0.1:1443', followonsGate: true } : undefined);
     mocks.followons.mockResolvedValue(followons);
     expect(await runExpandedProbe()).toMatchObject({ status: 'failed' });
     expect(mocks.storage).not.toHaveBeenCalled();
   });
   it('retains failed follow-on checks and receipts in the final failed wrapper report', async () => {
     mocks.state.mockResolvedValue(relaunchState);
-    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, followonsGate: true } : undefined);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, fixtureBaseUrl: 'http://127.0.0.1:1443', followonsGate: true } : undefined);
     const observed = { gate: 'expanded-native-followons-fixture', status: 'failed', checks: ['local native attachment Retry'], receipts: { admitted: { provider: 'local', model: 'pi-native-fixture', reasoningEffort: 'off' } }, error: 'Follow-on deadline: Reasoning effort' };
     mocks.followons.mockResolvedValue(observed);
     const result = await runExpandedProbe();
@@ -82,10 +85,16 @@ describe('explicit native expanded journey wrapper', () => {
   });
   it.each([undefined, {status:'failed',error:'source race leaked'}])('keeps owners open when supplemental evidence fails', async evidence => {
     mocks.state.mockResolvedValue(relaunchState);
-    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? {fixture:true,interactiveGate:true,expandedGate:true,followonsGate:true} : undefined);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? {fixture:true,interactiveGate:true,expandedGate:true,fixtureBaseUrl:'http://127.0.0.1:1443',followonsGate:true} : undefined);
     mocks.evidence.mockResolvedValue(evidence);
     expect(await runExpandedProbe()).toMatchObject({status:'failed'});
     expect(mocks.storage).not.toHaveBeenCalled();
+  });
+  it.each([undefined, 'http://localhost:1234/v1', 'http://127.0.0.1:8080'])('rejects absent or unowned native evidence fixture %s without falling back to chat settings', async fixtureBaseUrl => {
+    mocks.state.mockResolvedValue(relaunchState);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, followonsGate: true, fixtureBaseUrl } : undefined);
+    expect(await runExpandedProbe()).toMatchObject({ status: 'failed' });
+    expect(mocks.evidence).not.toHaveBeenCalled(); expect(mocks.storage).not.toHaveBeenCalled(); expect(mocks.settings).not.toHaveBeenCalled();
   });
   it('routes owned publication recovery before shared state admission', async () => {
     const publication={gate:'ios-native-publication-fault',status:'passed'};
