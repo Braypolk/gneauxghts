@@ -2,15 +2,21 @@ import { expect, it, vi } from 'vitest';
 import type { ChatApi } from '$lib/features/chat/api';
 import type { ChatSettings } from '$lib/features/chat/types';
 import type { MemoryStorage } from '@earendil-works/pi-durable/storage/memory';
+import type { SubmissionId } from '@earendil-works/pi-durable';
+import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { Message } from '@earendil-works/pi-ai';
 import { createPiChatApi } from './chatApi';
 import {createChatControllerMachineState,transitionChatControllerMachine} from '$lib/features/chat/machines/controllerMachine';
+import { CHAT_AGENT_EVENT_SCHEMA_VERSION, initialAgentEventState, reduceAgentEvent } from '$lib/features/chat/agentEvents';
 
-const probe=vi.hoisted(()=>({store:undefined as unknown as MemoryStorage,histories:[] as Array<readonly Message[]>,watches:0,slow:false,failure:'',whole:false,finish:()=>{},holdSubmit:undefined as (()=>Promise<void>)|undefined,observedPartial:undefined as (()=>void)|undefined,changeTypes:[] as string[]}));
+const probe=vi.hoisted(()=>({store:undefined as unknown as MemoryStorage,histories:[] as Array<readonly Message[]>,watches:0,slow:false,failure:'',whole:false,research:false,finish:()=>{},holdSubmit:undefined as (()=>Promise<void>)|undefined,observedPartial:undefined as (()=>void)|undefined,read:undefined as (()=>Promise<void>)|undefined,afterEvidenceSnapshot:undefined as (()=>Promise<void>)|undefined,changeTypes:[] as string[]}));
+const researchSource={kind:'passage',noteId:'n1',title:'One',excerpt:'Canonical worker evidence',passage:{id:'passage-1',noteId:'n1',revisions:[]}};
 vi.mock('@earendil-works/pi-durable',async()=>{
   const actual=await vi.importActual<typeof import('@earendil-works/pi-durable')>('@earendil-works/pi-durable');
   return {...actual,Harness:{...actual.Harness,open:async(...args:Parameters<typeof actual.Harness.open>)=>{
     const harness=await actual.Harness.open(...args);const read=harness.conversation.bind(harness);
+    const snapshot=harness.snapshot.bind(harness);
+    harness.snapshot=(async(...input:Parameters<typeof harness.snapshot>)=>{const value=await snapshot(...input);if(input[0].definition.kind==='gneauxghts.pi.evidence-run')await probe.afterEvidenceSnapshot?.();return value;}) as typeof harness.snapshot;
     harness.subscribeCommits(publication=>{if(!probe.observedPartial)return;for(const change of publication.changes)if(change.type==='document'&&change.record.kind==='pi.live'){const value=change.value as {generation?:{message?:{content?:Array<{type:string;text?:string}>}}}|null;if(value?.generation?.message?.content?.some(block=>block.type==='text'&&block.text))probe.observedPartial();}});
     harness.conversation=async(...input)=>{const conversation=await read(...input);if(!conversation)return conversation;const submit=conversation.submit.bind(conversation);conversation.submit=async(...input)=>{const result=await submit(...input);await probe.holdSubmit?.();return result;};return conversation;};return harness;
   }},watchEvents:async(...args:Parameters<typeof actual.watchEvents>)=>{
@@ -27,21 +33,30 @@ vi.mock('@tauri-apps/api/core',()=>({invoke:async(command:string,args?:{paths?:s
   if(command==='pi_publish_transcript')return {projectionPath:'Chats/Pi/Origin.md',detached:false,conflict:null,warning:null};
   if(command==='pi_prepare_evidence')return {sessionId:crypto.randomUUID(),context:[],selectedNoteIds:[],grants:[],temporal:{referenceInstant:'2026-10-15T12:00:00Z',timeZone:'UTC',dateTimeContext:null,referenceLabel:'2026-10-15 UTC',prompt:'Current time: 2026-10-15T12:00:00Z'}};
   if(command==='pi_validate_evidence'||command==='pi_validate_sources'||command==='pi_release_evidence')return;
+  if(command==='pi_evidence_operation'){await probe.read?.();return probe.research?{payload:{items:[{evidenceId:'passage-1',text:'Canonical worker evidence'}]},sources:[researchSource]}:{payload:{items:[]},sources:[]};}
+  if(command==='pi_begin_research')return {scope:{note_ids:['n1']},referenceInstant:'now',discoveryHints:[],scopeNoteCount:1};
+  if(command==='pi_finish_research')return {payload:{items:[{evidenceId:'passage-1',text:'Canonical worker evidence'}],gaps:[]},sources:[researchSource]};
+  if(command==='pi_release_research')return;
   throw new Error(`Unexpected native command ${command}`);
 }}));
 vi.mock('./nativeSqlite',()=>({openNativeSqlite:async()=>({})}));
 vi.mock('@earendil-works/pi-durable/storage/sqlite',()=>({SqliteStorage:{open:async()=>probe.store}}));
 vi.mock('./nativeProvider',async()=>{
   const {createModels,createAssistantMessageEventStream}=await import('@earendil-works/pi-ai');
-  const {fauxProvider,fauxAssistantMessage}=await import('@earendil-works/pi-ai/providers/faux');
+  const {fauxProvider,fauxAssistantMessage,fauxToolCall}=await import('@earendil-works/pi-ai/providers/faux');
   return {
     admitNativeRequest:async(provider:string,model:string,reasoningEffort:string,serviceTier:string)=>({id:crypto.randomUUID(),provider,model,reasoningEffort,serviceTier}),
     releaseNativeRequest:async()=>{},
-    nativeModels:(policies:Map<string,{history:readonly Message[];admission:unknown}>)=>{
+    nativeModels:(policies:Map<string,{history:readonly Message[];admission:unknown;purpose?:string}>)=>{
       const models=createModels();const faux=fauxProvider({provider:'local',models:[{id:'pi-native-fixture'},{id:'pi-native-fixture-b'}],tokensPerSecond:probe.slow?20:undefined});models.setProvider(faux.provider);
-      const response=(_context:unknown,options:{sessionId?:string}|undefined)=>{
+      const response=(request:{messages:readonly Message[]},options:{sessionId?:string}|undefined)=>{
         const policy=policies.get(options?.sessionId ?? '');if(!policy?.admission)throw new Error('Missing explicit request admission');probe.histories.push(policy.history);
         if(probe.failure)return fauxAssistantMessage('',{stopReason:'error',errorMessage:probe.failure});
+        if(probe.research){
+          if(policy.purpose==='researchSelection')return request.messages.some(message=>message.role==='toolResult')?fauxAssistantMessage('{"evidence_ids":["passage-1"],"gaps":[]}'):fauxAssistantMessage(fauxToolCall('read_notes',{note_id:'n1'},{id:'worker-read'}),{stopReason:'toolUse'});
+          if(!request.messages.some(message=>message.role==='toolResult'))return fauxAssistantMessage(fauxToolCall('research_notes',{question:'Focused evidence gap',note_ids:['n1']},{id:'parent-research'}),{stopReason:'toolUse'});
+        }
+        if(probe.read&&!request.messages.some(message=>message.role==='toolResult'))return fauxAssistantMessage(fauxToolCall('read_note',{noteId:'n1'},{id:'read-during-projection'}),{stopReason:'toolUse'});
         return fauxAssistantMessage(probe.slow?'First point. Second point. '.repeat(12):'First point. Second point.');
       };
       faux.setResponses(Array.from({length:20},()=>response));
@@ -162,6 +177,65 @@ it('rechecks a pending scan when a request completes during conversation project
     const restored=await reading;expect(restored.messages.at(-1)?.status).toBe('completed');expect(restored.messages.at(-1)?.errorMessage).toBeNull();expect(restored.messages.at(-1)?.content).toBe('Whole first chunk');
     offDelta();offComplete();
   } finally {release.resolve();probe.whole=false;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('projects committed tool outcomes when a pending turn settles after its entries were scanned',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.histories=[];
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'none',atlasVisibility:'hidden'};
+  const toolStarted=Promise.withResolvers<void>(),releaseTool=Promise.withResolvers<void>(),scanned=Promise.withResolvers<void>(),releaseScan=Promise.withResolvers<void>();
+  probe.read=async()=>{toolStarted.resolve();await releaseTool.promise;};
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);
+  try {
+    const conversation=await api.createConversation();const completed=Promise.withResolvers<void>();
+    const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    const receipt=await api.sendMessage({conversationId:conversation.id,content:'Read while conversation projection is suspended'});await toolStarted.promise;
+    const scan=probe.store.scanEntries.bind(probe.store);let suspend=true;
+    probe.store.scanEntries=async(...args)=>{const page=await scan(...args);if(suspend&&page.items.some(entry=>entry.model?.some(message=>message.role==='assistant'&&message.content.some(block=>block.type==='toolCall'&&block.id==='read-during-projection')))){
+      suspend=false;expect(page.items.some(entry=>entry.model?.some(message=>message.role==='toolResult'))).toBe(false);scanned.resolve();await releaseScan.promise;
+    }return page;};
+    const reading=api.getConversation(conversation.id);await scanned.promise;
+    releaseTool.resolve();await completed.promise;releaseScan.resolve();
+    const projected=await reading;const assistant=projected.messages.find(message=>message.id===receipt.assistantMessage!.id)!;
+    expect(assistant.status).toBe('completed');expect(assistant.parts.find(part=>part.type==='tool'&&part.name==='read_note')).toMatchObject({status:'success'});
+    expect((await api.getConversation(conversation.id)).messages.at(-1)?.parts).toEqual(assistant.parts);offComplete();
+  } finally {releaseTool.resolve();releaseScan.resolve();probe.read=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('delivers successful parent research activity live and after reopening through the supported event schema',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.histories=[];probe.research=true;
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'none',atlasVisibility:'hidden'};
+  const native={getSettings:async()=>settings} as ChatApi;const api=createPiChatApi(native);
+  try {
+    const conversation=await api.createConversation();let state=initialAgentEventState();const versions:number[]=[];
+    const offEvent=await api.on('chat://agent-event',event=>{state=reduceAgentEvent(state,event);if(event.schemaVersion!==undefined)versions.push(event.schemaVersion);});
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    await api.sendMessage({conversationId:conversation.id,content:'Research a focused gap'});await completed.promise;offEvent();offComplete();
+    expect(versions.length).toBeGreaterThan(0);expect(new Set(versions)).toEqual(new Set([CHAT_AGENT_EVENT_SCHEMA_VERSION]));
+    expect(state.parts.filter(part=>part.type==='tool')).toHaveLength(1);expect(state.parts.find(part=>part.type==='tool')).toMatchObject({name:'research_notes',status:'success'});
+    const projected=await api.getConversation(conversation.id);const tools=projected.messages.at(-1)!.parts.filter(part=>part.type==='tool');
+    expect(tools).toHaveLength(1);expect(tools[0]).toMatchObject({name:'research_notes',status:'success',readSources:[{noteId:'n1',label:'One',excerpt:'Canonical worker evidence'}]});
+    await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();const reopened=createPiChatApi(native);
+    try {expect((await reopened.getConversation(conversation.id)).messages.at(-1)!.parts.filter(part=>part.type==='tool')).toEqual(tools);}
+    finally {await (reopened as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+  } finally {probe.research=false;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('reconciles terminal activity when its process owner retires during the evidence-origin snapshot',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.histories=[];
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'none',atlasVisibility:'hidden'};
+  const toolStarted=Promise.withResolvers<void>(),releaseTool=Promise.withResolvers<void>(),originRead=Promise.withResolvers<void>(),releaseOrigin=Promise.withResolvers<void>();
+  probe.read=async()=>{toolStarted.resolve();await releaseTool.promise;};
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);
+  try {
+    const conversation=await api.createConversation();const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    const receipt=await api.sendMessage({conversationId:conversation.id,content:'Finish after the pending submission recheck'});await toolStarted.promise;
+    probe.afterEvidenceSnapshot=async()=>{probe.afterEvidenceSnapshot=undefined;const submission=await probe.store.submission(Number(receipt.requestId.split('-').at(-1)) as SubmissionId,context);expect(submission?.status).toBe('placed');originRead.resolve();await releaseOrigin.promise;};
+    const reading=api.getConversation(conversation.id);await originRead.promise;releaseTool.resolve();await completed.promise;releaseOrigin.resolve();
+    const assistant=(await reading).messages.find(message=>message.id===receipt.assistantMessage!.id)!;
+    expect(assistant.status).toBe('completed');expect(assistant.errorMessage).toBeNull();expect(assistant.content).toBe('First point. Second point.');
+    expect(assistant.parts.find(part=>part.type==='tool'&&part.name==='read_note')).toMatchObject({status:'success'});
+    expect((await api.getConversation(conversation.id)).messages.at(-1)?.parts).toEqual(assistant.parts);offComplete();
+  } finally {releaseTool.resolve();releaseOrigin.resolve();probe.afterEvidenceSnapshot=undefined;probe.read=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
 });
 
 it('reopens the committed actionable failure without exposing unsafe provider diagnostics',async()=>{

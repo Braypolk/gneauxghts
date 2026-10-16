@@ -7,7 +7,7 @@ import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { ChatApi } from '$lib/features/chat/api';
 import type { AgentEvent, AgentPlanEntry, ChatAgentEventEnvelope, ChatAgentProposal, ChatConversation, ChatConversationSummary, ChatEventMap, ChatMessage, ChatSettings } from '$lib/features/chat/types';
-import { initialAgentEventState, replayAgentEvents } from '$lib/features/chat/agentEvents';
+import { CHAT_AGENT_EVENT_SCHEMA_VERSION, initialAgentEventState, replayAgentEvents } from '$lib/features/chat/agentEvents';
 import { normalizeSource } from '$lib/features/chat/sources';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 import { openNativeSqlite } from './nativeSqlite';
@@ -65,7 +65,7 @@ function message(id:string,conversationId:string,role:ChatMessage['role'],conten
 
 function projectTurnEvents(entries:readonly EntryRecord[],submissionId:number,conversationId:string,timestamp:number,summaryUsage?:Partial<UsageCounters>,aggregate=emptyUsageCounters()):ChatAgentEventEnvelope[] {
   const events:ChatAgentEventEnvelope[]=[];
-  const append=(event:AgentEvent,createdAtMillis=timestamp)=>events.push({schemaVersion:1,requestId:`pi-request-${submissionId}`,conversationId,messageId:`pi-assistant-${submissionId}`,runId:`pi-run-${submissionId}`,sequence:events.length+1,createdAtMillis,event});
+  const append=(event:AgentEvent,createdAtMillis=timestamp)=>events.push({schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,requestId:`pi-request-${submissionId}`,conversationId,messageId:`pi-assistant-${submissionId}`,runId:`pi-run-${submissionId}`,sequence:events.length+1,createdAtMillis,event});
   let callIndex=0;
   if(summaryUsage){addUsageCounters(aggregate,summaryUsage);append({type:'usageUpdated',callIndex:callIndex++,aggregate:{...aggregate}});}
   for(const entry of entries){const workerUsage=researchUsage(entry);
@@ -210,8 +210,8 @@ export function createPiChatApi(native:ChatApi):ChatApi {
   };
   const getConversation=async(conversationId:string):Promise<ChatConversation> => {
     const id=cid(conversationId);const {harness,storage}=await open();const conversation=await harness.conversation(id,context);if(!conversation)throw new Error('Unknown Pi conversation');
-    const entries=await entriesFor(id);
     const records=(await scanAll(cursor=>storage.scanSubmissions({conversationId:id},128,cursor,context))).filter(r=>r.type==='input');
+    let entries=await entriesFor(id);
     const live=await harness.snapshot(LiveDoc,id,context);
     // Stopped/interrupted tools may never append their final details. Recover
     // received worker spend from its own Pi ledger, without reading its prose.
@@ -224,14 +224,33 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     for(let record of records) {
       const userEntry=record.entry && entries.find(e=>e.id===record.entry);
       const snapshot=requestSnapshot(userEntry);
-      const origin=snapshot?.evidence ? await harness.snapshot(EvidenceRun,snapshot.evidence.sessionId,context) : undefined;
       // Projection awaits per-origin documents. A pending scan may have settled
       // and retired its process owner by then; durable settlement wins.
       let currentLive=live;
       if(record.status==='placed'||record.status==='queued') {
         currentLive=await harness.snapshot(LiveDoc,id,context);
         const latest=await storage.submission(record.id,context);
-        if(latest?.type==='input')record=latest;
+        if(latest?.type==='input'){
+          record=latest;
+          // Settlement commits tool results before its terminal submission.
+          // Refresh the entries too, so terminal text, activity and usage all
+          // come from the completed turn rather than the earlier live scan.
+          if(record.status!=='placed'&&record.status!=='queued')entries=await entriesFor(id);
+        }
+      }
+      let origin=snapshot?.evidence ? await harness.snapshot(EvidenceRun,snapshot.evidence.sessionId,context) : undefined;
+      // An origin read can outlive the final owner retirement too. Reconcile
+      // once more before interpreting owner absence as interruption; retirement
+      // follows durable settlement, so the terminal record cannot regress.
+      if((record.status==='placed'||record.status==='queued')&&active.get(id)!==record.id&&!admitting.has(id)){
+        const latest=await storage.submission(record.id,context);
+        if(latest?.type==='input'){
+          record=latest;
+          if(record.status!=='placed'&&record.status!=='queued'){
+            entries=await entriesFor(id);
+            origin=snapshot?.evidence ? await harness.snapshot(EvidenceRun,snapshot.evidence.sessionId,context) : undefined;
+          }
+        }
       }
       const structured=!!origin && (evidenceSources(origin).length>0 || snapshot?.evidence?.context.some(item=>item.kind==='selected_excerpt'));
       const timestamp=snapshot?.createdAtMillis ?? userEntry?.model?.[0]?.timestamp ?? 0;
@@ -252,7 +271,7 @@ export function createPiChatApi(native:ChatApi):ChatApi {
       const events=projectTurnEvents(turnEntries,record.id,conversationId,timestamp,Object.values(supplemental).some(value=>value>0)?supplemental:undefined);
       if(origin){const binding=origin;
         let reads:AgentEvent[]=[];try{await invoke('pi_validate_sources',{sources:evidenceSources(binding),access:(await harness.snapshot(Evidence,id,context))?.access ?? 'none',grants:evidenceGrants(binding)});reads=evidenceReadEvents(binding);}catch{/* Keep stale destinations unavailable. */}
-        for(const event of [...reads,...evidencePermissionEvents(binding,{requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`})])events.push({schemaVersion:1,requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`,sequence:events.length+1,createdAtMillis:timestamp,event});}
+        for(const event of [...reads,...evidencePermissionEvents(binding,{requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`})])events.push({schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`,sequence:events.length+1,createdAtMillis:timestamp,event});}
       if(!current)for(const envelope of [...events])if(envelope.event.type==='permissionRequested'&&!events.some(candidate=>candidate.event.type==='permissionResolved'&&candidate.event.permissionId===(envelope.event as Extract<AgentEvent,{type:'permissionRequested'}>).request.permissionId))events.push({...envelope,sequence:events.length+1,event:{type:'permissionResolved',permissionId:envelope.event.request.permissionId,resolution:'cancelled'}});
       const eventState=replayAgentEvents(assistant.content,events,{conversationId,messageId:assistant.id});assistant.parts=eventState.parts;assistant.agentRunId=eventState.runId;assistant.agentSequence=eventState.sequence;assistant.agentEventCreatedAtMillis=eventState.createdAtMillis;
       messages.push(user,assistant);

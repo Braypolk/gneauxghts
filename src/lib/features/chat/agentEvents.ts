@@ -18,6 +18,8 @@ export interface AgentEventState {
   retiredRunIds: string[];
 }
 
+export const CHAT_AGENT_EVENT_SCHEMA_VERSION = 2;
+
 export function initialAgentEventState(
   text = '',
   target: { conversationId?: string; messageId?: string } = {}
@@ -237,7 +239,7 @@ function upsertPart(parts: ChatPart[], part: ChatPart): ChatPart[] {
 }
 
 function hasSupportedSchema(envelope: ChatAgentEventEnvelope): boolean {
-  return envelope.schemaVersion === undefined || envelope.schemaVersion === 2;
+  return envelope.schemaVersion === undefined || envelope.schemaVersion === CHAT_AGENT_EVENT_SCHEMA_VERSION;
 }
 
 function targetsCurrentMessage(
