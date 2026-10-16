@@ -37,7 +37,9 @@
 
   onMount(() => {
     const probeQuery = new URL(location.href).searchParams;
-    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piTranscriptTest')) {
+    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.get('piIosLiveTest') === '1') {
+      void import('$lib/prototypes/pi/iosLiveProbe').then(({runIosLiveProbe})=>runIosLiveProbe());
+    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piTranscriptTest')) {
       void import('$lib/prototypes/pi/iosTranscriptProbe').then(({runIosTranscriptProbe})=>runIosTranscriptProbe());
     } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piExpandedTest')) {
       void import('$lib/prototypes/pi/expandedProbe').then(({runExpandedProbe})=>runExpandedProbe());
