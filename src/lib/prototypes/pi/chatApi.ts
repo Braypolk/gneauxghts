@@ -82,9 +82,24 @@ function projectTurnEvents(entries:readonly EntryRecord[],submissionId:number,co
   return events;
 }
 
-const liveApis=new Set<()=>Promise<void>>();
+export type PiChatOwnedResources = {
+  enginePresent:boolean; closing:boolean; commitSubscription:boolean; projectionListener:boolean;
+  listeners:number; listenerEventKeys:number; listenerEventSets:number; eventStreams:number; evidenceWatches:number;
+  requestEventBindings:number; sequences:number; admissions:number; admitting:number;
+  active:number; policies:number; permitted:number; projectionStates:number;
+};
+type PiApiOwner = (()=>Promise<void>) & { resources():PiChatOwnedResources };
+const liveApis=new Set<PiApiOwner>();
 const policyCancellations=new Set<()=>Promise<void>>();
 let quiesceListener:Promise<unknown>|undefined;
+/** Read only existing app-owned collections; never open storage or a Harness. */
+export async function readPiChatResourceSnapshot() {
+  if(!(await invoke<{fixture:boolean}>('pi_probe_config')).fixture)throw new Error('Synthetic fixture required');
+  return {liveApiOwners:liveApis.size,policyCancellationOwners:policyCancellations.size,
+    quiesceListenerRequested:quiesceListener!==undefined,owners:[...liveApis].map(owner=>owner.resources()),
+    upstreamDocumentTrackers:null,upstreamWatchers:null,nativeLeases:null,
+    coverage:'app-owned-collections-only' as const};
+}
 export async function closePiChatApis():Promise<void> {await Promise.all([...liveApis].map(close=>close()));}
 function attachQuiesceListener() {
   return quiesceListener ??= Promise.all([listen<{token:string}>('pi-lifecycle-quiesce',async event=>{await closePiChatApis();await invoke('pi_lifecycle_quiesced',{token:event.payload.token});}),listen('pi-policy-changed',async()=>{await Promise.all([...policyCancellations].map(cancel=>cancel()));})]);
@@ -476,7 +491,14 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     })();
     try{await closePromise;}finally{closePromise=undefined;if(!retire)closing=false;}
   };
-  const quiesce=()=>close();
+  const quiesce=Object.assign(()=>close(),{resources:():PiChatOwnedResources=>({
+    enginePresent:engine!==undefined,closing,commitSubscription:unsubscribeCommits!==undefined,
+    projectionListener:projectionUnlisten!==undefined,listeners:[...listeners.values()].reduce((sum,set)=>sum+set.size,0),
+    listenerEventKeys:listeners.size,listenerEventSets:[...listeners.values()].filter(set=>set.size>0).length,eventStreams:watched.size,
+    evidenceWatches:evidenceWatched.size,requestEventBindings:requestEventsEnabled.size,sequences:sequences.size,
+    admissions:admissions.size,admitting:admitting.size,active:active.size,policies:policies.size,
+    permitted:permitted.size,projectionStates:projectionStates.size,
+  })});
   liveApis.add(quiesce);
   Object.assign(overrides,{prototypeClose:()=>close(true)});
   return overrides;
