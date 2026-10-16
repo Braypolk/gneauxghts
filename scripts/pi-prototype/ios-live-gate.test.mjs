@@ -26,13 +26,15 @@ test('background, Save and restart never acquire implicit inference permission',
 });
 test('closed native proof requires one publication and the precise durable effect identity', () => {
   const committedMarkdown = 'Original answer.\n\nSynthetic iOS live review edit retained 12.', hash = createHash('sha256').update(committedMarkdown).digest('hex');
-  const reviewed = { proposalId: 'proposal', reviewId: 'exact-review', draftVersion: 2, reviewedTitle: 'Saved', reviewedPath: '/owned/vault/Saved.md', reviewedSha256: hash };
-  const receipt = { proposalId: 'proposal', reviewId: 'exact-review', version: 2, noteId: 'stable-note', path: reviewed.reviewedPath, expectedSha256: hash, canonical: { noteId: 'stable-note', title: 'Saved', path: reviewed.reviewedPath, editorSha256: hash } };
+  const expectedKeepDraft = { version: 3, markdown: committedMarkdown, title: 'Saved', path: '/owned/vault/Saved.md', decisions: [{ id: 'hunk', status: 'kept' }] };
+  const draftHash = createHash('sha256').update(JSON.stringify(expectedKeepDraft)).digest('hex');
+  const reviewed = { proposalId: 'proposal', reviewId: 'exact-review', draftVersion: 2, expectedKeepVersion: 3, expectedKeepDraftSha256: draftHash, reviewedTitle: 'Saved', reviewedPath: '/owned/vault/Saved.md', reviewedSha256: hash };
+  const receipt = { proposalId: 'proposal', reviewId: 'exact-review', version: 3, keptDraftSha256: draftHash, noteId: 'stable-note', path: reviewed.reviewedPath, expectedSha256: hash, canonical: { noteId: 'stable-note', title: 'Saved', path: reviewed.reviewedPath, editorSha256: hash } };
   const nativeReceipt = { status: 'committed', noteId: receipt.noteId, applied: { path: receipt.path }, committedMarkdown };
   // Raw canonical bytes contain managed frontmatter/title and have a distinct
   // hash from the independently acknowledged editor-facing body.
   const rawCanonicalHash = createHash('sha256').update(`---\ngneauxghts:\n  id: stable-note\n---\n# Saved\n\n${committedMarkdown}`).digest('hex');
-  const effect = { id: 'proposal:2', note_id: 'stable-note', target_path: receipt.path, publications: 1, receipt: JSON.stringify(nativeReceipt), proof: null, payload_hash: hash, intended_hash: hash, canonicalSha256: rawCanonicalHash, canonicalRelativePath: 'Saved.md' };
+  const effect = { id: 'proposal:3', note_id: 'stable-note', target_path: receipt.path, publications: 1, receipt: JSON.stringify(nativeReceipt), proof: null, payload_hash: hash, intended_hash: hash, canonicalSha256: rawCanonicalHash, canonicalRelativePath: 'Saved.md' };
   assert.equal(assertLiveEffect({ effects: [effect] }, receipt, reviewed, '/owned/vault'), effect);
   for (const effects of [[], [effect, effect], [{ ...effect, publications: 2 }], [{ ...effect, note_id: 'different' }], [{ ...effect, id: 'proposal:1' }], [{ ...effect, proof: '{}' }], [{ ...effect, receipt: null }], [{ ...effect, canonicalSha256: '' }], [{ ...effect, canonicalRelativePath: 'Other.md' }], [{ ...effect, receipt: JSON.stringify({ ...nativeReceipt, committedMarkdown: 'changed bytes' }) }]]) assert.throws(() => assertLiveEffect({ effects }, receipt, reviewed, '/owned/vault'));
   // Regression: the former self-consistent receipt check could accept wrong
@@ -44,6 +46,13 @@ test('closed native proof requires one publication and the precise durable effec
   assert.throws(() => assertLiveEffect({ effects: [wrongEffect] }, receipt, reviewed, '/owned/vault'), /Native receipt differs/);
   assert.throws(() => assertLivePublicationEvidence({ ...receipt, canonical: { ...receipt.canonical, editorSha256: wrongHash } }, reviewed), /Canonical read_note projection differs/);
   assert.throws(() => assertLivePublicationEvidence({ ...receipt, reviewId: 'foreign-review' }, reviewed));
-  assert.throws(() => assertLivePublicationEvidence({ ...receipt, version: 3 }, reviewed), /Keep version differs/);
+  assert.throws(() => assertLivePublicationEvidence({ ...receipt, version: 4 }, reviewed), /Keep version differs/);
+  assert.throws(() => assertLivePublicationEvidence({ ...receipt, version: reviewed.draftVersion }, reviewed), /Keep version differs/);
+  for (const changed of [{ version: 99 }, { markdown: 'Changed body' }, { title: 'Other' }, { path: '/owned/vault/Other.md' }, { decisions: [{ id: 'hunk', status: 'pending' }] }]) {
+    const tamperedHash = createHash('sha256').update(JSON.stringify({ ...expectedKeepDraft, ...changed })).digest('hex');
+    assert.throws(() => assertLivePublicationEvidence({ ...receipt, keptDraftSha256: tamperedHash }, reviewed), /Kept full draft differs/);
+  }
+  assert.throws(() => assertLivePublicationEvidence(receipt, { ...reviewed, expectedKeepVersion: undefined }), /Missing independently planned Keep version/);
+  assert.throws(() => assertLivePublicationEvidence(receipt, { ...reviewed, expectedKeepDraftSha256: undefined }), /Missing independently planned full Keep draft hash/);
   assert.throws(() => assertLivePublicationEvidence({ ...receipt, canonical: { ...receipt.canonical, title: 'Other' } }, reviewed));
 });

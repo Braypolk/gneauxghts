@@ -3,11 +3,19 @@ import { render } from 'svelte/server';
 import ChatMarkdown from '$lib/features/chat/ui/ChatMarkdown.svelte';
 import { message as chatMessage } from '$lib/features/chat/chatTestSupport';
 import type { EditorView } from '@codemirror/view';
+import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
+import { updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
+import { createReviewEditorForTest } from '$lib/features/proposals/proposalEditorTestSupport';
+import { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
+import { createProposalReviewSession } from '$lib/features/proposals/reviewSession.svelte';
+import { acknowledgeDraft, acceptKeep, draftOf, type ReviewRecord } from './reviewState';
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn(), create: vi.fn(), get: vi.fn(), pending: vi.fn(), draft: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get, listPendingProposals: mocks.pending, getProposalDraft: mocks.draft } }));
-import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, keepIosLiveReview, openIosLiveSource, runIosLiveProbe } from './iosLiveProbe';
+import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, assertIosLiveKeepDraft, expectedIosLiveKeepDraft, iosLiveEnabled, iosLiveUntil, keepIosLiveReview, openIosLiveSource, runIosLiveProbe } from './iosLiveProbe';
 import type { ChatCitation, ChatProposalDraft } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 describe('explicit iOS live probe admission and deadlines', () => {
@@ -162,7 +170,7 @@ describe('live Keep binds the exact independently acknowledged review', () => {
     });
     mocks.pending.mockResolvedValue([{ id: 'exact-proposal', preview: { reviewId: 'exact-review' } }]);
     mocks.draft.mockResolvedValue(draft);
-    return { view, state, title, open, keep, input: { view, proposalId: 'exact-proposal', conversationId: 'exact-conversation', reviewId: 'exact-review', reviewedDraft: draft } };
+    return { view, state, title, open, keep, input: { view, proposalId: 'exact-proposal', conversationId: 'exact-conversation', reviewId: 'exact-review', reviewedDraft: draft, expectedKeepDraft: expectedIosLiveKeepDraft(draft, 'exact-review') } };
   }
   it('keeps the exact acknowledged review when normal chat navigation tears down its editor before showing Keep', async () => {
     const fixture = reviewToChat();
@@ -214,5 +222,55 @@ describe('live Keep binds the exact independently acknowledged review', () => {
     expect(() => assertIosLiveReview('expected-review', { reviewId: 'expected-review' })).not.toThrow();
     for (const projection of [undefined, null, { reviewId: 'foreign-review' }]) expect(() => assertIosLiveReview('expected-review', projection)).toThrow('review identity mismatch');
     expect(() => assertIosLiveReview('', { reviewId: '' })).toThrow('review identity mismatch');
+  });
+});
+
+describe('independently planned normal Keep decision checkpoint', () => {
+  it.each(['pending', 'modified'] as const)('matches actual orchestration, checkpoint and acknowledged version for %s decisions', async status => {
+    const path = '/vault/Plan.md', reviewId = 'real-keep-review';
+    const hunk = { id: 'hunk', baseFrom: 0, baseTo: 6, proposedFrom: 0, proposedTo: 5, oldText: 'Before', newText: 'After' };
+    const initial: ChatProposalDraft = { version: 3, markdown: 'After', title: 'Plan', path, decisions: [{ ...hunk, from: 0, to: 5, status }] };
+    const record: ReviewRecord = { proposalJson: JSON.stringify({ id: 'proposal', kind: 'update', status: 'pending', payload: {}, preview: { notePath: path } }),
+      draftJson: JSON.stringify(initial), decision: 'pending', acceptedJson: '', receiptJson: '', receiptVersion: 0, fault: '' };
+    const document = createNoteDraftState({ ...createEmptySessionSnapshot(), title: 'Plan', bodyMarkdown: 'Before', currentNoteId: 'note', currentNotePath: path,
+      lastSavedNoteId: 'note', lastSavedTitle: 'Plan', lastSavedMarkdown: 'Before', lastSavedPath: path });
+    const editor = createReviewEditorForTest(document), session = createProposalReviewSession();
+    const committedVersions: number[] = [];
+    const orchestration = createProposalOrchestration({ getEditorPaneDocument: () => document, getEditorForDocument: () => editor.adapter,
+      presentReviewDocument: async () => document, onReviewMarkdownChange: updateDocumentMarkdown,
+      finishReviewDocument: async () => {}, acknowledgeDocumentCommit: async () => {}, reloadReviewDocument: async () => {}, session });
+    try {
+      await orchestration.loadDurableProposal({ proposalId: 'proposal', noteId: 'note', kind: 'update',
+        preview: { reviewId, notePath: path, title: 'Plan', baseContentHash: 'base', baseEditorMarkdown: 'Before', proposedEditorMarkdown: 'After', hunks: [hunk] },
+        working: { markdown: initial.markdown, title: initial.title, path, decisions: initial.decisions },
+        checkpoint: async working => { acknowledgeDraft(record, { ...draftOf(record), markdown: working.markdown, title: working.title, path: working.path, decisions: working.decisions }); },
+        commit: async markdown => {
+          const acknowledged = draftOf(record); committedVersions.push(acknowledged.version);
+          acceptKeep(record, 'proposal', acknowledged.version, markdown, 'full');
+          return { status: 'committed', noteId: 'note', committedMarkdown: markdown, applied: { kind: 'updateNote', path, previousPath: path }, message: null };
+        }, dismiss: async () => {} });
+      await orchestration.flushCheckpoint();
+      expect(draftOf(record)).toEqual(initial);
+      const expected = expectedIosLiveKeepDraft(initial, reviewId);
+      expect(expected.version).toBe(4);
+      expect(initial.decisions[0].status).toBe(status); // Prediction never writes to the mounted review.
+      await orchestration.keepAll();
+      expect(draftOf(record)).toEqual(expected);
+      expect(committedVersions).toEqual([4]);
+      expect(JSON.parse(record.acceptedJson)).toMatchObject({ version: 4, title: initial.title, path, markdown: initial.markdown });
+    } finally { orchestration.dispose(); documentRegistry.dispose(document.handle); }
+  });
+  it('preserves already resolved choices and avoids a version increment for an unchanged checkpoint', () => {
+    const decisions = [{ id: 'kept', status: 'kept' }, { id: 'undone', status: 'undone' }] as ChatProposalDraft['decisions'];
+    const initial: ChatProposalDraft = { version: 3, title: 'Plan', path: '/vault/Plan.md', markdown: 'Retained body', decisions };
+    const expected = expectedIosLiveKeepDraft(initial, 'review');
+    expect(expected).toEqual(initial);
+    const record: ReviewRecord = { proposalJson: JSON.stringify({ status: 'pending', payload: {} }), draftJson: JSON.stringify(initial), decision: 'pending', acceptedJson: '', receiptJson: '', receiptVersion: 0, fault: '' };
+    expect(acknowledgeDraft(record, expected).version).toBe(3);
+  });
+  it.each([{ version: 99 }, { markdown: 'Wrong body' }, { title: 'Wrong title' }, { path: '/vault/Wrong.md' }, { decisions: [] }])('rejects an arbitrary resulting Keep draft (%j)', changed => {
+    const initial: ChatProposalDraft = { version: 3, title: 'Plan', path: '/vault/Plan.md', markdown: 'Body', decisions: [{ id: 'pending', status: 'pending' }] as ChatProposalDraft['decisions'] };
+    const expected = expectedIosLiveKeepDraft(initial, 'review');
+    expect(() => assertIosLiveKeepDraft(expected, { ...expected, ...changed })).toThrow('independently planned draft');
   });
 });

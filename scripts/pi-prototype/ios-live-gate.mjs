@@ -77,7 +77,10 @@ export function assertIosLiveReport(report, phase, previousLaunch) {
 export function assertLiveNoReplay(before, after, reason) { assert.equal(after, before, `${reason} dispatched inference without normal Send`); }
 export function assertLivePublicationEvidence(receipt, reviewed) {
   assert.equal(receipt.proposalId, reviewed.proposalId); assert.equal(receipt.reviewId, reviewed.reviewId);
-  assert.equal(receipt.version, reviewed.draftVersion, 'Keep version differs from independently acknowledged review');
+  assert(Number.isSafeInteger(reviewed.expectedKeepVersion) && reviewed.expectedKeepVersion > 0, 'Missing independently planned Keep version');
+  assert.match(reviewed.expectedKeepDraftSha256 ?? '', /^[a-f0-9]{64}$/, 'Missing independently planned full Keep draft hash');
+  assert.equal(receipt.version, reviewed.expectedKeepVersion, 'Keep version differs from independently planned decision checkpoint');
+  assert.equal(receipt.keptDraftSha256, reviewed.expectedKeepDraftSha256, 'Kept full draft differs from independently planned decision checkpoint');
   assert.equal(receipt.path, reviewed.reviewedPath); assert.equal(receipt.expectedSha256, reviewed.reviewedSha256, 'Pre-Keep reviewed content changed across launch');
   assert.deepEqual(receipt.canonical, { noteId: receipt.noteId, title: reviewed.reviewedTitle, path: reviewed.reviewedPath, editorSha256: reviewed.reviewedSha256 }, 'Canonical read_note projection differs from independently acknowledged review');
 }

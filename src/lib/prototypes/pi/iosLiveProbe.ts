@@ -2,19 +2,21 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { EditorView } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatMessage, ChatProposalDraft, ChatSettings } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
-import { reviewProjection } from '$lib/features/proposals/reviewExtension';
+import { documentReviewField, resolveReviewHunk, reviewProjection, setDocumentReview } from '$lib/features/proposals/reviewExtension';
 import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { openVisibleProbeChat, visibleProbeControl } from './probeChatFocus';
 import { focusProbeChatComposer, probeChatPane, probeComposerSend } from './probeChatSend';
 import { admittedProbeRead, revealProbeReadActivity } from './probeReadActivity';
 import { probePaneTitle } from './probePaneTitle';
+import { sameDraft } from './reviewState';
 
 export const IOS_LIVE = { upstream: 'http://100.117.20.29:1234/v1', endpoint: 'http://127.0.0.1:1444/v1', model: 'qwen3.8-27b-gsq-rco' } as const;
 type ProbeApi = ChatApi & { prototypeState(): Promise<{ iosLiveStateJson?: string } | undefined>; prototypeCheckpoint(value: unknown): Promise<void> };
-type State = { phase: 'pending' | 'kept'; conversationId: string; source: { noteId: string; path: string }; messages: Pick<ChatMessage, 'id' | 'content' | 'status' | 'role'>[]; proposalId: string; reviewId: string; draft: ChatProposalDraft; reviewedDraft: ChatProposalDraft; receipt?: CommitNoteReviewResult };
+type State = { phase: 'pending' | 'kept'; conversationId: string; source: { noteId: string; path: string }; messages: Pick<ChatMessage, 'id' | 'content' | 'status' | 'role'>[]; proposalId: string; reviewId: string; draft: ChatProposalDraft; reviewedDraft: ChatProposalDraft; expectedKeepDraft: ChatProposalDraft; receipt?: CommitNoteReviewResult };
 type CanonicalNote = { noteId: string | null; path: string | null; title: string; markdown: string };
 type Report = { gate: 'ios-local-live'; launchId: string; phase: string; status: 'running' | 'passed' | 'failed'; checks: string[]; receipts: Record<string, unknown>; error?: string; limits: string[] };
 const api = chatApi as ProbeApi;
@@ -34,6 +36,21 @@ export function assertIosLivePublication(reviewed: ChatProposalDraft, receipt: C
   assert(receipt.committedMarkdown === reviewed.markdown, 'Live Keep receipt differs from exact acknowledged review body');
   assert(canonical.noteId === receipt.noteId && canonical.path === reviewed.path && canonical.title === reviewed.title, 'Canonical live note identity, title or path differs from acknowledged review');
   assert(canonical.markdown === reviewed.markdown, 'Canonical live note body differs from exact acknowledged review');
+}
+/** Predict normal Keep without dispatching to the live editor or checkpointing.
+ * Use the document's actual hunk reducer and the acknowledged-draft equality
+ * contract; only a changed decision checkpoint advances its version. */
+export function expectedIosLiveKeepDraft(draft: ChatProposalDraft, reviewId: string): ChatProposalDraft {
+  const mounted = EditorState.create({ doc: draft.markdown, extensions: [documentReviewField] }).update({
+    effects: setDocumentReview.of({ reviewId, hunks: structuredClone(draft.decisions) })
+  }).state;
+  const resolved = mounted.update({ effects: draft.decisions.filter(hunk => hunk.status === 'pending' || hunk.status === 'modified')
+    .map(hunk => resolveReviewHunk.of({ id: hunk.id, status: 'kept' })) }).state;
+  const expected = { ...draft, decisions: resolved.field(documentReviewField)!.hunks };
+  return { ...expected, version: draft.version + (sameDraft(draft, expected) ? 0 : 1) };
+}
+export function assertIosLiveKeepDraft(expected: ChatProposalDraft, actual: ChatProposalDraft) {
+  assert(JSON.stringify(actual) === JSON.stringify(expected), 'Normal Keep checkpoint differs from independently planned draft');
 }
 /** Timeout includes an individual stalled IPC predicate, not just poll intervals. */
 export async function iosLiveUntil<T>(read: () => T | Promise<T>, label: string, timeout = 45000): Promise<NonNullable<T>> {
@@ -89,9 +106,10 @@ async function acknowledge(id: string, conversationId: string) {
     return { markdown: view.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
   } });
 }
-export async function keepIosLiveReview(input: { view: EditorView; proposalId: string; conversationId: string; reviewId: string; reviewedDraft: ChatProposalDraft }) {
+export async function keepIosLiveReview(input: { view: EditorView; proposalId: string; conversationId: string; reviewId: string; reviewedDraft: ChatProposalDraft; expectedKeepDraft: ChatProposalDraft }) {
   assertIosLiveReview(input.reviewId, input.view.state.field(reviewProjection, false));
   assert(input.view.dom.isConnected && input.view.state.doc.toString() === input.reviewedDraft.markdown && probePaneTitle(input.view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === input.reviewedDraft.title, 'Live working review changed before Keep');
+  assertIosLiveKeepDraft(input.expectedKeepDraft, expectedIosLiveKeepDraft(input.reviewedDraft, input.reviewId));
   // Compact chat navigation replaces the pane's editor. Retain the independent
   // mounted proof above, then bind normal Keep to the same acknowledged draft
   // and pending review rather than reading a destroyed EditorView's old DOM.
@@ -154,10 +172,11 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       input(field, 'Pi iOS live saved answer'); field.blur();
       await until(async () => { const value = await api.getProposalDraft!(proposal.id); return value.markdown === body && value.title === field.value ? value : undefined; }, 'normal body/title acknowledged');
       const draft = await acknowledge(proposal.id, conversation.id);
-      const state: State = { phase: 'pending', conversationId: conversation.id, source: note, messages: (await api.getConversation(conversation.id)).messages.map(({ id, content, status, role }) => ({ id, content, status, role })), proposalId: proposal.id, reviewId, draft, reviewedDraft: draft };
+      const expectedKeepDraft = expectedIosLiveKeepDraft(draft, reviewId);
+      const state: State = { phase: 'pending', conversationId: conversation.id, source: note, messages: (await api.getConversation(conversation.id)).messages.map(({ id, content, status, role }) => ({ id, content, status, role })), proposalId: proposal.id, reviewId, draft, reviewedDraft: draft, expectedKeepDraft };
       await api.prototypeCheckpoint({ iosLiveStateJson: JSON.stringify(state) });
       let backgrounds = 0; disposeBackground = await listen('app://backgrounding', () => { backgrounds++; });
-      await emit('awaiting-background', { conversationId: conversation.id, sourceNoteId: note.noteId, proposalId: proposal.id, reviewId, draftVersion: draft.version, reviewedTitle: draft.title, reviewedPath: draft.path, answerSha256: await digest(cited.content), reviewedSha256: await digest(draft.markdown) });
+      await emit('awaiting-background', { conversationId: conversation.id, sourceNoteId: note.noteId, proposalId: proposal.id, reviewId, draftVersion: draft.version, expectedKeepVersion: expectedKeepDraft.version, expectedKeepDraftSha256: await digest(JSON.stringify(expectedKeepDraft)), reviewedTitle: draft.title, reviewedPath: draft.path, answerSha256: await digest(cited.content), reviewedSha256: await digest(draft.markdown) });
       await until(() => backgrounds > 0, 'actual native background event', 120000);
       assertRestored(state, (await api.getConversation(state.conversationId)).messages, await api.getProposalDraft!(state.proposalId));
       report.checks.push('normal Save and editable acknowledged review survive native background event');
@@ -177,16 +196,18 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       assert(JSON.stringify(acknowledged) === JSON.stringify(state.reviewedDraft), 'Mounted live review differs from pre-relaunch acknowledgement');
       // Capture the expected content before Keep can produce any receipt.
       const expectedSha256 = await digest(state.reviewedDraft.markdown);
-      await keepIosLiveReview({ view, proposalId: state.proposalId, conversationId: state.conversationId, reviewId: state.reviewId, reviewedDraft: state.reviewedDraft });
+      await keepIosLiveReview({ view, proposalId: state.proposalId, conversationId: state.conversationId, reviewId: state.reviewId, reviewedDraft: state.reviewedDraft, expectedKeepDraft: state.expectedKeepDraft });
       await until(async () => !(await api.listPendingProposals(state.conversationId)).some(value => value.id === state.proposalId), 'native kept publication');
-      const draft = await api.getProposalDraft!(state.proposalId), receipt = await api.commitAgentProposal(state.proposalId, draft.markdown, draft.version);
+      const draft = await api.getProposalDraft!(state.proposalId);
+      assertIosLiveKeepDraft(state.expectedKeepDraft, draft);
+      const receipt = await api.commitAgentProposal(state.proposalId, draft.markdown, draft.version);
       assert(receipt.status === 'committed' && receipt.noteId, 'Live Keep failed to return a committed Note Identity');
       const canonical = await invoke<CanonicalNote>('read_note', { noteId: receipt.noteId, path: state.reviewedDraft.path });
       assertIosLivePublication(state.reviewedDraft, receipt, canonical);
       const duplicate = await api.commitAgentProposal(state.proposalId, draft.markdown, draft.version); assert(JSON.stringify(duplicate) === JSON.stringify(receipt), 'Duplicate Keep receipt changed');
       await api.prototypeCheckpoint({ iosLiveStateJson: JSON.stringify({ ...state, phase: 'kept', draft, receipt }) });
       report.checks.push('same live conversation and acknowledged pending review restored; normal Keep and duplicate receipt');
-      await emit('kept-ready-to-relaunch', { conversationId: state.conversationId, proposalId: state.proposalId, reviewId: state.reviewId, version: draft.version, noteId: receipt.noteId, path: receipt.applied?.path, expectedSha256, canonical: { noteId: canonical.noteId, title: canonical.title, path: canonical.path, editorSha256: await digest(canonical.markdown) } });
+      await emit('kept-ready-to-relaunch', { conversationId: state.conversationId, proposalId: state.proposalId, reviewId: state.reviewId, version: draft.version, keptDraftSha256: await digest(JSON.stringify(draft)), noteId: receipt.noteId, path: receipt.applied?.path, expectedSha256, canonical: { noteId: canonical.noteId, title: canonical.title, path: canonical.path, editorSha256: await digest(canonical.markdown) } });
       return report;
     }
     const duplicate = await api.commitAgentProposal(state.proposalId, state.draft.markdown, state.draft.version);
