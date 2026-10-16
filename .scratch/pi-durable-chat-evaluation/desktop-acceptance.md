@@ -20,7 +20,59 @@ Final native gates remain open.
 
 ## Current checkpoint — 2026-10-16
 
-Current actual checkpoint **v34**, canonical manifest
+Current **v35 diagnostic checkpoint**, canonical manifest
+`305dab627cffb692c2441046d01325d91a66be639035ea0f06765be777c62143`,
+is `/private/tmp/pi-removal-final-20261015-v35`: 1559 manifest entries,
+1507 retained files/52 legacy absences. Expanded executable
+`ac2c06ae38a91e285744720c59bb4d484ae981eca6afef84fb20fdeb5dc7ae9c`
+([compiler receipt](/private/tmp/pi-removal-final-20261015-v35/artifacts/ios-expanded-build.json))
+is **diagnostic-only, not final**. Frontend `ecd2f30` maps nine exact safe errors
+for terminal/reopen/private views while appending original detail (17 checks,
+Svelte zero errors/warnings and E2E TypeScript passed); this is error presentation.
+Temporary diagnostics `c82c924` affect six files, bound128 events/12 failures and
+require exact synthetic gates, with no admission/timeout/error change (three
+checks/fresh review no findings,
+`/private/tmp/pi-v35-refresh-diagnostic-tests.txt`).
+
+**Three fresh sandboxes, same binary, full expanded WHOLE PASS**, 143 requests
+each: [P2nyFg](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-P2nyFg/ios-interactive-gate.json),
+[tDYdqo](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-tDYdqo/ios-interactive-gate.json),
+[WOxuND](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WOxuND/ios-interactive-gate.json).
+All first14/relaunch10/failures4/follow-ons25 checks and the **closed registered-vault
+publication proof** passed. Each proves kept1 effect/1 timeline publication and
+saved+append2 effects/2 timeline publications on one identity, exact body/hash.
+This is the first whole observed iOS closed-publication proof for the corrected
+Documents-layout verifier `8598e2c`; it is not relocation acceptance or final
+replacement acceptance. v35/r2/r3 queues are closed. Closed backups:
+`/private/tmp/pi-owned-simulator-after-v35-expanded-pass-20261015`,
+`/private/tmp/pi-owned-simulator-after-v35-r2-expanded-pass-20261015`,
+`/private/tmp/pi-owned-simulator-after-v35-r3-expanded-pass-20261015`.
+
+Diagnostic r1/r3 recorded zero invalidations. r2 captured six records: two
+background evidence-validation calls exhausted three attempts each (~24.5ms),
+with captured/current generations167/169/171 equal, active preparation1,
+`WatcherCanonical`, and begunSinceCapture0. This demonstrates an already-active
+version-preparation race; it **does not identify v34's specific writer**. No
+unexpected model/tool/durable failures or provider retries occurred. Presentation
+caller `chatApi.ts:314` is plausible but not uniquely identified. Watcher batch35
+in r1 took326ms between image/audio; r3 batch317.6ms overlapped successful image
+work without invalidation. The ring retains only the last128 events/earlier108
+evicted, with no earlier reconciliation/window retained: earlier activity is not
+excluded by the capture.
+
+The targeted settled-start repair is authorized for RED/GREEN and pending author
+tests; the existing three projection attempts/two-second bound are unchanged.
+Keep diagnostics for **one repaired native capture**, then remove before final
+source capture/acceptance. Three diagnostic passes do not establish the repair or
+close intermittent behavior. All native runs are closed; only caffeinate remains
+while author tests begin. v34 desktop queue PID48883 was superseded before any
+gate ([receipt](/private/tmp/pi-final-desktop-queue-v34-superseded-20261015.json)).
+Scalev6, final resources/default/manual and final replacement verdict remain
+unrun/pending; scalev5 remains failed under its original budgets. Hosted live is
+user-deferred; physical touch/device/OS pressure remain unverified. No final
+acceptance, goal closure, archive or adoption claim.
+
+Previous actual checkpoint **v34**, canonical manifest
 `22c8180fe7a6d14333bd01d1c4050db0fb4840f1f46b2d49e0d863570b8e949d`,
 is `/private/tmp/pi-removal-final-20261015-v34`. Expanded compiled-only executable
 `8ccdf4b08c0e38e8f3c1af79bc762ced1f4a9b3fbb58da9abc1d172ed0da5607`
@@ -85,8 +137,8 @@ local/openai research, parent/worker compaction, fresh read, attachment/exact Re
 and hosted-web fixture follow-ons passed, then the closed publication verifier
 failed desktop `nativeRoot/vault` lookup on iOS Documents layout. That is **not
 follow-on relocation**. The registered-path verifier fix binds owner/target paths,
-manifest/confinement (27 Python checks passed), but **no whole closed iOS
-publication proof yet**. v32's completed workers334/598 (30 reads/59 sources each,
+manifest/confinement (27 Python checks passed); no whole closed iOS
+publication proof existed at that earlier checkpoint. The v35 proof is scoped above. v32's completed workers334/598 (30 reads/59 sources each,
 no failed tools) do not close the intermittent v31 failure. v32 artificial
 STOP/CONT fresh post-CONT UI read remains false/following durable relaunch true;
 no physical OS-suspension claim follows.
