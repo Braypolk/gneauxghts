@@ -11,46 +11,53 @@ acceptance gate is satisfied; unverified external prerequisites are not passes.
 
 ## Current checkpoint — 2026-10-16
 
-Product/native source remains frozen through `b52b1a6`. Diagnostic capture
-**v23**, canonical manifest
-`3fa0bab74e705b9d439f556b2bcd8fcd28cccd18d2f1c94a8eaaf1796a6aba95`,
-completed desktop compilation/exclusion tests and all three iOS builds. Compiler
-receipts are under `/private/tmp/pi-removal-final-20261015-v23/artifacts/*build.json`;
-compiler success is separate from native journey acceptance. The verified
-v22→v23 source comparison retains identical product API/runtime/provider/storage/
-policy/native bytes and 52 legacy absences. v22's compiled/exclusion-tested
-artifact remains valid for that same product and scale v5.
+Product/native source remains frozen through `b52b1a6`. v23 desktop/exclusion
+and three iOS compiles passed. Latest live diagnostic capture **v25**, canonical
+`d5436fb086ad42948abbd8af4364763a13f55ab404f5eee93db760862df84664`,
+compiled live executable SHA
+`d90197ffa8eeb63b30881d09ed65201b5a1b8c40c1d25b28558c74c31edbf9e6`;
+receipt `/private/tmp/pi-removal-final-20261015-v25/artifacts/ios-live-build.json`.
+Diagnostic/driver changes do not change frozen product runtime/native bytes;
+v22's same-product compiled/exclusion-tested artifact remains the scale pin.
+Compiler success is separate from native journey acceptance.
 
-Actual local-iOS **QUeIgd** is **whole failed**, not running or passed. Its v23
-live executable completed three real inference POSTs (HTTP 200), source-free
-continuity and an actual admitted note read, then hit the normal source citation
-deadline. Receipt:
-`/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-QUeIgd/ios-live-gate.json`.
-No Save/Keep/restart acceptance is established. The diagnostic queried the
-collapsed EvidenceSource control instead of the actual ChatMarkdown
-`button[data-chat-note-citation-id]`. Exact-note/visible-control correction
-`8dbcf7b` changes only the two `iosLiveProbe` files; 22 focused checks and full
-types (zero errors/warnings) passed. **v24 capture/live-only build is underway**;
-no v24 compile or live pass is claimed before its receipts. Prior UGhOtn
-pre-inference failure and earlier pinned passes remain retained.
+Local-iOS **sxZ0Sp** (v24) and **kcG1jG** (v25) are **whole failed**. v24
+passed normal citation, Save/edit acknowledgement, native background retention
+and exact pending-review restart, then inspected detached editor DOM before Keep;
+`70ea085` corrected that diagnostic. v25 observed normal Keep, duplicate receipt
+and exact canonical body/title/path/hash read-back, then the driver's independent
+version assertion failed (`4 !== 3`) before final committed restart/full native
+effect proof. Normal Keep checkpoints resolved hunks, legitimately advancing the
+version. Strict proof is being corrected to predict the accepted checkpoint
+**before** clicking; arbitrary post-hoc version acceptance is not permitted.
+These partial observations do not establish a full live iOS pass. Earlier
+UGhOtn/QUeIgd failures remain retained. Exact receipts/pins are in the
+[current matrix](validation-matrix.md).
 
-Scale **v5** remains running against pinned v22. The last in-memory progress
-reported 1005 conversations and 226 submissions; these are not final durable
-seed/history/identity/provider-accounting acceptance. Superseded v4 was
-operator-ended, with final failed fetch receipt/421 requests and no complete seed
-or identity accounting; it remains ineligible for guarded continuation.
-Compilation/pure-test CPU and independent iOS local-live work can overlap
-functional scale on separate roots/ports; no timing/RSS/resource comparison is
-claimed. Shared synthetic desktop fixture ports remain serialized.
+The v23 expanded simulator run **yvWBO9**, launched with current diagnostic driver
+`a1a4509` and `PI_PROTOTYPE_IOS_FIXTURE_PORT=1446`, has a retained **failed**
+receipt: 12 first-phase recorded checks/22 provider requests, then the normal
+conversation-mount deadline. Its pinned executable remains
+`19ec12d3a503f2d588b9fd3d570503ea86c2598a3fa8f6457b41bd62fb8a9f8b`.
+Before owned replacement, 48 closed file entries were backed up at
+`/private/tmp/pi-owned-simulator-before-v23-expanded-20261015`. Six pure port-helper
+checks permit functional parallelism, not native acceptance or performance proof.
 
-The persistent manual `c74a53e` bundle is closed and local-configured; its bounded
-live pass and original-vault seal remain pinned to SHA `9328ff2f…57b2`.
-The rebuilt `pi-prototype`-only bundle SHA
+Scale **v5** is still running against v22; last read-only memory progress was
+1005 conversations/401 submissions, not final durable seed/history/identity/
+provider accounting. Desktop expanded and owned churn are queued, **not started**,
+after v5 closure releases their owned ports. v4's operator-ended failed fetch
+receipt/421 requests remains incomplete and ineligible for guarded continuation.
+Compilation, pure-test CPU and independent simulator work may overlap functional
+scale; no timing/RSS/resource comparison is claimed.
+
+The rebuilt manual `pi-prototype`-only desktop bundle SHA
 `e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`
-is **launched with retained UI observed** via normal native CUA: prior synthetic note, chat/citation/Stop history and configured local model remain visible. No inference was dispatched during this bounded observation; earlier live acceptance retains its own binary pin. Hosted live is
-explicitly user-deferred. Complete native/platform/scale/cost acceptance and the
-goal remain open. The [current validation matrix](validation-matrix.md) records
-exact artifact pins and bounded scopes; historical sections retain prior states.
+was launched: normal CUA observed retained synthetic note, chat/citation/Stop
+history and configured local model, with **no new inference**. Earlier bounded
+live acceptance/original seal remain pinned to the closed `c74a53e` bundle SHA
+`9328ff2f…57b2`. Hosted live is user-deferred. Complete native/platform/scale/cost
+acceptance and the goal remain open; historical records preserve their own scopes.
 
 ## Current assignments
 
@@ -1251,3 +1258,11 @@ receipt); normal simulator termination confirmed nothing running before copying
 and uninstalling only the owned prototype. Local iOS used its independent port
 1444/container alongside functional desktop scale v5. Compiler and pure-test CPU
 also overlapped. No controlled timing/RSS/cost conclusion is drawn from either.
+
+### 2026-10-16 — product scale cost source audit
+
+[Read-only audit](scale-cost-audit.md) distinguishes event-driven product scale from earlier resource-driver polling and identifies full-history reconstruction, empty native source validations, missing summary lookups and retained frozen-history bytes. These mechanisms are not measured attribution, an implemented optimization or a scale pass. v5 remains running; immutable-boundary IPC counters remain unknown.
+
+### 2026-10-16 — v24 actual iOS local-live boundary
+
+Canonical v24 manifest `5fe8527636530cbd285b890291eeabfe349b6a7fa5b0e9bc2ad6727cde4af4a2` changes only two diagnostic files from v23; product/native bytes remain unchanged. Live executable SHA `310140ac811d8693b7858fae55033c8c243816cf03122a90ceff12bf1d34ea3e` compiled successfully after separately retained sandbox/empty generated-assets build failures. [sxZ0Sp receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-sxZ0Sp/ios-live-gate.json) is **whole failed**. Three actual inference POSTs completed with HTTP 200. Source-free continuity, actual admitted read, normal citation navigation, normal Save/editable exact review acknowledgement and native background retention passed. Relaunch restored exact durable review identity/body/title/path/version; the probe subsequently inspected its old editor DOM after normal compact navigation destroyed that editor, failing before Keep. No Keep/publication/final committed restart pass follows. The diagnostic correction is in progress. The closed container's 46 file entries were preserved at `/private/tmp/pi-owned-simulator-before-v25-live-20261015` before only the owned prototype bundle was uninstalled.
