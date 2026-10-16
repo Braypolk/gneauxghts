@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { resolve, join, isAbsolute } from 'node:path';
 import { evaluationRoot, dataOperation } from './evaluation-data.mjs';
 import { iosBuildFeatures } from './ios-build-features.mjs';
+import { iosDiagnosticCsp } from './ios-diagnostic-csp.mjs';
 
 const mode = process.argv[2] ?? 'desktop';
 if (process.env.PI_PROTOTYPE_IOS_CRASH_FIXTURES && mode !== 'ios') throw new Error('iOS crash fixture packaging is allowed only in explicit simulator builds');
@@ -42,8 +43,10 @@ if (['status', 'reset'].includes(mode)) {
 }
 const baseConfig = JSON.parse(readFileSync('scripts/pi-prototype/tauri.prototype.conf.json', 'utf8'));
 const diagnostic = mode.endsWith('gate') || mode === 'diagnostics' || (mode === 'ios' && process.env.PI_PROTOTYPE_DIAGNOSTICS === 'true');
-const nativeConfig = diagnostic && !['interactive-gate', 'fault-gate'].includes(mode) ? { ...baseConfig, app: { ...baseConfig.app,
+const windowConfig = diagnostic && !['interactive-gate', 'fault-gate'].includes(mode) ? { ...baseConfig, app: { ...baseConfig.app,
   windows: baseConfig.app.windows.map(window => ({ ...window, url: process.env.PI_PROTOTYPE_IOS_LIVE_GATE === 'true' ? '/?piIosLiveTest=1' : process.env.PI_PROTOTYPE_TRANSCRIPT_GATE === 'true' ? '/?piTranscriptTest=1' : process.env.PI_PROTOTYPE_EXPANDED_GATE === 'true' ? '/?piExpandedTest=1' : 'pi-prototype', title: 'Pi fixture diagnostics — disposable synthetic data' })) } } : baseConfig;
+const nativeConfig = iosDiagnosticCsp(windowConfig,
+  JSON.parse(readFileSync('src-tauri/tauri.conf.json', 'utf8')).app.security.csp, mode, process.env);
 if (mode.endsWith('gate')) {
   if (mode === 'interactive-gate' && process.env.PI_PROTOTYPE_DATA) throw new Error('Interactive gate always allocates a fresh generated root; unset PI_PROTOTYPE_DATA');
   // A gate may not seed/kill/reset a private evaluation root. Explicit test roots
