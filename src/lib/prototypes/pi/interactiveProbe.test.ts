@@ -224,7 +224,7 @@ describe('normal saved Open note restores compact Keep editor before origin navi
         : selector === 'button' ? [foreignOpen] : queryAll(selector),
     });
     vi.stubGlobal('KeyboardEvent', class { constructor(readonly type: string, readonly options: unknown) {} });
-    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    vi.stubGlobal('navigator', { platform: 'MacIntel', vendor: 'Apple Computer, Inc.', userAgent: 'Mozilla/5.0 (Macintosh) Safari/605.1.15', maxTouchPoints: 0 });
     mocks.conversation.mockResolvedValue({ title: 'Pi interactive A', messages: [{ id: 'answer', savedNote: { noteId: fault === 'identity' ? 'foreign-note' : expected.noteId, path: fault === 'path' ? '/vault/Other.md' : expected.path } }] });
     mocks.invoke.mockResolvedValue({ ...expected, ...(fault === 'body' ? { markdown: 'Wrong canonical body' } : fault === 'title' ? { title: 'Wrong title' } : {}) });
     return { expected, state, open, foreignOpen, view, keyboard, normalScroll, originalScroll: MessageElement.prototype.scrollIntoView };
@@ -241,7 +241,7 @@ describe('normal saved Open note restores compact Keep editor before origin navi
   it('reopens the exact saved message target after compact Keep unmounted its editor, then follows its origin by keyboard', async () => {
     const workspace = savedOriginWorkspace();
     expect(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).toHaveLength(0);
-    expect(await navigate(workspace.expected)).toEqual({ value: { noteId: 'saved-note', path: '/vault/Saved.md', title: 'Saved', conversationId: 'a', messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' } } });
+    expect(await navigate(workspace.expected)).toEqual({ value: { noteId: 'saved-note', path: '/vault/Saved.md', title: 'Saved', conversationId: 'a', messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' }, keyboardPlatform: { platform: 'MacIntel', appleMobile: false, metaKey: true, ctrlKey: false } } });
     expect(workspace.open.click).toHaveBeenCalledOnce();
     expect(workspace.foreignOpen.click).not.toHaveBeenCalled();
     expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('read_note', { noteId: 'saved-note', path: '/vault/Saved.md' });
@@ -295,6 +295,31 @@ describe('normal saved Open note restores compact Keep editor before origin navi
     expect(workspace.keyboard).toHaveBeenCalledOnce();
     expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
     if (fault === 'wrongAnchor') expect(workspace.normalScroll).toHaveBeenCalledExactlyOnceWith('other-answer', { behavior: 'auto', block: 'center' });
+  });
+
+  const keyboardPlatforms = [
+    { label: 'iPhone Mobile Safari', nav: { platform: 'iPhone', vendor: 'Apple Computer, Inc.', userAgent: 'Mozilla/5.0 (iPhone) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1', maxTouchPoints: 5 }, appleMobile: true, metaKey: true },
+    { label: 'iPad Mobile Safari', nav: { platform: 'iPad', vendor: 'Apple Computer, Inc.', userAgent: 'Mozilla/5.0 (iPad) AppleWebKit/605.1.15 Mobile/15E148 Safari/604.1', maxTouchPoints: 5 }, appleMobile: true, metaKey: true },
+    { label: 'Apple tablet touch detection without Mobile UA', nav: { platform: 'iPad', vendor: 'Apple Computer, Inc.', userAgent: 'Mozilla/5.0 AppleWebKit/605.1.15 Safari/605.1.15', maxTouchPoints: 5 }, appleMobile: true, metaKey: true },
+    { label: 'Mac desktop', nav: { platform: 'MacIntel', vendor: 'Google Inc.', userAgent: 'Mozilla/5.0 Chrome/140.0', maxTouchPoints: 0 }, appleMobile: false, metaKey: true },
+    { label: 'Linux desktop', nav: { platform: 'Linux x86_64', vendor: 'Google Inc.', userAgent: 'Mozilla/5.0 Chrome/140.0', maxTouchPoints: 0 }, appleMobile: false, metaKey: false },
+    { label: 'Windows desktop', nav: { platform: 'Win32', vendor: 'Google Inc.', userAgent: 'Mozilla/5.0 Chrome/140.0', maxTouchPoints: 0 }, appleMobile: false, metaKey: false },
+  ];
+
+  it.each(keyboardPlatforms)('uses the installed CodeMirror Mod platform rule through normal origin navigation: $label', async ({ nav, appleMobile, metaKey }) => {
+    const workspace = savedOriginWorkspace(undefined, true);
+    vi.stubGlobal('navigator', nav);
+    expect(await navigate(workspace.expected)).toMatchObject({ value: { keyboardPlatform: { platform: nav.platform, appleMobile, metaKey, ctrlKey: !metaKey } } });
+    expect(workspace.keyboard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ type: 'keydown', options: expect.objectContaining({ key: 'Enter', code: 'Enter', metaKey, ctrlKey: !metaKey }) }));
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
+  });
+
+  it('still rejects a no-op Apple mobile keydown when the exact origin chat/card already exists', async () => {
+    const workspace = savedOriginWorkspace('noop', true);
+    vi.stubGlobal('navigator', keyboardPlatforms[0].nav);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: Open in chat scrolls to exact originating message' });
+    expect(workspace.keyboard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ options: expect.objectContaining({ metaKey: true, ctrlKey: false }) }));
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
   });
 });
 

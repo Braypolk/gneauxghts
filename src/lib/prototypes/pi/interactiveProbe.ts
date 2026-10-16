@@ -183,6 +183,10 @@ export async function openSharedSavedOrigin(conversationId: string, messageId: s
   'exact saved target mounted by normal Open note');
   const originPosition = savedEditor.state.doc.toString().indexOf('[[Chats/Pi/'); assert(originPosition >= 0, 'Saved origin link absent');
   savedEditor.dispatch({ selection: { anchor: originPosition + 4 }, scrollIntoView: true }); savedEditor.focus();
+  // @codemirror/view/dist/index.js selects browser.mac for Mod bindings using
+  // this exact Apple-mobile-or-Mac rule; iPhone/iPad platforms need Meta too.
+  const appleMobile = /Apple Computer/.test(navigator.vendor) && (/Mobile\/\w+/.test(navigator.userAgent) || navigator.maxTouchPoints > 2);
+  const metaKey = appleMobile || /Mac/.test(navigator.platform);
   // Observe the ordinary anchor effect rather than accepting a chat/card that
   // was already present in a desktop split. Begin immediately before keydown:
   // there is no async window for unrelated navigation to satisfy this proof.
@@ -196,14 +200,15 @@ export async function openSharedSavedOrigin(conversationId: string, messageId: s
     originalScrollIntoView.call(this, options);
   };
   try {
-    savedEditor.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey: /Mac/i.test(navigator.platform), ctrlKey: !/Mac/i.test(navigator.platform), bubbles: true, cancelable: true }));
+    savedEditor.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey, ctrlKey: !metaKey, bubbles: true, cancelable: true }));
     await until(() => {
       const pane = probeChatPane(conversation.title);
       const target = document.querySelector<HTMLElement>(`[data-chat-message-id="${messageId}"]`);
       return anchorScroll && pane && target?.isConnected && visibleProbeControl(target) && target.closest('[data-testid="workspace-pane"]') === pane;
     }, 'Open in chat scrolls to exact originating message');
   } finally { Element.prototype.scrollIntoView = originalScrollIntoView; }
-  return { noteId: canonical.noteId, path: canonical.path, title: canonical.title, conversationId, messageId, anchorScroll };
+  return { noteId: canonical.noteId, path: canonical.path, title: canonical.title, conversationId, messageId, anchorScroll,
+    keyboardPlatform: { platform: navigator.platform, appleMobile, metaKey, ctrlKey: !metaKey } };
 }
 
 export async function runInteractiveProbe() {
