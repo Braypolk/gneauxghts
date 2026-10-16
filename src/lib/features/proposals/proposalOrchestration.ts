@@ -474,7 +474,9 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
         root(current).endReview(current.request.preview.reviewId);
         root(current).replaceMarkdown(request.preview.baseEditorMarkdown);
         updateDocumentTitle(document, document.savedBaseline?.content.title ?? '');
-        return start(request, document);
+        const started = await start(request, document);
+        if (started) await reviewNext();
+        return started;
       }
       await reviewNext();
       return true;

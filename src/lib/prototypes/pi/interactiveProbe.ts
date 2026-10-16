@@ -89,14 +89,17 @@ async function send(id: string, content: string) {
   await until(() => Array.from(document.querySelectorAll('[aria-label="Assistant response"]')).some(node => node.textContent?.includes(message.content.replace(/\[.*?\]\(.*?\)/g, '').trim().slice(0, 25))), 'rendered admitted answer');
   return message;
 }
-async function currentReview(id: string, reviewId?: string) {
+export async function currentReview(id: string, reviewId?: string) {
   const draft = await api.getProposalDraft!(id);
   const editor = () => {
-    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title && (reviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === reviewId));
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && visibleProbeControl(view.dom) && view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title && (reviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === reviewId));
   };
   return acquireProbeReview({ editor, openChat, until,
-    card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
-    openCard: card => click('Review in editor', card) });
+    // The active proposal replaces its queued card with the normal action
+    // strip. Review next re-enters the coordinator's latest versioned request.
+    card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ??
+      document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`) ?? undefined,
+    openCard: card => click(card.getAttribute('data-proposal-strip') === 'active' ? 'Review next' : 'Review in editor', card) });
 }
 async function editReview(id: string, body: string, title: string) {
   const view = await currentReview(id);

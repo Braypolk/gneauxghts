@@ -264,6 +264,47 @@ describe('durable proposal editor review', () => {
     expect(test.session.snapshot.error).toBeNull();
   });
 
+  it.each([false, true])('presents an offscreen same-proposal refined review while preserving newer local edits (%s)', async laterTyping => {
+    const test = setup();
+    const original = { ...test.request, checkpoint: async () => {}, draftVersion: 7,
+      working: { markdown: 'After', title: 'Plan', path, decisions: [] } };
+    await test.orchestration.loadDurableProposal(original);
+    test.setEditorDocument(null);
+    test.presentReviewDocument.mockClear();
+    test.presentReviewDocument.mockImplementation(async () => {
+      test.setEditorDocument(test.document);
+      return test.document;
+    });
+    const focus = vi.spyOn(test.firstEditor.adapter, 'focusSelection');
+    if (laterTyping) test.firstEditor.adapter.insertMarkdown(' newer local edit', { target: 'end' });
+    const localBody = test.firstEditor.markdown;
+    const localHunks = structuredClone(test.firstEditor.review?.hunks);
+    const latestPreview: ProposalPreview = { ...preview, reviewId: 'refined-review', title: 'Refined title',
+      proposedEditorMarkdown: 'Latest refinement', hunks: [{ ...preview.hunks[0], id: 'refined-hunk',
+        proposedTo: 17, newText: 'Latest refinement' }] };
+    const opened = await test.orchestration.loadDurableProposal({ ...original, draftVersion: 8, preview: latestPreview,
+      working: { markdown: latestPreview.proposedEditorMarkdown, title: latestPreview.title, path, decisions: [] } });
+    expect(test.commit).not.toHaveBeenCalled();
+    if (laterTyping) {
+      expect(opened).toBe(false);
+      expect(test.presentReviewDocument).not.toHaveBeenCalled();
+      expect(focus).not.toHaveBeenCalled();
+      expect(test.firstEditor.markdown).toBe(localBody);
+      expect(test.firstEditor.review?.hunks).toEqual(localHunks);
+      expect(test.session.snapshot.error).toContain('newer local edits');
+    } else {
+      expect(opened).toBe(true);
+      expect(test.presentReviewDocument).toHaveBeenCalledExactlyOnceWith({ document: test.document,
+        noteId: 'note-1', path, creation: false });
+      expect(focus).toHaveBeenCalledExactlyOnceWith({ anchor: 0, head: 17 });
+      expect(test.firstEditor.markdown).toBe(latestPreview.proposedEditorMarkdown);
+      expect(test.document.working.title).toBe(latestPreview.title);
+      expect(test.firstEditor.review).toMatchObject({ reviewId: latestPreview.reviewId,
+        hunks: [{ id: 'refined-hunk', from: 0, to: 17, status: 'pending' }] });
+      expect(test.session.snapshot.error).toBeNull();
+    }
+  });
+
   it('replaces an earlier same-target preview when the run stages a newer one', async () => {
     const test = setup();
     await test.orchestration.loadDurableProposal(test.request);

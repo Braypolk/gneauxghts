@@ -233,7 +233,15 @@ export function createNotepadChatPaneAdapter<TPaneId extends string>(
         snapshot: deps.proposal.session.snapshot,
         onKeepAll: () => void deps.proposal.keepAll(),
         onUndoAll: () => void deps.proposal.undoAll(),
-        onReview: () => void deps.proposal.reviewNext(),
+        onReview: async () => {
+          const proposalId = deps.proposal.session.snapshot.proposalId;
+          const pending = proposalId ? deps.coordinator.getController(paneId).getSnapshot().proposals
+            .find(proposal => proposal.id === proposalId) : undefined;
+          // An active durable review may have been refined since its editor
+          // opened. Reenter the versioned loader through its existing owner.
+          if (pending) await deps.coordinator.reviewAgentProposal(paneId, pending);
+          else await deps.proposal.reviewNext();
+        },
         onRetry: () => void deps.proposal.retryCommit(),
         onCopyCurrent: () => void deps.proposal.copyCurrent(),
         onReloadDisk: () => void deps.proposal.reloadDisk(),

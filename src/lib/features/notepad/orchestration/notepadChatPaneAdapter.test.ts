@@ -4,18 +4,24 @@ import { describe, expect, it, vi } from 'vitest';
 import type { ChatController } from '$lib/features/chat/controller.svelte';
 import type {
   ChatAgentProposal,
-  ChatCitation
+  ChatCitation,
+  ChatProposalDraft
 } from '$lib/features/chat/types';
 import {
   createNoteDraftState, type NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
-import { dispatchDocumentOperation } from '$lib/features/notepad/document/documentState';
+import { dispatchDocumentOperation, updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
 } from '$lib/features/notepad/session/session';
 import { createProposalReviewSession } from '$lib/features/proposals/reviewSession.svelte';
 import { createNotepadChatPaneAdapter } from './notepadChatPaneAdapter';
+import { NotepadChatCoordinator, type NotepadChatCoordinatorDeps } from './notepadChatCoordinator.svelte';
+import { fakeApi, proposal as agentProposal } from '$lib/features/chat/chatTestSupport';
+import { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
+import { createReviewEditorForTest } from '$lib/features/proposals/proposalEditorTestSupport';
+import { documentRegistry } from '../document/documentRegistry';
 
 type PaneId = 'chat' | 'editor';
 
@@ -67,7 +73,7 @@ function setup({ singlePane = false } = {}) {
   const getNoteSaveQueue = vi.fn(async () => {});
   const setSurfaceHandle = vi.fn();
   const reviewAgentProposal = vi.fn(async () => true);
-  const controller = {} as ChatController;
+  const controller = { getSnapshot: () => ({ proposals: [] }) } as unknown as ChatController;
   const coordinator = {
     getController: vi.fn(() => controller),
     getTargetAnchor: vi.fn(() => null),
@@ -120,11 +126,94 @@ function setup({ singlePane = false } = {}) {
     getNoteSaveQueue,
     setSurfaceHandle,
     reviewAgentProposal,
+    proposal,
     paneOrder
   };
 }
 
 describe('createNotepadChatPaneAdapter', () => {
+  it.each([false, true])('retains ordinary Review next when there is no matching durable proposal (legacy active: %s)', async active => {
+    const { adapter, proposal, reviewAgentProposal } = setup();
+    if (active) proposal.session.dispatchWorkflow({ type: 'openRequested', identity: {
+      proposalId: 'legacy-review', reviewId: 'legacy-preview', notePath: '/vault/Legacy.md'
+    } });
+    await adapter.getBindings('chat').proposalReview.onReview();
+    expect(proposal.reviewNext).toHaveBeenCalledOnce();
+    expect(reviewAgentProposal).not.toHaveBeenCalled();
+  });
+
+  it.each([false, true])('reopens the active same-ID refined draft through its durable owner, preserving newer local edits (%s)', async laterTyping => {
+    const document = note();
+    const editor = createReviewEditorForTest(document);
+    const orchestration = createProposalOrchestration({
+      session: createProposalReviewSession(),
+      getEditorPaneDocument: () => document,
+      getEditorForDocument: () => editor.adapter,
+      presentReviewDocument: async () => document,
+      onReviewMarkdownChange: updateDocumentMarkdown,
+      finishReviewDocument: async () => {},
+      acknowledgeDocumentCommit: async () => {},
+      reloadReviewDocument: async () => {}
+    });
+    const original: ChatProposalDraft = { version: 7, title: 'Human title', path: '/vault/Human.md',
+      markdown: 'Latest human checkpoint', decisions: [] };
+    const refined: ChatProposalDraft = { ...original, version: 8, title: 'Refined title', path: '/vault/Refined.md',
+      markdown: 'Latest human checkpoint\n\nModel refinement' };
+    let draft = original;
+    let pending = agentProposal({ id: 'pi-review-148', kind: 'create', noteId: null, title: draft.title,
+      suggestedPath: draft.path, payload: { markdown: draft.markdown },
+      preview: { reviewId: 'before-refinement', proposedEditorMarkdown: draft.markdown } });
+    const api = { ...fakeApi().api, getProposalDraft: vi.fn(async () => structuredClone(draft)) };
+    api.listPendingProposals.mockImplementation(async () => [pending]);
+    const coordinator = new NotepadChatCoordinator<PaneId>([], { api,
+      getProposalOrchestration: () => orchestration } as unknown as NotepadChatCoordinatorDeps<PaneId>);
+    // The controller still holds the initially announced proposal. The real
+    // coordinator must reread its durable record rather than trust that preview.
+    const announced = pending;
+    vi.spyOn(coordinator, 'getController').mockReturnValue({ getSnapshot: () => ({ proposals: [announced] }) } as unknown as ChatController);
+    const reviewNext = vi.spyOn(orchestration, 'reviewNext');
+    const adapter = createNotepadChatPaneAdapter<PaneId>({ coordinator, proposal: orchestration,
+      getPaneOrder: () => ['chat', 'editor'], getPaneKind: id => id === 'chat' ? 'chat' : 'editor',
+      getPaneDocument: () => document, setPaneDocument: () => {}, getPaneConversationId: () => 'conversation-1',
+      setPaneConversationId: () => {}, touchPaneLocation: () => {}, getPaneSelectedText: () => null,
+      setActivePane: () => {}, openNote: async () => {}, openRevisionCitation: async () => {},
+      openWikilink: async () => {}, flushPendingAutosave: () => {}, getNoteSaveQueue: async () => {} });
+    try {
+      expect(await coordinator.reviewAgentProposal('chat', announced)).toBe(true);
+      expect(editor.markdown).toBe(original.markdown);
+      const bindings = adapter.getBindings('chat');
+      draft = refined;
+      pending = { ...pending, title: refined.title, suggestedPath: refined.path, payload: { markdown: refined.markdown },
+        preview: { reviewId: 'after-refinement', proposedEditorMarkdown: refined.markdown } };
+      if (laterTyping) editor.adapter.insertMarkdown(' newer local edit', { target: 'end' });
+      const working = editor.markdown;
+      const localHunks = structuredClone(editor.review?.hunks);
+      await bindings.proposalReview.onReview();
+      expect(api.getProposalDraft).toHaveBeenCalledTimes(2);
+      expect(reviewNext).not.toHaveBeenCalled();
+      expect(api.commitAgentProposal).not.toHaveBeenCalled();
+      if (laterTyping) {
+        expect(editor.markdown).toBe(working);
+        expect(editor.review?.hunks).toEqual(localHunks);
+        expect(document.working.title).toBe(original.title);
+        expect(orchestration.session.snapshot).toMatchObject({ notePath: original.path,
+          error: 'This review has newer local edits. Save them before reopening the updated draft.' });
+      } else {
+        expect(editor.markdown).toBe(refined.markdown);
+        expect(document.working.title).toBe(refined.title);
+        expect(editor.review).toMatchObject({ reviewId: 'after-refinement', hunks: [{
+          id: `${announced.id}-creation`, newText: refined.markdown, from: 0, to: refined.markdown.length, status: 'pending'
+        }] });
+        expect(orchestration.session.snapshot).toMatchObject({ proposalId: announced.id, notePath: refined.path, title: refined.title });
+      }
+    } finally {
+      orchestration.dispose(); coordinator.dispose();
+      if (editor.review) editor.runtime.endReview(editor.review.reviewId);
+      editor.dispose(); documentRegistry.dispose(document.handle);
+      vi.restoreAllMocks();
+    }
+  });
+
   it('opens proposal review only through the explicit review binding', () => {
     const { adapter, reviewAgentProposal } = setup();
     const proposal = {
