@@ -469,16 +469,7 @@ async fn probe_prepare_close_with_fixture<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub(crate) async fn pi_ui_report(app: tauri::AppHandle, mut report: Value) -> Result<(), String> {
-    // TEMPORARY PI REFRESH DIAGNOSTIC: the vault coordinator enables this only
-    // for the exact explicit diagnostics + expanded synthetic fixture gates.
-    if let Some(state) = app.try_state::<crate::index::AppState>() {
-        if let Some(diagnostic) = state.note_timeline().temporary_refresh_diagnostic_snapshot() {
-            if let Some(report) = report.as_object_mut() {
-                report.insert("temporaryCurrentContentDiagnostics".into(), diagnostic);
-            }
-        }
-    }
+pub(crate) async fn pi_ui_report(report: Value) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
     let limit = if std::env::var_os("PI_PROTOTYPE_HTTP_FIXTURE").is_some()
         && std::env::var_os("PI_PROTOTYPE_INTERACTIVE_GATE").is_some() { 131072 } else { 16384 };

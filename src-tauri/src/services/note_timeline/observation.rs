@@ -42,20 +42,6 @@ impl<'a> NoteTimeline<'a> {
         if let Some(path) = &observation.previous_path {
             self.runtime.store.require_path(path)?;
         }
-        #[cfg(feature = "pi-prototype")]
-        let _current_content_mutation = {
-            use runtime::pi_refresh_diagnostics::MutationOrigin;
-            let origin = match (observation.source, observation.kind) {
-                (VaultObservationSource::Reconciliation, VaultObservationKind::CanonicalState) => MutationOrigin::ReconcileCanonical,
-                (VaultObservationSource::Reconciliation, VaultObservationKind::ReconciliationScan) => MutationOrigin::ReconcileScan,
-                (VaultObservationSource::Reconciliation, VaultObservationKind::Lifecycle(_)) => MutationOrigin::ReconcileLifecycle,
-                (VaultObservationSource::Watcher, VaultObservationKind::CanonicalState) => MutationOrigin::WatcherCanonical,
-                (VaultObservationSource::Watcher, VaultObservationKind::ReconciliationScan) => MutationOrigin::WatcherScan,
-                (VaultObservationSource::Watcher, VaultObservationKind::Lifecycle(_)) => MutationOrigin::WatcherLifecycle,
-            };
-            self.begin_current_content_mutation_with_origin(origin)?
-        };
-        #[cfg(not(feature = "pi-prototype"))]
         let _current_content_mutation = self.begin_current_content_mutation()?;
         self.runtime.with_observation_replay(|| {
             self.recover_pending_deletions()?;
