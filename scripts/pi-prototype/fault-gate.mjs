@@ -51,7 +51,7 @@ export function assertEditedCheckpoint(draft, body, title) {
 // EditorView.findFromDOM is the retained editor's public lookup, not a new view.
 export const editReviewScript = `${ui}
 const {chatApi:api}=await import('/src/lib/features/chat/api.ts');
-const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const {EditorView}=await import('/src/lib/prototypes/pi/probeEditorView.ts');
 const original=await api.getProposalDraft(arguments[0]);
 const view=await wait(()=>Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor'))
   .map(node=>EditorView.findFromDOM(node)).find(view=>view?.state.doc.toString()===original.markdown),'original retained review editor');

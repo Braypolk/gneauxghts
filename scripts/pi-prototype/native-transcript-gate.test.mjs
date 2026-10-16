@@ -8,6 +8,9 @@ test('relocation baseline waits for mounted creation decisions and exact acknowl
   assert.match(acknowledgedPendingScript,/hunks.length/);
   assert.match(acknowledgedPendingScript,/acknowledgedProbeDraft\(/);
   assert.match(acknowledgedPendingScript,/markdown:editor.state.doc.toString\(\),title:title.value,path:draft.path,decisions:editor.state.field/);
+  assert(acknowledgedPendingScript.includes("import('/src/lib/prototypes/pi/probeEditorView.ts')"));
+  assert(acknowledgedPendingScript.includes('EditorView.findFromDOM(node)'));
+  assert(!acknowledgedPendingScript.includes('/node_modules/@codemirror/'));
 });
 
 test('checkpoint script keeps multiline authored data in transport arguments', () => {
@@ -30,6 +33,9 @@ test('whole-answer Save uses its exact normal message control and retains coordi
   assert.match(reviewScript,/view\?\.state.doc.toString\(\)===draft.markdown/);
   assert.match(reviewScript,/node.value===draft.title/);
   assert.match(reviewScript,/data-proposal-strip/);
+  assert(reviewScript.includes("import('/src/lib/prototypes/pi/probeEditorView.ts')"));
+  assert(reviewScript.includes('EditorView.findFromDOM(node)'));
+  assert(!reviewScript.includes('/node_modules/@codemirror/'));
 });
 
 test('closed location helper requires a descendant of the old generated root', () => {

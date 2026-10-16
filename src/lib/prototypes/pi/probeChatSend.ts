@@ -14,14 +14,39 @@ export async function focusProbeChatComposer(pane: HTMLElement, until: <T>(read:
   const title = pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]');
   if (!title || !visible(title)) throw new Error('Requested chat pane has no visible normal title control');
   const retained = pane.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]');
-  // If its composer is already portaled, capture the sole visible dock surface
-  // before focusing. Multiple visible surfaces cannot establish its owner.
+  // A portaled surface may be hidden while the dock shows search. Capture the
+  // sole normal chat-slot surface even then; its absence from the requested
+  // pane distinguishes it from every other pane's locally retained composer.
   const docked = retained ? undefined : Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]'))
-    .filter(node => visible(node) && !node.closest('[data-testid="workspace-pane"]'));
+    .filter(node => node.closest('.workspace-chat-slot') && !node.closest('[data-testid="workspace-pane"]'));
   const composer = retained ?? (docked?.length === 1 ? docked[0] : undefined);
   if (!composer) throw new Error('Requested chat pane has no unambiguous retained composer');
   title.focus();
-  return until(() => composer.isConnected && !composer.disabled && visible(composer) ? composer : undefined, 'requested chat composer moves into visible normal dock');
+  if (document.activeElement !== title) throw new Error('Requested chat title did not receive normal focus');
+  let expanded = false;
+  return until(() => {
+    if (composer.isConnected && !composer.disabled && visible(composer)) return composer;
+    // Wait for this exact composer's normal relocation before using the dock
+    // control: clicking the old pane's Expand control could reactivate it.
+    const dock = composer.closest('.workspace-chat-slot')?.closest('[data-input-dock-mode]');
+    const expand = dock?.querySelector<HTMLButtonElement>('button[aria-label="Expand chat input"]');
+    if (!expanded && composer.isConnected && expand && !expand.disabled && visible(expand)) {
+      expanded = true; expand.click();
+    }
+    return undefined;
+  }, 'requested chat composer moves into visible normal dock');
+}
+
+export function probeChatSendDiagnostics() {
+  return {
+    panes: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"][data-pane-kind="chat"]')).slice(0, 6)
+      .map(pane => ({ paneId: pane.dataset.paneId, title: pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value,
+        retainedComposer: Boolean(pane.querySelector('textarea[aria-label="Message"]')), visible: visible(pane) })),
+    composers: Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]')).slice(0, 6)
+      .map(node => ({ paneId: node.closest<HTMLElement>('[data-testid="workspace-pane"]')?.dataset.paneId,
+        inDock: Boolean(node.closest('.workspace-chat-slot')), dockMode: node.closest<HTMLElement>('[data-input-dock-mode]')?.dataset.inputDockMode,
+        visible: visible(node), disabled: node.disabled, connected: node.isConnected, focused: document.activeElement === node })),
+  };
 }
 
 export function probeComposerSend(composer: HTMLTextAreaElement) {

@@ -41,7 +41,7 @@ const answer=await wait(()=>document.querySelector('[data-chat-message-id="'+arg
 (await wait(()=>button('Save to note',answer),'normal whole-answer Save')).click();
 return wait(async()=> (await api.listPendingProposals(arguments[0])).find(value=>!before.has(value.id)),'UI-staged whole-answer Save proposal');`;
 export const reviewScript = `${apiImport}${ui}
-const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const {EditorView}=await import('/src/lib/prototypes/pi/probeEditorView.ts');
 const {acquireProbeReview}=await import('/src/lib/prototypes/pi/probeReview.ts');
 const id=arguments[0],draft=await api.getProposalDraft(id);
 const editor=()=>Array.from(document.querySelectorAll('[data-testid="note-title"]')).some(node=>node.value===draft.title)
@@ -52,7 +52,7 @@ await acquireProbeReview({editor,openChat:open,until:wait,
 await open();await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+id+'"]'),'exact mounted review strip');
 return true;`;
 export const acknowledgedPendingScript = `${apiImport}${ui}
-const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const {EditorView}=await import('/src/lib/prototypes/pi/probeEditorView.ts');
 const {reviewProjection}=await import('/src/lib/features/proposals/reviewExtension.ts');
 const {acknowledgedProbeDraft}=await import('/src/lib/prototypes/pi/probeReview.ts');
 const id=arguments[0],draft=await api.getProposalDraft(id);

@@ -9,7 +9,7 @@ import { acquireProbeReview } from './probeReview';
 import { openProbeChatSplit } from './probeSplit';
 import { openVisibleProbeChat } from './probeChatFocus';
 import { revealProbeReadActivity } from './probeReadActivity';
-import { focusProbeChatComposer, probeChatPane, probeComposerSend } from './probeChatSend';
+import { focusProbeChatComposer, probeChatPane, probeComposerSend, probeChatSendDiagnostics } from './probeChatSend';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -49,6 +49,7 @@ async function openChat() {
 async function selectConversation(id: string) {
   await openChat(); const conversation = await api.getConversation(id);
   const pane = await until(() => probeChatPane(conversation.title) ?? probeChatPane(), 'normal chat pane for conversation picker');
+  trace('pickerComposerAcquire', { conversationId: id, paneId: pane.dataset.paneId, title: conversation.title });
   await focusProbeChatComposer(pane, until);
   await click('Conversations', pane);
   const item = await until(() => Array.from(pane.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker item');
@@ -61,6 +62,7 @@ async function startSend(id: string, content: string) {
   const snapshot = await until(() => api.getConversation(id), 'conversation snapshot before UI send');
   const count = snapshot.messages.length;
   const pane = await until(() => probeChatPane(snapshot.title), 'requested conversation mounted in normal chat pane');
+  trace('sendComposerAcquire', { conversationId: id, paneId: pane.dataset.paneId, title: snapshot.title });
   const composer = await focusProbeChatComposer(pane, until);
   input(composer, content);
   const sendControl = await until(() => probeComposerSend(composer), 'requested composer Send message');
@@ -295,6 +297,7 @@ export async function runInteractiveProbe() {
     report.status = 'passed';
   } catch (error) {
     report.status = 'failed'; report.error = String(error); report.visible = document.body.innerText.slice(0, 2500);
+    report.receipts.chatSend = probeChatSendDiagnostics();
     report.receipts.workspaceFocus = {
       panes: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"]')).slice(0, 6).map(node => ({ id: node.dataset.paneId, kind: node.dataset.paneKind, collapsed: node.hasAttribute('data-pane-collapsed'), inertFrame: Boolean(node.querySelector('[data-pane-frame][inert]')) })),
       controls: Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(node => /^(Expand |Open thought partner)/.test(node.getAttribute('aria-label') ?? '')).slice(0, 12).map(node => ({ label: node.getAttribute('aria-label'), disabled: node.disabled, hidden: Boolean(node.closest('[inert],[aria-hidden="true"]')), rectangles: node.getClientRects().length }))

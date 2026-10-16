@@ -41,6 +41,9 @@ test('edited checkpoint requires retained mapped hunks rather than pre-mount API
   assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[{from:body.length,to:0,status:'modified'}]},body,title));
   assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[{from:0,to:body.length,status:'pending'}]},body,title));
   assert(editReviewScript.includes('view.dispatch('));
+  assert(editReviewScript.includes("import('/src/lib/prototypes/pi/probeEditorView.ts')"));
+  assert(editReviewScript.includes('EditorView.findFromDOM(node)'));
+  assert(!editReviewScript.includes('/node_modules/@codemirror/'));
   assert(editReviewScript.includes('field.dispatchEvent(new InputEvent'));
   assert(editReviewScript.includes('pi_validate_review_checkpoint'));
   assert(!editReviewScript.includes('checkpointProposalDraft('));
