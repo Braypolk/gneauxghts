@@ -155,11 +155,18 @@ async function setModel(id: string, provider: 'local' | 'openai', model: string)
   await until(async () => { const conversation = await api.getConversation(id); return conversation.provider === provider && conversation.model === model; }, 'Pi model configuration');
 }
 export async function openSource(message: ChatMessage, expected?: SuspensionOrdinary) {
-  assert(message.citations.length, 'No admitted current citation');
-  const label = message.citations[0].label;
-  const row = await until(() => document.querySelector<HTMLElement>(`[data-chat-message-id="${message.id}"]`), 'exact current source message');
-  row.scrollIntoView({ block: 'nearest' });
-  const citation = await until(() => Array.from(row.querySelectorAll<HTMLButtonElement>('button[data-slot="inline-citation"]')).find(node => !node.disabled && visibleProbeControl(node) && node.textContent?.includes(label)), 'normal current source button in exact message');
+  const source = message.citations.find(value => value.kind === 'note' && (!expected || value.noteId === expected.noteId));
+  assert(source?.id, 'No admitted current note citation for the expected Note Identity');
+  const citation = await until(() => {
+    // Reacquire after each render; Sources evidence cards can remain collapsed.
+    // The normal visible Markdown controls carry the admitted citation identity.
+    const row = document.querySelector<HTMLElement>(`[data-chat-message-id="${message.id}"]`);
+    if (!row?.isConnected) return;
+    row.scrollIntoView({ block: 'nearest' });
+    return Array.from(row.querySelectorAll<HTMLButtonElement>('button[data-chat-note-citation-id]')).find(node =>
+      node.isConnected && !node.disabled && !node.closest('[hidden]') && visibleProbeControl(node) &&
+      node.getAttribute('data-chat-note-citation-id') === source.id);
+  }, 'normal current source button in exact message');
   citation.click();
   return until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view && (expected ? view.state.doc.toString() === expected.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === expected.title : view.state.doc.toString().includes('orchard'))), 'current note opened by citation');
 }
