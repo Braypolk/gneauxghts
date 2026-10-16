@@ -9,13 +9,14 @@ import { fileURLToPath } from 'node:url';
 import { createWebDriverRequest,waitUntil,listenerPids } from '../../e2e/support/nativeTransport.mjs';
 import { parseArguments,cleanEnvironment,frontendSourceDigest } from './shared-resource-gate.mjs';
 import { startParityFixture,PARITY_ANSWER,PARITY_EDIT } from './paired-parity-fixture.mjs';
-import { parityBrowserAction } from './paired-parity-browser.mjs';
+import { parityBrowserAction, reviewedTitlePlan } from './paired-parity-browser.mjs';
 import { proveClosedParityDuplicates,stopOwnedParityChild } from './paired-parity-lifecycle.mjs';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
 export const PARITY_LIMITS=[
   'Prepared fixture comparisons are unproven until this driver executes both pinned native lanes.',
   'Old baseline has no request_note_access tool and production permission requirements are empty; per-read Deny/Allow once dialogs cannot be compared. Persistent approved-note grant/revoke is compared through public ChatApi, not its UI.',
+  'Both lanes edit the review body. Proposal title editing follows each normal UI capability: editable titles change, while read-only baseline titles remain original and are recorded per lane. No DOM override or API title bypass is used.',
   'Compatible and Responses are separate explicit runs. No live-provider, latency, memory, scale, iOS or adoption claims.',
   'Stop/source-free follow-up remain in shared-resource-gate; this gate checks portable shutdown and no-inference restoration only to establish closed canonical effect snapshots.',
   'Canonical proof checks unique Note Identity, accepted bytes, exact duplicate receipt, unchanged files and NoteTimeline publication counts across duplicates. It does not compare internal chat/Pi storage layouts or infer performance.'
@@ -90,7 +91,7 @@ export async function runPairedParityGate(options) {
       const wd=createWebDriverRequest(4445,60000);let server,app,session;
       const execute=async(action,args={})=>{
         assert(session,'Fresh owned WebDriver session required');
-        const result=await wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(${parityBrowserAction.toString()})(arguments[0],arguments[1]).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,700)}));`,args:[action,args]});
+        const result=await wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];const reviewedTitlePlan=(${reviewedTitlePlan.toString()});(${parityBrowserAction.toString()})(arguments[0],arguments[1]).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,700)}));`,args:[action,args]});
         assert(result.ok,`Owned ${lane} browser action ${action} failed: ${result.error??'unknown'}`);return result.value;
       };
       const stopNative=async()=>{
@@ -129,6 +130,7 @@ export async function runPairedParityGate(options) {
         for(const action of ['evidence','grants','review','save']) {
           const before=fixture.requests.length;
           const proof=await execute(action,{answer:PARITY_ANSWER,edit:PARITY_EDIT});
+          if(action==='review'){output.reviewedTitle=proof.reviewedTitle;output.draftTitleEditable=proof.draftTitleEditable;output.titleEditing=proof.titleEditing;}
           output.checks.push({scenario:action,status:'passed',proof,providerDispatches:fixture.requests.length-before});
         }
         const proof=await proveClosedParityDuplicates({execute,cleanStop,launch,requestCount:()=>fixture.requests.length,snapshot:state=>{

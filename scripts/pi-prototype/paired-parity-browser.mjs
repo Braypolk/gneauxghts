@@ -1,5 +1,10 @@
 // Serialized into each lane's actual native webview by the paired driver.
 // Uses that lane's public ChatApi, retained editor and normal workspace controls.
+export function reviewedTitlePlan(currentTitle, requestedTitle, draftTitleEditable) {
+  return { reviewedTitle: draftTitleEditable ? requestedTitle : currentTitle, draftTitleEditable,
+    titleEditing: draftTitleEditable ? 'editable' : 'readonly-baseline',
+    changeTitle: draftTitleEditable && currentTitle !== requestedTitle };
+}
 export async function parityBrowserAction(action,args={}) {
   const check=(value,message)=>{if(!value)throw new Error(message);};
   const pause=()=>new Promise(ok=>setTimeout(ok,60));
@@ -69,9 +74,11 @@ export async function parityBrowserAction(action,args={}) {
   };
   const edit=async(id,markdown,title)=>{
     const view=await currentReview(id);view.dispatch({changes:{from:0,to:view.state.doc.length,insert:markdown},userEvent:'input.type'});
-    const field=await until(()=>Array.from(document.querySelectorAll('[data-testid="note-title"]')).find(node=>!node.readOnly),'editable title');
-    input(field,title);await pause();field.blur();
-    return until(async()=>{const draft=await api.getProposalDraft(id);return draft.markdown===markdown&&draft.title===title&&draft;},'acknowledged edit');
+    const field=await until(()=>view.dom.closest('[data-pane-frame]')?.querySelector('[data-testid="note-title"]'),'corresponding review title');
+    const capability=reviewedTitlePlan(field.value,title,!field.readOnly&&!field.disabled);
+    if(capability.changeTitle){input(field,capability.reviewedTitle);await pause();field.blur();}
+    const draft=await until(async()=>{const draft=await api.getProposalDraft(id);return draft.markdown===markdown&&draft.title===capability.reviewedTitle&&draft;},'acknowledged edit');
+    return {draft,...capability};
   };
   const keep=async(id,conversationId)=>{
     await currentReview(id);await openChat();
@@ -128,8 +135,8 @@ export async function parityBrowserAction(action,args={}) {
   if(action==='review') {
     const before=new Set((await api.listPendingProposals(state.full)).map(item=>item.id));await send(state.full,'PARITY:CREATE');
     const proposal=await until(async()=>(await api.listPendingProposals(state.full)).find(item=>!before.has(item.id)),'created pending review');
-    await edit(proposal.id,args.edit,'Paired human-reviewed plan');const final=await keep(proposal.id,state.full);
-    check(final.markdown===args.edit&&final.title==='Paired human-reviewed plan','Edited review not preserved');return{created:true,edited:true,kept:true};
+    const edited=await edit(proposal.id,args.edit,'Paired human-reviewed plan');const final=await keep(proposal.id,state.full);
+    check(final.markdown===args.edit&&final.title===edited.reviewedTitle,'Edited review not preserved');return{created:true,edited:true,kept:true,reviewedTitle:edited.reviewedTitle,draftTitleEditable:edited.draftTitleEditable,titleEditing:edited.titleEditing};
   }
   if(action==='save') {
     const answer=await send(state.full,'PARITY:HELLO');check(answer.content===args.answer,'Source-free answer differs');
@@ -137,7 +144,8 @@ export async function parityBrowserAction(action,args={}) {
     const root=await until(()=>document.querySelector(`[data-chat-message-id="${answer.id}"]`),'answer Save');await click('Save to note',root);
     const proposal=await until(async()=>(await api.listPendingProposals(state.full)).find(item=>!before.has(item.id)),'whole-answer Save review');
     const original=await api.getProposalDraft(proposal.id);check(original.markdown.includes(answer.content)&&original.markdown.includes('Open in chat'),'Faithful whole answer/origin absent');
-    await edit(proposal.id,`${original.markdown}\n\n## Selected addition\n`,original.title);await keep(proposal.id,state.full);
+    const edited=await edit(proposal.id,`${original.markdown}\n\n## Selected addition\n`,original.title);const keptSave=await keep(proposal.id,state.full);
+    check(keptSave.title===edited.reviewedTitle,'Save changed admitted review title');
     // Obtain the exact receipt through public duplicate Keep, preserving its
     // final hunk-decision version, so selection can name the native destination.
     const final=await api.getProposalDraft(proposal.id),receipt=await api.commitAgentProposal(proposal.id,final.markdown,final.version);
@@ -145,7 +153,7 @@ export async function parityBrowserAction(action,args={}) {
     const duplicate=await api.prepareNoteSave(state.full,answer.id);check(duplicate.id===proposal.id&&duplicate.status==='committed','Duplicate Save changed identity');
     const selected=await api.prepareNoteSave(state.full,answer.id,{markdown:'Echo phrase.',text:'Echo phrase.',occurrence:1},{targetNoteId:receipt.noteId,heading:'Selected addition'});
     const selectedDraft=await api.getProposalDraft(selected.id);check(selectedDraft.markdown.includes('Selected addition'),'Explicit append heading absent');
-    await keep(selected.id,state.full);return{faithfulWholeSave:true,originLink:true,duplicateSave:true,selectionOccurrence:1,explicitAppend:true};
+    await keep(selected.id,state.full);return{faithfulWholeSave:true,originLink:true,duplicateSave:true,selectionOccurrence:1,explicitAppend:true,reviewedTitle:edited.reviewedTitle,draftTitleEditable:edited.draftTitleEditable,titleEditing:edited.titleEditing};
   }
   if(action==='duplicates') {
     const receipts=[];

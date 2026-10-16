@@ -1,6 +1,18 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initializeParityWorkspace} from './paired-parity-gate.mjs';
+import {reviewedTitlePlan,parityBrowserAction} from './paired-parity-browser.mjs';
+
+test('review title admission preserves read-only baseline and skips unchanged Save titles',()=>{
+  assert.deepEqual(reviewedTitlePlan('Original baseline','Requested title',false),{
+    reviewedTitle:'Original baseline',draftTitleEditable:false,titleEditing:'readonly-baseline',changeTitle:false});
+  assert.deepEqual(reviewedTitlePlan('Original Pi','Requested title',true),{
+    reviewedTitle:'Requested title',draftTitleEditable:true,titleEditing:'editable',changeTitle:true});
+  assert.equal(reviewedTitlePlan('Saved original','Saved original',true).changeTitle,false);
+  assert.equal(reviewedTitlePlan('Saved original','Saved original',false).changeTitle,false);
+  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});return (${parityBrowserAction.toString()});`;
+  assert.doesNotThrow(()=>new Function(script));
+});
 
 test('initialization timeout retains the latest bounded browser error and failed phase',async()=>{
   const output={lane:'old',checks:[]};let attempts=0;

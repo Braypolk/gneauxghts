@@ -30,7 +30,7 @@ The same user scenarios and public outcomes run in each lane:
 | Adjacent selected context | Normal split editor selects `seven pear trees`; normal composer sends the request; fixture requires the actual canonical selection cursor and reads it; answer has admitted citation. |
 | Retained change evidence | Normal composer asks about orchard history; actual discovery and read tools issue references; answer selects an actually delivered source ID; normal historical citation opens History Mode. |
 | Approved scope | Public revoke, normal composer denied read with zero citations, public grant, normal composer allowed read with admitted citation, public revoke. |
-| Create and human review | Normal composer asks for creation; actual lane proposal tool stages it; retained editor changes body/title; normal Keep publishes those exact bytes. |
+| Create and human review | Normal composer asks for creation; actual lane proposal tool stages it; retained editor changes the body in both lanes and title only when the normal title input permits editing; normal Keep publishes those exact admitted fields. |
 | Faithful whole-answer Save | Normal answer Save control stages its exact completed answer and Open in chat link; retained editor adds the explicit append heading; normal Keep publishes it; repeated public Save preserves proposal identity. |
 | Second repeated selection append | Public Save selects occurrence 1 of `Echo phrase.` and names the saved Note Identity and heading; retained editor reviews; normal Keep appends once to that same canonical identity. |
 | Duplicate Keep | Exact final acknowledged hunk-decision version is supplied explicitly; stale version must reject; two duplicate Keeps must return equal committed receipts, dispatch no inference, change no canonical bytes, add no NoteTimeline publication, and leave one file per Note Identity. |
@@ -99,6 +99,12 @@ retains both snapshots, full restoration state and both native shutdown receipts
 
 Explicit comparison limits:
 
+- The old baseline exposes a read-only proposal title. Its review retains that
+  original title while editing the body; Pi edits both body and title through
+  normal inputs. Each lane records `reviewedTitle`, `draftTitleEditable` and
+  `titleEditing`; final Keep must preserve the admitted title. A Save that keeps
+  its original title does not unnecessarily edit its title input. No DOM
+  read-only override or API rename bypass is used.
 - Old `agent_permissions.rs::production_requirements()` is empty, and its model
   interface has no `request_note_access` or title-only `discover_notes` tool.
   Pi's per-read Deny/Allow once dialog therefore has no old equivalent. It is a
