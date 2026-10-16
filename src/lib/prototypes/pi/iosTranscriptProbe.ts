@@ -9,7 +9,7 @@ import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openVisibleProbeChat } from './probeChatFocus';
 
 type ProbeApi = ChatApi & {
-  prototypeState(): Promise<{ transcriptStateJson?: string }>;
+  prototypeState(): Promise<{ transcriptStateJson?: string } | undefined>;
   prototypeCheckpoint(value: unknown): Promise<void>;
   prototypeFault(id: string, fault: string): Promise<void>;
 };
@@ -96,7 +96,7 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
   };
   try {
     await until(() => document.querySelector('[data-testid="workspace-pane"]'), 'normal native workspace');
-    const prior = (await api.prototypeState()).transcriptStateJson;
+    const prior = (await api.prototypeState())?.transcriptStateJson;
     if (!prior) {
       assert(!(await api.listConversations()).length, 'Fresh generated simulator container required');
       const source = await invoke<{ noteId: string; path: string }>('save_note', { title: 'Pi transcript orchard', markdown: 'The synthetic orchard has seven pear trees.', currentPath: null });

@@ -10,15 +10,35 @@ type Proposal = {id: string; status: string; suggestedPath: string; payload: Rec
 type Draft = {version: number; markdown: string; title: string; path: string};
 async function editorState() { return browser.execute(() => (window as typeof window & { __GNEAUXGHTS_NATIVE_E2E__: {readEditorState: () => {activePaneId: string; editor: {markdown: string; selection: {anchor: number; head: number}} | null}} }).__GNEAUXGHTS_NATIVE_E2E__.readEditorState()); }
 async function replaceBody(markdown: string) {
-  await browser.execute((text) => {
+  const before = await browser.execute((text) => {
     document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content')!.focus();
-    const bridge = (window as typeof window & {__GNEAUXGHTS_NATIVE_E2E__: {readEditorState: () => {editor: {markdown: string}}; setEditorSelection: (a: number, b: number) => boolean}}).__GNEAUXGHTS_NATIVE_E2E__;
+    const bridge = (window as typeof window & {__GNEAUXGHTS_NATIVE_E2E__: {readEditorState: () => {activePaneId: string; editor: {markdown: string; selection: {anchor: number; head: number}}}; setEditorSelection: (a: number, b: number) => boolean}}).__GNEAUXGHTS_NATIVE_E2E__;
+    const state = bridge.readEditorState();
+    const target = document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content')!;
+    const diagnostic = {activePaneId: state.activePaneId, targetPaneId: target.closest('[data-pane-id]')?.getAttribute('data-pane-id'),
+      markdown: state.editor.markdown.slice(0, 4096), markdownLength: state.editor.markdown.length, selection: state.editor.selection,
+      targetHasFocus: document.activeElement === target, documentHasFocus: document.hasFocus(), visibility: document.visibilityState,
+      targetText: target.textContent?.slice(0, 2048)};
     if (!bridge.setEditorSelection(0, bridge.readEditorState().editor.markdown.length)) throw new Error('Native selection failed');
     if (!document.execCommand('insertText', false, text)) throw new Error('Native text input failed');
+    return diagnostic;
   }, markdown);
   // execCommand changes the DOM before CodeMirror's input observer accepts it.
   // A following review action must start after the simulated edit is real.
-  await browser.waitUntil(async () => (await editorState()).editor?.markdown === markdown, {timeoutMsg: 'Native text input did not reach the editor state'});
+  try {
+    await browser.waitUntil(async () => (await editorState()).editor?.markdown === markdown, {timeoutMsg: 'Native text input did not reach the editor state'});
+  } catch (error) {
+    const after = await browser.execute(() => {
+      const state = (window as typeof window & {__GNEAUXGHTS_NATIVE_E2E__: {readEditorState: () => {activePaneId: string; editor: {markdown: string; selection: {anchor: number; head: number}} | null}}}).__GNEAUXGHTS_NATIVE_E2E__.readEditorState();
+      const target = document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content');
+      return {activePaneId: state.activePaneId, targetPaneId: target?.closest('[data-pane-id]')?.getAttribute('data-pane-id'),
+        markdown: state.editor?.markdown.slice(0, 4096), markdownLength: state.editor?.markdown.length, selection: state.editor?.selection,
+        targetHasFocus: document.activeElement === target, documentHasFocus: document.hasFocus(), visibility: document.visibilityState,
+        targetText: target?.textContent?.slice(0, 2048)};
+    }).catch(() => ({unavailable: true}));
+    console.error('NATIVE_REPLACE_BODY_DIAGNOSTIC', JSON.stringify({expected: markdown.slice(0, 4096), expectedLength: markdown.length, before, after}));
+    throw error;
+  }
 }
 async function openChat() {
   await $('[data-testid="workspace-card"]').waitForExist({timeout: 30_000});
