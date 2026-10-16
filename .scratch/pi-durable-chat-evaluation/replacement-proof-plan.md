@@ -304,6 +304,21 @@ the gate itself cannot retrospectively bind that source tree to a prior binary
 build. A source mutation/binary replacement refuses the result. Root coordination
 must keep sources stable while this runs.
 
+The old artifact pin remains
+`435669a2fe3bd7b3d8baf32bff164c399a3fe68961660291a477ca6a03ce36f3` by default.
+An alternate baseline artifact can be supplied with `--old-binary` and optional
+`--old-sha256`; the latter must contain exactly 64 lowercase hexadecimal
+characters and match the actual file SHA-256. Omitting it never bypasses the
+original pin. The paired parity driver inherits this same parser and supports
+the same override. For a separately built baseline using features
+`e2e-wdio,e2e-chat-fixture`, retain the source revision, exact build command and
+feature flags, build log, artifact path and verified digest alongside the gate
+report, whose lane records the actual binary hash. This identifies a different
+artifact; it does not establish equivalence to the originally pinned binary or
+claim execution. Paired Responses still separately refuses an artifact without
+its loopback fixture override capability. All existing fresh-root, sealed-source,
+dummy-key and artifact-change checks remain required.
+
 This prepared core gate observes startup, a normal source-free send, a follow-up
 that must receive the earlier assistant answer, visible partial-stream Stop,
 durable terminal status, crash/restart with the exact committed message count,
@@ -497,3 +512,90 @@ prose-free fixtures/reproduction receipts and bounded failure evidence.
   counter inputs yield no numeric comparison claims and an unproven verdict.
 - No native measurements, build/removal/default/iOS/live checks or user feedback
   are included in these validation claims.
+
+## Audited paired core resource checkpoint — v8, 2026-10-15
+
+The native owner's closed, exit-0 receipt at
+`/private/tmp/pi-shared-resources-20261015-v8/shared-resource-gate.json`
+records **paired core fixture PASS**, old then Pi, with explicit foreground debug
+apps and generated data roots. This extends the v7 core receipt at
+`/private/tmp/pi-shared-resources-20261015-v7/shared-resource-gate.json` with a
+bounded long-output journey and closed storage metadata; earlier receipts and
+failures remain evidence. It is not replacement acceptance, long-history/context-
+cap proof or a performance win. The recorded verdict remains
+`unproven-pending-acceptance`.
+
+Both lanes completed short, source-free follow-up and exact 256-line/9,215-byte
+long output, then stopped a provisional answer through normal UI controls.
+Each journey made exactly one provider request; all eight requests across both
+lanes stayed within the 262,144-byte request, 16,384-byte output-content and
+32,768-byte SSE-frame budgets, with no fixture refusal. Both restarted with eight
+committed messages and no implicit inference replay. The long fixture measures
+output length, not a large conversation collection or context limit.
+
+| Warm journey | Old send→visible / terminal (ms) | Pi send→visible / terminal (ms) | Module IPC calls old / Pi | Request JSON proxy bytes old / Pi | Response JSON proxy bytes old / Pi |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Short | 227 / 278 | 307 / 339 | 7 / 294 | 571 / 68,691 | 7,214 / 156,625 |
+| Follow-up | 191 / 224 | 258 / 291 | 6 / 280 | 528 / 59,056 | 11,805 / 268,115 |
+| Long output | 215 / 248 | 240 / 271 | 6 / 277 | 524 / 98,113 | 38,271 / 378,996 |
+| Stop | 197 / 263 | 299 / 415 | 7 / 308 | 564 / 94,128 | 62,076 / **unknown** |
+
+For Stop, the terminal column means cancelled settlement; request→settlement was
+66 ms old / 116 ms Pi. Both displayed the expected provisional acknowledgement
+before Stop. Old cancelled terminal content was empty (0 bytes); Pi terminal
+content was 28 bytes. Exact cancelled-content equality was **not** asserted in
+either lane, so this is not equal durable-partial preservation. One rejected Pi
+invoke result has unknown response bytes: its cancel known subtotal of 789,563
+bytes must not be reported as a complete response total.
+
+| Other recorded measurement | Old | Pi |
+| --- | ---: | ---: |
+| Initial launch→workspace (ms) | 1,961.655334 | 2,477.642417 |
+| Restart launch→workspace (ms) | 613.595167 | 913.513042 |
+| Sampled app-only peak RSS (bytes) | 218,546,176 | 180,568,064 |
+| Local fixture server interval, short (ms) | 42.888250 | 45.142041 |
+| Local fixture server interval, follow-up (ms) | 42.819834 | 43.301292 |
+| Local fixture server interval, long (ms) | 42.346458 | 44.480000 |
+| Observed warm module IPC calls, total | 26 | 1,159 |
+
+All warm journey collectors verified a real ordinary `getSettings` crossing and
+recorded zero observer failures. The counts cover only the actual
+`@tauri-apps/api/core` module invoke boundary after setup, under the same generated
+Vite observation overlay. Pi includes 946 `sqlite` calls and 213 `domain` calls;
+old records 26 `domain` calls. Native-internal SQLite operations are outside this
+boundary, so these are not complete cross-lane database-operation counts. Sizes
+are UTF-8 JSON argument/result proxies, not native wire bytes. Direct injected
+bridge and startup IPC coverage remain unknown. Server intervals are complete
+local HTTP observations; provider coverage remains partial and these intervals
+are not live model inference latency. UI detection polls at 50 ms plus two
+frames, startup at 100 ms; clock-calibration uncertainty was ±0.410–0.766 ms.
+Renderer/helper/all-process RSS and OS-cache control remain unknown. This is one
+ordered synthetic run with observer/polling overhead, not a statistical comparison.
+
+Storage starts at zero in both fresh roots and ends after final owned process
+closure (`closed:true`, `forced:false` in both lanes). Only generated app/document
+root file metadata was counted; driver logs and overlay/config files are outside
+that boundary.
+
+| Logical storage growth (bytes) | Old | Pi |
+| --- | ---: | ---: |
+| SQLite | 671,744 | 663,552 |
+| WAL | 0 | 1,351,392 |
+| SHM | 0 | 32,768 |
+| Markdown | 10,301 | 9,884 |
+| Other | 2,333 | 2,333 |
+| **Total** | **684,378** | **2,059,929** |
+
+Both metadata captures are complete for their closed roots; no file contents,
+SQL or database inspection were used. Allocated bytes and checkpoint state are
+unknown, and `checkpointPerformed:false` in both lanes. Pi's retained WAL
+dominates the logical-size difference; the data do not establish equivalent
+checkpoint state, allocation cost or retained-growth bounds at scale.
+
+The receipt records frozen source/binary/overlay hashes (Pi binary
+`024dad84fbdc2b35c6358fd662c7d7bbdc5c82990f74b1dd7ddae379810e13a5`),
+while `frontendReceiptVerified:false` remains explicit in both lanes. This
+checkpoint supplies bounded short/long-output, cancellation, sampled app RSS,
+module IPC and storage observations only. Live, full-history/pagination,
+listener/retention, removal/default/iOS and final verdict obligations remain
+separate gates; no resource-savings or adoption conclusion is implied.

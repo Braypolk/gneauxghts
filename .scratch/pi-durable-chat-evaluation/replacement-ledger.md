@@ -5,12 +5,82 @@ Source inspection: 2026-10-15. Baseline:
 `/private/tmp/pi-evaluation-pre-replacement-source-4b5ff2de`. Current source is
 the integrated evaluation worktree, still subject to the native owner's final
 freeze. This ledger is a source inventory and responsibility comparison for
-[ticket 13](issues/13-replacement-proof-and-evaluation-verdict.md), **not ticket
-acceptance, physical-removal execution, measured savings or production adoption**.
-The native owner must bind final compiler/build/native/resource receipts to the
-same frozen source. The [spec](spec.md), [proof plan](replacement-proof-plan.md)
+[ticket 13](issues/13-replacement-proof-and-evaluation-verdict.md), **not full ticket
+acceptance, measured savings or production adoption**. It now records
+actual comparison-tree removal/compiler/native receipts produced by the native
+owner, separately from this worker's read-only source inspection.
+The v17 removal/compiler/native slices below are bound to their frozen v17
+source. Final compiler/build/native/resource proof must still converge on the
+same final source after all implementation owners stop changing it; this ledger
+does not declare that final freeze. The [spec](spec.md),
+[proof plan](replacement-proof-plan.md)
 and [removal reproduction contract](removal-experiment-preparation.md) define
 the remaining gates.
+
+## Latest source checkpoint — 2026-10-15
+
+v21 is captured at `/private/tmp/pi-removal-final-20261015-v21`, canonical
+manifest `1cb0607bf44b45b756d6bc92e41d51a9fe5251a24b3dac09add65393a581890e`.
+It is **uncompiled** while scale v4 holds the native lease. Source preparation is
+frozen and committed through `8aeacdf`. Independent Standards/Spec review found
+one iOS live acceptance-proof defect: a marker-containing wrong canonical body
+could pass. Exact independently acknowledged body/title/path/review/version and
+ordinary canonical `read_note` checks after Keep and relaunch resolve it; focused
+re-review found no remaining findings. There is no new native acceptance or final
+common-source acceptance freeze. The v17 native pins below retain their scopes.
+
+Broader v20 validation passed 609/609 frontend tests in 81 files and 157/157 Node
+checks. The localized proof correction subsequently passed 16 Vitest/four Node
+checks and full types (zero errors/warnings). Logs remain under `/private/tmp`.
+The prepared Save readiness, source-free compaction setup, owned-resource churn,
+local iOS live and artificial STOP/CONT checks still require actual native runs.
+The historical inventory below has not been relabeled as final source metrics.
+
+Scale v4 is running, last derived projection 359 replies; progress alone is not
+final durable seed/history/identity/accounting proof. Native builds/CUA do not
+overlap, while pure-test/source-capture CPU overlap precludes a performance
+claim. Resource v8 and closed manual local acceptance remain scoped evidence.
+The manual `c74a53e` bundle is closed and local-configured. Hosted live work is
+user-deferred. Complete replacement/iOS/scale/cost acceptance remains open.
+
+## Current source inventory at v21 capture
+
+The source inventory was refreshed after the localized proof correction. It is
+an inventory of maintained source, not measured savings or executable-function
+counts. The 52 comparison-tree deletions remain absent in v21; the default
+deliverable still deletes zero legacy files. v21 is not yet compiled.
+
+| Bounded inventory | Baseline `4b5ff2de` | Current v21 |
+| --- | ---: | ---: |
+| Pi normal static TS closure from `chatApi.ts` | 5 files / 42,679 bytes / 494 lines | 17 files / 173,383 bytes / 2,020 lines |
+| All non-test Pi TS, including diagnostics | 8 files / 69,293 bytes / 799 lines | 43 files / 367,209 bytes / 4,296 lines |
+| Separate Pi TS tests | 0 files | 35 files / 242,146 bytes / 2,780 lines |
+| Top-level native `pi_*.rs`, excluding separate test files | 4 files / 32,508 bytes / 570 lines | 12 files / 195,427 bytes / 4,100 lines |
+| Seven explicitly extracted domain/command paths | Embedded in other modules | 92,288 bytes / 2,365 lines |
+
+The normal static closure follows top-level relative import/export declarations
+within the Pi directory, using the installed TypeScript parser. It excludes
+dynamic imports, shared UI/domain modules and third-party dependencies. Lines
+are physical LF lines; bytes are UTF-8. The closure's sorted
+`path + NUL + fileSHA256 + LF` inventory hash is
+`08de8e72efa19c603acad6db93ba901a76557fc3c8baa2923a3c6e154ca38e96`.
+Its 481 syntax function bodies include 403 arrows; 73 per-file distinct named
+function declarations/expressions have bodies. Baseline equivalents are 151
+bodies / 137 arrows / 11 names. These are syntax counts, not a comparison with
+the Rust lexical counts below or a count of lifecycle responsibilities.
+
+The native Pi files contain 151 per-file distinct lexical `fn` names, including
+inline tests/inactive cfg, versus 23 at baseline. Seven extracted paths are
+`chat_domain.rs`, `provider_config.rs`, its `local_reasoning.rs` and
+`model_metadata.rs`, `proposal_policy.rs`, `note_promotion.rs`, and
+`commands/pi_chat_commands.rs`; their policy was already maintained inside other
+owners. Extraction is not wholly new policy or eliminated maintenance.
+
+Ten custom Pi document definitions (six singletons/four families), two custom
+tasks and the separate request-entry contract remain app-maintained. Pi AI,
+Pi Durable and Chord remain pinned at 1.3.0. The responsibility table below,
+actual bridge/storage observations and recovery obligations are the substantive
+replacement comparison; source size alone cannot establish a simpler system.
 
 ## Authority being replaced
 
@@ -63,7 +133,7 @@ name baseline functions, not all declarations or a compiler-resolved count.
 | `commands/chat_commands.rs`, `commands/proposal_commands.rs` | Native conversation/run/permission/review IPC dispatch and old canonical-effect/status coordination. Pi domain commands and effect adapters remain. |
 | Remaining `chat/**` except `citations.rs`, `date_time.rs`, `structured_answer.rs` | Legacy tests, instruction/evaluation text and fixtures. Their removal is an inventory change, not removed runtime behavior. |
 
-Read-only `removal-experiment.py::plan` found **130 conservatively reachable Rust
+The historical read-only `removal-experiment.py::plan` inspection found **130 conservatively reachable Rust
 module files** and **52 disjoint candidate files**, totaling **1,168,539 bytes**
 and **791 per-file distinct lexical `fn` names** at inspection. The corresponding
 52 baseline files total **1,206,491 bytes / 814 lexical names**; 49 files are
@@ -72,7 +142,7 @@ names reused in different files count again. They are not production-function
 counts, savings or compiler proof. The changed/extracted policy explains why
 deleting a whole legacy file must not be counted as deleting all its obligations.
 
-| Current candidate family | Files | Bytes | Lexical names |
+| Candidate family at historical inspection | Files | Bytes | Lexical names |
 | --- | ---: | ---: | ---: |
 | Guardrails / permissions / coordinator | 3 | 37,413 | 39 |
 | Rust runtime root and directory | 10 | 174,297 | 132 |
@@ -80,12 +150,35 @@ deleting a whole legacy file must not be counted as deleting all its obligations
 | Legacy chat root and candidate descendants | 18 | 477,443 | 293 |
 | Legacy chat/proposal command implementations | 2 | 72,523 | 73 |
 
-**Actual removals claimed by this ledger: zero.** The read-only plan neither
-creates a comparison tree nor builds/launches one. The native owner must preserve
-the final deletion patch/archive/manifest, compiler logs and bound native
-receipts before any file/function becomes an *actual comparison-tree removal*.
-The ordinary deliverable intentionally retains the excluded source and its
-maintenance cost until a later adoption decision.
+**Actual comparison-tree removals: 52 files; default-deliverable removals: zero.**
+The native owner prepared and compiled the isolated v17 comparison tree at
+`/private/tmp/pi-removal-final-20261015-v17/source`. Read-only verification against
+its `removal-ledger.json` found all 52 manifest-listed paths absent there, all 52
+retained in its `removed-source` archive, and all 52 still present in the default
+worktree. Thus the feature graph is no longer the only exclusion evidence, while
+the default runtime's source and maintenance cost remain retained pending a
+separate adoption decision.
+
+| v17 removal proof | Bound evidence / limit |
+| --- | --- |
+| Canonical source manifest | `468be149b7a263236c258b6b1f9ef053a7e546ab0b48ac37ab8dea6e314404e6` |
+| Removal manifest/archive | `/private/tmp/pi-removal-final-20261015-v17/removal-ledger.json`; 52 paths/hashes/bytes/lexical names; archived bytes under `removed-source` |
+| Compiled desktop artifact | SHA-256 `024dad84fbdc2b35c6358fd662c7d7bbdc5c82990f74b1dd7ddae379810e13a5`; `artifacts/desktop-build.json` records `removedFiles: 52` and matching canonical source digest |
+| Compiler log | `/private/tmp/pi-removal-v17-desktop-build.log` |
+| Publication fault `K7YRrL` | Passed after-intent/after-publication/after-receipt/during-model cases; eight synthetic provider requests; same binary |
+| Fault receipt | `/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-faults-K7YRrL/fault-gate.json` |
+| Native crash `RJ9Vy0` | Passed prepared-review and transport-completed boundaries for local/OpenAI synthetic protocols; each prepared-review has one canonical file/effect row/publication receipt; transport-completed has zero canonical effects |
+| Crash receipt | `/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-native-crashes-RJ9Vy0/native-crash-gate.json`; transport withholds terminal before Pi terminal commit, not proof of a failed Pi COMMIT |
+| Desktop transcript `HVmzV1` | Passed four checks: watcher edit/delete/Convert/Restore with preserved ordinary copy; full generated-root relocation/session/source/origin/conflict/pending review; UI Retry Keep plus duplicate API Keep one effect/no inference; known-old-root-only mapping/copied legacy inert |
+| Transcript receipt | `/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-transcript-HVmzV1/native-transcript-gate.json` |
+| Expanded desktop | Partial first/relaunch passes; v17 `r3L0r7` closed failed at visible failed-checkpoint deadline; no complete expanded native pass |
+| Remaining limits | No full iOS, scale, final removal/evaluation acceptance or production adoption; standalone Settings-selected vault move remains unproven |
+
+These are actual removal-tree/compiler and bounded synthetic native observations,
+not removed production functions or measured savings. They do not make the
+remaining expanded/iOS/scale gates pass or reconcile later source snapshots
+implicitly. Later snapshots and partial gates are tracked in
+[progress](progress.md) and [desktop acceptance](desktop-acceptance.md).
 
 ## Retained policy, editor and effect services
 
@@ -120,21 +213,24 @@ maintenance cost until a later adoption decision.
 
 `chat_domain.rs`, `provider_config.rs`, `proposal_policy.rs` and
 `note_promotion.rs` did not exist as separate files in the baseline. Their
-current combined **65,019 bytes** include extracted existing policy and tests;
+historically inspected combined **65,019 bytes** include extracted existing policy and tests;
 they are not 65 KB of purely new behavior or pure savings.
 
 ## Added Pi state, stores and recovery cost
 
-The normal static local import closure from `chatApi.ts` contains **17 TypeScript
-files / 167,407 bytes / 1,944 physical lines** at inspection. Five of those paths
+The historical normal static local import closure from `chatApi.ts` contained
+**17 TypeScript files / 167,407 bytes / 1,944 physical lines** at that earlier
+inspection. This is not a current or final-source count: later product changes,
+including `c74a53e`, were not included, and no reliable existing closure inventory
+has been rerun here. Five of those paths
 already existed in the baseline prototype. This closure excludes dynamic
 fixture/probe imports, tests, shared UI/controller files and dependencies. The
-12 top-level `pi_*.rs` files excluding separate test files total **195,427 bytes /
-4,100 lines**, including inline tests, diagnostics and fixture faults; retained
+historical 12 top-level `pi_*.rs` files excluding separate test files totaled
+**195,427 bytes / 4,100 lines**, including inline tests, diagnostics and fixture faults; retained
 domain files and composition changes are additional. These inventories describe
 maintained surfaces, not comparable executable sizes or net cost.
 
-The product path defines **ten custom Pi document kinds** (six singleton kinds,
+The product path at that source inspection defined **ten custom Pi document kinds** (six singleton kinds,
 four keyed families), plus **two custom task definitions**. Upstream Pi documents
 and tasks are additional; probe-only kinds are excluded from this count.
 
@@ -184,6 +280,19 @@ queues are adapter coordination, not free engine savings. The review state
 machine, effect reconciliation, startup shutdown handshake and policy validity
 machine remain app responsibilities even when durable tasks run in Pi.
 
+Later product work adds maintained coordination cost beyond that historical
+inventory. `chatApi.ts` now preserves tool-rich read activity across generic
+`message_end` projection, correlates admitted read events with native policy and
+conversation access revisions, and rechecks admission after awaited validation.
+Its terminal-origin/read-evidence/pending-commit paths must reject revoked or
+cross-conversation evidence rather than reviving stale parts. The request and
+provider policies in `notesExtension.ts`/`nativeProvider.ts` still validate current
+evidence before dispatch and answer admission. Research activity must match the
+shared UI schema, and review recovery must restore persisted uncertainty through
+identity-checked UI admission. These are real adapter/state-coordination and
+regression-test obligations; they are not functionality Pi removes. No new byte,
+line, document-kind or net-savings total is inferred from this qualitative update.
+
 Pi Durable, Pi AI and Chord remain pinned at **1.3.0** in `package.json` and the
 lockfile. Evaluation preserves ordinary Rust runtime dependencies/default wiring;
 conditional source exclusion is not a dependency-size or supply-chain reduction.
@@ -201,11 +310,14 @@ runtime behavior require the real compiler/native gates. The existing
 `src-tauri/tests/pi_lifecycle_exclusion.rs` documents those static checks; this
 worker did not run Cargo, a build, app, provider, port or simulator.
 
-The ledger intentionally makes no new native/compiler-pass claim. Check the
-native owner's final receipts and acceptance matrix for actual executions;
-earlier binaries or source-test passes cannot be relabeled final-source proof.
-Unexecuted final/removal/default/iOS/live gates remain unpassed, even if empty
-generic native lifecycle tables are observed. Static exclusion is supporting
+This worker ran no native/compiler operation. The actual v17 passes above are
+read from the native owner's bound receipts; the final acceptance matrix still
+must reconcile the complete required gates on an eventual common final frozen
+source.
+Earlier binaries or source-test passes cannot be relabeled final-source proof.
+Remaining final/default/iOS/scale requirements remain unproven; completed slices
+do not establish the complete matrix, even if empty generic native lifecycle
+tables are observed. Static exclusion is supporting
 evidence, never an assertion of product parity.
 
 Branching, standalone excerpt workflows, old-conversation/transcript import,
@@ -224,9 +336,11 @@ or acceptable long-history resource growth is established by this source scan.
 The [product scale plan](product-scale-proof-plan.md) distinguishes its native
 1,005-conversation/1,005-input gate from in-memory engine fixtures.
 
-Cold/warm startup, first visible output, completion overhead, cancellation, IPC,
-app/renderer/helper memory, listener lifetime and retained storage must be paired
-against the pinned old artifact at equivalent roots/cache/lifecycle boundaries.
+Bounded resource captures now exist; their exact measured scope and limitations
+are recorded in the [proof plan](replacement-proof-plan.md). A complete cost
+comparison of cold/warm startup, first visible output, completion overhead,
+cancellation, IPC, app/renderer/helper memory, listener lifetime and retained
+storage must still be paired against the pinned old artifact at equivalent roots/cache/lifecycle boundaries.
 Provider inference time, bridge/engine time, synthetic fixtures and live-provider
 journeys remain separate measurements. This ledger records no timing/memory/IPC/
 storage improvement and no material-regression threshold invented by the agent.

@@ -75,6 +75,37 @@ synthetic fixtures and bounded prose-free comparison summaries are separate from
 private copied data. The helper prints only the evaluation root, counts and
 history identities; it does not print note contents or per-note paths.
 
+## Repeat the normal hands-on check
+
+Reuse the existing persistent evaluation root and verified bundle. Setup/reset
+is unnecessary for this repeat. From this worktree, launch the normal installed
+entry with the root override absent:
+
+```sh
+env -u PI_PROTOTYPE_DATA pnpm pi:prototype installed
+```
+
+1. In Settings → AI & Chat, confirm the configured local model, then open normal
+   chat. Send a short source-free prompt and a follow-up; check retained context.
+2. Create a disposable synthetic note with your own unique phrase. Ask about it
+   from chat; open the citation and check the exact canonical source/passage.
+3. In a new chat using Approved only access, request that synthetic note and Deny
+   its permission request. Check the answer does not disclose its phrase or cite
+   an unread source. Ask again, Allow once, and inspect Read note activity/citation.
+   Restore your prior access mode afterward.
+4. Request one exact change to the synthetic note. Inspect editable body/title
+   and hunk choices; Keep only the change you intend. Save an answer through the
+   normal Save to note control, review it, then open its Open in chat link.
+5. Start a short disposable request, Stop before it completes, then Retry.
+   Confirm the original attempt stays Stopped and the separate retry completes.
+6. Quit normally, launch `installed` again, and confirm the synthetic note,
+   conversation and model remain. Quit normally when finished.
+
+Keep the check in synthetic evaluation notes. Record any failure with its normal
+UI step and expected/observed behavior; detailed receipts remain in the linked
+acceptance docs. This checklist establishes no additional iOS, hosted, scale,
+resource or adoption result until those separate gates run.
+
 ## Copy and failure contract
 
 Setup rejects all symlinks and special files, overlapping source/evaluation roots,
@@ -142,12 +173,26 @@ silently transferred into iOS. See the [historical validation](../pi-durable-pro
 for the existing fixture gate behavior; those earlier passes are not current live
 provider or persistent copied-vault acceptance.
 
-Current focused setup evidence: 12 Python safety/copy tests and 3 Node root/runner tests
-pass on 2026-10-15. The SQLite fixtures in those tests exercise the copy contract;
-they are not real NoteTimeline reconstruction acceptance. Two real native launches,
-original-vault unchanged proof after copy edits/Keep, bundle installation, and
-live-provider interaction must be recorded separately after source portability
-and native build ownership are available. No such pass is claimed here.
+Earlier focused setup evidence (12 Python safety/copy and three Node root/runner
+checks) exercises the copy contract. Separate actual persistent local acceptance
+has now passed on the manual `c74a53e` product / `2a11f83` probe bundle, SHA-256
+`9328ff2f9fcffdc194ee20631615ff80aecb9adaf5f2ae0846c7eda3526f57b2`.
+It used the isolated root with 209 copied files and the user-configured local
+model. Normal launches retained notes/history/model, approved synthetic mutation
+and Save Keeps committed faithfully, the saved origin link navigated to chat,
+a bounded Stop/Retry completed, and discovery/Deny/Allow once/citation checks
+passed. The app is **closed** after normal Cmd-Q (exit 0). The original 388-file
+seal was reverified unchanged after these actions:
+`66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`.
+The original vault remains untouched.
+
+Receipt: `/private/tmp/pi-persistent-live-20261015/manual-live.json`.
+See [desktop acceptance](desktop-acceptance.md) for exact manual scope/limits,
+[progress](progress.md) for current gates, and the [replacement ledger](replacement-ledger.md)
+for retained ownership/cost. This verified manual bundle is separate from later
+captured harness source; newer uncompiled source has no implied build/pass.
+Hosted live work is user-deferred. Full iOS, scale and final evaluation proof
+remain pending; there is no production-adoption decision or performance-win claim.
 
 ## Deliberate recovery of a stopped interrupted source
 

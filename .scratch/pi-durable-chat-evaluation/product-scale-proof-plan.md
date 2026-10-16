@@ -1,6 +1,7 @@
 # Product scale acceptance preparation
 
-Prepared 2026-10-15. Native execution is **pending**. This document adds a
+Prepared 2026-10-15; updated to the current driver contract. Native v4 is
+**pending**, and earlier failed runs do not establish scale acceptance. This adds a
 product-path scale gate to the engine-only `scaleProbe.ts`; it does not replace
 that check or constitute ticket 12/13 acceptance. No native build, launch,
 provider, port, Git command or real-data operation was run by this preparation
@@ -8,7 +9,7 @@ agent. The native owner is the root agent.
 
 ## Files and commands
 
-New files:
+Prepared tooling:
 
 - `src/lib/prototypes/pi/productScaleProbe.ts`: writes through public ChatApi;
   verifies public Meta/list/history/navigation; archive/restore; fixture-only
@@ -19,6 +20,8 @@ New files:
   no launch on import. Imports the existing shared driver's pure environment,
   source digest and exact dummy authorization helpers without editing that driver.
 - `scripts/pi-prototype/product-scale-gate.test.mjs`: pure fixture/storage tests.
+- `scripts/pi-prototype/product-scale-continuation.mjs` and its `.test.mjs`:
+  guarded, linked diagnostic continuation of an eligible closed generated run.
 
 Root must finish its active native gate and own ports 1442 (frontend), 1443
 (synthetic provider), 4445 (WebDriver) before this command. The binary must be a
@@ -47,8 +50,9 @@ it is for the native owner alone, not a pure validation command.
 The generated root contains `product-scale-gate.json`, mode 0600 private identity
 receipt `private-product-identities.json`, native/frontend logs, and fresh native
 data/documents under `data`. No preexisting vault or provider configuration is
-selected. A failed run's generated root is retained for diagnosis. No resume or
-overwrite path exists: diagnose, then rerun with a fresh root. Native logs remain
+selected. A failed run's generated root is retained for diagnosis. The ordinary
+gate refuses overwrite or resume; rerun with a fresh root. The separate guarded
+continuation below cannot turn an original failure into a pass. Native logs remain
 private artifacts; do not paste them without reviewing their synthetic scope.
 
 ## Concrete acceptance path
@@ -64,6 +68,10 @@ private artifacts; do not paste them without reviewing their synthetic scope.
    fixture requires the previous actual assistant answer in provider history
    for every turn after the first. It rejects unknown prompts, duplicates,
    replay, out-of-order dispatch, unbounded bodies and unexpected credentials.
+   Automatic native safe-summary work remains enabled. Any summary admission
+   must match the actual isolated summary envelope, completed input/answer pairs,
+   prior issued summary and current original request. The fixture returns bounded
+   JSON within the requested UTF-8 limit; it supplies no evidence or permissions.
 4. Public API verification checks every conversation identity/title and summary
    message count, every input/reply content/status/order, all 2010 unique message
    identities, no active request, and early/middle/late conversation navigation.
@@ -85,9 +93,12 @@ private artifacts; do not paste them without reviewing their synthetic scope.
    forging, generic state reconstruction or second live Harness is used.
 8. Kill the quiesced app, restart the same generated data root, verify every
    original conversation/message identity and content again, and repeat mounted
-   early/middle/late navigation. Provider request count must remain exactly 1005
-   throughout restart, public verification, UI navigation and a one-second idle
-   observation; any implicit replay fails. Close and rescan the restarted store.
+   early/middle/late navigation. Provider accounting must contain exactly 1005
+   completed answer admissions in order, plus separately validated summary
+   admissions, with at most 1100 total requests and no failed or unknown request.
+   This total must remain unchanged throughout public verification, UI navigation,
+   archive/restore, restart and a one-second idle observation; implicit replay
+   fails. Close and rescan the restarted store and reverify the same accounting.
 
 The first conversation is deliberately long; the other 1004 are empty. This is
 not a claim about 1005 simultaneously active conversations, 1005 nonempty
@@ -106,8 +117,21 @@ SQLite, WAL, SHM, Markdown and other logical bytes. They do not measure allocate
 disk blocks. Capture does not issue a checkpoint; natural close behavior may
 shrink WAL, so live and closed observations must be compared at like boundaries.
 
-Native `window.__TAURI_INTERNALS__.invoke` observations aggregate call counts,
-serialized request/response bytes, failures and coarse command categories.
+An `ENOENT` between directory enumeration and metadata capture is tolerated only
+for an entry enumerated as a regular `.db`, `.sqlite` or `.sqlite3` WAL/SHM sidecar
+beside a still-present regular, non-symlink database. The receipt records its path
+and kind as `partial-disappeared-sqlite-transients`; total files/bytes and the
+affected sidecar total become null, with observed counts retained separately.
+This is partial coverage, not a zero-byte or atomic complete snapshot. Missing
+roots, directories, other files/databases, other errors, symlinks and special
+files still fail. No checkpoint is added to stabilize the capture.
+
+A successfully installed hook verified by an actual native probe of
+`window.__TAURI_INTERNALS__.invoke` hook aggregates call counts,
+UTF-8 JSON request/response byte proxies, failures and coarse command categories.
+These proxies are not wire bytes. If the native property is immutable or the
+hook is unverified, counters are null and coverage unavailable, never a measured
+zero. This scale observer is separate from the paired resource module observer.
 Payloads and SQL text are not retained. SSE server frame counts/bytes and actual
 native stream chunk counts/bytes are separate units. Startup/early imported
 module work predates the observation boundary and is not claimed complete.
@@ -137,7 +161,10 @@ helper and all-process RSS are unknown; no all-process memory claim is allowed.
 Execution budgets are explicit failure bounds: 1005 inputs, at most 1100 provider
 requests, 4 MiB per request, 1 GiB aggregate request bodies, 60 seconds per
 terminal/DOM operation, 120-second WebDriver operation and two-hour seed budget.
-The synthetic fixture bypasses model context capacity/compaction. Current public
+The synthetic fixture admits source-free answers and strict native automatic
+safe-summary requests separately; it does not bypass native compaction execution
+or forge summary tasks. This tests the bounded synthetic summary protocol, not
+real-provider context capacity or summary quality. Current public
 API/history/transcript work can grow quadratically during this workload because
 each request reconstructs a growing history; a successful run establishes no
 latency, asymptotic, memory or disk acceptance threshold. If any configured
@@ -151,7 +178,28 @@ retirement/collection, private watcher bounds, default architecture removal,
 matching old/Pi resource comparison and the remaining ticket 12 journeys are
 still separate requirements. See `replacement-proof-plan.md` for that matrix.
 
-## Validation of prepared tooling
+## Guarded diagnostic continuation
+
+The separate continuation requires an explicitly confirmed closed native owner,
+an original **failed** receipt and a fresh output root. It accepts only a failure
+at the first mounted navigation deadline after the seed and complete public
+verification: exactly 1005 conversations, 1005 inputs, 2010 unique messages,
+every history position and Meta identity, detached probe listeners and complete
+validated provider accounting. Archive/restart must not have started, cleanup
+must have succeeded, and the recorded closed storage must still match.
+
+It pins the original binary and frontend digests, receipt and private identity
+hashes, then copies only the closed generated data with identical bytes and
+modes. Original receipts/data remain unchanged. Its fixture admits model-list
+GET only and rejects every inference POST. Normal foreground mounted navigation,
+public verification, archive/restore, closed scans and restart run on the copy;
+no new inference is permitted. A successful result is only
+`passed-linked-diagnostic-continuation`, with `originalRunPassed:false`,
+`productParity:false` and no IPC resource acceptance. It never repairs the
+original gate verdict. Failed v3 lacks the required completed seed, identity and
+accounting proof and is ineligible.
+
+## Historical preparation validation
 
 Executed without native apps, builds, providers, ports or Git:
 
@@ -162,8 +210,10 @@ pnpm exec vitest run src/lib/prototypes/pi/productScaleProbe.test.ts src/lib/pro
 pnpm exec svelte-check --tsconfig ./tsconfig.json --output machine
 ```
 
-Results: driver syntax clean; four pure Node tests passed; four mock-public-API
-assertion tests plus two separate real in-memory engine tests passed; static
-check 6147 files, zero errors and zero warnings. None proves the native product
+Initial preparation results: driver syntax clean; four pure Node tests passed;
+four mock-public-API assertion tests plus two separate real in-memory engine
+tests passed; static
+check 6147 files, zero errors and zero warnings. These historical counts do not
+describe the subsequently expanded tooling. None proves the native product
 workload passed. The native owner must run the prepared command and review the
 generated receipt before changing acceptance or evaluation status.
