@@ -89,10 +89,12 @@ async function acknowledge(id: string, conversationId: string) {
     return { markdown: view.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
   } });
 }
-async function source(message: ChatMessage, noteId: string) {
+export async function openIosLiveSource(message: ChatMessage, noteId: string) {
   admittedProbeRead(message, noteId); await openChat(); await revealProbeReadActivity({ message, noteId, until });
   const card = await until(() => document.querySelector(`[data-chat-message-id="${message.id}"]`), 'cited live answer');
-  (await until(() => Array.from(card.querySelectorAll<HTMLButtonElement>('button[data-slot="inline-citation"]')).find(node => !node.disabled && visibleProbeControl(node)), 'normal source citation')).click();
+  const admittedIds = new Set(message.citations.filter(citation => citation.kind === 'note' && citation.noteId === noteId).map(citation => citation.id));
+  (await until(() => Array.from(card.querySelectorAll<HTMLButtonElement>('button[data-chat-note-citation-id]')).find(node =>
+    admittedIds.has(node.getAttribute('data-chat-note-citation-id') ?? '') && !node.disabled && !node.closest('[hidden]') && visibleProbeControl(node)), 'normal source citation')).click();
   await until(() => Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).some(node => node.value === 'Pi live synthetic orchard') && Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-content')).some(node => node.textContent?.includes('thirteen cobalt pears')), 'canonical synthetic source opened');
 }
 function assertRestored(state: State, messages: ChatMessage[], draft: ChatProposalDraft) {
@@ -125,7 +127,7 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       const cited = await send(conversation.id, `What conversation code did I give you? Then read the note titled "Pi live synthetic orchard" (Note Identity ${note.noteId}) with the note evidence tool. Report its pear fact and inspection code with an admitted source citation. Do not create or edit notes. Keep the answer short.`);
       assert(cited.content.includes('KITE-LIVE-12') && cited.content.includes('ORCHARD-LIVE-12'), 'Live follow-up failed conversation continuity or actual source fact');
       report.receipts.noInferenceAfterMillis = Date.now();
-      await source(cited, note.noteId); report.checks.push('real local follow-up, actual canonical read activity and citation navigation');
+      await openIosLiveSource(cited, note.noteId); report.checks.push('real local follow-up, actual canonical read activity and citation navigation');
       await openChat();
       const before = new Set((await api.listPendingProposals(conversation.id)).map(value => value.id));
       const card = await until(() => document.querySelector(`[data-chat-message-id="${cited.id}"]`), 'exact live Save answer'); await click('Save to note', card);
@@ -181,7 +183,7 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
     assert(JSON.stringify(duplicate) === JSON.stringify(state.receipt), 'Durable live Keep receipt changed after relaunch');
     const canonical = await invoke<CanonicalNote>('read_note', { noteId: duplicate.noteId, path: state.reviewedDraft.path });
     assertIosLivePublication(state.reviewedDraft, duplicate, canonical);
-    const cited = conversation.messages.filter(value => value.role === 'assistant').at(-1); assert(cited, 'Restored live answer missing'); await source(cited, state.source.noteId);
+    const cited = conversation.messages.filter(value => value.role === 'assistant').at(-1); assert(cited, 'Restored live answer missing'); await openIosLiveSource(cited, state.source.noteId);
     report.checks.push('same committed conversation, source identity and Keep receipt restored without inference');
     report.status = 'passed'; await emit('complete', { conversationId: state.conversationId, proposalId: state.proposalId, reviewId: state.reviewId, noteId: duplicate.noteId, canonical: { noteId: canonical.noteId, title: canonical.title, path: canonical.path, editorSha256: await digest(canonical.markdown) } });
   } catch (error) { report.status = 'failed'; report.error = String(error).slice(0, 1500); await emit(report.phase); }

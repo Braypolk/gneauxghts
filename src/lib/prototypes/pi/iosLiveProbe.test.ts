@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { render } from 'svelte/server';
+import ChatMarkdown from '$lib/features/chat/ui/ChatMarkdown.svelte';
+import { message as chatMessage } from '$lib/features/chat/chatTestSupport';
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn(), create: vi.fn(), get: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
 vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get } }));
-import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, runIosLiveProbe } from './iosLiveProbe';
-import type { ChatProposalDraft } from '$lib/features/chat/types';
+import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, openIosLiveSource, runIosLiveProbe } from './iosLiveProbe';
+import type { ChatCitation, ChatProposalDraft } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 describe('explicit iOS live probe admission and deadlines', () => {
   beforeEach(() => {
@@ -75,6 +78,63 @@ describe('explicit iOS live probe admission and deadlines', () => {
     expect(item.click).toHaveBeenCalledOnce();
     expect(mocks.get).toHaveBeenCalledTimes(2);
     expect(mocks.checkpoint).not.toHaveBeenCalled();
+  });
+});
+
+describe('live source navigation through the rendered admitted inline citation', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+  function sourceSurface() {
+    const citation = (id: string, noteId: string): Extract<ChatCitation, { kind: 'note' }> => ({
+      id, noteId, kind: 'note', label: 'Pi live synthetic orchard', notePath: `/vault/${noteId}.md`, sectionLabel: null, startLine: null, excerpt: 'thirteen cobalt pears',
+      passage: { id: `${id}-passage`, noteId, contentHash: 'hash', location: 'body', start: 0, end: 20, excerpt: 'thirteen cobalt pears', revisions: [] },
+    });
+    const foreign = citation('foreign-source', 'foreign-note'), admitted = citation('admitted-source', 'expected-note');
+    const message = chatMessage({ id: 'exact-live-answer', citations: [foreign, admitted],
+      content: '[Other](passage:foreign-source-passage) [Orchard](passage:admitted-source-passage)',
+      parts: [{ id: 'read', type: 'tool', callId: 'read', name: 'read_note', title: 'Read note evidence', status: 'success', readSources: [admitted] }] });
+    const markup = render(ChatMarkdown, { props: { source: message.content, citations: message.citations } }).body;
+    let opened = false;
+    const visible = { closest: () => null, getClientRects: () => [1] };
+    const controls = [...markup.matchAll(/<button\b[^>]*data-chat-note-citation-id="([^"]+)"[^>]*>/g)].map(match => ({
+      ...visible, disabled: false, getAttribute: (name: string) => name === 'data-chat-note-citation-id' ? match[1] : null,
+      click: vi.fn(() => { opened = match[1] === admitted.id; }),
+    }));
+    expect(controls).toHaveLength(4); // Link labels and their ordinary numbered source buttons.
+    expect(markup).not.toContain('data-slot="inline-citation"');
+    const activity = { disabled: false, getAttribute: () => 'true', click: vi.fn() };
+    const read = { disabled: false, textContent: admitted.label, getAttribute: () => `Open ${admitted.label}, read passage` };
+    const card = { textContent: 'Read note evidence', querySelectorAll: (selector: string) => selector === 'button[aria-label^="Activity,"]' ? [activity]
+      : selector === '[aria-label="Notes and passages read"] button' ? [read]
+        : selector === 'button[data-chat-note-citation-id]' ? controls : [] };
+    const querySelector = vi.fn((selector: string) => selector === '[data-chat-message-id="exact-live-answer"]' ? card : null);
+    vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
+    vi.stubGlobal('document', { querySelector, querySelectorAll: (selector: string) => selector === '[aria-label="Thought partner chat"]' ? [visible]
+      : !opened ? [] : selector === '[data-testid="note-title"]' ? [{ value: admitted.label }]
+        : selector === '[data-testid="note-editor"] .cm-content' ? [{ textContent: 'thirteen cobalt pears' }] : [] });
+    return { message, controls, querySelector,
+      foreignControls: controls.filter(control => control.getAttribute('data-chat-note-citation-id') === foreign.id),
+      expectedControls: controls.filter(control => control.getAttribute('data-chat-note-citation-id') === admitted.id) };
+  }
+  it('clicks the expected Note Identity in the exact message instead of an earlier same-label foreign source', async () => {
+    vi.useFakeTimers(); const { message, foreignControls, expectedControls, querySelector } = sourceSurface();
+    const result = expect(openIosLiveSource(message, 'expected-note')).resolves.toBeUndefined();
+    await vi.advanceTimersByTimeAsync(45001); await result;
+    for (const control of foreignControls) expect(control.click).not.toHaveBeenCalled();
+    expect(expectedControls[0].click).toHaveBeenCalledOnce();
+    expect(expectedControls[1].click).not.toHaveBeenCalled();
+    expect(querySelector.mock.calls.every(([selector]) => selector === '[data-chat-message-id="exact-live-answer"]')).toBe(true);
+  });
+  it.each(['disabled', 'hidden', 'inert', 'unadmitted'] as const)('does not navigate through a %s citation control', async state => {
+    vi.useFakeTimers(); const { message, controls, expectedControls } = sourceSurface();
+    for (const control of expectedControls) {
+      if (state === 'disabled') control.disabled = true;
+      if (state === 'hidden') control.getClientRects = () => [];
+      if (state === 'inert') control.closest = () => ({} as never);
+      if (state === 'unadmitted') control.getAttribute = () => 'unadmitted-source';
+    }
+    const result = expect(openIosLiveSource(message, 'expected-note')).rejects.toThrow('iOS live deadline: normal source citation');
+    await vi.advanceTimersByTimeAsync(45001); await result;
+    for (const control of controls) expect(control.click).not.toHaveBeenCalled();
   });
 });
 
