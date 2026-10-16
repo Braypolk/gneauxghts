@@ -12,6 +12,7 @@ import { startInteractiveFixture } from './interactive-fixture.mjs';
 import { assertInteractiveTransport } from './expanded-report.mjs';
 import { retainExpandedPhase } from './retain-expanded-phase.mjs';
 import { verifyFollowonsReceipts } from './followons-fixture.mjs';
+import { captureOwnedIosProcess, assertOwnedIosProcess, parseOwnedIosLaunch, parseIosProcess, suspendOwnedIosProcess } from './ios-process-suspension.mjs';
 
 const followons = process.env.PI_PROTOTYPE_FOLLOWONS_GATE === 'true';
 assert(!process.env.PI_PROTOTYPE_DATA, 'Allocate a fresh synthetic root; unset PI_PROTOTYPE_DATA');
@@ -21,8 +22,8 @@ assert.equal(listenerPids(1443).length, 0, 'Fixture port 1443 has an unrelated o
 const bundle = 'com.braypolkinghorne.gneauxghts.pi-prototype';
 const root = mkdtempSync(join(tmpdir(), 'gneauxghts-pi-ios-interactive-'));
 const evidencePath = join(root, 'ios-interactive-gate.json');
-const run = (command, args, extra = {}) => {
-  const result = spawnSync(command, args, { env: { ...process.env, ...extra }, encoding: 'utf8' });
+const run = (command, args, extra = {}, timeout) => {
+  const result = spawnSync(command, args, { env: { ...process.env, ...extra }, encoding: 'utf8', timeout });
   assert.equal(result.status, 0, `${command} ${args.join(' ')} failed: ${result.stderr}\n${result.stdout}`);
   return result.stdout.trim();
 };
@@ -44,7 +45,7 @@ const evidence = { gate: 'ios-shared-workspace-fixture', status: 'running', root
   executableSha256: createHash('sha256').update(readFileSync(executable)).digest('hex'),
   constraints: { xcode: run('xcodebuild', ['-version']), simulatorSdk: run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
     runtime: selected.runtime, rustBuild: 'run.mjs exact pi-prototype,tauri/custom-protocol; existing generated Rust script replacement',
-    background: 'Preferences foregrounding only; does not establish OS suspension or physical-device pressure',
+    background: 'Preferences foregrounding plus artificial STOP/CONT of the exact owned native app process; WKWebView helpers may continue. Does not establish OS suspension or memory pressure.',
     originNavigation: 'shared Open in chat fixture synthesizes editor keyboard navigation; touch gesture remains unverified' },
   phases: [], screenshots: [], unobserved: [] };
 let fixture, data, first;
@@ -55,6 +56,9 @@ try {
   spawnSync('xcrun', ['simctl', 'uninstall', simulator, bundle]);
   run('xcrun', ['simctl', 'install', simulator, app]);
   data = run('xcrun', ['simctl', 'get_app_container', simulator, bundle, 'data']); evidence.data = data;
+  const installedApp = run('xcrun', ['simctl', 'get_app_container', simulator, bundle, 'app']);
+  const installedExecutable = join(installedApp, info.CFBundleExecutable);
+  const inspect = pid => parseIosProcess(run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,comm='], { LC_ALL: 'C' }, 2000));
   const reportPath = join(data, 'Library/Application Support', bundle, 'PROTOTYPE-wipe-me/ui-report.json');
   const launch = () => run('xcrun', ['simctl', 'launch', simulator, bundle], {
     SIMCTL_CHILD_PI_PROTOTYPE_HTTP_FIXTURE: 'http://127.0.0.1:1443',
@@ -65,13 +69,28 @@ try {
       && (report.phase === name || (report.phase === 'starting' && report.status === 'failed')) && report.launchId !== prior && ['passed', 'failed'].includes(report.status) && report; } catch { return false; }
   }, `actual normal iOS WKWebView ${name}`, followons ? 600000 : 240000);
   const screenshot = name => { const path = join(root, `${name}.png`); run('xcrun', ['simctl', 'io', simulator, 'screenshot', path]); evidence.screenshots.push(path); };
-  launch(); first = await retainExpandedPhase({ report: await phase('first'), phase: 'first', evidence, flush, screenshot });
+  const owner = captureOwnedIosProcess({ launchOutput: launch(), bundle, installedExecutable, inspect });
+  evidence.ownedLaunch = owner; flush();
+  first = await retainExpandedPhase({ report: await phase('first'), phase: 'first', evidence, flush, screenshot });
   const interruptedCount = fixture.requests.filter(value => value.journey === 'INTERRUPT').length;
   assert.equal(interruptedCount, 1, 'No single active interrupted native request');
-  run('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences']); await delay(750); launch(); await delay(750);
-  assert.equal(JSON.parse(readFileSync(reportPath, 'utf8')).launchId, first.launchId, 'Foreground reran the journey');
+  const beforeSuspensionRequests = fixture.requests.length;
+  run('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences']); await delay(750);
+  evidence.nativeProcessSuspension = {}; flush();
+  await suspendOwnedIosProcess({ owner, inspect, wait: delay, receipt: evidence.nativeProcessSuspension,
+    signal: (pid, signal) => run('/bin/kill', [`-${signal}`, String(pid)], {}, 2000) });
+  await waitUntil(() => !assertOwnedIosProcess(owner, inspect).state.includes('T'), 'owned native process continues after STOP', 2000);
+  assert.equal(parseOwnedIosLaunch(launch()), owner.pid, 'Foreground replaced the owned app process'); await delay(750);
+  assertOwnedIosProcess(owner, inspect);
+  const retainedFirst = JSON.parse(readFileSync(reportPath, 'utf8'));
+  assert.equal(retainedFirst.launchId, first.launchId, 'Foreground reran the journey');
+  assert.equal(retainedFirst.phase, first.phase, 'Foreground changed retained first phase');
+  assert.equal(retainedFirst.status, 'passed', 'Retained first phase is no longer passing');
+  assert.deepEqual(retainedFirst, first, 'The static acknowledged first-phase receipt changed across suspension');
+  assert.equal(fixture.requests.length, beforeSuspensionRequests, 'Suspension/foreground dispatched an extra provider request');
   assert.equal(fixture.requests.filter(value => value.journey === 'INTERRUPT').length, interruptedCount, 'Foreground replayed inference');
-  evidence.backgroundForeground = { sameLaunch: true, noReplay: true }; screenshot('foreground');
+  evidence.backgroundForeground = { sameLaunch: true, sameNativeProcessIdentity: true, noReplay: true, staticRetainedPhase: true,
+    freshPostContinueUiRead: false, durablePartialAndReviewVerifiedByFollowingRelaunch: false }; flush(); screenshot('foreground');
   run('xcrun', ['simctl', 'terminate', simulator, bundle]);
   const beforeRelaunch = fixture.requests.length;
   // Relaunch probe itself performs explicit UI Retry only after verifying the retained partial.
@@ -81,6 +100,8 @@ try {
   const retry = fixture.requests.find(value => value.journey === 'INTERRUPT' && value.attempt === 2);
   const shared = restored.shared.find(value => value.phase === 'relaunch');
   assert(shared.checks.includes('relaunch restores committed history, model and interrupted partial without replay'));
+  assert(shared.checks.includes('relaunch edited review Keep and Discard; duplicate Keep returns canonical receipt'));
+  evidence.backgroundForeground.durablePartialAndReviewVerifiedByFollowingRelaunch = true;
   assert(retry, 'Explicit UI Retry was not observed');
   // The shared relaunch assertion precedes its only provider request. All provider
   // observations before that request must match the terminated process count.
