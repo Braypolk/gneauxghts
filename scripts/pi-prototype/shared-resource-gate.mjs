@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { performance } from 'node:perf_hooks';
 import { setTimeout as delay } from 'node:timers/promises';
 import { createWebDriverRequest, waitUntil, listenerPids } from '../../e2e/support/nativeTransport.mjs';
+import {createInvokeObserverConfig,createModuleInvokeObserver} from './invoke-observer-overlay.mjs';
 
 export const DUMMY_AUTHORIZATION = 'Bearer gneauxghts-resource-fixture-dummy';
 export const OLD_SHA256 = '435669a2fe3bd7b3d8baf32bff164c399a3fe68961660291a477ca6a03ce36f3';
@@ -76,8 +77,10 @@ export function installInvokeObserver(native,begin) {
 }
 
 export function observedIpcCoverage(observer,rows) {
-  if(!observer?.installed||!observer.verified||!rows.length)return 'unknown';
-  return rows.every(row=>Number.isFinite(row.requestBytes)&&Number.isFinite(row.responseBytes))?'complete':'partial';
+  if(!observer?.installed||!observer.verified||observer.failures||!rows.length)return 'unknown';
+  // Coverage concerns observed calls. Unknown/rejected result byte proxies stay
+  // null and the measurement reducer independently leaves their totals unknown.
+  return 'complete';
 }
 
 export async function startSharedFixture() {
@@ -151,35 +154,35 @@ export function parseArguments(argv) {
 }
 
 const browserSetup = `
-  const [previousTimeOrigin]=arguments;
+  const [previousTimeOrigin,expectedOverlay]=arguments;
   if(previousTimeOrigin!==undefined && performance.timeOrigin===previousTimeOrigin)throw new Error('Previous document still mounted after reload');
   window.__resourceApi=(await import('/src/lib/features/chat/api.ts')).chatApi;
   const native=window.__TAURI_INTERNALS__;
   if(!native || !document.querySelector('[data-testid="workspace-pane"]'))throw new Error('Native workspace required');
-  const installInvokeObserver=(${installInvokeObserver.toString()});
-  if(!window.__resourceObserver?.installed)window.__resourceObserver=installInvokeObserver(native,(command,args)=>{
-    const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value??null)).length}catch{return null}};
-    const row={kind:'ipc',atMs:performance.now(),category:command==='pi_sql'?'sqlite':command.startsWith('pi_provider')?'provider':'domain',requestBytes:size(args),responseBytes:null};
-    window.__resourceIpc?.push(row);return(result,failed)=>{row.responseBytes=failed?null:size(result);};
-  });
+  const marker=globalThis.__piInvokeOverlayLoaded;
+  if(!expectedOverlay||marker?.originalCoreSha256!==expectedOverlay.originalCoreSha256||marker?.transformationSha256!==expectedOverlay.transformationSha256)throw new Error('Required actual Tauri module overlay is absent or differs');
+  const createModuleInvokeObserver=(${createModuleInvokeObserver.toString()});
   window.__resourceIpc=[];
+  window.__resourceObserver=createModuleInvokeObserver(()=>window.__resourceIpc,()=>performance.now());
+  globalThis.__piModuleInvokeObserver=window.__resourceObserver;
   const api=window.__resourceApi;const {atlasVisibility,...defaults}=await api.getSettings();
   const observer=window.__resourceObserver;
-  observer.verified=observer.installed&&native.invoke===observer.wrapper&&window.__resourceIpc.length>0;
-  window.__resourceObserverMetadata={installed:observer.installed,verified:observer.verified,descriptor:observer.descriptor,reason:observer.reason??(observer.verified?undefined:'Ordinary settings probe was not observed')};
+  const verified=observer.settingsProbeCalls>0&&observer.failures===0&&window.__resourceIpc.length>0;
+  window.__resourceObserverMetadata={installed:true,verified,...marker,settingsProbeCalls:observer.settingsProbeCalls,boundary:'@tauri-apps/api/core module invoke',byteUnits:'UTF-8 JSON args/result proxies',actualWireBytes:'unknown',directInjectedBridgeCoverage:'unknown'};
+  if(!verified)throw new Error('Ordinary getSettings did not cross the actual instrumented Tauri module');
   await api.setDefaults({...defaults,provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',
     localBaseUrl:'http://127.0.0.1:1443/local/v1',reasoningEffort:'off',defaultVaultAccess:'none'});
   return true;`;
 
 // Navigation can invalidate a WebDriver completion after the first workspace
 // frame. Setup is idempotent; retries never admit a journey until it succeeds.
-export async function initializeResourceWorkspace({execute,output,phase,afterTimeOrigin,timeoutMs=45000,wait=waitUntil}) {
+export async function initializeResourceWorkspace({execute,output,phase,afterTimeOrigin,expectedOverlay,timeoutMs=45000,wait=waitUntil}) {
   if(afterTimeOrigin!==undefined)assert(Number.isFinite(afterTimeOrigin)&&afterTimeOrigin>0,'Actual prior document time origin required');
   let attempt=0;
   return wait(async()=>{
     attempt++;
     try {
-      assert.equal(await execute(browserSetup,afterTimeOrigin===undefined?[]:[afterTimeOrigin]),true,'Browser setup did not acknowledge readiness');
+      assert.equal(await execute(browserSetup,[afterTimeOrigin,expectedOverlay]),true,'Browser setup did not acknowledge readiness');
       return true;
     } catch(error) {
       output.lastInitializeError={phase,attempt,error:String(error).slice(0,700)};
@@ -222,7 +225,8 @@ export const browserSend = `
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));events.push({kind:cancel?'cancel_settled':'terminal',atMs:performance.now()});
   const ipc=window.__resourceIpc.slice();window.__resourceIpc=[];
   const observer=window.__resourceObserverMetadata;
-  if(window.__resourceObserver?.wrapper!==window.__TAURI_INTERNALS__.invoke)observer.verified=false;
+  observer.failures=window.__resourceObserver.failures;
+  if(globalThis.__piModuleInvokeObserver!==window.__resourceObserver||observer.failures)observer.verified=false;
   return {events,ipc,observer,terminalStatus:terminal.status,messageCount:(await api.getConversation(id)).messages.length};`;
 
 export async function runSharedResourceGate(options) {
@@ -233,7 +237,7 @@ export async function runSharedResourceGate(options) {
     limits: ['Prepared core compatible-fixture gate; no live/Responses/scale/source/review/Save acceptance.',
       'Renderer/helper RSS unknown; app RSS sampled only. Startup invoke coverage incomplete.',
       'UI detection polls at 50ms then waits two frames; provider/renderer clock calibration has recorded round-trip uncertainty.',
-      'IPC is unknown when the native invoke boundary is locked or its real settings probe is not observed; empty captures never establish complete coverage.',
+      'An identical generated Vite overlay observes @tauri-apps/api/core module invoke after setup. Direct injected bridge calls and startup bypass it. Byte counts are UTF-8 JSON args/result proxies, not actual native wire bytes; observer overhead applies to both lanes.',
       'Observer getConversation calls contribute to IPC/latency; no performance win/adoption verdict.'], verdict: 'unproven-pending-acceptance' };
   try {
     for (const lane of (options.first==='pi'?['pi','old']:['old','pi'])) {
@@ -248,6 +252,7 @@ export async function runSharedResourceGate(options) {
         frontendSourceSha256: frontendSourceDigest(source), lockfileSha256: hash(readFileSync(join(source,'pnpm-lock.yaml'))),
         frontendReceiptVerified: false, rendererRssBytes: null, allProcessRssBytes: null,
         startupIpcCoverage: 'unknown', protocol: 'compatible', provider: 'fixture', profile: 'debug', presentation: foreground ? 'explicit-foreground' : 'background' };
+      output.measurementOverlay=createInvokeObserverConfig(source,laneRoot);
       report.lanes.push(output);
       let app, server, session, timer, rss = [], pinnedStart;
       const wd = createWebDriverRequest(4445, 60000);
@@ -274,7 +279,7 @@ export async function runSharedResourceGate(options) {
         await waitUntil(async()=>{try{return await execute(`if(!document.querySelector('[data-testid="workspace-pane"]'))return false;await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));return true;`)}catch{return false}},'usable workspace',45000,100);
         const end = performance.now();
         output.journeys.push({scenario:'startup',cache:'cold-process',startupKind:output.journeys.length?'restart':'initial',osCache:'uncontrolled',events:[{kind:'launch',atMs:0},{kind:'workspace_visible',atMs:end-start},...rss.filter(row=>row.atMs>=start&&row.atMs<=end).map(row=>({...row,atMs:row.atMs-start}))].sort((a,b)=>a.atMs-b.atMs),ipcCoverage:'unknown',providerCoverage:'unknown',pollingUncertaintyMs:100});
-        await initializeResourceWorkspace({execute,output,phase:output.journeys.length===1?'initial browser setup':'restart browser setup'});
+        await initializeResourceWorkspace({execute,output,expectedOverlay:output.measurementOverlay,phase:output.journeys.length===1?'initial browser setup':'restart browser setup'});
       };
       const stop = async signal => {
         clearInterval(timer);timer=undefined;
@@ -283,14 +288,14 @@ export async function runSharedResourceGate(options) {
       };
       try {
         const fd=openSync(join(laneRoot,'frontend.log'),'a',0o600);
-        server=spawn('pnpm',['exec','vite','--host','127.0.0.1','--port',String(port),'--strictPort'],{cwd:source,env,stdio:['ignore',fd,fd],detached:true});closeSync(fd);
+        server=spawn('pnpm',['exec','vite','--config',output.measurementOverlay.configurationPath,'--host','127.0.0.1','--port',String(port),'--strictPort'],{cwd:source,env,stdio:['ignore',fd,fd],detached:true});closeSync(fd);
         await waitUntil(async signal=>(await fetch(`http://127.0.0.1:${port}/`,{signal})).ok,'owned frontend',30000);
         await launch();
         const id=await execute(`return(await window.__resourceApi.createConversation({title:'Shared resource conversation',provider:'local',model:'pi-native-fixture',reasoningEffort:'off',vaultAccess:'none'})).id;`);
         // Reload refreshes the normal controller after API-only synthetic setup.
         const previousTimeOrigin=await execute('return performance.timeOrigin;');
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-        await initializeResourceWorkspace({execute,output,phase:'normal reloaded workspace',afterTimeOrigin:previousTimeOrigin,timeoutMs:30000});
+        await initializeResourceWorkspace({execute,output,expectedOverlay:output.measurementOverlay,phase:'normal reloaded workspace',afterTimeOrigin:previousTimeOrigin,timeoutMs:30000});
         output.phase='initial conversation selection';await execute(browserSelect,[id]);
         for(const [scenario,prompt,cancel] of [['short','RESOURCE_HELLO',false],['followup','RESOURCE_FOLLOWUP',false],['cancel','RESOURCE_STOP',true]]){
           output.phase=scenario;const firstRequest=fixture.requests.length;
@@ -304,7 +309,9 @@ export async function runSharedResourceGate(options) {
           const serverComplete=requests.length>0&&requests.every(row=>!row.failed&&row.endMs!==null&&row.startMs>=start&&row.endMs<=end);
           for(const row of requests){if(row.startMs>=start)events.push({kind:'provider_start',atMs:row.startMs,dispatch:row.index});if(row.endMs!==null&&row.endMs>=start)events.push({kind:'provider_end',atMs:row.endMs,dispatch:row.index})}
           events.push(...rss.filter(row=>row.atMs>=start&&row.atMs<=end));
-          output.journeys.push({scenario,cache:'warm-process',events:events.map(row=>({...row,atMs:row.atMs-start})).sort((a,b)=>a.atMs-b.atMs),ipcCoverage:observedIpcCoverage(result.observer,result.ipc),ipcObserver:result.observer,providerCoverage:'partial',serverIntervalCoverage:serverComplete?'complete':'partial',
+          const coverage=observedIpcCoverage(result.observer,result.ipc);
+          assert.equal(coverage,'complete','Actual module invoke observation missing or incomplete; IPC must not be fabricated');
+          output.journeys.push({scenario,cache:'warm-process',events:events.map(row=>({...row,atMs:row.atMs-start})).sort((a,b)=>a.atMs-b.atMs),ipcCoverage:coverage,ipcCoverageScope:'@tauri-apps/api/core module invoke only',ipcByteUnits:'UTF-8 JSON args/result proxies',actualWireBytesCoverage:'unknown',ipcObserver:result.observer,providerCoverage:'partial',serverIntervalCoverage:serverComplete?'complete':'partial',
             terminalStatus:result.terminalStatus,messageCount:result.messageCount,clockCalibrationUncertaintyMs:(after-before)/2,pollingUncertaintyMs:50,
             providerFrames:requests.reduce((sum,row)=>sum+(row.frames??0),0),providerFrameBytes:requests.reduce((sum,row)=>sum+(row.frameBytes??0),0)});
         }
@@ -319,6 +326,9 @@ export async function runSharedResourceGate(options) {
       }
       assert.equal(hash(readFileSync(binary)),output.binarySha256,'Measured binary changed');
       assert.equal(frontendSourceDigest(source),output.frontendSourceSha256,'Served frontend changed during capture');
+      assert.equal(hash(readFileSync(output.measurementOverlay.corePath)),output.measurementOverlay.originalCoreSha256,'Measured Tauri module changed');
+      assert.equal(hash(readFileSync(output.measurementOverlay.configurationPath)),output.measurementOverlay.configurationSha256,'Measurement config changed');
+      assert.equal(hash(readFileSync(output.measurementOverlay.overlayPath)),output.measurementOverlay.overlaySha256,'Measurement overlay changed');
     }
     assert(!fixture.requests.some(row=>row.failed),'Fixture refused a request');report.status='passed-core-fixture';
   } catch(error) {

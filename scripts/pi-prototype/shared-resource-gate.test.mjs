@@ -91,7 +91,8 @@ test('replaceable real invoke observer preserves receiver, arguments, result and
   const rows=[{requestBytes:2,responseBytes:4}];
   assert.equal(observedIpcCoverage({...observer,verified:false},rows),'unknown');
   assert.equal(observedIpcCoverage({...observer,verified:true},rows),'complete');
-  assert.equal(observedIpcCoverage({...observer,verified:true},[{requestBytes:2,responseBytes:null}]),'partial');
+  assert.equal(observedIpcCoverage({...observer,verified:true},[{requestBytes:2,responseBytes:null}]),'complete');
+  assert.equal(observedIpcCoverage({...observer,verified:true,failures:1},rows),'unknown');
 });
 test('initial browser setup retries transient navigation using the same real idempotent setup',async()=>{
   const output={journeys:[{scenario:'startup'}]},scripts=[];
@@ -100,7 +101,7 @@ test('initial browser setup retries transient navigation using the same real ide
     wait:async(check,phase,timeout)=>{assert.equal(phase,'initial browser setup');assert.equal(timeout,45000);assert.equal(await check(),false);return check();}
   });
   assert.equal(result,true);assert.equal(scripts.length,2);assert.equal(scripts[0],scripts[1]);
-  assert.match(scripts[0],/Native workspace required/);assert.match(scripts[0],/installInvokeObserver/);
+  assert.match(scripts[0],/Native workspace required/);assert.match(scripts[0],/createModuleInvokeObserver/);
   assert.match(scripts[0],/await api\.setDefaults/);
   assert.deepEqual(output.lastInitializeError,{phase:'initial browser setup',attempt:1,error:'Error: Completion handler for function call is no longer reachable'});
   assert.deepEqual(output.journeys,[{scenario:'startup'}]);
@@ -128,7 +129,7 @@ test('reload setup refuses the previous live document before importing or admitt
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
   const result=await initializeResourceWorkspace({output,phase:'normal reloaded workspace',afterTimeOrigin:100,
     execute:async(script,args)=>{
-      assert.deepEqual(args,[100]);attempts++;
+      assert.deepEqual(args,[100,undefined]);attempts++;
       if(attempts===1)return new AsyncFunction(`const performance={timeOrigin:100};${script}`)(...args);
       // The second owned document can now complete ordinary setup; the first
       // must fail at its actual epoch guard, before even attempting the import.
