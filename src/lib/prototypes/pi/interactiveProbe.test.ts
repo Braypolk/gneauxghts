@@ -54,6 +54,7 @@ function compactWorkspace() {
   };
   const pane = {
     dataset: { paneId: 'pane-2', paneKind: 'chat' },
+    querySelectorAll: () => [],
     querySelector: (selector: string) => selector === '[aria-label="Chat title"]' ? state.collapsed ? field : null
       : selector === 'textarea[aria-label="Message"]' ? state.docked ? null : composer
       : selector === '[data-pane-frame][inert]' && state.collapsed ? {} : null,
@@ -70,6 +71,7 @@ function compactWorkspace() {
   };
   const foreignField = { value: 'Pi interactive B', closest: () => null, getClientRects: () => [1], focus: vi.fn() };
   const foreignPane = { dataset: { paneId: 'foreign', paneKind: 'chat' }, closest: () => null, getClientRects: () => [1],
+    querySelectorAll: () => [],
     querySelector: (selector: string) => selector === '[aria-label="Chat title"]' ? foreignField : foreignComposer,
     hasAttribute: () => false };
   const rail = {
@@ -82,6 +84,7 @@ function compactWorkspace() {
   const panel = { closest: () => state.collapsed ? {} : null, getClientRects: () => [1] };
   const editorPane = { dataset: { paneId: 'pane-1', paneKind: 'editor' }, hasAttribute: () => false, querySelector: () => null };
   vi.stubGlobal('document', {
+    visibilityState: 'visible', hasFocus: () => true,
     activeElement: null, body: { innerText: 'Review editor and retained chat' },
     querySelector: () => editorPane,
     querySelectorAll: (selector: string) => {
@@ -240,7 +243,7 @@ describe('normal saved Open note restores compact Keep editor before origin navi
     const foreignOpen = { ...open, click: vi.fn() };
     const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
     const item = { textContent: 'Pi interactive A', click: vi.fn() };
-    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] });
+    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === '[role="log"]' ? [] : selector === 'button' ? [picker] : [item] });
     const queryAll = document.querySelectorAll.bind(document);
     Object.assign(document, {
       querySelector: (selector: string) => selector === '[data-chat-message-id="answer"]' ? state.mounted && !retainedSplit ? undefined : card : {},
@@ -416,7 +419,7 @@ describe('interactive relaunch consumes independent normal Keep proof', () => {
     vi.spyOn(EditorView, 'findFromDOM').mockReturnValue(view as unknown as EditorView);
     const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
     const item = { textContent: 'Pi interactive A', click: vi.fn() };
-    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] });
+    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === '[role="log"]' ? [] : selector === 'button' ? [picker] : [item] });
     const keep = { ...visible, disabled: false, textContent: 'Keep All', getAttribute: () => null, click: vi.fn(() => {
       const plan = published.at(-1)?.receipts.publicationPlans?.kept;
       expect(plan).toMatchObject({ proposalId: 'keep', reviewId: 'exact-review', reviewedDraft: mounted, expectedKeepDraft: { version: expectedKeepVersion, decisions: [{ status: 'kept' }] } });

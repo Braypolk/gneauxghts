@@ -45,9 +45,15 @@ export async function focusProbeChatComposer(pane: HTMLElement, until: <T>(read:
 
 export function probeChatSendDiagnostics() {
   return {
+    documentVisibility: document.visibilityState,
+    documentFocused: document.hasFocus(),
     panes: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"][data-pane-kind="chat"]')).slice(0, 6)
       .map(pane => ({ paneId: pane.dataset.paneId, title: probePaneTitle(pane, 'chat')?.value,
-        retainedComposer: Boolean(pane.querySelector('textarea[aria-label="Message"]')), visible: visible(pane) })),
+        retainedComposer: Boolean(pane.querySelector('textarea[aria-label="Message"]')), visible: visible(pane),
+        history: Array.from(pane.querySelectorAll<HTMLElement>('[role="log"]')).map(log => ({
+          phase: log.dataset.chatLoadingPhase, rendered: log.dataset.chatRenderedMessages,
+          total: log.dataset.chatTotalMessages, busy: log.getAttribute('aria-busy')
+        })) })),
     composers: Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]')).slice(0, 6)
       .map(node => ({ paneId: node.closest<HTMLElement>('[data-testid="workspace-pane"]')?.dataset.paneId,
         inDock: Boolean(node.closest('.workspace-chat-slot')), dockMode: node.closest<HTMLElement>('[data-input-dock-mode]')?.dataset.inputDockMode,

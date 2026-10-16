@@ -23,6 +23,7 @@
     type ChatScrollPosition
   } from './chatMessageScroll';
   import { chatSelectionToMarkdown, chatSelectionDescriptor } from './chatSelectionMarkdown';
+  import { renderChatHistoryInBatches } from './chatHistoryRendering';
 
   interface Props {
     controller: ChatController;
@@ -108,7 +109,7 @@
     const current = conversation;
     const loading = isInitializing || isLoadingConversation;
     const count = current?.messages.length ?? 0;
-    let frame: number | undefined;
+    let cancelRendering: (() => void) | undefined;
     untrack(() => {
       if (!current || loading) {
         renderedConversationId = null;
@@ -119,14 +120,12 @@
         renderedConversationId = current.id;
         renderedCount = 0;
       }
-      const renderBatch = () => {
-        renderedCount = Math.min(count, renderedCount + 8);
-        if (renderedCount < count) frame = requestAnimationFrame(renderBatch);
-      };
-      renderBatch();
+      cancelRendering = renderChatHistoryInBatches(count, renderedCount, next => {
+        renderedCount = next;
+      });
     });
     return () => {
-      if (frame !== undefined) cancelAnimationFrame(frame);
+      cancelRendering?.();
     };
   });
 
@@ -451,6 +450,9 @@
   class="relative min-h-0 min-w-0 max-w-full flex-1 overflow-x-hidden overflow-y-auto py-4 sm:py-5"
   role="log"
   data-pane-content
+  data-chat-loading-phase={isInitializing ? 'initializing' : isLoadingConversation ? 'selection' : isRenderingHistory ? 'history' : 'ready'}
+  data-chat-rendered-messages={visibleMessages.length}
+  data-chat-total-messages={conversation?.messages.length ?? 0}
   aria-live="polite"
   aria-busy={isInitializing || isLoadingConversation || isRenderingHistory}
   onscroll={updateScrollFollowing}
