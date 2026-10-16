@@ -20,11 +20,48 @@ Final native gates remain open.
 
 ## Current checkpoint — 2026-10-16
 
-Product lifecycle semantics remain frozen through `b52b1a6`; the next capture
-will explicitly add a native fixture close wrapper/registration delta. Diagnostic capture
-**v26**, canonical manifest
-`92782d6d42e182791d1138b8c3dfcc0e96d9d5d5bc36b82c9a9b3895b25ce35c`,
-now has an actual bounded **local iOS live PASS**: **ZlW6lU**, executable SHA
+Captured preparation is frozen at **v27**, canonical manifest
+`d3d120f286fc7273dad773e38ee67cdb289fd745195c145d8f540117eef1ec89`,
+`/private/tmp/pi-removal-final-20261015-v27`. Transcript/expanded source copies
+verified 1504 retained files and 52 legacy absences. The retained
+`v26-v27-source-diff.json` explicitly allows native `lib.rs`/`pi_prototype.rs`
+fixture-close wrapper/registration changes: **native bytes are not identical**.
+Product lifecycle owner/semantics remain based on `b52b1a6`.
+
+v27 desktop compiled and three lifecycle exclusion checks passed, SHA
+`f0a44da5b404ca50b215326f49dd5ef0fff296ac495105f2eb5722c0cc5167c4`.
+iOS transcript/expanded compiled; receipts are in v27 `artifacts/*build.json`.
+Actual v27 transcript **z3TtcW whole PASS**, exit 0, SHA
+`6ba7182fbee956ffe660419b214d06182b309af87ce86d78f7ae2e057c31f7c8`.
+[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-z3TtcW/ios-transcript-gate.json)
+records six synthetic requests, real sandbox CD286BAC→B6A513BA relocation with
+same vault/owner, exact pending body/version and retained authored conflict.
+Normal Retry Keep recovered `pi-review-60:3` at the relocated path with exactly
+one publication, proof cleared and canonical SHA unchanged; normal source
+navigation/stable Origin lookup/unknown-root rejection and both ordered portable
+close receipts passed. The root preserved 46 closed files at
+`/private/tmp/pi-owned-simulator-after-v27-transcript-20261015` before owned
+uninstall. Scope is synthetic/programmatic WKWebView, not live/physical touch or
+standalone Settings vault relocation.
+
+v27 expanded **lvqjxb whole FAILED**, session 69024 closed exit 1, SHA
+`e4faddd647a175dd91d6346353ccb0d3bf36c1cf29241d87ae5a6567e8204d2b`.
+[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-lvqjxb/ios-interactive-gate.json)
+records 26 requests, first 14 checks passed and five relaunch checks passed,
+including all three independent Keep/Save/append plans and exact canonical
+read-backs. The next `saved note in retained editor` deadline followed compact
+normal `openChat` unmounting the editor in `settleReview`; this is not a canonical
+publication discrepancy. Normal originating-message Open note before the existing
+exact editor/backlink assertion is being prepared, not a rerun pass.
+
+Artificial STOP/CONT of the exact owned PID completed in 14,008 ms with same
+process/launch and static-report no replay. `freshPostContinueUiRead:false` and
+`durablePartialAndReviewVerifiedByFollowingRelaunch:false` remain false because
+the whole phase failed; no OS-pressure or fresh post-CONT proof is inferred.
+The root preserved the closed 51-entry container at
+`/private/tmp/pi-owned-simulator-after-v27-expanded-failure-20261015` before owned
+uninstall. No iOS tests remain running. Earlier **v26** (`92782d6d…ce35c`) retains its own bounded **local iOS live PASS**:
+**ZlW6lU**, executable SHA
 `1a1c106c3057b0b36b084e5ca2b6c95d0556f6e5105f50b826cfb71b37a48c88`.
 [Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-ZlW6lU/ios-live-gate.json)
 records four phases ending `complete/passed`, two normal Sends, three real
@@ -55,26 +92,43 @@ Convert/Restore, normal Save/Keep plus duplicate committed receipt, exact pendin
 review acknowledgement, uncertain Keep conflict and relocation-state checkpoint;
 **no actual move/restart happened**. Native `prepare_restart` deliberately rejects
 iOS `can_relaunch=false` before lifecycle admission; the probe incorrectly assumed
-desktop restart portability. The pending fixture-only `pi_probe_prepare_close`
-wrapper will call existing `AppLifecycle.prepare_restart` on a blocking worker,
-under fixture/interactive/expanded guards. Its native wrapper/registration bytes
-will change at the next capture; product lifecycle semantics remain unchanged.
-No production iOS restart change or forced portable marker is proposed.
+desktop restart portability. Prepared `1ae47ec` fixture-only
+`pi_probe_prepare_close` calls existing `AppLifecycle.prepare_restart` on a
+blocking worker under fixture/interactive/expanded guards. Three native
+`diagnostic_close` checks and 28 TypeScript checks passed; fresh review found no
+functional findings. The manual-copy integration failure filename was clarified.
+No production iOS restart change or forced portable marker is introduced.
+The closed 48-entry xVPQ2S container was preserved at
+`/private/tmp/pi-owned-simulator-after-v26-transcript-failure-20261015` before
+owned uninstall.
 
 The v26 expanded executable compiled, SHA
 `bef89cdc07b78dc3a4e2316123ed3a2b26885b855cb919054742e30c2576916f`,
-but **never ran**. Shared expanded waits for the independently reviewed Keep/
-canonical-proof correction and a new capture. That diagnostic gap does not prove
-product corruption or a shared gate pass. Prior MlXAXC/yvWBO9 failures and v23/v22
-compiler/scale pins retain their own source and evidence scopes.
+but **never ran**. Prepared `bfe4260` independently binds shared Keep version/
+canonical publication proof, including staged v1/empty decisions→mounted v2
+pending→normal Keep v3 actual-relaunch caller regression. Thirty TypeScript and
+11 Python checks passed, Svelte zero errors/warnings, fresh Spec review without
+findings; root `check:e2e` passed. These preparations do not establish native
+acceptance or product corruption. Prior MlXAXC/yvWBO9 failures and v23/v22 pins
+retain their own source scopes.
 
-Scale **v5** remains running against v22. The root's last memory projection of
-476/1005 submissions is historical progress only; no fresh count or final durable
-seed/history/identity/provider accounting is established. Desktop expanded and
-owned churn remain queued, **not started**, after v5 closes and owned ports clear.
+Scale **v5** remains running, untouched on v22. The root's 04:32 memory
+projection of 576/1005 submissions is historical progress only, not final durable
+seed/history/identity/provider accounting. Prior v23 desktop queue PID 36092 was
+verified/stopped at 04:33 **before any gate or log started**; the
+[queue supersession receipt](/private/tmp/pi-final-desktop-queue-v23-superseded-20261015.json)
+preserves that boundary. The replacement
+[compiled-v27 queue](/private/tmp/pi-final-desktop-queue-v27-20261015.json) still
+waits for full v5 closure/owned ports. Desktop expanded and owned churn have
+**not started**.
 Compilation, pure-test CPU and independent simulator work may overlap functional
 scale; no timing/RSS/resource comparison is claimed. Earlier failed v3/v4 runs
-remain incomplete, not scale acceptance.
+remain incomplete, not scale acceptance. A minimal `chatApi.ts`/test correction
+for needless source-free empty native validations is assigned; no summary/index
+rewrite is proposed. Source inspection of roughly 2N needless calls is not
+measured attribution or an optimization speed claim; current v5/v22 is untouched.
+The Mac is locked; optional unlock is pending before normal persistent-app quit
+for a separate resource comparison, with no new comparison result.
 
 The rebuilt manual desktop bundle SHA
 `e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`
