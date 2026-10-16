@@ -1,5 +1,7 @@
 """Synthetic unit fixtures; not native acceptance evidence."""
 import importlib.util
+from contextlib import closing
+import shutil
 import sqlite3
 import tempfile
 import unittest
@@ -11,11 +13,31 @@ spec.loader.exec_module(effects)
 
 
 class EffectProof(unittest.TestCase):
+    def test_closed_wal_snapshot_counts_commits_missing_from_main_database(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            producer = root / 'producer.sqlite'
+            closed = root / 'closed'
+            closed.mkdir()
+            with closing(sqlite3.connect(producer)) as writer:
+                writer.execute('PRAGMA journal_mode=WAL')
+                writer.execute('PRAGMA wal_autocheckpoint=0')
+                writer.execute('CREATE TABLE publication_receipts(note_id TEXT)')
+                writer.commit()
+                writer.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchall()
+                writer.execute("INSERT INTO publication_receipts VALUES('accepted')")
+                writer.commit()
+                for suffix in ('', '-wal', '-shm'):
+                    shutil.copyfile(Path(str(producer) + suffix), closed / ('history.sqlite3' + suffix))
+            before = {path.name: path.read_bytes() for path in closed.iterdir()}
+            self.assertEqual(effects.snapshot(closed, {'accepted': 1}), {'accepted': {'publicationReceipts': 1}})
+            self.assertEqual({path.name: path.read_bytes() for path in closed.iterdir()}, before)
+
     def test_counts_exact_effects_and_does_not_modify_sqlite(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
             database = root / 'history.sqlite3'
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.executescript('CREATE TABLE publication_receipts(note_id TEXT);'
                     "INSERT INTO publication_receipts VALUES('created'),('saved'),('saved');")
             before = database.read_bytes()
@@ -24,7 +46,7 @@ class EffectProof(unittest.TestCase):
             self.assertEqual(database.read_bytes(), before)
             with self.assertRaises(AssertionError):
                 effects.snapshot(root, {'created': 2})
-            with sqlite3.connect(database) as connection:
+            with closing(sqlite3.connect(database)) as connection, connection:
                 connection.execute("INSERT INTO publication_receipts VALUES('created')")
             with self.assertRaises(AssertionError):
                 effects.snapshot(root, {'created': 1})

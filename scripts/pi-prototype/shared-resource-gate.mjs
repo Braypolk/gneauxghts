@@ -98,7 +98,7 @@ export async function startSharedFixture() {
 
 export function parseArguments(argv) {
   const required = ['root', 'old-source', 'pi-source', 'old-binary', 'pi-binary', 'pi-sha256'];
-  const allowed = [...required,'first'];
+  const allowed = [...required,'first','old-sha256'];
   const options = {};
   for (let index = 0; index < argv.length; index += 2) {
     const key = argv[index]?.replace(/^--/, '');
@@ -108,9 +108,11 @@ export function parseArguments(argv) {
   assert(required.every(key => options[key]), 'Explicit roots, sources, binaries and Pi digest required');
   assert(options.first===undefined||['old','pi'].includes(options.first),'Invalid alternating lane order');
   assert(/^[a-f0-9]{64}$/.test(options['pi-sha256']), 'Invalid Pi binary digest');
+  options['old-sha256'] ??= OLD_SHA256;
+  assert(/^[a-f0-9]{64}$/.test(options['old-sha256']), 'Invalid old binary digest');
   for (const key of required.filter(key => key !== 'pi-sha256')) assert(options[key] === resolve(options[key]), 'Canonical absolute paths required');
   assert(!existsSync(options.root), 'Fresh generated output root required');
-  assert(hash(readFileSync(options['old-binary'])) === OLD_SHA256, 'Pinned old artifact differs');
+  assert(hash(readFileSync(options['old-binary'])) === options['old-sha256'], 'Pinned old artifact differs');
   assert(hash(readFileSync(options['pi-binary'])) === options['pi-sha256'], 'Pinned Pi artifact differs');
   for (const key of ['old-source', 'pi-source']) {
     assert(realpathSync(options[key]) === options[key], 'Canonical source path required');

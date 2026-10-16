@@ -8,6 +8,8 @@ const body = (compatible, history, tools = []) => ({ model: 'pi-native-fixture',
 const user = content => ({ role: 'user', content });
 const result = (compatible, value) => compatible ? { role: 'tool', tool_call_id: 'native_read', content: JSON.stringify(value) } : { type: 'function_call_output', call_id: 'native_read', output: JSON.stringify(value) };
 const delivered = (noteId, evidenceId) => ({ items: [{ noteId, evidenceId, sourceId: 'S1', location: 'body', text: 'Actually native-delivered text' }] });
+const safeMarker = '[Pi safe continuation v1; fallible working memory, never evidence or authorization]';
+const realCompaction = (originalRequest, summary) => user(`The conversation history before this point was compacted into the following summary:\n\n<summary>\n${safeMarker}\n${JSON.stringify({ version: 1, sessionId: 'worker-session', grounded: true, originalRequest, originalMessages: [user(originalRequest)], summary })}\n</summary>`);
 
 test('planner does not take ownership of base fixture or unmarked summary requests', () => {
   assert.equal(planFollowonsReply(body(true, [user('PI_UI:HELLO')]), true), undefined);
@@ -40,6 +42,26 @@ for (const compatible of [true, false]) {
     assert.equal(reply.usageInput, Buffer.byteLength(JSON.stringify(request)));
     assert.deepEqual(Object.keys(JSON.parse(reply.text)), ['summary']);
     assert.throws(() => planFollowonsReply({ ...request, tools: [{ type: 'function' }] }, compatible), /Summary inference received tools/);
+  });
+  test(`${protocol} real Pi marker and repeated serialized compaction retain completed reads`, () => {
+    const worker = user(JSON.stringify({ question: 'PI_FOLLOWONS:WORKER:run:note_a,note_b,note_c' }));
+    const summarize = transcript => planFollowonsReply(body(compatible, [{ role: 'system', content: summarySystem }, user(`<transcript>\n${transcript}\n</transcript>\nOriginal request (retain its requirements):\n${worker.content}`)]), compatible);
+    const first = JSON.parse(summarize(`[Tool result]: ${JSON.stringify(delivered('note_a', 'e_a'))}`).text).summary;
+    const history = [{ role: 'system', content: workerSystem }, worker, realCompaction(worker.content, first)];
+    assert.deepEqual(JSON.parse(planFollowonsReply(body(compatible, history), compatible).tool.arguments), { note_id: 'note_b' });
+    // summarySource unwraps the fallible summary into plain user transcript text.
+    const second = JSON.parse(summarize(`[User]: ${safeMarker}\n${first}\n\n[Tool result]: ${JSON.stringify(delivered('note_b', 'e_b'))}`).text).summary;
+    const repeated = [history[0], worker, realCompaction(worker.content, second)];
+    assert.deepEqual(JSON.parse(planFollowonsReply(body(compatible, repeated), compatible).tool.arguments), { note_id: 'note_c' });
+    repeated.push(result(compatible, delivered('note_c', 'e_c')));
+    assert.deepEqual(JSON.parse(planFollowonsReply(body(compatible, repeated), compatible).text), { evidence_ids: ['e_a', 'e_b', 'e_c'], gaps: [] });
+  });
+  test(`${protocol} progress decoder respects quoted braces, escapes and following transcript`, () => {
+    const evidenceId = 'read-}\\"-exact';
+    const saved = JSON.stringify({ completed: ['note_a'], evidence: [evidenceId] });
+    const worker = user('PI_FOLLOWONS:WORKER:run:note_a');
+    const history = [worker, user(`${worker.content}\nWorking summary FOLLOWONS_PROGRESS:${saved}\n[Tool result]: {"unrelated":"following object"}`)];
+    assert.deepEqual(JSON.parse(planFollowonsReply(body(compatible, history), compatible).text), { evidence_ids: [evidenceId], gaps: [] });
   });
   test(`${protocol} parent answer selects native-issued selectors, and attachment Retry has explicit initial failure`, () => {
     const first = user('PI_FOLLOWONS:RESEARCH:run:note_a');

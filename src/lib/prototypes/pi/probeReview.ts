@@ -18,14 +18,16 @@ export async function acquireProbeReview<T,C>(input: {
     return input.editor();
   },'retained CodeMirror proposal review');
 }
-/** Capture the mounted checkpoint before injecting persistence failure. */
+/** Capture acknowledged mounted fields before testing an operation for writes. */
 export async function acknowledgedProbeDraft(input: {
   draft(): Promise<ChatProposalDraft>;
-  working(): Pick<ChatProposalDraft,'markdown'|'decisions'>;
+  working(): Pick<ChatProposalDraft,'markdown'|'decisions'|'title'> & Partial<Pick<ChatProposalDraft,'path'>>;
   until<V>(read: () => V | Promise<V>, label: string): Promise<NonNullable<V>>;
 }): Promise<ChatProposalDraft> {
   return input.until(async()=>{
     const draft=await input.draft(),working=input.working();
-    return draft.markdown===working.markdown && JSON.stringify(draft.decisions)===JSON.stringify(working.decisions) ? draft : undefined;
+    return draft.markdown===working.markdown && draft.title===working.title &&
+      (working.path===undefined || draft.path===working.path) &&
+      JSON.stringify(draft.decisions)===JSON.stringify(working.decisions) ? draft : undefined;
   },'acknowledged mounted review checkpoint');
 }

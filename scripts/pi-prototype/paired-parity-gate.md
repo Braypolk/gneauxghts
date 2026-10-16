@@ -5,9 +5,13 @@ this driver. Unit tests validate the fixture dialects and read-only effect proof
 they do not establish product parity. The native owner executes this after a
 frontend/artifact freeze and inspects the generated report and screenshots.
 
-The driver uses the pinned old artifact from
+By default the driver pins the original old artifact from
 `/private/tmp/pi-evaluation-pre-replacement-source-4b5ff2de/baseline-artifacts/gneauxghts`
-and an explicitly hashed Pi artifact. It imports only stable argument validation,
+to SHA-256 `435669a2fe3bd7b3d8baf32bff164c399a3fe68961660291a477ca6a03ce36f3`
+and requires an explicitly hashed Pi artifact. An alternate old artifact requires
+`--old-sha256` with exactly 64 lowercase hexadecimal characters matching the actual
+file bytes. This option is inherited from the shared argument parser; omitting it
+retains the original pin. It imports only stable argument validation,
 environment and source-digest helpers from `shared-resource-gate.mjs`; it changes
 none of that driver's scenarios or measurements. Existing files and production
 frontend behavior are unchanged.
@@ -43,6 +47,12 @@ Compatible and Responses are separate bounded runs. Responses refuses an old
 artifact without the literal debug `GNEAUXGHTS_OPENAI_FIXTURE_URL` capability;
 the fixture override is loopback only. It must not silently contact a live
 provider when that old binary was compiled without `e2e-chat-fixture`.
+For an alternate baseline built with `e2e-wdio,e2e-chat-fixture`, retain its old
+source revision, exact build command/features, build log and artifact digest;
+pass that artifact path and its verified digest through `--old-binary` and
+`--old-sha256`. The override changes the artifact provenance of the comparison;
+it does not prove a run, equivalence to the earlier binary, or a source-to-binary
+binding. The generated lane report records the actual binary SHA-256.
 
 Example for the exclusive native owner (replace Pi digest with the actual pinned
 artifact hash, use fresh absolute output roots, and retain the whole reports):
@@ -59,18 +69,33 @@ node scripts/pi-prototype/paired-parity-gate.mjs \
 ```
 
 Repeat with `--protocol responses`, a different fresh root and optionally
-`--first pi` to alternate order. The existing pinned old SHA validation remains
-mandatory. A failed lane is recorded before trying the second lane. Final status
+`--first pi` to alternate order. Old artifact SHA validation remains mandatory,
+using the original pin or explicit verified override. A failed lane is recorded
+before trying the second lane. Final status
 can pass only when all prepared checks in both lanes pass. Driver/fixture/browser
 source hashes, lane source/lockfile/binary hashes, provider operation receipts,
 canonical identities/bytes, NoteTimeline counts and final screenshots are retained.
 
-The NoteTimeline read-only verifier requires one generated `history.sqlite3` and
-counts exactly one publication for the created note, and two for the saved note
-(whole Save plus selected append), before and after duplicate Keeps. It reads
-with `mode=ro`, including committed WAL state, and never writes a database. This
-counts canonical domain effects without equating the old chat SQL layout and Pi
-documents.
+The NoteTimeline verifier requires one generated `history.sqlite3` and counts
+exactly one publication for the created note, and two for the saved note (whole
+Save plus selected append), before and after duplicate Keeps. Both measurements
+require the owning native process to have exited. The driver captures the full
+browser state, invokes retained native `prepare_restart`, requires both `ready`
+and `timelinePortable`, deletes the old WebDriver session, waits for owned process
+exit and driver port release, then measures. It relaunches the same artifact and
+data root against the same frontend, obtains a fresh session, initializes from
+the complete captured state and verifies no provider dispatch before running
+public duplicate Keeps. A second portable stop precedes the second measurement.
+Failed preparation, unexited children, restoration inference or duplicate
+inference cannot yield a passing proof. Soft and forced child exit waits are
+bounded; the driver only stops children it created.
+
+The shared `closed_sqlite_read` helper uses an immutable read for a closed database
+without sidecars. For a closed database with WAL/SHM/journal files it recovers a
+complete disposable copy with query-only reads, preserving all original bytes.
+It is never called while an app writer is alive. This counts canonical domain
+effects without equating the old chat SQL layout and Pi documents. The report
+retains both snapshots, full restoration state and both native shutdown receipts.
 
 Explicit comparison limits:
 
@@ -79,8 +104,9 @@ Explicit comparison limits:
   Pi's per-read Deny/Allow once dialog therefore has no old equivalent. It is a
   capability difference, not a passing paired dialog test. Persistent approved
   grants are compared through each public ChatApi; grant UI itself is omitted.
-- Source-free send/follow-up, Stop and restart remain in the existing shared
-  resource gate. This driver does not repeat them.
+- Source-free send/follow-up and Stop remain in the existing shared resource
+  gate. This driver adds only the portable restart and no-inference restoration
+  boundary needed for its closed canonical effect comparisons.
 - Update-existing-note model proposals, dirty editor conflicts, faults,
   compaction, research, attachments, web search, managed transcripts and iOS are
   outside this bounded subset and retain their separate acceptance requirements.
@@ -93,6 +119,6 @@ Explicit comparison limits:
 Pure preparation checks:
 
 ```sh
-node --test scripts/pi-prototype/paired-parity-fixture.test.mjs
+node --test scripts/pi-prototype/paired-parity-fixture.test.mjs scripts/pi-prototype/paired-parity-lifecycle.test.mjs
 python3 -B scripts/pi-prototype/paired-parity-effects.test.py
 ```

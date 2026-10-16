@@ -1,8 +1,10 @@
 // Explicit opt-in probe of the existing workspace, never an alternate UI/runtime.
 import { invoke } from '@tauri-apps/api/core';
+import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatProposalDraft, ChatMessage } from '$lib/features/chat/types';
 import { assertAcknowledgedReview } from './iosTranscriptContract';
+import { acquireProbeReview } from './probeReview';
 
 type ProbeApi = ChatApi & {
   prototypeState(): Promise<{ transcriptStateJson?: string }>;
@@ -43,8 +45,22 @@ async function send(id: string, content: string) {
   assert(message.status === 'completed', `Request ${message.status}: ${message.errorMessage}`); return message;
 }
 async function review(id: string) {
-  await open(); const card = await until(() => document.querySelector(`section[data-proposal-id="${id}"]`), 'proposal card'); await click('Review in editor', card);
+  const draft = await api.getProposalDraft!(id);
+  const editor = () => Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).some(node => node.value === draft.title)
+    ? Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown)
+    : undefined;
+  await acquireProbeReview({ editor, openChat: open, until,
+    card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
+    openCard: card => click('Review in editor', card) });
+  await open();
   return until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'normal review strip');
+}
+async function wholeSave(conversationId: string, messageId: string) {
+  await open();
+  const before = new Set((await api.listPendingProposals(conversationId)).map(value => value.id));
+  const answer = await until(() => document.querySelector(`[data-chat-message-id="${messageId}"]`), 'exact message Save control');
+  await click('Save to note', answer);
+  return until(async () => (await api.listPendingProposals(conversationId)).find(value => !before.has(value.id)), 'UI-staged whole-answer Save');
 }
 async function keep(id: string) { const strip = await review(id); (await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip) ?? button('Retry', strip), 'normal Keep or Retry')).click(); }
 async function conflict() { await until(() => button('Restore transcript from chat'), 'watcher-driven conflict UI'); }
@@ -80,7 +96,7 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
       await conflict(); assert((await api.getConversation(a.id)).projectionConflict === 'missing', 'Deleted transcript was not classified'); await resolve('Restore transcript from chat');
       report.checks.push('watcher-driven external edit/delete and normal Convert/Restore buttons');
       const cited = await send(a.id, `PI_UI:READ:${source.noteId}`); assert(cited.citations.length, 'No admitted source citation');
-      const saved = await api.prepareNoteSave!(a.id, cited.id); await select(a.id); await keep(saved.id);
+      const saved = await wholeSave(a.id, cited.id); await keep(saved.id);
       await until(async () => !(await api.listPendingProposals(a.id)).some(value => value.id === saved.id), 'Save receipt');
       const savedDraft = await api.getProposalDraft!(saved.id); const savedReceipt = await api.commitAgentProposal(saved.id, savedDraft.markdown, savedDraft.version);
       assert(savedReceipt.status === 'committed', 'Save was not committed'); report.receipts.saved = savedReceipt;
@@ -88,8 +104,8 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
       const pendingProposal = (await api.listPendingProposals(b.id))[0]; assert(pendingProposal, 'No pending proposal');
       const initial = await api.getProposalDraft!(pendingProposal.id);
       const pending = await api.checkpointProposalDraft!(pendingProposal.id, { ...initial, title: 'Relocated iOS pending review', markdown: `${initial.markdown}\n\nAcknowledged iOS relocation checkpoint.` });
-      await select(a.id); const uncertainProposal = await api.prepareNoteSave!(a.id, hello.id);
-      await api.prototypeFault(uncertainProposal.id, 'receipt-write'); await select(a.id); await keep(uncertainProposal.id);
+      await select(a.id); const uncertainProposal = await wholeSave(a.id, hello.id);
+      await api.prototypeFault(uncertainProposal.id, 'receipt-write'); await keep(uncertainProposal.id);
       await until(async () => (await api.listPendingProposals(a.id)).find(value => value.id === uncertainProposal.id && value.status === 'conflict'), 'uncertain native Keep acknowledgement');
       const uncertain = await api.getProposalDraft!(uncertainProposal.id);
       await select(b.id); await emit('awaiting-retained-conflict', { projectionPath: (await api.getConversation(b.id)).projectionPath }); await conflict();

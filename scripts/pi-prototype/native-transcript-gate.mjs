@@ -30,7 +30,27 @@ export function assertRecoveredEffect(before, after) {
 }
 const apiImport = "const {chatApi:api}=await import('/src/lib/features/chat/api.ts');";
 const nativeImport = "const {invoke}=await import('/node_modules/@tauri-apps/api/core.js');";
+export const pendingCheckpointScript = `${apiImport}
+const draft=await api.getProposalDraft(arguments[0]);
+return api.checkpointProposalDraft(arguments[0],{...draft,markdown:draft.markdown+arguments[1],title:arguments[2]});`;
 const ui = `const wait=async(read,label)=>{const end=Date.now()+20000;while(Date.now()<end){const value=await read();if(value)return value;await new Promise(r=>setTimeout(r,40));}throw new Error(label);};const button=(label,root=document)=>Array.from(root.querySelectorAll('button')).find(node=>!node.disabled&&(node.textContent.trim()===label||node.getAttribute('aria-label')===label));const open=async()=>{if(!document.querySelector('[aria-label="Thought partner chat"]'))(await wait(()=>button('Open thought partner'),'chat')).click();await wait(()=>document.querySelector('[aria-label="Thought partner chat"]'),'chat panel');};`;
+export const wholeSaveScript = `${apiImport}${ui}
+await open();
+const before=new Set((await api.listPendingProposals(arguments[0])).map(value=>value.id));
+const answer=await wait(()=>document.querySelector('[data-chat-message-id="'+arguments[1]+'"]'),'exact answer Save control');
+(await wait(()=>button('Save to note',answer),'normal whole-answer Save')).click();
+return wait(async()=> (await api.listPendingProposals(arguments[0])).find(value=>!before.has(value.id)),'UI-staged whole-answer Save proposal');`;
+export const reviewScript = `${apiImport}${ui}
+const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const {acquireProbeReview}=await import('/src/lib/prototypes/pi/probeReview.ts');
+const id=arguments[0],draft=await api.getProposalDraft(id);
+const editor=()=>Array.from(document.querySelectorAll('[data-testid="note-title"]')).some(node=>node.value===draft.title)
+  ?Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).map(node=>EditorView.findFromDOM(node)).find(view=>view?.state.doc.toString()===draft.markdown):undefined;
+await acquireProbeReview({editor,openChat:open,until:wait,
+  card:()=>document.querySelector('section[data-proposal-id="'+id+'"]')??undefined,
+  openCard:async card=>(await wait(()=>button('Review in editor',card),'Review')).click()});
+await open();await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+id+'"]'),'exact mounted review strip');
+return true;`;
 
 export async function runNativeTranscriptGate() {
   assert(!process.env.PI_PROTOTYPE_DATA, 'Unset PI_PROTOTYPE_DATA; this gate allocates synthetic data only');
@@ -79,8 +99,9 @@ export async function runNativeTranscriptGate() {
   };
   const conflictVisible = async () => waitUntil(() => call(`return Array.from(document.querySelectorAll('button')).some(node=>node.textContent.trim()==='Restore transcript from chat'&&!node.disabled);`), 'watcher-driven conflict buttons', 15000);
   const conflictAction = async label => call(`${ui}(await wait(()=>button(arguments[0]),'conflict action')).click();await wait(()=>!Array.from(document.querySelectorAll('button')).some(node=>node.textContent.trim()==='Restore transcript from chat'),'conflict settled');return true;`, [label]);
-  const review = async id => call(`${ui}await open();const card=await wait(()=>document.querySelector('section[data-proposal-id="'+arguments[0]+'"]'),'proposal card');(await wait(()=>button('Review in editor',card),'Review')).click();await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+arguments[0]+'"]'),'review strip');return true;`, [id]);
-  const keep = async id => call(`${ui}const strip=await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+arguments[0]+'"]'),'review strip');(await wait(()=>button('Keep All',strip)??button('Keep Remaining',strip),'Keep')).click();return true;`, [id]);
+  const wholeSave = async (id, messageId) => call(wholeSaveScript, [id, messageId]);
+  const review = async id => call(reviewScript, [id]);
+  const keep = async id => call(`${ui}const strip=await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+arguments[0]+'"]'),'review strip');(await wait(()=>button('Keep All',strip)??button('Keep Remaining',strip)??button('Retry',strip),'Keep or Retry')).click();return true;`, [id]);
   const shot = async name => { const path = join(root, `${name}.png`); writeFileSync(path, Buffer.from(await wd(`/session/${session.sessionId}/screenshot`, undefined, 'GET'), 'base64')); report.screenshots.push(path); };
   const closedSnapshot = (data, phase) => {
     const result = spawnSync('python3', ['-B', 'scripts/pi-prototype/verify-transcript-effects.py', data], { encoding: 'utf8' });
@@ -109,22 +130,21 @@ export async function runNativeTranscriptGate() {
     report.checks.push('native committed projection, watcher edit/delete UI, explicit Convert/Restore, preserved ordinary external copy, no inference');
     const cited = await send(setup.a.id, `PI_UI:READ:${setup.source.noteId}`); assert(cited.citations.length);
     await waitUntil(() => { const bytes=readFileSync(transcript,'utf8');return bytes.includes('Synthetic canonical orchard evidence.')&&bytes.includes('[[Pi transcript orchard|'); }, 'relative source display link');
-    const saved = await call(`${apiImport}return api.prepareNoteSave(arguments[0],arguments[1]);`, [setup.a.id, cited.id]);
-    // API-staged proposal events are not UI admission events; selecting reloads its public pending list.
-    await select(setup.a.title); await review(saved.id); await keep(saved.id);
+    const saved = await wholeSave(setup.a.id, cited.id);
+    await review(saved.id); await keep(saved.id);
     await waitUntil(async () => !(await call(`${apiImport}return api.listPendingProposals(arguments[0]);`, [setup.a.id])).some(value => value.id === saved.id), 'Save native receipt');
     const savedDraft = await call(`${apiImport}return api.getProposalDraft(arguments[0]);`, [saved.id]);
     const savedReceipt = await call(`${apiImport}return api.commitAgentProposal(arguments[0],arguments[1],arguments[2]);`, [saved.id,savedDraft.markdown,savedDraft.version]);
     assert(savedReceipt.applied.path && readFileSync(savedReceipt.applied.path,'utf8').includes(`[[Chats/Pi/${setup.a.id}/Origin#^msg_${cited.id}`)); report.saved = savedReceipt;
     await select(setup.b.title); await send(setup.b.id, 'PI_UI:HELLO'); await send(setup.b.id, 'PI_UI:CREATE');
     const pending = (await call(`${apiImport}return api.listPendingProposals(arguments[0]);`, [setup.b.id]))[0]; assert(pending);
-    const pendingDraft = await call(`${apiImport}const draft=await api.getProposalDraft(arguments[0]);return api.checkpointProposalDraft(arguments[0],{...draft,markdown:draft.markdown+'\n\nAcknowledged relocation checkpoint.',title:'Relocated pending review'});`,[pending.id]);
+    const pendingDraft = await call(pendingCheckpointScript,[pending.id,'\n\nAcknowledged relocation checkpoint.','Relocated pending review']);
     report.pending={id:pending.id,draft:pendingDraft}; await review(pending.id); await shot('pending-review-before-move');
     // A distinct Save proposal remains accepted but its native acknowledgement is withheld.
     await select(setup.a.title);
-    const uncertain=await call(`${apiImport}return api.prepareNoteSave(arguments[0],arguments[1]);`,[setup.a.id,hello.id]);
+    const uncertain=await wholeSave(setup.a.id,hello.id);
     await call(`${apiImport}await api.prototypeFault(arguments[0],'receipt-write');return true;`,[uncertain.id]);
-    await select(setup.a.title); await review(uncertain.id); await keep(uncertain.id);
+    await review(uncertain.id); await keep(uncertain.id);
     await waitUntil(async()=> (await call(`${apiImport}return api.listPendingProposals(arguments[0]);`,[setup.a.id])).find(value=>value.id===uncertain.id&&value.status==='conflict'),'uncertain Keep acknowledgement');
     const uncertainDraft=await call(`${apiImport}return api.getProposalDraft(arguments[0]);`,[uncertain.id]);
     assert(readFileSync(uncertainDraft.path,'utf8').includes(hello.content)); report.uncertain={id:uncertain.id,draft:uncertainDraft};

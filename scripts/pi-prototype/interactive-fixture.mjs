@@ -61,7 +61,9 @@ export function planInteractiveReply(body, compatible, attempt = 1) {
   if (journey === 'UPDATE' || journey === 'UPDATE_DIRTY') {
     if (!calls.includes('read_note')) return tool('read_note', { noteId: id });
     if (!calls.includes('propose_note')) return { ...tool('propose_note', { title: 'Pi interactive orchard', markdown: 'The orchard now has eight synthetic pear trees.', noteId: id }), ...(journey === 'UPDATE_DIRTY' ? { delayBefore: 1200 } : {}) };
-    return text('Synthetic proposal staged for human review.');
+    // Canonical reads enable structured admission for the rest of this turn.
+    // Staging is a workflow acknowledgement, not evidence of a published edit.
+    return text(JSON.stringify({ segments: [{ text: 'Synthetic proposal staged for human review.', sources: [] }] }));
   }
   if (journey === 'REFINE') {
     if (!calls.includes('read_note_proposal')) return tool('read_note_proposal', { proposalId: id });

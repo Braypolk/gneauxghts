@@ -2,7 +2,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { runInteractiveProbe } from './interactiveProbe';
-import { expandedPhases, expandedUnobserved, requireSharedReport, type SharedProbeReport } from './expandedProbeContract';
+import { expandedPhases, expandedUnobserved, requireSharedReport, sharedProbeReport, type SharedProbeReport } from './expandedProbeContract';
 
 export async function runExpandedProbe() {
   const config = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean; followonsGate?: boolean }>('pi_probe_config');
@@ -14,18 +14,19 @@ export async function runExpandedProbe() {
   };
   const original = new URL(location.href);
   try {
-    const api = chatApi as ChatApi & { prototypeState(): Promise<{ interactiveStateJson?: string }> };
-    const phases = expandedPhases((await api.prototypeState()).interactiveStateJson);
+    const api = chatApi as ChatApi & { prototypeState(): Promise<{ interactiveStateJson?: string } | undefined> };
+    const phases = expandedPhases((await api.prototypeState())?.interactiveStateJson);
     report.phase = phases.includes('first') ? 'first' : 'relaunch';
     await invoke('pi_ui_report', { report });
     for (const phase of phases) {
       const url = new URL(original); url.searchParams.set('piInteractiveTest', phase);
       history.replaceState(history.state, '', url);
-      const shared = requireSharedReport(await runInteractiveProbe(), phase);
+      const shared = sharedProbeReport(await runInteractiveProbe(), phase);
       // Timings and receipts are bounded by the existing native report size cap.
       const { timings, ...receipts } = shared.receipts;
       report.shared.push({ ...shared, receipts: { ...receipts, timingEventCount: Array.isArray(timings) ? timings.length : 0 } });
       report.checks.push(...shared.checks);
+      requireSharedReport(shared, phase);
     }
     if (phases.includes('relaunch')) {
       if(config.followonsGate){

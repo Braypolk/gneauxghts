@@ -1,8 +1,8 @@
 """Verify single native publication after the disposable desktop fault gate."""
 import json
-import sqlite3
 import sys
 from pathlib import Path
+from closed_sqlite_read import closed_sqlite_read
 
 root = Path(sys.argv[1])
 path = root / 'fault-gate.json'
@@ -14,10 +14,10 @@ for event in report['evidence']:
     data = root / event['fault']
     ui = event['second']['ui']
     note_id = ui['keepNoteId']
-    with sqlite3.connect(data / 'PROTOTYPE-wipe-me/publication-receipts.sqlite') as db:
+    with closed_sqlite_read(data / 'PROTOTYPE-wipe-me/publication-receipts.sqlite', caller_closed=True) as db:
         effects = db.execute('SELECT note_id,receipt FROM effects WHERE id LIKE ?',
                              (ui['keepId'] + ':%',)).fetchall()
-    with sqlite3.connect(data / 'PROTOTYPE-wipe-me/vault/.gneauxghts/history.sqlite3') as db:
+    with closed_sqlite_read(data / 'PROTOTYPE-wipe-me/vault/.gneauxghts/history.sqlite3', caller_closed=True) as db:
         publications = db.execute('SELECT COUNT(*) FROM publication_receipts WHERE note_id=?',
                                   (note_id,)).fetchone()[0]
     files = [p for p in (data / 'PROTOTYPE-wipe-me/vault').glob('*.md') if note_id in p.read_text()]

@@ -34,7 +34,7 @@ describe('failure probe checkpoint baseline',()=>{
       editor.runtime.beginReview({reviewId:'preview',notePath:initial.path,title:'Plan',baseContentHash:'',baseEditorMarkdown:'',proposedEditorMarkdown:'original',hunks:[{
         id:'creation',baseFrom:0,baseTo:0,proposedFrom:0,proposedTo:8,oldText:'',newText:'original'
       }]},{onKeep:()=>{},onUndo:()=>{},onChange:()=>{},onMarkdownChange:()=>{}},initial);
-      const working=()=>({markdown:editor.markdown,decisions:editor.review!.hunks});
+      const working=()=>({markdown:editor.markdown,title:document.working.title,decisions:editor.review!.hunks});
       expect(initial.decisions).toEqual([]);expect(working().decisions).toHaveLength(1);
       mounting=checkpointReview(harness,id,{...initial,...working()},undefined,'full');await entered.promise;
       const until=async<V>(read:()=>V|Promise<V>,label:string):Promise<NonNullable<V>>=>{

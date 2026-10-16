@@ -1,9 +1,9 @@
 """Read-only paired canonical effect proof; no apps, mutation or native build."""
 import hashlib
 import json
-import sqlite3
 import sys
 from pathlib import Path
+from closed_sqlite_read import closed_sqlite_read
 
 
 def snapshot(root, expected):
@@ -12,8 +12,7 @@ def snapshot(root, expected):
     assert len(histories) == 1, 'Expected one generated NoteTimeline database'
     history = histories[0]
     assert not history.is_symlink() and history.is_relative_to(root)
-    connection = sqlite3.connect(history.as_uri() + '?mode=ro', uri=True)
-    try:
+    with closed_sqlite_read(history, caller_closed=True) as connection:
         proof = {}
         for identity, count in sorted(expected.items()):
             assert isinstance(count, int) and count > 0
@@ -23,8 +22,6 @@ def snapshot(root, expected):
             assert rows == count, f'{identity}: expected {count} canonical publications, observed {rows}'
             proof[identity] = {'publicationReceipts': rows}
         return proof
-    finally:
-        connection.close()
 
 
 if __name__ == '__main__':

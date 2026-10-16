@@ -37,6 +37,34 @@ export function assertPublicationBoundary(fault, before, after) {
   if (before.canonicalSha256) assert.equal(after.canonicalSha256, before.canonicalSha256, 'Recovery rewrote published canonical bytes');
 }
 const ui = `const wait=async(read,label)=>{const end=Date.now()+20000;while(Date.now()<end){const value=await read();if(value)return value;await new Promise(r=>setTimeout(r,40));}throw new Error(label);};const button=(label,root=document)=>Array.from(root.querySelectorAll('button')).find(node=>!node.disabled&&(node.textContent.trim()===label||node.getAttribute('aria-label')===label));const open=async()=>{if(!document.querySelector('[aria-label="Thought partner chat"]'))(await wait(()=>button('Open thought partner'),'chat')).click();await wait(()=>document.querySelector('[aria-label="Thought partner chat"]'),'chat panel');};`;
+export function assertEditedCheckpoint(draft, body, title) {
+  assert.equal(draft.markdown, body, 'Mounted editor body was not acknowledged');
+  assert.equal(draft.title, title, 'Mounted title was not acknowledged');
+  assert(draft.decisions?.length, 'Mounted review did not checkpoint its hunk state');
+  assert(draft.decisions.some(hunk=>hunk.status==='modified'), 'Actual edited hunk was not retained');
+  for (const hunk of draft.decisions) {
+    assert(Number.isInteger(hunk.from) && Number.isInteger(hunk.to) && hunk.from>=0
+      && hunk.from<=hunk.to && hunk.to<=body.length, 'Retained edited hunk range differs from editor bytes');
+  }
+}
+// Run in the existing webview after original proposal review has mounted.
+// EditorView.findFromDOM is the retained editor's public lookup, not a new view.
+export const editReviewScript = `${ui}
+const {chatApi:api}=await import('/src/lib/features/chat/api.ts');
+const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const original=await api.getProposalDraft(arguments[0]);
+const view=await wait(()=>Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor'))
+  .map(node=>EditorView.findFromDOM(node)).find(view=>view?.state.doc.toString()===original.markdown),'original retained review editor');
+view.dispatch({changes:{from:0,to:view.state.doc.length,insert:arguments[1]},userEvent:'input.type'});
+const field=await wait(()=>Array.from(document.querySelectorAll('[data-testid="note-title"]')).find(node=>!node.readOnly),'editable review title');
+field.focus();field.value=arguments[2];field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:arguments[2]}));
+await new Promise(resolve=>setTimeout(resolve,60));field.blur();
+const draft=await wait(async()=>{const value=await api.getProposalDraft(arguments[0]);
+  return value.markdown===arguments[1]&&value.title===arguments[2]&&value.decisions?.length
+    &&value.decisions.some(hunk=>hunk.status==='modified')&&value;},'acknowledged editor body/title/hunks');
+const {invoke}=await import('/node_modules/@tauri-apps/api/core.js');
+await invoke('pi_validate_review_checkpoint',{markdown:draft.markdown,title:draft.title,path:draft.path,decisions:draft.decisions});
+return {draft,original,editorBody:view.state.doc.toString()};`;
 async function bounded(promise, milliseconds, label) {
   const controller = new AbortController();
   try { return await Promise.race([promise, delay(milliseconds, undefined, { signal: controller.signal })
@@ -52,7 +80,7 @@ export async function runFaultGate() {
   const path = join(root, 'fault-gate.json');
   const evidence = { gate: 'native-publication-crash-workspace', status: 'running', root,
     binarySha256: createHash('sha256').update(readFileSync(binary)).digest('hex'), evidence: [],
-    limits: ['Existing normal workspace with public Pi API staging/checkpoint and real review/Keep controls; no replacement UI.',
+    limits: ['Existing normal workspace with real composer, CodeMirror/title editing, acknowledged hunk checkpoints and review/Keep controls; no replacement UI.',
       'Restored Retry Keep uses the public API for the pinned accepted version; first Keep and proposal review use normal UI.',
       'Synthetic desktop providers only; no live provider or iOS observation is claimed.'] };
   let fixture, server, app, exited, session, current;
@@ -136,9 +164,12 @@ export async function runFaultGate() {
       assert.equal(pending.length, 1, 'Exactly one model-created proposal required'); const proposal = pending[0];
       current.proposalId = proposal.id; current.conversationId = conversation.id;
       const body = 'Edited checkpoint retained through restart.';
-      current.checkpoint = await call(`${api}const draft=await api.getProposalDraft(arguments[0]);return api.checkpointProposalDraft(arguments[0],{...draft,markdown:arguments[1],title:'Edited Pi title'});`, [proposal.id, body]);
-      assert.equal(current.checkpoint.markdown, body);
-      await review(proposal.id); await call(`${api}await api.prototypeFault(arguments[0],arguments[1]);return true;`, [proposal.id, fault]);
+      await review(proposal.id);
+      current.editorCheckpoint = await call(editReviewScript, [proposal.id, body, 'Edited Pi title']);
+      current.checkpoint = current.editorCheckpoint.draft;
+      assertEditedCheckpoint(current.checkpoint, body, 'Edited Pi title');
+      assert.equal(current.editorCheckpoint.editorBody, body);
+      await call(`${api}await api.prototypeFault(arguments[0],arguments[1]);return true;`, [proposal.id, fault]);
       await screenshot('before-fault'); current.requestsBeforeCrash = fixture.requests.length;
       await clickKeep(proposal.id).catch(error => { current.clickTransportError = String(error); });
       const [code, signal] = await bounded(exited, 20000, `${fault} failed to terminate native app`);

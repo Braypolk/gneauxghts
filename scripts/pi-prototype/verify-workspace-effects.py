@@ -11,10 +11,7 @@ import re
 import sqlite3
 import sys
 from pathlib import Path
-
-
-def readonly(path):
-    return sqlite3.connect(path.resolve().as_uri() + '?mode=ro', uri=True)
+from closed_sqlite_read import closed_sqlite_read
 
 
 def managed_identity(raw):
@@ -34,7 +31,7 @@ def prove(native_root, shared, retained):
     ledger = native_root / 'publication-receipts.sqlite'
     history = native_root / 'vault/.gneauxghts/history.sqlite3'
     proof = []
-    with closing(readonly(ledger)) as effects, closing(readonly(history)) as timeline:
+    with closed_sqlite_read(ledger, caller_closed=True) as effects, closed_sqlite_read(history, caller_closed=True) as timeline:
         # SQLite backup captures a consistent database including any retained WAL.
         for source, name in [(effects, 'publication-receipts.sqlite'), (timeline, 'history.sqlite3')]:
             with closing(sqlite3.connect(retained / name)) as target:

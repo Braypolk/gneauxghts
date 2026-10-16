@@ -61,7 +61,7 @@ try {
     SIMCTL_CHILD_PI_PROTOTYPE_FOLLOWONS_GATE: String(followons) });
   const phase = (name, prior) => waitUntil(() => {
     try { const report = JSON.parse(readFileSync(reportPath, 'utf8')); return report.gate === 'expanded-native-workspace-fixture'
-      && report.phase === name && report.launchId !== prior && ['passed', 'failed'].includes(report.status) && report; } catch { return false; }
+      && (report.phase === name || (report.phase === 'starting' && report.status === 'failed')) && report.launchId !== prior && ['passed', 'failed'].includes(report.status) && report; } catch { return false; }
   }, `actual normal iOS WKWebView ${name}`, followons ? 600000 : 240000);
   const screenshot = name => { const path = join(root, `${name}.png`); run('xcrun', ['simctl', 'io', simulator, 'screenshot', path]); evidence.screenshots.push(path); };
   launch(); first = assertExpandedPhase(await phase('first'), 'first'); evidence.phases.push(first); flush(); screenshot('first');

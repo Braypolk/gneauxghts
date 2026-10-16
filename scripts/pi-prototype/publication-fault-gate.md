@@ -20,8 +20,10 @@ owner.
 
 For each native `after-intent`, `after-publication` and `after-receipt` boundary,
 the existing composer sends `PI_UI:CREATE` to the current interactive fixture.
-The public Pi API acknowledges an edited draft checkpoint. The existing proposal
-review mounts in the normal editor, and the real Keep control starts publication.
+The original proposal review mounts in the normal editor. CodeMirror body edits
+and the existing title field produce the acknowledged retained draft and mapped
+hunk decisions. The gate verifies those decisions through the native checkpoint
+validator before arming the fault; the real Keep control starts publication.
 After process loss, read-only closed-database snapshots distinguish the exact
 boundary. Relaunch preserves the edited draft and original assistant source.
 Explicit public Retry Keep uses the retained accepted version; duplicate Keep

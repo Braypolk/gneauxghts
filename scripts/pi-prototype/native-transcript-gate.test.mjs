@@ -1,6 +1,28 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { relocatedPath, assertRecoveredEffect, sha256 } from './native-transcript-gate.mjs';
+import { relocatedPath, assertRecoveredEffect, sha256, wholeSaveScript, reviewScript, pendingCheckpointScript } from './native-transcript-gate.mjs';
+
+test('checkpoint script keeps multiline authored data in transport arguments', () => {
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  assert.doesNotThrow(()=>new AsyncFunction(pendingCheckpointScript));
+  assert.match(pendingCheckpointScript,/markdown:draft.markdown\+arguments\[1\]/);
+  assert.match(pendingCheckpointScript,/title:arguments\[2\]/);
+  assert.doesNotMatch(pendingCheckpointScript,/Acknowledged relocation checkpoint|Relocated pending review/);
+});
+
+test('whole-answer Save uses its exact normal message control and retains coordinator review acquisition', () => {
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  assert.doesNotThrow(()=>new AsyncFunction(wholeSaveScript));
+  assert.doesNotThrow(()=>new AsyncFunction(reviewScript));
+  assert.match(wholeSaveScript,/data-chat-message-id/);
+  assert.match(wholeSaveScript,/button\('Save to note',answer\)/);
+  assert.match(wholeSaveScript,/!before.has\(value.id\)/);
+  assert.doesNotMatch(wholeSaveScript,/prepareNoteSave|commitAgentProposal/);
+  assert.match(reviewScript,/acquireProbeReview\(\{editor/);
+  assert.match(reviewScript,/view\?\.state.doc.toString\(\)===draft.markdown/);
+  assert.match(reviewScript,/node.value===draft.title/);
+  assert.match(reviewScript,/data-proposal-strip/);
+});
 
 test('closed location helper requires a descendant of the old generated root', () => {
   assert.equal(relocatedPath('/old/data/PROTOTYPE-wipe-me/vault/Source.md','/old/data','/new/data'),'/new/data/PROTOTYPE-wipe-me/vault/Source.md');

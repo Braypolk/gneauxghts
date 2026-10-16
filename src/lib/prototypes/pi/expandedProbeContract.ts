@@ -18,12 +18,17 @@ export function expandedPhases(interactiveStateJson?: string): SharedPhase[] {
   return ['relaunch', 'failures'];
 }
 
-export function requireSharedReport(value: unknown, phase: SharedPhase): SharedProbeReport {
+export function sharedProbeReport(value: unknown, phase: SharedPhase): SharedProbeReport {
   if (!value || typeof value !== 'object') throw new Error('Shared UI probe must return its persisted report');
   const report = value as SharedProbeReport;
   if (report.gate !== 'first-usable-desktop-fixture' || report.phase !== phase || !Array.isArray(report.checks)) {
     throw new Error('Shared UI report does not match the requested journey');
   }
+  return report;
+}
+
+export function requireSharedReport(value: unknown, phase: SharedPhase): SharedProbeReport {
+  const report = sharedProbeReport(value, phase);
   if (report.status !== 'passed') throw new Error(report.error ?? `Shared UI ${phase} failed`);
   return report;
 }

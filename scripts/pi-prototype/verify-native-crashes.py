@@ -1,8 +1,8 @@
 """Read-only proof for generated native crash roots; never opens a private vault."""
 import json
-import sqlite3
 import sys
 from pathlib import Path
+from closed_sqlite_read import closed_sqlite_read
 
 report_path = Path(sys.argv[1])
 report = json.loads(report_path.read_text())
@@ -13,9 +13,9 @@ for case in report['cases']:
     kept = case.get('kept')
     if kept:
         note_id = kept['noteId']
-        with sqlite3.connect(f"file:{Path(case['root']) / 'PROTOTYPE-wipe-me/publication-receipts.sqlite'}?mode=ro", uri=True) as db:
+        with closed_sqlite_read(Path(case['root']) / 'PROTOTYPE-wipe-me/publication-receipts.sqlite', caller_closed=True) as db:
             effects = db.execute('SELECT note_id,receipt FROM effects WHERE id LIKE ?', (kept['proposalId'] + ':%',)).fetchall()
-        with sqlite3.connect(f"file:{vault / '.gneauxghts/history.sqlite3'}?mode=ro", uri=True) as db:
+        with closed_sqlite_read(vault / '.gneauxghts/history.sqlite3', caller_closed=True) as db:
             publications = db.execute('SELECT count(*) FROM publication_receipts WHERE note_id=?', (note_id,)).fetchone()[0]
         # These create proposals target the vault root. Managed transcripts live
         # under Chats and may quote the synthetic scope; they are projections.

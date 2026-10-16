@@ -1,11 +1,28 @@
 import {describe,it,expect,vi} from 'vitest';
-import {acquireProbeReview} from './probeReview';
+import {acquireProbeReview,acknowledgedProbeDraft} from './probeReview';
 import {NotepadChatCoordinator,type NotepadChatCoordinatorDeps} from '$lib/features/notepad/orchestration/notepadChatCoordinator.svelte';
 import {fakeApi} from '$lib/features/chat/chatTestSupport';
 import type {ChatAgentProposal,ChatProposalDraft} from '$lib/features/chat/types';
 import type {DurableProposalReviewRequest} from '$lib/features/proposals/types';
 
 describe('ordinary workspace probe review acquisition',()=>{
+  it.each(['path','title'] as const)('awaits refreshed %s acknowledgement before capturing the exact confirmation baseline',async field=>{
+    const mounted={markdown:'Reviewed authored text',decisions:[],title:'Human title',path:'/vault/Current.md'};
+    const stale:ChatProposalDraft={...mounted,version:4,[field]:field==='path'?'/vault/Old.md':'Old title'};
+    const acknowledged={...mounted,version:5};
+    let stored=stale;
+    const until=async<V>(read:()=>V|Promise<V>,label:string):Promise<NonNullable<V>>=>{
+      for(let poll=0;poll<3;poll++) {
+        const value=await read();if(value)return value as NonNullable<V>;
+        stored=acknowledged;
+      }
+      throw new Error(`deadline: ${label}`);
+    };
+    const baseline=await acknowledgedProbeDraft({draft:async()=>stored,working:()=>mounted,until});
+    expect(baseline).toEqual(acknowledged);
+    // The confirmation itself performs no checkpoint or version substitution.
+    expect(await Promise.resolve(stored)).toEqual(baseline);
+  });
   it('observes the Save coordinator delayed editor mount even when no chat card appears',async()=>{
     const draft:ChatProposalDraft={version:1,title:'Saved Pi answer',path:'/vault/Saved.md',markdown:'Faithful answer\n\n[[Chats/Pi/pi-10/Origin|Open in chat]]',decisions:[]};
     const proposal:ChatAgentProposal={id:'save-1',runId:null,conversationId:'conversation-1',assistantMessageId:'answer-1',kind:'create',noteId:null,

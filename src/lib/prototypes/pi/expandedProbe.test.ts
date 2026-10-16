@@ -28,14 +28,16 @@ describe('explicit native expanded journey wrapper', () => {
     expect(mocks.shared).not.toHaveBeenCalled();
   });
   it('propagates failed UI admission and restores the original URL without advancing phases', async () => {
-    mocks.shared.mockResolvedValue({ gate: 'first-usable-desktop-fixture', phase: 'seed', status: 'failed', error: 'storage unavailable', checks: [], receipts: {} });
+    mocks.shared.mockResolvedValue({ gate: 'first-usable-desktop-fixture', phase: 'seed', status: 'failed', error: 'storage unavailable', checks: ['visible checkpoint observed'], receipts: { partialId: 'acknowledged-partial' } });
     const result = await runExpandedProbe();
     expect(result).toMatchObject({ status: 'failed', error: 'Error: storage unavailable' });
+    expect(result?.shared).toMatchObject([{ status: 'failed', checks: ['visible checkpoint observed'], receipts: { partialId: 'acknowledged-partial' } }]);
     expect(mocks.shared).toHaveBeenCalledTimes(1);
     expect(location.href).toBe('http://tauri.localhost/?piExpandedTest=1');
     expect(mocks.invoke).toHaveBeenLastCalledWith('pi_ui_report', { report: result });
   });
   it('runs the shared fresh phases and retains their observations with explicit incomplete limits', async () => {
+    mocks.state.mockResolvedValue(undefined);
     const result = await runExpandedProbe();
     expect(result).toMatchObject({ status: 'passed', phase: 'first' });
     expect(result?.shared.map(value => value.phase)).toEqual(['seed', 'first']);

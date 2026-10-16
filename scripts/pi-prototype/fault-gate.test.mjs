@@ -30,3 +30,21 @@ test('publication boundary proof rejects the wrong initial crash point', () => {
   assert.throws(()=>assertPublicationBoundary('after-publication',before('after-receipt'),after));
   assert.throws(()=>assertPublicationBoundary('after-receipt',before('after-intent'),after));
 });
+
+test('edited checkpoint requires retained mapped hunks rather than pre-mount API text replacement', async () => {
+  const { assertEditedCheckpoint, editReviewScript } = await import('./fault-gate.mjs');
+  const body='Edited checkpoint retained through restart.', title='Edited Pi title';
+  const draft={markdown:body,title,decisions:[{from:0,to:body.length,status:'modified'}]};
+  assertEditedCheckpoint(draft,body,title);
+  assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[]},body,title));
+  assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[{from:0,to:body.length+8,status:'modified'}]},body,title));
+  assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[{from:body.length,to:0,status:'modified'}]},body,title));
+  assert.throws(()=>assertEditedCheckpoint({...draft,decisions:[{from:0,to:body.length,status:'pending'}]},body,title));
+  assert(editReviewScript.includes('view.dispatch('));
+  assert(editReviewScript.includes('field.dispatchEvent(new InputEvent'));
+  assert(editReviewScript.includes('pi_validate_review_checkpoint'));
+  assert(!editReviewScript.includes('checkpointProposalDraft('));
+  // Browser program syntax is parsed without running imports or mounting UI.
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  assert.doesNotThrow(()=>new AsyncFunction(editReviewScript));
+});

@@ -4,13 +4,30 @@ const markerPattern = /PI_FOLLOWONS:([A-Z_]+):([A-Za-z0-9_-]+)(?::([A-Za-z0-9_,-
 const objects = value => value && typeof value === 'object' ? [value, ...Object.values(value).flatMap(objects)] : [];
 const textOf = value => typeof value === 'string' ? value : Array.isArray(value) ? value.map(part => part.text ?? '').join('') : '';
 const parse = text => { try { return JSON.parse(text); } catch { return undefined; } };
+// Real Pi markers wrap JSON in <summary>, and serialized summary source can
+// contain a progress object followed by more transcript text. Decode exactly
+// one object while respecting quoted braces and escapes.
+function objectPrefix(text, start) {
+  if (text[start] !== '{') return undefined;
+  let depth = 0, quoted = false, escaped = false;
+  for (let index = start; index < text.length; index++) {
+    const char = text[index];
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) return parse(text.slice(start, index + 1));
+  }
+}
 function historyOf(body, compatible) { return compatible ? body.messages : body.input; }
 function expandedObjects(value) {
   const result = objects(value);
   for (const item of [...result]) for (const child of Object.values(item)) {
     if (typeof child === 'string') {
       const envelope = child.indexOf('\n{');
-      const decoded = parse(child) ?? (envelope >= 0 ? parse(child.slice(envelope + 1)) : undefined);
+      const decoded = parse(child) ?? (envelope >= 0 ? objectPrefix(child, envelope + 1) : undefined);
       if (decoded) result.push(...objects(decoded));
     }
   }
@@ -20,12 +37,12 @@ function progress(history) {
   const values = expandedObjects(history);
   const completed = new Set(), evidence = new Set();
   for (const item of values) {
-    if (typeof item.summary === 'string') {
-      const match = item.summary.match(/FOLLOWONS_PROGRESS:(\{[^\n]+\})/);
-      const saved = match && parse(match[1]);
-      for (const id of saved?.completed ?? []) completed.add(id);
-      for (const id of saved?.evidence ?? []) evidence.add(id);
-    }
+    for (const text of Object.values(item).filter(value => typeof value === 'string'))
+      for (const match of text.matchAll(/FOLLOWONS_PROGRESS:/g)) {
+        const saved = objectPrefix(text, match.index + match[0].length);
+        for (const id of saved?.completed ?? []) completed.add(id);
+        for (const id of saved?.evidence ?? []) evidence.add(id);
+      }
     if (typeof item.evidenceId === 'string' && typeof item.sourceId === 'string') {
       evidence.add(item.evidenceId);
       if (typeof item.noteId === 'string') completed.add(item.noteId);

@@ -25,6 +25,13 @@ uncertain Keep reconciled by explicit UI Retry. Closed before/after snapshots
 retain original payload hashes, target fields, proof, receipt and canonical byte
 hashes. Native proofs/accepted JSON are never rewritten by the driver.
 
+Both whole-answer Save proposals start from the exact message's normal **Save to
+note** button. The driver waits for a new public pending proposal, then acquires
+the retained CodeMirror review by its exact acknowledged title/body or opens its
+proposal card when available. A coordinator-mounted review does not require a
+chat card, and selecting an already-current conversation is not used to reload
+API-staged state. Keep/Retry still uses the exact mounted proposal action strip.
+
 Relocation moves the **entire generated evaluation data root**, including its
 vault and Pi/native state, after `prepare_restart` returns portable/ready and the
 process stops. The current opt-in native composition fixes the Running Vault

@@ -53,6 +53,15 @@ for (const compatible of [true, false]) {
     assert.equal(planInteractiveReply(body('PI_UI:UPDATE_DIRTY:note-1', [read]), compatible).delayBefore, 1200);
     assert.match(planInteractiveReply(body('PI_UI:UPDATE:note-1', [read, ['propose_note', {}]]), compatible).text, /staged/);
   });
+  for(const journey of ['UPDATE','UPDATE_DIRTY'])test(`${protocol}: ${journey} final acknowledgement obeys structured admission after a canonical read`,()=>{
+    const read=['read_note',{items:[{sourceId:'S-issued-body',evidenceId:'issued-body',location:'body',excerpt:'The orchard has seven pear trees.'}]}];
+    const proposed=['propose_note',{status:'pending',proposalId:'pi-review-42'}];
+    const reply=planInteractiveReply(body(`PI_UI:${journey}:note-1`,[read,proposed]),compatible);
+    assert.equal(reply.tool,undefined);
+    // This is a proposal-status acknowledgement, not a claim that canonical
+    // note content was changed. Reading still requires the structured envelope.
+    assert.deepEqual(JSON.parse(reply.text),{segments:[{text:'Synthetic proposal staged for human review.',sources:[]}]});
+  });
   test(`${protocol}: source-free follow-up fails if previous answer was omitted`, () => {
     assert.throws(() => planInteractiveReply(body('PI_UI:FOLLOWUP'), compatible), /missing from follow-up history/);
     const prior = [{ role: 'assistant', content: 'Synthetic hello. Echo phrase. Echo phrase.' }];

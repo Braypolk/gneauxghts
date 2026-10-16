@@ -28,6 +28,7 @@ export async function parityBrowserAction(action,args={}) {
     window.__pairedParity.provider=provider;return true;
   }
   const {api,EditorView,invoke,state,provider}=window.__pairedParity;
+  if(action==='quiesce')return invoke('prepare_restart');
   const openChat=async()=>{
     if(!document.querySelector('[aria-label="Thought partner chat"]'))await click('Open thought partner');
     await until(()=>document.querySelector('[aria-label="Thought partner chat"]'),'normal chat');

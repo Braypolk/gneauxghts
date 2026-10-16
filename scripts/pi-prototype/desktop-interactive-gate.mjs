@@ -71,7 +71,7 @@ const phase = async (name, priorLaunchId) => {
   const query = followons ? 'piExpandedTest=1' : `piInteractiveTest=${name}`;
   await wd(`/session/${session.sessionId}/execute/sync`, { script: `location.href='http://127.0.0.1:1442/?${query}';return true`, args: [] });
   const result = await waitUntil(() => {
-    try { const report = JSON.parse(readFileSync(join(root, 'PROTOTYPE-wipe-me/ui-report.json'), 'utf8')); return report.gate === evidence.gate && report.phase === name && (!priorLaunchId || report.launchId !== priorLaunchId) && ['passed', 'failed'].includes(report.status) && report; }
+    try { const report = JSON.parse(readFileSync(join(root, 'PROTOTYPE-wipe-me/ui-report.json'), 'utf8')); return report.gate === evidence.gate && (report.phase === name || (report.phase === 'starting' && report.status === 'failed')) && (!priorLaunchId || report.launchId !== priorLaunchId) && ['passed', 'failed'].includes(report.status) && report; }
     catch { return false; }
   }, `normal UI ${name} journey`, followons ? 600000 : 180000);
   evidence.phases.push(result); await screenshot(name); writeFileSync(evidencePath, JSON.stringify({ ...evidence, requests: fixture.requests }, null, 2));
