@@ -44,7 +44,7 @@ export type ProposalReviewWorkflowEvent<TReview> =
   | { type: 'openFailed'; identity: ProposalReviewIdentity; error: string }
   | { type: 'errorSet'; reviewId: string | null; error: string | null }
   | { type: 'resolutionRequested'; reviewId: string; resolution: 'commit' | 'dismiss' }
-  | { type: 'completionConflicted'; reviewId: string; error: string }
+  | { type: 'completionConflicted'; reviewId: string; error: string; refreshedIdentity?: ProposalReviewIdentity }
   | { type: 'completionFailed'; reviewId: string; error: string }
   | { type: 'completionSucceeded'; reviewId: string }
   | { type: 'externalConflict'; reviewId: string; error: string }
@@ -143,8 +143,9 @@ export function transitionProposalReviewWorkflow<TReview>(
             reason: 'proposal'
           };
     case 'completionConflicted':
-      return state.kind === 'committing' && event.reviewId === state.identity.reviewId
-        ? { kind: 'conflicted', ...context(state, event.error) }
+      return state.kind === 'committing' && event.reviewId === state.identity.reviewId &&
+        (!event.refreshedIdentity || event.refreshedIdentity.proposalId === state.identity.proposalId)
+        ? { kind: 'conflicted', ...context(state, event.error), identity: event.refreshedIdentity ?? state.identity }
         : state;
     case 'completionFailed':
       if (

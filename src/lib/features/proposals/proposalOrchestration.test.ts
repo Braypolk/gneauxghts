@@ -13,6 +13,7 @@ import { documentRegistry } from '$lib/features/notepad/document/documentRegistr
 import { createNotepadPersistenceController } from '$lib/features/notepad/orchestration/persistenceController';
 import { createWorkspacePersistenceService } from '$lib/features/notepad/workspace/workspacePersistenceService';
 import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
+import type { DurableProposalReviewRequest } from './types';
 
 const path = '/vault/Plan.md';
 const preview: ProposalPreview = {
@@ -517,6 +518,93 @@ describe('durable proposal editor review', () => {
     expect(test.commit).toHaveBeenCalledTimes(2);
   });
 
+  it('adopts the refreshed preview identity on conflict and retains authored bytes for recovery', async () => {
+    const test = setup(), authored = 'After\nHuman detail', base = 'Newer canonical';
+    test.commit.mockResolvedValueOnce({ status:'conflict', committedMarkdown:null, applied:null, noteId:null, message:'Changed on disk.' });
+    const checkpoint = vi.fn(async () => undefined);
+    const refreshed = {...test.request, checkpoint, preview:{...preview, reviewId:'review-new-base', baseContentHash:'new-hash', baseEditorMarkdown:base,
+      proposedEditorMarkdown:authored, hunks:[{...preview.hunks[0],id:'new-base-hunk',baseTo:base.length,oldText:base,proposedTo:authored.length,newText:authored}]},
+      working:{title:'Plan',path,markdown:authored,decisions:[]}};
+    const refresh = vi.fn(async () => refreshed);
+    test.reloadReviewDocument.mockImplementationOnce(async () => {
+      test.firstEditor.runtime.adoptCommittedMarkdown(base);
+      updateDocumentTitle(test.document,'Canonical renamed title');
+    });
+    await test.orchestration.loadDurableProposal({...test.request, checkpoint, refresh});
+    test.firstEditor.runtime.replaceMarkdown(authored);
+    await test.orchestration.keepAll();
+    expect(test.session.workflow).toMatchObject({kind:'conflicted',identity:{reviewId:'review-new-base',proposalId:'proposal-1',notePath:path},error:'Changed on disk.'});
+    expect(test.session.snapshot).toMatchObject({isApplying:false,isConflicted:true,error:'Changed on disk.'});
+    expect(test.firstEditor.review?.reviewId).toBe('review-new-base');
+    expect(test.firstEditor.markdown).toBe(authored);
+    expect(test.document.working.title).toBe(refreshed.working.title);
+    expect(test.reloadReviewDocument).toHaveBeenCalledOnce();
+    expect(test.acknowledgeDocumentCommit).not.toHaveBeenCalled();
+    expect(test.session.dispatchWorkflow({type:'resolutionRequested',reviewId:'review-1',resolution:'commit'})).toBe(false);
+    expect(test.session.snapshot.isApplying).toBe(false);
+    await test.orchestration.keepAll();
+    expect(test.commit).toHaveBeenCalledTimes(2);
+    expect(test.commit).toHaveBeenLastCalledWith(authored);
+    expect(test.orchestration.activeProposalId).toBeNull();
+  });
+
+  it('retains newer body, title and hunk choices typed while conflict refresh awaits', async () => {
+    const test=setup(), waiting=Promise.withResolvers<void>(), refreshResult=Promise.withResolvers<DurableProposalReviewRequest>();
+    const checkpoint=vi.fn(async()=>undefined);
+    test.commit.mockResolvedValueOnce({status:'conflict',committedMarkdown:null,applied:null,noteId:null,message:'Changed on disk.'});
+    test.reloadReviewDocument.mockImplementationOnce(async()=>{test.firstEditor.runtime.replaceMarkdown('Newer canonical');});
+    const refresh=vi.fn(async()=>{waiting.resolve();return refreshResult.promise;});
+    await test.orchestration.loadDurableProposal({...test.request,checkpoint,refresh});
+    const completion=test.orchestration.keepAll();await waiting.promise;
+    const newer='After\nTyped while refresh waited';
+    test.firstEditor.runtime.replaceMarkdown(newer);updateDocumentTitle(test.document,'Newer human title');
+    const decisions=test.firstEditor.review!.hunks.map(hunk=>({...hunk}));
+    refreshResult.resolve({...test.request,preview:{...preview,reviewId:'refreshed-base',baseContentHash:'new-hash',baseEditorMarkdown:'Newer canonical'},
+      working:{markdown:'After',title:'Plan',path,decisions:[]}});
+    await completion;
+    expect(test.firstEditor.markdown).toBe(newer);
+    expect(test.document.working.title).toBe('Newer human title');
+    expect(test.firstEditor.review!.hunks).toEqual(decisions);
+    expect(test.firstEditor.review!.reviewId).toBe('review-1');
+    expect(test.session.workflow).toMatchObject({kind:'conflicted',identity:{reviewId:'review-1'}});
+    expect(test.session.snapshot).toMatchObject({isApplying:false,isConflicted:true});
+    expect(test.session.snapshot.error).toContain('Newer edits are retained');
+    expect(test.reloadReviewDocument).not.toHaveBeenCalled();
+    expect(test.acknowledgeDocumentCommit).not.toHaveBeenCalled();
+    expect(test.commit).toHaveBeenCalledExactlyOnceWith('After');
+  });
+
+  it('retains live body, title and hunk choices when typing invalidates a pending conflict reload', async () => {
+    const test = setup(), entered = Promise.withResolvers<void>(), reload = Promise.withResolvers<void>();
+    test.commit.mockResolvedValueOnce({status:'conflict',committedMarkdown:null,applied:null,noteId:null,message:'Changed on disk.'});
+    const refresh = async () => ({...test.request, preview:{...preview,reviewId:'new-base',baseContentHash:'new-hash'}});
+    test.reloadReviewDocument.mockImplementationOnce(async () => {
+      const revision = test.document.operation.revision;
+      entered.resolve(); await reload.promise;
+      if (test.document.operation.revision !== revision) {
+        throw new Error('The reviewed note changed while loading from disk. Try Reload Disk again.');
+      }
+    });
+    await test.orchestration.loadDurableProposal({...test.request,refresh});
+    const completion = test.orchestration.keepAll();
+    await entered.promise;
+    const newer = 'After\nTyped during disk reload';
+    test.firstEditor.runtime.replaceMarkdown(newer);
+    updateDocumentTitle(test.document,'Title typed during disk reload');
+    const latestDecisions = test.firstEditor.review?.hunks.map(hunk => ({...hunk}));
+    reload.resolve();
+    await completion;
+    expect(test.firstEditor.markdown).toBe(newer);
+    expect(test.document.working.markdown).toBe(newer);
+    expect(test.document.working.title).toBe('Title typed during disk reload');
+    expect(latestDecisions).toEqual([expect.objectContaining({id:'hunk-1',status:'kept'})]);
+    expect(test.firstEditor.review).toMatchObject({reviewId:'review-1',hunks:latestDecisions});
+    expect(test.session.workflow).toMatchObject({kind:'conflicted',identity:{reviewId:'review-1'}});
+    expect(test.session.snapshot).toMatchObject({isApplying:false,isConflicted:true});
+    expect(test.session.snapshot.error).toContain('changed while loading from disk');
+    expect(test.acknowledgeDocumentCommit).not.toHaveBeenCalled();
+  });
+
   it('retains the working review if loading a refreshed destination fails', async () => {
     const test = setup();
     test.commit.mockResolvedValueOnce({status: 'conflict', message: 'Changed', applied: null, noteId: null, committedMarkdown: null});
@@ -558,10 +646,14 @@ describe('durable proposal editor review', () => {
     expect(test.orchestration.activeProposalId).toBeNull();
   });
 
-  it('requires confirmation before dismissing and reloading a conflicted review', async () => {
+  it('requires confirmation before reloading a conflicted Keep with no unresolved hunks', async () => {
     const test = setup();
+    test.commit.mockResolvedValueOnce({status:'conflict',committedMarkdown:null,applied:null,noteId:null,message:'Changed on disk.'});
+    test.reloadReviewDocument.mockImplementationOnce(async () => { test.firstEditor.runtime.adoptCommittedMarkdown('Newer canonical authored text'); });
     await test.orchestration.loadDurableProposal(test.request);
-    test.orchestration.markConflict(path);
+    await test.orchestration.keepAll();
+    expect(test.session.snapshot).toMatchObject({isConflicted:true,unresolvedHunks:0});
+    const before = {markdown:test.firstEditor.markdown,title:test.document.working.title,hunks:test.firstEditor.review!.hunks.map(hunk => ({...hunk}))};
 
     await test.orchestration.reloadDisk();
     expect(test.dismiss).not.toHaveBeenCalled();
@@ -569,11 +661,17 @@ describe('durable proposal editor review', () => {
       kind: 'confirmingDiscard',
       recoverTo: 'conflicted'
     });
+    expect(test.firstEditor.markdown).toBe(before.markdown);
+    expect(test.document.working.title).toBe(before.title);
+    expect(test.firstEditor.review!.hunks).toEqual(before.hunks);
+    expect(test.reloadReviewDocument).not.toHaveBeenCalled();
 
     await test.orchestration.reloadDisk();
     expect(test.dismiss).toHaveBeenCalledOnce();
     expect(test.reloadReviewDocument).toHaveBeenCalledWith(test.document);
     expect(test.orchestration.activeProposalId).toBeNull();
+    expect(test.firstEditor.markdown).toBe('Newer canonical authored text');
+    expect(test.commit).toHaveBeenCalledOnce();
   });
 
   it('admits confirmed reload only once while dismissal is pending', async () => {

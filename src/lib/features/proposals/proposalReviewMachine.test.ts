@@ -37,6 +37,17 @@ function reviewing(
 
 describe('proposal review workflow machine', () => {
 
+  it('adopts a refreshed identity only from the admitted commit for the same proposal', () => {
+    const busy=transitionProposalReviewWorkflow(reviewing(),{type:'resolutionRequested',reviewId:first.reviewId,resolution:'commit'});
+    const refreshed={...first,reviewId:'new-base',notePath:'/vault/Renamed.md'};
+    expect(transitionProposalReviewWorkflow(busy,{type:'completionConflicted',reviewId:'stale-operation',error:'Changed',refreshedIdentity:refreshed})).toBe(busy);
+    expect(transitionProposalReviewWorkflow(busy,{type:'completionConflicted',reviewId:first.reviewId,error:'Changed',refreshedIdentity:second})).toBe(busy);
+    const conflict=transitionProposalReviewWorkflow(busy,{type:'completionConflicted',reviewId:first.reviewId,error:'Changed',refreshedIdentity:refreshed});
+    expect(conflict).toMatchObject({kind:'conflicted',identity:refreshed,error:'Changed'});
+    expect(transitionProposalReviewWorkflow(conflict,{type:'resolutionRequested',reviewId:first.reviewId,resolution:'commit'})).toBe(conflict);
+    expect(transitionProposalReviewWorkflow(conflict,{type:'resolutionRequested',reviewId:refreshed.reviewId,resolution:'commit'})).toMatchObject({kind:'committing',identity:refreshed});
+  });
+
   it('does not replace a commit or dismissal in progress', () => {
     const current = reviewing();
     for (const resolution of ['commit', 'dismiss'] as const) {

@@ -209,9 +209,10 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
     )
       ? 'commit'
       : 'dismiss';
+    const resolutionReviewId = review.request.preview.reviewId;
     const started = session.dispatchWorkflow({
       type: 'resolutionRequested',
-      reviewId: review.request.preview.reviewId,
+      reviewId: resolutionReviewId,
       resolution
     });
     if (!started) return;
@@ -223,37 +224,61 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       }
       const markdown = root(review).markdown;
       const submittedTitle = review.document.working.title;
+      const submittedDecisions = JSON.stringify(hunks(review));
       if (review.request.checkpoint) await checkpoint(review);
       const result = await review.request.commit(markdown);
       if (currentReview() !== review) return;
       if (result.status === 'conflict') {
         const refreshed = await review.request.refresh?.();
+        if (currentReview() !== review) return;
+        if (refreshed && refreshed.proposalId !== review.request.proposalId) {
+          throw new Error('The refreshed review belongs to another proposal.');
+        }
         if (refreshed && (refreshed.preview.baseContentHash !== review.request.preview.baseContentHash ||
           refreshed.preview.notePath !== review.request.preview.notePath)) {
+          if (root(review).markdown !== markdown || review.document.working.title !== submittedTitle ||
+            JSON.stringify(hunks(review)) !== submittedDecisions) {
+            // A refreshed durable checkpoint cannot acknowledge later typing.
+            // Retain the live owner and require explicit conflict recovery.
+            session.dispatchWorkflow({type:'completionConflicted',reviewId:resolutionReviewId,
+              error:`${result.message ?? 'Note changed on disk.'} Newer edits are retained in this review. Copy your working text or reload the note before reviewing the changed base.`});
+            return;
+          }
           const previousRequest = review.request;
-          const previousWorking = { markdown: root(review).markdown,
+          const previousWorking = { markdown: root(review).markdown, title: review.document.working.title,
             decisions: hunks(review).map(hunk => ({...hunk})) };
           stopTitleObserver?.();
-          root(review).endReview(previousRequest.preview.reviewId);
           try {
             if (refreshed.kind === 'create') {
+              root(review).endReview(previousRequest.preview.reviewId);
               root(review).replaceMarkdown('');
               updateDocumentTitle(review.document, refreshed.working?.title ?? refreshed.preview.title);
             } else await deps.reloadReviewDocument(review.document);
+            // Keep the old hunk owner during the asynchronous disk read. Its
+            // revision guard can reject without rolling back later typing.
+            root(review).endReview(previousRequest.preview.reviewId);
             review.request = refreshed;
             root(review).beginReview(refreshed.preview, reviewCallbacks(review), refreshed.working);
+            if (refreshed.working) updateDocumentTitle(review.document, refreshed.working.title);
           } catch (error) {
             review.request = previousRequest;
-            root(review).replaceMarkdown(previousRequest.preview.baseEditorMarkdown);
-            root(review).beginReview(previousRequest.preview, reviewCallbacks(review), previousWorking);
-            throw error;
+            if (root(review).review?.reviewId !== previousRequest.preview.reviewId) {
+              root(review).replaceMarkdown(previousRequest.preview.baseEditorMarkdown);
+              root(review).beginReview(previousRequest.preview, reviewCallbacks(review), previousWorking);
+              updateDocumentTitle(review.document, previousWorking.title);
+            }
+            session.dispatchWorkflow({type:'completionConflicted',reviewId:resolutionReviewId,
+              error:proposalErrorMessage(error,'Unable to reload the changed review target.')});
+            return;
           } finally {
             bindCheckpointEffects(review);
           }
         }
         session.dispatchWorkflow({
           type: 'completionConflicted',
-          reviewId: review.request.preview.reviewId,
+          // Settle the admitted operation before adopting its new preview ID.
+          reviewId: resolutionReviewId,
+          refreshedIdentity: identityFor(review.request),
           error: result.message ?? 'Note changed on disk.'
         });
         return;
