@@ -171,7 +171,7 @@ export async function runProductScaleGate(options){
     assert.equal(fixture.requests.length,1005,'Final product verification dispatched provider work');assert(fixture.requests.every(row=>row.completed&&!row.failed),'Late fixture failure');
     assert.equal(hash(readFileSync(options.binary)),options.sha256,'Measured binary changed');assert.equal(frontendSourceDigest(options.source),report.frontendSourceSha256,'Served frontend changed');
     report.status='passed-bounded-product-scale-fixture';
-  }catch{report.status='failed';process.exitCode=1}
+  }catch(error){report.status='failed';report.error=String(error).slice(0,8000);process.exitCode=1}
   finally{await stop('SIGTERM');if(frontend){try{process.kill(-frontend.pid,'SIGTERM')}catch{}}
     report.providerRequests=fixture?.requests??[];if(fixture)await fixture.close();snapshot('process-closed');
     report.appRss={observedPeakBytes:rssSamples?rssPeak:null,samples:rssSamples,failedSamples:rssFailed,coverage:'app-only',cadenceMs:250};

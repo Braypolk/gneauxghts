@@ -195,8 +195,8 @@ export async function runSharedResourceGate(options) {
       const wd = createWebDriverRequest(4445, 60000);
       const execute = async (script, args = []) => {
         const result = await wd(`/session/${session.sessionId}/execute/async`, {script:
-          `const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),()=>done({ok:false}));`,args});
-        assert(result.ok, 'Owned browser scenario failed');return result.value;
+          `const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,2000)}));`,args});
+        assert(result.ok, `Owned browser scenario failed: ${result.error ?? 'unknown'}`);return result.value;
       };
       const sampleApp = () => {
         try {
@@ -262,8 +262,8 @@ export async function runSharedResourceGate(options) {
       assert.equal(frontendSourceDigest(source),output.frontendSourceSha256,'Served frontend changed during capture');
     }
     assert(!fixture.requests.some(row=>row.failed),'Fixture refused a request');report.status='passed-core-fixture';
-  } catch {
-    report.status='failed';process.exitCode=1;
+  } catch(error) {
+    report.status='failed';report.error=String(error).slice(0,8000);process.exitCode=1;
   } finally {
     report.providerRequests=fixture.requests;await fixture.close();writeNew(join(options.root,'shared-resource-gate.json'),report);
   }

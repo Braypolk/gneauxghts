@@ -6,6 +6,7 @@ import type { ChatProposalDraft, ChatMessage } from '$lib/features/chat/types';
 import { assertAcknowledgedReview } from './iosTranscriptContract';
 import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
+import { openVisibleProbeChat } from './probeChatFocus';
 
 type ProbeApi = ChatApi & {
   prototypeState(): Promise<{ transcriptStateJson?: string }>;
@@ -32,7 +33,7 @@ async function until<T>(read: () => T | Promise<T>, label: string, timeout = 450
 }
 const button = (label: string, root: ParentNode = document) => Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(node => !node.disabled && (node.textContent?.trim() === label || node.getAttribute('aria-label') === label));
 async function click(label: string, root: ParentNode = document) { (await until(() => button(label, root), label)).click(); await pause(); }
-async function open() { if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner'); await until(() => document.querySelector('[aria-label="Thought partner chat"]'), 'chat'); }
+async function open() { await openVisibleProbeChat(until); }
 async function select(id: string) {
   await open(); const conversation = await api.getConversation(id); await click('Conversations');
   (await until(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker')).click();

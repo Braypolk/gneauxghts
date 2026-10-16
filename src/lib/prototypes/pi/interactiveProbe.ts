@@ -7,6 +7,7 @@ import { nativeTransportStats } from './nativeProvider';
 import type { ChatMessage } from '$lib/features/chat/types';
 import { acquireProbeReview } from './probeReview';
 import { openProbeChatSplit } from './probeSplit';
+import { openVisibleProbeChat } from './probeChatFocus';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -41,8 +42,7 @@ function input(element: HTMLInputElement | HTMLTextAreaElement, value: string) {
   element.focus(); element.value = value; element.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value }));
 }
 async function openChat() {
-  if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
-  await until(() => document.querySelector('[aria-label="Thought partner chat"]'), 'normal chat panel');
+  await openVisibleProbeChat(until);
 }
 async function selectConversation(id: string) {
   await openChat(); const conversation = await api.getConversation(id);
@@ -283,6 +283,12 @@ export async function runInteractiveProbe() {
       } else throw new Error(`Unsupported interactive phase ${phase}`);
     }
     report.status = 'passed';
-  } catch (error) { report.status = 'failed'; report.error = String(error); report.visible = document.body.innerText.slice(0, 2500); }
+  } catch (error) {
+    report.status = 'failed'; report.error = String(error); report.visible = document.body.innerText.slice(0, 2500);
+    report.receipts.workspaceFocus = {
+      panes: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"]')).slice(0, 6).map(node => ({ id: node.dataset.paneId, kind: node.dataset.paneKind, collapsed: node.hasAttribute('data-pane-collapsed'), inertFrame: Boolean(node.querySelector('[data-pane-frame][inert]')) })),
+      controls: Array.from(document.querySelectorAll<HTMLButtonElement>('button')).filter(node => /^(Expand |Open thought partner)/.test(node.getAttribute('aria-label') ?? '')).slice(0, 12).map(node => ({ label: node.getAttribute('aria-label'), disabled: node.disabled, hidden: Boolean(node.closest('[inert],[aria-hidden="true"]')), rectangles: node.getClientRects().length }))
+    };
+  }
   return publish();
 }
