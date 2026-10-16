@@ -7,6 +7,7 @@ import { assertAcknowledgedReview } from './iosTranscriptContract';
 import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openVisibleProbeChat } from './probeChatFocus';
+import { probePaneTitle } from './probePaneTitle';
 
 type ProbeApi = ChatApi & {
   prototypeState(): Promise<{ transcriptStateJson?: string } | undefined>;
@@ -97,7 +98,7 @@ async function reviewEditor(id: string, trace: ProbeTrace, automaticReviewId?: s
   const editor = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
     .map(node => EditorView.findFromDOM(node)).find(view => {
       if (!view || view.state.doc.toString() !== draft.markdown) return false;
-      const title = view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]');
+      const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor');
       return title?.value === draft.title && (automaticReviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === automaticReviewId);
     });
   const view = await acquireProbeReview({ editor, openChat: () => open(trace), until, waitForAutomaticMount: automaticReviewId !== undefined,
@@ -127,7 +128,7 @@ async function acknowledgedPending(id: string, trace: ProbeTrace) {
   const draft = await api.getProposalDraft!(id);
   const editor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
     .map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && view.state.field(reviewProjection, false)?.hunks.length), 'mounted creation review decisions');
-  const title = editor.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]');
+  const title = probePaneTitle(editor.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor');
   assert(title, 'Mounted pending review has no corresponding title');
   return acknowledgedProbeDraft({ draft: () => api.getProposalDraft!(id), until,
     working: () => {

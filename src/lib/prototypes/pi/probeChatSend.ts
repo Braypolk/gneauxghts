@@ -1,18 +1,24 @@
 import { visibleProbeControl } from './probeChatFocus';
+import { probePaneTitle } from './probePaneTitle';
 
 const visible = (node: HTMLElement) => !node.closest('[hidden]') && visibleProbeControl(node);
 
 export function probeChatPane(title?: string) {
   return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"][data-pane-kind="chat"]'))
-    .find(pane => visible(pane) && (title === undefined || pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === title));
+    .find(pane => {
+      const field = probePaneTitle(pane, 'chat');
+      return visible(pane) && field && visible(field) && (title === undefined || field.value === title);
+    });
 }
 
 /** The inactive pane retains its composer under a hidden slot. Normal header
  * focus moves that same DOM surface into the shared dock; never substitute a
  * different pane's visible composer while that move is pending. */
 export async function focusProbeChatComposer(pane: HTMLElement, until: <T>(read: () => T | Promise<T>, label: string) => Promise<NonNullable<T>>) {
-  const title = pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]');
-  if (!title || !visible(title)) throw new Error('Requested chat pane has no visible normal title control');
+  const title = await until(() => {
+    const field = probePaneTitle(pane, 'chat');
+    return visible(pane) && field && visible(field) ? field : undefined;
+  }, 'requested chat pane has its visible normal title control');
   const retained = pane.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]');
   // A portaled surface may be hidden while the dock shows search. Capture the
   // sole normal chat-slot surface even then; its absence from the requested
@@ -40,7 +46,7 @@ export async function focusProbeChatComposer(pane: HTMLElement, until: <T>(read:
 export function probeChatSendDiagnostics() {
   return {
     panes: Array.from(document.querySelectorAll<HTMLElement>('[data-testid="workspace-pane"][data-pane-kind="chat"]')).slice(0, 6)
-      .map(pane => ({ paneId: pane.dataset.paneId, title: pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value,
+      .map(pane => ({ paneId: pane.dataset.paneId, title: probePaneTitle(pane, 'chat')?.value,
         retainedComposer: Boolean(pane.querySelector('textarea[aria-label="Message"]')), visible: visible(pane) })),
     composers: Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]')).slice(0, 6)
       .map(node => ({ paneId: node.closest<HTMLElement>('[data-testid="workspace-pane"]')?.dataset.paneId,

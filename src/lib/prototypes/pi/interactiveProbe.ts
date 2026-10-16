@@ -8,9 +8,10 @@ import type { ChatMessage } from '$lib/features/chat/types';
 import { acquireProbeReview } from './probeReview';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openProbeChatSplit } from './probeSplit';
-import { openVisibleProbeChat } from './probeChatFocus';
+import { openVisibleProbeChat, visibleProbeControl } from './probeChatFocus';
 import { revealProbeReadActivity } from './probeReadActivity';
 import { focusProbeChatComposer, probeChatPane, probeComposerSend, probeChatSendDiagnostics } from './probeChatSend';
+import { probePaneTitle } from './probePaneTitle';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -55,7 +56,7 @@ async function selectConversation(id: string) {
   await click('Conversations', pane);
   const item = await until(() => Array.from(pane.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker item');
   item.click();
-  await until(() => pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === conversation.title, 'selected chat title in picker owner pane');
+  await until(() => probePaneTitle(pane, 'chat')?.value === conversation.title, 'selected chat title in picker owner pane');
 }
 async function startSend(id: string, content: string) {
   const debug = /PI_UI:(STOP|INTERRUPT)/.test(content);
@@ -85,9 +86,7 @@ async function send(id: string, content: string) {
 async function currentReview(id: string) {
   const draft = await api.getProposalDraft!(id);
   const editor = () => {
-    const titleMatches = Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).some(node => node.value === draft.title);
-    if (!titleMatches) return undefined;
-    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown);
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title);
   };
   return acquireProbeReview({ editor, openChat, until,
     card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
@@ -96,7 +95,7 @@ async function currentReview(id: string) {
 async function editReview(id: string, body: string, title: string) {
   const view = await currentReview(id);
   view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body }, userEvent: 'input.type' });
-  const field = await until(() => Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).find(node => !node.readOnly), 'review title');
+  const field = await until(() => { const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor'); return title && !title.readOnly && visibleProbeControl(title) ? title : undefined; }, 'review title');
   input(field, title); await pause(); field.blur();
   return until(async () => { const draft = await api.getProposalDraft!(id); return draft.markdown === body && draft.title === title ? draft : undefined; }, 'acknowledged body/title checkpoint');
 }
@@ -272,7 +271,7 @@ export async function runInteractiveProbe() {
         await acquireProbeReview({ waitForAutomaticMount: true, until, openChat,
           editor: () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
             .map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === saveDraft.markdown &&
-              view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]')?.value === saveDraft.title &&
+              probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === saveDraft.title &&
               view.state.field(reviewProjection, false)?.reviewId === String(save.preview.reviewId ?? save.id)),
           card: () => document.querySelector(`section[data-proposal-id="${save.id}"]`) ?? undefined,
           openCard: card => click('Review in editor', card) });

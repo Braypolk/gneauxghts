@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn(), create: vi.fn(), get: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
-vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint } }));
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get } }));
 import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, runIosLiveProbe } from './iosLiveProbe';
 import type { ChatProposalDraft } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
@@ -50,6 +50,31 @@ describe('explicit iOS live probe admission and deadlines', () => {
   it('preserves actual native failures instead of returning a fabricated successful answer', async () => {
     mocks.state.mockRejectedValue(new Error('Observed native snapshot failure'));
     expect(await runIosLiveProbe()).toMatchObject({ status: 'failed', error: 'Error: Observed native snapshot failure', checks: [] }); expect(mocks.defaults).not.toHaveBeenCalled();
+  });
+  it('selects through the normal mobile picker and exact portaled title before attempting live Send', async () => {
+    const visible = { closest: () => null, getClientRects: () => [1] };
+    const title = { ...visible, value: '', focus: vi.fn(() => { Object.assign(document, { activeElement: title }); }) };
+    const composer = { ...visible, isConnected: true, disabled: false,
+      closest: (selector: string) => selector === '.workspace-chat-slot' ? {} : null };
+    const picker = { ...visible, disabled: false, getAttribute: () => 'Conversations', click: vi.fn() };
+    const item = { textContent: 'Pi iOS live local', click: vi.fn(() => { title.value = 'Pi iOS live local'; }) };
+    const pane = { ...visible, querySelector: () => null,
+      querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] };
+    vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
+    vi.stubGlobal('document', { activeElement: null, querySelector: () => pane,
+      querySelectorAll: (selector: string) => selector.startsWith('[data-testid=') ? [pane]
+        : selector.startsWith('.mobile-workspace-title-slot') ? [title]
+          : selector === 'textarea[aria-label="Message"]' ? [composer] : [visible] });
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: false, interactiveGate: true }
+      : command === 'save_note' ? { noteId: 'source', path: '/vault/Source.md' } : undefined);
+    mocks.create.mockResolvedValue({ id: 'live' });
+    mocks.get.mockResolvedValueOnce({ title: 'Pi iOS live local' }).mockRejectedValueOnce(new Error('Observed real Send boundary'));
+    expect(await runIosLiveProbe()).toMatchObject({ status: 'failed', error: 'Error: Observed real Send boundary', checks: [] });
+    expect(title.focus).toHaveBeenCalledOnce();
+    expect(picker.click).toHaveBeenCalledOnce();
+    expect(item.click).toHaveBeenCalledOnce();
+    expect(mocks.get).toHaveBeenCalledTimes(2);
+    expect(mocks.checkpoint).not.toHaveBeenCalled();
   });
 });
 

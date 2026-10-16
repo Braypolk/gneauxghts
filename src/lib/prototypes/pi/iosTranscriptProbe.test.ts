@@ -119,8 +119,10 @@ describe('iOS transcript probe snapshot admission', () => {
     const messages: { id: string; status: string; content: string; citations: { label: string }[] }[] = [];
     let conflictVisible = false, conflictKind = 'edited', saved = false;
     let title = draft.title, reviewId = 'foreign-review';
+    const notePane = { querySelector: () => null };
+    const mobileTitle = { get value() { return title; } };
     const view = { state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId }) },
-      dom: { closest: () => ({ querySelector: () => ({ value: title }) }) } };
+      dom: { closest: () => notePane } };
     mocks.editor.mockReturnValue(view);
     mocks.state.mockResolvedValue(undefined);
     mocks.create.mockResolvedValueOnce({ id: 'local' }).mockResolvedValueOnce({ id: 'openai' });
@@ -145,7 +147,9 @@ describe('iOS transcript probe snapshot admission', () => {
           : selector.startsWith('[data-chat-message-id=') ? answer : {},
       querySelectorAll: (selector: string) => selector === 'button' ? [...buttons, ...(conflictVisible ? [restore] : [])]
         : selector === '[role="menuitem"]' ? [Object.assign(makeButton('Local chat'), { textContent: 'Local chat' })]
-          : selector === '[data-testid="note-editor"] .cm-editor' ? [{}] : [],
+          : selector === '[data-testid="note-editor"] .cm-editor' ? [{}]
+            : selector === '[data-testid="workspace-pane"][data-pane-kind="editor"]' ? [notePane]
+              : selector === '.mobile-workspace-title-slot [data-testid="note-title"]' ? [mobileTitle] : [],
     });
     vi.mocked(acquireProbeReview).mockImplementationOnce(async input => {
       expect(input.waitForAutomaticMount).toBe(true);

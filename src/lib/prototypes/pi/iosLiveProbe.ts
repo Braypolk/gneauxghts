@@ -10,6 +10,7 @@ import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { openVisibleProbeChat, visibleProbeControl } from './probeChatFocus';
 import { focusProbeChatComposer, probeChatPane, probeComposerSend } from './probeChatSend';
 import { admittedProbeRead, revealProbeReadActivity } from './probeReadActivity';
+import { probePaneTitle } from './probePaneTitle';
 
 export const IOS_LIVE = { upstream: 'http://100.117.20.29:1234/v1', endpoint: 'http://127.0.0.1:1444/v1', model: 'qwen3.8-27b-gsq-rco' } as const;
 type ProbeApi = ChatApi & { prototypeState(): Promise<{ iosLiveStateJson?: string } | undefined>; prototypeCheckpoint(value: unknown): Promise<void> };
@@ -58,7 +59,7 @@ async function select(id: string) {
   const pane = await until(() => probeChatPane(conversation.title) ?? probeChatPane(), 'normal chat picker pane');
   await focusProbeChatComposer(pane, until); await click('Conversations', pane);
   (await until(() => Array.from(pane.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'live conversation picker item')).click();
-  await until(() => pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === conversation.title, 'selected live conversation');
+  await until(() => probePaneTitle(pane, 'chat')?.value === conversation.title, 'selected live conversation');
 }
 async function send(id: string, text: string) {
   const before = await api.getConversation(id), ids = new Set(before.messages.map(value => value.id));
@@ -76,13 +77,13 @@ async function review(id: string, conversationId: string, waitForAutomaticMount 
   const proposal = (await api.listPendingProposals(conversationId)).find(value => value.id === id);
   const reviewId = proposal?.preview.reviewId;
   assert(typeof reviewId === 'string' && reviewId.length > 0, 'Pending live proposal lacks exact review identity');
-  const editor = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && view.state.field(reviewProjection, false)?.reviewId === reviewId && view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]')?.value === draft.title);
+  const editor = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && view.state.field(reviewProjection, false)?.reviewId === reviewId && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title);
   const view = await acquireProbeReview({ editor, openChat, until, waitForAutomaticMount, card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined, openCard: card => click('Review in editor', card) });
   return { view, draft, reviewId };
 }
 async function acknowledge(id: string, conversationId: string) {
   const { view, draft, reviewId } = await review(id, conversationId);
-  const title = view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]'); assert(title, 'Review title unavailable');
+  const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor'); assert(title, 'Review title unavailable');
   return acknowledgedProbeDraft({ draft: () => api.getProposalDraft!(id), until, working: () => {
     const projection = view.state.field(reviewProjection, false); assertIosLiveReview(reviewId, projection); assert(projection, 'Review projection unavailable');
     return { markdown: view.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
@@ -132,7 +133,7 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       const { view, reviewId } = await review(proposal.id, conversation.id, true);
       const body = `${view.state.doc.toString()}\n\nSynthetic iOS live review edit retained 12.`;
       view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: body }, userEvent: 'input.type' });
-      const field = view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]'); assert(field, 'Mounted live review title missing');
+      const field = await until(() => { const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor'); return title && visibleProbeControl(title) ? title : undefined; }, 'mounted live review has its visible normal title');
       input(field, 'Pi iOS live saved answer'); field.blur();
       await until(async () => { const value = await api.getProposalDraft!(proposal.id); return value.markdown === body && value.title === field.value ? value : undefined; }, 'normal body/title acknowledged');
       const draft = await acknowledge(proposal.id, conversation.id);
@@ -163,7 +164,7 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       const strip = await until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${state.proposalId}"]`), 'normal retained review strip');
       const keep = await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip), 'normal retained Keep');
       assertIosLiveReview(state.reviewId, view.state.field(reviewProjection, false));
-      assert(view.state.doc.toString() === state.reviewedDraft.markdown && view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]')?.value === state.reviewedDraft.title, 'Live working review changed before Keep');
+      assert(view.state.doc.toString() === state.reviewedDraft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === state.reviewedDraft.title, 'Live working review changed before Keep');
       keep.click();
       await until(async () => !(await api.listPendingProposals(state.conversationId)).some(value => value.id === state.proposalId), 'native kept publication');
       const draft = await api.getProposalDraft!(state.proposalId), receipt = await api.commitAgentProposal(state.proposalId, draft.markdown, draft.version);

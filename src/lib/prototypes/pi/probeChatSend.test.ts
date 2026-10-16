@@ -26,17 +26,53 @@ function surface(shown: boolean) {
   return { state, composer, send, root, expand, dock };
 }
 function panel(title: string, composer: HTMLTextAreaElement | null, focus: () => void) {
+  const state = { localTitle: true, titleVisible: true };
   const field = { value: title, focus: vi.fn(() => { Object.assign(document, { activeElement: field }); focus(); }), closest: () => null, getClientRects: () => [1] };
-  const pane = { querySelector: vi.fn((selector: string) => selector === '[aria-label="Chat title"]' ? field : composer), closest: () => null, getClientRects: () => [1] } as unknown as HTMLElement;
-  return { pane, field };
+  field.getClientRects = () => state.titleVisible ? [1] : [];
+  const pane = { querySelector: vi.fn((selector: string) => selector === '[aria-label="Chat title"]' ? state.localTitle ? field : null : composer), closest: () => null, getClientRects: () => [1] } as unknown as HTMLElement;
+  return { pane, field, state };
 }
-function install(panes: HTMLElement[], composers: HTMLTextAreaElement[]) {
+function install(panes: HTMLElement[], composers: HTMLTextAreaElement[], mobileTitles: unknown[] = []) {
   vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
-  vi.stubGlobal('document', { querySelectorAll: (selector: string) => selector.startsWith('[data-testid=') ? panes : composers });
+  vi.stubGlobal('document', { querySelectorAll: (selector: string) => selector.startsWith('[data-testid=') ? panes : selector.startsWith('.mobile-workspace-title-slot') ? mobileTitles : composers });
 }
 afterEach(() => vi.unstubAllGlobals());
 
 describe('normal send with two retained chat panes', () => {
+  it('acquires the normal mobile title only for the pane whose title moved to the shared header', async () => {
+    const a = surface(true), b = surface(false);
+    const active = panel('A', null, () => {}), retained = panel('B', b.composer, () => {});
+    active.state.localTitle = false; retained.state.titleVisible = false;
+    install([retained.pane, active.pane], [a.composer, b.composer], [active.field]);
+    expect(probeChatPane()).toBe(active.pane);
+    expect(probeChatPane('A')).toBe(active.pane);
+    expect(probeChatPane('B')).toBeUndefined();
+    expect(await focusProbeChatComposer(active.pane, until)).toBe(a.composer);
+    expect(active.field.focus).toHaveBeenCalledOnce();
+    expect(retained.field.focus).not.toHaveBeenCalled();
+  });
+  it('waits for the exact pane title to mount instead of accepting its visible empty shell', async () => {
+    const a = surface(true), requested = panel('A', a.composer, () => {});
+    requested.state.localTitle = false;
+    install([requested.pane], [a.composer]);
+    expect(probeChatPane()).toBeUndefined();
+    queueMicrotask(() => { requested.state.localTitle = true; });
+    expect(await focusProbeChatComposer(requested.pane, until)).toBe(a.composer);
+    expect(requested.field.focus).toHaveBeenCalledOnce();
+  });
+  it('rejects ambiguous mobile title ownership and hidden mobile titles', async () => {
+    const a = surface(true), requested = panel('A', null, () => {}), shell = panel('pending', null, () => {});
+    requested.state.localTitle = false; shell.state.localTitle = false;
+    install([requested.pane, shell.pane], [a.composer], [requested.field]);
+    expect(probeChatPane('A')).toBeUndefined();
+    await expect(focusProbeChatComposer(requested.pane, until)).rejects.toThrow('did not become visible');
+    expect(requested.field.focus).not.toHaveBeenCalled();
+    install([requested.pane], [a.composer], [requested.field, shell.field]);
+    expect(probeChatPane()).toBeUndefined();
+    requested.state.titleVisible = false;
+    install([requested.pane], [a.composer], [requested.field]);
+    expect(probeChatPane()).toBeUndefined();
+  });
   it('focuses the requested pane and waits for its exact hidden composer to enter the dock', async () => {
     const a = surface(false), b = surface(true);
     const left = panel('A', a.composer, () => queueMicrotask(() => { a.state.shown = true; a.state.docked = true; b.state.shown = false; }));

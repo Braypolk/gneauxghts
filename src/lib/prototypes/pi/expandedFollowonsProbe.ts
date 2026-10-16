@@ -7,6 +7,9 @@ import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/featur
 import { nativeTransportStats } from './nativeProvider';
 import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
 import { collapseFollowonsEditorSelections } from './followonsEditorContext';
+import { focusProbeChatComposer, probeChatPane } from './probeChatSend';
+import { probePaneTitle } from './probePaneTitle';
+import { visibleProbeControl } from './probeChatFocus';
 
 export type FollowonsReport = {
   gate: 'expanded-native-followons-fixture'; status: 'running' | 'passed' | 'failed';
@@ -28,26 +31,27 @@ async function sendComposer(content: string) {
   const field = await until(() => { const node = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return node && !node.disabled ? node : undefined; }, 'normal composer');
   input(field, content); await click('Send message');
 }
+let conversationPane: HTMLElement | undefined;
 const conversationControls: FollowonsConversationControls = {
   focusChat: async () => {
     if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
-    // The inactive chat's docked composer may be hidden. Activate through its
-    // pane-local visible header, expanding a compact rail through normal UI.
+    // Activate the exact chat through its normal header and composer, expanding
+    // a compact rail through normal UI before acquiring the mobile title owner.
     const rail = document.querySelector<HTMLButtonElement>('[data-pane-kind="chat"][data-pane-collapsed] button.pane-rail-surface:not(:disabled)');
     if (rail) { rail.click(); await pause(); }
-    const title = await until(() => { const node = document.querySelector<HTMLInputElement>('[data-pane-kind="chat"] [aria-label="Chat title"]'); return node && !node.closest('[inert], [hidden]') && node.getClientRects().length ? node : undefined; }, 'visible chat header before New Chat');
-    title.focus();
+    const pane = await until(() => probeChatPane(), 'visible chat header before New Chat');
+    const composer = await focusProbeChatComposer(pane, until);
+    conversationPane = pane;
     await until(() => button('New Chat. Start a blank chat in this pane.'), 'chat header focus activates New Chat action');
-    const composer = await until(() => Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]')).find(node => !node.disabled && !node.closest('[inert], [hidden]') && node.getClientRects().length), 'visible mounted chat composer before New Chat');
     composer.focus();
     await until(() => document.activeElement === composer && button('New Chat. Start a blank chat in this pane.'), 'chat focus activates pane and New Chat action');
   },
   newChat: async () => {
     await click('New Chat. Start a blank chat in this pane.');
-    await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === '', 'blank mounted chat draft');
+    await until(() => probePaneTitle(conversationPane, 'chat')?.value === '', 'blank mounted chat draft');
   },
   title: async title => {
-    const field = await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]'), 'draft title');
+    const field = await until(() => { const title = probePaneTitle(conversationPane, 'chat'); return title && visibleProbeControl(title) ? title : undefined; }, 'draft title');
     input(field, title); field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await pause();
   },
   model: async (provider, model) => {
@@ -76,7 +80,7 @@ const conversationControls: FollowonsConversationControls = {
     const id = await until(async () => (await api.listConversations()).find(item => item.title === title)?.id, 'first Send creates configured conversation');
     const conversation = await until(async () => { const value = await api.getConversation(id); return value.messages.some(item => item.role === 'user' && item.content === content) && value.messages.at(-1)?.role === 'assistant' ? value : undefined; }, 'first WARMUP admission');
     completed(await terminal(id, conversation.messages.at(-1)!.id));
-    await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === title, 'first Send selects created conversation');
+    await until(() => probePaneTitle(conversationPane, 'chat')?.value === title, 'first Send selects created conversation');
     await until(() => document.querySelector(`[data-chat-message-id="${conversation.messages.at(-1)!.id}"]`)?.textContent?.includes('Synthetic'), 'first WARMUP renders in selected chat');
     return api.getConversation(id);
   }
