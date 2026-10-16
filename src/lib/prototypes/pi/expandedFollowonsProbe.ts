@@ -4,7 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
-import { acquireFollowonsConversation, type FollowonsConversationControls } from './followonsConversation';
+import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
 
 export type FollowonsReport = {
   gate: 'expanded-native-followons-fixture'; status: 'running' | 'passed' | 'failed';
@@ -60,7 +60,12 @@ const conversationControls: FollowonsConversationControls = {
     (await until(() => Array.from(menu.querySelectorAll<HTMLButtonElement>('button')).find(node => node.querySelector('span.font-medium')?.textContent === 'Full vault'), 'Full vault choice')).click();
     await until(() => button('Vault access')?.textContent?.includes('Full vault'), 'full vault draft');
   },
-  reasoning: async () => {
+  reasoning: async (_value, provider, model) => {
+    const capabilities = await api.getModelCapabilities(provider, model);
+    if (followonsReasoningMode(provider, model, capabilities) === 'unsupported-off') {
+      assert(!document.querySelector('button[aria-label="Reasoning effort"]'), 'Unsupported Off-only model unexpectedly exposes a reasoning control');
+      return;
+    }
     await click('Reasoning effort'); const picker = await until(() => document.querySelector('[aria-label="Reasoning effort picker"]'), 'reasoning picker');
     await click('Off', picker); await until(() => !document.querySelector('[aria-label="Reasoning effort picker"]') && button('Reasoning effort')?.textContent?.includes('Off'), 'off reasoning draft');
   },

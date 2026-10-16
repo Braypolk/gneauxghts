@@ -32,8 +32,8 @@ export async function runExpandedProbe() {
       if(config.followonsGate){
         const {runExpandedFollowonsProbe}=await import('./expandedFollowonsProbe');
         const followons=await runExpandedFollowonsProbe();
-        if(!followons || followons.status!=='passed')throw new Error(followons?.error ?? 'Enabled native follow-on gate produced no passing report');
         report.followons=followons;
+        if(!followons || followons.status!=='passed')throw new Error(followons?.error ?? 'Enabled native follow-on gate produced no passing report');
       }
       const {runNativeStorageFaultProbe}=await import('./nativeStorageFaultProbe');
       report.storageFaults=await runNativeStorageFaultProbe({phase:'last-after-ui',generatedSyntheticRoot:true});

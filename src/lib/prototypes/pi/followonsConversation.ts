@@ -1,4 +1,17 @@
-import type { ChatConversation, ChatProvider } from '$lib/features/chat/types';
+import { chatReasoningChoices } from '$lib/features/chat/chatConfiguration';
+import type { ChatConversation, ChatModelCapabilities, ChatProvider } from '$lib/features/chat/types';
+
+export function followonsReasoningMode(provider: ChatProvider, model: string, capabilities: ChatModelCapabilities) {
+  const choices = chatReasoningChoices(provider, model, capabilities);
+  if (choices.some(choice => choice.value === 'off')) return 'normal-control' as const;
+  // The ordinary hosted custom-model composer has no reasoning selector. Only
+  // an explicit Off-only capability default can justify leaving that draft as is;
+  // first Send must still prove that the controller admitted Off.
+  if (choices.length === 0 && capabilities.reasoningOptions?.length === 1
+    && capabilities.reasoningOptions[0] === 'off' && capabilities.defaultReasoningEffort === 'off')
+    return 'unsupported-off' as const;
+  throw new Error('Follow-on model cannot configure Off reasoning through the normal composer');
+}
 
 export type FollowonsDraft = { title: string; provider: ChatProvider; model: string; vaultAccess: 'full'; reasoningEffort: 'off' };
 export type FollowonsConversationControls = {
@@ -7,7 +20,7 @@ export type FollowonsConversationControls = {
   title(value: string): Promise<void>;
   model(provider: ChatProvider, model: string): Promise<void>;
   vault(value: 'full'): Promise<void>;
-  reasoning(value: 'off'): Promise<void>;
+  reasoning(value: 'off', provider: ChatProvider, model: string): Promise<void>;
   send(content: string): Promise<void>;
   accepted(title: string, content: string): Promise<ChatConversation>;
 };
@@ -22,7 +35,7 @@ export async function acquireFollowonsConversation(controls: FollowonsConversati
   await controls.title(draft.title);
   await controls.model(draft.provider, draft.model);
   await controls.vault(draft.vaultAccess);
-  await controls.reasoning(draft.reasoningEffort);
+  await controls.reasoning(draft.reasoningEffort, draft.provider, draft.model);
   await controls.send(firstWarmup);
   const conversation = await controls.accepted(draft.title, firstWarmup);
   if (conversation.title !== draft.title || conversation.provider !== draft.provider || conversation.model !== draft.model

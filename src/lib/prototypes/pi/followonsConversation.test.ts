@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
 import { createChatController } from '$lib/features/chat/controller.svelte';
 import { conversation, fakeApi, message, settings } from '$lib/features/chat/chatTestSupport';
-import type { ChatConversation, ChatProvider } from '$lib/features/chat/types';
-import { acquireFollowonsConversation, type FollowonsConversationControls } from './followonsConversation';
+import type { ChatConversation, ChatModelCapabilities, ChatProvider } from '$lib/features/chat/types';
+import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
+
+const offOnly: ChatModelCapabilities = { images: false, audio: false, video: false, files: false, tools: true, acceptedMimeTypes: [], reasoningOptions: ['off'], defaultReasoningEffort: 'off' };
 
 describe('mounted follow-on draft admission', () => {
   it('inactive actual ChatPanel keeps its header outside the hidden dockless composer', async () => {
@@ -28,7 +30,7 @@ describe('mounted follow-on draft admission', () => {
     fake.api.getSettings.mockResolvedValue({ ...settings, provider: 'local', model: 'previous-model', localModel: 'previous-model' });
     fake.api.listConversations.mockImplementation(async () => [...records.values()]);
     fake.api.getConversation.mockImplementation(async id => records.get(id)!);
-    fake.api.getModelCapabilities.mockResolvedValue({ images: false, audio: false, video: false, files: false, tools: true, acceptedMimeTypes: [], reasoningOptions: ['off'], defaultReasoningEffort: 'off' });
+    fake.api.getModelCapabilities.mockResolvedValue(offOnly);
     fake.api.createConversation.mockImplementation(async input => {
       const value = conversation({ ...input, id: `created-${++sequence}` }); records.set(value.id, value); return value;
     });
@@ -40,6 +42,7 @@ describe('mounted follow-on draft admission', () => {
     });
     const controller = createChatController(fake.api);
     await controller.initialize('existing');
+    const reasoningSetter = vi.spyOn(controller, 'setReasoningEffort');
     try {
       const unseen = await fake.api.createConversation({ title: 'API-created unseen picker item' });
       expect((await fake.api.listConversations()).some(item => item.id === unseen.id)).toBe(true);
@@ -52,7 +55,17 @@ describe('mounted follow-on draft admission', () => {
         title: async title => { controller.setConversationDraftTitle(title); },
         model: async (selected, model) => { await controller.setProvider(selected, model); },
         vault: async access => { await controller.setVaultAccess(access); },
-        reasoning: async effort => { await controller.setReasoningEffort(effort); },
+        reasoning: async (effort, selected, model) => {
+          const mode = followonsReasoningMode(selected, model, await fake.api.getModelCapabilities(selected, model));
+          // Exercise the retained composer's actual selector contract, rather
+          // than treating a missing control as permission to set metadata.
+          const body = render(ChatPanel, { props: { controller, autoInitialize: false } }).body;
+          if (mode === 'unsupported-off') expect(body).not.toContain('aria-label="Reasoning effort"');
+          else {
+            expect(body).toContain('aria-label="Reasoning effort"');
+            await controller.setReasoningEffort(effort);
+          }
+        },
         send: async content => { expect((await controller.send({ content })).status).toBe('sent'); },
         accepted: async title => records.get(controller.getSnapshot().conversation!.id)!
       };
@@ -65,13 +78,28 @@ describe('mounted follow-on draft admission', () => {
       expect(fake.api.createConversation).toHaveBeenLastCalledWith({ title: `Followons ${provider}`, provider, model: 'pi-native-fixture', vaultAccess: 'full', reasoningEffort: 'off' });
       expect(fake.api.sendMessage).toHaveBeenCalledOnce();
       expect(fake.api.sendMessage).toHaveBeenCalledWith(expect.objectContaining({ conversationId: accepted.id, content: firstWarmup }));
+      expect(reasoningSetter).toHaveBeenCalledTimes(provider === 'local' ? 1 : 0);
     } finally { controller.dispose(); }
   });
 
-  it('rejects a completed first Send with silently changed configuration', async () => {
+  it('requires exact Off-only capability proof before accepting an unavailable selector', () => {
+    expect(followonsReasoningMode('openai', 'pi-native-fixture', offOnly)).toBe('unsupported-off');
+    expect(followonsReasoningMode('local', 'pi-native-fixture', offOnly)).toBe('normal-control');
+    for (const capabilities of [
+      { ...offOnly, reasoningOptions: undefined },
+      { ...offOnly, reasoningOptions: ['off', 'on'] },
+      { ...offOnly, defaultReasoningEffort: 'medium' },
+      { ...offOnly, defaultReasoningEffort: undefined },
+    ] satisfies ChatModelCapabilities[]) {
+      expect(() => followonsReasoningMode('openai', 'pi-native-fixture', capabilities)).toThrow('cannot configure Off');
+    }
+    expect(() => followonsReasoningMode('openai', 'gpt-5.4', offOnly)).toThrow('cannot configure Off');
+  });
+
+  it.each([{ model: 'wrong-model' }, { reasoningEffort: 'medium' as const }, { provider: 'openai' as const }])('rejects a completed first Send with silently changed configuration %o', async changed => {
     const noop = async () => {};
     const controls: FollowonsConversationControls = { focusChat: noop, newChat: noop, title: noop, model: noop, vault: noop, reasoning: noop, send: noop,
-      accepted: async () => conversation({ title: 'Followons', provider: 'local', model: 'wrong-model', vaultAccess: 'full', reasoningEffort: 'off', messages: [message({ role: 'user', content: 'warmup' }), message({ status: 'completed' })] }) };
+      accepted: async () => conversation({ title: 'Followons', provider: 'local', model: 'pi-native-fixture', vaultAccess: 'full', reasoningEffort: 'off', ...changed, messages: [message({ role: 'user', content: 'warmup' }), message({ status: 'completed' })] }) };
     await expect(acquireFollowonsConversation(controls, { title: 'Followons', provider: 'local', model: 'pi-native-fixture', vaultAccess: 'full', reasoningEffort: 'off' }, 'warmup')).rejects.toThrow('configured draft');
   });
 });

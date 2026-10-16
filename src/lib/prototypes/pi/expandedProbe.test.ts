@@ -64,6 +64,16 @@ describe('explicit native expanded journey wrapper', () => {
     expect(await runExpandedProbe()).toMatchObject({ status: 'failed' });
     expect(mocks.storage).not.toHaveBeenCalled();
   });
+  it('retains failed follow-on checks and receipts in the final failed wrapper report', async () => {
+    mocks.state.mockResolvedValue(relaunchState);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true, followonsGate: true } : undefined);
+    const observed = { gate: 'expanded-native-followons-fixture', status: 'failed', checks: ['local native attachment Retry'], receipts: { admitted: { provider: 'local', model: 'pi-native-fixture', reasoningEffort: 'off' } }, error: 'Follow-on deadline: Reasoning effort' };
+    mocks.followons.mockResolvedValue(observed);
+    const result = await runExpandedProbe();
+    expect(result).toMatchObject({ status: 'failed', followons: observed, error: 'Error: Follow-on deadline: Reasoning effort' });
+    expect(mocks.invoke).toHaveBeenLastCalledWith('pi_ui_report', { report: result });
+    expect(mocks.storage).not.toHaveBeenCalled();
+  });
   it('preserves the default expanded route without opting into follow-ons', async () => {
     mocks.state.mockResolvedValue(relaunchState);
     expect(await runExpandedProbe()).toMatchObject({ status: 'passed', storageFaults: { status: 'passed' } });
