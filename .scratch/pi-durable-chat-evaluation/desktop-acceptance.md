@@ -62,16 +62,38 @@ Both retain v30 canonical
 no cross-artifact whole final pass follows. Transcript closed 46-entry backup:
 `/private/tmp/pi-owned-simulator-after-v30-transcript-20261015`.
 
-All three v30 iOS variants compiled; desktop was not built. All three v31 iOS
-builds started (29693), log `/private/tmp/pi-removal-v31-ios-builds-20261015.log`;
-expanded compilation completed SHA
+All three v31 iOS variants compiled on the canonical pin above. Actual expanded
+**3g4HLR whole FAILED**, 73 provider requests, binary
 `1b98f56f15756214f4c356086d6faef953f9c2cf453b6bcb1996bec70836678f`
-([compiled-only receipt](/private/tmp/pi-removal-final-20261015-v31/artifacts/ios-expanded-build.json)).
-Actual full-follow-on expanded run92673 started, log
-`/private/tmp/pi-removal-v31-ios-expanded-actual-20261015.log`, with no result yet.
-Remaining builds are pending; **no v31 native pass yet**. Separate-target persistent app build39179
-started, log `/private/tmp/pi-v31-persistent-app-build-20261015.log`, with no build
-pass yet; the manual app remains closed.
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-3g4HLR/ios-interactive-gate.json)).
+First14/relaunch6/failures4 passed, including exact stale-source refusal/unchanged
+editor checks. Research then failed: native child334/task433 reported
+`Evidence, context or access changed; retry with fresh context`. The root's closed
+backup audit found 39 excerpts and 30 canonical bodies match; that does not
+establish the cause. Diagnostic-only changes in three Rust files are undergoing
+root tests, **cause unproven** and not included in this captured pin. Closed
+85-entry backup: `/private/tmp/pi-owned-simulator-after-v31-expanded-failure-20261015`.
+
+**v31 transcript HrJXyy whole PASS**, six synthetic requests, binary
+`5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0`
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-HrJXyy/ios-transcript-gate.json));
+closed 46-entry backup `/private/tmp/pi-owned-simulator-after-v31-transcript-20261015`.
+**v31 local-live 7GmG8j whole PASS**, binary
+`1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-7GmG8j/ios-live-gate.json)),
+root poll exit0: two normal Sends/three completed real inference POSTs, 15 total
+requests including metadata, `noReplay:true`. Closed 48-entry backup:
+`/private/tmp/pi-owned-simulator-after-v31-live-20261015`; owned bundle uninstalled.
+These whole passes retain synthetic/programmatic versus bounded local-live scope,
+not physical touch/OS-pressure/hosted-live or cross-artifact final acceptance.
+
+No v31 desktop build/gate started. Its queue was superseded before any gate
+([receipt](/private/tmp/pi-final-desktop-queue-v31-superseded-20261015.json));
+final desktop/churn/resources/default smoke remain pending. Persistent manual app
+rebuilt v31 SHA
+`159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`,
+**compiled only/still closed**. Earlier desktop live/original-seal proof keeps its
+own older product pin; no new manual live pass follows.
 
 Historical v29 **dt88yt whole failed** later compact title-input acquisition after
 first14/relaunch6, exact publication/editor and observed origin scroll passed.
@@ -82,12 +104,10 @@ Artificial STOP/CONT false fresh-UI/durable-following-relaunch flags remain fals
 Hosted live is user-deferred; physical touch/device/OS pressure and standalone
 normal Settings vault relocation remain unverified.
 
-Scale **v5** remains untouched/running on frozen v22: **701/1005** at
+Scale **v5** remains untouched/running on frozen v22. Earlier **701/1005** at
 05:08:28 UTC is historical memory progress only, not final durable seed/history/
-identity/provider accounting. New v31 queue76661 waits for full v5 closure and
-desktop build. v30 queue97996 was superseded before **any** gate, exit143
-([receipt](/private/tmp/pi-final-desktop-queue-v30-superseded-20261015.json)); v5
-was not interrupted. Final expanded/fault/crash/transcript/churn, three paired
+identity/provider accounting. The v31 desktop queue is superseded before any gate;
+v5 remains running. Final expanded/fault/crash/transcript/churn, three paired
 Pi/old/Pi resources and fresh default smoke have no new queued result. Explicit
 iOS closure remains required before resources; coverage/cache/observer/IPC/storage
 unknowns and regressions stay visible. Earlier manual desktop live/original-seal
