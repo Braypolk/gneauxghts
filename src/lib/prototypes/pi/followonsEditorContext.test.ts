@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { EditorState, EditorSelection } from '@codemirror/state';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
 import type { ConversationId, EntryRecord } from '@earendil-works/pi-durable';
-import { collapseFollowonsEditorSelections } from './followonsEditorContext';
+import { collapseFollowonsEditorSelections, settleFollowonsEditorSelections } from './followonsEditorContext';
 import { REQUEST_KIND, safeHistory, type RequestSnapshot } from './lifecycle';
 import { EditorDocumentRuntime } from '$lib/features/notepad/editor/editorDocumentRuntime';
 import { createRuntimePane } from '$lib/features/notepad/editor/testSupport';
@@ -11,7 +11,7 @@ import { createRuntimePane } from '$lib/features/notepad/editor/testSupport';
 // pane seam and real CodeMirror transactions. The native probe separately finds
 // and checks actual mounted EditorViews; no private view implementation is used.
 const runtimes: EditorDocumentRuntime[] = [];
-afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.destroy(); });
+afterEach(() => { for (const runtime of runtimes.splice(0)) runtime.destroy(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 function editor(initial: EditorState) {
   const runtime = new EditorDocumentRuntime(initial.doc.toString());runtimes.push(runtime);
   const { view } = createRuntimePane(runtime, initial.doc.toString(), initial.selection.main.head, undefined, [EditorState.allowMultipleSelections.of(true)]);
@@ -56,5 +56,33 @@ describe('source-free native follow-on fixture editor setup', () => {
   it('fails closed if the owning editor does not acknowledge the selection transaction', () => {
     const state = EditorState.create({ doc: 'selected', selection: { anchor: 0, head: 8 } });
     expect(() => collapseFollowonsEditorSelections([{ state, dispatch: () => {} }])).toThrow('still have selected editor content');
+  });
+
+  it('verifies retained editor selection after two bounded yields when native frames stop', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const value = editor(EditorState.create({ doc: 'retained text', selection: { anchor: 0, head: 8 } }));
+    let finished = false;
+    const pending = settleFollowonsEditorSelections([value.view]).then(setup => { finished = true; return setup; });
+    await vi.advanceTimersByTimeAsync(50);
+    expect(finished).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
+    expect(await pending).toEqual({ editorCount: 1, selectedBefore: 1, selectedAfter: 0 });
+    expect(value.view.state.selection.ranges.every(range => range.empty)).toBe(true);
+    expect(value.view.state.doc.toString()).toBe('retained text');
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('still rejects a selection reintroduced during the bounded yields', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', vi.fn(() => 1));
+    vi.stubGlobal('cancelAnimationFrame', vi.fn());
+    const value = editor(EditorState.create({ doc: 'retained text' }));
+    const pending = expect(settleFollowonsEditorSelections([value.view])).rejects.toThrow('Editor selection changed before source-free warmups');
+    await vi.advanceTimersByTimeAsync(50);
+    value.view.dispatch({ selection: { anchor: 0, head: 8 } });
+    await vi.advanceTimersByTimeAsync(50);
+    await pending;
   });
 });

@@ -6,7 +6,7 @@ import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
 import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
-import { collapseFollowonsEditorSelections } from './followonsEditorContext';
+import { settleFollowonsEditorSelections } from './followonsEditorContext';
 import { focusProbeChatComposer, probeChatPane } from './probeChatSend';
 import { probePaneTitle } from './probePaneTitle';
 import { visibleProbeControl } from './probeChatFocus';
@@ -127,9 +127,7 @@ export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | und
       // growth, so privacy policy can retain the synthetic warmup answers.
       const editors = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
         .flatMap(node => { const view = EditorView.findFromDOM(node); return view ? [view] : []; });
-      const selectionSetup = collapseFollowonsEditorSelections(editors);
-      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      assert(editors.every(view => view.state.selection.ranges.every(range => range.empty)), 'Editor selection changed before source-free warmups');
+      const selectionSetup = await settleFollowonsEditorSelections(editors);
       await mark(`${provider} source-free warmups start with collapsed editor selections`, selectionSetup);
       const conversation = await acquireFollowonsConversation(conversationControls, { title: `Pi followons ${provider} ${report.run}`, provider, model: 'pi-native-fixture', reasoningEffort: 'off', vaultAccess: 'full' }, `PI_FOLLOWONS:WARMUP:${report.run}_${provider}_0`);
       conversations[provider] = conversation.id;
