@@ -19,70 +19,83 @@ the remaining gates.
 
 ## Latest source checkpoint — 2026-10-16
 
-Current frozen diagnostic capture is **v29** at
-`/private/tmp/pi-removal-final-20261015-v29`, canonical manifest
-`8beca79e11a0fdce62a373b35f8d108adf785d9680f7072129840bb2d570a3f7`.
-The retained `v28-v29-source-diff.json` lists exactly `interactiveProbe.ts` and its
-test. Native files are identical to **v28** (including the v27 fixture wrapper),
-not the earlier `b52b1a6` baseline; projection semantics remain based on guard
-`00e472f`, lifecycle ownership unchanged.
+Current frozen diagnostic capture is **v30**, HEAD `3b6d156`, at
+`/private/tmp/pi-removal-final-20261015-v30`, canonical manifest
+`edec64b2a5c5a800853ccd41b109f61c1e75c009f6d4fc95fa818ba7fadda162`.
+[v29→v30 diff](/private/tmp/pi-removal-final-20261015-v30/v29-v30-source-diff.json)
+contains exactly `interactiveFailures.ts` and its new test. Native files are
+identical to **v29** (including the v27 fixture wrapper), not the earlier
+`b52b1a6` baseline. All three iOS source copies verified 1505 retained files/52
+legacy absences each. Lifecycle ownership is unchanged; projection semantics
+include guard `00e472f`, with no measured speed improvement.
 
-Actual v28 expanded **djWH4K whole FAILED**, exit 1/26 requests, under SHA
-`998b977a5127cc1482046aa5ced86ecc68e40906feca340b0fab8401f4bcf8ab`.
-[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-djWH4K/ios-interactive-gate.json)
-records first14/relaunch5 checks passed, all three independent Keep/Save/append
-plans/read-backs, and new normal Open note/exact canonical editor body/title.
-The stronger observer then failed `Open in chat scrolls to exact originating
-message`; the saved editor remained visible, so this is not publication failure.
-Installed CodeMirror uses Meta on Apple Computer mobile UA/touch as well as Mac;
-the prior probe used only `/Mac/` platform detection. This is a source-supported
-modifier diagnosis; **actual native keyboard platform was not observed**.
-Reviewed `2b7ed45` corrects the same two diagnostic files, with 48 focused checks,
-zero-error/warning types and root `check:e2e` passed; a successful rerun will
-record `keyboardPlatform`. Preparation is not an origin-navigation pass.
-The root preserved the closed 51-entry container at
-`/private/tmp/pi-owned-simulator-after-v28-expanded-failure-20261015` and uninstalled
-only the owned bundle.
+Actual v29 expanded **dt88yt whole FAILED**, exit1/26 requests, on canonical
+`8beca79e11a0fdce62a373b35f8d108adf785d9680f7072129840bb2d570a3f7`,
+binary `36b1b2f7543109cf547ba5767bd609c0b5aaeea1641c6db7d4a21f123ec43b81`.
+[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-dt88yt/ios-interactive-gate.json)
+retains first14 and six relaunch checks passed, including the three independent
+publication plans/read-backs, normal Open note/exact canonical editor body/title,
+and **observed scroll to the exact originating message**. Native
+`keyboardPlatform` is `iPhone`, `appleMobile:true`, `metaKey:true`, `ctrlKey:false`.
+The later failures phase stopped at `Mounted review has no corresponding title
+input`; these passed slices do not make the whole gate pass. The closed 51-entry
+container is preserved at
+`/private/tmp/pi-owned-simulator-after-v29-expanded-failure-20261015`; only the
+owned bundle was uninstalled.
 
-All v28 variants compiled: desktop/exclusion `f0715b4c…fc7f`, expanded
-`998b977a…f8ab`, transcript `c06b99b1…b38c`, and unrun live
+Reviewed fixture fix `3b6d156` acquires the standard compact title portal and
+supported normal split, preserving ownership checks. Seventy-three focused checks
+in six files, Svelte zero errors/warnings and root `check:e2e` passed. The earlier
+573 checks in 65 affected frontend files predate this fix and are not added to
+that count. Support checks passed 38 with escalation; the original sandbox `EPERM`
+failure log remains retained. These are helper/static checks, not native acceptance.
+The v30 iOS build sequence is running
+(`/private/tmp/pi-removal-v30-ios-builds-20261015.log`). Expanded compilation
+completed SHA `dc4cdcec417c4e8839e3b34811e7db6036f7a589c0e91323a840072b82021c83`
+([compiled-only receipt](/private/tmp/pi-removal-final-20261015-v30/artifacts/ios-expanded-build.json)),
+bound to the v30 canonical manifest. Remaining builds are pending; **no v30
+native pass yet**. Actual full-follow-on expanded run started (11445),
+log `/private/tmp/pi-removal-v30-ios-expanded-actual-20261015.log`, with no result
+yet; the builder is now on transcript. Desktop compilation waits until all three
+iOS builders close.
+
+Historical v28 **djWH4K whole failed** after first14/relaunch5, exact publication
+plans/read-backs and normal Open note/editor succeeded, then exact-origin scroll
+failed. Its [receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-djWH4K/ios-interactive-gate.json)
+and closed 51-entry backup remain retained; v29 now verifies the mobile Meta
+correction on its own pin. All v28 variants compiled, including unrun live
 `55320711869a21decd1a37bcad4e1e544ad250d24d0c5bcda39ccc1921589978`.
-Fresh default E2E compilation passed, SHA
-`f3774b58edce7c16c25e164254abbe708107317d11caf232b4c73ff00ef3dfff`;
-[receipt](/private/tmp/pi-v28-default-build-closed-20261015.json) is compiler-only,
-**default smoke unrun**. v29 expanded compilation completed: SHA
-`36b1b2f7543109cf547ba5767bd609c0b5aaeea1641c6db7d4a21f123ec43b81`,
-[compiled-only receipt](/private/tmp/pi-removal-final-20261015-v29/artifacts/ios-expanded-build.json)
-binds the v29 canonical manifest. Other final builds wait for an actual mobile
-pass. **No v29 native pass yet**.
+Fresh default E2E compiled SHA
+`f3774b58edce7c16c25e164254abbe708107317d11caf232b4c73ff00ef3dfff`
+([receipt](/private/tmp/pi-v28-default-build-closed-20261015.json)); smoke remains
+unrun. Prior v27 **z3TtcW transcript PASS** and v26 **ZlW6lU local-live PASS** keep
+their own exact pins in the [matrix](validation-matrix.md), not a combined final
+pass. Artificial STOP/CONT's false fresh-UI/durable-following-relaunch flags stay
+false; hosted live is user-deferred, physical touch/device/OS pressure and normal
+Settings vault relocation remain unverified.
 
-Prior v27 **z3TtcW transcript whole PASS** and v26 **ZlW6lU local-live PASS** retain
-their own full pins/receipts in the [matrix](validation-matrix.md), not a
-cross-artifact final pass. Historical lvqjxb/djWH4K and earlier failures remain
-scoped; artificial STOP/CONT's false fresh post-CONT UI/durable-following-relaunch
-flags remain false. Hosted live is user-deferred; physical touch/device/OS pressure
-and standalone Settings vault relocation remain unverified.
-
-Scale **v5** remains running untouched on v22. Its 04:51 memory projection of
-651/1005 submissions is historical progress only, not final durable seed/history/
-identity/provider accounting. The v28 queue PID 85134 was stopped before **any**
-gate/log start, exit143; [supersession receipt](/private/tmp/pi-final-desktop-queue-v28-superseded-20261015.json)
-retains the empty gate list. **No desktop queue is running now**; final desktop,
-churn, alternating paired resources and default smoke remain unrun. Reviewed
-source-free projection guard `00e472f` has no measured speed improvement; v5's
-frozen v22 does not include it. Resource scope/coverage/cache/observer unknowns
-remain explicit, with no cost/adoption verdict.
+Scale **v5** remains running untouched on frozen v22. The 04:59:45 UTC memory
+projection of **676/1005** submissions is historical progress only, not final
+durable seed/history/identity/provider accounting. The
+[v30 desktop queue](/private/tmp/pi-final-desktop-queue-v30-20261015.json) waits
+for full v5 closure and desktop build. Its planned scope is final expanded →
+publication faults → native crashes → desktop transcript → owned churn v4 →
+three paired resources alternating Pi/old/Pi → fresh default smoke. Resources
+also require the explicit v30 iOS-closure marker. No queued gate has started or
+passed; previous queues were superseded before any gate/log start. Resource
+coverage/cache/observer/IPC/storage unknowns and regressions remain explicit;
+no cost/adoption verdict follows.
 
 The manual rebuilt desktop app remains normally closed; Command-Q/runner8295
 exit0, retained copied data/no reset/no inference are recorded in its
 [close receipt](/private/tmp/pi-final-manual-close-before-resources-v22-20261015.json).
-Earlier desktop live/original-seal proof stays on `c74a53e`/`9328ff2f…57b2`.
-Complete native/platform/scale/cost acceptance and the goal remain open.
+Earlier bounded desktop live/original-seal proof remains on `c74a53e`/
+`9328ff2f…57b2`. Full platform/default/scale/cost acceptance and the goal remain open.
 
 ## Current source inventory at v23 capture
 
 The following inventory is frozen at v23, before later live-probe
-corrections; it is not a recomputed v29 diagnostic/native total. The new fixture-close
+corrections; it is not a recomputed v30 diagnostic/native total. The new fixture-close
 wrapper/registration and shared proof adapter remain added maintained obligations. It is
 an inventory of maintained source, not measured savings or executable-function
 counts. The 52 comparison-tree deletions remain absent in v23; the default
