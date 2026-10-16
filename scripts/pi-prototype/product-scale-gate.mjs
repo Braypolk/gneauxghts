@@ -4,7 +4,7 @@ import {spawn,execFileSync} from 'node:child_process';
 import {createHash} from 'node:crypto';
 import {createServer} from 'node:http';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,openSync,closeSync,realpathSync,readdirSync,lstatSync} from 'node:fs';
-import {join,resolve} from 'node:path';
+import {join,resolve,relative} from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {setTimeout as delay} from 'node:timers/promises';
@@ -67,15 +67,31 @@ export function verifyProductScaleRequests(requests){
   return {answers:answers.length,summaries:summaries.length,total:requests.length,exactAnswerSequenceVerified:true,summarySourceChainVerified:true,totalRequestBudget:1100};
 }
 
-export function productStorageSnapshot(root){
+export function productStorageSnapshot(root,{lstat=lstatSync,readdir=readdirSync}={}){
   const counts={files:0,bytes:0,sqliteBytes:0,walBytes:0,shmBytes:0,markdownFiles:0,markdownBytes:0,otherBytes:0};
-  const walk=path=>{const stat=lstatSync(path);assert(!stat.isSymbolicLink(),'Generated storage symlink refused');
-    if(stat.isDirectory()){for(const name of readdirSync(path))walk(join(path,name));return}
+  const disappearedTransientFiles=[];
+  const walk=(path,enumeratedFile=false)=>{
+    let stat;
+    try{stat=lstat(path)}catch(error){
+      // SQLite legitimately unlinks sidecars between readdir and lstat. Only
+      // previously enumerated regular SQLite sidecars beside a present regular
+      // database qualify; roots, directories, symlinks and other failures do not.
+      const transient=path.match(/\.(?:db|sqlite|sqlite3)-(wal|shm)$/);
+      if(error.code!=='ENOENT'||!enumeratedFile||!transient)throw error;
+      const database=lstat(path.slice(0,-4));assert(database.isFile()&&!database.isSymbolicLink(),'Transient SQLite sidecar requires a regular database');
+      disappearedTransientFiles.push({path:relative(root,path),kind:transient[1],code:'ENOENT'});return;
+    }
+    assert(!stat.isSymbolicLink(),'Generated storage symlink refused');
+    if(stat.isDirectory()){for(const entry of readdir(path,{withFileTypes:true}))walk(join(path,entry.name),entry.isFile());return}
     assert(stat.isFile(),'Generated special file refused');counts.files++;counts.bytes+=stat.size;
     if(path.endsWith('-wal'))counts.walBytes+=stat.size;else if(path.endsWith('-shm'))counts.shmBytes+=stat.size;
     else if(/\.(db|sqlite|sqlite3)$/.test(path))counts.sqliteBytes+=stat.size;
     else if(path.endsWith('.md')){counts.markdownFiles++;counts.markdownBytes+=stat.size}else counts.otherBytes+=stat.size;
-  };walk(root);return {...counts,allocatedBytes:null,checkpointPerformed:false};
+  };walk(root);
+  const totals={...counts};
+  if(disappearedTransientFiles.length){totals.files=null;totals.bytes=null;for(const row of disappearedTransientFiles)totals[row.kind==='wal'?'walBytes':'shmBytes']=null}
+  return {...totals,allocatedBytes:null,checkpointPerformed:false,atomicSnapshot:false,
+    coverage:disappearedTransientFiles.length?'partial-disappeared-sqlite-transients':'all-enumerated-file-metadata-observed',disappearedTransientFiles,observedCounts:counts};
 }
 
 export function parseProductScaleArguments(argv){
@@ -87,6 +103,10 @@ export function parseProductScaleArguments(argv){
   assert(!existsSync(result.root),'Fresh generated root required');assert(realpathSync(result.source)===result.source,'Canonical source required');
   for(const name of ['.env','.env.local','.env.development','.env.development.local'])assert(!existsSync(join(result.source,name)),'Frontend environment files refused');
   assert(hash(readFileSync(result.binary))===result.sha256,'Pinned binary differs');return result;
+}
+
+export function productScaleEnvironment(path,foreground){
+  return {...cleanEnvironment(path,'pi'),...(foreground==='1'?{GNEAUXGHTS_E2E_FOREGROUND:'1'}:{})};
 }
 
 async function startProductFixture(){
@@ -194,7 +214,9 @@ const browserNavigate=`
 export async function runProductScaleGate(options){
   for(const port of [1442,1443,4445])assert.equal(listenerPids(port).length,0,'Native-owner port occupied');
   mkdirSync(options.root,{mode:0o700});const dataRoot=join(options.root,'data');mkdirSync(dataRoot,{mode:0o700});
+  const env=productScaleEnvironment(process.env.PATH,process.env.GNEAUXGHTS_E2E_FOREGROUND);
   const report={schema:'gneauxghts-product-scale-gate-v1',status:'running',productParity:false,verdict:'unproven-pending-acceptance',
+    presentation:{foregroundRequested:env.GNEAUXGHTS_E2E_FOREGROUND==='1',requestedMode:env.GNEAUXGHTS_E2E_FOREGROUND==='1'?'explicit-foreground':'default-background',actualFocusObserved:false},
     binarySha256:options.sha256,frontendSourceSha256:frontendSourceDigest(options.source),frontendReceiptVerified:false,
     limits:['1005 conversations and 1005 inputs in one conversation; 2010 public history messages. Other conversations empty.',
       'Fixture compatible loopback only; actual automatic compaction receives strictly validated synthetic summaries. No live provider/context-capacity acceptance.',
@@ -205,7 +227,7 @@ export async function runProductScaleGate(options){
       'Exactly 1005 answer admissions plus separately recorded summary admissions; total <=1100, per request <=4MiB, aggregate <=1GiB; 60s terminal/operation deadline; 2h seed deadline. Exceeding any budget fails, never truncates.'],
     rendererRssBytes:null,allProcessRssBytes:null,progress:[],storage:[],phases:[]};
   let fixture,frontend,app,session,timer,pinnedStart,rssPeak=0,rssSamples=0,rssFailed=0,browserEpoch=0;
-  const wd=createWebDriverRequest(4445,120000),env=cleanEnvironment(process.env.PATH,'pi');
+  const wd=createWebDriverRequest(4445,120000);
   const execute=(script,args=[])=>executeProductScaleBrowser({wd,sessionId:session.sessionId,script,args});
   const snapshot=label=>report.storage.push({label,atMs:performance.now(),...productStorageSnapshot(dataRoot)});
   const setup=async phase=>{await initializeProductScaleWorkspace({execute,output:report,phase});browserEpoch++};

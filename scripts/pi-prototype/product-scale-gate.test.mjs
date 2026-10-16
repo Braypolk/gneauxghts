@@ -1,11 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {EventEmitter} from 'node:events';
-import {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
+import {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync,lstatSync,unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {planProductScaleReply,planProductScaleProviderReply,verifyProductScaleRequests,PRODUCT_SCALE_SUMMARY_CONTRACT,PRODUCT_SCALE_SUMMARY_MARKER,productStorageSnapshot,parseProductScaleArguments,stopProductScaleChild,initializeProductScaleWorkspace,reloadProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
-import {DUMMY_AUTHORIZATION} from './shared-resource-gate.mjs';
+import {planProductScaleReply,planProductScaleProviderReply,verifyProductScaleRequests,PRODUCT_SCALE_SUMMARY_CONTRACT,PRODUCT_SCALE_SUMMARY_MARKER,productStorageSnapshot,parseProductScaleArguments,productScaleEnvironment,stopProductScaleChild,initializeProductScaleWorkspace,reloadProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
+import {DUMMY_AUTHORIZATION,cleanEnvironment} from './shared-resource-gate.mjs';
 
 test('exact dummy or absent auth only; unknown and out-of-budget inputs refused',()=>{
   for(const auth of [undefined,DUMMY_AUTHORIZATION])assert.deepEqual(planProductScaleReply({messages:[{role:'user',content:'PRODUCT_SCALE_INPUT_0.'}]},auth),{index:0,text:'Synthetic product scale reply 0.'});
@@ -69,12 +69,52 @@ test('provider accounting preserves 1005 exact answer admissions and separately 
 test('storage metadata measures WAL and projections without reading contents; refuses symlink escape',()=>{
   const root=mkdtempSync(join(tmpdir(),'product-scale-pure-'));
   try{mkdirSync(join(root,'nested'));for(const [name,size] of [['pi.sqlite',9],['pi.sqlite-wal',13],['pi.sqlite-shm',3],['nested/transcript.md',17],['other',5]])writeFileSync(join(root,name),Buffer.alloc(size));
-    assert.deepEqual(productStorageSnapshot(root),{files:5,bytes:47,sqliteBytes:9,walBytes:13,shmBytes:3,markdownFiles:1,markdownBytes:17,otherBytes:5,allocatedBytes:null,checkpointPerformed:false});
+    const counts={files:5,bytes:47,sqliteBytes:9,walBytes:13,shmBytes:3,markdownFiles:1,markdownBytes:17,otherBytes:5};
+    assert.deepEqual(productStorageSnapshot(root),{...counts,allocatedBytes:null,checkpointPerformed:false,atomicSnapshot:false,coverage:'all-enumerated-file-metadata-observed',disappearedTransientFiles:[],observedCounts:counts});
     symlinkSync('/private/tmp',join(root,'escape'));assert.throws(()=>productStorageSnapshot(root));
+  }finally{rmSync(root,{recursive:true,force:true})}
+});
+test('SQLite WAL/SHM disappearance after real enumeration retains observed metadata and marks affected totals unknown',()=>{
+  for(const kind of ['wal','shm']){
+    const root=mkdtempSync(join(tmpdir(),'product-scale-race-')),sidecar=join(root,`ai.sqlite3-${kind}`);
+    try{
+      writeFileSync(join(root,'ai.sqlite3'),Buffer.alloc(9));writeFileSync(sidecar,Buffer.alloc(13));let removed=false;
+      const result=productStorageSnapshot(root,{lstat:path=>{if(path===sidecar&&!removed){removed=true;rmSync(sidecar)}return lstatSync(path)}});
+      assert.equal(removed,true);assert.equal(result.files,null);assert.equal(result.bytes,null);assert.equal(result[`${kind}Bytes`],null);assert.equal(result.sqliteBytes,9);
+      assert.equal(result.coverage,'partial-disappeared-sqlite-transients');assert.equal(result.atomicSnapshot,false);
+      assert.deepEqual(result.disappearedTransientFiles,[{path:`ai.sqlite3-${kind}`,kind,code:'ENOENT'}]);
+      assert.deepEqual(result.observedCounts,{files:1,bytes:9,sqliteBytes:9,walBytes:0,shmBytes:0,markdownFiles:0,markdownBytes:0,otherBytes:0});
+    }finally{rmSync(root,{recursive:true,force:true})}
+  }
+});
+test('storage race handling never suppresses unknown files, missing roots, vanished directories, symlinks or permission errors',()=>{
+  const root=mkdtempSync(join(tmpdir(),'product-scale-race-strict-'));
+  try{
+    writeFileSync(join(root,'ai.sqlite3'),Buffer.alloc(9));
+    for(const name of ['other','unrelated-wal','ai.sqlite3-shm']){
+      const path=join(root,name);writeFileSync(path,Buffer.alloc(3));
+      if(name==='ai.sqlite3-shm'){
+        const denied=Object.assign(new Error('Controlled denied metadata'),{code:'EACCES'});
+        assert.throws(()=>productStorageSnapshot(root,{lstat:value=>{if(value===path)throw denied;return lstatSync(value)}}),error=>error===denied);
+        rmSync(path);
+      }else assert.throws(()=>productStorageSnapshot(root,{lstat:value=>{if(value===path)rmSync(path);return lstatSync(value)}}),{code:'ENOENT'});
+    }
+    const directory=join(root,'ai.sqlite3-shm');mkdirSync(directory);
+    assert.throws(()=>productStorageSnapshot(root,{lstat:path=>{if(path===directory)rmSync(directory,{recursive:true});return lstatSync(path)}}),{code:'ENOENT'});
+    symlinkSync('/private/tmp',join(root,'ai.sqlite3-wal'));assert.throws(()=>productStorageSnapshot(root),/symlink refused/);unlinkSync(join(root,'ai.sqlite3-wal'));
+    assert.throws(()=>productStorageSnapshot(join(root,'missing.sqlite3-shm')),{code:'ENOENT'});
+    const orphan=join(root,'orphan.sqlite3-shm');writeFileSync(orphan,Buffer.alloc(1));
+    assert.throws(()=>productStorageSnapshot(root,{lstat:path=>{if(path===orphan)rmSync(orphan);return lstatSync(path)}}),{code:'ENOENT'});
   }finally{rmSync(root,{recursive:true,force:true})}
 });
 test('CLI refuses incomplete arguments before performing native work',()=>{
   assert.throws(()=>parseProductScaleArguments([]));assert.throws(()=>parseProductScaleArguments(['--root','relative']));
+});
+test('foreground inheritance admits only exact string 1 and preserves the full clean environment allowlist',()=>{
+  const baseline=cleanEnvironment('/synthetic/bin','pi');
+  assert.deepEqual(productScaleEnvironment('/synthetic/bin','1'),{...baseline,GNEAUXGHTS_E2E_FOREGROUND:'1'});
+  for(const value of [undefined,'','0','true','01','1 ',1,true,{GNEAUXGHTS_E2E_FOREGROUND:'1',HOME:'/forbidden',OPENAI_API_KEY:'foreign'}])assert.deepEqual(productScaleEnvironment('/synthetic/bin',value),baseline);
+  const foreground=productScaleEnvironment('/synthetic/bin','1');assert.equal(foreground.OPENAI_API_KEY,DUMMY_AUTHORIZATION.slice(7));assert.equal(foreground.GNEAUXGHTS_LOCAL_API_KEY,DUMMY_AUTHORIZATION.slice(7));assert(!Object.hasOwn(foreground,'HOME'));
 });
 
 function ownedChild(onKill){
