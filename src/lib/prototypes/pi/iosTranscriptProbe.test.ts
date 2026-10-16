@@ -8,8 +8,9 @@ vi.mock('./probeReview', () => ({ acknowledgedProbeDraft: vi.fn(), acquireProbeR
 vi.mock('$lib/features/proposals/reviewExtension', () => ({ reviewProjection: {} }));
 vi.mock('./probeChatFocus', () => ({ openVisibleProbeChat: mocks.open }));
 
-import { iosTranscriptDomReceipt, runIosTranscriptProbe } from './iosTranscriptProbe';
-import { acquireProbeReview } from './probeReview';
+import { acknowledgedIosTranscriptPending, iosTranscriptDomReceipt, runIosTranscriptProbe } from './iosTranscriptProbe';
+import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
+import type { ChatProposalDraft } from '$lib/features/chat/types';
 
 function control(label = 'Expand retained chat') {
   return { tagName: 'BUTTON', textContent: '', getAttribute: (name: string) => name === 'aria-label' ? label : null,
@@ -122,7 +123,7 @@ describe('iOS transcript probe snapshot admission', () => {
     const notePane = { querySelector: () => null };
     const mobileTitle = { get value() { return title; } };
     const view = { state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId }) },
-      dom: { closest: () => notePane } };
+      dom: { isConnected: true, closest: () => notePane } };
     mocks.editor.mockReturnValue(view);
     mocks.state.mockResolvedValue(undefined);
     mocks.create.mockResolvedValueOnce({ id: 'local' }).mockResolvedValueOnce({ id: 'openai' });
@@ -172,5 +173,74 @@ describe('iOS transcript probe snapshot admission', () => {
     vi.stubGlobal('document', { querySelector: () => ({}), querySelectorAll: () => { throw new Error('Diagnostic DOM unavailable'); } });
     expect(await runIosTranscriptProbe()).toMatchObject({ status: 'failed', error: 'Error: Actual snapshot failure',
       receipts: { failedDom: { captureError: 'Error: Diagnostic DOM unavailable' } } });
+  });
+});
+
+describe('iOS transcript mounted pending acknowledgement', () => {
+  const decisions = [{ id: 'creation', from: 0, to: 12, status: 'pending', originalText: '', proposedText: 'Pending body' }] as unknown as ChatProposalDraft['decisions'];
+  const draft: ChatProposalDraft = { version: 4, title: 'Pending title', markdown: 'Pending body', path: '/vault/Pending.md', decisions };
+  let mounted: boolean, body: string, title: string, reviewId: string, durable: ChatProposalDraft;
+  let view: { state: { doc: { toString(): string }; field(): { reviewId: string; hunks: ChatProposalDraft['decisions'] } }; dom: { isConnected: boolean; closest(): unknown } };
+  let chatOpen: ReturnType<typeof vi.fn>;
+  beforeEach(async () => {
+    vi.resetAllMocks(); vi.useFakeTimers();
+    const actual = await vi.importActual<typeof import('./probeReview')>('./probeReview');
+    vi.mocked(acquireProbeReview).mockImplementation(actual.acquireProbeReview);
+    vi.mocked(acknowledgedProbeDraft).mockImplementation(actual.acknowledgedProbeDraft);
+    mounted = false; body = draft.markdown; title = draft.title; reviewId = 'exact-review'; durable = structuredClone(draft);
+    const titleInput = { get value() { return title; } };
+    const pane = { querySelector: () => titleInput };
+    view = { state: { doc: { toString: () => body }, field: () => ({ reviewId, hunks: decisions }) },
+      dom: { get isConnected() { return mounted; }, closest: () => pane } };
+    mocks.editor.mockReturnValue(view);
+    mocks.pending.mockResolvedValue([{ id: 'pending', preview: { reviewId: 'exact-review' } }]);
+    mocks.draft.mockImplementation(async () => structuredClone(durable));
+    chatOpen = vi.fn(() => { mounted = false; });
+    mocks.open.mockImplementation(chatOpen);
+    const reviewButton = { disabled: false, textContent: 'Review in editor', getAttribute: () => null, click: () => { mounted = true; } };
+    const card = { querySelectorAll: () => [reviewButton] };
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) => selector.startsWith('section[data-proposal-id=') ? card : {},
+      querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' && mounted ? [{}] : [],
+    });
+  });
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it('acknowledges exact mounted fields before compact chat navigation destroys the editor', async () => {
+    const pending = acknowledgedIosTranscriptPending('pending', 'conversation');
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(await pending).toEqual(draft);
+    expect(mocks.pending).toHaveBeenCalledWith('conversation');
+    expect(chatOpen).toHaveBeenCalledOnce();
+    expect(view.dom.isConnected).toBe(true);
+    // This is the compact lifecycle that caused the native deadline: the next
+    // normal chat navigation removes the editor, after its independent proof.
+    await mocks.open();
+    expect(view.dom.isConnected).toBe(false);
+  });
+
+  it.each(['review', 'body', 'title', 'disconnected'])('rejects a foreign or disconnected mounted %s', async mismatch => {
+    mounted = true;
+    if (mismatch === 'review') reviewId = 'foreign-review';
+    if (mismatch === 'body') body = 'Foreign body';
+    if (mismatch === 'title') title = 'Foreign title';
+    if (mismatch === 'disconnected') Object.defineProperty(view.dom, 'isConnected', { value: false });
+    const failure = acknowledgedIosTranscriptPending('pending', 'conversation').then(() => undefined, error => error);
+    await vi.advanceTimersByTimeAsync(46000);
+    expect(await failure).toEqual(expect.objectContaining({ message: expect.stringMatching(/deadline: retained CodeMirror proposal review/) }));
+  });
+
+  it.each(['markdown', 'title', 'path', 'decisions'] as const)('requires the durable acknowledgement to match mounted %s', async field => {
+    mounted = true;
+    let reads = 0;
+    mocks.draft.mockImplementation(async () => {
+      reads++;
+      if (reads === 1) return structuredClone(draft);
+      return { ...structuredClone(draft), [field]: field === 'decisions' ? [] : 'Foreign value' };
+    });
+    const failure = acknowledgedIosTranscriptPending('pending', 'conversation').then(() => undefined, error => error);
+    await vi.advanceTimersByTimeAsync(46000);
+    expect(await failure).toEqual(expect.objectContaining({ message: expect.stringMatching(/deadline: acknowledged mounted review checkpoint/) }));
+    expect(chatOpen).not.toHaveBeenCalled();
   });
 });

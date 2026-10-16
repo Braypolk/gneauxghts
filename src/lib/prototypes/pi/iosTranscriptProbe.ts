@@ -92,20 +92,20 @@ async function send(id: string, content: string) {
   const message = await until(async () => { const messages = (await api.getConversation(id)).messages; const value = messages.length > count && messages.at(-1); return value && !['pending', 'streaming'].includes(value.status) ? value : undefined; }, 'terminal committed assistant');
   assert(message.status === 'completed', `Request ${message.status}: ${message.errorMessage}`); return message;
 }
-async function reviewEditor(id: string, trace: ProbeTrace, automaticReviewId?: string) {
+async function reviewEditor(id: string, trace: ProbeTrace, expectedReviewId?: string, waitForAutomaticMount = false) {
   trace('review:begin', { id });
   const draft = await api.getProposalDraft!(id);
   const editor = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
     .map(node => EditorView.findFromDOM(node)).find(view => {
-      if (!view || view.state.doc.toString() !== draft.markdown) return false;
+      if (!view?.dom.isConnected || view.state.doc.toString() !== draft.markdown) return false;
       const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor');
-      return title?.value === draft.title && (automaticReviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === automaticReviewId);
+      return title?.value === draft.title && (expectedReviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === expectedReviewId);
     });
-  const view = await acquireProbeReview({ editor, openChat: () => open(trace), until, waitForAutomaticMount: automaticReviewId !== undefined,
+  const view = await acquireProbeReview({ editor, openChat: () => open(trace), until, waitForAutomaticMount,
     card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
     openCard: card => { trace('review:open-card', { id }); return click('Review in editor', card); } });
   trace('review:editor-ready', { id });
-  return view;
+  return { view, draft };
 }
 async function review(id: string, trace: ProbeTrace) {
   await reviewEditor(id, trace);
@@ -120,20 +120,23 @@ async function wholeSave(conversationId: string, messageId: string, trace: Probe
   await click('Save to note', answer);
   const proposal = await until(async () => (await api.listPendingProposals(conversationId)).find(value => !before.has(value.id)), 'UI-staged whole-answer Save');
   // Pending is published before the normal Save handler finishes presenting its review.
-  await reviewEditor(proposal.id, trace, String(proposal.preview.reviewId ?? proposal.id));
+  await reviewEditor(proposal.id, trace, String(proposal.preview.reviewId ?? proposal.id), true);
   return proposal;
 }
-async function acknowledgedPending(id: string, trace: ProbeTrace) {
-  await review(id, trace);
-  const draft = await api.getProposalDraft!(id);
-  const editor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
-    .map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && view.state.field(reviewProjection, false)?.hunks.length), 'mounted creation review decisions');
-  const title = probePaneTitle(editor.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor');
-  assert(title, 'Mounted pending review has no corresponding title');
+export async function acknowledgedIosTranscriptPending(id: string, conversationId: string, trace: ProbeTrace = () => {}) {
+  const proposal = (await api.listPendingProposals(conversationId)).find(value => value.id === id);
+  const reviewId = proposal?.preview.reviewId;
+  assert(typeof reviewId === 'string' && reviewId.length > 0, 'Pending transcript proposal lacks exact review identity');
+  // Compact navigation back to chat releases this editor. Capture and verify
+  // its independent mounted proof before any subsequent chat navigation.
+  const { view: editor, draft } = await reviewEditor(id, trace, reviewId);
   return acknowledgedProbeDraft({ draft: () => api.getProposalDraft!(id), until,
     working: () => {
       const projection = editor.state.field(reviewProjection, false);
-      assert(projection, 'Pending review projection disappeared before acknowledgement');
+      assert(editor.dom.isConnected && projection?.reviewId === reviewId, 'Pending review identity or mount changed before acknowledgement');
+      assert(projection.hunks.length, 'Mounted creation review decisions are unavailable');
+      const title = probePaneTitle(editor.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor');
+      assert(title, 'Mounted pending review has no corresponding title');
       return { markdown: editor.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
     } });
 }
@@ -192,7 +195,7 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
       const pendingProposal = (await api.listPendingProposals(b.id))[0]; assert(pendingProposal, 'No pending proposal');
       const initial = await api.getProposalDraft!(pendingProposal.id);
       const stagedPending = await api.checkpointProposalDraft!(pendingProposal.id, { ...initial, title: 'Relocated iOS pending review', markdown: `${initial.markdown}\n\nAcknowledged iOS relocation checkpoint.` });
-      const pending = await acknowledgedPending(pendingProposal.id, trace);
+      const pending = await acknowledgedIosTranscriptPending(pendingProposal.id, b.id, trace);
       assert(pending.markdown === stagedPending.markdown && pending.title === stagedPending.title && pending.path === stagedPending.path, 'Mounting changed pending authored fields');
       assert(pending.decisions.length, 'Mounted creation decisions must be acknowledged before relocation');
       await select(a.id, trace); const uncertainProposal = await wholeSave(a.id, hello.id, trace);
@@ -218,7 +221,8 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
     assertAcknowledgedReview(state.pending, pending, mapped[1]);
     await select(state.b, trace); await conflict(); assert((await api.getConversation(state.b)).projectionConflict === 'edited', 'Relocation erased true conflict');
     await emit('relocated-conflict-visible', { projectionPath: (await api.getConversation(state.b)).projectionPath }); await resolve('Restore transcript from chat');
-    await review(state.pendingId, trace);
+    const mountedPending = await acknowledgedIosTranscriptPending(state.pendingId, state.b, trace);
+    assertAcknowledgedReview(pending, mountedPending, pending.path);
     await until(() => Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).some(node => node.value === pending.title) && Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-content')).some(node => node.textContent?.includes('Acknowledged iOS relocation checkpoint.')), 'normal acknowledged review title/body');
     await emit('relocated-pending-visible', { proposalId: state.pendingId, draft: pending });
     await select(state.a, trace); await keep(state.uncertainId, trace);
