@@ -1288,11 +1288,24 @@ impl EvidenceSession {
         allowed: Option<&HashSet<String>>,
         excluded: &HashSet<String>,
     ) -> bool {
+        self.check_current(state, allowed, excluded).unwrap_or(false)
+    }
+
+    /// Preserve a failed validation operation separately from changed evidence.
+    /// Both fail closed; callers may expose the bounded recovery reason.
+    pub(crate) fn check_current(
+        &self,
+        state: &AppState,
+        allowed: Option<&HashSet<String>>,
+        excluded: &HashSet<String>,
+    ) -> Result<bool, String> {
+        for citation in self.admitted.values() {
+            if check_citation(state, citation, allowed, excluded)?.is_none() {
+                return Ok(false);
+            }
+        }
         let mut versions = HashMap::<Vec<String>, String>::new();
-        self.admitted
-            .values()
-            .all(|c| validate_citation(state, c, allowed, excluded).is_some())
-            && self
+        Ok(self
                 .searches
                 .values()
                 .map(|(version, binding, _, _)| (version, binding))
@@ -1321,7 +1334,7 @@ impl EvidenceSession {
                         versions.entry(key).or_insert(current)
                     };
                     current == version
-                })
+                }))
     }
 }
 
@@ -1609,6 +1622,15 @@ pub(crate) fn validate_citation(
     allowed: Option<&HashSet<String>>,
     excluded: &HashSet<String>,
 ) -> Option<(PathBuf, String)> {
+    check_citation(state, citation, allowed, excluded).ok().flatten()
+}
+
+pub(crate) fn check_citation(
+    state: &AppState,
+    citation: &PassageCitation,
+    allowed: Option<&HashSet<String>>,
+    excluded: &HashSet<String>,
+) -> Result<Option<(PathBuf, String)>, String> {
     let timeline = state.note_timeline();
     let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
     // An overlapping observation/publication can invalidate a one-shot read
@@ -1632,8 +1654,18 @@ pub(crate) fn validate_citation(
                     .collect::<Vec<_>>(),
             )
         })
-        .ok()?;
-    current.pop().map(|c| (c.path, c.title))
+        .map_err(|error| {
+            // Timeline errors may include private paths or storage diagnostics.
+            // Surface only known, content-free coordination/recovery reasons.
+            if error.contains("Current notes are still updating; retry the read") {
+                "Current notes are still updating; retry the read"
+            } else if error.contains("Current notes changed during the read; retry the read") {
+                "Current notes changed during the read; retry the read"
+            } else {
+                "Current note validation could not complete; retry the read"
+            }.to_string()
+        })?;
+    Ok(current.pop().map(|c| (c.path, c.title)))
 }
 
 fn validate_citation_snapshot(

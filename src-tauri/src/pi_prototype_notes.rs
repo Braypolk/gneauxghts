@@ -4,7 +4,7 @@ use crate::{
     chat_domain::ChatDomain,
     index::AppState,
     services::evidence::{
-        self, validate_citation, EvidenceSession, PassageCitation, ReadRequest, SearchRequest,
+        self, check_citation, validate_citation, EvidenceSession, PassageCitation, ReadRequest, SearchRequest,
     },
 };
 use serde::Deserialize;
@@ -73,13 +73,15 @@ fn check(
     let restricted = session.worker.as_ref().map(|worker| worker.ids.iter()
         .filter(|id| allowed.is_none_or(|ids| ids.contains(*id))).cloned().collect::<HashSet<_>>());
     let allowed = restricted.as_ref().or(allowed);
-    if !session.evidence.is_current(state, allowed, excluded)
-        || session
-            .context
-            .iter()
-            .any(|c| validate_citation(state, c, allowed, excluded).is_none())
-    {
+    if !session.evidence.check_current(state, allowed, excluded)
+        .map_err(|reason| format!("Evidence validation unavailable: {reason}"))? {
         return Err("Evidence, context or access changed; retry with fresh context".into());
+    }
+    for citation in &session.context {
+        if check_citation(state, citation, allowed, excluded)
+            .map_err(|reason| format!("Context validation unavailable: {reason}"))?.is_none() {
+            return Err("Evidence, context or access changed; retry with fresh context".into());
+        }
     }
     Ok(())
 }
@@ -744,6 +746,51 @@ pub(crate) async fn pi_resolve_passage(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn evidence_check_distinguishes_unsettled_reads_from_changed_passages() {
+        let vault = crate::test_support::TestVault::new("pi-evidence-validation-reason");
+        let saved = crate::test_support::save_and_finalize(
+            &vault.state, "Stable source".into(), "Canonical evidence".into(), None,
+        ).unwrap().unwrap();
+        let id = saved.note_id.unwrap();
+        let excluded = HashSet::new();
+        let mut session = Retrieval::default();
+        let (_, passages) = session.evidence.read_request(&vault.state, None, &excluded,
+            ReadRequest { note_id: Some(id), ..Default::default() }).unwrap();
+        session.evidence.record_delivery(&passages.into_iter().map(|(citation, _, _)| citation).collect::<Vec<_>>());
+        assert!(check(&vault.state, &session, None, &excluded).is_ok());
+        let mutation = crate::services::note_timeline::hold_current_content_mutation_for_test(&vault.state);
+        assert_eq!(check(&vault.state, &session, None, &excluded).unwrap_err(),
+            "Evidence validation unavailable: Current notes are still updating; retry the read");
+        drop(mutation);
+        assert!(check(&vault.state, &session, None, &excluded).is_ok());
+        let path = saved.path.unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(path, raw.replace("Canonical evidence", "Changed evidence")).unwrap();
+        assert_eq!(check(&vault.state, &session, None, &excluded).unwrap_err(),
+            "Evidence, context or access changed; retry with fresh context");
+    }
+
+    #[test]
+    fn context_check_distinguishes_unsettled_reads_from_changed_context() {
+        let vault = crate::test_support::TestVault::new("pi-context-validation-reason");
+        let saved = crate::test_support::save_and_finalize(
+            &vault.state, "Adjacent source".into(), "Canonical context".into(), None,
+        ).unwrap().unwrap();
+        let excluded = HashSet::new();
+        let (_, _, citation) = canonical(&vault.state, &saved.note_id.unwrap(), None, &excluded).unwrap();
+        let session = Retrieval { context: vec![citation], ..Default::default() };
+        let mutation = crate::services::note_timeline::hold_current_content_mutation_for_test(&vault.state);
+        assert_eq!(check(&vault.state, &session, None, &excluded).unwrap_err(),
+            "Context validation unavailable: Current notes are still updating; retry the read");
+        drop(mutation);
+        assert!(check(&vault.state, &session, None, &excluded).is_ok());
+        let path = saved.path.unwrap();
+        let raw = std::fs::read_to_string(&path).unwrap();
+        std::fs::write(path, raw.replace("Canonical context", "Changed context")).unwrap();
+        assert_eq!(check(&vault.state, &session, None, &excluded).unwrap_err(),
+            "Evidence, context or access changed; retry with fresh context");
+    }
     #[test]
     fn continuity_is_current_identity_metadata_without_source_or_permission_authority() {
         let vault=crate::test_support::TestVault::new("pi-continuity");

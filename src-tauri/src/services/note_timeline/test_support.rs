@@ -1,6 +1,11 @@
 use super::*;
 
 #[cfg(test)]
+pub(crate) fn hold_current_content_mutation_for_test(state: &AppState) -> impl Drop {
+    state.note_timeline().begin_current_content_mutation().unwrap()
+}
+
+#[cfg(test)]
 pub(crate) fn history_note_verification_count_for_test() -> usize {
     history_store::note_verification_count()
 }
