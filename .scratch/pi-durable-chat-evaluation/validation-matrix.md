@@ -18,8 +18,11 @@ probe/helper/test files changed and two were added; all captured native and othe
 product files remain byte-identical. This correction passed 53 focused/affected
 checks, zero-error/warning types and independent Spec/correctness review.
 Subsequent live-only diagnostic builds v24/v25 completed; neither actual live run
-passed as a whole. Latest v25 canonical manifest is
+passed as a whole. v25 canonical manifest is
 `d5436fb086ad42948abbd8af4364763a13f55ab404f5eee93db760862df84664`.
+Latest diagnostic source capture **v26** is
+`92782d6d42e182791d1138b8c3dfcc0e96d9d5d5bc36b82c9a9b3895b25ce35c`;
+builds and corrected reruns remain **pending**.
 Product/runtime/native bytes remain frozen at `b52b1a6`. Current `a1a4509`
 diagnostic driver also supports owned iOS fixture port 1446 (six pure helper
 tests); this is functional parallelism, not product change or native acceptance.
@@ -43,15 +46,25 @@ body/title/path/hash, but **whole failed** the independent version check `4 !== 
 before final committed restart/full native effect verification. Normal Keep's
 resolved-hunk checkpoint advances the version; the strict proof must predict
 that checkpoint before clicking, not accept an arbitrary returned version.
-The correction is in progress, with no later live pass claimed.
+Prepared `b2a85e7` independently predicts the normal resolved-hunk v3→v4
+checkpoint before Keep; it does not accept arbitrary returned versions.
+Prepared `0706ecc` uses normal Expand/chat reveal before exact compact refinement
+pane acquisition. Neither correction has a new native pass here.
 
 The actual v23 expanded **yvWBO9** receipt is now **failed**, after 12 recorded
 first-phase checks/22 provider requests, at the normal conversation-mount deadline.
 It used pinned v23 expanded executable/current driver on port 1446. The closed
 previous owned container's 48 entries were backed up at
 `/private/tmp/pi-owned-simulator-before-v23-expanded-20261015` before owned uninstall.
-Scale v5's last read-only in-memory progress was 1005 conversations/401 submissions;
-neither count is final durable acceptance.
+Latest v23 transcript **MlXAXC** is **whole failed** at mounted creation-review
+decisions; the bounded watcher external edit/delete plus normal Convert/Restore
+check passed. Its closed container's 46 entries were backed up at
+`/private/tmp/pi-owned-simulator-before-v26-20261015` before owned uninstall.
+Prepared `8347d67` binds exact connected body/title/reviewId acknowledgement
+before compact chat destroys its editor, also after relocation. Thirty focused
+tests, Svelte zero errors/warnings and root `check:e2e` passed; native rerun pending.
+Scale v5's prior memory projection of 1005 conversations/401 submissions is
+historical progress only; no fresh count or final durable acceptance is claimed.
 Compilation and independent iOS local-live work can overlap functional scale on
 separate roots/ports, excluding all timing/RSS/cost comparisons.
 
@@ -107,12 +120,12 @@ configured local inference through normal visible UI.
 | **C** | [RJ9Vy0 crash receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-native-crashes-RJ9Vy0/native-crash-gate.json): passed four cases | v17 binary **R**; prepared-review and transport-completed crashes under both synthetic protocols; no physical-device guarantee. |
 | **T** | [HVmzV1 transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-transcript-HVmzV1/native-transcript-gate.json): passed four checks, six provider requests | v17 binary **R**; generated-root relocation, exact pending review/recovery and duplicate one-effect checks; standalone Settings move excluded. |
 | **D** | [6xfnis desktop receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-6xfnis/desktop-interactive-gate.json): **whole failed**, 141 requests; 14 first, ten relaunch (six core/four failure), five storage and 23 follow-on UI checks passed | v19 SHA `0ced4b174e8f453bdcc0c39dc50bcbb9c36700910713b0d5eda5d7f4c91a2095`, canonical `836a19cf05ff18dfc96cd809b8ae8253981c6966672dd356075c0b654f05b069`. Strict native parent summary missing: adjacent selected context grounded warmups, 10,990-byte parent request stayed below 96k threshold. Worker summaries do not replace parent proof. Selection setup correction prepared. |
-| **I** | [jDLSGA iOS transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-jDLSGA/ios-transcript-gate.json): **whole failed**, three requests; watcher external edit/delete and normal Convert/Restore passed | v18 simulator executable SHA `36cf7d54c5e40db2579aba97986ca6c9d5a8dd009d92aeef9c87d34618ab5b83`. Save became pending before asynchronous editor readiness; prepared wait/proof corrections are unrun. No completed Save, selection-B or relocation claim. |
+| **I** | Latest [MlXAXC transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-MlXAXC/ios-transcript-gate.json): **whole failed** at mounted creation-review decisions; bounded watcher edit/delete/Convert/Restore passed | v23 executable SHA `a352dac04402b681b39cd74dec9950bc7091d9f337d5d9cee57701390a6b346b`. [Failed UI report](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-MlXAXC/failed-ui-report.json) retained; native run closed. Exact connected body/title/reviewId acknowledgement `8347d67` prepared, not native-verified. Earlier [jDLSGA v18](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-jDLSGA/ios-transcript-gate.json) failed Save readiness; no completed transcript Save/selection-B/relocation claim. |
 | **L** | Latest [kcG1jG live receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-kcG1jG/ios-live-gate.json): **whole failed** strict version `4 !== 3`; v25 live pin above | Three real POSTs HTTP 200/completed, normal chat/citation/Save/edit/background/pending restart and Keep/duplicate/canonical exact read-back observed. Failed before final committed restart and complete native-effect proof. [sxZ0Sp v24](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-sxZ0Sp/ios-live-gate.json) failed detached-editor diagnostic before Keep. [QUeIgd v23](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-QUeIgd/ios-live-gate.json) failed citation-control deadline; earlier UGhOtn failed before inference. None is a whole live pass. |
 | **E** | [yvWBO9 expanded iOS receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-yvWBO9/ios-interactive-gate.json): **whole failed**, 12 recorded first-phase checks/22 requests | v23 expanded SHA `19ec12d3a503f2d588b9fd3d570503ea86c2598a3fa8f6457b41bd62fb8a9f8b`; current `a1a4509` diagnostic driver/port 1446. Deadline mounting requested normal conversation; no whole first/relaunch/follow-on acceptance. |
 | **P** | [Compatible v8](/private/tmp/pi-paired-compatible-20261015-v8/paired-parity-gate.json) and [Responses v2](/private/tmp/pi-paired-responses-20261015-v2/paired-parity-gate.json): both old/Pi `passed-prepared-subset` | Frozen v13 frontend, Pi v2 binary `a1ec5982e1f8ea74a80dffef75d858fa94c1cd83c41f6219212d851ef750a338`; old `4b5ff2de` fixture binary `d5e3a76aed10c9441dc76e4d9d768d497a209a8be06434ce4d3ab254bbb60bc0`. Evidence/grants/body review/Save/selection append/closed duplicates only. Old title read-only; Pi editable. Grants use public API; permission dialogs not compared. |
 | **U** | [Resource v8 receipt](/private/tmp/pi-shared-resources-20261015-v8/shared-resource-gate.json): both lanes `passed-core-fixture`, eight requests, exact 256-line/9,215-byte output; [audited measurements](replacement-proof-plan.md#audited-paired-core-resource-checkpoint--v8-2026-10-15) | Old fixture binary above, Pi **R**. Actual module IPC observed: old 26/Pi 1,159 warm calls; closed logical storage old 684,378/Pi 2,059,929 bytes. Material observed bridge/storage increases disclosed. One rejected Pi invoke response size unknown; JSON proxies are not wire bytes. App-only RSS, uncontrolled cache/order and observer overhead prevent a performance-win claim. |
-| **S** | `/private/tmp/pi-product-scale-20261015-v5`, pinned v22 desktop above; **pending**, last memory progress 1005 conversations/401 submissions | Derived reply projections are progress, not final durable seed/identity/history/provider accounting. Requires exactly 1005 answers plus validated automatic summary requests, total ≤1100. Prior v3 failed transient SHM `ENOENT`. v4 was operator-ended at 03:45 UTC (401 submissions reported/421 provider requests) to switch superseded v17 to final indexed-query v22; its final receipt failed `fetch`, without full seed/identity accounting. `operator-stop.json` preserves verified owned-app stop. Neither prior run is eligible for guarded continuation or scale acceptance. See [scale contract](product-scale-proof-plan.md). |
+| **S** | `/private/tmp/pi-product-scale-20261015-v5`, pinned v22 desktop above; **pending**, prior memory projection 1005 conversations/401 submissions retained as historical progress only | No fresh count or final durable seed/identity/history/provider accounting claimed. Requires exactly 1005 answers plus validated automatic summary requests, total ≤1100. Prior v3 failed transient SHM `ENOENT`. v4 was operator-ended at 03:45 UTC (401 submissions reported/421 provider requests) to switch superseded v17 to final indexed-query v22; its final receipt failed `fetch`, without full seed/identity accounting. `operator-stop.json` preserves verified owned-app stop. Neither prior run is eligible for guarded continuation or scale acceptance. See [scale contract](product-scale-proof-plan.md). |
 
 Manual **M** copied 209 files and retained the original 388-file seal
 `66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`
@@ -131,8 +144,9 @@ implemented optimization, known IPC totals or a scale pass.
 1. Finish scale v5 and inspect the closed exact seed/history/identity/provider
    accounting; preserve failure if any. Do not promote derived progress or timing
    into acceptance. Pure test/source-capture CPU overlap prevents scale cost claims.
-2. Run the strict pre-Keep version-proof correction on a newly pinned local-iOS
-   build. v23/v24/v25 compiles are complete; latest live and expanded journeys
+2. Compile v26 and run strict pre-Keep, compact refinement and connected transcript
+   acknowledgement corrections against exact pinned artifacts. v23/v24/v25
+   compiles are complete; latest live, expanded and transcript journeys
    remain failed. Complete affected exclusion/native/default checks and expanded
    desktop summary/follow-on
    gates against their exact pinned artifacts. Earlier broad default smoke failed

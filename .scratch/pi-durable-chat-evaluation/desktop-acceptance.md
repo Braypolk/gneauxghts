@@ -21,9 +21,10 @@ Final native gates remain open.
 ## Current checkpoint — 2026-10-16
 
 Product/native source remains frozen through `b52b1a6`. v23 desktop/exclusion
-and three iOS compiles passed. Latest live diagnostic capture **v25**, canonical
-`d5436fb086ad42948abbd8af4364763a13f55ab404f5eee93db760862df84664`,
-compiled live executable SHA
+and three iOS compiles passed. Latest diagnostic source capture **v26** is
+`92782d6d42e182791d1138b8c3dfcc0e96d9d5d5bc36b82c9a9b3895b25ce35c`;
+builds and corrected reruns are **pending**, with unchanged product runtime.
+The earlier v25 live executable compiled, SHA
 `d90197ffa8eeb63b30881d09ed65201b5a1b8c40c1d25b28558c74c31edbf9e6`;
 receipt `/private/tmp/pi-removal-final-20261015-v25/artifacts/ios-live-build.json`.
 Diagnostic/driver changes do not change frozen product runtime/native bytes;
@@ -37,8 +38,9 @@ and exact pending-review restart, then inspected detached editor DOM before Keep
 and exact canonical body/title/path/hash read-back, then the driver's independent
 version assertion failed (`4 !== 3`) before final committed restart/full native
 effect proof. Normal Keep checkpoints resolved hunks, legitimately advancing the
-version. Strict proof is being corrected to predict the accepted checkpoint
-**before** clicking; arbitrary post-hoc version acceptance is not permitted.
+version. Prepared `b2a85e7` independently predicts the legitimate v3→v4
+resolved-hunk checkpoint **before** clicking; it does not accept arbitrary
+returned versions. Native verification of this correction remains pending.
 These partial observations do not establish a full live iOS pass. Earlier
 UGhOtn/QUeIgd failures remain retained. Exact receipts/pins are in the
 [current matrix](validation-matrix.md).
@@ -52,9 +54,22 @@ Before owned replacement, 48 closed file entries were backed up at
 `/private/tmp/pi-owned-simulator-before-v23-expanded-20261015`. Six pure port-helper
 checks permit functional parallelism, not native acceptance or performance proof.
 
-Scale **v5** is still running against v22; last read-only memory progress was
-1005 conversations/401 submissions, not final durable seed/history/identity/
-provider accounting. Desktop expanded and owned churn are queued, **not started**,
+Prepared `0706ecc` performs normal Expand/chat reveal before acquiring the exact
+compact refinement pane. Latest v23 transcript **MlXAXC** is also **whole failed**
+at mounted creation-review decisions. Its watcher external edit/delete and
+normal Convert/Restore bounded check passed; `failed-ui-report.json` remains in
+the closed receipt root. The 46-entry closed container was backed up at
+`/private/tmp/pi-owned-simulator-before-v26-20261015` before owned uninstall.
+Prepared `8347d67` acknowledges exact connected body/title/reviewId before
+compact chat destroys the editor, including after relocation. Thirty focused
+checks, Svelte zero errors/warnings and root `check:e2e` passed; these are
+preparation, not a transcript/live/iOS acceptance pass. See the matrix for the
+retained MlXAXC receipt and prior failures.
+
+Scale **v5** is still running against v22. The previously reported read-only
+memory projection of 1005 conversations/401 submissions is historical progress
+only; no fresh count or final durable seed/history/identity/provider accounting
+is established. Desktop expanded and owned churn are queued, **not started**,
 after v5 closure releases their owned ports. v4's operator-ended failed fetch
 receipt/421 requests remains incomplete and ineligible for guarded continuation.
 Compilation, pure-test CPU and independent simulator work may overlap functional
