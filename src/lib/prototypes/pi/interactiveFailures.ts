@@ -9,6 +9,9 @@ import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { acknowledgedProbeDraft } from './probeReview';
 import { observeStaleProbeCitation } from './probeCitation';
 import { prepareFailureReviewControls } from './interactiveFailureReview';
+import { probePaneTitle } from './probePaneTitle';
+import { visibleProbeControl } from './probeChatFocus';
+import { openProbeChatSplit } from './probeSplit';
 
 type FailureApi = ChatApi & { prototypeFault(id: string, fault: string): Promise<void> };
 export interface InteractiveFailureJourney {
@@ -19,7 +22,7 @@ export interface InteractiveFailureJourney {
   startSend(id: string, content: string): Promise<ChatMessage>;
   terminal(id: string, messageId: string): Promise<ChatMessage>;
   newProposal(id: string, prompt: string): Promise<ChatAgentProposal>;
-  currentReview(id: string): Promise<EditorView>;
+  currentReview(id: string, reviewId?: string): Promise<EditorView>;
   openSource(message: ChatMessage): Promise<EditorView>;
   openChat(): Promise<void>;
   mark(name: string, receipt?: unknown): Promise<void>;
@@ -38,10 +41,29 @@ const rewrite = (view: EditorView, markdown: string) => view.dispatch({ changes:
 export async function runInteractiveFailures(journey: InteractiveFailureJourney) {
   const { api, conversationId: conversation, mark } = journey;
   const draft = (id: string) => api.getProposalDraft!(id);
-  const mountedWorking = (editor: EditorView) => {
-    const title = editor.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]');
-    assert(title, 'Mounted review has no corresponding title input');
-    return {markdown:editor.state.doc.toString(),title:title.value,decisions:editor.state.field(reviewProjection,false)?.hunks ?? []};
+  const mountedWorking = (editor: EditorView, reviewId: string, active = false) => {
+    const pane = editor.dom.closest<HTMLElement>('[data-testid="workspace-pane"]');
+    const projection = editor.state.field(reviewProjection, false);
+    assert(editor.dom.isConnected && pane?.isConnected && pane.dataset.paneKind === 'editor'
+      && reviewId && projection?.reviewId === reviewId, 'Mounted failure review identity or connection differs');
+    const title = probePaneTitle(pane, 'editor');
+    assert(title?.isConnected, 'Mounted review has no corresponding title input');
+    if (active) assert(visibleProbeControl(editor.dom) && visibleProbeControl(title), 'Failure review editor and title must be visible before capture');
+    // A normal compact chat activation collapses this retained editor. Its
+    // title returns locally; it must never borrow the active chat's header.
+    return {markdown:editor.state.doc.toString(),title:title.value,decisions:projection.hunks};
+  };
+  const retainEditorBesideChat = async () => {
+    if (document.querySelector('[aria-label="Thought partner chat"]')) return;
+    // In a solo compact pane, Open thought partner replaces the editor. The
+    // supported narrow split instead retains its real frame behind a rail.
+    const enabledVisible = (node: HTMLButtonElement) => !node.disabled && visibleProbeControl(node);
+    await openProbeChatSplit({ until, pause,
+      visibleButton: label => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(node => enabledVisible(node)
+        && (node.getAttribute('aria-label') === label || node.textContent?.trim() === label)),
+      mobileThoughtPartner: () => Array.from(document.querySelectorAll<HTMLButtonElement>('[data-pane-command="split"] button#pane-command-thought-partner')).find(enabledVisible) });
+    await until(() => document.querySelector('[aria-label="Thought partner chat"]')
+      && document.querySelectorAll('[data-testid="workspace-pane"]').length > 1, 'normal retained failure editor/chat split');
   };
   const canonical = (noteId: string) => invoke<NoteSession>('read_note', { noteId });
   const note = async (title: string) => {
@@ -75,10 +97,12 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
     return { proposalId: proposal.id, status: proposal.status, alert, canonical: expectedCanonical, draft: await draft(id) };
   };
   const reloadConflict = async (id: string, expectedCanonical: string, targetId: string) => {
-    const editor = await journey.currentReview(id), target = await canonical(targetId);
+    const reviewId = (await api.listPendingProposals(conversation)).find(value => value.id === id)?.preview.reviewId;
+    assert(typeof reviewId === 'string' && reviewId, 'Conflicted proposal has no exact review identity');
+    const editor = await journey.currentReview(id, reviewId), target = await canonical(targetId);
     assert(target.path, 'Refreshed canonical target has no current path');
     const before = await acknowledgedProbeDraft({draft:() => draft(id),until,
-      working:() => ({...mountedWorking(editor),path:target.path!})});
+      working:() => ({...mountedWorking(editor, reviewId),path:target.path!})});
     await journey.openChat();
     const reload = () => { const root = strip(id); return root && buttons(root, 'Reload Disk'); };
     (await until(reload, 'normal conflict Reload Disk')).click();
@@ -97,7 +121,14 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
   // and a switch must not acknowledge or replace that unpersisted body.
   const first = await journey.newProposal(conversation, 'PI_UI:CREATE');
   const second = await journey.newProposal(conversation, 'PI_UI:CREATE');
-  const editor = await journey.currentReview(first.id);
+  const reviewId = first.preview.reviewId;
+  assert(typeof reviewId === 'string' && reviewId, 'Failure proposal has no exact review identity');
+  const editor = await journey.currentReview(first.id, reviewId);
+  mountedWorking(editor, reviewId, true);
+  const before = await acknowledgedProbeDraft({ draft: () => draft(first.id), until,
+    working: () => mountedWorking(editor, reviewId) });
+  const initial = mountedWorking(editor, reviewId);
+  await retainEditorBesideChat();
   const controls = await prepareFailureReviewControls({ conversationId: conversation, proposalId: first.id,
     selectConversation: journey.selectConversation, until,
     strip: () => {
@@ -105,9 +136,8 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
       return node && !node.closest('[hidden],[inert],[aria-hidden="true"]') && node.getClientRects().length > 0
         && getComputedStyle(node).visibility !== 'hidden' ? node : undefined;
     },
-    working: () => ({ connected: editor.dom.isConnected, markdown: editor.state.doc.toString(), title: mountedWorking(editor).title }) });
-  const before = await acknowledgedProbeDraft({ draft: () => draft(first.id), until,
-    working: () => mountedWorking(editor) });
+    working: () => ({ connected: editor.dom.isConnected, ...mountedWorking(editor, reviewId) }) });
+  assert(JSON.stringify(mountedWorking(editor, reviewId)) === JSON.stringify(initial), 'Selecting the review owner changed the exact acknowledged review');
   const edited = 'Synthetic unacknowledged editor bytes survive a failed checkpoint.';
   await api.prototypeFault(first.id, 'checkpoint');
   rewrite(editor, edited);
