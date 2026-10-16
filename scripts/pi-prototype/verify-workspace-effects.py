@@ -87,20 +87,62 @@ def managed_identity(raw):
     return match[1].strip() if match else None
 
 
-def prove(native_root, shared, retained):
+def absolute_location(value):
+    assert isinstance(value, str) and value and Path(value).is_absolute() and not any(part in ('.', '..') for part in value.split('/')), 'Invalid absolute native vault location'
+    return Path(value)
+
+
+def resolve_vault(native_root, shared, owned_container):
+    # lib.rs configures Documents/PROTOTYPE-wipe-me on iOS, independently of
+    # app-local Pi databases. Resolve only native owner-registered locations;
+    # pre-click publication paths identify the exact current root among any
+    # retained historical roots. Never search for an arbitrary history DB.
+    native_root, owned_container = Path(native_root).resolve(strict=True), Path(owned_container).resolve(strict=True)
+    assert native_root.is_relative_to(owned_container), 'Native publication root is outside the owned container'
+    location_path = native_root / 'locations.sqlite'
+    assert location_path.resolve(strict=True).parent == native_root, 'Native location database escapes its owned publication root'
+    with closed_sqlite_read(location_path, caller_closed=True) as locations:
+        owners = locations.execute('SELECT id,vault_id FROM pi_vault_owner').fetchall()
+        assert len(owners) == 1 and owners[0][0] == 1 and owners[0][1], 'Missing or ambiguous native vault owner'
+        vault_id = owners[0][1]
+        registered = locations.execute('SELECT roots_json FROM vault_locations WHERE vault_id=?', (vault_id,)).fetchall()
+        assert len(registered) == 1, 'Missing or ambiguous registered native vault locations'
+        roots = json.loads(registered[0][0])
+    assert isinstance(roots, list) and roots, 'Missing registered native vault roots'
+    roots = [absolute_location(value) for value in roots]
+    paths = [absolute_location(shared['receipts']['publicationPlans'][role]['expectedKeepDraft']['path']) for role in ('kept', 'saved', 'appended')]
+    candidates = [root for root in roots if all(path != root and path.is_relative_to(root) for path in paths)]
+    assert len(candidates) == 1, 'Missing or ambiguous registered vault for exact publication targets'
+    configured = candidates[0]
+    # Constrain the selected path before opening any foreign vault/manifest.
+    assert configured.resolve(strict=False).is_relative_to(owned_container), 'Registered publication vault is outside the owned container'
+    vault = configured.resolve(strict=True)
+    assert vault.is_dir() and vault.is_relative_to(owned_container), 'Configured publication vault escapes the owned container'
+    assert all(path.resolve(strict=True).is_relative_to(vault) for path in paths), 'Publication target escapes its registered vault'
+    manifest_path = vault / '.gneauxghts/vault.json'
+    assert manifest_path.resolve(strict=True).is_relative_to(vault), 'Vault manifest escapes its configured vault'
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest.get('vaultId') == vault_id, 'Configured vault manifest differs from native vault owner'
+    return vault, {'vaultId': vault_id, 'configuredPath': str(configured), 'registeredRoots': [str(root) for root in roots]}
+
+
+def prove(native_root, shared, retained, owned_container):
     native_root, retained = Path(native_root), Path(retained)
     retained.mkdir(parents=True, exist_ok=True)
     ledger = native_root / 'publication-receipts.sqlite'
-    history = native_root / 'vault/.gneauxghts/history.sqlite3'
     proof = []
     plans = shared['receipts']['publicationPlans']
     read_backs = shared['receipts']['publicationReadBacks']
     expectations = {role: validate_plan(plans[role], read_backs[role], shared['receipts'][role]) for role in ('kept', 'saved', 'appended')}
     assert shared['receipts']['saved']['noteId'] == shared['receipts']['appended']['noteId'], 'Append changed stable Note Identity'
     assert plans['appended']['expectedNoteId'] == shared['receipts']['saved']['noteId'], 'Append was not independently targeted at saved identity'
-    with closed_sqlite_read(ledger, caller_closed=True) as effects, closed_sqlite_read(history, caller_closed=True) as timeline:
+    vault, vault_scope = resolve_vault(native_root, shared, owned_container)
+    history = vault / '.gneauxghts/history.sqlite3'
+    assert ledger.resolve(strict=True).parent == native_root.resolve(strict=True), 'Publication ledger escapes its owned native root'
+    assert history.resolve(strict=True).is_relative_to(vault), 'History database escapes its configured vault'
+    with closed_sqlite_read(ledger, caller_closed=True) as effects, closed_sqlite_read(history, caller_closed=True) as timeline, closed_sqlite_read(native_root / 'locations.sqlite', caller_closed=True) as locations:
         # SQLite backup captures a consistent database including any retained WAL.
-        for source, name in [(effects, 'publication-receipts.sqlite'), (timeline, 'history.sqlite3')]:
+        for source, name in [(effects, 'publication-receipts.sqlite'), (timeline, 'history.sqlite3'), (locations, 'locations.sqlite')]:
             with closing(sqlite3.connect(retained / name)) as target:
                 source.backup(target)
         for key, roles in [('kept', ['kept']), ('saved', ['saved', 'appended'])]:
@@ -124,7 +166,11 @@ def prove(native_root, shared, retained):
             # finalization. Their temporary effect->intent token is then cleared;
             # retain timeline identity/sequence scope, without inventing that join.
             assert all(row[1] == note_id and row[3:] == ('point', 'finalized', 0) for row in publications), (key, 'timeline publication is not finalized and released for exact identity')
-            paths = [path for path in (native_root / 'vault').rglob('*.md') if managed_identity(path.read_text()) == note_id]
+            paths = []
+            for path in vault.rglob('*.md'):
+                assert path.resolve(strict=True).is_relative_to(vault), 'Canonical file escapes its configured vault'
+                if managed_identity(path.read_text()) == note_id:
+                    paths.append(path)
             assert len(paths) == 1, (key, 'canonical identity is not unique', len(paths))
             path = paths[0]
             final_role = roles[-1]
@@ -137,6 +183,7 @@ def prove(native_root, shared, retained):
             assert digest(editor_markdown(body, path)) == plans[final_role]['expectedEditorSha256'], (key, 'canonical editor hash differs from final Keep plan')
             (retained / f'{key}.md').write_bytes(data)
             proof.append({'role': key, 'noteId': note_id, 'effectRows': len(rows), 'timelinePublications': len(publications),
+                          'vaultScope': vault_scope,
                           'canonicalFilesWithIdentity': len(paths), 'canonicalSha256': hashlib.sha256(data).hexdigest(),
                           'expectedFinalRole': final_role, 'expectedEditorSha256': plans[final_role]['expectedEditorSha256'],
                           'expectedDraftSha256ByEffect': {f"{plans[role]['proposalId']}:{expectations[role][0]['version']}": plans[role]['expectedDraftSha256'] for role in roles},
@@ -149,6 +196,6 @@ if __name__ == '__main__':
     report = json.loads(report_path.read_text())
     relaunch = next(phase for phase in report['phases'] if phase['phase'] == 'relaunch')
     shared = next(phase for phase in relaunch['shared'] if phase['phase'] == 'relaunch')
-    report['publicationProof'] = prove(native_root, shared, report_path.parent / 'retained-native')
+    report['publicationProof'] = prove(native_root, shared, report_path.parent / 'retained-native', report['data'])
     report_path.write_text(json.dumps(report, indent=2) + '\n')
     print(json.dumps({'status': 'passed', 'nativePublicationProofs': len(report['publicationProof'])}))

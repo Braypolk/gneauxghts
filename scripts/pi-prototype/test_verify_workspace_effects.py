@@ -4,6 +4,8 @@ import copy
 from contextlib import closing
 import json
 import sqlite3
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -19,6 +21,12 @@ class PublicationProofTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         (self.root / 'vault/.gneauxghts').mkdir(parents=True)
+        (self.root / 'vault/.gneauxghts/vault.json').write_text(json.dumps({'vaultId': 'owned-vault'}))
+        with closing(sqlite3.connect(self.root / 'locations.sqlite')) as db, db:
+            db.execute('CREATE TABLE pi_vault_owner(id INTEGER PRIMARY KEY,vault_id TEXT NOT NULL)')
+            db.execute('INSERT INTO pi_vault_owner VALUES(1,?)', ('owned-vault',))
+            db.execute('CREATE TABLE vault_locations(vault_id TEXT PRIMARY KEY,roots_json TEXT NOT NULL)')
+            db.execute('INSERT INTO vault_locations VALUES(?,?)', ('owned-vault', json.dumps([str(self.root / 'vault')])))
         self.report = {'receipts': {'publicationPlans': {}, 'publicationReadBacks': {}}}
         receipts = self.report['receipts']
         for role, identity, version, body in [('kept', 'kept', 3, 'Edited exact body\n'), ('saved', 'saved', 5, 'Answer.\n\n## Selected addition\n'), ('appended', 'saved', 8, 'Answer.\n\n## Selected addition\nEcho phrase.\n')]:
@@ -46,7 +54,178 @@ class PublicationProofTests(unittest.TestCase):
             db.executemany('INSERT INTO publication_receipts VALUES(?,?,?,?,?,?)', [('keep-token', 'kept', 1, 'point', 'finalized', 0), ('save-token', 'saved', 1, 'point', 'finalized', 0), ('append-token', 'saved', 2, 'point', 'finalized', 0)])
 
     def prove(self):
-        return module.prove(self.root, self.report, self.root / 'retained')
+        return module.prove(self.root, self.report, self.root / 'retained', self.root)
+
+    def roots(self, values):
+        with closing(sqlite3.connect(self.root / 'locations.sqlite')) as db, db:
+            db.execute('UPDATE vault_locations SET roots_json=?', (json.dumps([str(value) for value in values]),))
+
+    def move_vault(self):
+        old, moved = self.root / 'vault', self.root / 'Documents/PROTOTYPE-wipe-me'
+        moved.parent.mkdir()
+        old.rename(moved)
+        receipts = self.report['receipts']
+        for role in ('kept', 'saved', 'appended'):
+            plan = receipts['publicationPlans'][role]
+            path = str(moved / Path(plan['expectedKeepDraft']['path']).name)
+            plan['reviewedDraft']['path'] = plan['expectedKeepDraft']['path'] = path
+            plan['expectedDraftSha256'] = module.digest(json.dumps(plan['expectedKeepDraft'], separators=(',', ':')))
+            receipts['publicationReadBacks'][role]['settledDraft']['path'] = path
+            receipts['publicationReadBacks'][role]['canonical']['path'] = path
+            receipts[role]['applied']['path'] = path
+            with closing(sqlite3.connect(self.root / 'publication-receipts.sqlite')) as db, db:
+                db.execute('UPDATE effects SET target_path=?,receipt=? WHERE id=?', (path, json.dumps(receipts[role]), f"{role}:{plan['expectedKeepDraft']['version']}"))
+        self.roots([old, moved])
+        return moved
+
+    def test_registered_ios_documents_root_preserves_all_exact_publication_proofs(self):
+        moved = self.move_vault()
+        self.assertFalse((self.root / 'vault').exists())
+        proofs = self.prove()
+        self.assertEqual([value['effectRows'] for value in proofs], [1, 2])
+        self.assertEqual([value['timelinePublications'] for value in proofs], [1, 2])
+        self.assertEqual(proofs[0]['vaultScope']['vaultId'], 'owned-vault')
+        self.assertEqual(proofs[0]['vaultScope']['configuredPath'], str(moved))
+        self.assertEqual((moved / 'saved.md').read_bytes(), (self.root / 'retained/saved.md').read_bytes())
+        with closing(sqlite3.connect(self.root / 'retained/locations.sqlite')) as db:
+            self.assertEqual(db.execute('SELECT vault_id FROM pi_vault_owner').fetchone()[0], 'owned-vault')
+
+    def test_missing_registered_vault_has_no_filesystem_fallback(self):
+        # A valid-looking desktop vault still exists, but native registration
+        # does not authorize it. Neither directory search nor a guessed path
+        # may replace the missing native location proof.
+        self.roots([self.root / 'missing-vault'])
+        with self.assertRaisesRegex(AssertionError, 'Missing or ambiguous registered vault'):
+            self.prove()
+
+    def test_missing_registered_directory_fails_even_with_original_valid_vault(self):
+        missing = self.root / 'missing-vault'
+        self.roots([missing])
+        shared = copy.deepcopy(self.report)
+        for role in ('kept', 'saved', 'appended'):
+            shared['receipts']['publicationPlans'][role]['expectedKeepDraft']['path'] = str(missing / f'{role}.md')
+        with self.assertRaises(FileNotFoundError):
+            module.resolve_vault(self.root, shared, self.root)
+
+    def test_duplicate_or_overlapping_registered_roots_are_ambiguous(self):
+        for values in ([self.root / 'vault', self.root / 'vault'], [self.root, self.root / 'vault']):
+            with self.subTest(values=values):
+                self.roots(values)
+                with self.assertRaisesRegex(AssertionError, 'ambiguous registered vault'):
+                    self.prove()
+
+    def test_foreign_registered_ancestor_cannot_escape_owned_container(self):
+        self.roots([self.root.parent])
+        with self.assertRaisesRegex(AssertionError, 'outside the owned container'):
+            self.prove()
+
+    def test_foreign_manifest_identity_cannot_supply_history_or_canonical_bytes(self):
+        (self.root / 'vault/.gneauxghts/vault.json').write_text(json.dumps({'vaultId': 'foreign-vault'}))
+        with self.assertRaisesRegex(AssertionError, 'manifest differs from native vault owner'):
+            self.prove()
+
+    def test_missing_or_foreign_owner_registration_fails(self):
+        with closing(sqlite3.connect(self.root / 'locations.sqlite')) as db, db:
+            db.execute("UPDATE pi_vault_owner SET vault_id='foreign-vault'")
+        with self.assertRaisesRegex(AssertionError, 'Missing or ambiguous registered native vault locations'):
+            self.prove()
+        with closing(sqlite3.connect(self.root / 'locations.sqlite')) as db, db:
+            db.execute('DELETE FROM pi_vault_owner')
+        with self.assertRaisesRegex(AssertionError, 'Missing or ambiguous native vault owner'):
+            self.prove()
+
+    def test_invalid_or_empty_native_roots_are_rejected(self):
+        for values in ([], ['relative/vault'], [str(self.root / 'vault/../vault')]):
+            with self.subTest(values=values):
+                self.roots(values)
+                with self.assertRaisesRegex(AssertionError, 'Missing registered native vault roots|Invalid absolute native vault location'):
+                    self.prove()
+
+    def test_publication_targets_cannot_mix_registered_vaults(self):
+        foreign = self.root / 'foreign-vault'
+        foreign.mkdir()
+        self.roots([self.root / 'vault', foreign])
+        shared = copy.deepcopy(self.report)
+        shared['receipts']['publicationPlans']['saved']['expectedKeepDraft']['path'] = str(foreign / 'saved.md')
+        with self.assertRaisesRegex(AssertionError, 'Missing or ambiguous registered vault'):
+            module.resolve_vault(self.root, shared, self.root)
+
+    def test_moved_root_still_rejects_wrong_canonical_bytes_and_exact_receipt(self):
+        moved = self.move_vault()
+        canonical = moved / 'saved.md'
+        original = canonical.read_text()
+        canonical.write_text(original.replace('Echo phrase.', 'Forged phrase.'))
+        with self.assertRaisesRegex(AssertionError, 'canonical authored bytes differ'):
+            self.prove()
+        canonical.write_text(original)
+        with closing(sqlite3.connect(self.root / 'publication-receipts.sqlite')) as db, db:
+            db.execute("UPDATE effects SET target_path='/foreign/saved.md' WHERE note_id='saved'")
+        with self.assertRaisesRegex(AssertionError, 'effect target or identity differs'):
+            self.prove()
+
+    def test_cli_uses_owned_report_container_and_native_registration_for_ios_documents(self):
+        moved = self.move_vault()
+        report = {'data': str(self.root), 'phases': [{'phase': 'relaunch', 'shared': [{'phase': 'relaunch', **self.report}]}]}
+        report_path = self.root / 'gate.json'
+        report_path.write_text(json.dumps(report))
+        result = subprocess.run([sys.executable, '-B', str(Path(module.__file__)), str(report_path), str(self.root)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(json.loads(result.stdout)['nativePublicationProofs'], 2)
+        self.assertEqual(json.loads(report_path.read_text())['publicationProof'][0]['vaultScope']['configuredPath'], str(moved))
+
+    def test_vault_symlink_cannot_open_a_foreign_configured_root(self):
+        with tempfile.TemporaryDirectory() as foreign:
+            target = Path(foreign) / 'foreign-vault'
+            (self.root / 'vault').rename(target)
+            (self.root / 'vault').symlink_to(target, target_is_directory=True)
+            with self.assertRaisesRegex(AssertionError, 'outside the owned container'):
+                self.prove()
+
+    def test_expected_publication_target_symlink_cannot_escape_registered_vault(self):
+        with tempfile.TemporaryDirectory() as foreign:
+            target = Path(foreign) / 'foreign.md'
+            target.write_text('Foreign note')
+            path = self.root / 'vault/kept.md'
+            path.unlink()
+            path.symlink_to(target)
+            with self.assertRaisesRegex(AssertionError, 'Publication target escapes'):
+                self.prove()
+
+    def test_history_or_publication_database_symlink_cannot_supply_foreign_proof(self):
+        for relative, message in [('vault/.gneauxghts/history.sqlite3', 'History database escapes'), ('publication-receipts.sqlite', 'Publication ledger escapes'), ('locations.sqlite', 'Native location database escapes')]:
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as foreign:
+                path = self.root / relative
+                target = Path(foreign) / path.name
+                path.rename(target)
+                path.symlink_to(target)
+                try:
+                    with self.assertRaisesRegex(AssertionError, message):
+                        self.prove()
+                finally:
+                    path.unlink()
+                    target.rename(path)
+
+    def test_manifest_or_metadata_directory_symlink_cannot_open_foreign_metadata(self):
+        for relative in ('vault/.gneauxghts/vault.json', 'vault/.gneauxghts'):
+            with self.subTest(path=relative), tempfile.TemporaryDirectory() as foreign:
+                path = self.root / relative
+                target = Path(foreign) / path.name
+                path.rename(target)
+                path.symlink_to(target, target_is_directory=target.is_dir())
+                try:
+                    with self.assertRaisesRegex(AssertionError, 'Vault manifest escapes'):
+                        self.prove()
+                finally:
+                    path.unlink()
+                    target.rename(path)
+
+    def test_extra_canonical_symlink_is_rejected_before_foreign_identity_scan(self):
+        with tempfile.TemporaryDirectory() as foreign:
+            target = Path(foreign) / 'foreign.md'
+            target.write_text('---\ngneauxghts:\n  id: kept\n---\nForeign canonical owner\n')
+            (self.root / 'vault/extra.md').symlink_to(target)
+            with self.assertRaisesRegex(AssertionError, 'Canonical file escapes'):
+                self.prove()
 
     def test_retains_exact_canonical_bytes_and_consistent_databases(self):
         (self.root / 'vault/reference.md').write_text('Authored reference to kept and saved is not canonical identity ownership.')
