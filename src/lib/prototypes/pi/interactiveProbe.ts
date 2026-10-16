@@ -63,6 +63,9 @@ async function startSend(id: string, content: string) {
   if (debug) trace('startSend', { conversationId: id, content });
   const snapshot = await until(() => api.getConversation(id), 'conversation snapshot before UI send');
   const count = snapshot.messages.length;
+  // Review editing can leave the retained compact chat behind an inert rail.
+  // Reveal it with normal workspace controls before requiring its visible title.
+  await openChat();
   const pane = await until(() => probeChatPane(snapshot.title), 'requested conversation mounted in normal chat pane');
   trace('sendComposerAcquire', { conversationId: id, paneId: pane.dataset.paneId, title: snapshot.title });
   const composer = await focusProbeChatComposer(pane, until);
