@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initializeParityWorkspace} from './paired-parity-gate.mjs';
-import {reviewedTitlePlan,parityBrowserAction,observePublicKeep,verifyDuplicateKeep,reviewKeepControl} from './paired-parity-browser.mjs';
+import {reviewedTitlePlan,parityBrowserAction,observePublicKeep,verifyDuplicateKeep,reviewKeepControl,discoverPreparedReview} from './paired-parity-browser.mjs';
 
 test('review title admission preserves read-only baseline and skips unchanged Save titles',()=>{
   assert.deepEqual(reviewedTitlePlan('Original baseline','Requested title',false),{
@@ -10,7 +10,7 @@ test('review title admission preserves read-only baseline and skips unchanged Sa
     reviewedTitle:'Requested title',draftTitleEditable:true,titleEditing:'editable',changeTitle:true});
   assert.equal(reviewedTitlePlan('Saved original','Saved original',true).changeTitle,false);
   assert.equal(reviewedTitlePlan('Saved original','Saved original',false).changeTitle,false);
-  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});const reviewKeepControl=(${reviewKeepControl.toString()});return (${parityBrowserAction.toString()});`;
+  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});const reviewKeepControl=(${reviewKeepControl.toString()});const discoverPreparedReview=(${discoverPreparedReview.toString()});return (${parityBrowserAction.toString()});`;
   assert.doesNotThrow(()=>new Function(script));
 });
 
@@ -21,6 +21,17 @@ test('exact retained review chooses normal aggregate control, or enabled inline 
   assert.equal(reviewKeepControl(review,'native-review-id',undefined,[disabled,inline]),inline);
   assert.throws(()=>reviewKeepControl(review,'another-proposal-review',aggregate,[inline]),/identity changed/);
   assert.equal(reviewKeepControl({...review,hunks:[{status:'kept'},{status:'undone'}]},'native-review-id',aggregate,[inline]),undefined);
+});
+test('API-prepared append is discovered by normal conversation reload without changing its identity or draft',async()=>{
+  const prepared={id:'exact-append',conversationId:'full',draft:{version:0,markdown:'Accepted body\nSecond selected occurrence.',title:'Details'}};
+  const stored=[prepared],initial=structuredClone(prepared);let active='full',mountedPending=[];
+  // Mounted controller lists are snapshots; a same-conversation selection may
+  // be skipped by the UI, while selecting away/back reloads ordinary pending state.
+  const select=async id=>{if(id===active)return;active=id;mountedPending=stored.filter(proposal=>proposal.conversationId===id);};
+  await select('full');assert.deepEqual(mountedPending,[]);
+  await discoverPreparedReview(select,'full','approved');
+  assert.equal(active,'full');assert.equal(mountedPending[0],prepared);assert.deepEqual(prepared,initial);
+  await assert.rejects(discoverPreparedReview(select,'full','full'),/Distinct normal conversation/);
 });
 
 test('multiple normal inline decisions reach one final checkpoint and publication through observed UI Keep',async()=>{

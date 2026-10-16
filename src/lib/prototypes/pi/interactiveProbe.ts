@@ -8,6 +8,7 @@ import type { ChatMessage } from '$lib/features/chat/types';
 import { acquireProbeReview } from './probeReview';
 import { openProbeChatSplit } from './probeSplit';
 import { openVisibleProbeChat } from './probeChatFocus';
+import { revealProbeReadActivity } from './probeReadActivity';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -207,7 +208,8 @@ export async function runInteractiveProbe() {
         const allowed = await startSend(state.permission, `PI_UI:DISCOVER_ALLOW:${state.source.noteId}`);
         const allow = await until(() => document.querySelector('[aria-label^="Decide permission for"]'), 'second note permission request'); await click('Allow once', allow);
         const allowedAnswer = await terminal(state.permission, allowed.id); assert(allowedAnswer.status === 'completed' && allowedAnswer.citations.length, 'Allowed read missing admitted evidence');
-        await until(() => document.body.innerText.includes('Read note evidence'), 'normal read activity'); await mark('normal permission Allow once delivers read activity and citation');
+        const readActivity = await revealProbeReadActivity({ message: allowedAnswer, noteId: state.source.noteId, until });
+        await mark('normal permission Allow once delivers read activity and citation', readActivity);
         await selectConversation(state.a);
         const stopped = await startSend(state.a, 'PI_UI:STOP');
         await until(() => document.querySelector(`[data-chat-message-id="${stopped.id}"]`)?.textContent?.includes('Acknowledged partial fixture text.'), 'acknowledged visible partial stream');

@@ -53,6 +53,13 @@ export function reviewKeepControl(review,expectedReviewId,aggregate,inline) {
   if(!review.hunks.some(hunk=>['pending','modified'].includes(hunk.status)))return;
   return aggregate??inline.find(control=>!control.disabled);
 }
+/** API-prepared selection destinations become ordinary pending controller state
+ * through the normal picker; staging alone does not update the mounted list. */
+export async function discoverPreparedReview(select,conversationId,alternateId) {
+  if(!alternateId||alternateId===conversationId)throw new Error('Distinct normal conversation required to refresh prepared review');
+  await select(alternateId);
+  await select(conversationId);
+}
 export async function parityBrowserAction(action,args={}) {
   const check=(value,message)=>{if(!value)throw new Error(message);};
   const pause=()=>new Promise(ok=>setTimeout(ok,60));
@@ -133,7 +140,7 @@ export async function parityBrowserAction(action,args={}) {
     return {draft,...capability};
   };
   const keep=async(id,conversationId)=>{
-    const view=await currentReview(id);await openChat();
+    const view=await currentReview(id);
     const proposal=(await api.listPendingProposals(conversationId)).find(item=>item.id===id);
     check(proposal,'Exact pending review unavailable before Keep');
     const reviewId=String(proposal.preview.reviewId??proposal.id);
@@ -215,6 +222,7 @@ export async function parityBrowserAction(action,args={}) {
     const duplicate=await api.prepareNoteSave(state.full,answer.id);check(duplicate.id===proposal.id&&duplicate.status==='committed','Duplicate Save changed identity');
     const selected=await api.prepareNoteSave(state.full,answer.id,{markdown:'Echo phrase.',text:'Echo phrase.',occurrence:1},{targetNoteId:receipt.noteId,heading:'Selected addition'});
     const selectedDraft=await api.getProposalDraft(selected.id);check(selectedDraft.markdown.includes('Selected addition'),'Explicit append heading absent');
+    await discoverPreparedReview(select,state.full,state.approved);
     await keep(selected.id,state.full);return{faithfulWholeSave:true,originLink:true,duplicateSave:true,selectionOccurrence:1,explicitAppend:true,reviewedTitle:edited.reviewedTitle,draftTitleEditable:edited.draftTitleEditable,titleEditing:edited.titleEditing};
   }
   if(action==='duplicates') {

@@ -4,7 +4,7 @@ import {EventEmitter} from 'node:events';
 import {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {planProductScaleReply,productStorageSnapshot,parseProductScaleArguments,stopProductScaleChild,initializeProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
+import {planProductScaleReply,productStorageSnapshot,parseProductScaleArguments,stopProductScaleChild,initializeProductScaleWorkspace,reloadProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
 import {DUMMY_AUTHORIZATION} from './shared-resource-gate.mjs';
 
 test('exact dummy or absent auth only; unknown and out-of-budget inputs refused',()=>{
@@ -77,4 +77,31 @@ test('browser wrapper retains thrown browser error and never turns missing ackno
   await assert.rejects(executeProductScaleBrowser({wd,sessionId:'synthetic-session',script:'throw new Error("Native setup failed at import");'}),/Native setup failed at import/);
   assert.equal(await executeProductScaleBrowser({wd,sessionId:'synthetic-session',script:'return arguments[0];',args:[17]}),17);
   await assert.rejects(executeProductScaleBrowser({wd:async()=>undefined,sessionId:'synthetic-session',script:'return true;'}),/missing acknowledgement/);
+});
+test('reload cannot set up the still-mounted old document or an unmounted new document',async()=>{
+  const output={},state={timeOrigin:100,mounted:true};let setups=0,navigations=0;
+  const execute=async script=>new Function('performance','document',script)({timeOrigin:state.timeOrigin},{querySelector:()=>state.mounted?{}:null});
+  await reloadProductScaleWorkspace({execute,output,phase:'fresh owner',navigate:async()=>{navigations++},
+    setup:async()=>{assert.equal(state.timeOrigin,200);assert.equal(state.mounted,true);setups++;return true},
+    wait:async(check,phase,timeout)=>{
+      assert.equal(phase,'fresh owner new mounted document');assert.equal(timeout,60000);
+      assert.equal(await check(),false,'Old mounted document cannot acknowledge reload');assert.equal(setups,0);
+      state.timeOrigin=200;state.mounted=false;assert.equal(await check(),false,'A changed epoch alone cannot acknowledge readiness');assert.equal(setups,0);
+      state.mounted=true;return check();
+    }});
+  assert.equal(navigations,1);assert.equal(setups,1);
+  assert.deepEqual(output.reloads,[{phase:'fresh owner',fromTimeOrigin:100,toTimeOrigin:200,attempts:3}]);
+});
+test('missing document transition has a real bounded deadline and never runs setup',async()=>{
+  const output={};let setups=0;
+  await assert.rejects(reloadProductScaleWorkspace({output,phase:'unchanged document',timeoutMs:15,
+    execute:async()=>({timeOrigin:100,workspaceReady:true}),navigate:async()=>{},setup:async()=>{setups++}}),/Timed out waiting for unchanged document new mounted document/);
+  assert.equal(setups,0);assert.equal(output.lastReloadObservation.timeOrigin,100);assert.equal(output.reloads,undefined);
+});
+test('invalidated reload completion still requires a new mounted document',async()=>{
+  const output={};let epoch=100,setups=0;
+  await reloadProductScaleWorkspace({output,phase:'completion lost',execute:async()=>({timeOrigin:epoch,workspaceReady:true}),
+    navigate:async()=>{epoch=200;throw new Error('Completion handler for function call is no longer reachable')},setup:async()=>{setups++},
+    wait:async check=>check()});
+  assert.equal(setups,1);assert.match(output.lastReloadCommandError.error,/Completion handler/);assert.equal(output.reloads[0].toTimeOrigin,200);
 });

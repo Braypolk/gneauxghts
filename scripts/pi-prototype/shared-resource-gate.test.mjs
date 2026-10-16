@@ -76,6 +76,28 @@ test('setup cannot turn a missing readiness acknowledgement into success',async(
   assert.equal(output.lastInitializeError.phase,'restart browser setup');
   assert.match(output.lastInitializeError.error,/did not acknowledge readiness/);
 });
+test('reload setup refuses the previous live document before importing or admitting its API',async()=>{
+  const output={};let attempts=0;
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  const result=await initializeResourceWorkspace({output,phase:'normal reloaded workspace',afterTimeOrigin:100,
+    execute:async(script,args)=>{
+      assert.deepEqual(args,[100]);attempts++;
+      if(attempts===1)return new AsyncFunction(`const performance={timeOrigin:100};${script}`)(...args);
+      // The second owned document can now complete ordinary setup; the first
+      // must fail at its actual epoch guard, before even attempting the import.
+      return true;
+    },
+    wait:async check=>{assert.equal(await check(),false);return check();}
+  });
+  assert.equal(result,true);assert.equal(attempts,2);
+  assert.match(output.lastInitializeError.error,/Previous document still mounted after reload/);
+  assert.equal(output.lastInitializeError.phase,'normal reloaded workspace');
+  let dispatched=false;
+  await assert.rejects(initializeResourceWorkspace({output,phase:'normal reloaded workspace',afterTimeOrigin:NaN,
+    execute:async()=>{dispatched=true;return true;}
+  }),/Actual prior document/);
+  assert.equal(dispatched,false);
+});
 test('omitting old digest preserves the original artifact pin',()=>artifacts(({argv})=>{
   assert.equal(OLD_SHA256,'435669a2fe3bd7b3d8baf32bff164c399a3fe68961660291a477ca6a03ce36f3');
   assert.throws(()=>parseArguments(argv),/Pinned old artifact differs/);

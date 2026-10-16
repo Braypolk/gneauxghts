@@ -122,6 +122,8 @@ export function parseArguments(argv) {
 }
 
 const browserSetup = `
+  const [previousTimeOrigin]=arguments;
+  if(previousTimeOrigin!==undefined && performance.timeOrigin===previousTimeOrigin)throw new Error('Previous document still mounted after reload');
   window.__resourceApi=(await import('/src/lib/features/chat/api.ts')).chatApi;
   const native=window.__TAURI_INTERNALS__;
   if(!native || !document.querySelector('[data-testid="workspace-pane"]'))throw new Error('Native workspace required');
@@ -138,12 +140,13 @@ const browserSetup = `
 
 // Navigation can invalidate a WebDriver completion after the first workspace
 // frame. Setup is idempotent; retries never admit a journey until it succeeds.
-export async function initializeResourceWorkspace({execute,output,phase,timeoutMs=45000,wait=waitUntil}) {
+export async function initializeResourceWorkspace({execute,output,phase,afterTimeOrigin,timeoutMs=45000,wait=waitUntil}) {
+  if(afterTimeOrigin!==undefined)assert(Number.isFinite(afterTimeOrigin)&&afterTimeOrigin>0,'Actual prior document time origin required');
   let attempt=0;
   return wait(async()=>{
     attempt++;
     try {
-      assert.equal(await execute(browserSetup),true,'Browser setup did not acknowledge readiness');
+      assert.equal(await execute(browserSetup,afterTimeOrigin===undefined?[]:[afterTimeOrigin]),true,'Browser setup did not acknowledge readiness');
       return true;
     } catch(error) {
       output.lastInitializeError={phase,attempt,error:String(error).slice(0,700)};
@@ -249,8 +252,9 @@ export async function runSharedResourceGate(options) {
         await launch();
         const id=await execute(`return(await window.__resourceApi.createConversation({title:'Shared resource conversation',provider:'local',model:'pi-native-fixture',reasoningEffort:'off',vaultAccess:'none'})).id;`);
         // Reload refreshes the normal controller after API-only synthetic setup.
+        const previousTimeOrigin=await execute('return performance.timeOrigin;');
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-        await initializeResourceWorkspace({execute,output,phase:'normal reloaded workspace',timeoutMs:30000});
+        await initializeResourceWorkspace({execute,output,phase:'normal reloaded workspace',afterTimeOrigin:previousTimeOrigin,timeoutMs:30000});
         await execute(browserSelect,[id]);
         for(const [scenario,prompt,cancel] of [['short','RESOURCE_HELLO',false],['followup','RESOURCE_FOLLOWUP',false],['cancel','RESOURCE_STOP',true]]){
           const firstRequest=fixture.requests.length;

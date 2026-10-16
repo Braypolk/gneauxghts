@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { createWebDriverRequest,waitUntil,listenerPids } from '../../e2e/support/nativeTransport.mjs';
 import { parseArguments,cleanEnvironment,frontendSourceDigest } from './shared-resource-gate.mjs';
 import { startParityFixture,PARITY_ANSWER,PARITY_EDIT } from './paired-parity-fixture.mjs';
-import { parityBrowserAction, reviewedTitlePlan, observePublicKeep, verifyDuplicateKeep, reviewKeepControl } from './paired-parity-browser.mjs';
+import { parityBrowserAction, reviewedTitlePlan, observePublicKeep, verifyDuplicateKeep, reviewKeepControl, discoverPreparedReview } from './paired-parity-browser.mjs';
 import { proveClosedParityDuplicates,stopOwnedParityChild } from './paired-parity-lifecycle.mjs';
 
 const sha=value=>createHash('sha256').update(value).digest('hex');
@@ -92,7 +92,7 @@ export async function runPairedParityGate(options) {
       const wd=createWebDriverRequest(4445,60000);let server,app,session;
       const execute=async(action,args={})=>{
         assert(session,'Fresh owned WebDriver session required');
-        const result=await wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});const reviewKeepControl=(${reviewKeepControl.toString()});(${parityBrowserAction.toString()})(arguments[0],arguments[1]).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,700)}));`,args:[action,args]});
+        const result=await wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});const reviewKeepControl=(${reviewKeepControl.toString()});const discoverPreparedReview=(${discoverPreparedReview.toString()});(${parityBrowserAction.toString()})(arguments[0],arguments[1]).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,700)}));`,args:[action,args]});
         assert(result.ok,`Owned ${lane} browser action ${action} failed: ${result.error??'unknown'}`);return result.value;
       };
       const stopNative=async()=>{

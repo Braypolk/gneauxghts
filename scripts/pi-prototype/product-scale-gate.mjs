@@ -96,6 +96,24 @@ export async function initializeProductScaleWorkspace({execute,output,phase,time
   },phase,timeoutMs);
 }
 
+// A successful reload command can still return from the old mounted document.
+// Do not install globals or admit work until the new document itself is mounted.
+export async function reloadProductScaleWorkspace({execute,navigate,setup,output,phase,timeoutMs=60000,wait=waitUntil}){
+  const observe='return {timeOrigin:performance.timeOrigin,workspaceReady:!!document.querySelector(\'[data-testid="workspace-pane"]\')};';
+  const before=await execute(observe);assert(Number.isFinite(before?.timeOrigin)&&before.timeOrigin>0,'Product document epoch required');
+  try{await navigate()}catch(error){output.lastReloadCommandError={phase,error:String(error).slice(0,2000)}}
+  let attempt=0;
+  const after=await wait(async()=>{
+    attempt++;
+    try{
+      const observed=await execute(observe);output.lastReloadObservation={phase,attempt,...observed};
+      return Number.isFinite(observed?.timeOrigin)&&observed.timeOrigin>0&&observed.timeOrigin!==before.timeOrigin&&observed.workspaceReady===true?observed:false;
+    }catch(error){output.lastReloadError={phase,attempt,error:String(error).slice(0,2000)};return false}
+  },`${phase} new mounted document`,timeoutMs);
+  (output.reloads??=[]).push({phase,fromTimeOrigin:before.timeOrigin,toTimeOrigin:after.timeOrigin,attempts:attempt});
+  return setup();
+}
+
 export async function executeProductScaleBrowser({wd,sessionId,script,args=[]}){
   const result=await wd(`/session/${sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,2000)}));`,args});
   assert(result?.ok,`Product browser operation failed: ${result?.error??'missing acknowledgement'}`);return result.value;
@@ -138,6 +156,8 @@ export async function runProductScaleGate(options){
   const execute=(script,args=[])=>executeProductScaleBrowser({wd,sessionId:session.sessionId,script,args});
   const snapshot=label=>report.storage.push({label,atMs:performance.now(),...productStorageSnapshot(dataRoot)});
   const setup=async phase=>{await initializeProductScaleWorkspace({execute,output:report,phase});browserEpoch++};
+  const reload=phase=>reloadProductScaleWorkspace({execute,output:report,phase,setup:()=>setup(phase),
+    navigate:()=>wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]})});
   const browserCounters=async label=>report.phases.push({label,browserEpoch,atMs:performance.now(),ipcCoverage:'observed-invoke-boundary-after-workspace',...await execute('return {ipc:window.__productIpc,transport:{...window.__productTransport}};')});
   const stop=async signal=>{clearInterval(timer);timer=undefined;
     if(session){try{await wd(`/session/${session.sessionId}`,undefined,'DELETE')}catch{}session=undefined}
@@ -160,8 +180,7 @@ export async function runProductScaleGate(options){
     report.closedStoreEmpty=await execute('return await window.__productProbe.countClosedProductStore();');snapshot('closed-empty');
     // Closing the owner is terminal for that webview's ChatApi. A normal reload
     // creates its next owner before seeding; no second live Harness is opened.
-    await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-    await setup('fresh product owner browser setup');
+    await reload('fresh product owner browser setup');
     // Seed outside a long WebDriver command so the native owner can poll numeric
     // progress, record storage growth and retain a bounded operation deadline.
     await execute(`window.__productState={status:'running',progress:{phase:'start',conversations:0,submissions:0,probeListeners:0}};
@@ -174,8 +193,7 @@ export async function runProductScaleGate(options){
     writeNew(join(options.root,'private-product-identities.json'),seeded.identity);report.seed={...seeded,identity:undefined};snapshot('seeded');await browserCounters('seeded');
     assert.equal(fixture.requests.length,1005,'Provider count differs from submitted inputs');assert(fixture.requests.every(row=>row.completed&&!row.failed),'Fixture request failed');
     // Reload the ordinary mounted controller so it discovers API-created Meta.
-    await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-    await setup('reloaded product browser setup');
+    await reload('reloaded product browser setup');
     report.beforeRestart=await execute('return await window.__productProbe.verifyProductScale(window.__productApi,arguments[0]);',[seeded.identity]);
     report.beforeRestartUi=await execute(browserNavigate,[seeded.identity]);await browserCounters('before-archive');snapshot('before-archive');
     report.archive=await execute('return await window.__productProbe.checkProductArchive(window.__productApi,arguments[0]);',[seeded.identity]);snapshot('after-archive');await browserCounters('after-archive');
