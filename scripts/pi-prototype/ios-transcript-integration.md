@@ -1,5 +1,7 @@
-Prepared files are unintegrated and have not launched an app. The root/native
-lease owner must approve and perform integration before this is executable.
+The transcript gate uses the ordinary mounted workspace under an isolated
+synthetic fixture composition. Native builds, byte pins and simulator execution
+belong to the root/native lease owner; pure checks below do not establish native
+acceptance.
 
 1. In the opt-in `src/routes/+layout.svelte` onMount dispatch, route
    `?piTranscriptTest=1` to the new `runIosTranscriptProbe` from
@@ -9,9 +11,9 @@ lease owner must approve and perform integration before this is executable.
 2. In the diagnostic URL choice in `scripts/pi-prototype/run.mjs`, add an
    explicit `PI_PROTOTYPE_TRANSCRIPT_GATE=true` choice for
    `/?piTranscriptTest=1` before the existing expanded choice. Keep all
-   isolation and ordinary workspace build paths. No native command or new
-   persistence schema is needed: fixture config, Pi-owned probe state,
-   ui-report and portable `prepare_restart` already exist.
+   isolation and ordinary workspace build paths. Pi-owned probe state and
+   ui-report retain the existing persistence schema. Portable closure uses the
+   fixture-only native `pi_probe_prepare_close` command described below.
 3. Build through the established iOS workaround, using a generated build root:
    `PI_PROTOTYPE_DATA=/generated/empty/build-root PI_PROTOTYPE_DIAGNOSTICS=true
    PI_PROTOTYPE_EXPANDED_GATE=true PI_PROTOTYPE_TRANSCRIPT_GATE=true node
@@ -38,6 +40,28 @@ to its generated evidence root, then reinstalls and restores them into a new
 sandbox. It rejects an unchanged container path. No settings or SQLite strings
 are replaced.
 
+`pi_probe_prepare_close` is compiled only in the Pi prototype. It rejects before
+looking up or admitting `AppLifecycle` unless `PI_PROTOTYPE_HTTP_FIXTURE` is an
+explicit literal `http://127.0.0.1` URL without credentials, query or fragment,
+and both `PI_PROTOTYPE_INTERACTIVE_GATE` and `PI_PROTOTYPE_EXPANDED_GATE` are
+exactly `true`. Driver ownership checks still establish the disposable bundle,
+simulator and fresh container. The command dispatches the existing joining
+`AppLifecycle::prepare_restart` operation on a blocking worker and returns its
+complete receipt. That owner retains Pi quiescence, native storage release,
+watcher/write settlement, `NoteTimeline.clean_close` and semantic shutdown.
+There is no separate close owner, forced portability marker or relaunch action.
+
+This is a test-only synthetic portable-close diagnostic, not a normal iOS UI
+feature. Product `prepare_restart` still rejects iOS before lifecycle admission;
+manual force-quit and backgrounding retain their existing semantics. Live gates
+without the synthetic fixture environment cannot enter this diagnostic. Adding
+the wrapper changes native prototype bytes and requires fresh build/byte pins;
+do not describe the resulting native binary as unchanged. The transcript probe
+records every returned close receipt before asserting portable readiness, so
+`failed-ui-report.json` retains native failure details. It performs no Pi/API
+read after portable closure; only the bounded diagnostic report is published
+before the driver terminates the process.
+
 On relaunch, the probe requires native known-root mapping, unchanged pending
 body/title/version/decisions, watcher-visible true conflict, normal pending
 review UI, explicit Keep recovery, duplicate Keep receipt equality, normal
@@ -52,6 +76,7 @@ Pure checks, authorized without a native lease:
 
 ```
 pnpm exec vitest run src/lib/prototypes/pi/iosTranscriptContract.test.ts
+pnpm exec vitest run src/lib/prototypes/pi/iosTranscriptProbe.test.ts
 node --check scripts/pi-prototype/ios-transcript-gate.mjs
 node --test scripts/pi-prototype/ios-transcript-gate.test.mjs
 python3 -B -c "import ast,pathlib; ast.parse(pathlib.Path('scripts/pi-prototype/verify-ios-transcript-effects.py').read_text())"

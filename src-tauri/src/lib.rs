@@ -393,6 +393,8 @@ pub fn run() {
             #[cfg(feature = "pi-prototype")]
             pi_prototype::pi_probe_config,
             #[cfg(feature = "pi-prototype")]
+            pi_prototype::pi_probe_prepare_close,
+            #[cfg(feature = "pi-prototype")]
             pi_prototype::pi_ui_report,
             #[cfg(feature = "pi-prototype")]
             pi_prototype_transport::pi_fetch,

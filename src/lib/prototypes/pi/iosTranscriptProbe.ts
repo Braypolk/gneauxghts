@@ -24,6 +24,20 @@ export type IosTranscriptReport = {
   status: 'running' | 'passed' | 'failed'; checks: string[]; receipts: Record<string, unknown>;
   error?: string; limits: readonly string[];
 };
+type ProbeCloseReceipt = {
+  status: 'ready' | 'failed'; ready: boolean; timelinePortable: boolean; canResume: boolean; error?: string;
+};
+
+/** Keep the complete native outcome even when portable-close validation fails. */
+export async function prepareIosTranscriptClose(report: IosTranscriptReport) {
+  let receipt: ProbeCloseReceipt;
+  try { receipt = await invoke<ProbeCloseReceipt>('pi_probe_prepare_close'); }
+  catch (error) { report.receipts.closeError = String(error); throw error; }
+  report.receipts.close = receipt;
+  assert(receipt?.status === 'ready' && receipt.ready && receipt.timelinePortable && receipt.canResume === false,
+    'Native diagnostic close did not close to portable state');
+  return receipt;
+}
 const api = chatApi as ProbeApi;
 type ProbeTrace = (step: string, detail?: Record<string, unknown>) => void;
 const pause = () => new Promise(resolve => setTimeout(resolve, 60));
@@ -162,10 +176,6 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
     transitions.push({ step, atMs: performance.now(), ...detail });
   };
   const emit = async (phase: string, receipt?: unknown) => { report.phase = phase; if (receipt !== undefined) report.receipts[phase] = receipt; await invoke('pi_ui_report', { report }); };
-  const close = async () => {
-    const receipt = await invoke<{ ready: boolean; timelinePortable: boolean }>('prepare_restart');
-    assert(receipt.ready && receipt.timelinePortable, 'Native restart did not close to portable state'); return receipt;
-  };
   try {
     await until(() => document.querySelector('[data-testid="workspace-pane"]'), 'normal native workspace');
     const prior = (await api.prototypeState())?.transcriptStateJson;
@@ -208,7 +218,7 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
         conversationIds: (await api.listConversations()).map(value => value.id) };
       await api.prototypeCheckpoint({ transcriptStateJson: JSON.stringify(state) });
       trace('relocation:checkpoint-acknowledged');
-      await emit('ready-to-relocate', { state, close: await close() });
+      await emit('ready-to-relocate', { state, close: await prepareIosTranscriptClose(report) });
       // The driver must terminate now. No Pi/API read follows portable closure.
       return report;
     }
@@ -236,7 +246,7 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
     const origin = `${vault.runningPath}/Chats/Pi/${state.a}/Origin.md`; assert(await api.findConversationByProjectionPath(origin) === state.a, 'Stable Origin lookup failed');
     let rejected = false; try { await invoke('pi_resolve_locations', { paths: [`${state.oldVault}-unknown/Source.md`] }); } catch { rejected = true; } assert(rejected, 'Unknown root was guessed');
     report.checks.push('actual sandbox path changed; pending body/version and real conflict retained', 'explicit UI uncertain Keep recovery and duplicate API Keep', 'normal source button opens native editor; stable Origin lookup and unknown-root rejection');
-    report.receipts.close = await close(); report.status = 'passed'; await emit('complete');
+    await prepareIosTranscriptClose(report); report.status = 'passed'; await emit('complete');
   } catch (error) { report.status = 'failed'; report.error = String(error); report.receipts.failedDom = iosTranscriptDomReceipt(); await emit('failed'); }
   return report;
 }

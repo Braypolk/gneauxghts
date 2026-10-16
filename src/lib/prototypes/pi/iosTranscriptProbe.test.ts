@@ -8,7 +8,7 @@ vi.mock('./probeReview', () => ({ acknowledgedProbeDraft: vi.fn(), acquireProbeR
 vi.mock('$lib/features/proposals/reviewExtension', () => ({ reviewProjection: {} }));
 vi.mock('./probeChatFocus', () => ({ openVisibleProbeChat: mocks.open }));
 
-import { acknowledgedIosTranscriptPending, iosTranscriptDomReceipt, runIosTranscriptProbe } from './iosTranscriptProbe';
+import { acknowledgedIosTranscriptPending, iosTranscriptDomReceipt, prepareIosTranscriptClose, runIosTranscriptProbe, type IosTranscriptReport } from './iosTranscriptProbe';
 import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import type { ChatProposalDraft } from '$lib/features/chat/types';
 
@@ -16,6 +16,45 @@ function control(label = 'Expand retained chat') {
   return { tagName: 'BUTTON', textContent: '', getAttribute: (name: string) => name === 'aria-label' ? label : null,
     closest: () => null, getClientRects: () => [{}], disabled: false } as unknown as HTMLButtonElement;
 }
+
+describe('iOS transcript fixture close contract', () => {
+  let report: IosTranscriptReport;
+  beforeEach(() => {
+    vi.resetAllMocks();
+    report = { gate: 'ios-native-transcript-fixture', launchId: 'close-test', phase: 'starting', status: 'running', checks: [], receipts: {}, limits: [] };
+  });
+
+  it('uses the fixture-only native lifecycle command and retains its complete ready receipt', async () => {
+    const receipt = { status: 'ready', ready: true, timelinePortable: true, canResume: false };
+    mocks.invoke.mockResolvedValue(receipt);
+    expect(await prepareIosTranscriptClose(report)).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('pi_probe_prepare_close');
+    expect(report.receipts.close).toBe(receipt);
+    expect(mocks.state).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { status: 'failed', ready: false, timelinePortable: false, canResume: true, error: 'Pi did not quiesce' },
+    { status: 'failed', ready: false, timelinePortable: true, canResume: false, error: 'Terminal shutdown failed after timeline close' },
+    { status: 'ready', ready: true, timelinePortable: false, canResume: false },
+    { status: 'failed', ready: true, timelinePortable: true, canResume: false },
+    { status: 'ready', ready: true, timelinePortable: true, canResume: true },
+  ])('retains the exact incomplete or inconsistent receipt before rejecting (%j)', async receipt => {
+    mocks.invoke.mockResolvedValue(receipt);
+    await expect(prepareIosTranscriptClose(report)).rejects.toThrow('Native diagnostic close did not close to portable state');
+    expect(report.receipts.close).toBe(receipt);
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('pi_probe_prepare_close');
+    expect(mocks.state).not.toHaveBeenCalled(); expect(mocks.get).not.toHaveBeenCalled();
+  });
+
+  it('preserves a denied or lost IPC failure without fabricating a native receipt', async () => {
+    const error = new Error('Pi diagnostic close requires an explicit synthetic fixture URL');
+    mocks.invoke.mockRejectedValue(error);
+    await expect(prepareIosTranscriptClose(report)).rejects.toBe(error);
+    expect(report.receipts).toEqual({ closeError: String(error) });
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('pi_probe_prepare_close');
+  });
+});
 
 describe('iOS transcript probe snapshot admission', () => {
   beforeEach(() => {

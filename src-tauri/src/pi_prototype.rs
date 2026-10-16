@@ -415,6 +415,59 @@ pub(crate) fn pi_probe_config() -> Value {
         "followonsGate":followons})
 }
 
+fn require_probe_close_fixture(
+    fixture: Option<&str>,
+    interactive_gate: Option<&str>,
+    expanded_gate: Option<&str>,
+) -> Result<(), String> {
+    if interactive_gate != Some("true") || expanded_gate != Some("true") {
+        return Err("Pi diagnostic close requires interactive and expanded synthetic gates".into());
+    }
+    let literal_loopback = fixture.is_some_and(|value| value.strip_prefix("http://127.0.0.1")
+        .is_some_and(|suffix| suffix.is_empty() || suffix.starts_with(':') || suffix.starts_with('/')));
+    let endpoint = fixture
+        .and_then(|value| url::Url::parse(value).ok())
+        .ok_or("Pi diagnostic close requires an explicit synthetic fixture URL")?;
+    if !literal_loopback || endpoint.scheme() != "http" || endpoint.host_str() != Some("127.0.0.1")
+        || !endpoint.username().is_empty() || endpoint.password().is_some()
+        || endpoint.query().is_some() || endpoint.fragment().is_some()
+    {
+        return Err("Pi diagnostic close requires an explicit IPv4 loopback HTTP fixture URL".into());
+    }
+    Ok(())
+}
+
+/// Synthetic fixture diagnostic only: release resources without requesting relaunch.
+/// The owned driver terminates the process after receiving this lifecycle receipt.
+#[tauri::command]
+pub(crate) async fn pi_probe_prepare_close<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+) -> Result<crate::app::PrepareRestartReceipt, String> {
+    let fixture = std::env::var("PI_PROTOTYPE_HTTP_FIXTURE").ok();
+    let interactive_gate = std::env::var("PI_PROTOTYPE_INTERACTIVE_GATE").ok();
+    let expanded_gate = std::env::var("PI_PROTOTYPE_EXPANDED_GATE").ok();
+    probe_prepare_close_with_fixture(app, fixture.as_deref(), interactive_gate.as_deref(), expanded_gate.as_deref()).await
+}
+
+async fn probe_prepare_close_with_fixture<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    fixture: Option<&str>,
+    interactive_gate: Option<&str>,
+    expanded_gate: Option<&str>,
+) -> Result<crate::app::PrepareRestartReceipt, String> {
+    // Reject before looking up or admitting any lifecycle owner. In particular,
+    // this cannot close a live/manual iOS evaluation or change prepare_restart.
+    require_probe_close_fixture(fixture, interactive_gate, expanded_gate)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let lifecycle = app
+            .try_state::<crate::app::AppLifecycle>()
+            .ok_or_else(|| "Application lifecycle unavailable".to_string())?;
+        Ok(lifecycle.prepare_restart(&app))
+    })
+    .await
+    .map_err(|error| error.to_string())?
+}
+
 #[tauri::command]
 pub(crate) async fn pi_ui_report(report: Value) -> Result<(), String> {
     let bytes = serde_json::to_vec_pretty(&report).map_err(|e| e.to_string())?;
@@ -444,6 +497,50 @@ pub(crate) async fn pi_probe_report(_app: tauri::AppHandle, report: Value) -> Re
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn diagnostic_close_requires_both_explicit_synthetic_gates() {
+        for gate in [None, Some(""), Some("false"), Some("1"), Some("TRUE"), Some(" true")] {
+            assert!(require_probe_close_fixture(Some("http://127.0.0.1:1443"), gate, Some("true")).is_err());
+            assert!(require_probe_close_fixture(Some("http://127.0.0.1:1443"), Some("true"), gate).is_err());
+        }
+        assert!(require_probe_close_fixture(Some("http://127.0.0.1:1443"), Some("true"), Some("true")).is_ok());
+    }
+
+    #[test]
+    fn diagnostic_close_denies_missing_malformed_and_nonfixture_endpoints() {
+        for fixture in [None, Some(""), Some("not a URL"), Some("https://127.0.0.1:1443"),
+            Some("http://localhost:1443"), Some("http://[::1]:1443"), Some("http://example.com"),
+            Some("http://127.0.0.1.example.com"), Some("http://user@127.0.0.1:1443"),
+            Some("http://127.1:1443"), Some("http://2130706433:1443"), Some("http://0x7f000001:1443"),
+            Some("http://user:password@127.0.0.1:1443"), Some("http://127.0.0.1:1443?redirect=remote"),
+            Some("http://127.0.0.1:1443#remote")] {
+            assert!(require_probe_close_fixture(fixture, Some("true"), Some("true")).is_err(), "admitted {fixture:?}");
+        }
+    }
+
+    #[test]
+    fn diagnostic_close_rejects_before_lifecycle_lookup() {
+        // No lifecycle owner is installed. An admitted call reaches that lookup,
+        // while all denied calls must fail at the fixture boundary instead.
+        let app = tauri::test::mock_builder()
+            .build(tauri::test::mock_context(tauri::test::noop_assets()))
+            .unwrap();
+        tauri::async_runtime::block_on(async {
+            for (fixture, interactive, expanded) in [
+                (None, Some("true"), Some("true")),
+                (Some("http://127.0.0.1:1443"), None, Some("true")),
+                (Some("http://127.0.0.1:1443"), Some("true"), Some("false")),
+                (Some("http://remote.example"), Some("true"), Some("true")),
+            ] {
+                let error = probe_prepare_close_with_fixture(app.handle().clone(), fixture, interactive, expanded)
+                    .await.unwrap_err();
+                assert!(error.starts_with("Pi diagnostic close requires"), "{error}");
+            }
+            assert_eq!(probe_prepare_close_with_fixture(app.handle().clone(), Some("http://127.0.0.1:1443"), Some("true"), Some("true"))
+                .await.unwrap_err(), "Application lifecycle unavailable");
+        });
+    }
+
     fn request(
         action: &str,
         owner: Option<u64>,
