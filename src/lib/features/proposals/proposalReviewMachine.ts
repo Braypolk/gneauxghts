@@ -5,6 +5,10 @@ export interface ProposalReviewIdentity {
 }
 
 export type ProposalReviewRecoveryPhase = 'reviewing' | 'conflicted';
+export interface ProposalReviewConflictRecovery {
+  kind: 'conflicted';
+  error: string;
+}
 
 export interface ProposalReviewContext<TReview> {
   identity: ProposalReviewIdentity;
@@ -40,7 +44,7 @@ export type ProposalReviewWorkflowState<TReview> =
 export type ProposalReviewWorkflowEvent<TReview> =
   | { type: 'openRequested'; identity: ProposalReviewIdentity }
   | { type: 'openPrepared'; identity: ProposalReviewIdentity; review: TReview }
-  | { type: 'openSucceeded'; identity: ProposalReviewIdentity }
+  | { type: 'openSucceeded'; identity: ProposalReviewIdentity; recovery?: ProposalReviewConflictRecovery }
   | { type: 'openFailed'; identity: ProposalReviewIdentity; error: string }
   | { type: 'errorSet'; reviewId: string | null; error: string | null }
   | { type: 'resolutionRequested'; reviewId: string; resolution: 'commit' | 'dismiss' }
@@ -98,10 +102,10 @@ export function transitionProposalReviewWorkflow<TReview>(
       return state.kind === 'opening' && state.review &&
         sameIdentity(state.identity, event.identity)
         ? {
-            kind: 'reviewing',
+            kind: event.recovery?.kind ?? 'reviewing',
             identity: state.identity,
             review: state.review,
-            error: null
+            error: event.recovery?.error ?? null
           }
         : state;
     case 'openFailed':

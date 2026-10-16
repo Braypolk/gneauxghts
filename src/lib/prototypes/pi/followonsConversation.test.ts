@@ -28,8 +28,11 @@ describe('mounted follow-on draft admission', () => {
       const unseen = await fake.api.createConversation({ title: 'API-created unseen picker item' });
       expect((await fake.api.listConversations()).some(item => item.id === unseen.id)).toBe(true);
       expect(controller.getSnapshot().conversations.some(item => item.id === unseen.id)).toBe(false);
+      let activePane: 'note' | 'chat' = 'note';
+      const actions: string[] = [];
       const controls: FollowonsConversationControls = {
-        newChat: async () => { controller.startNewConversation(); },
+        focusChat: async () => { actions.push('focus chat composer'); activePane = 'chat'; },
+        newChat: async () => { expect(activePane).toBe('chat'); actions.push('New Chat'); controller.startNewConversation(); },
         title: async title => { controller.setConversationDraftTitle(title); },
         model: async (selected, model) => { await controller.setProvider(selected, model); },
         vault: async access => { await controller.setVaultAccess(access); },
@@ -39,6 +42,7 @@ describe('mounted follow-on draft admission', () => {
       };
       const firstWarmup = `PI_FOLLOWONS:WARMUP:run_${provider}_0`;
       const accepted = await acquireFollowonsConversation(controls, { title: `Followons ${provider}`, provider, model: 'pi-native-fixture', vaultAccess: 'full', reasoningEffort: 'off' }, firstWarmup);
+      expect(actions).toEqual(['focus chat composer', 'New Chat']);
       expect(accepted.id).not.toBe(unseen.id);
       expect(controller.getSnapshot().conversation?.id).toBe(accepted.id);
       expect(controller.getSnapshot().conversations.some(item => item.id === accepted.id)).toBe(true);
@@ -50,7 +54,7 @@ describe('mounted follow-on draft admission', () => {
 
   it('rejects a completed first Send with silently changed configuration', async () => {
     const noop = async () => {};
-    const controls: FollowonsConversationControls = { newChat: noop, title: noop, model: noop, vault: noop, reasoning: noop, send: noop,
+    const controls: FollowonsConversationControls = { focusChat: noop, newChat: noop, title: noop, model: noop, vault: noop, reasoning: noop, send: noop,
       accepted: async () => conversation({ title: 'Followons', provider: 'local', model: 'wrong-model', vaultAccess: 'full', reasoningEffort: 'off', messages: [message({ role: 'user', content: 'warmup' }), message({ status: 'completed' })] }) };
     await expect(acquireFollowonsConversation(controls, { title: 'Followons', provider: 'local', model: 'pi-native-fixture', vaultAccess: 'full', reasoningEffort: 'off' }, 'warmup')).rejects.toThrow('configured draft');
   });

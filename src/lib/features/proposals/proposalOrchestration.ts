@@ -395,7 +395,7 @@ export function createProposalOrchestration(deps: ProposalOrchestrationDeps) {
       if (request.working && request.checkpoint) root(review).replaceMarkdown(preview.baseEditorMarkdown);
       if (request.working || request.kind === 'create') updateDocumentTitle(document, request.working?.title ?? preview.title);
       root(review).beginReview(preview, reviewCallbacks(review), request.working);
-      session.dispatchWorkflow({ type: 'openSucceeded', identity });
+      session.dispatchWorkflow({ type: 'openSucceeded', identity, recovery: request.recovery });
       bindCheckpointEffects(review);
       return true;
     } catch (error) {

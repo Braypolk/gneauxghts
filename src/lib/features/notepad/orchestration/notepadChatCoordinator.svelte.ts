@@ -265,6 +265,8 @@ export class NotepadChatCoordinator<TPaneId extends string> {
     } : storedUpdatePreview(pendingProposal);
     if (!preview) return null;
     const request: DurableProposalReviewRequest = {
+      recovery: pendingProposal.status === 'conflict' ? {kind:'conflicted',
+        error:'This proposal needs recovery. Retry Keep to reconcile its saved state, or copy your working text and reload the note.'} : undefined,
       draftVersion: draft?.version,
       kind: pendingProposal.kind,
       refresh: () => this.durableProposalReviewRequest(pendingProposal),

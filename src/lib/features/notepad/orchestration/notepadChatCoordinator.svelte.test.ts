@@ -4,6 +4,11 @@ import { fakeApi } from '$lib/features/chat/chatTestSupport';
 import type { ChatAgentProposal } from '$lib/features/chat/types';
 import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
 import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
+import { createProposalOrchestration } from '$lib/features/proposals/proposalOrchestration';
+import { createProposalReviewSession } from '$lib/features/proposals/reviewSession.svelte';
+import { createReviewEditorForTest } from '$lib/features/proposals/proposalEditorTestSupport';
+import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
+import { updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
 import {
   NotepadChatCoordinator,
   type NotepadChatCoordinatorDeps
@@ -37,12 +42,43 @@ function proposal(): ChatAgentProposal {
 }
 
 describe('NotepadChatCoordinator chat surface registry', () => {
+  it('reopens a relocated conflicted all-kept draft with recovery and only commits its exact version on explicit Retry',async()=>{
+    const path='/relocated/vault/Plan.md',pending={...proposal(),status:'conflict' as const,suggestedPath:path};
+    pending.preview={...pending.preview,notePath:path,hunks:[{id:'hunk-1',baseFrom:0,baseTo:6,proposedFrom:0,proposedTo:5,oldText:'Before',newText:'After'}]};
+    const acknowledged={version:17,markdown:'After\nHuman detail',title:'Human title',path,decisions:[{id:'hunk-1',baseFrom:0,baseTo:6,proposedFrom:0,proposedTo:5,oldText:'Before',newText:'After',from:0,to:5,status:'kept' as const}]};
+    const fake=fakeApi();fake.api.listPendingProposals.mockResolvedValue([pending]);
+    const api={...fake.api,getProposalDraft:vi.fn(async()=>acknowledged),checkpointProposalDraft:vi.fn(async()=>acknowledged)};
+    const document=createNoteDraftState({...createEmptySessionSnapshot(),title:'Plan',bodyMarkdown:'Before',currentNoteId:'note-1',currentNotePath:path,lastSavedNoteId:'note-1',lastSavedTitle:'Plan',lastSavedMarkdown:'Before',lastSavedPath:path});
+    const editor=createReviewEditorForTest(document),session=createProposalReviewSession();
+    const orchestration=createProposalOrchestration({session,getEditorPaneDocument:()=>document,getEditorForDocument:()=>editor.adapter,
+      onReviewMarkdownChange:updateDocumentMarkdown,presentReviewDocument:async()=>document,finishReviewDocument:async()=>{},
+      acknowledgeDocumentCommit:async()=>{},reloadReviewDocument:async()=>{throw new Error('No implicit reload');}});
+    const coordinator=new NotepadChatCoordinator(['chat'],{api,getProposalOrchestration:()=>orchestration} as unknown as NotepadChatCoordinatorDeps<'chat'>);
+    try {
+      await coordinator.reviewAgentProposal('chat',pending);
+      expect(editor.markdown).toBe(acknowledged.markdown);expect(document.working.title).toBe(acknowledged.title);
+      expect(editor.review?.hunks).toEqual(acknowledged.decisions);
+      expect(session.workflow).toMatchObject({kind:'conflicted',identity:{proposalId:pending.id,reviewId:'review-1',notePath:path}});
+      expect(session.snapshot).toMatchObject({isConflicted:true,isApplying:false,unresolvedHunks:0});
+      expect(session.snapshot.error).toMatch(/Retry Keep/);
+      expect(api.commitAgentProposal).not.toHaveBeenCalled();
+      await orchestration.retryCommit();
+      expect(api.commitAgentProposal).toHaveBeenCalledExactlyOnceWith(pending.id,acknowledged.markdown,17);
+      expect(orchestration.activeProposalId).toBeNull();
+      await orchestration.retryCommit();expect(api.commitAgentProposal).toHaveBeenCalledOnce();
+    } finally {
+      coordinator.dispose();orchestration.dispose();
+      if(editor.runtime.review)editor.runtime.endReview(editor.runtime.review.reviewId);
+      editor.dispose();documentRegistry.dispose(document.handle);
+    }
+  });
+
   it('uses passive display on arrival and navigation only for explicit review', async () => {
     const pending = proposal();
     const fake = fakeApi();
     fake.api.listPendingProposals.mockResolvedValue([pending]);
     const loadDurableProposalIfOpen = vi.fn(async () => true);
-    const loadDurableProposal = vi.fn(async () => true);
+    const loadDurableProposal = vi.fn<(request:DurableProposalReviewRequest)=>Promise<boolean>>(async () => true);
     const coordinator = new NotepadChatCoordinator(
       ['chat'],
       {
@@ -62,6 +98,7 @@ describe('NotepadChatCoordinator chat surface registry', () => {
     await coordinator.reviewAgentProposal('chat', pending);
 
     expect(loadDurableProposal).toHaveBeenCalledOnce();
+    expect(loadDurableProposal.mock.calls[0]?.[0]?.recovery).toBeUndefined();
 
     loadDurableProposalIfOpen.mockClear();
     const controller = coordinator.getController(

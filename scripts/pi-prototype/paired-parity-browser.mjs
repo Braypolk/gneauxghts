@@ -18,7 +18,9 @@ export async function parityBrowserAction(action,args={}) {
   if(action==='initialize') {
     check(window.__TAURI_INTERNALS__&&document.querySelector('[data-testid="workspace-pane"]'),'Actual native workspace required');
     const {chatApi:api}=await import('/src/lib/features/chat/api.ts');
-    const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+    // The old Vite lane serves the raw package with unresolved bare imports.
+    // Use its native-E2E optimized module, shared by the mounted editor.
+    const {EditorView}=await import('/node_modules/.vite-e2e-native/deps/@codemirror_view.js');
     window.__pairedParity={api,EditorView,state:args.state??{kept:[]},invoke:window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)};
     const {atlasVisibility,...settings}=await api.getSettings();
     const provider=args.protocol==='responses'?'openai':'local';

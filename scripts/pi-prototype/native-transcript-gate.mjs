@@ -61,6 +61,13 @@ const title=editor.dom.closest('[data-pane-frame]')?.querySelector('[data-testid
 if(!title)throw new Error('Mounted pending review has no corresponding title');
 return acknowledgedProbeDraft({draft:()=>api.getProposalDraft(id),until:wait,
   working:()=>({markdown:editor.state.doc.toString(),title:title.value,path:draft.path,decisions:editor.state.field(reviewProjection,false).hunks})});`;
+export const failureDomScript = `const text=(value,limit)=>String(value??'').slice(0,limit);
+const controls=root=>Array.from(root.querySelectorAll('button')).slice(0,16).map(node=>({label:text(node.getAttribute('aria-label')||node.textContent.trim(),120),disabled:node.disabled}));
+return {href:text(location.href,500),readyState:document.readyState,
+  strips:Array.from(document.querySelectorAll('[data-proposal-strip]')).slice(0,8).map(node=>({kind:node.getAttribute('data-proposal-strip'),proposalId:node.getAttribute('data-proposal-id'),text:text(node.textContent,1600),controls:controls(node)})),
+  alerts:Array.from(document.querySelectorAll('[role="alert"]')).slice(0,12).map(node=>text(node.textContent,600)),
+  titles:Array.from(document.querySelectorAll('[data-testid="note-title"]')).slice(0,8).map(node=>({value:text(node.value,200),readOnly:node.readOnly})),
+  actions:Array.from(document.querySelectorAll('button')).filter(node=>/^(Keep All|Keep Remaining|Retry|Discard|Review next|Review in editor|Copy Current|Reload Disk)$/.test(node.textContent.trim())).slice(0,24).map(node=>({label:text(node.textContent.trim(),120),disabled:node.disabled}))};`;
 
 export async function runNativeTranscriptGate() {
   assert(!process.env.PI_PROTOTYPE_DATA, 'Unset PI_PROTOTYPE_DATA; this gate allocates synthetic data only');
@@ -201,7 +208,16 @@ export async function runNativeTranscriptGate() {
     const key=`${uncertain.id}:${uncertainDraft.version}`;assertRecoveredEffect(before.effects.find(value=>value.id===key),after.effects.find(value=>value.id===key));
     assert.equal(before.vaultId,after.vaultId);assert.equal(before.owner,after.owner);assert.equal(after.locations.length,2);
     assert(!fixture.requests.some(value=>value.error),'Fixture contract failure');report.status='passed';
-  }catch(error){report.status='failed';report.error=String(error);process.exitCode=1;}
+  }catch(error){
+    report.status='failed';report.error=String(error);process.exitCode=1;persist();
+    if(session){
+      const diagnosticWd=createWebDriverRequest(4445,3000);
+      try{report.failureDOM=await diagnosticWd(`/session/${session.sessionId}/execute/sync`,{script:failureDomScript,args:[]});}
+      catch(diagnosticError){report.failureDOMError=String(diagnosticError);}
+      try{const path=join(root,'failure.png');writeFileSync(path,Buffer.from(await diagnosticWd(`/session/${session.sessionId}/screenshot`,undefined,'GET'),'base64'));report.screenshots.push(path);}
+      catch(screenshotError){report.failureScreenshotError=String(screenshotError);}
+    }
+  }
   finally{persist();await stop();try{process.kill(-server.pid,'SIGTERM');}catch{}await fixture.close();console.log(JSON.stringify({status:report.status,root,evidence:reportPath,error:report.error}));}
   return report;
 }

@@ -2,6 +2,7 @@ import type { ChatConversation, ChatProvider } from '$lib/features/chat/types';
 
 export type FollowonsDraft = { title: string; provider: ChatProvider; model: string; vaultAccess: 'full'; reasoningEffort: 'off' };
 export type FollowonsConversationControls = {
+  focusChat(): Promise<void>;
   newChat(): Promise<void>;
   title(value: string): Promise<void>;
   model(provider: ChatProvider, model: string): Promise<void>;
@@ -14,6 +15,9 @@ export type FollowonsConversationControls = {
 /** First Send creates and selects the draft through the mounted controller.
  * A raw API-created chat is absent from its already-loaded picker snapshot. */
 export async function acquireFollowonsConversation(controls: FollowonsConversationControls, draft: FollowonsDraft, firstWarmup: string) {
+  // A mounted chat can coexist with an active note pane. The dock's New action
+  // follows the active pane, so focus the chat before acquiring New Chat.
+  await controls.focusChat();
   await controls.newChat();
   await controls.title(draft.title);
   await controls.model(draft.provider, draft.model);

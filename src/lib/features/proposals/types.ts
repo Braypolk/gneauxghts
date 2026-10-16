@@ -3,6 +3,7 @@ import type {
   ProposalPreview
 } from '$lib/types/proposals';
 import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import type { ProposalReviewConflictRecovery } from './proposalReviewMachine';
 
 export interface ProposalReviewSessionSnapshot {
   proposalId: string | null;
@@ -26,6 +27,7 @@ export interface ProposalWorkingState {
 }
 
 export interface DurableProposalReviewRequest {
+  recovery?: ProposalReviewConflictRecovery;
   draftVersion?: number;
   kind?: 'update' | 'create';
   changeLocation?: (path: string) => Promise<void>;

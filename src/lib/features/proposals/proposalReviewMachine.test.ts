@@ -36,6 +36,16 @@ function reviewing(
 }
 
 describe('proposal review workflow machine', () => {
+  it('admits persisted conflict recovery only with the prepared opening identity',()=>{
+    let opening=transitionProposalReviewWorkflow(createProposalReviewWorkflowState<{id:string}>(),{type:'openRequested',identity:first});
+    opening=transitionProposalReviewWorkflow(opening,{type:'openPrepared',identity:first,review:{id:'retained'}});
+    const recovery={kind:'conflicted' as const,error:'Retry Keep to reconcile the saved result.'};
+    expect(transitionProposalReviewWorkflow(opening,{type:'openSucceeded',identity:second,recovery})).toBe(opening);
+    const reopened=transitionProposalReviewWorkflow(opening,{type:'openSucceeded',identity:first,recovery});
+    expect(reopened).toMatchObject({kind:'conflicted',identity:first,error:recovery.error,review:{id:'retained'}});
+    expect(transitionProposalReviewWorkflow(reopened,{type:'resolutionRequested',reviewId:second.reviewId,resolution:'commit'})).toBe(reopened);
+    expect(transitionProposalReviewWorkflow(reopened,{type:'resolutionRequested',reviewId:first.reviewId,resolution:'commit'})).toMatchObject({kind:'committing',recoverTo:'conflicted'});
+  });
 
   it('adopts a refreshed identity only from the admitted commit for the same proposal', () => {
     const busy=transitionProposalReviewWorkflow(reviewing(),{type:'resolutionRequested',reviewId:first.reviewId,resolution:'commit'});

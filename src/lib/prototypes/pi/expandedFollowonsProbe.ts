@@ -27,8 +27,13 @@ async function sendComposer(content: string) {
   input(field, content); await click('Send message');
 }
 const conversationControls: FollowonsConversationControls = {
-  newChat: async () => {
+  focusChat: async () => {
     if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
+    const composer = await until(() => { const node = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return node && !node.disabled ? node : undefined; }, 'mounted chat composer before New Chat');
+    composer.focus();
+    await until(() => document.activeElement === composer && button('New Chat. Start a blank chat in this pane.'), 'chat focus activates pane and New Chat action');
+  },
+  newChat: async () => {
     await click('New Chat. Start a blank chat in this pane.');
     await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === '', 'blank mounted chat draft');
   },
