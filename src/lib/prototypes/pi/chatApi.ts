@@ -251,7 +251,7 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     // Stopped/interrupted tools may never append their final details. Recover
     // received worker spend from its own Pi ledger, without reading its prose.
     const workerUsageByOrigin=new Map<string,UsageCounters>();
-    const children=(await scanAll(cursor=>storage.scanConversations({},128,cursor,context))).filter(record=>record.owner?.conversationId===id);
+    const children=(await scanAll(cursor=>storage.scanConversations({ownerConversationId:id},128,cursor,context))).filter(record=>record.owner?.conversationId===id);
     for(const child of children){const worker=await harness.snapshot(ResearchWorker,child.id,context);if(worker?.parentId!==id)continue;
       const ledger=await harness.snapshot(UsageDoc,child.id,context);const totals=workerUsageByOrigin.get(worker.parentSessionId)??emptyUsageCounters();
       for(const value of Object.values(ledger?.models??{}))addUsageCounters(totals,usageCounters(value));workerUsageByOrigin.set(worker.parentSessionId,totals);}
