@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
+import { acquireFollowonsConversation, type FollowonsConversationControls } from './followonsConversation';
 
 export type FollowonsReport = {
   gate: 'expanded-native-followons-fixture'; status: 'running' | 'passed' | 'failed';
@@ -18,14 +19,49 @@ async function until<T>(read: () => T | Promise<T>, description: string, timeout
   while (Date.now() < end) { const result = await read(); if (result) return result as NonNullable<T>; await pause(); }
   throw new Error(`Follow-on deadline: ${description}`);
 }
-function button(label: string) { return Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(node => !node.disabled && (node.getAttribute('aria-label') === label || node.textContent?.trim() === label)); }
-async function click(label: string) { (await until(() => button(label), label)).click(); await pause(); }
-async function select(id: string) {
-  if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
-  const conversation = await api.getConversation(id); await click('Conversations');
-  (await until(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker')).click();
-  await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === conversation.title, 'selected conversation');
+function button(label: string, root: ParentNode = document) { return Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(node => !node.disabled && (node.getAttribute('aria-label') === label || node.textContent?.trim() === label)); }
+async function click(label: string, root: ParentNode = document) { (await until(() => button(label, root), label)).click(); await pause(); }
+function input(field: HTMLInputElement | HTMLTextAreaElement, value: string) { field.focus(); field.value = value; field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: value })); }
+async function sendComposer(content: string) {
+  const field = await until(() => { const node = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return node && !node.disabled ? node : undefined; }, 'normal composer');
+  input(field, content); await click('Send message');
 }
+const conversationControls: FollowonsConversationControls = {
+  newChat: async () => {
+    if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
+    await click('New Chat. Start a blank chat in this pane.');
+    await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === '', 'blank mounted chat draft');
+  },
+  title: async title => {
+    const field = await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]'), 'draft title');
+    input(field, title); field.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })); await pause();
+  },
+  model: async (provider, model) => {
+    await click('AI model'); const picker = await until(() => document.querySelector('[aria-label="AI model picker"]'), 'normal model picker');
+    await click(provider === 'local' ? 'Server' : 'ChatGPT', picker);
+    input(await until(() => picker.querySelector<HTMLInputElement>('[aria-label="Custom model ID"]'), 'model ID'), model);
+    await click('Use', picker);
+    await until(() => button('AI model')?.title === `${provider === 'local' ? 'Server' : 'ChatGPT'} · ${model}`, 'draft model configuration');
+  },
+  vault: async () => {
+    await click('Vault access'); const menu = await until(() => document.querySelector('[role="menu"][aria-label="Vault access"]'), 'vault access menu');
+    (await until(() => Array.from(menu.querySelectorAll<HTMLButtonElement>('button')).find(node => node.querySelector('span.font-medium')?.textContent === 'Full vault'), 'Full vault choice')).click();
+    await until(() => button('Vault access')?.textContent?.includes('Full vault'), 'full vault draft');
+  },
+  reasoning: async () => {
+    await click('Reasoning effort'); const picker = await until(() => document.querySelector('[aria-label="Reasoning effort picker"]'), 'reasoning picker');
+    await click('Off', picker); await until(() => !document.querySelector('[aria-label="Reasoning effort picker"]') && button('Reasoning effort')?.textContent?.includes('Off'), 'off reasoning draft');
+  },
+  send: sendComposer,
+  accepted: async (title, content) => {
+    const id = await until(async () => (await api.listConversations()).find(item => item.title === title)?.id, 'first Send creates configured conversation');
+    const conversation = await until(async () => { const value = await api.getConversation(id); return value.messages.some(item => item.role === 'user' && item.content === content) && value.messages.at(-1)?.role === 'assistant' ? value : undefined; }, 'first WARMUP admission');
+    completed(await terminal(id, conversation.messages.at(-1)!.id));
+    await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === title, 'first Send selects created conversation');
+    await until(() => document.querySelector(`[data-chat-message-id="${conversation.messages.at(-1)!.id}"]`)?.textContent?.includes('Synthetic'), 'first WARMUP renders in selected chat');
+    return api.getConversation(id);
+  }
+};
 async function terminal(id: string, messageId: string) {
   const message = await until(async () => { const value = (await api.getConversation(id)).messages.find(item => item.id === messageId); return value && !['pending', 'streaming'].includes(value.status) ? value : undefined; }, 'terminal actual Pi request');
   await pause(); return message;
@@ -33,9 +69,7 @@ async function terminal(id: string, messageId: string) {
 function completed(message: ChatMessage) { assert(message.status === 'completed', `Follow-on request ${message.status}: ${message.errorMessage}`); return message; }
 async function sendUi(id: string, content: string) {
   const before = (await api.getConversation(id)).messages.length;
-  const field = await until(() => { const node = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return node && !node.disabled ? node : undefined; }, 'normal composer');
-  field.focus(); field.value = content; field.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: content }));
-  await click('Send message');
+  await sendComposer(content);
   const messageId = await until(async () => { const messages = (await api.getConversation(id)).messages; return messages.length > before && messages.at(-1)?.role === 'assistant' ? messages.at(-1)?.id : undefined; }, 'UI admission');
   const result = completed(await terminal(id, messageId));
   await until(() => Array.from(document.querySelectorAll('[aria-label="Assistant response"]')).some(node => node.textContent?.includes('Synthetic')), 'normal rendered follow-on answer');
@@ -65,9 +99,10 @@ export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | und
     await mark('synthetic canonical notes created through native command', { count: notes.length });
     const conversations: Record<string, string> = {};
     for (const provider of ['local', 'openai'] as ChatProvider[]) {
-      const conversation = await api.createConversation({ title: `Pi followons ${provider} ${report.run}`, provider, model: 'pi-native-fixture', reasoningEffort: 'off', vaultAccess: 'full' });
-      conversations[provider] = conversation.id; await select(conversation.id);
-      for (let index = 0; index < 7; index++) await sendUi(conversation.id, `PI_FOLLOWONS:WARMUP:${report.run}_${provider}_${index}`);
+      const conversation = await acquireFollowonsConversation(conversationControls, { title: `Pi followons ${provider} ${report.run}`, provider, model: 'pi-native-fixture', reasoningEffort: 'off', vaultAccess: 'full' }, `PI_FOLLOWONS:WARMUP:${report.run}_${provider}_0`);
+      conversations[provider] = conversation.id;
+      await mark(`${provider} normal New Chat and first WARMUP preserve configured admission`, { conversationId: conversation.id, provider: conversation.provider, model: conversation.model, reasoningEffort: conversation.reasoningEffort, vaultAccess: conversation.vaultAccess });
+      for (let index = 1; index < 7; index++) await sendUi(conversation.id, `PI_FOLLOWONS:WARMUP:${report.run}_${provider}_${index}`);
       await sendUi(conversation.id, `PI_FOLLOWONS:PARENT:${report.run}_${provider}`);
       await mark(`${provider} normal UI long-history continuation completed`, { conversationId: conversation.id, warmupTurns: 7, driverVerificationRequired: true });
       const researched = await sendUi(conversation.id, `PI_FOLLOWONS:RESEARCH:${report.run}_${provider}:${notes.join(',')}`);

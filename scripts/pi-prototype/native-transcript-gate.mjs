@@ -51,6 +51,16 @@ await acquireProbeReview({editor,openChat:open,until:wait,
   openCard:async card=>(await wait(()=>button('Review in editor',card),'Review')).click()});
 await open();await wait(()=>document.querySelector('[data-proposal-strip="active"][data-proposal-id="'+id+'"]'),'exact mounted review strip');
 return true;`;
+export const acknowledgedPendingScript = `${apiImport}${ui}
+const {EditorView}=await import('/node_modules/@codemirror/view/dist/index.js');
+const {reviewProjection}=await import('/src/lib/features/proposals/reviewExtension.ts');
+const {acknowledgedProbeDraft}=await import('/src/lib/prototypes/pi/probeReview.ts');
+const id=arguments[0],draft=await api.getProposalDraft(id);
+const editor=await wait(()=>Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).map(node=>EditorView.findFromDOM(node)).find(view=>view?.state.doc.toString()===draft.markdown&&view.state.field(reviewProjection,false)?.hunks.length),'mounted creation review decisions');
+const title=editor.dom.closest('[data-pane-frame]')?.querySelector('[data-testid="note-title"]');
+if(!title)throw new Error('Mounted pending review has no corresponding title');
+return acknowledgedProbeDraft({draft:()=>api.getProposalDraft(id),until:wait,
+  working:()=>({markdown:editor.state.doc.toString(),title:title.value,path:draft.path,decisions:editor.state.field(reviewProjection,false).hunks})});`;
 
 export async function runNativeTranscriptGate() {
   assert(!process.env.PI_PROTOTYPE_DATA, 'Unset PI_PROTOTYPE_DATA; this gate allocates synthetic data only');
@@ -138,8 +148,12 @@ export async function runNativeTranscriptGate() {
     assert(savedReceipt.applied.path && readFileSync(savedReceipt.applied.path,'utf8').includes(`[[Chats/Pi/${setup.a.id}/Origin#^msg_${cited.id}`)); report.saved = savedReceipt;
     await select(setup.b.title); await send(setup.b.id, 'PI_UI:HELLO'); await send(setup.b.id, 'PI_UI:CREATE');
     const pending = (await call(`${apiImport}return api.listPendingProposals(arguments[0]);`, [setup.b.id]))[0]; assert(pending);
-    const pendingDraft = await call(pendingCheckpointScript,[pending.id,'\n\nAcknowledged relocation checkpoint.','Relocated pending review']);
-    report.pending={id:pending.id,draft:pendingDraft}; await review(pending.id); await shot('pending-review-before-move');
+    const stagedPending = await call(pendingCheckpointScript,[pending.id,'\n\nAcknowledged relocation checkpoint.','Relocated pending review']);
+    await review(pending.id);
+    const pendingDraft = await call(acknowledgedPendingScript,[pending.id]);
+    for(const field of ['markdown','title','path'])assert.equal(pendingDraft[field],stagedPending[field],`Mounting changed pending ${field}`);
+    assert(pendingDraft.decisions.length,'Mounted creation decisions must be acknowledged before relocation');
+    report.pending={id:pending.id,draft:pendingDraft}; await shot('pending-review-before-move');
     // A distinct Save proposal remains accepted but its native acknowledgement is withheld.
     await select(setup.a.title);
     const uncertain=await wholeSave(setup.a.id,hello.id);

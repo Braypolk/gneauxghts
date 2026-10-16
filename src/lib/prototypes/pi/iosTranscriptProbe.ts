@@ -4,7 +4,8 @@ import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatProposalDraft, ChatMessage } from '$lib/features/chat/types';
 import { assertAcknowledgedReview } from './iosTranscriptContract';
-import { acquireProbeReview } from './probeReview';
+import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
+import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 
 type ProbeApi = ChatApi & {
   prototypeState(): Promise<{ transcriptStateJson?: string }>;
@@ -62,6 +63,20 @@ async function wholeSave(conversationId: string, messageId: string) {
   await click('Save to note', answer);
   return until(async () => (await api.listPendingProposals(conversationId)).find(value => !before.has(value.id)), 'UI-staged whole-answer Save');
 }
+async function acknowledgedPending(id: string) {
+  await review(id);
+  const draft = await api.getProposalDraft!(id);
+  const editor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+    .map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && view.state.field(reviewProjection, false)?.hunks.length), 'mounted creation review decisions');
+  const title = editor.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]');
+  assert(title, 'Mounted pending review has no corresponding title');
+  return acknowledgedProbeDraft({ draft: () => api.getProposalDraft!(id), until,
+    working: () => {
+      const projection = editor.state.field(reviewProjection, false);
+      assert(projection, 'Pending review projection disappeared before acknowledgement');
+      return { markdown: editor.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
+    } });
+}
 async function keep(id: string) { const strip = await review(id); (await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip) ?? button('Retry', strip), 'normal Keep or Retry')).click(); }
 async function conflict() { await until(() => button('Restore transcript from chat'), 'watcher-driven conflict UI'); }
 async function resolve(label: string) { await click(label); await until(() => !button('Restore transcript from chat'), 'conflict resolved'); }
@@ -103,7 +118,10 @@ export async function runIosTranscriptProbe(): Promise<IosTranscriptReport | und
       await select(b.id); await send(b.id, 'PI_UI:HELLO'); await send(b.id, 'PI_UI:CREATE');
       const pendingProposal = (await api.listPendingProposals(b.id))[0]; assert(pendingProposal, 'No pending proposal');
       const initial = await api.getProposalDraft!(pendingProposal.id);
-      const pending = await api.checkpointProposalDraft!(pendingProposal.id, { ...initial, title: 'Relocated iOS pending review', markdown: `${initial.markdown}\n\nAcknowledged iOS relocation checkpoint.` });
+      const stagedPending = await api.checkpointProposalDraft!(pendingProposal.id, { ...initial, title: 'Relocated iOS pending review', markdown: `${initial.markdown}\n\nAcknowledged iOS relocation checkpoint.` });
+      const pending = await acknowledgedPending(pendingProposal.id);
+      assert(pending.markdown === stagedPending.markdown && pending.title === stagedPending.title && pending.path === stagedPending.path, 'Mounting changed pending authored fields');
+      assert(pending.decisions.length, 'Mounted creation decisions must be acknowledged before relocation');
       await select(a.id); const uncertainProposal = await wholeSave(a.id, hello.id);
       await api.prototypeFault(uncertainProposal.id, 'receipt-write'); await keep(uncertainProposal.id);
       await until(async () => (await api.listPendingProposals(a.id)).find(value => value.id === uncertainProposal.id && value.status === 'conflict'), 'uncertain native Keep acknowledgement');

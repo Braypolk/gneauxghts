@@ -1,6 +1,14 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { relocatedPath, assertRecoveredEffect, sha256, wholeSaveScript, reviewScript, pendingCheckpointScript } from './native-transcript-gate.mjs';
+import { relocatedPath, assertRecoveredEffect, sha256, wholeSaveScript, reviewScript, pendingCheckpointScript, acknowledgedPendingScript } from './native-transcript-gate.mjs';
+
+test('relocation baseline waits for mounted creation decisions and exact acknowledged fields', () => {
+  const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
+  assert.doesNotThrow(()=>new AsyncFunction(acknowledgedPendingScript));
+  assert.match(acknowledgedPendingScript,/hunks.length/);
+  assert.match(acknowledgedPendingScript,/acknowledgedProbeDraft\(/);
+  assert.match(acknowledgedPendingScript,/markdown:editor.state.doc.toString\(\),title:title.value,path:draft.path,decisions:editor.state.field/);
+});
 
 test('checkpoint script keeps multiline authored data in transport arguments', () => {
   const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
