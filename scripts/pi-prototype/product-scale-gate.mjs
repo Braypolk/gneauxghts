@@ -9,6 +9,7 @@ import {fileURLToPath} from 'node:url';
 import {performance} from 'node:perf_hooks';
 import {setTimeout as delay} from 'node:timers/promises';
 import {DUMMY_AUTHORIZATION,cleanEnvironment,frontendSourceDigest} from './shared-resource-gate.mjs';
+import {stopOwnedParityChild} from './paired-parity-lifecycle.mjs';
 import {createWebDriverRequest,listenerPids,waitUntil} from '../../e2e/support/nativeTransport.mjs';
 const hash=value=>createHash('sha256').update(value).digest('hex');
 const writeNew=(path,value)=>writeFileSync(path,JSON.stringify(value,null,2)+'\n',{flag:'wx',mode:0o600});
@@ -71,18 +72,38 @@ async function startProductFixture(){
 }
 
 const browserSetup=`
+  const native=window.__TAURI_INTERNALS__;if(!native||!document.querySelector('[data-testid="workspace-pane"]'))throw new Error('Native workspace required');
   const probe=await import('/src/lib/prototypes/pi/productScaleProbe.ts');
   const api=await probe.nativeProductScaleApi();
-  const native=window.__TAURI_INTERNALS__;if(!native||!document.querySelector('[data-testid="workspace-pane"]'))throw new Error('Native workspace required');
-  const original=native.invoke.bind(native),size=value=>{try{return new TextEncoder().encode(JSON.stringify(value??null)).length}catch{return null}};
+  const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value??null)).length}catch{return null}};
   window.__productIpc={calls:0,requestBytes:0,responseBytes:0,failed:0,unknownSizes:0,eventListen:0,eventUnlisten:0,categories:{}};
-  native.invoke=async(command,args,...rest)=>{const counter=window.__productIpc;counter.calls++;const sent=size(args);if(sent===null)counter.unknownSizes++;else counter.requestBytes+=sent;
+  if(!window.__productInvoke){window.__productInvoke=native.invoke.bind(native);native.invoke=async(command,args,...rest)=>{const counter=window.__productIpc;counter.calls++;const sent=size(args);if(sent===null)counter.unknownSizes++;else counter.requestBytes+=sent;
     const category=command==='pi_sql'?'sqlite':command.startsWith('pi_provider')?'provider':command.startsWith('plugin:event|')?'event':'domain';counter.categories[category]=(counter.categories[category]??0)+1;
     if(command==='plugin:event|listen')counter.eventListen++;if(command==='plugin:event|unlisten')counter.eventUnlisten++;
-    try{const value=await original(command,args,...rest),received=size(value);if(received===null)counter.unknownSizes++;else counter.responseBytes+=received;return value}catch(error){counter.failed++;throw error}};
+    try{const value=await window.__productInvoke(command,args,...rest),received=size(value);if(received===null)counter.unknownSizes++;else counter.responseBytes+=received;return value}catch(error){counter.failed++;throw error}};}
   window.__productApi=api;window.__productProbe=probe;window.__productTransport=(await import('/src/lib/prototypes/pi/nativeProvider.ts')).nativeTransportStats;
   const {atlasVisibility,...defaults}=await api.getSettings();await api.setDefaults({...defaults,provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',localBaseUrl:'http://127.0.0.1:1443/local/v1',reasoningEffort:'off',defaultVaultAccess:'none'});
   return true;`;
+
+// Reloads can invalidate a WebDriver completion after the workspace first mounts.
+// Retry only this idempotent setup; no seed or public journey is admitted early.
+export async function initializeProductScaleWorkspace({execute,output,phase,timeoutMs=60000,wait=waitUntil}){
+  let attempt=0;
+  return wait(async()=>{
+    attempt++;
+    try{assert.equal(await execute(browserSetup),true,'Product browser setup did not acknowledge readiness');return true}
+    catch(error){output.lastInitializeError={phase,attempt,error:String(error).slice(0,2000)};return false}
+  },phase,timeoutMs);
+}
+
+export async function executeProductScaleBrowser({wd,sessionId,script,args=[]}){
+  const result=await wd(`/session/${sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,2000)}));`,args});
+  assert(result?.ok,`Product browser operation failed: ${result?.error??'missing acknowledgement'}`);return result.value;
+}
+
+export async function stopProductScaleChild(child,signal='SIGTERM',options={}){
+  return stopOwnedParityChild(child,{...options,kill:requested=>child.kill(requested==='SIGTERM'?signal:requested)});
+}
 
 const browserNavigate=`
   const [identity]=arguments,api=window.__productApi,rows=[];
@@ -114,21 +135,20 @@ export async function runProductScaleGate(options){
     rendererRssBytes:null,allProcessRssBytes:null,progress:[],storage:[],phases:[]};
   let fixture,frontend,app,session,timer,pinnedStart,rssPeak=0,rssSamples=0,rssFailed=0,browserEpoch=0;
   const wd=createWebDriverRequest(4445,120000),env=cleanEnvironment(process.env.PATH,'pi');
-  const execute=async(script,args=[])=>{const result=await wd(`/session/${session.sessionId}/execute/async`,{script:`const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),()=>done({ok:false}));`,args});assert(result.ok,'Product browser operation failed');return result.value};
+  const execute=(script,args=[])=>executeProductScaleBrowser({wd,sessionId:session.sessionId,script,args});
   const snapshot=label=>report.storage.push({label,atMs:performance.now(),...productStorageSnapshot(dataRoot)});
-  const setup=async()=>{await execute(browserSetup);browserEpoch++};
+  const setup=async phase=>{await initializeProductScaleWorkspace({execute,output:report,phase});browserEpoch++};
   const browserCounters=async label=>report.phases.push({label,browserEpoch,atMs:performance.now(),ipcCoverage:'observed-invoke-boundary-after-workspace',...await execute('return {ipc:window.__productIpc,transport:{...window.__productTransport}};')});
   const stop=async signal=>{clearInterval(timer);timer=undefined;
     if(session){try{await wd(`/session/${session.sessionId}`,undefined,'DELETE')}catch{}session=undefined}
-    if(app&&app.exitCode===null){app.kill(signal);await Promise.race([new Promise(ok=>app.once('exit',ok)),delay(5000)]);if(app.exitCode===null){app.kill('SIGKILL');await new Promise(ok=>app.once('exit',ok))}}};
+    await stopProductScaleChild(app,signal)};
   const launch=async label=>{const fd=openSync(join(options.root,`native-${label}.log`),'a',0o600);
     app=spawn(options.binary,['--e2e-app-data-root',dataRoot,'--e2e-documents-root',dataRoot],{cwd:options.source,env,stdio:['ignore',fd,fd]});closeSync(fd);pinnedStart=undefined;
     timer=setInterval(()=>{try{const fields=execFileSync('/bin/ps',['-p',String(app.pid),'-o','pid=,rss=,lstart='],{encoding:'ascii',env:{LC_ALL:'C'},timeout:2000}).trim().split(/\s+/);
       assert(Number(fields[0])===app.pid&&/^\d+$/.test(fields[1]),'Bad numeric PID sample');const start=hash(fields.slice(2).join(' '));pinnedStart??=start;assert(start===pinnedStart,'PID reuse');rssPeak=Math.max(rssPeak,Number(fields[1])*1024);rssSamples++}catch{rssFailed++}},250);
     await waitUntil(async()=>{try{return(await wd('/status',undefined,'GET')).ready}catch{return false}},'owned product native driver',30000);
     session=await wd('/session',{capabilities:{alwaysMatch:{browserName:'tauri'}}});await wd(`/session/${session.sessionId}/timeouts`,{script:120000});
-    await waitUntil(async()=>{try{return await execute('return !!document.querySelector(\'[data-testid="workspace-pane"]\');')}catch{return false}},'native product workspace',60000);
-    await setup();
+    await setup(`${label} product browser setup`);
   };
   try{
     fixture=await startProductFixture();const fd=openSync(join(options.root,'frontend.log'),'a',0o600);
@@ -141,21 +161,21 @@ export async function runProductScaleGate(options){
     // Closing the owner is terminal for that webview's ChatApi. A normal reload
     // creates its next owner before seeding; no second live Harness is opened.
     await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-    await waitUntil(async()=>{try{return await execute('return !!document.querySelector(\'[data-testid="workspace-pane"]\');')}catch{return false}},'fresh product owner workspace',60000);await setup();
+    await setup('fresh product owner browser setup');
     // Seed outside a long WebDriver command so the native owner can poll numeric
     // progress, record storage growth and retain a bounded operation deadline.
     await execute(`window.__productState={status:'running',progress:{phase:'start',conversations:0,submissions:0,probeListeners:0}};
-      window.__productProbe.seedProductScale(window.__productApi,1005,1005,value=>window.__productState.progress=value).then(result=>{window.__productState.result=result;window.__productState.status='done'},()=>window.__productState.status='failed');return true;`);
+      window.__productProbe.seedProductScale(window.__productApi,1005,1005,value=>window.__productState.progress=value).then(result=>{window.__productState.result=result;window.__productState.status='done'},error=>{window.__productState.error=String(error).slice(0,2000);window.__productState.status='failed'});return true;`);
     const deadline=performance.now()+7200000;let state;
-    while(performance.now()<deadline){state=await execute('return {status:window.__productState.status,progress:window.__productState.progress};');
+    while(performance.now()<deadline){state=await execute('return {status:window.__productState.status,progress:window.__productState.progress,error:window.__productState.error};');
       if(state.status!=='running')break;report.progress.push({atMs:performance.now(),...state.progress});snapshot('seed-progress');await delay(5000)}
-    assert.equal(state?.status,'done','Product scale seed failed or exceeded deadline');
+    report.lastSeedState=state;assert.equal(state?.status,'done',`Product scale seed failed or exceeded deadline: ${state?.error??state?.status}`);
     const seeded=await execute('return window.__productState.result;');
     writeNew(join(options.root,'private-product-identities.json'),seeded.identity);report.seed={...seeded,identity:undefined};snapshot('seeded');await browserCounters('seeded');
     assert.equal(fixture.requests.length,1005,'Provider count differs from submitted inputs');assert(fixture.requests.every(row=>row.completed&&!row.failed),'Fixture request failed');
     // Reload the ordinary mounted controller so it discovers API-created Meta.
     await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-    await waitUntil(async()=>{try{return await execute('return !!document.querySelector(\'[data-testid="workspace-pane"]\');')}catch{return false}},'reloaded product workspace',60000);await setup();
+    await setup('reloaded product browser setup');
     report.beforeRestart=await execute('return await window.__productProbe.verifyProductScale(window.__productApi,arguments[0]);',[seeded.identity]);
     report.beforeRestartUi=await execute(browserNavigate,[seeded.identity]);await browserCounters('before-archive');snapshot('before-archive');
     report.archive=await execute('return await window.__productProbe.checkProductArchive(window.__productApi,arguments[0]);',[seeded.identity]);snapshot('after-archive');await browserCounters('after-archive');
@@ -172,8 +192,8 @@ export async function runProductScaleGate(options){
     assert.equal(hash(readFileSync(options.binary)),options.sha256,'Measured binary changed');assert.equal(frontendSourceDigest(options.source),report.frontendSourceSha256,'Served frontend changed');
     report.status='passed-bounded-product-scale-fixture';
   }catch(error){report.status='failed';report.error=String(error).slice(0,8000);process.exitCode=1}
-  finally{await stop('SIGTERM');if(frontend){try{process.kill(-frontend.pid,'SIGTERM')}catch{}}
-    report.providerRequests=fixture?.requests??[];if(fixture)await fixture.close();snapshot('process-closed');
+  finally{try{await stop('SIGTERM')}catch(error){report.status='failed';report.cleanupError=String(error).slice(0,2000);process.exitCode=1}if(frontend){try{process.kill(-frontend.pid,'SIGTERM')}catch{}}
+    report.providerRequests=fixture?.requests??[];if(fixture)await fixture.close();snapshot(app&&app.exitCode===null&&app.signalCode===null?'process-exit-unconfirmed':'process-closed');
     report.appRss={observedPeakBytes:rssSamples?rssPeak:null,samples:rssSamples,failedSamples:rssFailed,coverage:'app-only',cadenceMs:250};
     writeNew(join(options.root,'product-scale-gate.json'),report);
   }return report;
