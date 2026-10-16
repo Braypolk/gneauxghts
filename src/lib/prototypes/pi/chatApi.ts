@@ -173,6 +173,7 @@ export function createPiChatApi(native:ChatApi):ChatApi {
   const admittedReadEvents=async(id:ConversationId,binding:{sourcesJson:string;readsJson?:string;grantsJson?:string}):Promise<ReadAdmission> => {
     const admission:ReadAdmission={nativeRevision:nativePolicyRevision,accessRevision:accessRevisions.get(id)??0,events:[]};
     if(!currentReadAdmission(id,admission))return admission;
+    if(evidenceSources(binding).length===0 && evidenceReadEvents(binding).length===0)return admission;
     const {harness}=await open();const current=await harness.snapshot(Evidence,id,context);
     if(!current||!currentReadAdmission(id,admission))return admission;
     try{await invoke('pi_validate_sources',{sources:evidenceSources(binding),access:current.access,grants:evidenceGrants(binding)});}catch{return admission;}
@@ -300,7 +301,7 @@ export function createPiChatApi(native:ChatApi):ChatApi {
       const assistant=message(`pi-assistant-${record.id}`,conversationId,'assistant',textOf(answerEntry?.model?.[0]?.content ?? (structured ? undefined : livePartial?.content ?? partial?.content)),record.status==='done'?'completed':current?'streaming':record.status==='unanswered' && record.reason==='aborted'?'cancelled':'error',timestamp+1);
       assistant.requestId=`pi-request-${record.id}`;
       if(assistant.status==='error')assistant.errorMessage=record.status==='unanswered'?visibleFailure(record.detail,partial?.errorMessage):'Interrupted request; Retry explicitly permits network work.';
-      if(answerEntry && answerEntry.byTaskId) {const admitted=await harness.snapshot(AdmittedAnswer,String(answerEntry.byTaskId),context);if(admitted){assistant.content=admitted.text;assistant.parts=initialAgentEventState(admitted.text).parts;try{await invoke('pi_validate_sources',{sources:vaultSources(evidenceSources(admitted)),access:(await harness.snapshot(Evidence,id,context))?.access ?? 'none',grants:evidenceGrants(admitted)});assistant.citations=evidenceSources(admitted).map(normalizeSource);}catch{assistant.citations=evidenceSources(admitted).filter(source=>source.kind==='web').map(normalizeSource);}}}
+      if(answerEntry && answerEntry.byTaskId) {const admitted=await harness.snapshot(AdmittedAnswer,String(answerEntry.byTaskId),context);if(admitted){assistant.content=admitted.text;assistant.parts=initialAgentEventState(admitted.text).parts;const sources=evidenceSources(admitted),vault=vaultSources(sources);try{if(vault.length)await invoke('pi_validate_sources',{sources:vault,access:(await harness.snapshot(Evidence,id,context))?.access ?? 'none',grants:evidenceGrants(admitted)});assistant.citations=sources.map(normalizeSource);}catch{assistant.citations=sources.filter(source=>source.kind==='web').map(normalizeSource);}}}
       const summaryUsage=snapshot?.evidence?.sessionId?await harness.snapshot(SummaryUsageRun,summaryUsageKey(id,snapshot.evidence.sessionId),context):undefined;
       const supplemental=missingResearchUsage(turnEntries,snapshot?.evidence?.sessionId?workerUsageByOrigin.get(snapshot.evidence.sessionId):undefined);addUsageCounters(supplemental,summaryUsage);
       const events=projectTurnEvents(turnEntries,record.id,conversationId,timestamp,Object.values(supplemental).some(value=>value>0)?supplemental:undefined);
