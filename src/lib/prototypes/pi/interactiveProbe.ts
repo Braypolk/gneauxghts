@@ -6,6 +6,7 @@ import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { nativeTransportStats } from './nativeProvider';
 import type { ChatMessage } from '$lib/features/chat/types';
 import { acquireProbeReview } from './probeReview';
+import { openProbeChatSplit } from './probeSplit';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -177,8 +178,11 @@ export async function runInteractiveProbe() {
         // selection cannot be read by the composer. Use the ordinary split
         // control to keep the selected editor mounted beside the chat.
         if (!document.querySelector('[aria-label="Thought partner chat"]')) {
-          const split = await until(() => button('Open split pane options'), 'normal split control'); split.focus(); await pause();
-          await click('Split with thought partner');
+          const visible = (node: HTMLButtonElement) => !node.disabled && node.getClientRects().length > 0 && getComputedStyle(node).visibility !== 'hidden';
+          const splitKind = await openProbeChatSplit({ until, pause,
+            visibleButton: label => Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(node => visible(node) && (node.getAttribute('aria-label') === label || node.textContent?.trim() === label)),
+            mobileThoughtPartner: () => Array.from(document.querySelectorAll<HTMLButtonElement>('[data-pane-command="split"] button#pane-command-thought-partner')).find(visible) });
+          trace('normalChatSplit', { control: splitKind });
           await until(() => document.querySelector('[aria-label="Thought partner chat"]') && document.querySelectorAll('[data-testid="workspace-pane"]').length > 1, 'real editor/chat split');
           await selectConversation(state.a);
           editor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString().includes('orchard')), 'mounted sibling note editor');

@@ -9,7 +9,8 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { waitUntil, listenerPids } from '../../e2e/support/nativeTransport.mjs';
 import { startInteractiveFixture } from './interactive-fixture.mjs';
-import { assertExpandedPhase, assertInteractiveTransport } from './expanded-report.mjs';
+import { assertInteractiveTransport } from './expanded-report.mjs';
+import { retainExpandedPhase } from './retain-expanded-phase.mjs';
 import { verifyFollowonsReceipts } from './followons-fixture.mjs';
 
 const followons = process.env.PI_PROTOTYPE_FOLLOWONS_GATE === 'true';
@@ -64,7 +65,7 @@ try {
       && (report.phase === name || (report.phase === 'starting' && report.status === 'failed')) && report.launchId !== prior && ['passed', 'failed'].includes(report.status) && report; } catch { return false; }
   }, `actual normal iOS WKWebView ${name}`, followons ? 600000 : 240000);
   const screenshot = name => { const path = join(root, `${name}.png`); run('xcrun', ['simctl', 'io', simulator, 'screenshot', path]); evidence.screenshots.push(path); };
-  launch(); first = assertExpandedPhase(await phase('first'), 'first'); evidence.phases.push(first); flush(); screenshot('first');
+  launch(); first = await retainExpandedPhase({ report: await phase('first'), phase: 'first', evidence, flush, screenshot });
   const interruptedCount = fixture.requests.filter(value => value.journey === 'INTERRUPT').length;
   assert.equal(interruptedCount, 1, 'No single active interrupted native request');
   run('xcrun', ['simctl', 'launch', simulator, 'com.apple.Preferences']); await delay(750); launch(); await delay(750);
@@ -75,8 +76,8 @@ try {
   const beforeRelaunch = fixture.requests.length;
   // Relaunch probe itself performs explicit UI Retry only after verifying the retained partial.
   // Request time is compared with the reported UI retry click, rather than a fixed launch sleep.
-  launch(); const restored = assertExpandedPhase(await phase('relaunch', first.launchId), 'relaunch', first.launchId);
-  evidence.phases.push(restored); evidence.unobserved = restored.unobserved; screenshot('relaunch');
+  launch(); const restored = await retainExpandedPhase({ report: await phase('relaunch', first.launchId), phase: 'relaunch', priorLaunchId: first.launchId, evidence, flush, screenshot });
+  evidence.unobserved = restored.unobserved;
   const retry = fixture.requests.find(value => value.journey === 'INTERRUPT' && value.attempt === 2);
   const shared = restored.shared.find(value => value.phase === 'relaunch');
   assert(shared.checks.includes('relaunch restores committed history, model and interrupted partial without replay'));
