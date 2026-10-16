@@ -20,99 +20,67 @@ Final native gates remain open.
 
 ## Current checkpoint — 2026-10-16
 
-Frozen diagnostic capture **v31**, HEAD `31ef99f`, is at
-`/private/tmp/pi-removal-final-20261015-v31`, canonical manifest
-`d2aad8a3cadb3ec7bc90ca832efe9b1a19b893c99bbd95a5c778e753f32c1260`.
-[v30→v31 diff](/private/tmp/pi-removal-final-20261015-v31/v30-v31-source-diff.json)
-contains exactly `probeCitation.ts`/test and `interactiveFailures.ts`/test.
-No product/native change: native bytes remain identical to v30/v29, including
-the v27 fixture wrapper, not the earlier `b52b1a6` baseline. All three iOS copies
-verified 1505 retained files/52 legacy absences. Product lifecycle ownership is
-unchanged; projection includes `00e472f`, with no measured speed improvement.
+Latest captured native diagnostic checkpoint is **v32**, canonical manifest
+`5d70cf539b94cc9d1b3920dbfc45c1a3488b5f4b3de636a195b22a6e97ae3209`,
+`/private/tmp/pi-removal-final-20261015-v32`. Its
+[v31→v32 diff](/private/tmp/pi-removal-final-20261015-v32/v31-v32-source-diff.json)
+retains three Rust diagnostic/test-support files plus three generated schema
+changes; **native bytes are not identical to v31**. Commit `779b0ce` adds
+sanitized freshness diagnostics, retaining fail-closed behavior; two root native
+diagnostic checks passed. This is not an established underlying fix.
 
-Actual v30 expanded **71i6Ij whole FAILED**, 32 requests, first14/relaunch6 plus
-one failure-checkpoint check passed (versions before2/failed2/recovered3), under
-SHA `dc4cdcec417c4e8839e3b34811e7db6036f7a589c0e91323a840072b82021c83`.
-[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-71i6Ij/ios-interactive-gate.json)
-retains the later `normal stale-source error` selector deadline. The actual normal
-alert was `Unable to open the referenced note.`; the resolver refused before
-opening. This does not relabel the failed gate. Closed 52-entry backup:
-`/private/tmp/pi-owned-simulator-after-v30-expanded-failure-20261015`.
+Actual v32 expanded **WRrwST whole FAILED**, 143 provider requests, executable
+`bb9b5257354fd3339636c5b2c87dc60d5d6926a7c247675484c5c231319674f6`
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json)).
+Initial14/relaunch10 passed, followed by actual local and openai fixture research,
+parent/worker compaction, fresh read, attachment bytes/exact Retry, and hosted-web
+fixture follow-ons. Native workers334/598 completed with 30 reads/59 sources each
+and no failed tool results. Passing research here **does not prove v31's
+intermittent freshness failure is fixed**.
 
-Reviewed v31 fixture proof binds the exact visible issued source/current message
-pane. Its scoped own-composer refusal permits the exact generic fallback only
-with mandatory API withholding and unchanged exact EditorView membership/body/
-title/selection/review. Ownership checks remain strict. The 125 focused checks in
-eight files, Svelte zero errors/warnings and root `check:e2e` passed; this is
-prepared diagnostic proof, not native acceptance. Earlier 573 affected frontend
-checks predate these changes; 38 escalated support checks passed with the original
-sandbox `EPERM` failure retained. Do not add overlapping suite counts.
+The final closed publication verifier failed `FileNotFoundError` at
+`nativeRoot/vault`: author-confirmed platform layout mismatch, iOS
+`Documents/PROTOTYPE-wipe-me` versus desktop appData/vault. This is not a follow-on
+relocation failure and is not a closed publication-proof pass. Root preserved
+84 closed entries at `/private/tmp/pi-owned-simulator-after-v32-expanded-failure-20261015`
+and uninstalled only the owned bundle. Artificial STOP/CONT retains
+`freshPostContinueUiRead:false`; actual following durable relaunch now records
+`durablePartialAndReviewVerifiedByFollowingRelaunch:true`. Neither establishes
+physical OS suspension/pressure or touch behavior.
 
-**v30 transcript 0cCfVn whole PASS** (six synthetic requests), executable
-`53712878aa60d22561ecae1ec1422c0ed342eb1b15edf6a33b8c37952021e63c`,
-[receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-0cCfVn/ios-transcript-gate.json).
-**v30 local-live B6Dw3j whole PASS**, executable
-`dca8b4de82f2afb32e8432df9be968fbe07e2bf96541eaec113d3919782e4697`,
-[receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-B6Dw3j/ios-live-gate.json):
-two normal Sends/three completed real POST200, 15 total requests including metadata;
-normal source/citation, Save/edit acknowledgement/background, pending restart,
-Keep/duplicate and final committed restart passed without inference replay.
-Both retain v30 canonical
-`edec64b2a5c5a800853ccd41b109f61c1e75c009f6d4fc95fa818ba7fadda162`;
-no cross-artifact whole final pass follows. Transcript closed 46-entry backup:
-`/private/tmp/pi-owned-simulator-after-v30-transcript-20261015`.
+Two reviewed fixes are frozen but **uncommitted pending full tests**: coherent
+batch-admitted citations use one generation plus a final distinct raw reread
+(three focused Rust checks passed); the iOS verifier binds registered owner/target
+paths, manifest and confinement (27 Python checks passed). Full Pi/default Rust
+suites are running under root ownership. **No v33 source capture or native result
+yet**; neither prepared fix is accepted through a native rerun.
 
-All three v31 iOS variants compiled on the canonical pin above. Actual expanded
-**3g4HLR whole FAILED**, 73 provider requests, binary
-`1b98f56f15756214f4c356086d6faef953f9c2cf453b6bcb1996bec70836678f`
-([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-3g4HLR/ios-interactive-gate.json)).
-First14/relaunch6/failures4 passed, including exact stale-source refusal/unchanged
-editor checks. Research then failed: native child334/task433 reported
-`Evidence, context or access changed; retry with fresh context`. The root's closed
-backup audit found 39 excerpts and 30 canonical bodies match; that does not
-establish the cause. Diagnostic-only changes in three Rust files are undergoing
-root tests, **cause unproven** and not included in this captured pin. Closed
-85-entry backup: `/private/tmp/pi-owned-simulator-after-v31-expanded-failure-20261015`.
+Prior v31 transcript **HrJXyy whole PASS** (six synthetic requests), executable
+`5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0`, and
+local-live **7GmG8j whole PASS**, executable
+`1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`,
+retain their own v31 canonical/pins and [matrix](validation-matrix.md) receipts.
+Live scope is two normal Sends/three completed real inference POSTs, 15 total
+requests including metadata, no replay. Closed backups46/48 remain preserved.
+v31 expanded **3g4HLR whole failed** at research freshness validation despite
+39 excerpts/30 canonical bodies matching; cause remains unproven. Historical
+v30/v29/v28/v27 failures and scoped passes are retained, not relabeled.
 
-**v31 transcript HrJXyy whole PASS**, six synthetic requests, binary
-`5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0`
-([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-HrJXyy/ios-transcript-gate.json));
-closed 46-entry backup `/private/tmp/pi-owned-simulator-after-v31-transcript-20261015`.
-**v31 local-live 7GmG8j whole PASS**, binary
-`1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`
-([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-7GmG8j/ios-live-gate.json)),
-root poll exit0: two normal Sends/three completed real inference POSTs, 15 total
-requests including metadata, `noReplay:true`. Closed 48-entry backup:
-`/private/tmp/pi-owned-simulator-after-v31-live-20261015`; owned bundle uninstalled.
-These whole passes retain synthetic/programmatic versus bounded local-live scope,
-not physical touch/OS-pressure/hosted-live or cross-artifact final acceptance.
+No final desktop build/gate ran from superseded v31 queue
+([receipt](/private/tmp/pi-final-desktop-queue-v31-superseded-20261015.json)). Persistent manual app
+v31 SHA `159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`
+is **compiled only/still closed**; older manual live/original-seal evidence stays
+on its own pin. Hosted live remains user-deferred; synthetic openai/web follow-ons
+are not hosted live. Physical touch/device/OS pressure and normal Settings vault
+relocation remain unverified.
 
-No v31 desktop build/gate started. Its queue was superseded before any gate
-([receipt](/private/tmp/pi-final-desktop-queue-v31-superseded-20261015.json));
-final desktop/churn/resources/default smoke remain pending. Persistent manual app
-rebuilt v31 SHA
-`159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`,
-**compiled only/still closed**. Earlier desktop live/original-seal proof keeps its
-own older product pin; no new manual live pass follows.
-
-Historical v29 **dt88yt whole failed** later compact title-input acquisition after
-first14/relaunch6, exact publication/editor and observed origin scroll passed.
-Its keyboardPlatform was iPhone/appleMobile true/Meta true/Ctrl false; closed
-51-entry backup and [receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-dt88yt/ios-interactive-gate.json)
-remain retained. v28 djWH4K/v27 lvqjxb and earlier failures keep their own scope.
-Artificial STOP/CONT false fresh-UI/durable-following-relaunch flags remain false.
-Hosted live is user-deferred; physical touch/device/OS pressure and standalone
-normal Settings vault relocation remain unverified.
-
-Scale **v5** remains untouched/running on frozen v22. Earlier **701/1005** at
-05:08:28 UTC is historical memory progress only, not final durable seed/history/
-identity/provider accounting. The v31 desktop queue is superseded before any gate;
-v5 remains running. Final expanded/fault/crash/transcript/churn, three paired
-Pi/old/Pi resources and fresh default smoke have no new queued result. Explicit
-iOS closure remains required before resources; coverage/cache/observer/IPC/storage
-unknowns and regressions stay visible. Earlier manual desktop live/original-seal
-proof and platform passes retain their own pins. Full acceptance, cost/verdict
-and the goal remain open; no closure/archive/adoption claim.
+Scale **v5** remains running untouched on frozen v22. Latest reported **726/1005**
+is historical memory progress only, not final durable seed/history/identity/provider
+accounting. Final desktop/churn/default regression, three repeated paired resource
+captures and full cost/collection/lifecycle proof remain pending. Existing resource
+IPC/storage regressions and scope/cache/observer unknowns remain explicit. Verdict
+is pending/continue evaluation; no final acceptance, goal closure, archive or
+adoption claim.
 
 ## Persistent live local observations
 
