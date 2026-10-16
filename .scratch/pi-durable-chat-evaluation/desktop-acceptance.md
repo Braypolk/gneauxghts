@@ -20,31 +20,46 @@ Final native gates remain open.
 
 ## Current checkpoint — 2026-10-16
 
-Final source is frozen through `b52b1a6` and captured as **v22** at
-`/private/tmp/pi-removal-final-20261015-v22`, canonical manifest
-`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`.
-Its desktop removal build compiled and passed all three lifecycle exclusion tests;
-binary SHA `e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`.
-Receipt: `artifacts/desktop-build.json`; complete compiler/exclusion log:
-`/private/tmp/pi-removal-v22-desktop-build.log`. Three iOS variants are compiling.
-This establishes compilation/exclusion, not completed native journeys.
+Product/native source remains frozen through `b52b1a6`. Diagnostic capture
+**v23**, canonical manifest
+`3fa0bab74e705b9d439f556b2bcd8fcd28cccd18d2f1c94a8eaaf1796a6aba95`,
+completed desktop compilation/exclusion tests and all three iOS builds. Compiler
+receipts are under `/private/tmp/pi-removal-final-20261015-v23/artifacts/*build.json`;
+compiler success is separate from native journey acceptance. The verified
+v22→v23 source comparison retains identical product API/runtime/provider/storage/
+policy/native bytes and 52 legacy absences. v22's compiled/exclusion-tested
+artifact remains valid for that same product and scale v5.
 
-Scale **v5** now runs the full fresh fixture against this final source. Superseded
-v4 was deliberately ended at 03:45 UTC on October 16, after read-only progress
-reported 1005 conversations and 401 submissions. Its final receipt is failed
-(`TypeError: fetch failed`) with 421 provider requests and no complete seed or
-identity accounting. `operator-stop.json` records the verified owned-app SIGTERM
-and reason: rerun the indexed parent query on delivered source. v4 is incomplete
-and ineligible for guarded continuation. Compilation/pure-test CPU overlaps scale;
-no scale timing/resource comparison is claimed. Native app/simulator journeys
-remain serialized. See the [current validation matrix](validation-matrix.md) for
-all 13 tickets, pinned prior passes/failures and the remaining queue.
+Actual local-iOS **QUeIgd** is **whole failed**, not running or passed. Its v23
+live executable completed three real inference POSTs (HTTP 200), source-free
+continuity and an actual admitted note read, then hit the normal source citation
+deadline. Receipt:
+`/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-QUeIgd/ios-live-gate.json`.
+No Save/Keep/restart acceptance is established. The diagnostic queried the
+collapsed EvidenceSource control instead of the actual ChatMarkdown
+`button[data-chat-note-citation-id]`. Exact-note/visible-control correction
+`8dbcf7b` changes only the two `iosLiveProbe` files; 22 focused checks and full
+types (zero errors/warnings) passed. **v24 capture/live-only build is underway**;
+no v24 compile or live pass is claimed before its receipts. Prior UGhOtn
+pre-inference failure and earlier pinned passes remain retained.
 
-The persistent manual `c74a53e` bundle is closed and configured locally. Its bounded
-live acceptance and original-vault seal remain valid for that pin. Hosted live is
-user-deferred. Complete native/platform/scale/cost acceptance and the goal remain
-open; historical sections below retain earlier observations, not current running
-or permission states.
+Scale **v5** remains running against pinned v22. The last in-memory progress
+reported 1005 conversations and 226 submissions; these are not final durable
+seed/history/identity/provider-accounting acceptance. Superseded v4 was
+operator-ended, with final failed fetch receipt/421 requests and no complete seed
+or identity accounting; it remains ineligible for guarded continuation.
+Compilation/pure-test CPU and independent iOS local-live work can overlap
+functional scale on separate roots/ports; no timing/RSS/resource comparison is
+claimed. Shared synthetic desktop fixture ports remain serialized.
+
+The persistent manual `c74a53e` bundle is closed and local-configured; its bounded
+live pass and original-vault seal remain pinned to SHA `9328ff2f…57b2`.
+The rebuilt `pi-prototype`-only bundle SHA
+`e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`
+is **launched with retained UI observed** via normal native CUA: prior synthetic note, chat/citation/Stop history and configured local model remain visible. No inference was dispatched during this bounded observation; earlier live acceptance retains its own binary pin. Hosted live is
+explicitly user-deferred. Complete native/platform/scale/cost acceptance and the
+goal remain open. The [current validation matrix](validation-matrix.md) records
+exact artifact pins and bounded scopes; historical sections retain prior states.
 
 ## Persistent live local observations
 
@@ -1061,3 +1076,33 @@ Research/compaction (09), attachments/web (10), managed transcripts/relocation
 (11), expanded native faults and actual iOS acceptance (12), and replacement/
 resource comparison/verdict (13) remain phase follow-ons. Branching, standalone
 excerpts, import, physical-device acceptance and production adoption are deferred.
+
+### Final v22 compiler and first real local iOS boundary — 2026-10-16
+
+Desktop compiled and three lifecycle exclusion tests passed. All three actual
+simulator variants compiled from verified source copies under v22; compiler logs
+and executable hashes are in `artifacts/ios-{transcript,expanded,live}-build.json`.
+No expanded/transcript v22 native journey ran yet. The manual desktop bundle also
+built, SHA `e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`,
+`pi-prototype` alone; `/private/tmp/pi-final-manual-bundle-20261015-v22.json`
+records compiled-only/unlaunched status. Existing persistent evaluation data was
+reused without setup/reset/copy, and prior c74a53e manual acceptance remains pinned.
+
+Actual local-iOS **UGhOtn** failed before inference at normal title acquisition:
+`Requested chat pane has no visible normal title control`. Receipt:
+`/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-UGhOtn/ios-live-gate.json`.
+Two real upstream model GETs returned 200; there were zero inference POSTs.
+Executable SHA `82e9f739ded9086d024412a38b92e91f7b490316d52c70eb2b8c91341cdd7da5`.
+The driver terminated the app and retained data container `8445D687-96FB-4A60-BDE7-472E4EEFA037`.
+Source inspection of `PaneHeader.svelte`/`mountInSlot.ts` confirms that compact
+active title nodes move into the shared mobile workspace title slot, so a pane-local
+selector cannot acquire them. The same source pattern affects exact review-title
+readiness. Owner-aware diagnostic correction is in progress; visibility and
+identity checks will remain required. This is no completed live chat/Save proof.
+
+Before this run the closed prior jDLSGA container's Library/Documents were preserved
+at `/private/tmp/pi-owned-simulator-before-v22-live-20261015` (44 entries and backup
+receipt); normal simulator termination confirmed nothing running before copying
+and uninstalling only the owned prototype. Local iOS used its independent port
+1444/container alongside functional desktop scale v5. Compiler and pure-test CPU
+also overlapped. No controlled timing/RSS/cost conclusion is drawn from either.

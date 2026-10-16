@@ -19,45 +19,61 @@ the remaining gates.
 
 ## Latest source checkpoint — 2026-10-16
 
-Final source is frozen through `b52b1a6` and captured as **v22** at
-`/private/tmp/pi-removal-final-20261015-v22`, canonical manifest
-`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`.
-Its desktop removal build compiled and passed all three lifecycle exclusion tests;
-binary SHA `e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`.
-Receipt: `artifacts/desktop-build.json`; complete compiler/exclusion log:
-`/private/tmp/pi-removal-v22-desktop-build.log`. Three iOS variants are compiling.
-This establishes compilation/exclusion, not completed native journeys.
+Product/native source remains frozen through `b52b1a6`. Diagnostic capture
+**v23**, canonical manifest
+`3fa0bab74e705b9d439f556b2bcd8fcd28cccd18d2f1c94a8eaaf1796a6aba95`,
+completed desktop compilation/exclusion tests and all three iOS builds. Compiler
+receipts are under `/private/tmp/pi-removal-final-20261015-v23/artifacts/*build.json`;
+compiler success is separate from native journey acceptance. The verified
+v22→v23 source comparison retains identical product API/runtime/provider/storage/
+policy/native bytes and 52 legacy absences. v22's compiled/exclusion-tested
+artifact remains valid for that same product and scale v5.
 
-Scale **v5** now runs the full fresh fixture against this final source. Superseded
-v4 was deliberately ended at 03:45 UTC on October 16, after read-only progress
-reported 1005 conversations and 401 submissions. Its final receipt is failed
-(`TypeError: fetch failed`) with 421 provider requests and no complete seed or
-identity accounting. `operator-stop.json` records the verified owned-app SIGTERM
-and reason: rerun the indexed parent query on delivered source. v4 is incomplete
-and ineligible for guarded continuation. Compilation/pure-test CPU overlaps scale;
-no scale timing/resource comparison is claimed. Native app/simulator journeys
-remain serialized. See the [current validation matrix](validation-matrix.md) for
-all 13 tickets, pinned prior passes/failures and the remaining queue.
+Actual local-iOS **QUeIgd** is **whole failed**, not running or passed. Its v23
+live executable completed three real inference POSTs (HTTP 200), source-free
+continuity and an actual admitted note read, then hit the normal source citation
+deadline. Receipt:
+`/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-QUeIgd/ios-live-gate.json`.
+No Save/Keep/restart acceptance is established. The diagnostic queried the
+collapsed EvidenceSource control instead of the actual ChatMarkdown
+`button[data-chat-note-citation-id]`. Exact-note/visible-control correction
+`8dbcf7b` changes only the two `iosLiveProbe` files; 22 focused checks and full
+types (zero errors/warnings) passed. **v24 capture/live-only build is underway**;
+no v24 compile or live pass is claimed before its receipts. Prior UGhOtn
+pre-inference failure and earlier pinned passes remain retained.
 
-The persistent manual `c74a53e` bundle is closed and configured locally. Its bounded
-live acceptance and original-vault seal remain valid for that pin. Hosted live is
-user-deferred. Complete native/platform/scale/cost acceptance and the goal remain
-open; historical sections below retain earlier observations, not current running
-or permission states.
+Scale **v5** remains running against pinned v22. The last in-memory progress
+reported 1005 conversations and 226 submissions; these are not final durable
+seed/history/identity/provider-accounting acceptance. Superseded v4 was
+operator-ended, with final failed fetch receipt/421 requests and no complete seed
+or identity accounting; it remains ineligible for guarded continuation.
+Compilation/pure-test CPU and independent iOS local-live work can overlap
+functional scale on separate roots/ports; no timing/RSS/resource comparison is
+claimed. Shared synthetic desktop fixture ports remain serialized.
 
-## Current source inventory at v22 capture
+The persistent manual `c74a53e` bundle is closed and local-configured; its bounded
+live pass and original-vault seal remain pinned to SHA `9328ff2f…57b2`.
+The rebuilt `pi-prototype`-only bundle SHA
+`e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`
+is **launched with retained UI observed** via normal native CUA: prior synthetic note, chat/citation/Stop history and configured local model remain visible. No inference was dispatched during this bounded observation; earlier live acceptance retains its own binary pin. Hosted live is
+explicitly user-deferred. Complete native/platform/scale/cost acceptance and the
+goal remain open. The [current validation matrix](validation-matrix.md) records
+exact artifact pins and bounded scopes; historical sections retain prior states.
 
-The source inventory was refreshed after the localized proof correction. It is
+## Current source inventory at v23 capture
+
+The following inventory is frozen at v23, before the two-file v24 live-probe
+correction; it is not a recomputed v24 diagnostic total. It is
 an inventory of maintained source, not measured savings or executable-function
-counts. The 52 comparison-tree deletions remain absent in v22; the default
-deliverable still deletes zero legacy files. The v22 desktop compiler and three
-lifecycle exclusion checks passed; native journey results remain separate.
+counts. The 52 comparison-tree deletions remain absent in v23; the default
+deliverable still deletes zero legacy files. The v23 desktop compiler/exclusion checks and three iOS builds passed;
+native journey results remain separate.
 
-| Bounded inventory | Baseline `4b5ff2de` | Current v22 |
+| Bounded inventory | Baseline `4b5ff2de` | Current v23 |
 | --- | ---: | ---: |
 | Pi normal static TS closure from `chatApi.ts` | 5 files / 42,679 bytes / 494 lines | 17 files / 173,405 bytes / 2,020 lines |
-| All non-test Pi TS, including diagnostics | 8 files / 69,293 bytes / 799 lines | 43 files / 367,231 bytes / 4,296 lines |
-| Separate Pi TS tests | 0 files | 35 files / 242,146 bytes / 2,780 lines |
+| All non-test Pi TS, including diagnostics | 8 files / 69,293 bytes / 799 lines | 44 files / 368,243 bytes / 4,321 lines |
+| Separate Pi TS tests | 0 files | 36 files / 248,772 bytes / 2,875 lines |
 | Top-level native `pi_*.rs`, excluding separate test files | 4 files / 32,508 bytes / 570 lines | 12 files / 195,427 bytes / 4,100 lines |
 | Seven explicitly extracted domain/command paths | Embedded in other modules | 92,288 bytes / 2,365 lines |
 

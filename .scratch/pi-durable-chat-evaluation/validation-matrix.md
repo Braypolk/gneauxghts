@@ -1,26 +1,57 @@
 # Current Pi evaluation validation matrix
 
-2026-10-15. Implementation is integrated; ticket acceptance remains open at the
+2026-10-16. Implementation is integrated; ticket acceptance remains open at the
 boundaries below. This matrix summarizes actual evidence, not a final verdict or
 goal closure. See [spec](spec.md), [hands-on instructions](README.md),
 [detailed native records](desktop-acceptance.md) and [progress](progress.md).
 
-## Current prepared source
+## Current source and validation
 
-Removal comparison **v22** is captured and source copies verified at
-`/private/tmp/pi-removal-final-20261015-v22`, canonical manifest
-`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`.
-Desktop compilation and all three lifecycle exclusion checks passed, binary SHA
-`e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`, receipt
-`artifacts/desktop-build.json`, compiler/exclusion log
-`/private/tmp/pi-removal-v22-desktop-build.log`. iOS variants are compiling.
-No final v22 native journey acceptance is implied. Build CPU overlaps functional
-scale v5 (and previously v4); scale cost claims are excluded. Reviewed preparations
-include owner-scoped research query `b52b1a6` (35 Vitest checks, full types clean)
-and exact iOS publication proof `8aeacdf` (16 TypeScript/four Node checks).
-Broader prior frontend 609/609 in 81 files and Node 157/157 are preparation
-evidence; focused suites overlap and are not additive. Compilation, helper tests
-and native execution are separate evidence classes.
+Product/native source is frozen at `b52b1a6`; mobile diagnostic correction
+`43e24dd` is captured as **v23**, canonical manifest
+`3fa0bab74e705b9d439f556b2bcd8fcd28cccd18d2f1c94a8eaaf1796a6aba95`, at
+`/private/tmp/pi-removal-final-20261015-v23`. Desktop compilation/exclusion tests
+and all three iOS builds completed; their pins below establish compiler results,
+not completed native journeys. Each iOS source copy verified 1499 retained
+files and 52 legacy absences. `v22-v23-source-diff.json` proves that only eight
+probe/helper/test files changed and two were added; all captured native and other
+product files remain byte-identical. This correction passed 53 focused/affected
+checks, zero-error/warning types and independent Spec/correctness review.
+The subsequent exact-note/visible citation-control correction `8dbcf7b` changes
+only two `iosLiveProbe` files, with 22 focused checks/full types clean. v24
+capture/live-only build is underway; no v24 compile or live pass is claimed.
+
+Product scale v5 remains pinned to v22 (canonical
+`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`), whose desktop
+compiled and passed three exclusion checks, binary SHA
+`e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`.
+The v22 local-iOS **UGhOtn** run failed before inference on the compact title
+portal; two real model GETs succeeded and zero inference POSTs occurred. The app
+is terminated and data/receipt preserved. The corrected v23 local-iOS **QUeIgd**
+run subsequently completed three real inference POSTs (HTTP 200), source-free
+continuity and an actual admitted note read, but **whole failed** at the normal
+source citation deadline. The diagnostic searched a collapsed EvidenceSource
+button rather than actual ChatMarkdown `button[data-chat-note-citation-id]`.
+No Save/Keep/restart acceptance is established; `8dbcf7b` rerun remains pending.
+Scale v5's last in-memory progress was 1005 conversations/226 submissions;
+neither count is final durable acceptance.
+Compilation and independent iOS local-live work can overlap functional scale on
+separate roots/ports, excluding all timing/RSS/cost comparisons.
+
+Earlier frontend 609/609 (81 files), Node 157/157, later localized iOS proof
+16 Vitest/four Node, and owner-query 35 Vitest/full types retain their individual
+scopes; overlapping test counts are not additive. Compilation, helper tests and
+native execution are separate evidence classes. The updated manual desktop bundle
+built with `pi-prototype` alone, SHA
+`e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`;
+normal native CUA observed retained synthetic note, chat/citation/Stop history and local model on this launched rebuilt bundle. No inference was dispatched during this bounded observation; earlier live acceptance retains its own binary pin.
+
+| v23 compiler receipt under `artifacts/` | Binary SHA-256 | Actual result |
+| --- | --- | --- |
+| [desktop-build.json](/private/tmp/pi-removal-final-20261015-v23/artifacts/desktop-build.json) | `d88797134ba05bdc728d9b33402ddbadea627b96569124d3772d4d7c53c6ea20` | Compiled and exclusion tests passed |
+| [ios-expanded-build.json](/private/tmp/pi-removal-final-20261015-v23/artifacts/ios-expanded-build.json) | `19ec12d3a503f2d588b9fd3d570503ea86c2598a3fa8f6457b41bd62fb8a9f8b` | Compiled only |
+| [ios-transcript-build.json](/private/tmp/pi-removal-final-20261015-v23/artifacts/ios-transcript-build.json) | `a352dac04402b681b39cd74dec9950bc7091d9f337d5d9cee57701390a6b346b` | Compiled only |
+| [ios-live-build.json](/private/tmp/pi-removal-final-20261015-v23/artifacts/ios-live-build.json) | `013ce6a9269e9eedeea2e1de6e5ad745deb61c4210911d76ee94e0f7a7761ac7` | Compiled; actual QUeIgd live journey failed |
 
 ## Ticket coverage
 
@@ -32,16 +63,16 @@ configured local inference through normal visible UI.
 | --- | --- | --- | --- |
 | [01](issues/01-persistent-isolated-evaluation-app.md) isolated persistent app | Integrated copy/recovery/setup and separate installed app | **M live:** 209 copied files; repeated launches retain model/history/review; approved synthetic edits leave original unchanged | Final comparison/resources and remaining platform gates; agent observations are not user trial feedback |
 | [02](issues/02-isolate-pi-lifecycle-ownership.md) lifecycle ownership | Integrated explicit Pi API/native domain seam | **R:** 52 legacy files physically absent in compiled comparison builds; lifecycle exclusion checks; **F/C/T/D** actual native slices | Recheck final captured build/default path and full native matrix; ordinary deliverable retains its default runtime |
-| [03](issues/03-provider-settings-and-model-switching.md) provider/settings | Integrated frozen native routing and model refresh | **D:** normal model/protocol checks; **P:** compatible and Responses subsets; **M:** configured local model | Final both-protocol matrix; hosted live explicitly user-deferred, not fixture-equivalent |
+| [03](issues/03-provider-settings-and-model-switching.md) provider/settings | Integrated frozen native routing and model refresh | **D:** normal model/protocol checks; **P:** compatible and Responses subsets; **M:** configured local model; **L:** three real local-iOS POSTs completed | Final both-protocol matrix; **L** whole failed; hosted live explicitly user-deferred, not fixture-equivalent |
 | [04](issues/04-conversation-history-and-request-lifecycle.md) history/Stop/Retry | Integrated Pi admission, checkpoints, projection and paging | **D:** first/relaunch/failure slices; **C:** crash recovery; **M:** short Stop then separate Retry completed READY | Complete final concurrent/session/lifecycle matrix; **S** 1005-history acceptance pending |
-| [05](issues/05-context-discovery-and-evidence.md) discovery/permission/citations | Integrated native policy/evidence and Pi bindings | **P:** selected/current/retained evidence and grants; **M:** actual discover→Deny, fresh Allow once→read/citation/canonical navigation | Final race/revocation/platform matrix; paired grant API checks do not prove paired permission-dialog parity |
+| [05](issues/05-context-discovery-and-evidence.md) discovery/permission/citations | Integrated native policy/evidence and Pi bindings | **P:** selected/current/retained evidence and grants; **M:** actual discover→Deny, fresh Allow once→read/citation/canonical navigation; **L:** admitted native read | Final race/revocation/platform matrix; **L** citation-control deadline failed; paired grant API checks do not prove paired permission-dialog parity |
 | [06](issues/06-reviewed-note-changes-and-refinement.md) editable proposals | Integrated durable review/refinement and narrow canonical effects | **D:** real review, checkpoint/conflict/dirty-buffer slices; **F/C/T:** recovery and duplicate-effect slices; **M:** approved normal Keep | Final full review/refinement/termination/iOS matrix; partial runs do not close all races |
 | [07](issues/07-faithful-save-to-note.md) faithful Save/origin | Integrated deterministic whole/selection Save | **P:** whole Save/origin, explicit selection append and closed duplicates; **M:** normal Save→approved Keep→Open in chat | Final full Save/platform matrix; **I** normal Save readiness race failed, correction prepared |
 | [08](issues/08-first-usable-desktop-milestone.md) desktop handoff | Integrated normal UI harness, app and checklist | **M:** bounded persistent local live scope passed/closed; **D:** 14 first + ten relaunch checks passed | Complete expanded fixture run still failed; hosted live user-deferred; no invented user feedback requirement |
 | [09](issues/09-pi-research-and-safe-compaction.md) research/compaction | Integrated isolated Pi worker and safe summaries | **D:** worker summaries and 23 UI follow-ons passed; focused actual-Harness tests | Whole **D** failed strict parent-summary receipt; source-free fixture setup fixed/prepared, native rerun required; **S** pending |
 | [10](issues/10-attachments-and-web-search.md) attachments/web | Integrated native admission, retained bytes and search routing | **D:** bounded attachment/web follow-on checks within 23 passed UI checks | Complete both-protocol failure/restart/Retry matrix; bounded hosted live web not established and user-deferred |
 | [11](issues/11-managed-transcripts-and-relocation.md) transcripts/relocation | Integrated committed projection, conflicts and identity-bound mapping | **T:** complete desktop watcher/Save/generated-root relocation/uncertain Keep slices; **I:** watcher Convert/Restore passed | Complete iOS Save/selection/relocation; standalone normal Settings vault move remains unproven |
-| [12](issues/12-native-fault-and-ios-acceptance.md) native faults/iOS | Integrated fault/crash/storage/iOS drivers; suspension/live preparations | **F/C:** four cases each passed; **D:** five native-storage checks passed; **I:** watcher slice passed | Final desktop/iOS expanded and transcript runs; prepared suspension/local-iOS-live/churn not executed; physical touch/device/OS-pressure guarantees unverified |
+| [12](issues/12-native-fault-and-ios-acceptance.md) native faults/iOS | Integrated fault/crash/storage/iOS drivers; suspension/live preparations | **F/C:** four cases each passed; **D:** five native-storage checks passed; **I:** watcher slice passed; **L:** real local chat/read partial evidence | Final desktop/iOS expanded/transcript/live runs; **L** whole failed, v24 correction unrun; prepared suspension/churn not executed; physical touch/device/OS-pressure guarantees unverified |
 | [13](issues/13-replacement-proof-and-evaluation-verdict.md) replacement/cost | Removal/compiler/ledger and paired capture tooling implemented | **R/F/C/T:** removed-tree native slices; **P:** both-protocol prepared subsets; **U:** paired bounded core/long-output pass | Final source build/native/default gates, scale/churn/retention/collection and full cost evidence; no adoption or savings conclusion |
 
 ## Receipt provenance and scope
@@ -55,9 +86,10 @@ configured local inference through normal visible UI.
 | **T** | [HVmzV1 transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-transcript-HVmzV1/native-transcript-gate.json): passed four checks, six provider requests | v17 binary **R**; generated-root relocation, exact pending review/recovery and duplicate one-effect checks; standalone Settings move excluded. |
 | **D** | [6xfnis desktop receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-6xfnis/desktop-interactive-gate.json): **whole failed**, 141 requests; 14 first, ten relaunch (six core/four failure), five storage and 23 follow-on UI checks passed | v19 SHA `0ced4b174e8f453bdcc0c39dc50bcbb9c36700910713b0d5eda5d7f4c91a2095`, canonical `836a19cf05ff18dfc96cd809b8ae8253981c6966672dd356075c0b654f05b069`. Strict native parent summary missing: adjacent selected context grounded warmups, 10,990-byte parent request stayed below 96k threshold. Worker summaries do not replace parent proof. Selection setup correction prepared. |
 | **I** | [jDLSGA iOS transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-jDLSGA/ios-transcript-gate.json): **whole failed**, three requests; watcher external edit/delete and normal Convert/Restore passed | v18 simulator executable SHA `36cf7d54c5e40db2579aba97986ca6c9d5a8dd009d92aeef9c87d34618ab5b83`. Save became pending before asynchronous editor readiness; prepared wait/proof corrections are unrun. No completed Save, selection-B or relocation claim. |
+| **L** | [QUeIgd local iOS live receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-QUeIgd/ios-live-gate.json): **whole failed**, three actual inference POSTs HTTP 200/completed; chat continuity and admitted note read observed | v23 live SHA `013ce6a9269e9eedeea2e1de6e5ad745deb61c4210911d76ee94e0f7a7761ac7`. Normal citation-control deadline; no Save/Keep/restart acceptance. Two-file diagnostic correction `8dbcf7b` tested, v24 build/rerun pending. Earlier UGhOtn pre-inference failure remains retained. |
 | **P** | [Compatible v8](/private/tmp/pi-paired-compatible-20261015-v8/paired-parity-gate.json) and [Responses v2](/private/tmp/pi-paired-responses-20261015-v2/paired-parity-gate.json): both old/Pi `passed-prepared-subset` | Frozen v13 frontend, Pi v2 binary `a1ec5982e1f8ea74a80dffef75d858fa94c1cd83c41f6219212d851ef750a338`; old `4b5ff2de` fixture binary `d5e3a76aed10c9441dc76e4d9d768d497a209a8be06434ce4d3ab254bbb60bc0`. Evidence/grants/body review/Save/selection append/closed duplicates only. Old title read-only; Pi editable. Grants use public API; permission dialogs not compared. |
 | **U** | [Resource v8 receipt](/private/tmp/pi-shared-resources-20261015-v8/shared-resource-gate.json): both lanes `passed-core-fixture`, eight requests, exact 256-line/9,215-byte output; [audited measurements](replacement-proof-plan.md#audited-paired-core-resource-checkpoint--v8-2026-10-15) | Old fixture binary above, Pi **R**. Actual module IPC observed: old 26/Pi 1,159 warm calls; closed logical storage old 684,378/Pi 2,059,929 bytes. Material observed bridge/storage increases disclosed. One rejected Pi invoke response size unknown; JSON proxies are not wire bytes. App-only RSS, uncontrolled cache/order and observer overhead prevent a performance-win claim. |
-| **S** | `/private/tmp/pi-product-scale-20261015-v5`, pinned v22 desktop above; **pending** | Derived reply projections are progress, not final durable seed/identity/history/provider accounting. Requires exactly 1005 answers plus validated automatic summary requests, total ≤1100. Prior v3 failed transient SHM `ENOENT`. v4 was operator-ended at 03:45 UTC (401 submissions reported/421 provider requests) to switch superseded v17 to final indexed-query v22; its final receipt failed `fetch`, without full seed/identity accounting. `operator-stop.json` preserves verified owned-app stop. Neither prior run is eligible for guarded continuation or scale acceptance. See [scale contract](product-scale-proof-plan.md). |
+| **S** | `/private/tmp/pi-product-scale-20261015-v5`, pinned v22 desktop above; **pending**, last memory progress 1005 conversations/226 submissions | Derived reply projections are progress, not final durable seed/identity/history/provider accounting. Requires exactly 1005 answers plus validated automatic summary requests, total ≤1100. Prior v3 failed transient SHM `ENOENT`. v4 was operator-ended at 03:45 UTC (401 submissions reported/421 provider requests) to switch superseded v17 to final indexed-query v22; its final receipt failed `fetch`, without full seed/identity accounting. `operator-stop.json` preserves verified owned-app stop. Neither prior run is eligible for guarded continuation or scale acceptance. See [scale contract](product-scale-proof-plan.md). |
 
 Manual **M** copied 209 files and retained the original 388-file seal
 `66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`
@@ -65,7 +97,7 @@ unchanged after synthetic Keeps and final shutdown. No source content or secrets
 belong in committed evidence. Hosted live is explicitly deferred by the user's
 local-only instruction; synthetic Responses passes do not become hosted live.
 Receipts retain their own source, binary, frontend and driver pins. Cross-version
-passes cannot be combined into a claim that v22 passed every native journey;
+passes cannot be combined into a claim that v23 passed every native journey;
 paired/resource `frontendReceiptVerified:false` remains an explicit binding limit.
 
 ## Remaining gate queue
@@ -73,8 +105,9 @@ paired/resource `frontendReceiptVerified:false` remains an explicit binding limi
 1. Finish scale v5 and inspect the closed exact seed/history/identity/provider
    accounting; preserve failure if any. Do not promote derived progress or timing
    into acceptance. Pure test/source-capture CPU overlap prevents scale cost claims.
-2. Complete captured final source compilation while the functional scale runs; rerun exclusion,
-   affected native/default checks and complete expanded desktop summary/follow-on
+2. Finish v24 live-only compilation/rerun after the citation diagnostic correction;
+   v23 desktop and three iOS compiles are complete. Rerun affected exclusion,
+   native/default checks and complete expanded desktop summary/follow-on
    gates against their exact pinned artifacts. Earlier broad default smoke failed
    one input wait; unchanged foreground/background focused reruns passed. Preserve
    that original flake rather than reporting the broad run passed.
