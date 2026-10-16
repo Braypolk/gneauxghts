@@ -8,6 +8,7 @@ use std::sync::{
 mod evidence_contracts;
 mod prose_tasks;
 mod query_inventory;
+mod refreshable_preparation;
 mod weekly_tasks;
 
 struct Fixture {

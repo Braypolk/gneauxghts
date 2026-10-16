@@ -117,6 +117,10 @@ pub(crate) struct NoteTimelineRuntime {
     window_admission_provider: Mutex<Option<WindowAdmissionProvider>>,
     #[cfg(test)]
     recovery_lock_observer: Mutex<Option<RecoveryLockObserver>>,
+    #[cfg(test)]
+    replay_lock_observer: Mutex<Option<ReplayLockObserver>>,
+    #[cfg(test)]
+    settlement_clock: Mutex<Option<Arc<dyn Fn() -> std::time::Instant + Send + Sync>>>,
 }
 
 #[cfg(test)]
@@ -127,6 +131,15 @@ pub(super) enum RecoveryLockEvent {
 
 #[cfg(test)]
 type RecoveryLockObserver = Arc<dyn Fn(RecoveryLockEvent) + Send + Sync>;
+
+#[cfg(test)]
+pub(super) enum ReplayLockEvent {
+    Acquired,
+    Contended,
+}
+
+#[cfg(test)]
+type ReplayLockObserver = Arc<dyn Fn(ReplayLockEvent) + Send + Sync>;
 
 #[cfg(test)]
 type WindowAdmissionProvider = Arc<
@@ -158,6 +171,10 @@ impl NoteTimelineRuntime {
             window_admission_provider: Mutex::new(None),
             #[cfg(test)]
             recovery_lock_observer: Mutex::new(None),
+            #[cfg(test)]
+            replay_lock_observer: Mutex::new(None),
+            #[cfg(test)]
+            settlement_clock: Mutex::new(None),
         })
     }
 
@@ -199,6 +216,10 @@ impl NoteTimelineRuntime {
             window_admission_provider: Mutex::new(None),
             #[cfg(test)]
             recovery_lock_observer: Mutex::new(None),
+            #[cfg(test)]
+            replay_lock_observer: Mutex::new(None),
+            #[cfg(test)]
+            settlement_clock: Mutex::new(None),
         }
     }
 
@@ -210,6 +231,16 @@ impl NoteTimelineRuntime {
     #[cfg(test)]
     pub(super) fn set_recovery_lock_observer(&self, observer: Option<RecoveryLockObserver>) {
         *self.recovery_lock_observer.lock().unwrap() = observer;
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_replay_lock_observer(&self, observer: Option<ReplayLockObserver>) {
+        *self.replay_lock_observer.lock().unwrap() = observer;
+    }
+
+    #[cfg(test)]
+    pub(super) fn set_settlement_clock(&self, clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>) {
+        *self.settlement_clock.lock().unwrap() = Some(clock);
     }
 
     #[track_caller]
@@ -275,7 +306,42 @@ impl NoteTimelineRuntime {
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?)
     }
 
-    pub(super) fn await_current_content_settled(&self) -> Result<(), HistoryError> {
+    pub(super) fn settled_current_content_version(
+        &self,
+    ) -> Result<Option<CurrentContentVersion>, HistoryError> {
+        let state = self.current_content.state.lock()
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
+        Ok((state.active_mutations == 0).then_some(CurrentContentVersion {
+            generation: state.generation,
+            #[cfg(feature = "pi-prototype")]
+            diagnostic_active: state.diagnostics.active(),
+            #[cfg(feature = "pi-prototype")]
+            diagnostic_begun: state.diagnostics.begun(),
+        }))
+    }
+
+    fn settlement_now(&self) -> std::time::Instant {
+        #[cfg(test)]
+        if let Some(clock) = self.settlement_clock.lock().unwrap().clone() {
+            return clock();
+        }
+        std::time::Instant::now()
+    }
+
+    pub(super) fn current_content_settlement_deadline(&self) -> std::time::Instant {
+        self.settlement_now() + std::time::Duration::from_secs(2)
+    }
+
+    pub(super) fn await_current_content_settled(
+        &self,
+        deadline: std::time::Instant,
+    ) -> Result<(), HistoryError> {
+        let remaining = deadline.saturating_duration_since(self.settlement_now());
+        if remaining.is_zero() {
+            return Err(HistoryError::Stale(
+                "Current notes are still updating; retry the read".into(),
+            ));
+        }
         let state = self
             .current_content
             .state
@@ -284,7 +350,7 @@ impl NoteTimelineRuntime {
         let (state, _) = self
             .current_content
             .settled
-            .wait_timeout_while(state, std::time::Duration::from_secs(2), |state| {
+            .wait_timeout_while(state, remaining, |state| {
                 state.active_mutations != 0
             })
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
@@ -481,10 +547,26 @@ impl NoteTimelineRuntime {
         &self,
         operation: impl FnOnce() -> Result<T, HistoryError>,
     ) -> Result<T, HistoryError> {
+        #[cfg(test)]
+        {
+            let observer = self.replay_lock_observer.lock().unwrap().clone();
+            if let Some(observer) = observer {
+                if matches!(self.observation_replay.try_lock(), Err(std::sync::TryLockError::WouldBlock)) {
+                    observer(ReplayLockEvent::Contended);
+                }
+            }
+        }
         let _replay = self
             .observation_replay
             .lock()
             .map_err(|_| "Note Timeline observation replay lock poisoned".to_string())?;
+        #[cfg(test)]
+        {
+            let observer = self.replay_lock_observer.lock().unwrap().clone();
+            if let Some(observer) = observer {
+                observer(ReplayLockEvent::Acquired);
+            }
+        }
         self.track_owned_history_result(operation())
     }
 

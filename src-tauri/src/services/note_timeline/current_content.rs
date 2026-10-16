@@ -175,6 +175,31 @@ impl CurrentContentAccess<'_> {
         })
     }
 
+    fn prepare_refreshable_read(
+        &self,
+    ) -> Result<(OperationGuard, CurrentContentVersion), HistoryError> {
+        // Preparation races share the original settlement budget. A queued
+        // writer must finish before we spend a projection attempt.
+        let deadline = self.runtime.current_content_settlement_deadline();
+        loop {
+            self.runtime.await_current_content_settled(deadline)?;
+            let prepared = self.with_integrity_tracking(|| {
+                let operation = self.runtime.begin_operation()?;
+                let timeline = NoteTimeline { state: self.state, runtime: self.runtime };
+                let version = self.runtime.with_observation_replay(|| {
+                    timeline.recover_pending_deletions()?;
+                    self.runtime.settled_current_content_version()
+                })?;
+                Ok(version.map(|version| (operation, version)))
+            })?;
+            if let Some(prepared) = prepared {
+                return Ok(prepared);
+            }
+            // Both replay ownership and the unsuccessful operation lease have
+            // been released before waiting for the writer queued behind us.
+        }
+    }
+
     pub(super) fn eligibility(&self) -> Result<CurrentContentEligibility<'_>, HistoryError> {
         let notes_root = self.runtime.store.vault_root().to_path_buf();
         let index = self
@@ -231,8 +256,7 @@ impl CurrentContentAccess<'_> {
         mut query: impl FnMut() -> Result<T, String>,
     ) -> Result<T, String> {
         for _attempt in 1..=3 {
-            self.runtime.await_current_content_settled()?;
-            let (_operation, version) = self.prepare_read()?;
+            let (_operation, version) = self.prepare_refreshable_read()?;
             let mut projection = query()?;
             let eligibility = self.eligibility()?;
             #[cfg(feature = "pi-prototype")]
