@@ -19,74 +19,97 @@ the remaining gates.
 
 ## Latest source checkpoint — 2026-10-16
 
-Current clean **v37 checkpoint**, canonical manifest
-`735ddd1d1d53e8451feef32a029c9b61f06c61e4f6cda875978f717dd7f59972`,
-is `/private/tmp/pi-removal-final-20261015-v37`. Temporary diagnostics were removed
-in `1dc0b55`; settled-preparation repair `c175d2f` remains. Current HEAD `122e695`
-subsequently corrects only the churn proof; new v38 capture is pending.
-This is **gate-open evidence, not final replacement acceptance**.
+Current immutable **v38** source, HEAD `44d200d`, is
+`/private/tmp/pi-removal-final-20261015-v38`, canonical manifest
+`14ceb2312d90d66f870cc273a4e6372e7c7f6403b88fc4a109eb5d7013100728`.
+Removed-tree desktop binary
+`c9f08ac067cf58c671da4ae62c6728d69d37048cfb63e749fea7b07f32272c1e`
+and served frontend
+`23e74527ceaac2692a194c3d6e46e6464fc109b96b764628be74fdcc71ffcb88`
+are pinned. Temporary native diagnostics are absent; settled-preparation repair
+remains. **Acceptance is still open; no final verdict/ticket resolution/archive.**
 
-[Clean full Rust receipt](/private/tmp/pi-final-full-rust-receipt-20261016.json):
-Pi754 passed/20 ignored, default944 passed/32 ignored; each also passed
-architecture21/exclusion3/runtime1. [Static receipt](/private/tmp/pi-final-static-checks-20261016.json):
-support38, frontend1623 in192 files, Node161, Python89, Svelte zero errors/warnings
-and E2E TypeScript passed. Static checks retain their recorded frontend digest/
-checkpoint binding and initial failures, not an automatic binding to later edits.
+[Desktop queue](/private/tmp/pi-final-desktop-queue-v38-20261015.json) records all
+seven functional classes passed: expanded I0gmUQ (143 requests), publication
+faults 4C3GQB, native crashes EtcRrX, desktop transcript m0NmD4, compatible/Responses
+paired observable subsets, and owned churnv7. The prior v37 exact-origin failure
+is retained; the current desktop whole run passed. Paired subsets retain old
+`4b5ff2de`/`d5e3a76a…60bc0` capability differences, grantAPI-only comparison and
+source/binary provenance limits; they are not full product parity.
 
-**Clean v37 iOS whole PASS** for expanded
-[E8Zt80](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-E8Zt80/ios-interactive-gate.json)
-(`fea04d3748517fec48a6df66d90e4c1d5830a42a93f0e09236f272a72338d652`),
-transcript [POk25L](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-POk25L/ios-transcript-gate.json)
-(`72b8e971e84ef7d9466b547f411a3584ffe57bcdb247dda319d90c6bd0745fcc`),
-and bounded local-live
-[wGsMkb](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-wGsMkb/ios-live-gate.json)
-(`0a2359bf8c0769d1541114bc38ae56fcb0b499fb264ac93bf6607749aa343028`).
-[Queue](/private/tmp/pi-final-ios-queue-v37-20261015.json) explicitly records no
-temporary instrumentation; its status awaits root native closure attestation,
-not permission to assume every builder/driver/app/port is closed. Fixture,
-local-live and programmatic simulator limits remain separate.
+[All three clean iOS gates passed](/private/tmp/pi-final-ios-queue-v38-20261015.json):
+expanded [qxKi7t](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-qxKi7t/ios-interactive-gate.json)
+(`2f81cf8609cce773c27bf141698a03445085efd257788f349dd416c28d760469`, 143 requests),
+transcript [DxtdzR](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-DxtdzR/ios-transcript-gate.json)
+(`7a00ea09d2afbd055d259a12bd21b928e7e6aa464ea68f8ae2b597dee498be3c`, six synthetic requests),
+local-live [7ETlYP](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-7ETlYP/ios-live-gate.json)
+(`d110c6a16dae11226ba5205b8db559d7b4fdbb17a284dbea50d9e1eea7f7e747`, two normal Sends/
+four inference POSTs/16 total requests including metadata, no replay).
+Fixture/programmatic versus configured-local-live scope stays distinct. Root
+[closure attestation](/private/tmp/pi-v38-native-closure-owner-attestation.json)
+binds native builders/drivers/apps/ports closed and owned simulator shutdown
+before resource pairs; it does not imply later default build/smoke was already done.
 
-Desktop v37 executable
-`5c47930dfa2d6ab84f735332b7df30cf57565601d8c339a525b968252746d27e`:
-expanded **qHtwIk whole FAILED** exact-origin anchor navigation; diagnostic r2/r3
-reproduced it, investigation ongoing. The
-[functional queue](/private/tmp/pi-final-desktop-queue-v37-20261015.json) also
-records publication faults, native crashes, desktop transcript and both compatible/
-Responses paired subsets passed. Initial churnv5 failed because its harness
-counted explicit archive writes as read-only; do not relabel that run.
+**Three controlled paired core-resource runs passed**, Pi/old → old/Pi → Pi/old,
+24 bounded compatible fixture requests total. [JSON](/private/tmp/pi-v38-controlled-resource-summary-20261016.json)
+and [table](/private/tmp/pi-v38-controlled-resource-summary-20261016.md) retain
+per-run metrics, medians/ranges and receipt hashes. Old→Pi medians: warm module
+calls 26→1085 (41.7×), request JSON proxy bytes 2187→321954, known response proxy
+bytes 119536→1778331 with one Pi response size unknown per run. Closed logical
+storage 684378→2059929 bytes (3.01×; +1375551), including Pi WAL 1351392/SHM 32768;
+checkpoint/allocation unknown. These are **material observed bridge/storage
+regressions**, not automatic Pi savings. First-visible medians short 226→305,
+follow-up 175→242, long-output 213→259ms; Stop settlement 67→84ms. Initial startup
+1699.5→1417.6ms and sampled app RSS235110400→206159872 bytes were lower, without
+an overall performance/all-process-memory inference. OS cache/debug/observer/
+polling/provider-partial limits remain; JSON proxies are not wire bytes, bootstrap/
+direct bridge IPC unknown. Old cancelled content 0/Pi 28 bytes is not exact content
+equivalence. Full scale is outside these resource fixtures.
 
-Reviewed `122e695` separates strict read-only proof from explicit archive/restore
-and verifies normal visibility (seven checks/fresh review no issues).
-Actual [churnv6](/private/tmp/pi-resource-churn-20261015-v6/resource-churn-gate.json)
-**passed-bounded-owned-resources**: 35 read-only revisions unchanged, then37 after
-two explicit presentation revisions; three seed requests/no inference during
-churn/restart, pending review retained. Six of seven functional gate classes now
-have bounded passes, but the corrected driver is later than the v37 source pin.
-Private tracker/cache/lease totals and controller disposal remain unobserved;
-archive is retained history, not retirement/GC or physical collection.
+The original overall desktop queue remains failed at ordinary default smoke:
+first three specs passed2+2+1, then chat-to-note8 passed/1 failed at the initial
+edited-review input wait. Intended multiline input had one extra trailing LF;
+mechanism remains unresolved. **Unchanged focused rerun1 passed** (session19792),
+then **unchanged full smoke14 passed in4 specs** (session2532), both closed.
+[Continuation receipt](/private/tmp/pi-v38-default-continuation-20261016.json)
+retains original queue/log hashes and default binary
+`d308c7aa0986ec00ecbea9a0a7c07a3328910e3919b3e3688b8694e68c673761`.
+No product/test/trim change or mechanistic fix is claimed; original failure remains.
+Root verified owned apps/builders/drivers closed, absent ports and simulator
+shutdown after both runs, before scale.
 
-The queue is held before cost measurements. **v37 paired resources0/default smoke
-unrun; full1005 scalev6 unrun**. Scalev5 remains a failed two-hour seed on historical
-v22, not a v37 result; original workload/budgets stay unchanged. Final persistent
-handoff remains pending. [Original vault seal](/private/tmp/pi-final-original-vault-seal-20261016.json)
-reverified388 files, exact
-`66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`, unchanged.
-This covers regular-file bytes including hidden/database files, not external
-app-data or directory metadata. Hosted live is user-deferred; physical touch/
-OS pressure and standalone Settings relocation remain unverified. Keep source/
-artifact/driver bindings, IPC/storage regressions and resource coverage unknowns.
-No final verdict, adoption claim, ticket resolution, archive or goal closure.
+**Full scalev6 is RUNNING**, session66327, started07:19UTC at
+`/private/tmp/pi-product-scale-20261015-v6`, with no overlapping native work and
+unchanged full1005-answer/≤1100 total/two-hour budgets. No acceptance result yet.
+Historicalv22 scalev5 remains failed. Final persistent handoff/closure evidence
+remains open; default rerun passes do not close scale or erase the original flake.
 
-Material earlier failures remain retained: [v34 continuity refresh](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-cE9fvy/ios-interactive-gate.json),
-[v33 standalone validation](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-5W81zD/ios-interactive-gate.json),
-[v32 Documents-layout verifier](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json).
-The v35 three diagnostic whole passes remain historical on `ac2c06ae…ae9c`;
-they do not replace the clean v37 source binding or close final open gates.
+[Post-fix static checks](/private/tmp/pi-origin-fixed-static-checks-20261016.json)
+match the v38 frontend digest: support 38, Vitest 1631 tests in 192 files, Node
+166, Svelte zero errors/warnings and e2e TypeScript passed. Its six changed-input
+hashes match the immutable capture. [Full Rust](/private/tmp/pi-final-full-rust-receipt-20261016.json)
+is reused: Pi 754 passed/20 ignored and default 944 passed/32 ignored, each with
+21 architecture/three exclusion/one runtime checks passed. The recorded
+[v37→v38 diff](/private/tmp/pi-removal-final-20261015-v38/v37-v38-source-diff.json)
+is exactly six frontend/driver files, with no native changes; this is explicit
+input binding, not a Rust rerun. Python 89 remains the unchanged-input result in
+the [prior static receipt](/private/tmp/pi-final-static-checks-20261016.json).
+[Original seal](/private/tmp/pi-final-original-vault-seal-20261016.json)
+remains exact 388 files/`66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`.
+Hosted live is user-deferred. Physical touch/device/OS pressure, private resource/
+controller-disposal/collection counts and standalone Settings vault relocation
+remain unverified. No adoption/performance-win/goal-closure claim.
+
+Material historical failures: [v37 desktop origin](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-qHtwIk/desktop-interactive-gate.json),
+[v34 continuity](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-cE9fvy/ios-interactive-gate.json),
+[v33 validation](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-5W81zD/ios-interactive-gate.json),
+[v32 Documents verifier](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json).
+Earlier diagnostic passes retain their own pins and do not replace clean v38 evidence.
 
 ## Current source inventory at v23 capture
 
 The following inventory is frozen at v23, before later live-probe
-corrections; it is not a recomputed v37/v38 diagnostic/native total. The new fixture-close
+corrections; it is not a recomputed v38 native/frontend total. The new fixture-close
 wrapper/registration and shared proof adapter remain added maintained obligations. It is
 an inventory of maintained source, not measured savings or executable-function
 counts. The 52 comparison-tree deletions remain absent in v23; the default
