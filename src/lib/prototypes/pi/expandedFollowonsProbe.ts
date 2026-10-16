@@ -3,14 +3,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
-import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
+import type { ChatAgentProposal, ChatAttachmentInput, ChatMessage, ChatProposalDraft, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
 import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
-import { discardFollowonsSaveReview, type FollowonsSaveReviewControls } from './followonsSaveReview';
+import { discardFollowonsSaveReview, openFollowonsSaveReview, type FollowonsSaveReviewControls } from './followonsSaveReview';
 import { settleFollowonsEditorSelections } from './followonsEditorContext';
 import { focusProbeChatComposer, probeChatPane } from './probeChatSend';
 import { probePaneTitle } from './probePaneTitle';
 import { visibleProbeControl } from './probeChatFocus';
+import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 
 export type FollowonsReport = {
   gate: 'expanded-native-followons-fixture'; status: 'running' | 'passed' | 'failed';
@@ -105,32 +106,60 @@ function attachment(name: string, mimeType: string, bytes: string, kind: 'file' 
 }
 function noteCitations(message: ChatMessage) { return message.citations.filter(item => item.kind === 'note'); }
 
-const saveReviewControls = (conversationId: string): FollowonsSaveReviewControls => ({
-  open: async id => {
-    const target = await until(() => {
-      const strip = document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
-      if (strip && visibleProbeControl(strip)) return { strip };
-      const card = document.querySelector<HTMLElement>(`[aria-label="Pending note proposals"] [data-proposal-id="${id}"]`);
-      const review = card && button('Review in editor', card);
-      return review && visibleProbeControl(review) ? { review } : undefined;
-    }, 'owned web Save normal review control');
-    if ('review' in target) { target.review!.click(); await pause(); }
-    await until(() => {
-      const strip = document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
-      return strip && visibleProbeControl(strip) ? strip : undefined;
-    }, 'owned web Save mounted editor review');
-  },
-  discard: async id => {
-    const strip = await until(() => document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'owned web Save strip');
-    const discard = await until(() => ['Discard', 'Undo All', 'Undo Remaining'].map(label => button(label, strip)).find(node => node && visibleProbeControl(node)), 'owned web Save normal discard');
-    discard.click();
-  },
-  settled: async id => {
-    await until(async () => !(await api.listPendingProposals(conversationId)).some(proposal => proposal.id === id), 'owned web Save durable dismissal');
-    await until(() => !document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'owned web Save retained review cleared');
-    assert((await api.dismissAgentProposal(id)).status === 'dismissed', 'Owned web Save did not retain its exact durable dismissal');
-  },
-});
+async function revealSavePane(node: HTMLElement, description: string) {
+  const pane = node.closest<HTMLElement>('[data-testid="workspace-pane"]');
+  assert(pane, `Owned web Save ${description} has no workspace pane`);
+  if (!pane.hasAttribute('data-pane-collapsed')) return;
+  const rail = await until(() => {
+    const rail = pane.querySelector<HTMLButtonElement>('button[aria-label^="Expand "]');
+    return rail && !rail.disabled && visibleProbeControl(rail) ? rail : undefined;
+  }, `owned web Save normal ${description} expansion control`);
+  rail.click(); await pause();
+}
+
+const saveReviewControls = (conversationId: string, proposal: ChatAgentProposal, draft: ChatProposalDraft): FollowonsSaveReviewControls => {
+  const reviewId = proposal.preview.reviewId;
+  assert(typeof reviewId === 'string', 'Owned web Save has no exact review identity');
+  const reviewEditors = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+    .map(node => EditorView.findFromDOM(node)).filter((view): view is EditorView => Boolean(view?.dom.isConnected && view.state.field(reviewProjection, false)?.reviewId === reviewId));
+  const matchingEditor = (visible: boolean) => reviewEditors().find(view => (!visible || visibleProbeControl(view.dom)) &&
+    view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title);
+  const strip = (id: string) => document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
+  return {
+    open: async id => {
+      assert(id === proposal.id, 'Owned web Save review identity changed');
+      await openFollowonsSaveReview({
+        mountedEditor: () => matchingEditor(false),
+        visibleEditor: () => matchingEditor(true),
+        revealEditor: async editor => revealSavePane(editor.dom, 'editor'),
+        reviewControl: () => {
+          const card = document.querySelector<HTMLElement>(`[aria-label="Pending note proposals"] [data-proposal-id="${id}"]`);
+          const review = card && button('Review in editor', card);
+          return review && visibleProbeControl(review) ? review : undefined;
+        },
+        openReview: async review => { review.click(); await pause(); },
+        until
+      });
+    },
+    discard: async id => {
+      const retainedStrip = await until(() => strip(id), 'owned web Save strip');
+      // The normal mobile Review action expands the editor and collapses chat,
+      // whose retained action strip owns batch Discard. Reveal that exact pane.
+      await revealSavePane(retainedStrip, 'chat');
+      const discard = await until(() => {
+        const current = strip(id);
+        if (!current || !visibleProbeControl(current)) return;
+        return ['Discard', 'Undo All', 'Undo Remaining'].map(label => button(label, current)).find(node => node && visibleProbeControl(node));
+      }, 'owned web Save normal discard');
+      discard.click();
+    },
+    settled: async id => {
+      await until(async () => !(await api.listPendingProposals(conversationId)).some(proposal => proposal.id === id), 'owned web Save durable dismissal');
+      await until(() => !strip(id) && reviewEditors().length === 0, 'owned web Save retained review cleared');
+      assert((await api.dismissAgentProposal(id)).status === 'dismissed', 'Owned web Save did not retain its exact durable dismissal');
+    },
+  };
+};
 
 export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | undefined> {
   const config = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean; followonsGate?: boolean }>('pi_probe_config');
@@ -224,7 +253,7 @@ export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | und
       const draft = await api.getProposalDraft(proposal.id);
       assert(draft.markdown.includes('https://example.com/pi-followons'), 'Saved whole/selection draft lost authored web link');
       assert(draft.markdown.includes('Open in chat'), 'Saved whole/selection draft lost source-chat navigation');
-      await discardFollowonsSaveReview(saveReviewControls(hosted), proposal.id);
+      await discardFollowonsSaveReview(saveReviewControls(hosted, proposal, draft), proposal.id);
     }
     assert(nativeTransportStats.bytes === transportBefore.bytes && nativeTransportStats.chunks === transportBefore.chunks, 'Deterministic web Save invoked inference');
     await mark('whole and selection web Save preserve links without inference', { drafts: 2 });

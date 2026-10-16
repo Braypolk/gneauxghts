@@ -16,7 +16,7 @@ import { createChatController } from '$lib/features/chat/controller.svelte';
 import { fakeApi } from '$lib/features/chat/chatTestSupport';
 import { Evidence } from './notesExtension';
 import { stageReview, reviewExtension, readReview, checkpointReview, discardReview } from './reviews';
-import { discardFollowonsSaveReview } from './followonsSaveReview';
+import { discardFollowonsSaveReview, openFollowonsSaveReview } from './followonsSaveReview';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }));
 const harnesses: Harness[] = [];
@@ -27,7 +27,7 @@ afterEach(async () => {
   for (const runtime of [...documentRegistry.values()]) documentRegistry.dispose(runtime.documentHandle);
 });
 
-async function setup(kind: 'create' | 'update') {
+async function setup(kind: 'create' | 'update', mounted = true) {
   const registry = createRegistry(); registry.install(reviewExtension(async () => 'full', () => 'answer'));
   const models = createModels(); models.setProvider(fauxProvider().provider);
   const harness = await Harness.open(new MemoryStorage(), { models, registry }, context); harnesses.push(harness);
@@ -59,7 +59,7 @@ async function setup(kind: 'create' | 'update') {
     checkpoint: async working => { draft = await checkpointReview(harness, id, { ...working, version: draft.version }, undefined, 'full'); },
     dismiss: async () => { await discardReview(harness, id); }, commit: vi.fn() };
   // Updates can passively mount in an open editor; creates use normal Review.
-  expect(await (kind === 'update' ? orchestration.loadDurableProposalIfOpen(request) : orchestration.loadDurableProposal(request))).toBe(true);
+  if (mounted) expect(await (kind === 'update' ? orchestration.loadDurableProposalIfOpen(request) : orchestration.loadDurableProposal(request))).toBe(true);
   const controller = createChatController(fakeApi().api);
   const adapter = createNotepadChatPaneAdapter({ proposal: orchestration,
     coordinator: { getController: () => controller, getTargetAnchor: () => null, selectionActions: {} as never,
@@ -70,10 +70,49 @@ async function setup(kind: 'create' | 'update') {
     setActivePane: vi.fn(), openNote: vi.fn(), openWikilink: vi.fn(), openRevisionCitation: vi.fn(),
     flushPendingAutosave: vi.fn(), getNoteSaveQueue: vi.fn(async () => {}) });
   cleanup.push(() => { orchestration.dispose(); controller.dispose(); editor.dispose(); });
-  return { harness, id, adapter, orchestration, session, body, draft };
+  return { harness, id, adapter, orchestration, session, body, draft, editor, request };
 }
 
 describe('web Save setup leaves the next normal composer usable', () => {
+  it.each(['create', 'update'] as const)('opens a %s Save when compact editor presentation hides its chat action strip', async kind => {
+    const test = await setup(kind, kind === 'update');
+    let chatVisible = true;
+    const control = {};
+    const openReview = vi.fn(async () => {
+      expect(await test.orchestration.loadDurableProposal(test.request)).toBe(true);
+      // Normal compact presentation expands the editor and collapses chat.
+      chatVisible = false;
+    });
+    const until = async <T>(read: () => T | Promise<T>, label: string): Promise<NonNullable<T>> => {
+      for (let poll = 0; poll < 3; poll++) {
+        const value = await read(); if (value) return value as NonNullable<T>;
+      }
+      throw new Error(`Follow-on deadline: ${label}`);
+    };
+    await openFollowonsSaveReview({
+      mountedEditor: () => test.editor.review?.reviewId === test.request.preview.reviewId ? test.editor : undefined,
+      visibleEditor: () => !chatVisible && test.editor.review?.reviewId === test.request.preview.reviewId ? test.editor : undefined,
+      reviewControl: () => chatVisible && !test.session.snapshot.proposalId ? control : undefined,
+      openReview,
+      revealEditor: async () => { chatVisible = false; },
+      until
+    });
+    if (kind === 'create') expect(openReview).toHaveBeenCalledExactlyOnceWith(control);
+    else expect(openReview).not.toHaveBeenCalled();
+    expect(test.editor.markdown).toBe(test.body);
+    expect(test.session.snapshot.proposalId).toBe(test.id);
+    await discardFollowonsSaveReview({
+      open: async () => {},
+      discard: async () => { chatVisible = true; await test.orchestration.undoAll(); },
+      settled: async () => {
+        expect((await readReview(test.harness, test.id)).proposal.status).toBe('dismissed');
+        expect(test.editor.review).toBeNull();
+        expect(test.session.snapshot.proposalId).toBeNull();
+      }
+    }, test.id);
+    await expect(test.adapter.getBindings('chat').context.getActiveNoteSnapshot()).resolves.toEqual(kind === 'create' ? null : expect.objectContaining({ body: 'Saved answer', selection: null }));
+  });
+
   it('reproduces direct API dismissal retaining a review that rejects the next Send snapshot', async () => {
     const test = await setup('update');
     await discardReview(test.harness, test.id);
