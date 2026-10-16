@@ -11,67 +11,73 @@ acceptance gate is satisfied; unverified external prerequisites are not passes.
 
 ## Current checkpoint — 2026-10-16
 
-Latest captured native diagnostic checkpoint is **v32**, canonical manifest
-`5d70cf539b94cc9d1b3920dbfc45c1a3488b5f4b3de636a195b22a6e97ae3209`,
-`/private/tmp/pi-removal-final-20261015-v32`. Its
-[v31→v32 diff](/private/tmp/pi-removal-final-20261015-v32/v31-v32-source-diff.json)
-retains three Rust diagnostic/test-support files plus three generated schema
-changes; **native bytes are not identical to v31**. Commit `779b0ce` adds
-sanitized freshness diagnostics, retaining fail-closed behavior; two root native
-diagnostic checks passed. This is not an established underlying fix.
+Latest captured checkpoint **v33** is
+`/private/tmp/pi-removal-final-20261015-v33`, canonical manifest
+`e87cf98893523599dd51342cdab24027adf4924736f0c70bf04d9417452194e5`.
+Desktop compiled/three exclusion checks passed, binary
+`2d5613455092a52c3a984c4eede2864d7d13d16c1fe7bf3d5a4e8b8147f222aa`
+([receipt](/private/tmp/pi-removal-final-20261015-v33/artifacts/desktop-build.json)).
+All three iOS variants compiled; transcript/live **not run** on v33. Desktop queue
+was superseded before any gate; the iOS queue closed failed. No final desktop
+native acceptance follows from compilation.
 
-Actual v32 expanded **WRrwST whole FAILED**, 143 provider requests, executable
-`bb9b5257354fd3339636c5b2c87dc60d5d6926a7c247675484c5c231319674f6`
-([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json)).
-Initial14/relaunch10 passed, followed by actual local and openai fixture research,
-parent/worker compaction, fresh read, attachment bytes/exact Retry, and hosted-web
-fixture follow-ons. Native workers334/598 completed with 30 reads/59 sources each
-and no failed tool results. Passing research here **does not prove v31's
-intermittent freshness failure is fixed**.
+Actual v33 expanded **5W81zD whole FAILED**, 80 provider requests, executable
+`a54fd98a599b725fddbc03236b15cf9239b3f5eaedd4ec6e511499be19193b96`
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-5W81zD/ios-interactive-gate.json)).
+First14/relaunch10 checks passed, but the relaunch phase failed during follow-ons.
+Worker334/generation465 failed after 2153ms with
+`Evidence or access changed; read again`, after 55 sources/28 successful reads.
+This isolates the standalone per-citation `pi_validate_sources` Option wrapper
+failure; that wrapper still hides availability versus changed-context cause.
+Closed 85-entry backup:
+`/private/tmp/pi-owned-simulator-after-v33-expanded-failure-20261015`.
 
-The final closed publication verifier failed `FileNotFoundError` at
-`nativeRoot/vault`: author-confirmed platform layout mismatch, iOS
-`Documents/PROTOTYPE-wipe-me` versus desktop appData/vault. This is not a follow-on
-relocation failure and is not a closed publication-proof pass. Root preserved
-84 closed entries at `/private/tmp/pi-owned-simulator-after-v32-expanded-failure-20261015`
-and uninstalled only the owned bundle. Artificial STOP/CONT retains
-`freshPostContinueUiRead:false`; actual following durable relaunch now records
-`durablePartialAndReviewVerifiedByFollowingRelaunch:true`. Neither establishes
-physical OS suspension/pressure or touch behavior.
+Batch checking and standalone validation are now unified in reviewed commits
+`9feed2d`/`2864fff`, with clear user errors. Full Pi Rust751/architecture21/
+exclusion3/runtime1 passed
+(`/private/tmp/pi-v34-full-rust-pi-20261015.log`); affected default evidence23
+passed (`/private/tmp/pi-v34-default-evidence-tests-20261015.log`). Prior full
+default941/architecture21/exclusion3/runtime1 passed at v33; these overlapping
+suites are not added together. Frontend adapter17 passed. Initial Svelte Map type
+error remains retained at `/private/tmp/pi-v34-svelte-check-20261015.log`;
+repair passed zero errors/warnings and E2E TypeScript
+(`/private/tmp/pi-v34-svelte-check-repair-20261015.log`). **v34 capture is underway;
+no accepted v34 native result yet**. The fixes are not proven by a native rerun.
 
-Two reviewed fixes are frozen but **uncommitted pending full tests**: coherent
-batch-admitted citations use one generation plus a final distinct raw reread
-(three focused Rust checks passed); the iOS verifier binds registered owner/target
-paths, manifest and confinement (27 Python checks passed). Full Pi/default Rust
-suites are running under root ownership. **No v33 source capture or native result
-yet**; neither prepared fix is accepted through a native rerun.
+Historical v32 **WRrwST whole failed**, 143 requests: initial14/relaunch10 and all
+local/openai research, parent/worker compaction, fresh read, attachment/exact Retry
+and hosted-web fixture follow-ons passed, then the closed publication verifier
+failed desktop `nativeRoot/vault` lookup on iOS Documents layout. That is **not
+follow-on relocation**. The registered-path verifier fix binds owner/target paths,
+manifest/confinement (27 Python checks passed), but **no whole closed iOS
+publication proof yet**. v32's completed workers334/598 (30 reads/59 sources each,
+no failed tools) do not close the intermittent v31 failure. v32 artificial
+STOP/CONT fresh post-CONT UI read remains false/following durable relaunch true;
+no physical OS-suspension claim follows.
 
-Prior v31 transcript **HrJXyy whole PASS** (six synthetic requests), executable
-`5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0`, and
-local-live **7GmG8j whole PASS**, executable
-`1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`,
-retain their own v31 canonical/pins and [matrix](validation-matrix.md) receipts.
-Live scope is two normal Sends/three completed real inference POSTs, 15 total
-requests including metadata, no replay. Closed backups46/48 remain preserved.
-v31 expanded **3g4HLR whole failed** at research freshness validation despite
-39 excerpts/30 canonical bodies matching; cause remains unproven. Historical
-v30/v29/v28/v27 failures and scoped passes are retained, not relabeled.
+Prior v31 **HrJXyy transcript PASS** and **7GmG8j bounded local-live PASS** keep
+canonical/pins and [matrix](validation-matrix.md) receipts. Live scope was two
+normal Sends/three completed real inference POSTs, 15 total requests/no replay.
+Earlier whole failures retain their actual boundaries; no cross-artifact final
+pass. Manual app v31 SHA
+`159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`
+remains compiled only/closed. Earlier desktop live/original 388-file seal proof
+stays on its own older product pin. Hosted live is user-deferred; fixture openai/
+web checks are not hosted live. Physical touch/device/OS pressure and standalone
+normal Settings vault relocation remain unverified.
 
-No final desktop build/gate ran from superseded v31 queue
-([receipt](/private/tmp/pi-final-desktop-queue-v31-superseded-20261015.json)). Persistent manual app
-v31 SHA `159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`
-is **compiled only/still closed**; older manual live/original-seal evidence stays
-on its own pin. Hosted live remains user-deferred; synthetic openai/web follow-ons
-are not hosted live. Physical touch/device/OS pressure and normal Settings vault
-relocation remain unverified.
-
-Scale **v5** remains running untouched on frozen v22. Latest reported **726/1005**
-is historical memory progress only, not final durable seed/history/identity/provider
-accounting. Final desktop/churn/default regression, three repeated paired resource
-captures and full cost/collection/lifecycle proof remain pending. Existing resource
-IPC/storage regressions and scope/cache/observer unknowns remain explicit. Verdict
-is pending/continue evaluation; no final acceptance, goal closure, archive or
-adoption claim.
+**Scale v5 FINAL FAILED** its original two-hour seed budget; process closed,
+no cleanup error. [Receipt](/private/tmp/pi-product-scale-20261015-v5/product-scale-gate.json)
+retains last public progress776, **782 answer +4 summary admissions =786 completed
+provider requests**, prefix request bytes13,880,171/max27,796. This is not full
+seed/identity/history/archive/restart/final closed proof. IPC is null; sampled
+app RSS209,764,352 bytes has helper/renderer coverage unknown. Native build overlap
+prevents a controlled timing claim. Keep the original 1005-answer/≤1100 total/
+two-hour budgets; **v6 is required after resources on an updated build**, with no
+reduction. Final desktop/churn/default regression, repeated paired resources and
+full cost/collection/lifecycle evidence remain pending; existing IPC/storage
+regressions and unknowns stay explicit. Verdict pending/continue evaluation;
+no goal closure, archive or adoption claim.
 
 ## Current assignments
 
@@ -89,7 +95,7 @@ adoption claim.
 | 10 | Integrated attachments and hosted web | Provider/native checks pass; native follow-on journeys pending | `ticket10_prepare` |
 | 11 | Integrated transcript export/conflicts and relocation | Desktop and v27 synthetic iOS transcript/root-relocation gates passed; standalone Settings move pending | `ticket11_prepare`; root integration |
 | 12 | Native/iOS drivers and real SQLite fault probe implemented | Publication/crash, bounded v26 local iOS live and v27 transcript passed; expanded/relaunch matrix pending | `ticket08_acceptance`, `ticket12_prepare`; root native lease |
-| 13 | v23 desktop/exclusion and three iOS compiles passed; v17 publication/crash/transcript slices passed; latest v32 expanded follow-ons passed then closed verifier failed iOS path layout; v31 freshness cause unproven; resource module IPC observed/full cost unproven | Complete removal-native/default/paired/resource evidence and verdict pending | `ticket13_prepare`, `ticket04_lifecycle`, `replacement_ledger`; root native lease |
+| 13 | v23 desktop/exclusion and three iOS compiles passed; v17 publication/crash/transcript slices passed; latest v33 expanded failed standalone source validation; v32 follow-ons passed then verifier failed iOS Documents layout; resource module IPC observed/full cost unproven | Complete removal-native/default/paired/resource evidence and verdict pending | `ticket13_prepare`, `ticket04_lifecycle`, `replacement_ledger`; root native lease |
 
 Independent implementation proceeds against agreed interfaces while acceptance
 dependencies remain gates. This does not declare prerequisites accepted early.

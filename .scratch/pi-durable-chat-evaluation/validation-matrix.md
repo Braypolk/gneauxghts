@@ -7,67 +7,73 @@ goal closure. See [spec](spec.md), [hands-on instructions](README.md),
 
 ## Current source and validation
 
-Latest captured native diagnostic checkpoint is **v32**, canonical manifest
-`5d70cf539b94cc9d1b3920dbfc45c1a3488b5f4b3de636a195b22a6e97ae3209`,
-`/private/tmp/pi-removal-final-20261015-v32`. Its
-[v31→v32 diff](/private/tmp/pi-removal-final-20261015-v32/v31-v32-source-diff.json)
-retains three Rust diagnostic/test-support files plus three generated schema
-changes; **native bytes are not identical to v31**. Commit `779b0ce` adds
-sanitized freshness diagnostics, retaining fail-closed behavior; two root native
-diagnostic checks passed. This is not an established underlying fix.
+Latest captured checkpoint **v33** is
+`/private/tmp/pi-removal-final-20261015-v33`, canonical manifest
+`e87cf98893523599dd51342cdab24027adf4924736f0c70bf04d9417452194e5`.
+Desktop compiled/three exclusion checks passed, binary
+`2d5613455092a52c3a984c4eede2864d7d13d16c1fe7bf3d5a4e8b8147f222aa`
+([receipt](/private/tmp/pi-removal-final-20261015-v33/artifacts/desktop-build.json)).
+All three iOS variants compiled; transcript/live **not run** on v33. Desktop queue
+was superseded before any gate; the iOS queue closed failed. No final desktop
+native acceptance follows from compilation.
 
-Actual v32 expanded **WRrwST whole FAILED**, 143 provider requests, executable
-`bb9b5257354fd3339636c5b2c87dc60d5d6926a7c247675484c5c231319674f6`
-([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json)).
-Initial14/relaunch10 passed, followed by actual local and openai fixture research,
-parent/worker compaction, fresh read, attachment bytes/exact Retry, and hosted-web
-fixture follow-ons. Native workers334/598 completed with 30 reads/59 sources each
-and no failed tool results. Passing research here **does not prove v31's
-intermittent freshness failure is fixed**.
+Actual v33 expanded **5W81zD whole FAILED**, 80 provider requests, executable
+`a54fd98a599b725fddbc03236b15cf9239b3f5eaedd4ec6e511499be19193b96`
+([receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-5W81zD/ios-interactive-gate.json)).
+First14/relaunch10 checks passed, but the relaunch phase failed during follow-ons.
+Worker334/generation465 failed after 2153ms with
+`Evidence or access changed; read again`, after 55 sources/28 successful reads.
+This isolates the standalone per-citation `pi_validate_sources` Option wrapper
+failure; that wrapper still hides availability versus changed-context cause.
+Closed 85-entry backup:
+`/private/tmp/pi-owned-simulator-after-v33-expanded-failure-20261015`.
 
-The final closed publication verifier failed `FileNotFoundError` at
-`nativeRoot/vault`: author-confirmed platform layout mismatch, iOS
-`Documents/PROTOTYPE-wipe-me` versus desktop appData/vault. This is not a follow-on
-relocation failure and is not a closed publication-proof pass. Root preserved
-84 closed entries at `/private/tmp/pi-owned-simulator-after-v32-expanded-failure-20261015`
-and uninstalled only the owned bundle. Artificial STOP/CONT retains
-`freshPostContinueUiRead:false`; actual following durable relaunch now records
-`durablePartialAndReviewVerifiedByFollowingRelaunch:true`. Neither establishes
-physical OS suspension/pressure or touch behavior.
+Batch checking and standalone validation are now unified in reviewed commits
+`9feed2d`/`2864fff`, with clear user errors. Full Pi Rust751/architecture21/
+exclusion3/runtime1 passed
+(`/private/tmp/pi-v34-full-rust-pi-20261015.log`); affected default evidence23
+passed (`/private/tmp/pi-v34-default-evidence-tests-20261015.log`). Prior full
+default941/architecture21/exclusion3/runtime1 passed at v33; these overlapping
+suites are not added together. Frontend adapter17 passed. Initial Svelte Map type
+error remains retained at `/private/tmp/pi-v34-svelte-check-20261015.log`;
+repair passed zero errors/warnings and E2E TypeScript
+(`/private/tmp/pi-v34-svelte-check-repair-20261015.log`). **v34 capture is underway;
+no accepted v34 native result yet**. The fixes are not proven by a native rerun.
 
-Two reviewed fixes are frozen but **uncommitted pending full tests**: coherent
-batch-admitted citations use one generation plus a final distinct raw reread
-(three focused Rust checks passed); the iOS verifier binds registered owner/target
-paths, manifest and confinement (27 Python checks passed). Full Pi/default Rust
-suites are running under root ownership. **No v33 source capture or native result
-yet**; neither prepared fix is accepted through a native rerun.
+Historical v32 **WRrwST whole failed**, 143 requests: initial14/relaunch10 and all
+local/openai research, parent/worker compaction, fresh read, attachment/exact Retry
+and hosted-web fixture follow-ons passed, then the closed publication verifier
+failed desktop `nativeRoot/vault` lookup on iOS Documents layout. That is **not
+follow-on relocation**. The registered-path verifier fix binds owner/target paths,
+manifest/confinement (27 Python checks passed), but **no whole closed iOS
+publication proof yet**. v32's completed workers334/598 (30 reads/59 sources each,
+no failed tools) do not close the intermittent v31 failure. v32 artificial
+STOP/CONT fresh post-CONT UI read remains false/following durable relaunch true;
+no physical OS-suspension claim follows.
 
-Prior v31 transcript **HrJXyy whole PASS** (six synthetic requests), executable
-`5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0`, and
-local-live **7GmG8j whole PASS**, executable
-`1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`,
-retain their own v31 canonical/pins and receipts below.
-Live scope is two normal Sends/three completed real inference POSTs, 15 total
-requests including metadata, no replay. Closed backups46/48 remain preserved.
-v31 expanded **3g4HLR whole failed** at research freshness validation despite
-39 excerpts/30 canonical bodies matching; cause remains unproven. Historical
-v30/v29/v28/v27 failures and scoped passes are retained, not relabeled.
+Prior v31 **HrJXyy transcript PASS** and **7GmG8j bounded local-live PASS** keep
+canonical/pins and receipts below. Live scope was two
+normal Sends/three completed real inference POSTs, 15 total requests/no replay.
+Earlier whole failures retain their actual boundaries; no cross-artifact final
+pass. Manual app v31 SHA
+`159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`
+remains compiled only/closed. Earlier desktop live/original 388-file seal proof
+stays on its own older product pin. Hosted live is user-deferred; fixture openai/
+web checks are not hosted live. Physical touch/device/OS pressure and standalone
+normal Settings vault relocation remain unverified.
 
-No final desktop build/gate ran from superseded v31 queue
-([receipt](/private/tmp/pi-final-desktop-queue-v31-superseded-20261015.json)). Persistent manual app
-v31 SHA `159dc528aceabce4e5b23b22d261dd6e7d466cc439b366c73428c11525c952bd`
-is **compiled only/still closed**; older manual live/original-seal evidence stays
-on its own pin. Hosted live remains user-deferred; synthetic openai/web follow-ons
-are not hosted live. Physical touch/device/OS pressure and normal Settings vault
-relocation remain unverified.
-
-Scale **v5** remains running untouched on frozen v22. Latest reported **726/1005**
-is historical memory progress only, not final durable seed/history/identity/provider
-accounting. Final desktop/churn/default regression, three repeated paired resource
-captures and full cost/collection/lifecycle proof remain pending. Existing resource
-IPC/storage regressions and scope/cache/observer unknowns remain explicit. Verdict
-is pending/continue evaluation; no final acceptance, goal closure, archive or
-adoption claim.
+**Scale v5 FINAL FAILED** its original two-hour seed budget; process closed,
+no cleanup error. [Receipt](/private/tmp/pi-product-scale-20261015-v5/product-scale-gate.json)
+retains last public progress776, **782 answer +4 summary admissions =786 completed
+provider requests**, prefix request bytes13,880,171/max27,796. This is not full
+seed/identity/history/archive/restart/final closed proof. IPC is null; sampled
+app RSS209,764,352 bytes has helper/renderer coverage unknown. Native build overlap
+prevents a controlled timing claim. Keep the original 1005-answer/≤1100 total/
+two-hour budgets; **v6 is required after resources on an updated build**, with no
+reduction. Final desktop/churn/default regression, repeated paired resources and
+full cost/collection/lifecycle evidence remain pending; existing IPC/storage
+regressions and unknowns stay explicit. Verdict pending/continue evaluation;
+no goal closure, archive or adoption claim.
 
 | Available v28 compiler receipt | Binary SHA-256 | Scope |
 | --- | --- | --- |
@@ -262,7 +268,7 @@ configured local inference through normal visible UI.
 | [01](issues/01-persistent-isolated-evaluation-app.md) isolated persistent app | Integrated copy/recovery/setup and separate installed app | **M live:** 209 copied files; repeated launches retain model/history/review; approved synthetic edits leave original unchanged | Final comparison/resources and remaining platform gates; agent observations are not user trial feedback |
 | [02](issues/02-isolate-pi-lifecycle-ownership.md) lifecycle ownership | Integrated explicit Pi API/native domain seam | **R:** 52 legacy files physically absent in compiled comparison builds; lifecycle exclusion checks; **F/C/T/D** actual native slices | Recheck final captured build/default path and full native matrix; ordinary deliverable retains its default runtime |
 | [03](issues/03-provider-settings-and-model-switching.md) provider/settings | Integrated frozen native routing and model refresh | **D:** normal model/protocol checks; **P:** compatible and Responses subsets; **M:** configured local model; **L:** bounded local-compatible iOS live passed | Final both-protocol matrix; hosted live explicitly user-deferred, not fixture-equivalent |
-| [04](issues/04-conversation-history-and-request-lifecycle.md) history/Stop/Retry | Integrated Pi admission, checkpoints, projection and paging | **D:** first/relaunch/failure slices; **C:** crash recovery; **M:** short Stop then separate Retry completed READY | Complete final concurrent/session/lifecycle matrix; **S** 1005-history acceptance pending |
+| [04](issues/04-conversation-history-and-request-lifecycle.md) history/Stop/Retry | Integrated Pi admission, checkpoints, projection and paging | **D:** first/relaunch/failure slices; **C:** crash recovery; **M:** short Stop then separate Retry completed READY | Complete final concurrent/session/lifecycle matrix; **S** v5 failed budget; updated-build v6 required |
 | [05](issues/05-context-discovery-and-evidence.md) discovery/permission/citations | Integrated native policy/evidence and Pi bindings | **P:** selected/current/retained evidence and grants; **M:** actual discover→Deny, fresh Allow once→read/citation/canonical navigation; **L:** admitted native read/normal citation passed | Final race/revocation/platform matrix; paired grant API checks do not prove paired permission-dialog parity |
 | [06](issues/06-reviewed-note-changes-and-refinement.md) editable proposals | Integrated durable review/refinement and narrow canonical effects | **D:** real review, checkpoint/conflict/dirty-buffer slices; **F/C/T:** recovery and duplicate-effect slices; **M:** approved normal Keep | Final full review/refinement/termination/iOS matrix; partial runs do not close all races |
 | [07](issues/07-faithful-save-to-note.md) faithful Save/origin | Integrated deterministic whole/selection Save | **P:** whole Save/origin, explicit selection append and closed duplicates; **M:** normal Save→approved Keep→Open in chat; **L:** exact Keep/duplicate/final restart; **I:** Save/Keep/relocation recovery; **E:** three independent publication plans/read-backs passed | **E** local/openai follow-ons passed; whole failed final iOS publication-verifier layout, corrected proof prepared |
@@ -271,7 +277,7 @@ configured local inference through normal visible UI.
 | [10](issues/10-attachments-and-web-search.md) attachments/web | Integrated native admission, retained bytes and search routing | **D/E:** bounded attachment/web/Retry follow-ons, including v32 both fixture lanes | Complete both-protocol failure/restart/Retry matrix; bounded hosted live web not established and user-deferred |
 | [11](issues/11-managed-transcripts-and-relocation.md) transcripts/relocation | Integrated committed projection, conflicts and identity-bound mapping | **T:** desktop watcher/Save/generated-root relocation/uncertain Keep passed; **I:** v31 whole synthetic iOS transcript/sandbox relocation passed | Final combined platform acceptance and standalone normal Settings vault move remain unproven; synthetic/programmatic scope only |
 | [12](issues/12-native-fault-and-ios-acceptance.md) native faults/iOS | Integrated fault/crash/storage/iOS drivers; suspension/live preparations | **F/C:** four cases each passed; **D:** five native-storage checks passed; **I:** v31 transcript whole passed; **L:** bounded local iOS live passed; **E:** first14/relaunch6 and artificial STOP/CONT observed | **E** whole failed; v32 fresh post-CONT false/following durable relaunch true; no OS-suspension claim; complete expanded/desktop/churn pending; hosted deferred, physical touch/device/OS-pressure unverified |
-| [13](issues/13-replacement-proof-and-evaluation-verdict.md) replacement/cost | Removal/compiler/ledger and paired tooling; v31 strict issued-citation/refusal fixture reviewed and frozen | **R/F/C/T:** removed-tree native slices; **I:** v31 transcript whole passed; **E:** publication proof slices; **P/U:** bounded paired subsets/resources | v32 expanded whole failed final closed verifier after follow-ons passed; v33 fixes prepared/uncommitted; final/default/scale/churn/retention/collection/cost open; no measured speed/adoption/savings claim |
+| [13](issues/13-replacement-proof-and-evaluation-verdict.md) replacement/cost | Removal/compiler/ledger and paired tooling; v31 strict issued-citation/refusal fixture reviewed and frozen | **R/F/C/T:** removed-tree native slices; **I:** v31 transcript whole passed; **E:** publication proof slices; **P/U:** bounded paired subsets/resources | v33 expanded whole failed standalone validation; tested unified validators/v34 capture underway; scalev5 failed; final/default/scale/churn/retention/collection/cost open; no measured speed/adoption/savings claim |
 
 ## Receipt provenance and scope
 
@@ -285,10 +291,10 @@ configured local inference through normal visible UI.
 | **D** | [6xfnis desktop receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-6xfnis/desktop-interactive-gate.json): **whole failed**, 141 requests; 14 first, ten relaunch (six core/four failure), five storage and 23 follow-on UI checks passed | v19 SHA `0ced4b174e8f453bdcc0c39dc50bcbb9c36700910713b0d5eda5d7f4c91a2095`, canonical `836a19cf05ff18dfc96cd809b8ae8253981c6966672dd356075c0b654f05b069`. Strict native parent summary missing: adjacent selected context grounded warmups, 10,990-byte parent request stayed below 96k threshold. Worker summaries do not replace parent proof. Selection setup correction prepared. |
 | **I** | [HrJXyy v31 transcript receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-HrJXyy/ios-transcript-gate.json): **whole passed**, six synthetic requests, binary `5c3cc2c7ebc63ffb88945aee2087a3aefa3a76ed5e88933b5f181554163506f0` | Watcher edit/delete/normal Convert/Restore, sandbox relocation/pending body-version/retained conflict, uncertain Keep recovery/duplicate and source/Origin/unknown-root checks. Synthetic programmatic WKWebView, not physical/live/Settings move. Prior [0cCfVn v30](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-0cCfVn/ios-transcript-gate.json) and [z3TtcW v27](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-z3TtcW/ios-transcript-gate.json) whole passes retain own pins; earlier failures remain historical. |
 | **L** | [7GmG8j v31 local-live receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-7GmG8j/ios-live-gate.json): **whole passed**, binary `1ea5f166d510eb7d9dea35b2e03989061ed7347ef13d4bca032c8aae8ada9bdb`, two Sends/three completed real inference POSTs/15 total requests, `noReplay:true` | Normal continuity/read/citation, Save/edit/background, pending restart, Keep/duplicate/final committed restart. Bounded local/programmatic simulator scope; hosted user-deferred, physical touch/OS pressure unverified. Prior [B6Dw3j v30](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-B6Dw3j/ios-live-gate.json) and [ZlW6lU v26](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-ZlW6lU/ios-live-gate.json) whole passes retain own pins; failures remain historical. |
-| **E** | [WRrwST v32 expanded receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json): **whole failed**, 143 provider requests, initial14/relaunch10 and local/openai research/parent+worker compaction/fresh read/attachment/exact Retry/hosted-web fixture follow-ons passed; binary `bb9b5257354fd3339636c5b2c87dc60d5d6926a7c247675484c5c231319674f6` | Final closed publication verifier failed nativeRoot/vault lookup on iOS Documents layout; not follow-on relocation or closed-proof pass. Workers334/598 completed30reads/59sources each/no failed tools; v31 intermittent cause remains unproven. STOP/CONT fresh-UI false/following durable relaunch true, no OS-suspension claim. Prior [3g4HLR v31](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-3g4HLR/ios-interactive-gate.json) freshness failure, [71i6Ij v30](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-71i6Ij/ios-interactive-gate.json) selector, [dt88yt v29](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-dt88yt/ios-interactive-gate.json) portal, [djWH4K v28](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-djWH4K/ios-interactive-gate.json) origin and [lvqjxb v27](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-lvqjxb/ios-interactive-gate.json) editor retain failed scopes. |
+| **E** | [5W81zD v33 expanded receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-5W81zD/ios-interactive-gate.json): **whole failed**, 80 provider requests, first14/relaunch10 checks passed but relaunch phase failed follow-ons; binary `a54fd98a599b725fddbc03236b15cf9239b3f5eaedd4ec6e511499be19193b96` | Worker334/gen465 failed standalone source-validation wrapper after55sources/28reads; availability versus changed-context cause hidden. Unified validators tested/capturev34 underway, no native fix pass. Prior [WRrwST v32](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-WRrwST/ios-interactive-gate.json) passed all fixture follow-ons then failed final iOS Documents-layout verifier, not relocation. Prior [3g4HLR v31](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-3g4HLR/ios-interactive-gate.json) freshness failure and earlier scoped failures remain retained. v32 STOP/CONT fresh-UI false/following durable relaunch true is not OS suspension. |
 | **P** | [Compatible v8](/private/tmp/pi-paired-compatible-20261015-v8/paired-parity-gate.json) and [Responses v2](/private/tmp/pi-paired-responses-20261015-v2/paired-parity-gate.json): both old/Pi `passed-prepared-subset` | Frozen v13 frontend, Pi v2 binary `a1ec5982e1f8ea74a80dffef75d858fa94c1cd83c41f6219212d851ef750a338`; old `4b5ff2de` fixture binary `d5e3a76aed10c9441dc76e4d9d768d497a209a8be06434ce4d3ab254bbb60bc0`. Evidence/grants/body review/Save/selection append/closed duplicates only. Old title read-only; Pi editable. Grants use public API; permission dialogs not compared. |
 | **U** | [Resource v8 receipt](/private/tmp/pi-shared-resources-20261015-v8/shared-resource-gate.json): both lanes `passed-core-fixture`, eight requests, exact 256-line/9,215-byte output; [audited measurements](replacement-proof-plan.md#audited-paired-core-resource-checkpoint--v8-2026-10-15) | Old fixture binary above, Pi **R**. Actual module IPC observed: old 26/Pi 1,159 warm calls; closed logical storage old 684,378/Pi 2,059,929 bytes. Material observed bridge/storage increases disclosed. One rejected Pi invoke response size unknown; JSON proxies are not wire bytes. App-only RSS, uncontrolled cache/order and observer overhead prevent a performance-win claim. |
-| **S** | `/private/tmp/pi-product-scale-20261015-v5`, untouched pinned v22 desktop above; **pending**, latest reported memory projection 726/1005 submissions retained as historical progress only | No final durable seed/identity/history/provider accounting claimed. Requires exactly 1005 answers plus validated automatic summary requests, total ≤1100. Prior v3 failed transient SHM `ENOENT`. v4 was operator-ended at 03:45 UTC (401 submissions reported/421 provider requests) to switch superseded v17 to final indexed-query v22; its final receipt failed `fetch`, without full seed/identity accounting. `operator-stop.json` preserves verified owned-app stop. Neither prior run is eligible for guarded continuation or scale acceptance. See [scale contract](product-scale-proof-plan.md). |
+| **S** | [v5 scale receipt](/private/tmp/pi-product-scale-20261015-v5/product-scale-gate.json), frozen v22: **final failed** two-hour seed budget; last public progress776, 782 answers+4 summaries=786 completed requests, 13,880,171 request bytes/max27,796 | No complete seed/identities/history/archive/restart/final closed proof. Process closed/no cleanup error. IPCnull; app-only RSS209,764,352 bytes/helper-renderer unknown; builds overlapped, no controlled timing/performance claim. Original1005-answer/≤1100 total/two-hour budgets unchanged; updated-build v6 required after resources. Prior v3 SHM ENOENT/v4 operator-ended failures remain retained; no continuation acceptance. See [scale contract](product-scale-proof-plan.md). |
 
 Earlier failed iOS receipts remain retained: transcript
 [xVPQ2S](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-xVPQ2S/ios-transcript-gate.json),
@@ -314,22 +320,21 @@ implemented optimization, known IPC totals or a scale pass.
 
 ## Remaining gate queue
 
-1. Finish untouched v5 and inspect closed exact seed/history/identity/provider
-   accounting. Historical memory progress is not acceptance; CPU/build overlap
-   prevents scale performance attribution. Guard `00e472f` is absent from v22.
-2. Finish full Pi/default Rust tests and review/checkpoint the frozen coherent
-   citation-batch and registered-path iOS verifier fixes. No v33 capture/native
-   result exists yet. Passing v32 research does not close v31's intermittent cause.
-3. Capture/build new exact artifacts and rerun full expanded acceptance including
-   final closed publication proof. Then final desktop/fault/crash/transcript/churn,
-   alternating Pi/old/Pi resource repetitions and fresh default smoke. Require
-   full v5 closure, closed native builders and exact source/binary/owner-path pins;
-   preserve cache/observer/renderer/IPC/storage unknowns and regressions.
+1. Complete v34 source capture/builds and exact pinning of the unified batch/
+   standalone source validators and iOS Documents-layout verifier. Tests passed;
+   no accepted native rerun or whole closed iOS publication proof yet.
+2. Rerun whole expanded native acceptance through research/follow-ons and final
+   closed publication verification. Keep v33 failed scope and v32 passed follow-on
+   scope separate; neither closes intermittent freshness behavior by itself.
+3. Run final pinned desktop/fault/crash/transcript/churn, three alternating Pi/old/
+   Pi resource repetitions, updated-build scalev6 and fresh default smoke. Keep
+   original1005-answer/≤1100 total/two-hour scale budgets. v5 is closed failed,
+   not an eligible completed seed. Preserve source/owner/path/cache/observer/
+   renderer/IPC/storage unknowns and regressions; no performance-win claim.
 4. Keep v31 transcript/local-live and earlier passes independently pinned; manual
-   rebuilt app remains compiler-only/closed. Preserve broad default smoke failure
-   despite focused unchanged rerun passes. v32 artificial STOP/CONT fresh-UI false/
-   durable-following-relaunch true is not OS suspension. Hosted live is deferred;
-   physical touch/device/radio/OS pressure and normal Settings move are unverified.
+   rebuilt app remains compiler-only/closed. Hosted live is deferred; programmatic
+   simulator checks/artificial STOPCONT do not prove physical OS suspension,
+   touch/device/radio/OS pressure or normal Settings vault relocation.
 5. Reconcile lifecycle/listener, retained-family/collection, scale and resource
    evidence with unknowns/regressions intact, then acceptance/ledger/verdict.
    Verdict pending/continue evaluation; no goal closure/archive/adoption claim.
