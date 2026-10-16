@@ -62,6 +62,18 @@ export function canonicalIdentityCounts(root,identities) {
   };visit(root);return counts;
 }
 
+export async function initializeParityWorkspace({execute,args,output,phase,wait=waitUntil}) {
+  let attempt=0;
+  return wait(async()=>{
+    attempt++;
+    try{return await execute('initialize',args);}
+    catch(error){
+      output.lastInitializeError={phase,attempt,error:String(error).slice(0,700)};
+      return false;
+    }
+  },phase,45000);
+}
+
 export async function runPairedParityGate(options) {
   for(const port of [1430,1442,1443,4445])assert.equal(listenerPids(port).length,0,'Required port belongs to another owner');
   mkdirSync(options.root,{mode:0o700});
@@ -96,7 +108,7 @@ export async function runPairedParityGate(options) {
         let failure;const launched=app;app.once('error',error=>{failure=error;});
         await waitUntil(async()=>{if(failure)throw failure;assert(launched.exitCode===null&&launched.signalCode===null,'Owned native process exited before driver readiness');try{return(await wd('/status',undefined,'GET')).ready}catch{return false;}},'owned native driver',30000);
         session=await wd('/session',{capabilities:{alwaysMatch:{browserName:'tauri'}}});await wd(`/session/${session.sessionId}/timeouts`,{script:60000});
-        await waitUntil(async()=>{try{return await execute('initialize',{protocol:options.protocol,...(state?{state}:{})})}catch{return false;}},'normal native workspace',45000);
+        await initializeParityWorkspace({execute,args:{protocol:options.protocol,...(state?{state}:{})},output,phase:'normal native workspace'});
         if(state)assert.deepEqual(await execute('state'),state,'Relaunch did not restore full captured parity state');
         output.launches=++launchCount;
       };
@@ -113,7 +125,7 @@ export async function runPairedParityGate(options) {
         await launch();
         const seeded=await execute('seed');
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-        await waitUntil(async()=>{try{return await execute('initialize',{protocol:options.protocol,state:seeded})}catch{return false;}},'reloaded normal workspace',45000);
+        await initializeParityWorkspace({execute,args:{protocol:options.protocol,state:seeded},output,phase:'reloaded normal workspace'});
         for(const action of ['evidence','grants','review','save']) {
           const before=fixture.requests.length;
           const proof=await execute(action,{answer:PARITY_ANSWER,edit:PARITY_EDIT});
