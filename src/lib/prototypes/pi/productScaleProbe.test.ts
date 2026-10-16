@@ -2,6 +2,9 @@ import {describe,it,expect} from 'vitest';
 import type {ChatApi} from '$lib/features/chat/api';
 import type {ChatConversation} from '$lib/features/chat/types';
 import {productScaleTitle,productScaleInput,productScaleReply,verifyProductScale,seedProductScale} from './productScaleProbe';
+import {SUMMARY_CONTRACT,serializeSummarySource,parseSummary} from './compaction';
+import {SUMMARY_MARKER} from './compactionState';
+import type {Message} from '@earendil-works/pi-ai';
 
 function fixture(count=1005,turns=1005){
   const ids=Array.from({length:count},(_,index)=>`opaque-${count-index}`);
@@ -13,6 +16,22 @@ function fixture(count=1005,turns=1005){
   return {api,rows,identity:{conversations:ids,messages:messages.map(row=>row.id),submissions:turns}};
 }
 describe('product scale acceptance assertions (mock public API, not native acceptance)',()=>{
+  it('summary fixture accepts the real compaction serializer and actual output validator',async()=>{
+    const fixtureUrl=new URL('../../../../scripts/pi-prototype/product-scale-gate.mjs',import.meta.url).href;
+    const fixture=await import(/* @vite-ignore */ fixtureUrl);
+    expect(fixture.PRODUCT_SCALE_SUMMARY_CONTRACT).toBe(SUMMARY_CONTRACT);expect(fixture.PRODUCT_SCALE_SUMMARY_MARKER).toBe(SUMMARY_MARKER);
+    const messages=Array.from({length:163},(_,index)=>[
+      {role:'user',content:productScaleInput(index),timestamp:1},
+      {role:'assistant',content:[{type:'text',text:productScaleReply(index)}],timestamp:1}
+    ]).flat() as Message[];
+    const body={messages:[{role:'system',content:`${SUMMARY_CONTRACT}\nLimit: 8000 UTF-8 bytes.`},
+      {role:'user',content:`<transcript>\n${serializeSummarySource(messages)}\n</transcript>\nOriginal request (retain its requirements):\n${productScaleInput(165)}`}]};
+    const result=fixture.planProductScaleProviderReply(body,undefined,{answerCount:165,summaries:[]});
+    expect(result).toMatchObject({kind:'summary',firstNewTurn:0,lastTurn:162,originalInput:165});
+    expect(parseSummary(result.text,8000,287701,4671)).toBe(result.summary);
+    body.messages[1].content=body.messages[1].content.replace(productScaleReply(80),'foreign result');
+    expect(()=>fixture.planProductScaleProviderReply(body,undefined,{answerCount:165,summaries:[]})).toThrow('assistant sequence');
+  });
   it('checks >1000 identities and full history without relying on list order',async()=>{
     const {api,identity}=fixture();expect(await verifyProductScale(api,identity)).toMatchObject({conversations:1005,messages:2010,allHistoryPositionsVerified:true,productParity:false});
   });

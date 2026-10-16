@@ -4,7 +4,7 @@ import {EventEmitter} from 'node:events';
 import {mkdtempSync,writeFileSync,mkdirSync,symlinkSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {planProductScaleReply,productStorageSnapshot,parseProductScaleArguments,stopProductScaleChild,initializeProductScaleWorkspace,reloadProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
+import {planProductScaleReply,planProductScaleProviderReply,verifyProductScaleRequests,PRODUCT_SCALE_SUMMARY_CONTRACT,PRODUCT_SCALE_SUMMARY_MARKER,productStorageSnapshot,parseProductScaleArguments,stopProductScaleChild,initializeProductScaleWorkspace,reloadProductScaleWorkspace,executeProductScaleBrowser} from './product-scale-gate.mjs';
 import {DUMMY_AUTHORIZATION} from './shared-resource-gate.mjs';
 
 test('exact dummy or absent auth only; unknown and out-of-budget inputs refused',()=>{
@@ -15,6 +15,56 @@ test('exact dummy or absent auth only; unknown and out-of-budget inputs refused'
 test('a later answer requires the actual previous assistant text in request history',()=>{
   assert.throws(()=>planProductScaleReply({messages:[{role:'user',content:'PRODUCT_SCALE_INPUT_1004.'}]}));
   assert.equal(planProductScaleReply({messages:[{role:'assistant',content:[{type:'text',text:'Synthetic product scale reply 1003.'}]},{role:'user',content:[{type:'text',text:'PRODUCT_SCALE_INPUT_1004.'}]}]}).index,1004);
+});
+const summaryBody=(first,last,current,prior)=>({messages:[
+  {role:'system',content:`${PRODUCT_SCALE_SUMMARY_CONTRACT}\nLimit: 8000 UTF-8 bytes.`},
+  {role:'user',content:`<transcript>\n${[
+    ...(prior?[`[User]: ${PRODUCT_SCALE_SUMMARY_MARKER}\n${prior}`]:[]),
+    ...Array.from({length:last-first+1},(_,offset)=>`[User]: PRODUCT_SCALE_INPUT_${first+offset}.\n\n[Assistant]: Synthetic product scale reply ${first+offset}.`)
+  ].join('\n\n')}\n</transcript>\nOriginal request (retain its requirements):\nPRODUCT_SCALE_INPUT_${current}.`}
+]});
+test('actual summary request shape preserves validated completed ranges, issued chain and exact original request',()=>{
+  const state={answerCount:165,summaries:[]},first=planProductScaleProviderReply(summaryBody(0,162,165),undefined,state);
+  assert.equal(first.kind,'summary');assert.equal(first.firstNewTurn,0);assert.equal(first.lastTurn,162);
+  assert.equal(first.originalInput,165);assert.equal(first.priorSummaryIndex,null);assert.equal(JSON.parse(first.text).summary,first.summary);
+  assert.match(first.summary,/Original request: PRODUCT_SCALE_INPUT_165\./);assert(Buffer.byteLength(first.summary)<=8000);
+  state.summaries.push(first);state.answerCount=330;
+  const next=planProductScaleProviderReply(summaryBody(163,327,330,first.summary),undefined,state);
+  assert.equal(next.firstNewTurn,163);assert.equal(next.lastTurn,327);assert.equal(next.priorSummaryIndex,0);
+  assert.match(next.summary,/completed turns 0 through 327/);assert.match(next.summary,/Original request: PRODUCT_SCALE_INPUT_330\./);
+  assert.throws(()=>planProductScaleProviderReply(summaryBody(163,327,330,first.summary+' forged'),undefined,state),/issued summary chain/);
+  assert.throws(()=>planProductScaleProviderReply(summaryBody(163,327,330),undefined,state),/issued summary chain/);
+});
+test('summary refuses changed contract, tools, foreign content, gaps, invented results and wrong original input',()=>{
+  const state={answerCount:165,summaries:[]};
+  const mutations=[
+    body=>{body.messages[0].content+=' foreign instructions'},
+    body=>{body.tools=[{type:'function'}]},
+    body=>{body.messages[1].content=body.messages[1].content.replace('Synthetic product scale reply 80.','Foreign result')},
+    body=>{body.messages[1].content=body.messages[1].content.replace('PRODUCT_SCALE_INPUT_80.','PRODUCT_SCALE_INPUT_81.')},
+    body=>{body.messages[1].content+='\nforeign content'},
+    body=>{body.messages[1].content=body.messages[1].content.replace('INPUT_165.','INPUT_164.')},
+    body=>{body.messages[0].content=body.messages[0].content.replace('8000','1')}
+  ];
+  for(const mutate of mutations){const body=summaryBody(0,162,165);mutate(body);assert.throws(()=>planProductScaleProviderReply(body,undefined,state))}
+  assert.throws(()=>planProductScaleProviderReply(summaryBody(0,165,165),undefined,state),/uncompleted answer/);
+  assert.throws(()=>planProductScaleProviderReply(summaryBody(0,162,165),'Bearer foreign',state),/authorization/);
+});
+test('summary admission does not weaken ordinary prior assistant or exact answer sequence',()=>{
+  const state={answerCount:165,summaries:[]},summary=planProductScaleProviderReply(summaryBody(0,162,165),undefined,state);state.summaries.push(summary);
+  const body={messages:[{role:'user',content:summary.summary},{role:'user',content:'PRODUCT_SCALE_INPUT_165.'}]};
+  assert.throws(()=>planProductScaleProviderReply(body,undefined,state),/Previous committed answer missing/);
+  body.messages.unshift({role:'assistant',content:'Synthetic product scale reply 164.'});
+  assert.equal(planProductScaleProviderReply(body,undefined,state).kind,'answer');
+  state.answerCount++;assert.throws(()=>planProductScaleProviderReply(body,undefined,state),/replay\/duplicate\/reordered/);
+});
+test('provider accounting preserves 1005 exact answer admissions and separately counted summaries',()=>{
+  const requests=Array.from({length:1005},(_,index)=>({kind:'answer',index,completed:true,failed:false}));
+  requests.splice(165,0,{kind:'summary',index:0,firstNewTurn:0,lastTurn:162,originalInput:165,priorSummaryIndex:null,completed:true,failed:false});
+  assert.deepEqual(verifyProductScaleRequests(requests),{answers:1005,summaries:1,total:1006,exactAnswerSequenceVerified:true,summarySourceChainVerified:true,totalRequestBudget:1100});
+  const wrong=structuredClone(requests);wrong[165].failed=true;assert.throws(()=>verifyProductScaleRequests(wrong),/Fixture request failed/);
+  assert.throws(()=>verifyProductScaleRequests(requests.slice(1)),/Answer provider count/);
+  assert.throws(()=>verifyProductScaleRequests([...requests,...Array(95).fill({completed:true,failed:false})]),/budget exceeded/);
 });
 test('storage metadata measures WAL and projections without reading contents; refuses symlink escape',()=>{
   const root=mkdtempSync(join(tmpdir(),'product-scale-pure-'));
@@ -49,7 +99,7 @@ test('navigation-invalidated setup retries the same idempotent script before adm
   await initializeProductScaleWorkspace({output,phase:'initial product browser setup',execute:async script=>{
     scripts.push(script);if(scripts.length===1)throw new Error('Completion handler for function call is no longer reachable');return true;
   },wait:async(check,phase,timeout)=>{assert.equal(phase,'initial product browser setup');assert.equal(timeout,60000);assert.equal(await check(),false);return check()}});
-  assert.equal(scripts.length,2);assert.equal(scripts[0],scripts[1]);assert.match(scripts[0],/if\(!window\.__productInvoke\)/);
+  assert.equal(scripts.length,2);assert.equal(scripts[0],scripts[1]);assert.match(scripts[0],/if\(!window\.__productInvokeWrapper\)/);
   assert.match(scripts[0],/Native workspace required/);assert.match(scripts[0],/await api\.setDefaults/);assert.doesNotMatch(scripts[0],/seedProductScale\(/);
   assert.deepEqual(output.lastInitializeError,{phase:'initial product browser setup',attempt:1,error:'Error: Completion handler for function call is no longer reachable'});
 });
@@ -70,7 +120,18 @@ test('setup retry after instrumentation installation counts each actual IPC call
   await initializeProductScaleWorkspace({execute,output:{},phase:'synthetic retry',wait:async check=>{assert.equal(await check(),false);return check()}});
   assert.equal(window.__TAURI_INTERNALS__.invoke,firstWrapper);
   await window.__TAURI_INTERNALS__.invoke('synthetic_read');
-  assert.equal(rawCalls,5);assert.equal(window.__productIpc.calls,3);assert.equal(window.__productIpc.failed,0);
+  assert.equal(rawCalls,7);assert.equal(window.__productIpc.calls,4);assert.equal(window.__productIpc.failed,0);
+  assert.equal(window.__productIpcObservation.verified,true);
+});
+test('immutable native invoke remains untouched and every IPC counter is unavailable',async()=>{
+  let calls=0;const original=async()=>{calls++;return true},native={};Object.defineProperty(native,'invoke',{value:original});
+  const window={__TAURI_INTERNALS__:native},api={getSettings:async()=>{await native.invoke('get_settings');return {}},setDefaults:async()=>native.invoke('set_defaults')};
+  const load=async path=>path.endsWith('productScaleProbe.ts')?{nativeProductScaleApi:async()=>api}:{nativeTransportStats:{}};
+  const execute=script=>new Function('window','document','load',`return (async()=>{${script.replaceAll('import(', 'load(')}})()`)(window,{querySelector:()=>({})},load);
+  await initializeProductScaleWorkspace({execute,output:{},phase:'immutable native invoke',wait:async check=>check()});
+  assert.equal(native.invoke,original);assert.equal(calls,2);
+  assert.deepEqual(window.__productIpc,{calls:null,requestBytes:null,responseBytes:null,failed:null,unknownSizes:null,eventListen:null,eventUnlisten:null,categories:null});
+  assert.deepEqual(window.__productIpcObservation,{installed:false,verified:false,coverage:'unavailable-immutable-native-invoke',descriptor:{writable:false,configurable:false,enumerable:false,accessor:false}});
 });
 test('browser wrapper retains thrown browser error and never turns missing acknowledgement into success',async()=>{
   const wd=async(path,body)=>{assert.equal(path,'/session/synthetic-session/execute/async');return new Promise(done=>new Function(body.script).apply(null,[...body.args,done]))};

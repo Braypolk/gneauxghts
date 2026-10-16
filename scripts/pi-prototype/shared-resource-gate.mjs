@@ -31,12 +31,16 @@ export function planSharedReply(body, authorization) {
   assert(Array.isArray(body.messages), 'Compatible protocol history required');
   const user = body.messages.findLast(message => message.role === 'user');
   const prompt = typeof user?.content === 'string' ? user.content : JSON.stringify(user?.content ?? []);
+  const finish=(reply)=>{
+    const formatter=(body.tools??[]).map(item=>item.function??item).find(item=>item.parameters?.properties?.segments);
+    return formatter?{...reply,tool:{name:formatter.name,arguments:JSON.stringify({segments:[{text:reply.text,sources:[]}]})}}:reply;
+  };
   if (prompt.includes('RESOURCE_FOLLOWUP')) {
     assert(body.messages.slice(0, -1).some(message => message.role === 'assistant' && JSON.stringify(message.content).includes('Shared synthetic answer')), 'Follow-up omitted prior source-free answer');
-    return { case: 'followup', text: 'Shared synthetic follow-up.', pause: false };
+    return finish({ case: 'followup', text: 'Shared synthetic follow-up.', pause: false });
   }
-  if (prompt.includes('RESOURCE_STOP')) return { case: 'cancel', text: 'Shared acknowledged partial.', pause: true };
-  if (prompt.includes('RESOURCE_HELLO')) return { case: 'short', text: 'Shared synthetic answer.', pause: false };
+  if (prompt.includes('RESOURCE_STOP')) return finish({ case: 'cancel', text: 'Shared acknowledged partial.', pause: true });
+  if (prompt.includes('RESOURCE_HELLO')) return finish({ case: 'short', text: 'Shared synthetic answer.', pause: false });
   // Local model metadata/title requests are bounded fixture operations, not live
   // inference. Unknown prompts are refused rather than falsely passing a journey.
   throw new Error('Unknown synthetic journey');
@@ -49,6 +53,31 @@ export function cleanEnvironment(path, lane) {
     OPENAI_API_KEY: DUMMY_AUTHORIZATION.slice(7), GNEAUXGHTS_LOCAL_API_KEY: DUMMY_AUTHORIZATION.slice(7),
     VITE_E2E_NATIVE: 'true', WDIO_EMBEDDED_SERVER: 'true', TAURI_WEBDRIVER_PORT: '4445',
     ...(lane === 'pi' ? { VITE_PI_PROTOTYPE: 'true', PI_PROTOTYPE_HTTP_FIXTURE: 'http://127.0.0.1:1443' } : {}) };
+}
+
+/** Observe the real invoke boundary only when its descriptor permits it. Tauri
+ * normally locks this property; assignment must never silently imply coverage. */
+export function installInvokeObserver(native,begin) {
+  const property=Object.getOwnPropertyDescriptor(native,'invoke');
+  const descriptor={writable:property?.writable===true,configurable:property?.configurable===true,
+    enumerable:property?.enumerable===true,accessor:Boolean(property?.get||property?.set)};
+  const original=native.invoke;
+  if(typeof original!=='function'||(!descriptor.writable&&!descriptor.configurable))
+    return {installed:false,verified:false,descriptor,reason:'Native invoke boundary is not replaceable'};
+  const wrapper=async function(command,args,...rest) {
+    const finish=begin(command,args);
+    try {const result=await original.apply(this,[command,args,...rest]);finish(result,false);return result;}
+    catch(error){finish(undefined,true);throw error;}
+  };
+  let changed=false;
+  try {changed=descriptor.writable?Reflect.set(native,'invoke',wrapper):Reflect.defineProperty(native,'invoke',{...property,value:wrapper});}catch{}
+  const installed=changed&&native.invoke===wrapper;
+  return {installed,verified:false,descriptor,...(installed?{wrapper}:{reason:'Native invoke wrapper was not installed'})};
+}
+
+export function observedIpcCoverage(observer,rows) {
+  if(!observer?.installed||!observer.verified||!rows.length)return 'unknown';
+  return rows.every(row=>Number.isFinite(row.requestBytes)&&Number.isFinite(row.responseBytes))?'complete':'partial';
 }
 
 export async function startSharedFixture() {
@@ -79,15 +108,15 @@ export async function startSharedFixture() {
         created: 1, model: body.model, choices: [{ index: 0, delta, finish_reason }] });
       send(chunk({ role: 'assistant' })); await delay(20);
       if (res.destroyed) return;
-      send(chunk({ content: reply.text }));
+      send(chunk(reply.tool?{tool_calls:[{index:0,id:`shared-${record.index}`,type:'function',function:reply.tool}]}:{ content: reply.text }));
       if (reply.pause) await new Promise(done => {const timer=setTimeout(done,30000);res.once('close',()=>{clearTimeout(timer);done()})});
       if (res.destroyed) return;
-      await delay(20); send(chunk({}, 'stop'));
+      await delay(20); send(chunk({}, reply.tool?'tool_calls':'stop'));
       record.frames++; record.frameBytes += Buffer.byteLength('data: [DONE]\n\n');
       record.completed = true; record.endMs = performance.now(); res.end('data: [DONE]\n\n');
-    } catch {
-      if (record) record.failed = true;
-      else requests.push({ index: requests.length, case: 'refused', startMs, endMs: performance.now(), failed: true });
+    } catch(error) {
+      if (record) {record.failed = true;record.error=String(error).slice(0,300);}
+      else requests.push({ index: requests.length, case: 'refused', startMs, endMs: performance.now(), failed: true, error:String(error).slice(0,300) });
       if (!res.headersSent) res.writeHead(500);
       res.end('Synthetic fixture refused');
     }
@@ -127,13 +156,17 @@ const browserSetup = `
   window.__resourceApi=(await import('/src/lib/features/chat/api.ts')).chatApi;
   const native=window.__TAURI_INTERNALS__;
   if(!native || !document.querySelector('[data-testid="workspace-pane"]'))throw new Error('Native workspace required');
-  if(!window.__resourceInvoke){window.__resourceInvoke=native.invoke.bind(native);native.invoke=async(command,args,...rest)=>{
-    const atMs=performance.now();const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value??null)).length}catch{return null}};
-    const row={kind:'ipc',atMs,category:command==='pi_sql'?'sqlite':command.startsWith('pi_provider')?'provider':'domain',requestBytes:size(args),responseBytes:null};
-    window.__resourceIpc?.push(row);const result=await window.__resourceInvoke(command,args,...rest);row.responseBytes=size(result);return result;
-  };}
+  const installInvokeObserver=(${installInvokeObserver.toString()});
+  if(!window.__resourceObserver?.installed)window.__resourceObserver=installInvokeObserver(native,(command,args)=>{
+    const size=value=>{try{return new TextEncoder().encode(JSON.stringify(value??null)).length}catch{return null}};
+    const row={kind:'ipc',atMs:performance.now(),category:command==='pi_sql'?'sqlite':command.startsWith('pi_provider')?'provider':'domain',requestBytes:size(args),responseBytes:null};
+    window.__resourceIpc?.push(row);return(result,failed)=>{row.responseBytes=failed?null:size(result);};
+  });
   window.__resourceIpc=[];
   const api=window.__resourceApi;const {atlasVisibility,...defaults}=await api.getSettings();
+  const observer=window.__resourceObserver;
+  observer.verified=observer.installed&&native.invoke===observer.wrapper&&window.__resourceIpc.length>0;
+  window.__resourceObserverMetadata={installed:observer.installed,verified:observer.verified,descriptor:observer.descriptor,reason:observer.reason??(observer.verified?undefined:'Ordinary settings probe was not observed')};
   await api.setDefaults({...defaults,provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',
     localBaseUrl:'http://127.0.0.1:1443/local/v1',reasoningEffort:'off',defaultVaultAccess:'none'});
   return true;`;
@@ -155,40 +188,42 @@ export async function initializeResourceWorkspace({execute,output,phase,afterTim
   },phase,timeoutMs);
 }
 
-const browserSelect = `
+export const browserSelect = `
   const [id]=arguments;const api=window.__resourceApi;
   const pause=()=>new Promise(ok=>setTimeout(ok,50));
-  const until=async fn=>{const end=performance.now()+30000;while(performance.now()<end){const value=await fn();if(value)return value;await pause()}throw new Error('UI deadline')};
+  const until=async(fn,label)=>{const end=performance.now()+30000;while(performance.now()<end){const value=await fn();if(value)return value;await pause()}throw new Error('Selection deadline: '+label)};
   const button=label=>Array.from(document.querySelectorAll('button')).find(node=>!node.disabled&&(node.getAttribute('aria-label')===label||node.textContent.trim()===label));
-  if(!document.querySelector('[aria-label="Thought partner chat"]'))(await until(()=>button('Open thought partner'))).click();
-  await until(()=>document.querySelector('[aria-label="Thought partner chat"]'));
+  if(!document.querySelector('[aria-label="Thought partner chat"]'))(await until(()=>button('Open thought partner'),'Open thought partner')).click();
+  await until(()=>document.querySelector('[aria-label="Thought partner chat"]'),'mounted chat');
   const chat=await api.getConversation(id);
   if(document.querySelector('[aria-label="Chat title"]')?.value!==chat.title){
-    (await until(()=>button('Conversations'))).click();
-    (await until(()=>Array.from(document.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent.trim()===chat.title))).click();
+    (await until(()=>button('Conversations'),'Conversations')).click();
+    (await until(()=>Array.from(document.querySelectorAll('[role="menuitem"]')).find(node=>node.textContent.trim()===chat.title),'exact conversation picker item')).click();
   }
-  await until(()=>document.querySelector('[aria-label="Chat title"]')?.value===chat.title);
+  await until(()=>document.querySelector('[aria-label="Chat title"]')?.value===chat.title,'selected chat title');
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));return true;`;
 
-const browserSend = `
+export const browserSend = `
   const [id,prompt,cancel]=arguments,api=window.__resourceApi;
   const pause=()=>new Promise(ok=>setTimeout(ok,50));
-  const until=async fn=>{const end=performance.now()+45000;while(performance.now()<end){const value=await fn();if(value)return value;await pause()}throw new Error('Scenario deadline')};
+  const until=async(fn,label)=>{const end=performance.now()+45000;while(performance.now()<end){const value=await fn();if(value)return value;await pause()}throw new Error('Scenario deadline: '+label)};
   const before=(await api.getConversation(id)).messages.length;
   const button=label=>Array.from(document.querySelectorAll('button')).find(node=>!node.disabled&&(node.getAttribute('aria-label')===label||node.textContent.trim()===label));
-  const field=await until(()=>{const value=document.querySelector('textarea[aria-label="Message"]');return value&&!value.disabled&&value});
+  const field=await until(()=>{const value=document.querySelector('textarea[aria-label="Message"]');return value&&!value.disabled&&value},'enabled composer');
   field.focus();field.value=prompt;field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:prompt}));
-  window.__resourceIpc=[];const events=[{kind:'send',atMs:performance.now()}];(await until(()=>button('Send message'))).click();
-  const admitted=await until(async()=>{const chat=await api.getConversation(id);return chat.messages.length>before&&chat.messages.at(-1)});
-  await until(()=>document.querySelector('[data-chat-message-id="'+admitted.id+'"]')?.textContent?.includes(cancel?'Shared acknowledged partial.':prompt.includes('FOLLOWUP')?'Shared synthetic follow-up.':'Shared synthetic answer.'));
+  window.__resourceIpc=[];const events=[{kind:'send',atMs:performance.now()}];(await until(()=>button('Send message'),'Send message')).click();
+  const admitted=await until(async()=>{const chat=await api.getConversation(id);return chat.messages.length>before&&chat.messages.at(-1)},'request admission');
+  await until(async()=>{const chat=await api.getConversation(id),message=chat.messages.find(row=>row.id===admitted.id);if(message&&!['pending','streaming','completed'].includes(message.status))throw new Error('Before first visible answer: '+message.status+': '+(message.errorMessage??message.error??''));return document.querySelector('[data-chat-message-id="'+admitted.id+'"]')?.textContent?.includes(cancel?'Shared acknowledged partial.':prompt.includes('FOLLOWUP')?'Shared synthetic follow-up.':'Shared synthetic answer.')},'first visible answer');
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));events.push({kind:'first_visible',atMs:performance.now()});
-  if(cancel){events.push({kind:'cancel_request',atMs:performance.now()});(await until(()=>button('Stop response'))).click()}
-  const terminal=await until(async()=>{const chat=await api.getConversation(id);const message=chat.messages.find(row=>row.id===admitted.id);return message&&!['pending','streaming'].includes(message.status)&&!chat.activeRequestId&&message});
+  if(cancel){events.push({kind:'cancel_request',atMs:performance.now()});(await until(()=>button('Stop response'),'Stop response')).click()}
+  const terminal=await until(async()=>{const chat=await api.getConversation(id);const message=chat.messages.find(row=>row.id===admitted.id);return message&&!['pending','streaming'].includes(message.status)&&!chat.activeRequestId&&message},'terminal settlement');
   if(!cancel&&terminal.status!=='completed')throw new Error('Scenario did not complete');
   if(cancel&&terminal.status==='completed')throw new Error('Stop announced completion');
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));events.push({kind:cancel?'cancel_settled':'terminal',atMs:performance.now()});
   const ipc=window.__resourceIpc.slice();window.__resourceIpc=[];
-  return {events,ipc,terminalStatus:terminal.status,messageCount:(await api.getConversation(id)).messages.length};`;
+  const observer=window.__resourceObserverMetadata;
+  if(window.__resourceObserver?.wrapper!==window.__TAURI_INTERNALS__.invoke)observer.verified=false;
+  return {events,ipc,observer,terminalStatus:terminal.status,messageCount:(await api.getConversation(id)).messages.length};`;
 
 export async function runSharedResourceGate(options) {
   for (const port of [1430, 1442, 1443, 4445]) assert.equal(listenerPids(port).length, 0, 'Required port has another owner');
@@ -198,6 +233,7 @@ export async function runSharedResourceGate(options) {
     limits: ['Prepared core compatible-fixture gate; no live/Responses/scale/source/review/Save acceptance.',
       'Renderer/helper RSS unknown; app RSS sampled only. Startup invoke coverage incomplete.',
       'UI detection polls at 50ms then waits two frames; provider/renderer clock calibration has recorded round-trip uncertainty.',
+      'IPC is unknown when the native invoke boundary is locked or its real settings probe is not observed; empty captures never establish complete coverage.',
       'Observer getConversation calls contribute to IPC/latency; no performance win/adoption verdict.'], verdict: 'unproven-pending-acceptance' };
   try {
     for (const lane of (options.first==='pi'?['pi','old']:['old','pi'])) {
@@ -218,7 +254,7 @@ export async function runSharedResourceGate(options) {
       const execute = async (script, args = []) => {
         const result = await wd(`/session/${session.sessionId}/execute/async`, {script:
           `const done=arguments[arguments.length-1];(async function(){${script}}).apply(null,Array.from(arguments).slice(0,-1)).then(value=>done({ok:true,value}),error=>done({ok:false,error:String(error).slice(0,2000)}));`,args});
-        assert(result.ok, `Owned browser scenario failed: ${result.error ?? 'unknown'}`);return result.value;
+        if(!result.ok)output.lastBrowserError={phase:output.phase??'unknown',error:String(result.error??'unknown').slice(0,700)};assert(result.ok, `Owned browser scenario failed: ${result.error ?? 'unknown'}`);return result.value;
       };
       const sampleApp = () => {
         try {
@@ -255,9 +291,9 @@ export async function runSharedResourceGate(options) {
         const previousTimeOrigin=await execute('return performance.timeOrigin;');
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
         await initializeResourceWorkspace({execute,output,phase:'normal reloaded workspace',afterTimeOrigin:previousTimeOrigin,timeoutMs:30000});
-        await execute(browserSelect,[id]);
+        output.phase='initial conversation selection';await execute(browserSelect,[id]);
         for(const [scenario,prompt,cancel] of [['short','RESOURCE_HELLO',false],['followup','RESOURCE_FOLLOWUP',false],['cancel','RESOURCE_STOP',true]]){
-          const firstRequest=fixture.requests.length;
+          output.phase=scenario;const firstRequest=fixture.requests.length;
           const before=performance.now(),renderer=await execute('return performance.now();'),after=performance.now();
           const rendererZero=(before+after)/2-renderer;
           const result=await execute(browserSend,[id,prompt,cancel]);
@@ -268,13 +304,13 @@ export async function runSharedResourceGate(options) {
           const serverComplete=requests.length>0&&requests.every(row=>!row.failed&&row.endMs!==null&&row.startMs>=start&&row.endMs<=end);
           for(const row of requests){if(row.startMs>=start)events.push({kind:'provider_start',atMs:row.startMs,dispatch:row.index});if(row.endMs!==null&&row.endMs>=start)events.push({kind:'provider_end',atMs:row.endMs,dispatch:row.index})}
           events.push(...rss.filter(row=>row.atMs>=start&&row.atMs<=end));
-          output.journeys.push({scenario,cache:'warm-process',events:events.map(row=>({...row,atMs:row.atMs-start})).sort((a,b)=>a.atMs-b.atMs),ipcCoverage:'complete',providerCoverage:'partial',serverIntervalCoverage:serverComplete?'complete':'partial',
+          output.journeys.push({scenario,cache:'warm-process',events:events.map(row=>({...row,atMs:row.atMs-start})).sort((a,b)=>a.atMs-b.atMs),ipcCoverage:observedIpcCoverage(result.observer,result.ipc),ipcObserver:result.observer,providerCoverage:'partial',serverIntervalCoverage:serverComplete?'complete':'partial',
             terminalStatus:result.terminalStatus,messageCount:result.messageCount,clockCalibrationUncertaintyMs:(after-before)/2,pollingUncertaintyMs:50,
             providerFrames:requests.reduce((sum,row)=>sum+(row.frames??0),0),providerFrameBytes:requests.reduce((sum,row)=>sum+(row.frameBytes??0),0)});
         }
         const beforeRestart=fixture.requests.length;await stop('SIGKILL');await launch();await delay(1000);
         assert.equal(fixture.requests.length,beforeRestart,'Restart silently replayed inference');
-        await execute(browserSelect,[id]);
+        output.phase='restored conversation selection';await execute(browserSelect,[id]);
         output.restart={noImplicitRequests:true,messageCount:await execute('return(await window.__resourceApi.getConversation(arguments[0])).messages.length;',[id])};
         assert.equal(output.restart.messageCount,6,'Committed history did not survive restart');
         output.status='passed-core-fixture';

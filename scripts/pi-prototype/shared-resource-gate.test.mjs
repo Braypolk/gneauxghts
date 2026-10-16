@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planSharedReply, cleanEnvironment, DUMMY_AUTHORIZATION, initializeResourceWorkspace } from './shared-resource-gate.mjs';
+import { planSharedReply, cleanEnvironment, DUMMY_AUTHORIZATION, initializeResourceWorkspace, browserSend, browserSelect, installInvokeObserver, observedIpcCoverage } from './shared-resource-gate.mjs';
 import {parseArguments,OLD_SHA256} from './shared-resource-gate.mjs';
 import {parseParityArguments} from './paired-parity-gate.mjs';
 import {createHash} from 'node:crypto';
@@ -35,6 +35,30 @@ test('stop fixture streams a partial and unknown prompts cannot pass', () => {
   assert.equal(planSharedReply({ messages: [{ role: 'user', content: 'RESOURCE_STOP' }] }).pause, true);
   assert.throws(() => planSharedReply({ messages: [{ role: 'user', content: 'Unknown' }] }));
 });
+test('source-free fixture uses the actual offered final formatter and keeps cancellation paused',()=>{
+  const tools=[{type:'function',function:{name:'final_result_1',parameters:{type:'object',properties:{segments:{type:'array'}}}}}];
+  for(const prompt of ['RESOURCE_HELLO','RESOURCE_FOLLOWUP','RESOURCE_STOP']) {
+    const messages=[{role:'assistant',content:'Shared synthetic answer.'},{role:'user',content:prompt}];
+    const reply=planSharedReply({messages,tools});
+    assert.equal(reply.tool.name,'final_result_1');
+    assert.deepEqual(JSON.parse(reply.tool.arguments),{segments:[{text:reply.text,sources:[]}]});
+    assert.equal(reply.pause,prompt==='RESOURCE_STOP');
+    assert.equal(planSharedReply({messages,tools:[]}).tool,undefined);
+  }
+  assert.throws(()=>planSharedReply({messages:[{role:'user',content:'RESOURCE_FOLLOWUP'}],tools}),/omitted prior source-free answer/);
+});
+test('real browser Send reports terminal provider failure before waiting out visible-answer deadline',async()=>{
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  assert.doesNotThrow(()=>new AsyncFunction(browserSelect));
+  let sent=false;
+  const api={async getConversation(){return {messages:sent?[{id:'failed-answer',role:'assistant',status:'failed',errorMessage:'Provider refused final formatter'}]:[]};}};
+  const field={disabled:false,focus(){},dispatchEvent(){}};
+  const send={disabled:false,textContent:'',getAttribute(){return 'Send message';},click(){sent=true;}};
+  const browserDocument={querySelector(selector){return selector.startsWith('textarea')?field:undefined;},querySelectorAll(){return [send];}};
+  const run=new AsyncFunction('browserWindow','browserDocument','BrowserInputEvent',`const window=browserWindow,document=browserDocument,InputEvent=BrowserInputEvent;return (async function(){${browserSend}}).apply(null,['conversation','RESOURCE_HELLO',false]);`);
+  await assert.rejects(run({__resourceApi:api,__resourceIpc:[]},browserDocument,class {}),/Before first visible answer: failed: Provider refused final formatter/);
+  assert.equal(sent,true);
+});
 test('child environment is an allowlist with dummy overrides in both lanes', () => {
   for (const lane of ['old', 'pi']) {
     const env=cleanEnvironment('/synthetic/bin', lane);
@@ -46,6 +70,29 @@ test('child environment is an allowlist with dummy overrides in both lanes', () 
     assert.equal(Object.hasOwn(env, 'PI_PROTOTYPE_HTTP_FIXTURE'), lane === 'pi');
   }
 });
+test('actual Tauri-style locked invoke descriptor never claims installation or zero complete IPC',async()=>{
+  let observed=0,calls=0;const native={};
+  Object.defineProperty(native,'invoke',{value:async()=>{calls++;return 'real result';}});
+  const observer=installInvokeObserver(native,()=>{observed++;return()=>{};});
+  assert.equal(observer.installed,false);assert.equal(observer.verified,false);
+  assert.deepEqual(observer.descriptor,{writable:false,configurable:false,enumerable:false,accessor:false});
+  assert.equal(await native.invoke('get_settings'),'real result');assert.equal(calls,1);assert.equal(observed,0);
+  assert.equal(observedIpcCoverage(observer,[]),'unknown');
+  assert.equal(observedIpcCoverage({installed:true,verified:true},[]),'unknown');
+});
+test('replaceable real invoke observer preserves receiver, arguments, result and rejection',async()=>{
+  const failure=new Error('native failure'),records=[];
+  const native={marker:'receiver',async invoke(command,args,options){assert.equal(this.marker,'receiver');assert.deepEqual(args,{value:1});assert.deepEqual(options,{raw:true});if(command==='fail')throw failure;return {accepted:true};}};
+  const observer=installInvokeObserver(native,(command,args)=>{const row={command,args};records.push(row);return(result,failed)=>Object.assign(row,{result,failed});});
+  assert.equal(observer.installed,true);assert.equal(native.invoke,observer.wrapper);
+  assert.deepEqual(await native.invoke('get_settings',{value:1},{raw:true}),{accepted:true});
+  await assert.rejects(native.invoke('fail',{value:1},{raw:true}),error=>error===failure);
+  assert.deepEqual(records.map(row=>row.failed),[false,true]);
+  const rows=[{requestBytes:2,responseBytes:4}];
+  assert.equal(observedIpcCoverage({...observer,verified:false},rows),'unknown');
+  assert.equal(observedIpcCoverage({...observer,verified:true},rows),'complete');
+  assert.equal(observedIpcCoverage({...observer,verified:true},[{requestBytes:2,responseBytes:null}]),'partial');
+});
 test('initial browser setup retries transient navigation using the same real idempotent setup',async()=>{
   const output={journeys:[{scenario:'startup'}]},scripts=[];
   const result=await initializeResourceWorkspace({output,phase:'initial browser setup',
@@ -53,7 +100,7 @@ test('initial browser setup retries transient navigation using the same real ide
     wait:async(check,phase,timeout)=>{assert.equal(phase,'initial browser setup');assert.equal(timeout,45000);assert.equal(await check(),false);return check();}
   });
   assert.equal(result,true);assert.equal(scripts.length,2);assert.equal(scripts[0],scripts[1]);
-  assert.match(scripts[0],/Native workspace required/);assert.match(scripts[0],/if\(!window\.__resourceInvoke\)/);
+  assert.match(scripts[0],/Native workspace required/);assert.match(scripts[0],/installInvokeObserver/);
   assert.match(scripts[0],/await api\.setDefaults/);
   assert.deepEqual(output.lastInitializeError,{phase:'initial browser setup',attempt:1,error:'Error: Completion handler for function call is no longer reachable'});
   assert.deepEqual(output.journeys,[{scenario:'startup'}]);
