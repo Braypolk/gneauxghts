@@ -91,9 +91,25 @@ async function send(id: string, content: string) {
 }
 export async function currentReview(id: string, reviewId?: string) {
   const draft = await api.getProposalDraft!(id);
-  const editor = () => {
-    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && visibleProbeControl(view.dom) && view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title && (reviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === reviewId));
+  const matchingEditor = (visible: boolean) => {
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && (!visible || visibleProbeControl(view.dom)) && view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title && (reviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === reviewId));
   };
+  const editor = () => matchingEditor(true);
+  const ready = editor();
+  if (ready) return ready;
+  const retained = matchingEditor(false);
+  const pane = retained?.dom.closest<HTMLElement>('[data-testid="workspace-pane"]');
+  if (pane?.hasAttribute('data-pane-collapsed')) {
+    // A disk-change conflict can block Review next while the exact editable
+    // review remains retained behind its compact rail. Reveal that owner with
+    // the normal pane control; visibility does not require readmitting it.
+    const rail = await until(() => {
+      const control = pane.querySelector<HTMLButtonElement>('button[aria-label^="Expand "]');
+      return control && !control.disabled && visibleProbeControl(control) ? control : undefined;
+    }, 'normal retained review editor expansion control');
+    rail.click();
+    return until(editor, 'visible retained CodeMirror proposal review');
+  }
   return acquireProbeReview({ editor, openChat, until,
     // The active proposal replaces its queued card with the normal action
     // strip. Review next re-enters the coordinator's latest versioned request.

@@ -13,6 +13,34 @@ import { currentReview } from './interactiveProbe';
 
 afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); vi.useRealTimers(); mocks.draft.mockReset(); mocks.openChat.mockReset(); });
 describe('normal active proposal review acquisition after refinement', () => {
+  it('expands the exact retained conflicted editor without re-entering review admission', async () => {
+    vi.useFakeTimers();
+    const proposalId = 'pi-review-266', reviewId = 'conflicted-review';
+    const draft: ChatProposalDraft = { version: 2, title: 'Pi interactive orchard', path: '/synthetic/orchard.md',
+      markdown: 'The orchard now has eight synthetic pear trees.', decisions: [] };
+    let collapsed = true;
+    const rail = { disabled: false, closest: () => null, getClientRects: () => [1],
+      click: vi.fn(() => { collapsed = false; }) };
+    const pane = { hasAttribute: (name: string) => name === 'data-pane-collapsed' && collapsed,
+      querySelector: (selector: string) => selector === '[data-testid="note-title"]' ? { value: draft.title } : rail };
+    const dom = { isConnected: true, closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : collapsed ? {} : null,
+      getClientRects: () => [1] };
+    const exactView = { dom, state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId, hunks: [] }) } } as unknown as EditorView;
+    const otherView = { dom, state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId: 'another-review', hunks: [] }) } } as unknown as EditorView;
+    const readmit = vi.fn();
+    const strip = { getAttribute: () => 'active', querySelectorAll: () => [{ textContent: 'Review next', disabled: false, getAttribute: () => null, click: readmit }] };
+    vi.stubGlobal('document', { querySelector: (selector: string) => selector.startsWith('[data-proposal-strip') ? strip : null,
+      querySelectorAll: () => [{ view: otherView }, { view: exactView }] });
+    vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
+    vi.spyOn(EditorView, 'findFromDOM').mockImplementation(node => (node as unknown as { view: EditorView }).view);
+    mocks.draft.mockResolvedValue(draft); mocks.openChat.mockResolvedValue(undefined);
+    const opening = currentReview(proposalId, reviewId).then(view => ({ view }), error => ({ error }));
+    await vi.advanceTimersByTimeAsync(30001);
+    expect(await opening).toEqual({ view: exactView });
+    expect(rail.click).toHaveBeenCalledOnce();
+    expect(readmit).not.toHaveBeenCalled(); expect(mocks.openChat).not.toHaveBeenCalled();
+    expect(mocks.draft).toHaveBeenCalledExactlyOnceWith(proposalId);
+  });
   it('opens the real active strip when its queued card is intentionally absent and waits for the exact refined editor', async () => {
     vi.useFakeTimers();
     const proposalId = 'pi-review-148', reviewId = 'refined-review';
@@ -34,7 +62,7 @@ describe('normal active proposal review acquisition after refinement', () => {
       click: vi.fn(() => { if (textContent === 'Review next') { refreshed = true; setTimeout(() => { presented = true; }, 60); } }) }));
     const strip = { getAttribute: (name: string) => name === 'data-proposal-strip' ? 'active' : null,
       querySelectorAll: () => controls };
-    const pane = { querySelector: () => ({ value: draft.title }) };
+    const pane = { querySelector: () => ({ value: draft.title }), hasAttribute: () => false };
     const dom = { isConnected: true, closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : null,
       getClientRects: () => [1] };
     const staleView = { dom,
