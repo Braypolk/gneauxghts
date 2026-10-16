@@ -46,6 +46,13 @@ export async function verifyDuplicateKeep(api,id,draft,lane) {
   if(first.committedMarkdown!==draft.markdown)throw new Error('Receipt differs from accepted body');
   return {id,version:draft.version,...first,staleDuplicate:rejected?'rejected':'accepted-existing-receipt'};
 }
+/** Both controls invoke the retained document's normal review callbacks.
+ * Never act on a matching body whose actual review identity differs. */
+export function reviewKeepControl(review,expectedReviewId,aggregate,inline) {
+  if(review?.reviewId!==expectedReviewId)throw new Error('Retained editor review identity changed before Keep');
+  if(!review.hunks.some(hunk=>['pending','modified'].includes(hunk.status)))return;
+  return aggregate??inline.find(control=>!control.disabled);
+}
 export async function parityBrowserAction(action,args={}) {
   const check=(value,message)=>{if(!value)throw new Error(message);};
   const pause=()=>new Promise(ok=>setTimeout(ok,60));
@@ -67,7 +74,8 @@ export async function parityBrowserAction(action,args={}) {
     // The old Vite lane serves the raw package with unresolved bare imports.
     // Use its native-E2E optimized module, shared by the mounted editor.
     const {EditorView}=await import('/node_modules/.vite-e2e-native/deps/@codemirror_view.js');
-    window.__pairedParity={api,EditorView,state:args.state??{kept:[]},invoke:window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)};
+    const {reviewProjection}=await import('/src/lib/features/proposals/reviewExtension.ts');
+    window.__pairedParity={api,EditorView,reviewProjection,state:args.state??{kept:[]},invoke:window.__TAURI_INTERNALS__.invoke.bind(window.__TAURI_INTERNALS__)};
     const {atlasVisibility,...settings}=await api.getSettings();
     const provider=args.protocol==='responses'?'openai':'local';
     await api.setDefaults({...settings,provider,model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',
@@ -76,7 +84,7 @@ export async function parityBrowserAction(action,args={}) {
     check(['old','pi'].includes(args.lane),'Explicit paired runtime lane required');
     window.__pairedParity.provider=provider;window.__pairedParity.lane=args.lane;return true;
   }
-  const {api,EditorView,invoke,state,provider,lane}=window.__pairedParity;
+  const {api,EditorView,reviewProjection,invoke,state,provider,lane}=window.__pairedParity;
   if(action==='quiesce')return invoke('prepare_restart');
   const openChat=async()=>{
     if(!document.querySelector('[aria-label="Thought partner chat"]'))await click('Open thought partner');
@@ -101,9 +109,11 @@ export async function parityBrowserAction(action,args={}) {
   };
   const currentReview=async id=>{
     const draft=await api.getProposalDraft(id);
+    const proposal=(await api.listPendingProposals(state.full)).find(item=>item.id===id);
+    check(proposal,'Exact pending review unavailable');
+    const reviewId=String(proposal.preview.reviewId??proposal.id);
     const editor=()=>{
-      if(!Array.from(document.querySelectorAll('[data-testid="note-title"]')).some(node=>node.value===draft.title))return;
-      return Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).map(node=>EditorView.findFromDOM(node)).find(view=>view?.state.doc.toString()===draft.markdown);
+      return Array.from(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).map(node=>EditorView.findFromDOM(node)).find(view=>view?.dom.closest('[data-pane-frame]')?.querySelector('[data-testid="note-title"]')?.value===draft.title&&view.state.doc.toString()===draft.markdown&&view.state.field(reviewProjection,false)?.reviewId===reviewId);
     };
     const ready=editor();if(ready)return ready;
     await openChat();let opened=false;
@@ -123,12 +133,22 @@ export async function parityBrowserAction(action,args={}) {
     return {draft,...capability};
   };
   const keep=async(id,conversationId)=>{
-    await currentReview(id);await openChat();
+    const view=await currentReview(id);await openChat();
+    const proposal=(await api.listPendingProposals(conversationId)).find(item=>item.id===id);
+    check(proposal,'Exact pending review unavailable before Keep');
+    const reviewId=String(proposal.preview.reviewId??proposal.id);
     const before=await api.getProposalDraft(id);
     const observed=await observePublicKeep(api,id,before,async()=>{
-      const strip=await until(()=>document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`),'review action strip');
-      (await until(()=>button('Keep All',strip)??button('Keep Remaining',strip),'normal Keep')).click();
-      await until(async()=>!(await api.listPendingProposals(conversationId)).some(value=>value.id===id),'native publication');
+      await until(async()=>{
+        if(!(await api.listPendingProposals(conversationId)).some(value=>value.id===id))return true;
+        const strip=document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
+        const candidate=strip&&(button('Keep All',strip)??button('Keep Remaining',strip));
+        const aggregate=candidate&&!candidate.closest('[inert], [hidden]')&&candidate.getClientRects().length?candidate:undefined;
+        const inline=Array.from(view.dom.querySelectorAll('button.cm-gn-proposal-keep')).filter(node=>!node.disabled&&!node.closest('[inert], [hidden]')&&node.getClientRects().length);
+        const control=reviewKeepControl(view.state.field(reviewProjection,false),reviewId,aggregate,inline);
+        if(control){control.click();await pause();}
+        return false;
+      },'normal exact-review Keep and native publication');
     },until);
     state.kept.push({id,...observed});return observed.draft;
   };

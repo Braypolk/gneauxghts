@@ -136,6 +136,22 @@ const browserSetup = `
     localBaseUrl:'http://127.0.0.1:1443/local/v1',reasoningEffort:'off',defaultVaultAccess:'none'});
   return true;`;
 
+// Navigation can invalidate a WebDriver completion after the first workspace
+// frame. Setup is idempotent; retries never admit a journey until it succeeds.
+export async function initializeResourceWorkspace({execute,output,phase,timeoutMs=45000,wait=waitUntil}) {
+  let attempt=0;
+  return wait(async()=>{
+    attempt++;
+    try {
+      assert.equal(await execute(browserSetup),true,'Browser setup did not acknowledge readiness');
+      return true;
+    } catch(error) {
+      output.lastInitializeError={phase,attempt,error:String(error).slice(0,700)};
+      return false;
+    }
+  },phase,timeoutMs);
+}
+
 const browserSelect = `
   const [id]=arguments;const api=window.__resourceApi;
   const pause=()=>new Promise(ok=>setTimeout(ok,50));
@@ -185,11 +201,14 @@ export async function runSharedResourceGate(options) {
       const source = options[`${lane}-source`], binary = options[`${lane}-binary`], laneRoot = join(options.root, lane);
       mkdirSync(laneRoot, { mode: 0o700 });
       const dataRoot = join(laneRoot, 'data');mkdirSync(dataRoot, { mode: 0o700 });
-      const env = cleanEnvironment(process.env.PATH, lane), port = lane === 'old' ? 1430 : 1442;
+      // Foreground presentation is explicit opt-in; only this exact flag is
+      // added to the clean child allowlist, never the parent environment.
+      const foreground = process.env.GNEAUXGHTS_E2E_FOREGROUND === '1';
+      const env = { ...cleanEnvironment(process.env.PATH, lane), ...(foreground ? { GNEAUXGHTS_E2E_FOREGROUND: '1' } : {}) }, port = lane === 'old' ? 1430 : 1442;
       const output = { lane, binarySha256: hash(readFileSync(binary)), status: 'running', journeys: [],
         frontendSourceSha256: frontendSourceDigest(source), lockfileSha256: hash(readFileSync(join(source,'pnpm-lock.yaml'))),
         frontendReceiptVerified: false, rendererRssBytes: null, allProcessRssBytes: null,
-        startupIpcCoverage: 'unknown', protocol: 'compatible', provider: 'fixture', profile: 'debug' };
+        startupIpcCoverage: 'unknown', protocol: 'compatible', provider: 'fixture', profile: 'debug', presentation: foreground ? 'explicit-foreground' : 'background' };
       report.lanes.push(output);
       let app, server, session, timer, rss = [], pinnedStart;
       const wd = createWebDriverRequest(4445, 60000);
@@ -216,7 +235,7 @@ export async function runSharedResourceGate(options) {
         await waitUntil(async()=>{try{return await execute(`if(!document.querySelector('[data-testid="workspace-pane"]'))return false;await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));return true;`)}catch{return false}},'usable workspace',45000,100);
         const end = performance.now();
         output.journeys.push({scenario:'startup',cache:'cold-process',startupKind:output.journeys.length?'restart':'initial',osCache:'uncontrolled',events:[{kind:'launch',atMs:0},{kind:'workspace_visible',atMs:end-start},...rss.filter(row=>row.atMs>=start&&row.atMs<=end).map(row=>({...row,atMs:row.atMs-start}))].sort((a,b)=>a.atMs-b.atMs),ipcCoverage:'unknown',providerCoverage:'unknown',pollingUncertaintyMs:100});
-        await execute(browserSetup);
+        await initializeResourceWorkspace({execute,output,phase:output.journeys.length===1?'initial browser setup':'restart browser setup'});
       };
       const stop = async signal => {
         clearInterval(timer);timer=undefined;
@@ -231,7 +250,7 @@ export async function runSharedResourceGate(options) {
         const id=await execute(`return(await window.__resourceApi.createConversation({title:'Shared resource conversation',provider:'local',model:'pi-native-fixture',reasoningEffort:'off',vaultAccess:'none'})).id;`);
         // Reload refreshes the normal controller after API-only synthetic setup.
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
-        await waitUntil(async()=>{try{return await execute(browserSetup)}catch{return false}},'normal reloaded workspace',30000);
+        await initializeResourceWorkspace({execute,output,phase:'normal reloaded workspace',timeoutMs:30000});
         await execute(browserSelect,[id]);
         for(const [scenario,prompt,cancel] of [['short','RESOURCE_HELLO',false],['followup','RESOURCE_FOLLOWUP',false],['cancel','RESOURCE_STOP',true]]){
           const firstRequest=fixture.requests.length;

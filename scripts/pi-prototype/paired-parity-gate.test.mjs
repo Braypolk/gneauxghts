@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initializeParityWorkspace} from './paired-parity-gate.mjs';
-import {reviewedTitlePlan,parityBrowserAction,observePublicKeep,verifyDuplicateKeep} from './paired-parity-browser.mjs';
+import {reviewedTitlePlan,parityBrowserAction,observePublicKeep,verifyDuplicateKeep,reviewKeepControl} from './paired-parity-browser.mjs';
 
 test('review title admission preserves read-only baseline and skips unchanged Save titles',()=>{
   assert.deepEqual(reviewedTitlePlan('Original baseline','Requested title',false),{
@@ -10,8 +10,37 @@ test('review title admission preserves read-only baseline and skips unchanged Sa
     reviewedTitle:'Requested title',draftTitleEditable:true,titleEditing:'editable',changeTitle:true});
   assert.equal(reviewedTitlePlan('Saved original','Saved original',true).changeTitle,false);
   assert.equal(reviewedTitlePlan('Saved original','Saved original',false).changeTitle,false);
-  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});return (${parityBrowserAction.toString()});`;
+  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});const reviewKeepControl=(${reviewKeepControl.toString()});return (${parityBrowserAction.toString()});`;
   assert.doesNotThrow(()=>new Function(script));
+});
+
+test('exact retained review chooses normal aggregate control, or enabled inline Keep without a strip',()=>{
+  const review={reviewId:'native-review-id',hunks:[{status:'kept'},{status:'modified'},{status:'pending'}]};
+  const aggregate={kind:'aggregate'},disabled={kind:'inline-disabled',disabled:true},inline={kind:'inline'};
+  assert.equal(reviewKeepControl(review,'native-review-id',aggregate,[disabled,inline]),aggregate);
+  assert.equal(reviewKeepControl(review,'native-review-id',undefined,[disabled,inline]),inline);
+  assert.throws(()=>reviewKeepControl(review,'another-proposal-review',aggregate,[inline]),/identity changed/);
+  assert.equal(reviewKeepControl({...review,hunks:[{status:'kept'},{status:'undone'}]},'native-review-id',aggregate,[inline]),undefined);
+});
+
+test('multiple normal inline decisions reach one final checkpoint and publication through observed UI Keep',async()=>{
+  const before={version:2,markdown:'Exactly edited Save body',title:'Details',path:'/generated/Details.md',decisions:[]};
+  const review={reviewId:'save-native-review',hunks:[{id:'a',status:'modified'},{id:'b',status:'pending'}]};
+  let commits=0,clicks=0,version=before.version;
+  const api={
+    async checkpointProposalDraft(id,draft){return {...draft,version:++version};},
+    async commitAgentProposal(id,markdown,expectedVersion){assert.equal(expectedVersion,version);commits++;return {status:'committed',committedMarkdown:markdown,noteId:'saved-note'};}
+  };
+  const observed=await observePublicKeep(api,'save-proposal',before,async()=>{
+    while(review.hunks.some(hunk=>['pending','modified'].includes(hunk.status))) {
+      const hunk=review.hunks.find(hunk=>['pending','modified'].includes(hunk.status));
+      const control={disabled:false,async click(){clicks++;hunk.status='kept';const final=await api.checkpointProposalDraft('save-proposal',{...before,decisions:structuredClone(review.hunks)});if(review.hunks.every(hunk=>hunk.status==='kept'))await api.commitAgentProposal('save-proposal',final.markdown,final.version);}};
+      await reviewKeepControl(review,'save-native-review',undefined,[control]).click();
+    }
+  },async check=>check());
+  assert.equal(clicks,2);assert.equal(commits,1);assert.equal(observed.draft.version,4);
+  assert.deepEqual(observed.draft.decisions.map(hunk=>hunk.status),['kept','kept']);
+  assert.equal(observed.receipt.committedMarkdown,before.markdown);
 });
 
 test('normal UI Keep observes the final acknowledged version without reading a resolved baseline draft',async()=>{
