@@ -11,68 +11,69 @@ acceptance gate is satisfied; unverified external prerequisites are not passes.
 
 ## Current checkpoint — 2026-10-16
 
-Product/native source remains frozen through `b52b1a6`. v23 desktop/exclusion
-and three iOS compiles passed. Latest diagnostic source capture **v26** is
-`92782d6d42e182791d1138b8c3dfcc0e96d9d5d5bc36b82c9a9b3895b25ce35c`;
-builds and corrected reruns are **pending**, with unchanged product runtime.
-The earlier v25 live executable compiled, SHA
-`d90197ffa8eeb63b30881d09ed65201b5a1b8c40c1d25b28558c74c31edbf9e6`;
-receipt `/private/tmp/pi-removal-final-20261015-v25/artifacts/ios-live-build.json`.
-Diagnostic/driver changes do not change frozen product runtime/native bytes;
-v22's same-product compiled/exclusion-tested artifact remains the scale pin.
-Compiler success is separate from native journey acceptance.
+Product lifecycle semantics remain frozen through `b52b1a6`; the next capture
+will explicitly add a native fixture close wrapper/registration delta. Diagnostic capture
+**v26**, canonical manifest
+`92782d6d42e182791d1138b8c3dfcc0e96d9d5d5bc36b82c9a9b3895b25ce35c`,
+now has an actual bounded **local iOS live PASS**: **ZlW6lU**, executable SHA
+`1a1c106c3057b0b36b084e5ca2b6c95d0556f6e5105f50b826cfb71b37a48c88`.
+[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-ZlW6lU/ios-live-gate.json)
+records four phases ending `complete/passed`, two normal Sends, three real
+inference POSTs (HTTP 200/completed) and `noReplay:true`. Normal citation,
+Save/edit acknowledgement, native background retention, exact pending restart,
+normal Keep/duplicate receipt and final committed restart passed without
+inference during citation/Save/background/restarts.
 
-Local-iOS **sxZ0Sp** (v24) and **kcG1jG** (v25) are **whole failed**. v24
-passed normal citation, Save/edit acknowledgement, native background retention
-and exact pending-review restart, then inspected detached editor DOM before Keep;
-`70ea085` corrected that diagnostic. v25 observed normal Keep, duplicate receipt
-and exact canonical body/title/path/hash read-back, then the driver's independent
-version assertion failed (`4 !== 3`) before final committed restart/full native
-effect proof. Normal Keep checkpoints resolved hunks, legitimately advancing the
-version. Prepared `b2a85e7` independently predicts the legitimate v3→v4
-resolved-hunk checkpoint **before** clicking; it does not accept arbitrary
-returned versions. Native verification of this correction remains pending.
-These partial observations do not establish a full live iOS pass. Earlier
-UGhOtn/QUeIgd failures remain retained. Exact receipts/pins are in the
-[current matrix](validation-matrix.md).
+The strict pre-click proof independently predicted draft v3→Keep v4 and full
+checkpoint SHA
+`274ab96ee86912267b421cf7bed212c76231fe6c425faa87be969a8a9e7b6a42`;
+exact body/title/path/editor hash were checked. Closed before/after native effect
+`pi-review-30:4`, publication count **one**, canonical relative path/identity/
+receipt/hash remained exact. The root preserved the closed 48-entry container at
+`/private/tmp/pi-owned-simulator-after-v26-live-20261015`, uninstalled only the
+owned bundle, and observed process 2504 exit 0. This is local-compatible live
+simulator evidence; hosted live remains user-deferred and physical touch/device/
+OS-pressure behavior remains unverified. Earlier UGhOtn, QUeIgd, sxZ0Sp and
+kcG1jG whole failures retain their historical scope, not a relabeled pass.
 
-The v23 expanded simulator run **yvWBO9**, launched with current diagnostic driver
-`a1a4509` and `PI_PROTOTYPE_IOS_FIXTURE_PORT=1446`, has a retained **failed**
-receipt: 12 first-phase recorded checks/22 provider requests, then the normal
-conversation-mount deadline. Its pinned executable remains
-`19ec12d3a503f2d588b9fd3d570503ea86c2598a3fa8f6457b41bd62fb8a9f8b`.
-Before owned replacement, 48 closed file entries were backed up at
-`/private/tmp/pi-owned-simulator-before-v23-expanded-20261015`. Six pure port-helper
-checks permit functional parallelism, not native acceptance or performance proof.
+All three v26 iOS variants compiled. Transcript SHA
+`07ad57cecc9335445288bcc47f879f30d48d9b038e52e80851909ba1e997ddc9`
+ran **xVPQ2S**, now **whole failed**, closed exit 1 at `awaiting-retained-conflict`:
+`Native restart did not close to portable state`. The
+[receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-xVPQ2S/ios-transcript-gate.json)
+and `failed-ui-report.json` remain retained. Bounded observations passed watcher
+Convert/Restore, normal Save/Keep plus duplicate committed receipt, exact pending
+review acknowledgement, uncertain Keep conflict and relocation-state checkpoint;
+**no actual move/restart happened**. Native `prepare_restart` deliberately rejects
+iOS `can_relaunch=false` before lifecycle admission; the probe incorrectly assumed
+desktop restart portability. The pending fixture-only `pi_probe_prepare_close`
+wrapper will call existing `AppLifecycle.prepare_restart` on a blocking worker,
+under fixture/interactive/expanded guards. Its native wrapper/registration bytes
+will change at the next capture; product lifecycle semantics remain unchanged.
+No production iOS restart change or forced portable marker is proposed.
 
-Prepared `0706ecc` performs normal Expand/chat reveal before acquiring the exact
-compact refinement pane. Latest v23 transcript **MlXAXC** is also **whole failed**
-at mounted creation-review decisions. Its watcher external edit/delete and
-normal Convert/Restore bounded check passed; `failed-ui-report.json` remains in
-the closed receipt root. The 46-entry closed container was backed up at
-`/private/tmp/pi-owned-simulator-before-v26-20261015` before owned uninstall.
-Prepared `8347d67` acknowledges exact connected body/title/reviewId before
-compact chat destroys the editor, including after relocation. Thirty focused
-checks, Svelte zero errors/warnings and root `check:e2e` passed; these are
-preparation, not a transcript/live/iOS acceptance pass. See the matrix for the
-retained MlXAXC receipt and prior failures.
+The v26 expanded executable compiled, SHA
+`bef89cdc07b78dc3a4e2316123ed3a2b26885b855cb919054742e30c2576916f`,
+but **never ran**. Shared expanded waits for the independently reviewed Keep/
+canonical-proof correction and a new capture. That diagnostic gap does not prove
+product corruption or a shared gate pass. Prior MlXAXC/yvWBO9 failures and v23/v22
+compiler/scale pins retain their own source and evidence scopes.
 
-Scale **v5** is still running against v22. The previously reported read-only
-memory projection of 1005 conversations/401 submissions is historical progress
-only; no fresh count or final durable seed/history/identity/provider accounting
-is established. Desktop expanded and owned churn are queued, **not started**,
-after v5 closure releases their owned ports. v4's operator-ended failed fetch
-receipt/421 requests remains incomplete and ineligible for guarded continuation.
+Scale **v5** remains running against v22. The root's last memory projection of
+476/1005 submissions is historical progress only; no fresh count or final durable
+seed/history/identity/provider accounting is established. Desktop expanded and
+owned churn remain queued, **not started**, after v5 closes and owned ports clear.
 Compilation, pure-test CPU and independent simulator work may overlap functional
-scale; no timing/RSS/resource comparison is claimed.
+scale; no timing/RSS/resource comparison is claimed. Earlier failed v3/v4 runs
+remain incomplete, not scale acceptance.
 
-The rebuilt manual `pi-prototype`-only desktop bundle SHA
+The rebuilt manual desktop bundle SHA
 `e6ef2bbe82f8966544ac521208c586782f6012833c99d891b470e25083fb64a2`
-was launched: normal CUA observed retained synthetic note, chat/citation/Stop
-history and configured local model, with **no new inference**. Earlier bounded
-live acceptance/original seal remain pinned to the closed `c74a53e` bundle SHA
-`9328ff2f…57b2`. Hosted live is user-deferred. Complete native/platform/scale/cost
-acceptance and the goal remain open; historical records preserve their own scopes.
+was launched with retained normal UI/local model observed and **no new inference**.
+Earlier bounded desktop live acceptance/original seal remains pinned to the
+closed `c74a53e` bundle SHA `9328ff2f…57b2`. Complete native/platform/scale/cost
+acceptance and the goal remain open. The [current matrix](validation-matrix.md)
+retains exact artifact/receipt scopes and the remaining queue.
 
 ## Current assignments
 
@@ -89,7 +90,7 @@ acceptance and the goal remain open; historical records preserve their own scope
 | 09 | Integrated research and adaptive compaction | 23 focused checks pass; native extended-work acceptance pending | `ticket09_prepare`; root native lease |
 | 10 | Integrated attachments and hosted web | Provider/native checks pass; native follow-on journeys pending | `ticket10_prepare` |
 | 11 | Integrated transcript export/conflicts and relocation | Complete synthetic desktop transcript/root-relocation gate passed; iOS/standalone Settings move pending | `ticket11_prepare`; root integration |
-| 12 | Native/iOS drivers and real SQLite fault probe implemented | Publication/crash slices and full iOS first phase pass; complete expanded/relaunch/iOS matrix pending | `ticket08_acceptance`, `ticket12_prepare`; root native lease |
+| 12 | Native/iOS drivers and real SQLite fault probe implemented | Publication/crash slices and bounded v26 local iOS live passed; complete expanded/relaunch/transcript matrix pending | `ticket08_acceptance`, `ticket12_prepare`; root native lease |
 | 13 | v23 desktop/exclusion and three iOS compiles passed; v17 publication/crash/transcript slices passed; latest expanded failed strict parent-summary proof; resource module IPC observed/full cost unproven | Complete removal-native/default/paired/resource evidence and verdict pending | `ticket13_prepare`, `ticket04_lifecycle`, `replacement_ledger`; root native lease |
 
 Independent implementation proceeds against agreed interfaces while acceptance
