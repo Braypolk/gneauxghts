@@ -174,15 +174,22 @@ export async function openSharedSavedOrigin(conversationId: string, messageId: s
   const open = await until(() => Array.from(card.querySelectorAll<HTMLButtonElement>('button')).find(node =>
     node.isConnected && !node.disabled && visibleProbeControl(node) && node.getAttribute('aria-label') === 'Open note'), 'visible originating message Open note control');
   open.click();
+  // A retained editor can already match the note while this ordinary Open
+  // operation is still restoring it. Wait for the clicked action's actual
+  // awaited completion before acquiring a view or selecting its origin link.
+  await until(() => open.getAttribute('aria-busy') === 'false' && !open.disabled,
+    'originating message Open note operation completed');
   const canonical = await invoke<SharedCanonicalNote>('read_note', { noteId: expected.noteId, path: expected.path });
   assert(canonical.noteId === expected.noteId && canonical.path === expected.path && canonical.title === expected.title && canonical.markdown === expected.markdown,
     'Opened saved canonical identity, body, title or path differs from exact final append');
   const savedEditor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
     .map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && visibleProbeControl(view.dom) &&
+      view.dom.closest('[data-testid="note-editor"]')?.getAttribute('aria-busy') === 'false' &&
       view.state.doc.toString() === expected.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === expected.title),
   'exact saved target mounted by normal Open note');
   const originPosition = savedEditor.state.doc.toString().indexOf('[[Chats/Pi/'); assert(originPosition >= 0, 'Saved origin link absent');
-  savedEditor.dispatch({ selection: { anchor: originPosition + 4 }, scrollIntoView: true }); savedEditor.focus();
+  savedEditor.dispatch({ selection: { anchor: originPosition + 4 }, scrollIntoView: true });
+  savedEditor.focus();
   // @codemirror/view/dist/index.js selects browser.mac for Mod bindings using
   // this exact Apple-mobile-or-Mac rule; iPhone/iPad platforms need Meta too.
   const appleMobile = /Apple Computer/.test(navigator.vendor) && (/Mobile\/\w+/.test(navigator.userAgent) || navigator.maxTouchPoints > 2);
@@ -192,21 +199,32 @@ export async function openSharedSavedOrigin(conversationId: string, messageId: s
   // there is no async window for unrelated navigation to satisfy this proof.
   const originalScrollIntoView = Element.prototype.scrollIntoView;
   let anchorScroll: ScrollIntoViewOptions | undefined;
+  let anchorTarget: HTMLElement | undefined;
+  let anchorPane: HTMLElement | undefined;
+  const exactVisibleOrigin = (target: HTMLElement | undefined, pane: HTMLElement | undefined) => {
+    const title = probePaneTitle(pane, 'chat');
+    return target?.getAttribute('data-chat-message-id') === messageId && target.isConnected && visibleProbeControl(target) &&
+      pane?.dataset.paneKind === 'chat' && !pane.closest('[hidden]') && visibleProbeControl(pane) &&
+      title?.value === conversation.title && visibleProbeControl(title) && target.closest('[data-testid="workspace-pane"]') === pane;
+  };
   Element.prototype.scrollIntoView = function (options?: boolean | ScrollIntoViewOptions) {
-    const pane = probeChatPane(conversation.title);
+    const target = this as HTMLElement;
+    const pane = target.closest<HTMLElement>('[data-testid="workspace-pane"]') ?? undefined;
     if (typeof options === 'object' && options.block === 'center' && ['auto', 'smooth', 'instant'].includes(options.behavior ?? '') &&
-      this.getAttribute('data-chat-message-id') === messageId && this.isConnected && visibleProbeControl(this as HTMLElement) &&
-      pane && this.closest('[data-testid="workspace-pane"]') === pane) anchorScroll = { ...options };
+      exactVisibleOrigin(target, pane)) {
+      anchorScroll = { ...options }; anchorTarget = target; anchorPane = pane;
+    }
     originalScrollIntoView.call(this, options);
   };
   try {
     savedEditor.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey, ctrlKey: !metaKey, bubbles: true, cancelable: true }));
-    await until(() => {
-      const pane = probeChatPane(conversation.title);
-      const target = document.querySelector<HTMLElement>(`[data-chat-message-id="${messageId}"]`);
-      return anchorScroll && pane && target?.isConnected && visibleProbeControl(target) && target.closest('[data-testid="workspace-pane"]') === pane;
-    }, 'Open in chat scrolls to exact originating message');
-  } finally { Element.prototype.scrollIntoView = originalScrollIntoView; }
+    // A split can display this conversation twice. Verify the exact element
+    // actually scrolled by the link, rather than the first retained chat card.
+    await until(() => anchorScroll && exactVisibleOrigin(anchorTarget, anchorPane),
+      'Open in chat scrolls to exact originating message');
+  } finally {
+    Element.prototype.scrollIntoView = originalScrollIntoView;
+  }
   return { noteId: canonical.noteId, path: canonical.path, title: canonical.title, conversationId, messageId, anchorScroll,
     keyboardPlatform: { platform: navigator.platform, appleMobile, metaKey, ctrlKey: !metaKey } };
 }

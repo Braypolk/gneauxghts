@@ -1,7 +1,7 @@
 import { render } from 'svelte/server';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { ChatMessage as ChatMessageModel } from '../types';
-import ChatMessage from './ChatMessage.svelte';
+import ChatMessage, { runMessageSaveAction } from './ChatMessage.svelte';
 
 import { message as chatMessage } from '../chatTestSupport';
 
@@ -12,7 +12,8 @@ function message(role: 'assistant' | 'user'): ChatMessageModel {
 function renderMessage(
   role: 'assistant' | 'user',
   overrides: Partial<ChatMessageModel> = {},
-  canDecidePermission = false
+  canDecidePermission = false,
+  onSaveMessage?: () => void | Promise<void>
 ) {
   const noop = () => undefined;
   return render(ChatMessage, {
@@ -27,6 +28,7 @@ function renderMessage(
       onRetry: noop,
       onBranch: noop,
       onCopyMessage: noop,
+      onSaveMessage,
       onCopySelection: noop,
       onCopyLink: noop,
       onSaveSelection: noop,
@@ -199,5 +201,50 @@ describe('ChatMessage text rendering', () => {
       body.indexOf('Prepare changes to “Budget”')
     );
     expect(body).toContain('Activity, 3 of 3 actions complete');
+  });
+});
+
+
+describe('normal message Save and Open note completion', () => {
+  function control() {
+    const attributes = new Map([['aria-busy', 'false']]);
+    return { disabled: false, isConnected: true,
+      setAttribute: (name: string, value: string) => { attributes.set(name, value); },
+      getAttribute: (name: string) => attributes.get(name),
+    };
+  }
+
+  it('renders the ordinary saved action with an accessible completion state', () => {
+    const body = renderMessage('assistant', { savedNote: { noteId: 'saved', path: '/vault/Saved.md' } }, false, vi.fn());
+    expect(body).toMatch(/<button[^>]*aria-label="Open note"[^>]*aria-busy="false"/);
+    expect(body).not.toMatch(/<button[^>]*aria-label="Open note"[^>]*disabled/);
+  });
+
+  it('keeps the clicked action busy through awaited opening, blocks duplicates and completes after unmount', async () => {
+    const button = control();
+    let complete!: () => void;
+    const save = vi.fn(() => new Promise<void>(resolve => { complete = resolve; }));
+    const pending = runMessageSaveAction(button as unknown as HTMLButtonElement, save);
+    expect(button.disabled).toBe(true);
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    await runMessageSaveAction(button as unknown as HTMLButtonElement, save);
+    expect(save).toHaveBeenCalledOnce();
+    button.isConnected = false;
+    expect(button.getAttribute('aria-busy')).toBe('true');
+    complete();
+    await pending;
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-busy')).toBe('false');
+  });
+
+  it('clears busy on failure, preserves the caller error and permits a later action', async () => {
+    const button = control();
+    const error = new Error('Opening failed');
+    const save = vi.fn().mockRejectedValueOnce(error).mockResolvedValueOnce(undefined);
+    await expect(runMessageSaveAction(button as unknown as HTMLButtonElement, save)).rejects.toBe(error);
+    expect(button.disabled).toBe(false);
+    expect(button.getAttribute('aria-busy')).toBe('false');
+    await runMessageSaveAction(button as unknown as HTMLButtonElement, save);
+    expect(save).toHaveBeenCalledTimes(2);
   });
 });

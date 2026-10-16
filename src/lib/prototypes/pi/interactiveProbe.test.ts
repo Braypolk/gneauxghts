@@ -5,6 +5,7 @@ import { EditorState } from '@codemirror/state';
 import { documentReviewField, reviewProjection, setDocumentReview } from '$lib/features/proposals/reviewExtension';
 import type { ChatProposalDraft } from '$lib/features/chat/types';
 import type { SharedKeepPlan } from './sharedKeepProof';
+import { createMarkdownLanguage } from '$lib/features/notepad/markdown/markdownLanguage';
 
 const mocks = vi.hoisted(() => ({ invoke: vi.fn(), conversation: vi.fn(), failures: vi.fn(), state: vi.fn(), pending: vi.fn(), draft: vi.fn(), commit: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
@@ -182,37 +183,60 @@ describe('normal saved Open note restores compact Keep editor before origin navi
   beforeEach(() => { vi.resetAllMocks(); vi.useFakeTimers(); });
   afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
-  function savedOriginWorkspace(fault?: 'inert' | 'identity' | 'path' | 'body' | 'title' | 'mountedBody' | 'noop' | 'wrongAnchor' | 'wrongScroll', retainedSplit = false) {
+  function savedOriginWorkspace(fault?: 'inert' | 'identity' | 'path' | 'body' | 'title' | 'mountedBody' | 'noop' | 'wrongAnchor' | 'wrongScroll' | 'pendingOpen' | 'stuckOpen' | 'wrongConversation' | 'wrongPaneKind', retainedSplit = false, twoPanes = false) {
     const workspace = compactWorkspace();
     const expected = { noteId: 'saved-note', path: '/vault/Saved.md', title: 'Saved', markdown: 'Final appended answer.\n\n[[Chats/Pi/a/Origin#^msg_answer|Open in chat]]' };
-    const state = { mounted: false, originOpened: false };
+    const state = { mounted: false, originOpened: false, navigationSettled: false };
     const title = { value: expected.title };
     const pane = { querySelector: () => title };
-    const visible = { isConnected: true, getClientRects: () => [1], closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : null };
+    const editorRoot = { getAttribute: () => 'false' };
+    const visible = { isConnected: true, getClientRects: () => [1], closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : selector === '[data-testid="note-editor"]' ? editorRoot : null };
     const normalScroll = vi.fn();
     class MessageElement {
       isConnected = true;
-      constructor(readonly id: string) {}
+      constructor(readonly id: string, readonly owner = workspace.pane) {}
       getAttribute(name: string) { return name === 'data-chat-message-id' ? this.id : null; }
       getClientRects() { return [1]; }
-      closest(selector: string) { return selector === '[data-testid="workspace-pane"]' ? workspace.pane : null; }
+      closest(selector: string) { return selector === '[data-testid="workspace-pane"]' ? this.owner : null; }
       querySelectorAll() { return [open]; }
       scrollIntoView(options?: boolean | ScrollIntoViewOptions) { normalScroll(this.id, options); }
     }
     vi.stubGlobal('Element', MessageElement);
     const card = new MessageElement('answer');
     const wrongCard = new MessageElement('other-answer');
+    const destinationTitle = { ...title, value: fault === 'wrongConversation' ? 'Other conversation' : 'Pi interactive A',
+      closest: () => null, getClientRects: () => [1] };
+    const destinationPane = { ...workspace.pane, dataset: { paneId: 'origin-editor', paneKind: fault === 'wrongPaneKind' ? 'editor' : 'chat' },
+      querySelector: (selector: string) => selector === '[aria-label="Chat title"]' ? destinationTitle : null };
+    const destinationCard = new MessageElement('answer', destinationPane);
     const keyboard = vi.fn(() => {
+      if ((fault === 'pendingOpen' || fault === 'stuckOpen') && !state.navigationSettled) return;
       if (fault === 'noop') return;
       state.mounted = false; state.originOpened = true;
-      (fault === 'wrongAnchor' ? wrongCard : card).scrollIntoView({ behavior: 'auto', block: fault === 'wrongScroll' ? 'nearest' : 'center' });
+      (fault === 'wrongAnchor' ? wrongCard : twoPanes ? destinationCard : card).scrollIntoView({ behavior: 'auto', block: fault === 'wrongScroll' ? 'nearest' : 'center' });
     });
-    const view = { dom: visible, state: { doc: { toString: () => fault === 'mountedBody' ? 'Wrong note with Open in chat' : expected.markdown } },
-      dispatch: vi.fn(), focus: vi.fn(), contentDOM: { dispatchEvent: keyboard } };
+    const view = { dom: visible, state: EditorState.create({
+      doc: fault === 'mountedBody' ? 'Wrong note with Open in chat' : expected.markdown,
+      extensions: [createMarkdownLanguage()],
+    }),
+      dispatch: vi.fn((transaction: { selection: { anchor: number } }) => { view.state = view.state.update(transaction).state; }),
+      focus: vi.fn(), contentDOM: { dispatchEvent: keyboard } };
     vi.spyOn(EditorView, 'findFromDOM').mockReturnValue(view as unknown as EditorView);
-    const open = { ...visible, disabled: false, getAttribute: () => 'Open note',
+    let openBusy = 'false';
+    const open = { ...visible, disabled: false, getAttribute: (name: string) => name === 'aria-label' ? 'Open note' : name === 'aria-busy' ? openBusy : null,
       closest: () => fault === 'inert' ? {} : null,
-      click: vi.fn(() => { expect(state.mounted).toBe(false); state.mounted = true; }) };
+      click: vi.fn(() => {
+        expect(state.mounted).toBe(false); state.mounted = true;
+        // Controlled pending normal Open note: an already matching retained
+        // editor is observable before navigation restores its saved cursor.
+        if (fault === 'pendingOpen' || fault === 'stuckOpen') {
+          openBusy = 'true'; open.disabled = true;
+          if (fault === 'pendingOpen') setTimeout(() => {
+            view.state = view.state.update({ selection: { anchor: 0 } }).state; state.navigationSettled = true;
+            openBusy = 'false'; open.disabled = false;
+          }, 120);
+        }
+      }) };
     const foreignOpen = { ...open, click: vi.fn() };
     const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
     const item = { textContent: 'Pi interactive A', click: vi.fn() };
@@ -221,13 +245,14 @@ describe('normal saved Open note restores compact Keep editor before origin navi
     Object.assign(document, {
       querySelector: (selector: string) => selector === '[data-chat-message-id="answer"]' ? state.mounted && !retainedSplit ? undefined : card : {},
       querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' ? state.mounted ? [view.dom] : []
+        : selector === '[data-testid="workspace-pane"][data-pane-kind="chat"]' && twoPanes && state.originOpened ? [workspace.pane, destinationPane]
         : selector === 'button' ? [foreignOpen] : queryAll(selector),
     });
     vi.stubGlobal('KeyboardEvent', class { constructor(readonly type: string, readonly options: unknown) {} });
     vi.stubGlobal('navigator', { platform: 'MacIntel', vendor: 'Apple Computer, Inc.', userAgent: 'Mozilla/5.0 (Macintosh) Safari/605.1.15', maxTouchPoints: 0 });
     mocks.conversation.mockResolvedValue({ title: 'Pi interactive A', messages: [{ id: 'answer', savedNote: { noteId: fault === 'identity' ? 'foreign-note' : expected.noteId, path: fault === 'path' ? '/vault/Other.md' : expected.path } }] });
     mocks.invoke.mockResolvedValue({ ...expected, ...(fault === 'body' ? { markdown: 'Wrong canonical body' } : fault === 'title' ? { title: 'Wrong title' } : {}) });
-    return { expected, state, open, foreignOpen, view, keyboard, normalScroll, originalScroll: MessageElement.prototype.scrollIntoView };
+    return { expected, state, open, foreignOpen, view, keyboard, card, destinationCard, destinationPane, normalScroll, originalScroll: MessageElement.prototype.scrollIntoView };
   }
 
   async function navigate(expected: Parameters<typeof openSharedSavedOrigin>[2]) {
@@ -295,6 +320,49 @@ describe('normal saved Open note restores compact Keep editor before origin navi
     expect(workspace.keyboard).toHaveBeenCalledOnce();
     expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
     if (fault === 'wrongAnchor') expect(workspace.normalScroll).toHaveBeenCalledExactlyOnceWith('other-answer', { behavior: 'auto', block: 'center' });
+  });
+
+  it('verifies the exact newly scrolled destination when a first pane retains the same conversation and message', async () => {
+    const workspace = savedOriginWorkspace(undefined, true, true);
+    expect(await navigate(workspace.expected)).toMatchObject({ value: { messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' } } });
+    expect(document.querySelector('[data-chat-message-id="answer"]')).toBe(workspace.card);
+    expect(workspace.destinationCard).not.toBe(workspace.card);
+    expect(workspace.destinationCard.closest('[data-testid="workspace-pane"]')).toBe(workspace.destinationPane);
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(workspace.normalScroll).toHaveBeenCalledExactlyOnceWith('answer', { behavior: 'auto', block: 'center' });
+  });
+
+  it.each(['wrongConversation', 'wrongPaneKind'] as const)('rejects an exact message scroll in a %s destination despite an already visible correct chat', async fault => {
+    const workspace = savedOriginWorkspace(fault, true, true);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: Open in chat scrolls to exact originating message' });
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
+  });
+
+  it('waits for a pending normal Open note before selecting an already matching retained editor and sending one Mod-Enter', async () => {
+    const workspace = savedOriginWorkspace('pendingOpen', true);
+    const pending = openSharedSavedOrigin('a', 'answer', workspace.expected);
+    await vi.advanceTimersByTimeAsync(119);
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+    expect(workspace.open.disabled).toBe(true);
+    expect(workspace.view.state.doc.toString()).toBe(workspace.expected.markdown);
+    expect(workspace.view.dispatch).not.toHaveBeenCalled();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
+    await vi.runAllTimersAsync();
+    expect(await pending).toMatchObject({ messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' } });
+    expect(workspace.state.navigationSettled).toBe(true);
+    expect(workspace.view.state.selection.main.head).toBe(workspace.expected.markdown.indexOf('[[Chats/Pi/') + 4);
+    expect(workspace.view.dispatch).toHaveBeenCalledOnce();
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+  });
+
+  it('times out an unfinished Open note without selecting the retained editor or retrying navigation', async () => {
+    const workspace = savedOriginWorkspace('stuckOpen', true);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: originating message Open note operation completed' });
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+    expect(workspace.view.dispatch).not.toHaveBeenCalled();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
   });
 
   const keyboardPlatforms = [

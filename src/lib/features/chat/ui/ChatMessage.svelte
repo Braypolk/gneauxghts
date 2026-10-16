@@ -1,3 +1,19 @@
+<script module lang="ts">
+  export async function runMessageSaveAction(control: HTMLButtonElement, save: () => void | Promise<void>) {
+    if (control.disabled) return;
+    control.disabled = true;
+    control.setAttribute('aria-busy', 'true');
+    try {
+      await save();
+    } finally {
+      // Opening a note can unmount this message. Complete the same control's
+      // accessible state even when its component no longer owns a DOM update.
+      control.setAttribute('aria-busy', 'false');
+      control.disabled = false;
+    }
+  }
+</script>
+
 <script lang="ts">
   import {
     Brain,
@@ -376,7 +392,7 @@
       </button>
     {/if}
     {#if message.role === 'assistant' && message.status === 'completed' && message.content && onSaveMessage}
-      <button type="button" class="chat-message-action" aria-label={message.savedNote ? "Open note" : "Save to note"} title={message.savedNote ? "Open note" : "Save to note"} onclick={() => void onSaveMessage?.()}>
+      <button type="button" class="chat-message-action" aria-label={message.savedNote ? "Open note" : "Save to note"} title={message.savedNote ? "Open note" : "Save to note"} aria-busy="false" onclick={(event) => void runMessageSaveAction(event.currentTarget, onSaveMessage!)}>
         <FileInput class="h-3.5 w-3.5" />
       </button>
       {#if message.savedNote && onSaveAnotherCopy}
