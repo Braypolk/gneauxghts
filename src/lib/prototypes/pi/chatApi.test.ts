@@ -1,6 +1,6 @@
 import { expect, it, vi } from 'vitest';
 import type { ChatApi } from '$lib/features/chat/api';
-import type { ChatSettings } from '$lib/features/chat/types';
+import type { AgentEvent, ChatSettings } from '$lib/features/chat/types';
 import type { MemoryStorage } from '@earendil-works/pi-durable/storage/memory';
 import type { SubmissionId } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
@@ -9,7 +9,7 @@ import { createPiChatApi } from './chatApi';
 import {createChatControllerMachineState,transitionChatControllerMachine} from '$lib/features/chat/machines/controllerMachine';
 import { CHAT_AGENT_EVENT_SCHEMA_VERSION, initialAgentEventState, reduceAgentEvent } from '$lib/features/chat/agentEvents';
 
-const probe=vi.hoisted(()=>({store:undefined as unknown as MemoryStorage,histories:[] as Array<readonly Message[]>,watches:0,slow:false,failure:'',whole:false,research:false,finish:()=>{},holdSubmit:undefined as (()=>Promise<void>)|undefined,observedPartial:undefined as (()=>void)|undefined,read:undefined as (()=>Promise<void>)|undefined,afterEvidenceSnapshot:undefined as (()=>Promise<void>)|undefined,changeTypes:[] as string[]}));
+const probe=vi.hoisted(()=>({store:undefined as unknown as MemoryStorage,histories:[] as Array<readonly Message[]>,watches:0,slow:false,failure:'',whole:false,research:false,readEvidence:false,finish:()=>{},holdSubmit:undefined as (()=>Promise<void>)|undefined,observedPartial:undefined as (()=>void)|undefined,read:undefined as (()=>Promise<void>)|undefined,afterEvidenceSnapshot:undefined as (()=>Promise<void>)|undefined,beforeMessageEndBatch:undefined as (()=>Promise<void>)|undefined,beforeEvidenceDelivery:undefined as (()=>Promise<void>)|undefined,evidenceWatching:undefined as (()=>void)|undefined,sourceValidation:undefined as ((access:string)=>Promise<void>)|undefined,changeTypes:[] as string[]}));
 const researchSource={kind:'passage',noteId:'n1',title:'One',excerpt:'Canonical worker evidence',passage:{id:'passage-1',noteId:'n1',revisions:[]}};
 vi.mock('@earendil-works/pi-durable',async()=>{
   const actual=await vi.importActual<typeof import('@earendil-works/pi-durable')>('@earendil-works/pi-durable');
@@ -17,23 +17,26 @@ vi.mock('@earendil-works/pi-durable',async()=>{
     const harness=await actual.Harness.open(...args);const read=harness.conversation.bind(harness);
     const snapshot=harness.snapshot.bind(harness);
     harness.snapshot=(async(...input:Parameters<typeof harness.snapshot>)=>{const value=await snapshot(...input);if(input[0].definition.kind==='gneauxghts.pi.evidence-run')await probe.afterEvidenceSnapshot?.();return value;}) as typeof harness.snapshot;
+    const watchDoc=harness.watchDoc.bind(harness);
+    harness.watchDoc=(async(...input:Parameters<typeof harness.watchDoc>)=>{const watcher=await watchDoc(...input);if(watcher&&input[0].definition.kind==='gneauxghts.pi.evidence'){const start=watcher.start.bind(watcher);watcher.start=listener=>start(async(value,ops,context)=>{if(typeof value?.readsJson==='string'&&value.readsJson!=='[]')await probe.beforeEvidenceDelivery?.();await listener(value,ops,context);});probe.evidenceWatching?.();}return watcher;}) as typeof harness.watchDoc;
     harness.subscribeCommits(publication=>{if(!probe.observedPartial)return;for(const change of publication.changes)if(change.type==='document'&&change.record.kind==='pi.live'){const value=change.value as {generation?:{message?:{content?:Array<{type:string;text?:string}>}}}|null;if(value?.generation?.message?.content?.some(block=>block.type==='text'&&block.text))probe.observedPartial();}});
     harness.conversation=async(...input)=>{const conversation=await read(...input);if(!conversation)return conversation;const submit=conversation.submit.bind(conversation);conversation.submit=async(...input)=>{const result=await submit(...input);await probe.holdSubmit?.();return result;};return conversation;};return harness;
   }},watchEvents:async(...args:Parameters<typeof actual.watchEvents>)=>{
     const stream=await actual.watchEvents(...args);probe.watches++;const stop=stream.stop.bind(stream);let stopped=false;
-    stream.stop=async()=>{if(!stopped){stopped=true;probe.watches--;}return stop();};const start=stream.start.bind(stream);stream.start=listener=>start(async(events,context)=>{for(const event of events){probe.changeTypes.push(event.type);if(event.type==='message_update')probe.changeTypes.push(...event.changes.map(change=>change.type));}await listener(events,context);});return stream;
+    stream.stop=async()=>{if(!stopped){stopped=true;probe.watches--;}return stop();};const start=stream.start.bind(stream);stream.start=listener=>start(async(events,context)=>{for(const event of events){probe.changeTypes.push(event.type);if(event.type==='message_update')probe.changeTypes.push(...event.changes.map(change=>change.type));}if(events.some(event=>event.type==='message_end'))await probe.beforeMessageEndBatch?.();await listener(events,context);});return stream;
   }};
 });
 vi.mock('@tauri-apps/api/event',()=>({listen:async()=>()=>{}}));
-vi.mock('@tauri-apps/api/core',()=>({invoke:async(command:string,args?:{paths?:string[]})=>{
+vi.mock('@tauri-apps/api/core',()=>({invoke:async(command:string,args?:{paths?:string[];sources?:unknown[];access?:string})=>{
   if(command==='pi_probe_config')return {fixture:true};
   if(command==='pi_bind_vault_location')return;
   if(command==='pi_resolve_locations')return args?.paths;
   if(command==='pi_transcript_status')return null;
   if(command==='pi_publish_transcript')return {projectionPath:'Chats/Pi/Origin.md',detached:false,conflict:null,warning:null};
   if(command==='pi_prepare_evidence')return {sessionId:crypto.randomUUID(),context:[],selectedNoteIds:[],grants:[],temporal:{referenceInstant:'2026-10-15T12:00:00Z',timeZone:'UTC',dateTimeContext:null,referenceLabel:'2026-10-15 UTC',prompt:'Current time: 2026-10-15T12:00:00Z'}};
-  if(command==='pi_validate_evidence'||command==='pi_validate_sources'||command==='pi_release_evidence')return;
-  if(command==='pi_evidence_operation'){await probe.read?.();return probe.research?{payload:{items:[{evidenceId:'passage-1',text:'Canonical worker evidence'}]},sources:[researchSource]}:{payload:{items:[]},sources:[]};}
+  if(command==='pi_validate_sources'){if(args?.sources?.length)await probe.sourceValidation?.(args.access!);return;}
+  if(command==='pi_validate_evidence'||command==='pi_release_evidence')return;
+  if(command==='pi_evidence_operation'){await probe.read?.();return probe.research||probe.readEvidence?{payload:{items:[{evidenceId:'passage-1',text:'Canonical worker evidence'}]},sources:[researchSource]}:{payload:{items:[]},sources:[]};}
   if(command==='pi_begin_research')return {scope:{note_ids:['n1']},referenceInstant:'now',discoveryHints:[],scopeNoteCount:1};
   if(command==='pi_finish_research')return {payload:{items:[{evidenceId:'passage-1',text:'Canonical worker evidence'}],gaps:[]},sources:[researchSource]};
   if(command==='pi_release_research')return;
@@ -207,17 +210,95 @@ it('delivers successful parent research activity live and after reopening throug
   const native={getSettings:async()=>settings} as ChatApi;const api=createPiChatApi(native);
   try {
     const conversation=await api.createConversation();let state=initialAgentEventState();const versions:number[]=[];
-    const offEvent=await api.on('chat://agent-event',event=>{state=reduceAgentEvent(state,event);if(event.schemaVersion!==undefined)versions.push(event.schemaVersion);});
-    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
-    await api.sendMessage({conversationId:conversation.id,content:'Research a focused gap'});await completed.promise;offEvent();offComplete();
+    let controller=createChatControllerMachineState();controller=transitionChatControllerMachine(controller,{type:'startLoading',conversationId:conversation.id,operationId:1});controller=transitionChatControllerMachine(controller,{type:'selectionLoaded',operationId:1,conversation,proposals:[],capabilities:null});controller=transitionChatControllerMachine(controller,{type:'submit',conversationId:conversation.id,operationId:2});
+    const offStart=await api.on('chat://started',payload=>{controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://started',payload,now:Date.now()});});
+    const offEvent=await api.on('chat://agent-event',payload=>{state=reduceAgentEvent(state,payload);if(payload.schemaVersion!==undefined)versions.push(payload.schemaVersion);controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://agent-event',payload,now:Date.now()});});
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',payload=>{controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://completed',payload,now:Date.now()});completed.resolve();});
+    const receipt=await api.sendMessage({conversationId:conversation.id,content:'Research a focused gap'});controller=transitionChatControllerMachine(controller,{type:'receipt',receipt,operationId:2,includeUser:true});await completed.promise;offEvent();offComplete();offStart();
     expect(versions.length).toBeGreaterThan(0);expect(new Set(versions)).toEqual(new Set([CHAT_AGENT_EVENT_SCHEMA_VERSION]));
     expect(state.parts.filter(part=>part.type==='tool')).toHaveLength(1);expect(state.parts.find(part=>part.type==='tool')).toMatchObject({name:'research_notes',status:'success'});
     const projected=await api.getConversation(conversation.id);const tools=projected.messages.at(-1)!.parts.filter(part=>part.type==='tool');
     expect(tools).toHaveLength(1);expect(tools[0]).toMatchObject({name:'research_notes',status:'success',readSources:[{noteId:'n1',label:'One',excerpt:'Canonical worker evidence'}]});
+    expect(state.parts.filter(part=>part.type==='tool')).toEqual(tools);
+    expect(controller.conversation?.messages.at(-1)?.parts.filter(part=>part.type==='tool')).toEqual(tools);
     await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();const reopened=createPiChatApi(native);
     try {expect((await reopened.getConversation(conversation.id)).messages.at(-1)!.parts.filter(part=>part.type==='tool')).toEqual(tools);}
     finally {await (reopened as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
   } finally {probe.research=false;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('settles canonical read Activity before completion even when both live watches lag behind the committed read',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.readEvidence=true;
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'full',atlasVisibility:'hidden'};
+  const release=Promise.withResolvers<void>(),watching=Promise.withResolvers<void>();probe.read=()=>watching.promise;probe.evidenceWatching=()=>watching.resolve();probe.beforeMessageEndBatch=()=>release.promise;probe.beforeEvidenceDelivery=()=>release.promise;
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);
+  try {
+    const conversation=await api.createConversation();let controller=createChatControllerMachineState();controller=transitionChatControllerMachine(controller,{type:'startLoading',conversationId:conversation.id,operationId:1});controller=transitionChatControllerMachine(controller,{type:'selectionLoaded',operationId:1,conversation,proposals:[],capabilities:null});controller=transitionChatControllerMachine(controller,{type:'submit',conversationId:conversation.id,operationId:2});
+    const offStart=await api.on('chat://started',payload=>{controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://started',payload,now:Date.now()});});
+    const offEvent=await api.on('chat://agent-event',payload=>{controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://agent-event',payload,now:Date.now()});});
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',payload=>{controller=transitionChatControllerMachine(controller,{type:'backend',channel:'chat://completed',payload,now:Date.now()});completed.resolve();});
+    const receipt=await api.sendMessage({conversationId:conversation.id,content:'Read a note with slow live observers'});controller=transitionChatControllerMachine(controller,{type:'receipt',receipt,operationId:2,includeUser:true});await completed.promise;
+    const canonical=(await api.getConversation(conversation.id)).messages.at(-1)!;
+    expect(canonical.parts.find(part=>part.type==='tool')).toMatchObject({title:'Read note evidence',status:'success',readSources:[{noteId:'n1'}]});
+    expect(controller.conversation?.messages.at(-1)?.parts.filter(part=>part.type==='tool')).toEqual(canonical.parts.filter(part=>part.type==='tool'));
+    const terminalParts=controller.conversation?.messages.at(-1)?.parts;release.resolve();await new Promise(resolve=>setTimeout(resolve,0));
+    expect(controller.conversation?.messages.at(-1)?.parts).toEqual(terminalParts);offStart();offEvent();offComplete();
+  } finally {release.resolve();probe.read=undefined;probe.readEvidence=false;probe.beforeMessageEndBatch=undefined;probe.beforeEvidenceDelivery=undefined;probe.evidenceWatching=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it.each(['origin snapshot','native validation'] as const)('does not publish terminal read links after access is revoked during %s',async boundary=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.readEvidence=true;
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'full',atlasVisibility:'hidden'};
+  const release=Promise.withResolvers<void>(),watching=Promise.withResolvers<void>();probe.read=()=>watching.promise;probe.evidenceWatching=()=>watching.resolve();probe.beforeMessageEndBatch=()=>release.promise;probe.beforeEvidenceDelivery=()=>release.promise;
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);
+  try {
+    const conversation=await api.createConversation();let validations=0,revoked=false;
+    const revoke=async()=>{await api.setConversationVaultAccess(conversation.id,'none');revoked=true;};
+    probe.sourceValidation=async access=>{validations++;if(boundary==='native validation'&&validations===3)await revoke();if(access==='none')throw new Error('Evidence or access changed; read again');};
+    if(boundary==='origin snapshot')probe.afterEvidenceSnapshot=async()=>{if(validations!==2)return;probe.afterEvidenceSnapshot=undefined;await revoke();};
+    const events:AgentEvent[]=[];const offEvent=await api.on('chat://agent-event',payload=>events.push(payload.event));
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    await api.sendMessage({conversationId:conversation.id,content:'Revoke access at terminal read admission'});await completed.promise;
+    expect(revoked).toBe(true);expect(events.filter(event=>event.type==='toolCallUpdated'&&event.readSources?.length)).toEqual([]);
+    release.resolve();await new Promise(resolve=>setTimeout(resolve,0));expect(events.filter(event=>event.type==='toolCallUpdated'&&event.readSources?.length)).toEqual([]);offEvent();offComplete();
+  } finally {release.resolve();probe.read=undefined;probe.readEvidence=false;probe.beforeMessageEndBatch=undefined;probe.beforeEvidenceDelivery=undefined;probe.evidenceWatching=undefined;probe.sourceValidation=undefined;probe.afterEvidenceSnapshot=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('keeps terminal read admission independent of another conversation access change',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.readEvidence=true;
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'full',atlasVisibility:'hidden'};
+  const release=Promise.withResolvers<void>(),watching=Promise.withResolvers<void>();probe.read=()=>watching.promise;probe.evidenceWatching=()=>watching.resolve();probe.beforeMessageEndBatch=()=>release.promise;probe.beforeEvidenceDelivery=()=>release.promise;
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);
+  try {
+    const conversation=await api.createConversation(),other=await api.createConversation();let validations=0;
+    probe.sourceValidation=async()=>{if(++validations===3)await api.setConversationVaultAccess(other.id,'none');};
+    const events:AgentEvent[]=[];const offEvent=await api.on('chat://agent-event',payload=>events.push(payload.event));
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    await api.sendMessage({conversationId:conversation.id,content:'Keep this read while another conversation changes access'});await completed.promise;
+    expect(events.filter(event=>event.type==='toolCallUpdated'&&event.readSources?.length)).toMatchObject([{callId:'read-during-projection',readSources:[{noteId:'n1'}]}]);offEvent();offComplete();
+  } finally {release.resolve();probe.read=undefined;probe.readEvidence=false;probe.beforeMessageEndBatch=undefined;probe.beforeEvidenceDelivery=undefined;probe.evidenceWatching=undefined;probe.sourceValidation=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
+});
+
+it('does not admit cached access while a conversation access change is still committing',async()=>{
+  const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.readEvidence=true;
+  const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'full',atlasVisibility:'hidden'};
+  const release=Promise.withResolvers<void>(),watching=Promise.withResolvers<void>(),commitReached=Promise.withResolvers<void>(),releaseCommit=Promise.withResolvers<void>(),validationReached=Promise.withResolvers<void>(),releaseValidation=Promise.withResolvers<void>();
+  probe.read=()=>watching.promise;probe.evidenceWatching=()=>watching.resolve();probe.beforeMessageEndBatch=()=>release.promise;probe.beforeEvidenceDelivery=()=>release.promise;
+  const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);let mutation:ReturnType<ChatApi['setConversationVaultAccess']>|undefined;
+  try {
+    const conversation=await api.createConversation();let validations=0;
+    probe.sourceValidation=async access=>{if(++validations===3){expect(access).toBe('full');validationReached.resolve();await releaseValidation.promise;}if(access==='none')throw new Error('Evidence or access changed; read again');};
+    probe.afterEvidenceSnapshot=async()=>{if(validations!==2)return;probe.afterEvidenceSnapshot=undefined;
+      const commit=probe.store.commit.bind(probe.store);let hold=true;
+      probe.store.commit=async(...args)=>{if(hold){hold=false;commitReached.resolve();await releaseCommit.promise;}return commit(...args);};
+      mutation=api.setConversationVaultAccess(conversation.id,'none');await commitReached.promise;
+    };
+    const events:AgentEvent[]=[];const offEvent=await api.on('chat://agent-event',payload=>events.push(payload.event));
+    const completed=Promise.withResolvers<void>();const offComplete=await api.on('chat://completed',()=>completed.resolve());
+    await api.sendMessage({conversationId:conversation.id,content:'Start read admission behind an unsettled access change'});
+    await Promise.race([completed.promise,validationReached.promise]);releaseCommit.resolve();await mutation;releaseValidation.resolve();await completed.promise;
+    expect(mutation).toBeDefined();expect(events.filter(event=>event.type==='toolCallUpdated'&&event.readSources?.length)).toEqual([]);offEvent();offComplete();
+  } finally {release.resolve();releaseCommit.resolve();releaseValidation.resolve();probe.read=undefined;probe.readEvidence=false;probe.beforeMessageEndBatch=undefined;probe.beforeEvidenceDelivery=undefined;probe.evidenceWatching=undefined;probe.sourceValidation=undefined;probe.afterEvidenceSnapshot=undefined;await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
 });
 
 it('reconciles terminal activity when its process owner retires during the evidence-origin snapshot',async()=>{

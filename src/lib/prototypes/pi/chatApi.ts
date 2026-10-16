@@ -63,7 +63,7 @@ function message(id:string,conversationId:string,role:ChatMessage['role'],conten
     agentRunId:null,agentSequence:0,agentEventCreatedAtMillis:0,agentRetiredRunIds:[]};
 }
 
-function projectTurnEvents(entries:readonly EntryRecord[],submissionId:number,conversationId:string,timestamp:number,summaryUsage?:Partial<UsageCounters>,aggregate=emptyUsageCounters()):ChatAgentEventEnvelope[] {
+function projectTurnEvents(entries:readonly EntryRecord[],submissionId:number,conversationId:string,timestamp:number,summaryUsage?:Partial<UsageCounters>,aggregate=emptyUsageCounters(),reads:readonly AgentEvent[]=[]):ChatAgentEventEnvelope[] {
   const events:ChatAgentEventEnvelope[]=[];
   const append=(event:AgentEvent,createdAtMillis=timestamp)=>events.push({schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,requestId:`pi-request-${submissionId}`,conversationId,messageId:`pi-assistant-${submissionId}`,runId:`pi-run-${submissionId}`,sequence:events.length+1,createdAtMillis,event});
   let callIndex=0;
@@ -72,12 +72,12 @@ function projectTurnEvents(entries:readonly EntryRecord[],submissionId:number,co
     if(workerUsage){addUsageCounters(aggregate,workerUsage);append({type:'usageUpdated',callIndex:callIndex++,aggregate:{...aggregate}});}
     for(const item of entry.model ?? []) {
     if(item.role==='assistant') {
-      for(const block of item.content)if(block.type==='toolCall')append({type:'toolCallUpdated',callId:block.id,name:block.name,title:block.name,status:'running'},item.timestamp);
+      for(const block of item.content)if(block.type==='toolCall')append(reads.find(read=>read.type==='toolCallUpdated'&&read.callId===block.id) ?? {type:'toolCallUpdated',callId:block.id,name:block.name,title:block.name,status:'running'},item.timestamp);
       addUsageCounters(aggregate,usageCounters(item.usage));
       append({type:'usageUpdated',callIndex:callIndex++,aggregate:{...aggregate}},item.timestamp);
     } else if(item.role==='toolResult'){
       if(item.toolName==='update_plan'&&!item.isError)try{const plan=JSON.parse(textOf(item.content)) as {entries:AgentPlanEntry[]};if(Array.isArray(plan.entries)&&plan.entries.length<=12)append({type:'planUpdated',entries:plan.entries},item.timestamp);}catch{/* Malformed tool output is not a plan. */}
-      append({type:'toolCallUpdated',callId:item.toolCallId,name:item.toolName,title:item.toolName,status:item.isError?'error':'success'},item.timestamp);}
+      append((!item.isError&&reads.find(read=>read.type==='toolCallUpdated'&&read.callId===item.toolCallId)) || {type:'toolCallUpdated',callId:item.toolCallId,name:item.toolName,title:item.toolName,status:item.isError?'error':'success'},item.timestamp);}
   }}
   return events;
 }
@@ -93,6 +93,8 @@ function attachQuiesceListener() {
 export function createPiChatApi(native:ChatApi):ChatApi {
   let engine:Promise<{harness:Harness;storage:SqliteStorage;models:ReturnType<typeof nativeModels>}>|undefined;
   let closing=false;
+  let nativePolicyRevision=0;
+  const accessRevisions=new Map<number,number>(),accessMutations=new Map<number,number>();
   let transcripts:ReturnType<typeof createTranscriptPublisher>|undefined;
   let projectionUnlisten:(()=>void)|undefined;
   const projectionStates=new Map<string,TranscriptStatus>();
@@ -151,6 +153,19 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     queueMicrotask(()=>{void scanAll(cursor=>storage.scanConversations({},128,cursor,context)).then(async records=>{for(const record of records)if(await harness.snapshot(Meta,record.id,context))transcripts?.schedule(`pi-${record.id}`);}).catch(()=>{});});
     return {harness,storage,models};
   })().catch(error=>{engine=undefined;throw error;});};
+  type ReadAdmission={nativeRevision:number;accessRevision:number;events:AgentEvent[]};
+  const currentReadAdmission=(id:ConversationId,admission:ReadAdmission)=>!accessMutations.has(id)&&admission.nativeRevision===nativePolicyRevision&&admission.accessRevision===(accessRevisions.get(id)??0);
+  const admittedReadEvents=async(id:ConversationId,binding:{sourcesJson:string;readsJson?:string;grantsJson?:string}):Promise<ReadAdmission> => {
+    const admission:ReadAdmission={nativeRevision:nativePolicyRevision,accessRevision:accessRevisions.get(id)??0,events:[]};
+    if(!currentReadAdmission(id,admission))return admission;
+    const {harness}=await open();const current=await harness.snapshot(Evidence,id,context);
+    if(!current||!currentReadAdmission(id,admission))return admission;
+    try{await invoke('pi_validate_sources',{sources:evidenceSources(binding),access:current.access,grants:evidenceGrants(binding)});}catch{return admission;}
+    // Source validation awaits native work. A policy change during that await
+    // retires its admission even if native accepted the earlier access value.
+    if(currentReadAdmission(id,admission))admission.events=evidenceReadEvents(binding);
+    return admission;
+  };
   const summary=async (id:ConversationId):Promise<ChatConversationSummary> => {
     const {harness,storage}=await open();const conversation=await harness.conversation(id,context);if(!conversation)throw new Error('Unknown Pi conversation');
     const meta=await harness.snapshot(Meta,id,context);const agent=await conversation.agent(context);const evidence=await harness.snapshot(Evidence,id,context);
@@ -174,8 +189,11 @@ export function createPiChatApi(native:ChatApi):ChatApi {
           if(usageOrigin!==submissionId){usageOrigin=submissionId;aggregate=emptyUsageCounters();summarySeen=emptyUsageCounters();}
           const binding=await harness.snapshot(Evidence,id,context);
           const summaryUsage=binding?.sessionId?await harness.snapshot(SummaryUsageRun,summaryUsageKey(id,binding.sessionId),context):undefined;
+          const admitted=binding?await admittedReadEvents(id,binding):undefined;
+          if(!requestEventsEnabled.has(id)||active.get(id)!==submissionId)return;
+          const reads=admitted&&currentReadAdmission(id,admitted)?admitted.events:[];
           const delta=emptyUsageCounters();for(const key of Object.keys(delta) as (keyof UsageCounters)[]){delta[key]=Math.max(0,(summaryUsage?.[key]??0)-summarySeen[key]);summarySeen[key]=summaryUsage?.[key]??0;}
-          for(const envelope of projectTurnEvents([event.entry],submissionId,identity.conversationId,Date.now(),Object.values(delta).some(value=>value>0)?delta:undefined,aggregate)){const sequence=(sequences.get(id)??0)+1;sequences.set(id,sequence);emit('chat://agent-event',{...envelope,sequence});}
+          for(const envelope of projectTurnEvents([event.entry],submissionId,identity.conversationId,Date.now(),Object.values(delta).some(value=>value>0)?delta:undefined,aggregate,reads)){const sequence=(sequences.get(id)??0)+1;sequences.set(id,sequence);emit('chat://agent-event',{...envelope,sequence});}
         }
         const update=projectText(event);
         if(update?.type==='delta')emit('chat://text-delta',{...identity,delta:update.delta});
@@ -194,8 +212,10 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     const seen=new Set<string>();const identity={requestId:`pi-request-${submissionId}`,conversationId:`pi-${id}`,messageId:`pi-assistant-${submissionId}`,runId:`pi-run-${submissionId}`};
     const publish=async(binding:typeof watcher.value)=>{
       if(!binding || active.get(id)!==submissionId)return;
-      let reads:AgentEvent[]=[];try{await invoke('pi_validate_sources',{sources:evidenceSources(binding),access:binding.access,grants:evidenceGrants(binding)});reads=evidenceReadEvents(binding);}catch{/* Revoked sources cannot become live read links. */}
-      for(const event of [...reads,...evidencePermissionEvents(binding,identity)]){const key=JSON.stringify(event);if(seen.has(key))continue;seen.add(key);const sequence=(sequences.get(id)??0)+1;sequences.set(id,sequence);emit('chat://agent-event',{...identity,sequence,createdAtMillis:Date.now(),event});}
+      const admitted=await admittedReadEvents(id,binding);
+      if(!requestEventsEnabled.has(id)||active.get(id)!==submissionId)return;
+      const reads=currentReadAdmission(id,admitted)?admitted.events:[];
+      for(const event of [...reads,...evidencePermissionEvents(binding,identity)]){const key=JSON.stringify(event);if(seen.has(key))continue;seen.add(key);const sequence=(sequences.get(id)??0)+1;sequences.set(id,sequence);emit('chat://agent-event',{schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,...identity,sequence,createdAtMillis:Date.now(),event});}
     };
     watcher.start(publish);await publish(watcher.value);
   };
@@ -270,7 +290,8 @@ export function createPiChatApi(native:ChatApi):ChatApi {
       const supplemental=missingResearchUsage(turnEntries,snapshot?.evidence?.sessionId?workerUsageByOrigin.get(snapshot.evidence.sessionId):undefined);addUsageCounters(supplemental,summaryUsage);
       const events=projectTurnEvents(turnEntries,record.id,conversationId,timestamp,Object.values(supplemental).some(value=>value>0)?supplemental:undefined);
       if(origin){const binding=origin;
-        let reads:AgentEvent[]=[];try{await invoke('pi_validate_sources',{sources:evidenceSources(binding),access:(await harness.snapshot(Evidence,id,context))?.access ?? 'none',grants:evidenceGrants(binding)});reads=evidenceReadEvents(binding);}catch{/* Keep stale destinations unavailable. */}
+        const admitted=await admittedReadEvents(id,binding);
+        const reads=currentReadAdmission(id,admitted)?admitted.events:[];
         for(const event of [...reads,...evidencePermissionEvents(binding,{requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`})])events.push({schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,requestId:`pi-request-${record.id}`,conversationId,messageId:assistant.id,runId:`pi-run-${record.id}`,sequence:events.length+1,createdAtMillis:timestamp,event});}
       if(!current)for(const envelope of [...events])if(envelope.event.type==='permissionRequested'&&!events.some(candidate=>candidate.event.type==='permissionResolved'&&candidate.event.permissionId===(envelope.event as Extract<AgentEvent,{type:'permissionRequested'}>).request.permissionId))events.push({...envelope,sequence:events.length+1,event:{type:'permissionResolved',permissionId:envelope.event.request.permissionId,resolution:'cancelled'}});
       const eventState=replayAgentEvents(assistant.content,events,{conversationId,messageId:assistant.id});assistant.parts=eventState.parts;assistant.agentRunId=eventState.runId;assistant.agentSequence=eventState.sequence;assistant.agentEventCreatedAtMillis=eventState.createdAtMillis;
@@ -329,11 +350,21 @@ export function createPiChatApi(native:ChatApi):ChatApi {
         void submission.wait(context).then(async receipt=>{
           if(active.get(id)!==submission.id)return;
           permitted.delete(id);
+          const terminalSequence=sequences.get(id)??0;
           await stopWatch(id);await releaseNativeRequest(frozen).catch(()=>{});await releaseEvidence(prepared!.sessionId).catch(()=>{});active.delete(id);admissions.delete(id);
           if(closing)return;
           transcripts?.schedule(input.conversationId);
           const conversation=await getConversation(input.conversationId);const final=conversation.messages.find(m=>m.id===assistantMessage.id)!;
           const identity={requestId,conversationId:input.conversationId,messageId:final.id,message:final};
+          // Pi stop() drops queued watch frames. The controller retains live
+          // Activity at terminal delivery, so settle committed reads through
+          // that same event seam before announcing completion/cancellation.
+          const origin=await harness.snapshot(EvidenceRun,prepared!.sessionId,context);
+          const admitted=origin?await admittedReadEvents(id,origin):undefined;
+          if(closing)return;
+          const reads=admitted&&currentReadAdmission(id,admitted)?admitted.events:[];
+          let sequence=Math.max(terminalSequence,final.agentSequence);
+          for(const event of reads)emit('chat://agent-event',{schemaVersion:CHAT_AGENT_EVENT_SCHEMA_VERSION,requestId,conversationId:input.conversationId,messageId:final.id,runId:`pi-run-${submission.id}`,sequence:++sequence,createdAtMillis:Date.now(),event});
           if(receipt.status==='done')emit('chat://completed',{...identity,conversation});
           else if(final.status==='cancelled')emit('chat://cancelled',identity);
           else emit('chat://failed',{...identity,error:final.errorMessage ?? 'Pi request failed',retryable:true});
@@ -381,7 +412,11 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     getConversation,sendMessage,
     renameConversation:async(id,title)=>{const {harness}=await open();await harness.commit(async tx=>{(await tx.doc(Meta,cid(id))).title=title;},context);transcripts?.schedule(id);return summary(cid(id));},
     archiveConversation:async(id,archived)=>{const {harness}=await open();await harness.commit(async tx=>{(await tx.doc(Meta,cid(id))).archived=archived;},context);return null;},
-    setConversationVaultAccess:async(id,access)=>{const {harness}=await open();await harness.commit(async tx=>{(await tx.doc(Evidence,cid(id))).access=access;},context);return summary(cid(id));},
+    setConversationVaultAccess:async(id,access)=>{
+      const conversationId=cid(id);accessRevisions.set(conversationId,(accessRevisions.get(conversationId)??0)+1);accessMutations.set(conversationId,(accessMutations.get(conversationId)??0)+1);
+      try{const {harness}=await open();await harness.commit(async tx=>{(await tx.doc(Evidence,conversationId)).access=access;},context);return summary(conversationId);}
+      finally{accessRevisions.set(conversationId,(accessRevisions.get(conversationId)??0)+1);const pending=accessMutations.get(conversationId)!-1;if(pending)accessMutations.set(conversationId,pending);else accessMutations.delete(conversationId);}
+    },
     setConversationProvider:async(id,provider,model,reasoningEffort)=>{if(active.has(cid(id))||admitting.has(cid(id)))throw new Error('Stop the active request before changing models');const {harness,models}=await open();models.registerModel(provider,model,await overrides.getModelCapabilities(provider,model));await harness.commit(async tx=>{(await tx.doc(Meta,cid(id))).reasoningEffort=reasoningEffort;},context);await (await harness.conversation(cid(id),context))!.configure({model:{provider,modelId:model}},context);return summary(cid(id));},
     cancelRequest:async requestId=>{const {harness,storage}=await open();const record=await storage.submission(sid(requestId),context);if(!record||record.status==='done'||record.status==='unanswered')return;await (await harness.conversation(record.conversationId,context))!.abort(context);},
     retryMessage:async messageId=>{const {storage,harness}=await open();const record=await storage.submission(sid(messageId),context);if(!record || record.type!=='input')throw new Error('Unknown interrupted request');if(active.has(record.conversationId))throw new Error('Stop the active request before Retry');
@@ -424,7 +459,7 @@ export function createPiChatApi(native:ChatApi):ChatApi {
     throw new Error('Source was not issued to this conversation');
   }});
   Object.assign(overrides,{prototypeFault:async(id:string,fault:string)=>{if(!fixture)throw new Error('Synthetic fixture required');const {harness}=await open();const current=await readReview(harness,id);await harness.commit(async tx=>{(await tx.doc(Review,String(current.taskId),'')).fault=fault;},context);}});
-  const cancelForPolicy=async()=>{permitted.clear();policies.clear();if(engine){const {harness}=await engine;await Promise.all([...active.keys()].map(async id=>{await (await harness.conversation(id as ConversationId,context))?.abort(context);}));}};
+  const cancelForPolicy=async()=>{nativePolicyRevision++;permitted.clear();policies.clear();if(engine){const {harness}=await engine;await Promise.all([...active.keys()].map(async id=>{await (await harness.conversation(id as ConversationId,context))?.abort(context);}));}};
   policyCancellations.add(cancelForPolicy);
   let closePromise:Promise<void>|undefined;
   const close=async(retire=false)=>{
