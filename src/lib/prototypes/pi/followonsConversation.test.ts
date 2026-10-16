@@ -1,10 +1,26 @@
 import { describe, expect, it } from 'vitest';
+import { render } from 'svelte/server';
+import ChatPanel from '$lib/features/chat/ChatPanel.svelte';
 import { createChatController } from '$lib/features/chat/controller.svelte';
 import { conversation, fakeApi, message, settings } from '$lib/features/chat/chatTestSupport';
 import type { ChatConversation, ChatProvider } from '$lib/features/chat/types';
 import { acquireFollowonsConversation, type FollowonsConversationControls } from './followonsConversation';
 
 describe('mounted follow-on draft admission', () => {
+  it('inactive actual ChatPanel keeps its header outside the hidden dockless composer', async () => {
+    const fake = fakeApi();
+    const controller = createChatController(fake.api);
+    await controller.initialize('conversation-1');
+    try {
+      const body = render(ChatPanel, { props: { controller, autoInitialize: false, composerDock: { slot: null, expanded: false, onExpand: () => {} } } }).body;
+      const wrapper = body.match(/<div[^>]*class="chat-composer-slot[^>]*>/)?.[0];
+      expect(wrapper).toBeDefined();
+      expect(wrapper).toMatch(/\bhidden(?:\s|=|>)/);
+      expect(body.indexOf('aria-label="Chat title"')).toBeGreaterThan(-1);
+      expect(body.indexOf('aria-label="Chat title"')).toBeLessThan(body.indexOf(wrapper!));
+      expect(body.indexOf('aria-label="Message"')).toBeGreaterThan(body.indexOf(wrapper!));
+    } finally { controller.dispose(); }
+  });
   for (const provider of ['local', 'openai'] as ChatProvider[]) it(`${provider}: creates and selects first WARMUP despite a stale picker list`, async () => {
     const fake = fakeApi();
     const records = new Map<string, ChatConversation>([['existing', conversation({ id: 'existing', title: 'Already mounted chat' })]]);

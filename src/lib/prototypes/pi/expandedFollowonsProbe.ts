@@ -29,7 +29,14 @@ async function sendComposer(content: string) {
 const conversationControls: FollowonsConversationControls = {
   focusChat: async () => {
     if (!document.querySelector('[aria-label="Thought partner chat"]')) await click('Open thought partner');
-    const composer = await until(() => { const node = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return node && !node.disabled ? node : undefined; }, 'mounted chat composer before New Chat');
+    // The inactive chat's docked composer may be hidden. Activate through its
+    // pane-local visible header, expanding a compact rail through normal UI.
+    const rail = document.querySelector<HTMLButtonElement>('[data-pane-kind="chat"][data-pane-collapsed] button.pane-rail-surface:not(:disabled)');
+    if (rail) { rail.click(); await pause(); }
+    const title = await until(() => { const node = document.querySelector<HTMLInputElement>('[data-pane-kind="chat"] [aria-label="Chat title"]'); return node && !node.closest('[inert], [hidden]') && node.getClientRects().length ? node : undefined; }, 'visible chat header before New Chat');
+    title.focus();
+    await until(() => button('New Chat. Start a blank chat in this pane.'), 'chat header focus activates New Chat action');
+    const composer = await until(() => Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea[aria-label="Message"]')).find(node => !node.disabled && !node.closest('[inert], [hidden]') && node.getClientRects().length), 'visible mounted chat composer before New Chat');
     composer.focus();
     await until(() => document.activeElement === composer && button('New Chat. Start a blank chat in this pane.'), 'chat focus activates pane and New Chat action');
   },
