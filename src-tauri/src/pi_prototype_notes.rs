@@ -4,7 +4,8 @@ use crate::{
     chat_domain::ChatDomain,
     index::AppState,
     services::evidence::{
-        self, check_citation, validate_citation, EvidenceSession, PassageCitation, ReadRequest, SearchRequest,
+        self, check_citation, check_citations, validate_citation, EvidenceSession, PassageCitation,
+        ReadRequest, SearchRequest,
     },
 };
 use serde::Deserialize;
@@ -692,26 +693,50 @@ pub(crate) async fn pi_validate_sources(
             &access,
             &grants.unwrap_or_default(),
         )?;
-        sources
-            .into_iter()
-            .map(|mut source| {
-                let citation = source.passage.as_ref().ok_or("Issued passage required")?;
-                let (path, title) =
-                    validate_citation(&state, citation, allowed.as_ref(), &excluded)
-                        .ok_or("Evidence or access changed; read again")?;
-                if source.excerpt != citation.excerpt
-                    || source.note_id.as_deref() != Some(&citation.note_id)
-                {
-                    return Err("Evidence binding mismatch".into());
-                }
-                source.note_path = Some(path.to_string_lossy().into());
-                source.title = title;
-                Ok(source)
-            })
-            .collect()
+        validate_source_batch(&state, sources, allowed.as_ref(), &excluded)
     })
     .await
     .map_err(|e| e.to_string())?
+}
+
+pub(crate) fn validate_source_batch(
+    state: &AppState,
+    sources: Vec<ChatSource>,
+    allowed: Option<&HashSet<String>>,
+    excluded: &HashSet<String>,
+) -> Result<Vec<ChatSource>, String> {
+    if sources.len() > 128 {
+        return Err("Evidence bound exceeded".into());
+    }
+    let citations = sources
+        .iter()
+        .map(|source| {
+            let citation = source.passage.as_ref().ok_or("Issued passage required")?;
+            if source.excerpt != citation.excerpt
+                || source.note_id.as_deref() != Some(citation.note_id.as_str())
+            {
+                return Err("Evidence binding mismatch");
+            }
+            Ok(citation)
+        })
+        .collect::<Result<Vec<_>, &str>>()?;
+    let bindings = check_citations(state, &citations, allowed, excluded)
+        .map_err(|reason| format!("Evidence validation unavailable: {reason}"))?
+        .ok_or("Evidence or access changed; read again")?;
+    if bindings.len() != sources.len() {
+        return Err("Evidence or access changed; read again".into());
+    }
+    // Publish refreshed destinations only after the complete, ordered source
+    // set passed canonical, proof and scope validation at one generation.
+    Ok(sources
+        .into_iter()
+        .zip(bindings)
+        .map(|(mut source, (path, title))| {
+            source.note_path = Some(path.to_string_lossy().into());
+            source.title = title;
+            source
+        })
+        .collect())
 }
 #[tauri::command]
 pub(crate) async fn pi_resolve_passage(

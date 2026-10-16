@@ -1656,7 +1656,7 @@ fn observe_citation_validation(event: CitationValidationEvent<'_>) {
 
 /// Admit the complete set at one timeline generation. Reuse lasts only for this
 /// validation attempt; an invalidated attempt repeats every source and proof.
-fn check_citations(
+pub(crate) fn check_citations(
     state: &AppState,
     citations: &[&PassageCitation],
     allowed: Option<&HashSet<String>>,
@@ -1675,17 +1675,20 @@ fn check_citations(
             #[cfg(test)]
             observe_citation_validation(CitationValidationEvent::AttemptStarted);
             let mut current = Vec::with_capacity(citations.len());
-            let mut canonical = HashMap::<PathBuf, String>::new();
+            let mut canonical = HashMap::<PathBuf, blake3::Hash>::new();
             for citation in citations {
                 let Some((path, title, raw)) =
                     validate_citation_snapshot(state, citation, allowed, excluded)
                 else {
                     return Ok(Vec::new());
                 };
-                if canonical.get(&path).is_some_and(|previous| previous != &raw) {
+                // Bind all bytes, including managed metadata, without retaining
+                // the complete contents of every distinct note in the batch.
+                let raw_hash = blake3::hash(raw.as_bytes());
+                if canonical.get(&path).is_some_and(|previous| previous != &raw_hash) {
                     return Ok(Vec::new());
                 }
-                canonical.insert(path.clone(), raw);
+                canonical.insert(path.clone(), raw_hash);
                 current.push(Candidate {
                     citation: (*citation).clone(),
                     path,
@@ -1701,10 +1704,11 @@ fn check_citations(
             }
             // An external edit need not have reached the timeline observer yet.
             // Recheck earlier sources after the last source/proof was inspected.
-            if canonical
-                .iter()
-                .any(|(path, raw)| fs::read_to_string(path).ok().as_ref() != Some(raw))
-            {
+            if canonical.iter().any(|(path, raw_hash)| {
+                fs::read_to_string(path)
+                    .map(|raw| blake3::hash(raw.as_bytes()) != *raw_hash)
+                    .unwrap_or(true)
+            }) {
                 return Ok(Vec::new());
             }
             Ok(current)
