@@ -1,16 +1,219 @@
-# Replacement proof and paired resource capture preparation
+# Replacement proof and paired resource capture record
 
-2026-10-15. Ticket [13](issues/13-replacement-proof-and-evaluation-verdict.md)
-remains blocked by ticket 12 acceptance. This document prepares its independent
-tooling and exact remaining gates; it does not accept tickets 08–13, record a
-removal experiment, or recommend production adoption. The [spec](spec.md),
-[baseline](baseline.md), [progress](progress.md) and [desktop matrix](desktop-acceptance.md)
-remain the source of phase scope and recorded native evidence.
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
 
-No native application, build, provider, port or simulator was operated by this
-preparation worker. No original data, credentials, Git state or existing runtime
-file was changed. The only execution evidence here is the pure helper tests and
-offline generated-counter CLI smoke described below.
+Current checkpoint: 2026-10-16. Ticket [13](../archive/pi-durable-chat-evaluation/issues/13-replacement-proof-and-evaluation-verdict.md)
+retains its ticket-12/native and final handoff dependencies. This record separates
+actual current evidence, retained older observations and the historical capture
+contract. The [spec](../archive/pi-durable-chat-evaluation/spec.md), [progress](progress.md), [ledger](replacement-ledger.md)
+and [desktop matrix](desktop-acceptance.md) define scope. No production adoption,
+net maintenance reduction or overall performance win is established.
+
+## Current source and acceptance checkpoint — v51, 2026-10-16
+
+Frozen source commit `81f3bf7` is captured at
+`/private/tmp/pi-removal-final-20261016-v51`, canonical manifest
+`f81a1549fca48d8ed191168acf4e4f924761d2f007046d5c2284bce6fde89a57`:
+1585 captured files,1533 retained files and **52 actual legacy-file absences**.
+The [v48→v51 delta](/private/tmp/pi-removal-final-20261016-v51/v48-v51-source-delta.json)
+is nine diagnostic packaging/probe/test paths, with no Rust or product-runtime
+change. Whole frontend digest is now
+`3262311db05903e4009d630beb8008405bc4e3119333422f466a9795d566bbe2`;
+it differs from v48/v49 because the diagnostic probe is included. **Fresh final
+desktop/history/iOS/manual artifacts are selected; no desktop equivalence reuse
+is the final index.** Retained v48 observations below stay separately pinned.
+
+| Actual v51 artifact | Recorded result / pin |
+| --- | --- |
+| [Desktop compiler](/private/tmp/pi-removal-final-20261016-v51/artifacts/desktop-build.json) | Compiled with three exclusion checks passed; `pi-prototype,e2e-wdio`; SHA `6d39bbdd56b7f8e2d35b79f60e16a2d7e9d0cc03107b712dc7588b07ac150858` |
+| [iOS compiler](/private/tmp/pi-removal-final-20261016-v51/artifacts/ios-expanded-build.json) | Compiled; `pi-prototype,e2e-chat-fixture,tauri/custom-protocol`; SHA `b3c224070042409b995f29a763227da31c822a28912971125fcf7796e45fb135` |
+| [Manual compiler](/private/tmp/pi-removal-final-20261016-v51/artifacts/manual-build.json) | Compiler receipt; `pi-prototype`; SHA `78154483e2ed80efbf573a35775d55d364e34785bf87fcdba3e98a1c9996a48c`; ordinary two-launch/quit/root-retention acceptance passed (manual receipt below) |
+
+**Whole v51 iOS expanded gate passed**,178 synthetic requests:
+[BTSO9O receipt](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json).
+First14 and relaunch10 shared checks passed, followed by parent/worker compaction,
+research/fresh reads, attachments/exact Retry/web follow-ons, exact latest-draft
+refinement/restart and both-protocol source-after-read races/active worker Stop/
+clean new research (14 requests per protocol). Fresh **same-launch post-CONT UI**
+observed ordinary authored-note bytes, exact review version10 and acknowledged
+partial without replay; following durable relaunch also verified retained state.
+An active native transaction was armed424ms before STOP, then held across about
+14 seconds against the10-second lease TTL: stale COMMIT rejected `Revoked SQLite
+owner`, zero rejected durable rows, stale owner revoked and fresh owner one row.
+These are actual fresh observation/lease proofs, not the old static suspension
+report. Controlled STOP/CONT remains distinct from actual OS pressure.
+[Closed100-file backup](/private/tmp/pi-owned-simulator-v51-passed-whole-20261016/backup-receipt.json)
+was retained and only the owned simulator app uninstalled.
+
+**All five separate iOS crash/publication cases passed**,11 synthetic requests:
+[yw2Vaa receipt](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json).
+The `after-intent`, `after-publication`, `after-receipt`, `prepared-review` and
+`transport-completed` boundaries retain fresh launch/nonce/process ownership,
+independently predicted exact drafts/canonical receipts and one-effect checks;
+prepared outcomes and acknowledged partials restore without implicit replay,
+then explicit Retry continues. These are bounded actual simulator fixture proofs,
+not hosted/physical acceptance. The last case's
+[closed45-file backup](/private/tmp/pi-owned-simulator-v51-passed-faults-20261016/backup-receipt.json)
+was retained; root reports owned simulator shutdown exit0. Fresh post-CONT,
+lease-spanning-STOP and these five boundaries now have actual v51 evidence; keep
+their distinct protocol/fixture/platform limits. Final manual handoff is recorded below.
+
+[Current v51 linked history](/private/tmp/pi-history-render-v51-20261016/history-render-revalidation.json)
+passed on a copy of the closed generated v38 scale-v6 corpus. Exact1005
+conversation identities/all2010 API and mounted DOM message IDs/content/order
+matched before/after restart. Long-history ready observations were
+**14023ms/13993ms**; obsolete rendering observed at192/2010 cancelled into an
+empty conversation unchanged through200ms. Zero fixture/provider requests;
+closed scoped counts identical (9053 current documents,1005 inputs/Meta), and
+original corpus/receipts and tested source/artifact pins unchanged. This is current
+restored-data/UI coverage, **not** new provider reseeding/compaction or comparative
+resource measurement. DOM/timer checks do not prove physical paint/focus;
+`frontendReceiptVerified:false`, recovered readiness retries and root closure
+attestation requirements remain explicit.
+
+**The initial v51 desktop whole attempt failed** at the first failure-slice CREATE before
+admission, with the correct composer observed and cause unproven:
+[xyySVL receipt](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-xyySVL/desktop-interactive-gate.json),
+[log](/private/tmp/pi-v51-desktop-supplement-native-20261016.log).
+The serialized controlled identical-driver retry **passed**, exit0 and178
+synthetic requests:
+[O7czrc receipt](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json),
+[log](/private/tmp/pi-v51-desktop-observed-retry-native-20261016.log).
+[Operational provenance](/private/tmp/pi-v51-desktop-observed-retry-20261016)
+retains frozen driver imports, immutable executable and matching Vite cwd with
+catch-only read observation; no product/input change or mechanistic repair is
+claimed. The first xyySVL attempt (receipt above, `xyySVL`) stays **failed**:
+an unexplained flake, cause unproved. The retry is its own actual whole pass,
+not borrowed v48 or iOS evidence.
+
+[v51 pure checks](/private/tmp/pi-v51-pure-checks-20261016.json) bind the capture:
+fresh support38/Vitest1711 in201 files/frontend and types zero errors/warnings,
+e2e TypeScript passed; Node204 reuses exact unchanged v49 inputs, Python90 exact
+unchanged v41 inputs. The static receipt's `native-unrun` field describes its
+recording time; later native receipts have their own status. Native compiler
+input bytes, generated ACL deltas and required diagnostic packaging remain
+separately recorded; no temporary runtime diagnostics or cost claim follows.
+
+**Final normal manual handoff passed on the actual v51 bundle:**
+[manual acceptance](/private/tmp/pi-v51-manual-acceptance-20261016.json) binds the
+source manifest and manual executable above. Both normal launches restored exact
+`pi-review-163`, “Pi final handoff scratch” / `PI FINAL HANDOFF READY`, with one
+hunk and normal Keep enabled; normal Keep on launch2 published the exact Markdown
+body. Both READY responses completed through normal UI, both Cmd-Q owner runners
+exited0, and prior synthetic note/history survived without reset or recopy.
+[Known synthetic canonical readback](/private/tmp/pi-v51-manual-synthetic-canonical-20261016.json)
+retains the initially incorrect diagnostic whole-file/body assertion and its
+corrected frontmatter-separated exact-body check; no product change followed.
+This is local-model manual acceptance, not hosted acceptance or a new full
+permission/Save/cancellation cross-product. The earlier
+[v50 preparation](/private/tmp/pi-v50-manual-preparation-20261016.json) keeps its
+own preparation scope.
+
+[Root final native closure](/private/tmp/pi-v51-final-native-closure-20261016.json)
+records `nativeClosed:true`, closed persistent/original apps, both manual owner
+exits, free owned ports, owned simulator shutdown/uninstall with retained backups,
+and identity-verified owned caffeinate cleanup. These are scoped root observations,
+not independent OS-wide write tracing.
+
+[Final evidence index](/private/tmp/pi-v51-final-evidence-index-20261016.json) now
+exists and binds final source/builds, five selected proofs and retained failures.
+Its `acceptanceVerdict:null` is intentional hash binding, not semantic acceptance.
+[Root final semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json)
+records `passed-bounded-evaluation-delivery`, all13 implementation tickets and
+`boundedRequiredAcceptanceComplete:true`, with the decision narrow/continue
+isolated evaluation and deferred default adoption. Archive reconciliation is
+complete; the [archived outcome](../archive/pi-durable-chat-evaluation/outcome.md)
+contains the 13 final ticket reconciliations outside the executable backlog.
+
+**Recommendation: narrow/continue isolated evaluation; defer default adoption.**
+Material bridge/storage regressions and remaining hosted/physical/measurement
+limits support that bounded recommendation, not a performance win or net
+maintenance reduction. Hosted live is user-deferred; physical device/radio/
+distribution, real OS pressure, private disposal/collection and full IPC/process
+memory remain unverified. Native/manual terminal evidence and root bounded semantic acceptance are complete
+within these recorded scopes. Archive reconciliation is complete; the historical tickets and spec are outside
+the executable backlog. Real user feedback remains separate; production default runtime/ADR0001 remain intact.
+
+### Retained v48 desktop/history and default-smoke evidence
+
+Actual v48 source commit`02d6111`, canonical
+`c76d594904d38c5c9e206f6fcbb3fc32e2d719e09a1d58ab490655dfd6f4fcb2`
+(1583 captured/1531 retained/52 absent), desktop
+`a930ca9adeaf42097521b593cb89280a85c054d00c27795bc07af9ab7d6b3467`,
+frontend`46006fd4223669dd229ee83ec2e9342b7c7128f34268152129fe57ab7d475fa0`:
+[whole KCwTai](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-KCwTai/desktop-interactive-gate.json)
+passed178 requests, exact normal refinement7→8→10/restored10/Keep canonical and
+three after-read source races plus active worker Stop/clean new research under
+both fixture protocols (eight checks,14 requests/protocol). Its
+[linked history](/private/tmp/pi-history-render-v48-20261016/history-render-revalidation.json)
+passed2010 before/after restart,13040/8592ms,96/2010→empty cancellation, zero
+requests and unchanged corpus. These remain actual historical passes; the separate v51 desktop retry above
+now has its own whole pass, preserving the initial failed attempt.
+
+[Current-frontend default smoke](/private/tmp/pi-v48-current-frontend-default-smoke-20261016.json)
+passed14 in4 specs with one preexisting optional cursor-paint skip. It served
+v48/v49 frontend46006fd4…bbe2 using retained v38 default-native
+`d308c7aa0986ec00ecbea9a0a7c07a3328910e3919b3e3688b8694e68c673761`;
+no new default compilation or v51 whole-frontend equality is claimed. The
+original v38 extra-LF failure remains failed/cause unresolved. The ordinary
+deliverable still retains its default runtime; comparison-tree removals are not
+production source deletions or demonstrated maintenance savings.
+
+### Retained failures and original-vault observation
+
+- [v48 iOS l8ZTxK](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-l8ZTxK/ios-interactive-gate.json) failed after first14 at CSP control `Load failed`, before suspension; [49-file closed backup](/private/tmp/pi-owned-simulator-v48-failed-suspension-20261016) retained. Its compiled executable `59f0b539ec78a4eaa98ff2255825e4ba8aa031a07c2c316766d0c92d927ed412` is not a successful iOS gate.
+- [v49 iOS tDkt12](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-tDkt12/ios-interactive-gate.json) failed canonical-conflict setup at retained CodeMirror review lookup after actual fresh-CONT/lease partial proofs; [57-file closed backup](/private/tmp/pi-owned-simulator-v49-failed-review-20261016) retained. Partial proofs are not a whole pass.
+- [v50 iOS y7PETc](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-y7PETc/ios-interactive-gate.json) failed later web Save presentation; [90-file closed backup](/private/tmp/pi-owned-simulator-v50-failed-web-save-20261016/backup-receipt.json) retained. Its partial checks are not a whole pass.
+- [v47 failure/closure](/private/tmp/pi-v47-native-failure-and-history-closure-20261016.json) retains failed whole desktop and linked history stalled624/2010. Earlier guard/Retry/loading/foreground-requested failures remain failed; actual focus and cause are not inferred from later passes.
+
+The [final opaque original-vault observation](/private/tmp/pi-original-vault-final-observation-20261016.json)
+was made after the user closed the ordinary app:388 files, read-only hashing,
+no SQLite connection/source mutation. SHA
+`759e94ba60290d368e6edcb3b15a11d55fe2db32216a1538086acd7a9b9a105c`
+differs from prior`66a085d2…1863`, cause unestablished. Record scoped evaluation
+agent-write isolation by owned roots/actions; do not assert continuous/final
+original byte equality or attribute the difference from this observation alone.
+
+[Post-v51-manual original observation](/private/tmp/pi-original-post-v51-manual-20261016.json)
+records388 files and aggregate `759e94ba60290d368e6edcb3b15a11d55fe2db32216a1538086acd7a9b9a105c`,
+equal to the fresh pre-v50-manual baseline only across that bounded manual interval.
+It opened no SQLite connection or mutated source. Historical-seal inequality and
+its unestablished cause remain; this does not prove continuous original equality.
+
+## Retained measured comparison and full scale
+
+Three controlled v38 paired core-resource runs passed, Pi/old → old/Pi → Pi/old,
+24 bounded compatible requests. [Summary](/private/tmp/pi-v38-controlled-resource-summary-20261016.json)
+and [table](/private/tmp/pi-v38-controlled-resource-summary-20261016.md) retain
+exact lane pins, ranges and limitations: median warm module calls old26/Pi1085
+(**41.7×**), logical storage old684378/Pi2059929 bytes (**3.01×**), one Pi null
+response size/run, slower observed first-visible and Stop intervals. Module/JSON
+proxy/debug/cache/observer/provider-partial/app-only-RSS limits prevent full IPC,
+wire, all-process-memory or causal attribution claims. Lower startup/app-PID RSS
+is not an overall win. Old/Pi prepared functional subsets and API grants do not
+establish permission-dialog or full product parity. These costs remain pinned to
+v38, not remeasured on v48; the older v8 measurement section below is historical.
+
+[Full scale v6](/private/tmp/pi-product-scale-20261015-v6/product-scale-gate.json)
+passed on its frozen v38 binary/frontend, exit 0 at 08:17:40 UTC: exact
+1005 conversations/1005 inputs/2010 messages, 1005 answers plus six validated
+synthetic compaction summaries/1011 requests, exact identities before/after
+restart, ten archive/restores and no replay. [Accounting/limits](/private/tmp/pi-v38-scale-final-analysis-20261016.md)
+and [native closure](/private/tmp/pi-v38-scale-root-native-closure-20261016.json)
+remain separately bound. Final current documents9053; logical files64797047
+bytes; private watcher/collection/IPC, full-process RSS, actual focus and compiled
+frontend provenance remain unknown. Archive is not collection. The current linked
+history check above is targeted restored-data/UI verification, not another full
+provider/compaction or comparable resource run. Historical scale v5 remains failed.
+
+## Historical preparation contract — 2026-10-15
+
+The preparation worker operated no native application, build, provider, port or
+simulator; its execution claims below are pure tests/offline counter smoke only.
+Native observations above were produced later by the root native owner. The
+following command templates and candidate matrix describe the reusable plan,
+not an instruction to relabel historical source/binary pins or repeat every
+already-passed gate regardless of the actual input delta.
 
 ## Evidence boundaries
 
@@ -419,9 +622,10 @@ policy remain maintained app complexity, not automatic library savings. Physical
 line/file counts are secondary to state owners, recovery paths and caller duties.
 The deliverable retains the ordinary default runtime and ADR 0001 unchanged.
 
-## Exact default-regression and final-gate run plan
+## Historical default-regression and final-gate run plan
 
-These are pending commands for the orchestrator's serialized native lease. Run
+These are historical command templates for the orchestrator's serialized native lease.
+Current actual passes and remaining obligations are at the checkpoint above. Run
 pure checks after final edits; compile/link the final source with separate output
 receipts, and never treat a previous target-cache binary as the requested lane.
 Do not change ordinary credentials or run the ordinary vault for these tests.
@@ -482,10 +686,16 @@ attachment/web behavior and transcript/relocation. Checkpoint pending reviews
 and restart without implicit requests. Separate the user's dated feedback from
 agent observations and synthetic provider output.
 
-The final result must choose continued evaluation, narrower scope, adoption work,
-defer or reject **from recorded evidence**. Until tickets 08–12, physical removal,
-paired resources and final default regression are recorded, the verdict is
-**unproven / pending acceptance**, not reduced coordination or parity. Record
+The bounded evidence-based result is **narrow/continue isolated evaluation; defer
+default adoption**. Current v51 whole iOS/history, five iOS fault cases, serialized
+desktop retry and final two-launch normal manual handoff passed, preserving the
+initial failed desktop attempt and retained v48/v38 pins. Final root native closure
+is recorded above. The final evidence index and separate root semantic acceptance
+now exist and record bounded required acceptance complete. Archive reconciliation
+remains with its owner; this record does not assert archive creation.
+Material bridge/storage regressions and hosted/physical/measurement limits support
+the bounded outcome; no reduced coordination, savings or full parity claim follows.
+Record
 real user feedback separately when available and explicitly disclose its absence;
 the spec does not make receipt of user feedback a prerequisite for technical
 acceptance or an evidence-based evaluation verdict.
@@ -513,7 +723,7 @@ prose-free fixtures/reproduction receipts and bounded failure evidence.
 - No native measurements, build/removal/default/iOS/live checks or user feedback
   are included in these validation claims.
 
-## Audited paired core resource checkpoint — v8, 2026-10-15
+## Historical paired core resource checkpoint — v8, 2026-10-15
 
 The native owner's closed, exit-0 receipt at
 `/private/tmp/pi-shared-resources-20261015-v8/shared-resource-gate.json`
@@ -522,8 +732,8 @@ apps and generated data roots. This extends the v7 core receipt at
 `/private/tmp/pi-shared-resources-20261015-v7/shared-resource-gate.json` with a
 bounded long-output journey and closed storage metadata; earlier receipts and
 failures remain evidence. It is not replacement acceptance, long-history/context-
-cap proof or a performance win. The recorded verdict remains
-`unproven-pending-acceptance`.
+cap proof or a performance win. That historical receipt records
+`unproven-pending-acceptance`; the current bounded outcome is recorded above.
 
 Both lanes completed short, source-free follow-up and exact 256-line/9,215-byte
 long output, then stopped a provisional answer through normal UI controls.

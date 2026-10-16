@@ -1,5 +1,7 @@
 # Exclude old lifecycle coordination from the Pi evaluation build
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -100,4 +102,14 @@ production ownership decision.
 
 The explicit Pi ChatApi/native domain seam is integrated. Matrix **R** records 52 legacy files physically absent from compiled comparison builds and lifecycle exclusion checks; **F/C/T/D** record actual native slices. The ordinary deliverable retains its default runtime.
 
-Final captured-source compilation began at 03:42 UTC on 2026-10-16 and has no passed result yet. Recheck that build, the default path and the full native matrix before acceptance. See the [current validation matrix](../validation-matrix.md); earlier implementation-agent pending statements above are historical.
+Final captured-source compilation began at 03:42 UTC on 2026-10-16 and has no passed result yet. Recheck that build, the default path and the full native matrix before acceptance. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md); earlier implementation-agent pending statements above are historical.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). 52 legacy files are physically absent from compiler-bound comparison captures; exclusion/compiler and bounded native gates passed, including current [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json). Retained native domain/evidence/editor/NoteTimeline effects remain separately identified in the ledger.
+
+Material limits: Ordinary deliverable retains its default runtime. Comparison-tree removal proves exclusion/replacement scope, not production deletion, overall coordination reduction or architecture adoption.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 02 outcome](../outcome.md#ticket-02) for bounded acceptance and material limits.

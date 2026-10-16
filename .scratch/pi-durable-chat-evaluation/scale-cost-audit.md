@@ -1,5 +1,7 @@
 # Product scale cost audit — 2026-10-16
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 Read-only source audit of frozen product `b52b1a6`; no measured attribution or performance improvement is claimed. Scale v5 is still running, so this does not establish its eventual acceptance result. The 1005-conversation/1005-input fixture and its budgets remain unchanged.
 
 The scale seed waits for correlated terminal events (`productScaleProbe.ts:69–80`). Its five-second driver progress poll reads only in-memory fields (`product-scale-gate.mjs:259–265`); it does not poll `getConversation`. This differs from the earlier shared-resource fixture's full-conversation polling. The normal mounted controller adopts the supplied completion event rather than reloading conversation/list on every terminal event (`controller.svelte.ts:183–208`, `controllerMachine.ts:507–514`).

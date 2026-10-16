@@ -1,5 +1,7 @@
 # Prove expanded recovery and actual iOS simulator behavior
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: phase-complete
@@ -49,4 +51,14 @@ Preserve default background automation; hands-on launch is an explicit workflow.
 
 Fault/crash/storage/iOS drivers and suspension/local-live preparations are integrated. Matrix **F/C** records four passed native cases each, **D** five passed native-storage checks, and **I** a passed watcher slice. The whole expanded desktop and iOS transcript runs remain failed at their documented boundaries.
 
-Final desktop/iOS expanded and transcript checks remain open. Prepared artificial suspension, local-iOS-live and owned churn have not executed. Hosted live is explicitly user-deferred; simulator evidence does not establish physical touch/device/radio or real OS-pressure guarantees. See the [current validation matrix](../validation-matrix.md).
+Final desktop/iOS expanded and transcript checks remain open. Prepared artificial suspension, local-iOS-live and owned churn have not executed. Hosted live is explicitly user-deferred; simulator evidence does not establish physical touch/device/radio or real OS-pressure guarantees. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md).
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) passed ordinary edits/exact version-10 review/partial state after STOP/CONT and held lease expiry with zero rejected durable rows. [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) passed all five SQL checks; [five iOS boundaries](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json) passed after-intent/publication/receipt, prepared-review and transport-completed with explicit Retry/no replay/one effect.
+
+Material limits: Actual WKWebView and native SQLite fixture proof is bounded; STOP is artificial, page quota SQLITE_FULL is not host-disk exhaustion. Hosted live user-deferred; physical devices/touch/radio/distribution/real OS pressure unverified.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 12 outcome](../outcome.md#ticket-12) for bounded acceptance and material limits.

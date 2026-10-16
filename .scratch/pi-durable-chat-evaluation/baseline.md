@@ -1,12 +1,14 @@
 # Interactive Pi evaluation: owner and measurement baseline
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 Recorded 2026-10-15 at source revision
 `4b5ff2de500db089787b3d7adefb40d99f13a574`, before ticket 02 replacement work.
 This is a reproducible comparison protocol and artifact preflight. **Equivalent
 old/Pi resource measurements have not yet been captured.** No performance win,
 live-provider acceptance or legacy-runtime removal is established by this record.
-Use with [ticket 01](issues/01-persistent-isolated-evaluation-app.md) and
-[ticket 13](issues/13-replacement-proof-and-evaluation-verdict.md).
+Use with [ticket 01](../archive/pi-durable-chat-evaluation/issues/01-persistent-isolated-evaluation-app.md) and
+[ticket 13](../archive/pi-durable-chat-evaluation/issues/13-replacement-proof-and-evaluation-verdict.md).
 
 ## Existing ownership and deletion baseline
 

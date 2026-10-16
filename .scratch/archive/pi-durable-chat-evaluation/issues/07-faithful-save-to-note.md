@@ -1,5 +1,7 @@
 # Preserve faithful Save and existing-note addition semantics
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -56,4 +58,14 @@ Review hardening: fragment lookup now receives an explicitly authorized current 
 
 Deterministic whole-answer and verified-selection Save are integrated. Matrix **P** records whole Save/origin, explicit selection append and closed duplicates; **M** records normal Save → approved Keep → Open in chat through the persistent local-live app.
 
-The final full Save/platform matrix remains open. **I** failed the normal Save editor-readiness race; wait/publication-proof corrections are prepared, with no corrected native pass yet. See the [current validation matrix](../validation-matrix.md) for exact scope and failure provenance.
+The final full Save/platform matrix remains open. **I** failed the normal Save editor-readiness race; wait/publication-proof corrections are prepared, with no corrected native pass yet. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for exact scope and failure provenance.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). Retained P/M/L/I/E and current [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) cover whole/selection Save, explicit additions, duplicate suppression, exact canonical read-backs and Open in chat. [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) extends final persistent review/Keep and note/history retention.
+
+Material limits: Some explicit append/recovery actions use the public API and normal review editor; that scope is recorded separately from ordinary UI actions. Final manual was not a new complete Save/citation cross-product.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 07 outcome](../outcome.md#ticket-07) for bounded acceptance and material limits.

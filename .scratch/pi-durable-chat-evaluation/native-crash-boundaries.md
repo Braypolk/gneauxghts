@@ -1,5 +1,7 @@
 # Native command and transport crash gate
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 Prepared command for the native lease owner, after rebuilding the normal `/`
 entry binary with `pi-prototype,e2e-wdio`:
 

@@ -1,5 +1,7 @@
 # Complete editable Note Proposal and refinement behavior
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -101,4 +103,14 @@ document runtime and global review workflow; Pi owns durable pending records.
 
 Durable review/refinement and narrow canonical effects are integrated. Matrix **D** records real review plus checkpoint/conflict/dirty-buffer slices; **F/C/T** record recovery and duplicate-effect slices; **M** records approved normal Keep in the persistent local-live app.
 
-The final full review/refinement/termination/iOS matrix remains open; partial native runs do not close every race. See the [current validation matrix](../validation-matrix.md) for the exact passed scope and artifact pins. Earlier implementation-agent native-pending statements above describe their original checkpoints.
+The final full review/refinement/termination/iOS matrix remains open; partial native runs do not close every race. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for the exact passed scope and artifact pins. Earlier implementation-agent native-pending statements above describe their original checkpoints.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) passed latest body/title/location/hunk refinement 7→8→10, exact restart restore, normal Keep/duplicate and canonical bytes; checkpoint/conflict/dirty-buffer slices passed. [five iOS boundaries](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json) passed exact-draft and single-effect recovery; [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) restored and kept the approved pending synthetic review.
+
+Material limits: Crash fixtures and scoped publication receipts establish bounded transitions, not all possible races or physical OS pressure. Earlier failed whole iOS review runs remain failed on their original pins.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 06 outcome](../outcome.md#ticket-06) for bounded acceptance and material limits.

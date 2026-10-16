@@ -1,5 +1,7 @@
 # Prove and hand off the first usable desktop evaluation
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -48,7 +50,7 @@ relaunch. Conversation/review setup is Pi-owned and synthetic notes enter native
 NoteTimeline commands; normal sends, permissions, model/session selection,
 editor/review actions and whole Save use the retained UI. Explicit repeated-text
 append initiation uses public Save parameters and is labeled separately from the
-UI-initiated whole-answer journey. See [desktop acceptance](../desktop-acceptance.md)
+UI-initiated whole-answer journey. See [desktop acceptance](../../../pi-durable-chat-evaluation/desktop-acceptance.md)
 for commands, matrix and remaining work.
 
 Preparation is not acceptance: dependencies 01–07 were still undergoing native
@@ -93,4 +95,14 @@ transcript integration errors, with no diagnostics in the prepared driver files.
 
 The normal-UI harness, persistent app and handoff checklist are integrated. Matrix **M** records a passed/closed bounded persistent local-live scope; **D** records 14 first-launch and ten relaunch checks passed. These are actual observations beyond the historical preparation comments above.
 
-The complete expanded fixture run **D** still failed its strict parent-summary receipt. Hosted live is explicitly user-deferred; no user feedback is invented or made an implicit dependency. Expanded acceptance remains open. See the [current validation matrix](../validation-matrix.md) and its remaining gate queue.
+The complete expanded fixture run **D** still failed its strict parent-summary receipt. Hosted live is explicitly user-deferred; no user feedback is invented or made an implicit dependency. Expanded acceptance remains open. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) and its remaining gate queue.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). Whole [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) each passed 178 synthetic requests with first14/relaunch10 and 25 follow-on checks; supplemental evidence/refinement/cancellation passed. [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) passed final two-launch local handoff, both normal quits and retained state.
+
+Material limits: Hosted live is user-deferred. Initial xyySVL desktop failure after first14/shared6 is retained; same-source/binary operational retry passed, cause unproved. Agent observations are not invented user feedback.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 08 outcome](../outcome.md#ticket-08) for bounded acceptance and material limits.

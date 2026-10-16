@@ -1,5 +1,7 @@
 # Demonstrate replacement cost and record the evaluation verdict
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: phase-complete
@@ -53,4 +55,14 @@ comparison/verdict requirements. No removal build or acceptance is claimed here.
 
 Removal/compiler/ledger and paired-capture tooling are integrated. Matrix **R/F/C/T** records actual removed-tree native slices, **P** both-protocol prepared subsets, and **U** a bounded paired core/long-output pass. Observed Pi bridge/storage increases and measurement/binding limits remain disclosed; no performance-win or savings conclusion follows.
 
-Final v22 source compilation began at 03:42 UTC on 2026-10-16 without a passed result yet; **S** scale v4 remains running/pending. Compilation overlaps scale v4 for functional coverage only; it does not establish scale cost. Final build/native/default, churn, retention/collection and comparable cost gates remain open. See the [current validation matrix](../validation-matrix.md) for exact evidence and queue. No acceptance, closure, archive, adoption or final verdict is claimed.
+Final v22 source compilation began at 03:42 UTC on 2026-10-16 without a passed result yet; **S** scale v4 remains running/pending. Compilation overlaps scale v4 for functional coverage only; it does not establish scale cost. Final build/native/default, churn, retention/collection and comparable cost gates remain open. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for exact evidence and queue. No acceptance, closure, archive, adoption or final verdict is claimed.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [root acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json) records all 13 implementations/bounded required acceptance complete and narrow/continue isolated testing. Current [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json)/[five iOS boundaries](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json)/[v51 history](/private/tmp/pi-history-render-v51-20261016/history-render-revalidation.json)/[final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) passed; retained v38 removal/native/paired-resource/full-scale and default14 evidence preserve their pins and failures.
+
+Material limits: Three debug v38 pairs show 41.7× warm module calls, 147.2× request JSON proxy bytes and 3.01× logical storage. No overall coordination reduction, full parity, performance win or automatic savings; default/adoption/migration remains deferred.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 13 outcome](../outcome.md#ticket-13) for bounded acceptance and material limits.

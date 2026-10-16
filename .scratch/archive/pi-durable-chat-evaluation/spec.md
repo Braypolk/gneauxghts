@@ -1,5 +1,7 @@
 # Pi Durable interactive chat evaluation
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](outcome.md).
+
 Status: ready-for-agent
 Type: prototype
 Date: 2026-10-15
@@ -17,7 +19,7 @@ The user confirmed the interview recommendations on 2026-10-15 and requested
 these tickets. They subsequently authorized implementation by a new orchestrator
 chat in this same worktree, using fresh-context subagents and parallel work where
 dependencies permit. The persistent implementation goal is active in orchestrator
-chat `01a141e7-aed3-7962-85b6-2768654155e7`; follow [progress](progress.md).
+chat `01a141e7-aed3-7962-85b6-2768654155e7`; follow [progress](../../pi-durable-chat-evaluation/progress.md).
 
 Confirmed decisions:
 
@@ -45,19 +47,19 @@ deferred workflow.
 
 ## Read first and historical baseline
 
-- [CONTEXT](../../CONTEXT.md), [architecture](../../ARCHITECTURE.md) and
-  [behavior invariants](../../docs/architecture/behavior-invariants.md), especially
+- [CONTEXT](../../../CONTEXT.md), [architecture](../../../ARCHITECTURE.md) and
+  [behavior invariants](../../../docs/architecture/behavior-invariants.md), especially
   Chat, Proposals, committed adoption and Running Vault lifecycle.
-- [ADR 0001](../../docs/adr/0001-keep-agent-runtime-app-owned.md),
-  [ADR 0002](../../docs/adr/0002-own-note-timelines-at-the-canonical-mutation-seam.md),
-  [ADR 0009](../../docs/adr/0009-allow-scoped-retained-activity-evidence.md) and
-  [ADR 0011](../../docs/adr/0011-use-ordinary-note-links-for-chat-promotion.md).
-- Previous experiment: [result](../pi-durable-prototype/results.md),
-  [validation](../pi-durable-prototype/validation.md),
-  [owner baseline](../pi-durable-prototype/baseline.md) and
-  [run instructions](../pi-durable-prototype/README.md).
-- [Initial engine decision](../chat-reuse-research/engine-decision.md) and
-  [mobile source findings](../chat-reuse-research/pi-mobile-source-findings.md).
+- [ADR 0001](../../../docs/adr/0001-keep-agent-runtime-app-owned.md),
+  [ADR 0002](../../../docs/adr/0002-own-note-timelines-at-the-canonical-mutation-seam.md),
+  [ADR 0009](../../../docs/adr/0009-allow-scoped-retained-activity-evidence.md) and
+  [ADR 0011](../../../docs/adr/0011-use-ordinary-note-links-for-chat-promotion.md).
+- Previous experiment: [result](../../pi-durable-prototype/results.md),
+  [validation](../../pi-durable-prototype/validation.md),
+  [owner baseline](../../pi-durable-prototype/baseline.md) and
+  [run instructions](../../pi-durable-prototype/README.md).
+- [Initial engine decision](../../chat-reuse-research/engine-decision.md) and
+  [mobile source findings](../../chat-reuse-research/pi-mobile-source-findings.md).
 
 The prior experiment established native SQLite, both fixture protocols and a
 bounded real-editor/recovery slice on desktop/iOS. It removed zero production

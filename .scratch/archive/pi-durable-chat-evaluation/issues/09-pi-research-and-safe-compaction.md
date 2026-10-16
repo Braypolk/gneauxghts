@@ -1,5 +1,7 @@
 # Move research workers and long-context continuation onto Pi
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: phase-complete
@@ -48,4 +50,14 @@ are behavior references, not reusable lifecycle owners.
 
 The isolated Pi research worker and safe summaries are integrated, including the owner-scoped query correction. Matrix **D** records worker summaries and 23 passed follow-on UI checks; focused actual-Harness checks are preparation evidence.
 
-The whole **D** run failed strict parent-summary proof: adjacent selected context kept the parent below its threshold. Source-free fixture setup is corrected/prepared and requires a native rerun. **S** scale v4 remains running/pending, with no completed history/compaction accounting result. See the [current validation matrix](../validation-matrix.md); worker summaries cannot substitute for parent proof.
+The whole **D** run failed strict parent-summary proof: adjacent selected context kept the parent below its threshold. Source-free fixture setup is corrected/prepared and requires a native rerun. **S** scale v4 remains running/pending, with no completed history/compaction accounting result. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md); worker summaries cannot substitute for parent proof.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) follow-ons passed research and parent/worker summaries for both fixture lanes; current desktop active research Stop produced no late evidence and clean subsequent research completed. Retained v38 scale v6 completed 1005 answers plus six actual summaries/1011 requests.
+
+Material limits: Worker prose/summaries confer neither fresh evidence nor grants. v38 full scale remains independently pinned; current history/supplement checks do not remeasure scale/resources or prove physical collection.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 09 outcome](../outcome.md#ticket-09) for bounded acceptance and material limits.

@@ -1,5 +1,7 @@
 # Product scale acceptance preparation
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 Prepared 2026-10-15; updated to the current driver contract. Native v4 is
 **pending**, and earlier failed runs do not establish scale acceptance. This adds a
 product-path scale gate to the engine-only `scaleProbe.ts`; it does not replace

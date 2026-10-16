@@ -1,5 +1,7 @@
 # Prepared native storage fault phase
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 `src/lib/prototypes/pi/nativeStorageFaultProbe.ts` exports:
 
 ```ts

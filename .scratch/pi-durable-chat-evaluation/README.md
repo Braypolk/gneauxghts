@@ -1,8 +1,10 @@
 # Persistent Pi evaluation app
 
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
 This opt-in evaluation keeps the ordinary app, vault and Keychain service
 separate. The desktop entry opens the existing workspace directly; it does not
-run the diagnostic seeding route. This is an experiment under the [spec](spec.md),
+run the diagnostic seeding route. This is an experiment under the [spec](../archive/pi-durable-chat-evaluation/spec.md),
 not a production migration. See [baseline](baseline.md) for owner/resource
 comparison commands and measured limits.
 
@@ -173,26 +175,48 @@ silently transferred into iOS. See the [historical validation](../pi-durable-pro
 for the existing fixture gate behavior; those earlier passes are not current live
 provider or persistent copied-vault acceptance.
 
-Earlier focused setup evidence (12 Python safety/copy and three Node root/runner
-checks) exercises the copy contract. Separate actual persistent local acceptance
-has now passed on the manual `c74a53e` product / `2a11f83` probe bundle, SHA-256
-`9328ff2f9fcffdc194ee20631615ff80aecb9adaf5f2ae0846c7eda3526f57b2`.
-It used the isolated root with 209 copied files and the user-configured local
-model. Normal launches retained notes/history/model, approved synthetic mutation
-and Save Keeps committed faithfully, the saved origin link navigated to chat,
-a bounded Stop/Retry completed, and discovery/Deny/Allow once/citation checks
-passed. The app is **closed** after normal Cmd-Q (exit 0). The original 388-file
-seal was reverified unchanged after these actions:
-`66a085d23fce3cc0445700b8bfea9e4d35f497bc71402aad6c6ba257cf211863`.
-The original vault remains untouched.
+## Final installed app and acceptance
 
-Receipt: `/private/tmp/pi-persistent-live-20261015/manual-live.json`.
-See [desktop acceptance](desktop-acceptance.md) for exact manual scope/limits,
-[progress](progress.md) for current gates, and the [replacement ledger](replacement-ledger.md)
-for retained ownership/cost. This verified manual bundle is separate from later
-captured harness source; newer uncompiled source has no implied build/pass.
-Hosted live work is user-deferred. Full iOS, scale and final evaluation proof
-remain pending; there is no production-adoption decision or performance-win claim.
+The final v51 normal manual bundle is built with `pi-prototype` alone, executable
+SHA-256 `78154483e2ed80efbf573a35775d55d364e34785bf87fcdba3e98a1c9996a48c`.
+The [final manual receipt](/private/tmp/pi-v51-manual-acceptance-20261016.json) passed two
+normal launches/quits on the same persistent copied root, retaining the configured
+local model `qwen3.8-27b-gsq-rco`, prior synthetic note/history and exact pending
+review. Normal Keep on the second launch and exact synthetic canonical body
+read-back passed; source-free READY and retained-context follow-up completed in
+normal UI. No setup/reset/recopy was performed. The app is **closed**.
+
+Reuse the existing root/model with
+`env -u PI_PROTOTYPE_DATA pnpm pi:prototype installed`; no reset is needed.
+The [root bounded acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json) records all 13
+implementations and required bounded acceptance complete: **narrow/continue
+isolated testing; defer default production adoption**. Current whole desktop/iOS,
+five iOS crash boundaries and linked history passed on their recorded pins; the
+first v51 desktop failure remains failed/unexplained despite the unchanged retry
+passing. See [archived outcome](../archive/pi-durable-chat-evaluation/outcome.md),
+[matrix](validation-matrix.md), [desktop acceptance](desktop-acceptance.md) and
+[replacement ledger](replacement-ledger.md) for exact scopes/failures/cost limits.
+The [evidence index](/private/tmp/pi-v51-final-evidence-index-20261016.json) binds
+source/build/receipt slots; `acceptanceVerdict:null` is intentional and separate
+from the root semantic decision.
+
+The [post-manual original observation](/private/tmp/pi-original-post-v51-manual-20261016.json)
+records 388 files/aggregate
+`759e94ba60290d368e6edcb3b15a11d55fe2db32216a1538086acd7a9b9a105c`, equal only
+to the fresh pre-v50 manual baseline for the bounded manual interval. Historical
+`66a085…1863` differs with cause unestablished. The observation made no writes or
+SQLite opens; root attestation is not independent OS-wide tracing. Do not infer
+continuous historical equality.
+
+Earlier manual `c74a53e`/`2a11f83`, executable `9328ff2…57b2`, is historical
+local-live evidence: 209 copied files, normal permission/citation/Save/origin and
+bounded Stop/Retry. Its [receipt](/private/tmp/pi-persistent-live-20261015/manual-live.json)
+retains that older scope and original-seal observation; it is not the final
+installed binary. Hosted live is user-deferred; physical devices/OS pressure,
+private collection/disposal/full-process memory and standalone Settings relocation
+remain unverified. Three v38 debug resource pairs show material bridge/storage
+regressions; no overall coordination reduction, full parity or performance win
+is established. Final default adoption/migration remains deferred.
 
 ## Deliberate recovery of a stopped interrupted source
 

@@ -1,5 +1,7 @@
 # Project Pi chats into managed Markdown and preserve relocation
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: phase-complete
@@ -67,4 +69,14 @@ pending; no acceptance or phase-completion claim is made by this comment.
 
 Committed transcript projection, conflict handling and identity-bound relocation mapping are integrated. Matrix **T** records complete desktop watcher/Save/generated-root relocation/uncertain-Keep slices; **I** records passed iOS watcher external edit/delete and normal Convert/Restore checks.
 
-The whole **I** run failed normal Save editor readiness; corrected Save, selection-B and relocation remain unpassed. Standalone normal Settings vault relocation also remains unproven. See the [current validation matrix](../validation-matrix.md) for exact scopes; the earlier native-pending implementation comment is historical.
+The whole **I** run failed normal Save editor readiness; corrected Save, selection-B and relocation remain unpassed. Standalone normal Settings vault relocation also remains unproven. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for exact scopes; the earlier native-pending implementation comment is historical.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). Retained T/I prove desktop watchers/generated-root relocation/uncertain Keep and clean synthetic iOS transcript/sandbox relocation. Current [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json), [five iOS boundaries](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json) and [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) supplement stable reviewed effects/history/recovery on their own pins.
+
+Material limits: Standalone normal Settings vault relocation remains unverified. Synthetic/programmatic relocation does not establish physical sync/distribution; transcript projection is not another lifecycle owner.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 11 outcome](../outcome.md#ticket-11) for bounded acceptance and material limits.

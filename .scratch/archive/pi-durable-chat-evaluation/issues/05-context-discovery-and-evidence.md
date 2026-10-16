@@ -1,5 +1,7 @@
 # Support normal context, discovery, permissions and citations
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -112,4 +114,14 @@ these suggestion/evidence files have no type errors.
 
 Native context/policy/evidence services and Pi bindings are integrated. Matrix **P** records selected/current/retained evidence and grants; **M** records actual discovery → Deny, then fresh Allow once → read/citation/canonical navigation through normal local-live UI.
 
-Final race, revocation and platform checks remain open. The paired grant API subset does not establish paired permission-dialog parity. See the [current validation matrix](../validation-matrix.md) for receipt provenance; earlier preparation/typecheck limitations above are historical.
+Final race, revocation and platform checks remain open. The paired grant API subset does not establish paired permission-dialog parity. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for receipt provenance; earlier preparation/typecheck limitations above are historical.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) and retained P/M/L cover normal context/evidence; earlier local-live discover→Deny→fresh Allow once→read/citation/navigation passed. Current desktop held-read edit/rename/exclude races passed both fixture protocols with no provisional delivery.
+
+Material limits: Paired grants cover the API subset, not paired permission-dialog/full-product parity. Programmatic simulator navigation does not prove physical touch behavior; no unread metadata/summary authority is implied.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 05 outcome](../outcome.md#ticket-05) for bounded acceptance and material limits.

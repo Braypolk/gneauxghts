@@ -1,5 +1,7 @@
 # Deliver a persistent isolated app for hands-on Pi chat
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -59,7 +61,7 @@ unsettled history work. It never writes the source; staged publication validates
 source hashes again and preserves history identity/payloads while rebasing copied
 location columns. It omits app data/credentials, Chats and relocated managed chat
 Markdown. Reset requires an evaluation marker and refuses open/unrecognized roots.
-See [run instructions](../README.md) for private-data, retry and reset boundaries.
+See [run instructions](../../../pi-durable-chat-evaluation/README.md) for private-data, retry and reset boundaries.
 
 Focused evidence: `python3 -B -W error::ResourceWarning -m unittest discover -s
 scripts/pi-prototype -p '*_test.py' -v` passes **12 tests**; `node --test
@@ -74,7 +76,7 @@ exit 1 and empty PID output. Native builds/app launches were not performed by th
 implementation agent. Real source portability, two-launch persistence and copied
 edit/Keep isolation remain acceptance gates; a user statement that the vault is
 ready is not substituted for a portable store marker. Comparison baseline is
-tracked separately in [baseline](../baseline.md).
+tracked separately in [baseline](../../../pi-durable-chat-evaluation/baseline.md).
 
 Manual visibility review: the development desktop entry explicitly sets
 `GNEAUXGHTS_E2E_FOREGROUND=1` while diagnostic/gate environments remove that
@@ -114,4 +116,14 @@ instructions](../README.md) for exact commands and limits.
 
 Copy/recovery/setup and the separate persistent app are integrated. Matrix **M** records 209 copied files, repeated launches retaining model/history/review, approved synthetic edits leaving the original unchanged, and normal shutdown. This is bounded actual local-live evidence; agent observations are not user trial feedback.
 
-Final comparison/resource and remaining platform gates stay open. See the [current validation matrix](../validation-matrix.md) for receipt provenance and scope; earlier preparation-only comments above are historical.
+Final comparison/resource and remaining platform gates stay open. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for receipt provenance and scope; earlier preparation-only comments above are historical.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) passed two normal launches/quits, retained prior note/history/model and the same pending review, then approved synthetic Keep/canonical read-back, without setup/reset/recopy. Earlier M records the 209-file copy and permission/Save journeys.
+
+Material limits: Final local UI observations extend the earlier manual scope; they are not user trial feedback or a new full permission/Save/cancellation cross-product. Original equality is limited to the fresh bounded manual interval.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 01 outcome](../outcome.md#ticket-01) for bounded acceptance and material limits.

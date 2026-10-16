@@ -1,5 +1,7 @@
 # Restore ordinary conversation and durable request behavior
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -57,4 +59,14 @@ event contracts and native request/answer admission seams.
 
 Pi admission, durable checkpoints, projection and paging are integrated. Matrix **D** records first/relaunch/failure slices, **C** actual crash recovery, and **M** a short active Stop followed by a separate Retry completing READY. The earlier long-count Retry was stopped and is not a completed Retry result.
 
-The final concurrent/session/lifecycle matrix remains open. **S** scale v4 is running/pending: derived projection progress is not completed 1005-history, identity or provider-accounting proof. See the [current validation matrix](../validation-matrix.md) for bounded results and remaining gates.
+The final concurrent/session/lifecycle matrix remains open. **S** scale v4 is running/pending: derived projection progress is not completed 1005-history, identity or provider-accounting proof. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for bounded results and remaining gates.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) passed first/relaunch, Stop/Retry, no implicit replay and fault/follow-on scopes; [five iOS boundaries](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-publication-yw2Vaa/ios-publication-fault-gate.json) passed prepared/partial interruption semantics. [v51 history](/private/tmp/pi-history-render-v51-20261016/history-render-revalidation.json) verified 1005 conversations/2010 messages, exact order/content/identities before/after restart and obsolete-batch cancellation.
+
+Material limits: Current history is linked UI proof on the retained corpus, not a new provider/compaction/scale-cost run. Initial v51 desktop admission failed; unchanged serialized retry passed without establishing its cause.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 04 outcome](../outcome.md#ticket-04) for bounded acceptance and material limits.

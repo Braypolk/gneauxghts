@@ -1,5 +1,7 @@
 # Support normal provider settings and model switching with Pi
 
+> Historical specification/issue record; outside the executable backlog. Original triage/dependency lines are a historical snapshot. See [outcome](../outcome.md).
+
 Status: ready-for-agent
 Type: task
 Milestone: first-usable-desktop
@@ -82,4 +84,14 @@ Use pinned APIs; document any justified version change.
 
 Frozen native provider routing and model refresh are integrated. Matrix **D** records normal model/protocol checks, **P** compatible and Responses prepared subsets, and **M** normal Settings with configured local inference. The earlier unconfigured-namespace/live-unverified comment is historical for that checkpoint.
 
-The final both-protocol matrix remains open. Hosted live is explicitly user-deferred; synthetic Responses results do not establish hosted live. See the [current validation matrix](../validation-matrix.md) for exact artifact and coverage limits.
+The final both-protocol matrix remains open. Hosted live is explicitly user-deferred; synthetic Responses results do not establish hosted live. See the [current validation matrix](../../../pi-durable-chat-evaluation/validation-matrix.md) for exact artifact and coverage limits.
+
+### 2026-10-16 — Final acceptance reconciliation
+
+Implementation is integrated and bounded acceptance is complete under the [root semantic acceptance](/private/tmp/pi-v51-root-final-acceptance-20261016.json). Normal settings/model and both-protocol fixture checks passed in retained and current [v51 desktop](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-interactive-O7czrc/desktop-interactive-gate.json)/[v51 iOS](/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-BTSO9O/ios-interactive-gate.json) slices. Earlier desktop/iOS local-live receipts and [final manual](/private/tmp/pi-v51-manual-acceptance-20261016.json) show configured local inference and retained settings.
+
+Material limits: Hosted live is user-deferred; synthetic Responses is fixture evidence. No new provider integration or full platform/protocol/live cross-product is claimed.
+
+The original triage/dependency lines above are historical; this record is outside the executable backlog. Default production adoption and migration remain deferred.
+
+See [ticket 03 outcome](../outcome.md#ticket-03) for bounded acceptance and material limits.

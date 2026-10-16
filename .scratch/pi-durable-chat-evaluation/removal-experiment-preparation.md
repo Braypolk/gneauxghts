@@ -1,6 +1,8 @@
 # Bounded physical-removal preparation
 
-2026-10-15. Ticket [13](issues/13-replacement-proof-and-evaluation-verdict.md)
+> Retained evaluation runbook/evidence supporting the installed app. The historical spec/issues are archived; see [outcome](../archive/pi-durable-chat-evaluation/outcome.md). This record does not authorize production adoption/default migration.
+
+2026-10-15. Ticket [13](../archive/pi-durable-chat-evaluation/issues/13-replacement-proof-and-evaluation-verdict.md)
 has a runnable preparation tool, not a completed removal/build/native result.
 No native build, application, provider, Git command, or removal of working source
 was performed by this worker. Production default wiring remains intact.

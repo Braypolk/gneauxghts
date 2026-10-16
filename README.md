@@ -292,3 +292,5 @@ docs/adr/          Architecture decisions and their current scope
 - **New Idea** starts or reuses an empty draft in the invoking pane. Ordinary
   edits are saved before departure; protected proposal reviews await Keep or
   Undo. Other panes keep their current note or chat.
+
+The separately installed [Pi evaluation app](.scratch/pi-durable-chat-evaluation/README.md) supports persistent ordinary chat in an isolated copied vault. Its [bounded evaluation outcome](.scratch/archive/pi-durable-chat-evaluation/outcome.md) records completed implementation/acceptance and material cost/coverage limits. Continue narrow isolated testing; the ordinary default runtime is retained and production adoption remains deferred.
