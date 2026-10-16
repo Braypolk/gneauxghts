@@ -401,7 +401,10 @@ it('reopens the committed actionable failure without exposing unsafe provider di
     ['Current notes are still updating; retry the read','Notes are still updating. Wait a moment, then Retry.'],
     ['Current notes changed during the read; retry the read','Notes changed while they were being checked. Retry to read fresh evidence.'],
     ['Current note validation could not complete; retry the read','Notes could not be checked. Retry the request.'],
-  ].flatMap(([reason,message])=>['Evidence','Context'].map(kind=>[`${kind} validation unavailable: ${reason}`,message] as const));
+  ].flatMap(([reason,message])=>[
+    [reason,message] as const,
+    ...['Evidence','Context'].map(kind=>[`${kind} validation unavailable: ${reason}`,message] as const),
+  ]);
   const generic='The model request failed. Check the model and connection settings, then Retry.';
   const cases=[
     ['Evidence changed before delivery; read again','Evidence changed before delivery; read again'],

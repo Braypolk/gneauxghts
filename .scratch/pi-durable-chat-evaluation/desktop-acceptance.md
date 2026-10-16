@@ -20,7 +20,34 @@ Final native gates remain open.
 
 ## Current checkpoint — 2026-10-16
 
-Latest captured checkpoint **v33** is
+Current actual checkpoint **v34**, canonical manifest
+`22c8180fe7a6d14333bd01d1c4050db0fb4840f1f46b2d49e0d863570b8e949d`,
+is `/private/tmp/pi-removal-final-20261015-v34`. Expanded compiled-only executable
+`8ccdf4b08c0e38e8f3c1af79bc762ced1f4a9b3fbb58da9abc1d172ed0da5607`
+([compiler receipt](/private/tmp/pi-removal-final-20261015-v34/artifacts/ios-expanded-build.json))
+ran **cE9fvy whole FAILED**, 88 provider requests
+([gate receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-cE9fvy/ios-interactive-gate.json)).
+First14/relaunch10 checks and local parent/worker compaction/research
+(30 reads/31 generations/59 sources), fresh read, text and image attachment
+checks passed. The relaunch phase nevertheless failed during follow-ons.
+
+Post-response **audio parent generation508** failed after 2015ms with exact
+unprefixed `Current notes changed during the read; retry the read`.
+Provider request87 completed in66ms, then failure followed1891ms later; no
+AdmittedAnswer was committed, with zero evidence/context/grants at this boundary.
+`resolveContinuity` → `pi_continuity_references` exhausted three invalidated
+`current_content.read_refreshable` attempts. The actual writer remains **unknown**;
+these timings do not establish attribution. The root's retained
+[forensic receipt](/private/tmp/pi-removal-final-20261015-v34/artifacts/ios-expanded-failure-boundary.json)
+binds this boundary/pin, `admittedAnswer:false`, `wholeGatePassed:false` and
+`remainingNativeBuildersStarted:false`. Closed backup:
+`/private/tmp/pi-owned-simulator-after-v34-expanded-failure-20261015`.
+The native queue closed failed; remaining iOS/desktop builders did not start,
+and the desktop queue produced no gates. Narrow diagnostic investigation is
+ongoing. Upcoming exact unprefixed friendly-error mapping is presentation only,
+**not an underlying fix or accepted native result**.
+
+Previous captured checkpoint **v33** is
 `/private/tmp/pi-removal-final-20261015-v33`, canonical manifest
 `e87cf98893523599dd51342cdab24027adf4924736f0c70bf04d9417452194e5`.
 Desktop compiled/three exclusion checks passed, binary
@@ -50,8 +77,8 @@ default941/architecture21/exclusion3/runtime1 passed at v33; these overlapping
 suites are not added together. Frontend adapter17 passed. Initial Svelte Map type
 error remains retained at `/private/tmp/pi-v34-svelte-check-20261015.log`;
 repair passed zero errors/warnings and E2E TypeScript
-(`/private/tmp/pi-v34-svelte-check-repair-20261015.log`). **v34 capture is underway;
-no accepted v34 native result yet**. The fixes are not proven by a native rerun.
+(`/private/tmp/pi-v34-svelte-check-repair-20261015.log`). The tested source was captured in v34; its actual whole native run failed
+at the continuity-refresh boundary above. No accepted whole rerun follows.
 
 Historical v32 **WRrwST whole failed**, 143 requests: initial14/relaunch10 and all
 local/openai research, parent/worker compaction, fresh read, attachment/exact Retry

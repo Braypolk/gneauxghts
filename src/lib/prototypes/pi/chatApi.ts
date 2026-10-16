@@ -53,7 +53,10 @@ const noteValidationFailures=new Map<string,string>([
   ['Current notes are still updating; retry the read','Notes are still updating. Wait a moment, then Retry.'],
   ['Current notes changed during the read; retry the read','Notes changed while they were being checked. Retry to read fresh evidence.'],
   ['Current note validation could not complete; retry the read','Notes could not be checked. Retry the request.'],
-].flatMap(([reason,message])=>['Evidence','Context'].map(kind=>[`${kind} validation unavailable: ${reason}`,message] as const)));
+].flatMap(([reason,message])=>[
+  [reason,message] as const,
+  ...['Evidence','Context'].map(kind=>[`${kind} validation unavailable: ${reason}`,message] as const),
+]));
 function visibleFailure(detail:unknown,partial:unknown):string {
   for(const candidate of [detail,partial])if(typeof candidate==='string') {
     const diagnostic=candidate.replace(/^Error: /,'').trim();
