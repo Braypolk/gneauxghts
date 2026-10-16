@@ -13,7 +13,9 @@ function body(lane,protocol,marker,tools=[],context='') {
   if(lane==='old')offered.push({type:'function',function:{name:'final_result',parameters:{type:'object',properties:{segments:{type:'array'}}}}});
   const tail=tools.flatMap(([name,result],index)=>protocol==='compatible'?[{role:'assistant',tool_calls:[{id:String(index),function:{name,arguments:'{}'}}]},{role:'tool',content:JSON.stringify(result)}]:[{type:'function_call',name,call_id:String(index),arguments:'{}'},{type:'function_call_output',call_id:String(index),output:JSON.stringify(result)}]);
   const history=[{role:'system',content:context},{role:'user',content:marker},...tail];
-  return protocol==='compatible'?{messages:history,tools:offered}:{input:history,tools:offered.map(item=>({type:'function',...item.function}))};
+  // Pinned Rig Responses lifts its leading system message to instructions;
+  // compatible keeps it in messages. Model each actual wire placement.
+  return protocol==='compatible'?{messages:history,tools:offered}:{input:history.slice(1),instructions:context,tools:offered.map(item=>({type:'function',...item.function}))};
 }
 for(const lane of ['old','pi'])for(const protocol of ['compatible','responses']) {
   const plan=(marker,tools=[],context='')=>planParityReply(body(lane,protocol,marker,tools,context),lane,protocol);
@@ -53,6 +55,19 @@ test('fixture refuses absent tools, real authorization and unknown scenarios',()
 test('embedded context scanner handles bracket prose, quotes and nested selectors',()=>{
   const result=embeddedObjects('Untrusted [invalid] prose {"selection":"[x] \\"quote\\"","selectionRead":{"cursor":"canonical"}} trailing');
   assert(result.some(item=>item.cursor==='canonical'));
+});
+test('Responses context reads only the exact selector supplied by instructions or input and requires delivered evidence',()=>{
+  const context='Allowed adjacent editor hint:\n{"noteId":"note1","selection":"seven pear trees","selectionRead":{"purpose":"answer","cursor":"native-selected-cursor"}}';
+  const request=body('old','responses','PARITY:CONTEXT',[],context);
+  assert(!JSON.stringify(request.input).includes('native-selected-cursor'));
+  assert.deepEqual(JSON.parse(planParityReply(request,'old','responses').tool.arguments),{purpose:'answer',cursor:'native-selected-cursor'});
+  const inputPlacement={...request,instructions:'Generic system guidance',input:[{role:'system',content:[{type:'input_text',text:context}]},...request.input]};
+  assert.deepEqual(planParityReply(inputPlacement,'old','responses'),planParityReply(request,'old','responses'));
+  const noSelector={...request,instructions:'Allowed adjacent editor hint:\n{"noteId":"note1","selection":"seven pear trees"}'};
+  assert.throws(()=>planParityReply(noSelector,'old','responses'),/Selected canonical context omitted/);
+  assert.throws(()=>planParityReply(body('old','responses','PARITY:CONTEXT',[['read_notes',{items:[{evidenceId:'unread'}]}]],context),'old','responses'),/actually delivered sourceId/);
+  const delivered=planParityReply(body('old','responses','PARITY:CONTEXT',[['read_notes',{items:[{sourceId:'actual-selected-source'}]}]],context),'old','responses');
+  assert.deepEqual(JSON.parse(delivered.tool.arguments).segments[0].sources,['actual-selected-source']);
 });
 test('browser driver remains serializable and explicitly reports permission capability difference',()=>{
   assert.doesNotThrow(()=>new Function(`return (${parityBrowserAction.toString()})`));

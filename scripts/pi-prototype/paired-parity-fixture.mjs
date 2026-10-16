@@ -67,7 +67,11 @@ export function planParityReply(body,lane,protocol='compatible',authorization) {
     return sourceAnswer();
   }
   if(journey==='CONTEXT') {
-    const context=history.slice(0,last+1).flatMap(item=>embeddedObjects(textOf(item)));
+    // Rig's Responses serializer lifts leading system messages, including the
+    // freshly validated adjacent hint, into top-level instructions. Pi may
+    // retain context in input; both are real provider-visible context fields.
+    const context=[...(protocol==='responses'&&typeof body.instructions==='string'?[body.instructions]:[]),
+      ...history.slice(0,last+1).map(textOf)].flatMap(embeddedObjects);
     const selector=context.find(value=>value.selectionRead?.cursor)?.selectionRead
       ??context.find(value=>value.kind==='selected_excerpt'&&value.read?.cursor)?.read;
     assert(selector,'Selected canonical context omitted');
