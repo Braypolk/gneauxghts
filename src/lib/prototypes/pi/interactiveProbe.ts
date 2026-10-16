@@ -9,6 +9,7 @@ import { acquireProbeReview } from './probeReview';
 import { openProbeChatSplit } from './probeSplit';
 import { openVisibleProbeChat } from './probeChatFocus';
 import { revealProbeReadActivity } from './probeReadActivity';
+import { focusProbeChatComposer, probeChatPane, probeComposerSend } from './probeChatSend';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -47,17 +48,24 @@ async function openChat() {
 }
 async function selectConversation(id: string) {
   await openChat(); const conversation = await api.getConversation(id);
-  await click('Conversations');
-  const item = await until(() => Array.from(document.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker item');
+  const pane = await until(() => probeChatPane(conversation.title) ?? probeChatPane(), 'normal chat pane for conversation picker');
+  await focusProbeChatComposer(pane, until);
+  await click('Conversations', pane);
+  const item = await until(() => Array.from(pane.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')).find(node => node.textContent?.trim() === conversation.title), 'conversation picker item');
   item.click();
-  await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === conversation.title, 'selected chat title');
+  await until(() => pane.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === conversation.title, 'selected chat title in picker owner pane');
 }
 async function startSend(id: string, content: string) {
   const debug = /PI_UI:(STOP|INTERRUPT)/.test(content);
   if (debug) trace('startSend', { conversationId: id, content });
-  const count = (await until(() => api.getConversation(id), 'conversation snapshot before UI send')).messages.length;
-  const composer = await until(() => { const value = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'); return value && !value.disabled ? value : undefined; }, 'normal chat composer');
-  input(composer, content); if (debug) trace('sendClick', { content, buttons: visibleButtons() }); await click('Send message');
+  const snapshot = await until(() => api.getConversation(id), 'conversation snapshot before UI send');
+  const count = snapshot.messages.length;
+  const pane = await until(() => probeChatPane(snapshot.title), 'requested conversation mounted in normal chat pane');
+  const composer = await focusProbeChatComposer(pane, until);
+  input(composer, content);
+  const sendControl = await until(() => probeComposerSend(composer), 'requested composer Send message');
+  trace('sendClick', { conversationId: id, paneId: pane.dataset.paneId, title: snapshot.title, content, visibleComposer: true });
+  sendControl.click(); await pause();
   const admitted = await until(async () => { const messages = (await api.getConversation(id)).messages; return messages.length > count ? messages.at(-1) : undefined; }, 'Pi admission of UI send');
   if (debug) trace('startSendReturned', { content, messageId: admitted.id, status: admitted.status, buttons: visibleButtons() });
   return admitted;
