@@ -160,6 +160,52 @@ async function openSource(message: ChatMessage) {
   return until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString().includes('orchard')), 'current note opened by citation');
 }
 
+/** Compact Keep returns to chat and can unmount the editor. Re-enter through
+ * the originating message's ordinary committed Save action before keyboard
+ * navigation; the saved Note Identity, canonical bytes and mounted title/body
+ * must all agree with the already independently verified append result. */
+export async function openSharedSavedOrigin(conversationId: string, messageId: string, expected: SharedCanonicalNote) {
+  await selectConversation(conversationId);
+  const conversation = await api.getConversation(conversationId);
+  const message = conversation.messages.find(value => value.id === messageId);
+  assert(expected.noteId && expected.path && message?.savedNote?.noteId === expected.noteId && message.savedNote.path === expected.path,
+    'Originating message Open note target differs from exact saved Note Identity/path');
+  const card = await until(() => document.querySelector(`[data-chat-message-id="${messageId}"]`), 'originating message saved Open note card');
+  const open = await until(() => Array.from(card.querySelectorAll<HTMLButtonElement>('button')).find(node =>
+    node.isConnected && !node.disabled && visibleProbeControl(node) && node.getAttribute('aria-label') === 'Open note'), 'visible originating message Open note control');
+  open.click();
+  const canonical = await invoke<SharedCanonicalNote>('read_note', { noteId: expected.noteId, path: expected.path });
+  assert(canonical.noteId === expected.noteId && canonical.path === expected.path && canonical.title === expected.title && canonical.markdown === expected.markdown,
+    'Opened saved canonical identity, body, title or path differs from exact final append');
+  const savedEditor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+    .map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && visibleProbeControl(view.dom) &&
+      view.state.doc.toString() === expected.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === expected.title),
+  'exact saved target mounted by normal Open note');
+  const originPosition = savedEditor.state.doc.toString().indexOf('[[Chats/Pi/'); assert(originPosition >= 0, 'Saved origin link absent');
+  savedEditor.dispatch({ selection: { anchor: originPosition + 4 }, scrollIntoView: true }); savedEditor.focus();
+  // Observe the ordinary anchor effect rather than accepting a chat/card that
+  // was already present in a desktop split. Begin immediately before keydown:
+  // there is no async window for unrelated navigation to satisfy this proof.
+  const originalScrollIntoView = Element.prototype.scrollIntoView;
+  let anchorScroll: ScrollIntoViewOptions | undefined;
+  Element.prototype.scrollIntoView = function (options?: boolean | ScrollIntoViewOptions) {
+    const pane = probeChatPane(conversation.title);
+    if (typeof options === 'object' && options.block === 'center' && ['auto', 'smooth', 'instant'].includes(options.behavior ?? '') &&
+      this.getAttribute('data-chat-message-id') === messageId && this.isConnected && visibleProbeControl(this as HTMLElement) &&
+      pane && this.closest('[data-testid="workspace-pane"]') === pane) anchorScroll = { ...options };
+    originalScrollIntoView.call(this, options);
+  };
+  try {
+    savedEditor.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey: /Mac/i.test(navigator.platform), ctrlKey: !/Mac/i.test(navigator.platform), bubbles: true, cancelable: true }));
+    await until(() => {
+      const pane = probeChatPane(conversation.title);
+      const target = document.querySelector<HTMLElement>(`[data-chat-message-id="${messageId}"]`);
+      return anchorScroll && pane && target?.isConnected && visibleProbeControl(target) && target.closest('[data-testid="workspace-pane"]') === pane;
+    }, 'Open in chat scrolls to exact originating message');
+  } finally { Element.prototype.scrollIntoView = originalScrollIntoView; }
+  return { noteId: canonical.noteId, path: canonical.path, title: canonical.title, conversationId, messageId, anchorScroll };
+}
+
 export async function runInteractiveProbe() {
   const config = await invoke<{ fixture: boolean; interactiveGate: boolean }>('pi_probe_config');
   if (!config.fixture || !config.interactiveGate) return;
@@ -339,13 +385,9 @@ export async function runInteractiveProbe() {
         const appended = await proveKeep(selection.id, state.b, 'appended', selected); assert(appended.noteId === state.savedNoteId, 'Append changed target identity'); report.receipts.appended = appended;
         assert(nativeTransportStats.chunks === noInference.chunks && nativeTransportStats.bytes === noInference.bytes, 'Save or Keep dispatched inference');
         await mark('public deterministic repeated-selection append uses retained UI review and exact target', { before: noInference, after: { ...nativeTransportStats } });
-        // Use the normal editor keyboard navigation, including the origin alias.
-        const savedEditor = await until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString().includes('Open in chat')), 'saved note in retained editor');
-        const originPosition = savedEditor.state.doc.toString().indexOf('[[Chats/Pi/'); assert(originPosition >= 0, 'Saved origin link absent');
-        savedEditor.dispatch({ selection: { anchor: originPosition + 4 }, scrollIntoView: true }); savedEditor.focus();
-        savedEditor.contentDOM.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', metaKey: /Mac/i.test(navigator.platform), ctrlKey: !/Mac/i.test(navigator.platform), bubbles: true, cancelable: true }));
-        await until(() => document.querySelector<HTMLInputElement>('[aria-label="Chat title"]')?.value === 'Pi interactive B' && document.querySelector(`[data-chat-message-id="${message.id}"]`), 'Open in chat returns exact originating message');
-        await mark('saved ordinary Open in chat link navigates to originating conversation/message');
+        assert(appended.status === 'committed', 'Append lacks committed editor Markdown');
+        const origin = await openSharedSavedOrigin(state.b, message.id, { noteId: state.savedNoteId, path: state.savedPath!, title: selected.title, markdown: appended.committedMarkdown });
+        await mark('saved ordinary Open in chat link navigates to originating conversation/message', origin);
         await persist(state);
       } else throw new Error(`Unsupported interactive phase ${phase}`);
     }

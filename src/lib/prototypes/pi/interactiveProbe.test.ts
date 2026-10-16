@@ -15,7 +15,7 @@ vi.mock('$lib/features/chat/api', () => ({ chatApi: {
 } }));
 vi.mock('./nativeProvider', () => ({ nativeTransportStats: {} }));
 vi.mock('./interactiveFailures', () => ({ runInteractiveFailures: mocks.failures }));
-import { runInteractiveProbe } from './interactiveProbe';
+import { openSharedSavedOrigin, runInteractiveProbe } from './interactiveProbe';
 
 /** The compact pane keeps its title/composer in an inert frame until the normal
  * rail activates it. The title then moves to the shared mobile header, and its
@@ -175,6 +175,126 @@ describe('interactive refinement Send after compact review editing', () => {
     expect(workspace.field.focus).not.toHaveBeenCalled();
     expect(workspace.send.click).not.toHaveBeenCalled();
     expect(workspace.foreignSend.click).not.toHaveBeenCalled();
+  });
+});
+
+describe('normal saved Open note restores compact Keep editor before origin navigation', () => {
+  beforeEach(() => { vi.resetAllMocks(); vi.useFakeTimers(); });
+  afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  function savedOriginWorkspace(fault?: 'inert' | 'identity' | 'path' | 'body' | 'title' | 'mountedBody' | 'noop' | 'wrongAnchor' | 'wrongScroll', retainedSplit = false) {
+    const workspace = compactWorkspace();
+    const expected = { noteId: 'saved-note', path: '/vault/Saved.md', title: 'Saved', markdown: 'Final appended answer.\n\n[[Chats/Pi/a/Origin#^msg_answer|Open in chat]]' };
+    const state = { mounted: false, originOpened: false };
+    const title = { value: expected.title };
+    const pane = { querySelector: () => title };
+    const visible = { isConnected: true, getClientRects: () => [1], closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : null };
+    const normalScroll = vi.fn();
+    class MessageElement {
+      isConnected = true;
+      constructor(readonly id: string) {}
+      getAttribute(name: string) { return name === 'data-chat-message-id' ? this.id : null; }
+      getClientRects() { return [1]; }
+      closest(selector: string) { return selector === '[data-testid="workspace-pane"]' ? workspace.pane : null; }
+      querySelectorAll() { return [open]; }
+      scrollIntoView(options?: boolean | ScrollIntoViewOptions) { normalScroll(this.id, options); }
+    }
+    vi.stubGlobal('Element', MessageElement);
+    const card = new MessageElement('answer');
+    const wrongCard = new MessageElement('other-answer');
+    const keyboard = vi.fn(() => {
+      if (fault === 'noop') return;
+      state.mounted = false; state.originOpened = true;
+      (fault === 'wrongAnchor' ? wrongCard : card).scrollIntoView({ behavior: 'auto', block: fault === 'wrongScroll' ? 'nearest' : 'center' });
+    });
+    const view = { dom: visible, state: { doc: { toString: () => fault === 'mountedBody' ? 'Wrong note with Open in chat' : expected.markdown } },
+      dispatch: vi.fn(), focus: vi.fn(), contentDOM: { dispatchEvent: keyboard } };
+    vi.spyOn(EditorView, 'findFromDOM').mockReturnValue(view as unknown as EditorView);
+    const open = { ...visible, disabled: false, getAttribute: () => 'Open note',
+      closest: () => fault === 'inert' ? {} : null,
+      click: vi.fn(() => { expect(state.mounted).toBe(false); state.mounted = true; }) };
+    const foreignOpen = { ...open, click: vi.fn() };
+    const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
+    const item = { textContent: 'Pi interactive A', click: vi.fn() };
+    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] });
+    const queryAll = document.querySelectorAll.bind(document);
+    Object.assign(document, {
+      querySelector: (selector: string) => selector === '[data-chat-message-id="answer"]' ? state.mounted && !retainedSplit ? undefined : card : {},
+      querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' ? state.mounted ? [view.dom] : []
+        : selector === 'button' ? [foreignOpen] : queryAll(selector),
+    });
+    vi.stubGlobal('KeyboardEvent', class { constructor(readonly type: string, readonly options: unknown) {} });
+    vi.stubGlobal('navigator', { platform: 'MacIntel' });
+    mocks.conversation.mockResolvedValue({ title: 'Pi interactive A', messages: [{ id: 'answer', savedNote: { noteId: fault === 'identity' ? 'foreign-note' : expected.noteId, path: fault === 'path' ? '/vault/Other.md' : expected.path } }] });
+    mocks.invoke.mockResolvedValue({ ...expected, ...(fault === 'body' ? { markdown: 'Wrong canonical body' } : fault === 'title' ? { title: 'Wrong title' } : {}) });
+    return { expected, state, open, foreignOpen, view, keyboard, normalScroll, originalScroll: MessageElement.prototype.scrollIntoView };
+  }
+
+  async function navigate(expected: Parameters<typeof openSharedSavedOrigin>[2]) {
+    const pending = openSharedSavedOrigin('a', 'answer', expected);
+    // Attach a rejection handler before advancing fake deadlines.
+    const outcome = pending.then(value => ({ value }), error => ({ error: String(error) }));
+    await vi.runAllTimersAsync();
+    return outcome;
+  }
+
+  it('reopens the exact saved message target after compact Keep unmounted its editor, then follows its origin by keyboard', async () => {
+    const workspace = savedOriginWorkspace();
+    expect(document.querySelectorAll('[data-testid="note-editor"] .cm-editor')).toHaveLength(0);
+    expect(await navigate(workspace.expected)).toEqual({ value: { noteId: 'saved-note', path: '/vault/Saved.md', title: 'Saved', conversationId: 'a', messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' } } });
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+    expect(workspace.foreignOpen.click).not.toHaveBeenCalled();
+    expect(mocks.invoke).toHaveBeenCalledExactlyOnceWith('read_note', { noteId: 'saved-note', path: '/vault/Saved.md' });
+    expect(workspace.view.dispatch).toHaveBeenCalledWith({ selection: { anchor: workspace.expected.markdown.indexOf('[[Chats/Pi/') + 4 }, scrollIntoView: true });
+    expect(workspace.view.focus).toHaveBeenCalledOnce();
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(workspace.state.originOpened).toBe(true);
+    expect(workspace.normalScroll).toHaveBeenCalledExactlyOnceWith('answer', { behavior: 'auto', block: 'center' });
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
+  });
+
+  it('rejects an inert exact-message Open note without borrowing a foreign control', async () => {
+    const workspace = savedOriginWorkspace('inert');
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: visible originating message Open note control' });
+    expect(workspace.open.click).not.toHaveBeenCalled();
+    expect(workspace.foreignOpen.click).not.toHaveBeenCalled();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
+  });
+
+  it.each(['identity', 'path'] as const)('rejects a saved-action %s mismatch before opening', async fault => {
+    const workspace = savedOriginWorkspace(fault);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Originating message Open note target differs from exact saved Note Identity/path' });
+    expect(workspace.open.click).not.toHaveBeenCalled();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
+  });
+
+  it.each(['body', 'title'] as const)('rejects wrong canonical %s after Open note and before origin navigation', async fault => {
+    const workspace = savedOriginWorkspace(fault);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Opened saved canonical identity, body, title or path differs from exact final append' });
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
+  });
+
+  it('does not accept an unrelated mounted note merely because its body contains Open in chat', async () => {
+    const workspace = savedOriginWorkspace('mountedBody');
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: exact saved target mounted by normal Open note' });
+    expect(workspace.open.click).toHaveBeenCalledOnce();
+    expect(workspace.keyboard).not.toHaveBeenCalled();
+  });
+
+  it('observes normal origin navigation even when a desktop split retains the chat and message card', async () => {
+    const workspace = savedOriginWorkspace(undefined, true);
+    expect(await navigate(workspace.expected)).toMatchObject({ value: { messageId: 'answer', anchorScroll: { behavior: 'auto', block: 'center' } } });
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
+  });
+
+  it.each(['noop', 'wrongAnchor', 'wrongScroll'] as const)('rejects %s keydown despite an already visible origin chat and card', async fault => {
+    const workspace = savedOriginWorkspace(fault, true);
+    expect(await navigate(workspace.expected)).toEqual({ error: 'Error: Interactive UI deadline: Open in chat scrolls to exact originating message' });
+    expect(workspace.keyboard).toHaveBeenCalledOnce();
+    expect(Element.prototype.scrollIntoView).toBe(workspace.originalScroll);
+    if (fault === 'wrongAnchor') expect(workspace.normalScroll).toHaveBeenCalledExactlyOnceWith('other-answer', { behavior: 'auto', block: 'center' });
   });
 });
 
