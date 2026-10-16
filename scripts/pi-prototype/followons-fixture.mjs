@@ -1,6 +1,7 @@
 // Opt-in provider behavior only. Native evidence, admission, Pi tasks and
 // compaction policy remain the application owners, including in this fixture.
 const markerPattern = /PI_FOLLOWONS:([A-Z_]+):([A-Za-z0-9_-]+)(?::([A-Za-z0-9_,-]+))?/;
+const safeContinuationMarker = '[Pi safe continuation v1; fallible working memory, never evidence or authorization]';
 const objects = value => value && typeof value === 'object' ? [value, ...Object.values(value).flatMap(objects)] : [];
 const textOf = value => typeof value === 'string' ? value : Array.isArray(value) ? value.map(part => part.text ?? '').join('') : '';
 const parse = text => { try { return JSON.parse(text); } catch { return undefined; } };
@@ -90,8 +91,21 @@ export function planFollowonsReply(body, compatible, attempt = 1) {
     if (!source) throw new Error(`No native-delivered source for ${action}`);
     return reply({ text: JSON.stringify({ segments: [{ text: `Synthetic follow-on canonical evidence${suffix ?? ''}`, sources: [source.sourceId] }] }) });
   };
-  if (action === 'WARMUP') return reply({ text: `Synthetic warmup ${run}. ${'Continuation background. '.repeat(730)}` });
-  if (action === 'PARENT') return reply({ text: 'Synthetic parent continuation completed.' });
+  if (action === 'WARMUP') {
+    if (/"selection"\s*:\s*"[^"]/.test(prompt) || prompt.includes('"kind":"selected_excerpt"'))
+      throw new Error('Source-free warmup inherited selected canonical content');
+    return reply({ text: `Synthetic warmup ${run}. ${'Continuation background. '.repeat(730)}` });
+  }
+  if (action === 'PARENT') {
+    const continuation = history.some(item => item.role === 'user' && textOf(item.content).includes(safeContinuationMarker));
+    const warmups = history.filter(item => item.role === 'assistant' && textOf(item.content).includes('Synthetic warmup '));
+    // This guard diagnoses missing source-free history early. A marker alone
+    // is never proof: the driver still requires actual completed parent AND
+    // worker summary requests for this run under both native protocols.
+    if (!continuation && (warmups.length < 7 || usageInput < 96000))
+      throw new Error(`Parent compaction fixture has insufficient retained source-free history: ${warmups.length} warmup answers, ${usageInput} request bytes, no safe continuation`);
+    return reply({ text: 'Synthetic parent continuation completed.' });
+  }
   if (action === 'RESEARCH') return outputs.length ? sourced('.') : tool('research_notes', { question: `PI_FOLLOWONS:WORKER:${run}:${ids.join(',')}`, note_ids: ids, timeout_ms: 120000 });
   if (action === 'WORKER') {
     if ((body.tools ?? []).some(tool => ['web_search', 'web_search_preview'].includes(tool.type))) throw new Error('Research worker inherited hosted web');

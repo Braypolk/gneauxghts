@@ -1,10 +1,12 @@
 // Run in the existing native workspace, explicitly opted in by the fixture
 // launcher. Public ChatApi operations retain native admission and Pi tasks.
 import { invoke } from '@tauri-apps/api/core';
+import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
 import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
+import { collapseFollowonsEditorSelections } from './followonsEditorContext';
 
 export type FollowonsReport = {
   gate: 'expanded-native-followons-fixture'; status: 'running' | 'passed' | 'failed';
@@ -116,6 +118,15 @@ export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | und
     await mark('synthetic canonical notes created through native command', { count: notes.length });
     const conversations: Record<string, string> = {};
     for (const provider of ['local', 'openai'] as ChatProvider[]) {
+      // Shared dirty-buffer/review journeys may leave a genuine selected note
+      // passage. Clear it through the mounted editor before source-free history
+      // growth, so privacy policy can retain the synthetic warmup answers.
+      const editors = Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+        .flatMap(node => { const view = EditorView.findFromDOM(node); return view ? [view] : []; });
+      const selectionSetup = collapseFollowonsEditorSelections(editors);
+      await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      assert(editors.every(view => view.state.selection.ranges.every(range => range.empty)), 'Editor selection changed before source-free warmups');
+      await mark(`${provider} source-free warmups start with collapsed editor selections`, selectionSetup);
       const conversation = await acquireFollowonsConversation(conversationControls, { title: `Pi followons ${provider} ${report.run}`, provider, model: 'pi-native-fixture', reasoningEffort: 'off', vaultAccess: 'full' }, `PI_FOLLOWONS:WARMUP:${report.run}_${provider}_0`);
       conversations[provider] = conversation.id;
       await mark(`${provider} normal New Chat and first WARMUP preserve configured admission`, { conversationId: conversation.id, provider: conversation.provider, model: conversation.model, reasoningEffort: conversation.reasoningEffort, vaultAccess: conversation.vaultAccess });

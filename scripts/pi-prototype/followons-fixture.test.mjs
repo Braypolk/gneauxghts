@@ -18,6 +18,22 @@ test('planner does not take ownership of base fixture or unmarked summary reques
 
 for (const compatible of [true, false]) {
   const protocol = compatible ? 'compatible' : 'Responses';
+  test(`${protocol} source-free warmups reject inherited canonical selection and parent fails early without retained history`, () => {
+    const warmup = 'PI_FOLLOWONS:WARMUP:run_0';
+    assert.throws(() => planFollowonsReply(body(compatible, [user(`App context: {"kind":"adjacent_editor_hint","selection":"Selected canonical text"}\n${warmup}`)]), compatible), /inherited selected canonical content/);
+    assert.throws(() => planFollowonsReply(body(compatible, [user(`App context: {"kind":"adjacent_editor_hint","selection":" "}\n${warmup}`)]), compatible), /inherited selected canonical content/);
+    assert.equal(planFollowonsReply(body(compatible, [user(`App context: {"kind":"adjacent_editor_hint","noteId":"n"}\n${warmup}`)]), compatible).journey, 'FOLLOWONS_WARMUP');
+    // Reproduce the actual native failure: seven authored questions survived,
+    // while selection-grounded answers were correctly omitted by policy.
+    const questions = Array.from({ length: 7 }, (_, index) => user(`PI_FOLLOWONS:WARMUP:run_${index}\nPrior request note references: metadata only`));
+    assert.throws(() => planFollowonsReply(body(compatible, [...questions, user('PI_FOLLOWONS:PARENT:run')]), compatible), /insufficient retained source-free history: 0 warmup answers/);
+    const full = questions.flatMap((question, index) => [question, { role: 'assistant', content: planFollowonsReply(body(compatible, [user(`PI_FOLLOWONS:WARMUP:run_${index}`)]), compatible).text }]);
+    assert.equal(planFollowonsReply(body(compatible, [...full, user('PI_FOLLOWONS:PARENT:run')]), compatible).journey, 'FOLLOWONS_PARENT');
+    const summary = realCompaction('PI_FOLLOWONS:WARMUP:run_6', 'Synthetic bounded continuation');
+    assert.equal(planFollowonsReply(body(compatible, [summary, user('PI_FOLLOWONS:PARENT:run')]), compatible).journey, 'FOLLOWONS_PARENT');
+    // Planner acceptance of a continuation is not a manufactured provider proof.
+    assert.throws(() => verifyFollowonsReceipts([], { gate: 'expanded-native-followons-fixture', status: 'passed', run: 'run' }), /Missing local RESEARCH/);
+  });
   test(`${protocol} research requests exact scope, reads before selection and retains progress after real compaction`, () => {
     const request = user('PI_FOLLOWONS:RESEARCH:run:note_a,note_b');
     const parent = planFollowonsReply(body(compatible, [request]), compatible);
@@ -111,6 +127,12 @@ test('driver validates protocol parity, media wire bytes, exact Retry and hosted
   add(false, 'WEB', 'run', { tool_choice: { type: 'web_search' } }); add(false, 'WEB', 'run');
   const report = { gate: 'expanded-native-followons-fixture', status: 'passed', run: 'run' };
   assert.equal(verifyFollowonsReceipts(requests, report).length, 3);
+  for (const path of ['/local/v1/chat/completions', '/openai/v1/responses']) {
+    for (const owner of ['PARENT', 'WORKER']) {
+      const missing = requests.filter(record => !(record.path === path && record.journey === `FOLLOWONS_SUMMARY_${owner}`));
+      assert.throws(() => verifyFollowonsReceipts(missing, report), new RegExp(`Missing ${path.startsWith('/local') ? 'local' : 'openai'} SUMMARY_${owner} native provider receipt`));
+    }
+  }
   const changed = structuredClone(requests);
   changed.find(record => record.journey === 'FOLLOWONS_ATTACH_AUDIO').body.messages[0].content[1].input_audio.data = 'wrong';
   assert.throws(() => verifyFollowonsReceipts(changed, report), /Changed local native input_audio bytes/);
