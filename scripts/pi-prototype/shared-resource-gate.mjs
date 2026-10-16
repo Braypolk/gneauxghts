@@ -14,6 +14,15 @@ import {createInvokeObserverConfig,createModuleInvokeObserver} from './invoke-ob
 
 export const DUMMY_AUTHORIZATION = 'Bearer gneauxghts-resource-fixture-dummy';
 export const OLD_SHA256 = '435669a2fe3bd7b3d8baf32bff164c399a3fe68961660291a477ca6a03ce36f3';
+export const LONG_OUTPUT_LINES = 256;
+export const LONG_OUTPUT = Array.from({length:LONG_OUTPUT_LINES},(_,index)=>`Synthetic output line ${String(index+1).padStart(3,'0')}: bounded.`).join('\n');
+export const SHARED_JOURNEYS = Object.freeze([
+  {scenario:'short',prompt:'RESOURCE_HELLO',cancel:false,expected:'Shared synthetic answer.'},
+  {scenario:'followup',prompt:'RESOURCE_FOLLOWUP',cancel:false,expected:'Shared synthetic follow-up.'},
+  {scenario:'long-output',prompt:'RESOURCE_LONG',cancel:false,expected:LONG_OUTPUT},
+  {scenario:'cancel',prompt:'RESOURCE_STOP',cancel:true,expected:'Shared acknowledged partial.'},
+].map(Object.freeze));
+export const FIXTURE_BUDGET = Object.freeze({requestBytes:262144,outputBytes:16384,responseFrameBytes:32768,longOutputLines:LONG_OUTPUT_LINES,requestsPerJourney:1});
 const hash = value => createHash('sha256').update(value).digest('hex');
 const writeNew = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2) + '\n', { flag: 'wx', mode: 0o600 });
 
@@ -25,6 +34,53 @@ export function frontendSourceDigest(source) {
     else {assert(stat.isFile(),'Frontend input special file refused');result.update(JSON.stringify([relative,hash(readFileSync(path))])+'\n');}};
   for(const path of ['src','static','package.json','pnpm-lock.yaml','vite.config.js','vite.config.ts','svelte.config.js','tsconfig.json'])visit(path);
   return result.digest('hex');
+}
+
+/** File metadata only: no database opening, checkpointing or file-content reads.
+ * Both snapshots require the owned writer to be absent. Any enumeration race
+ * fails closed instead of treating an unobserved WAL/SHM as zero bytes. */
+export function captureStorageMetadata(root,{writerAbsent}={}) {
+  assert.equal(writerAbsent,true,'Storage capture requires an absent owned writer');
+  assert.equal(realpathSync(root),root,'Canonical generated storage root required');
+  assert(lstatSync(root).isDirectory(),'Storage root must be a directory');
+  const files=[],bytesByKind={sqlite:0,wal:0,shm:0,markdown:0,other:0};
+  const visit=relative=>{
+    const path=join(root,relative),stat=lstatSync(path);
+    assert(!stat.isSymbolicLink(),'Storage symlink refused');
+    if(stat.isDirectory()){for(const name of readdirSync(path).sort())visit(join(relative,name));return;}
+    assert(stat.isFile(),'Storage special file refused');
+    const kind=/\.(?:sqlite3?|db)-wal$/i.test(relative)?'wal':/\.(?:sqlite3?|db)-shm$/i.test(relative)?'shm':
+      /\.(?:sqlite3?|db)$/i.test(relative)?'sqlite':/\.md$/i.test(relative)?'markdown':'other';
+    assert(Number.isSafeInteger(stat.size)&&stat.size>=0,'Invalid storage byte size');
+    files.push({path:relative,kind,bytes:stat.size});bytesByKind[kind]+=stat.size;
+  };
+  for(const name of readdirSync(root).sort())visit(name);
+  return {coverage:'complete-file-metadata',writerAbsent:true,files,fileCount:files.length,bytesByKind,
+    logicalBytes:Object.values(bytesByKind).reduce((sum,value)=>sum+value,0),allocatedBytes:null,
+    checkpointPerformed:false,checkpointState:'unknown',contentRead:false};
+}
+
+export function storageGrowth(before,after) {
+  assert.equal(before.coverage,'complete-file-metadata');assert.equal(after.coverage,'complete-file-metadata');
+  assert(before.writerAbsent&&after.writerAbsent,'Storage snapshots must share the absent-writer condition');
+  return {logicalBytes:after.logicalBytes-before.logicalBytes,
+    bytesByKind:Object.fromEntries(Object.keys(before.bytesByKind).map(kind=>[kind,after.bytesByKind[kind]-before.bytesByKind[kind]])),
+    allocatedBytes:null,checkpointPerformed:false,checkpointState:'unknown'};
+}
+
+export async function stopOwnedResourceProcess(child,signal,{wait=waitUntil,timeoutMs=5000}={}) {
+  if(!child)return {closed:true,forced:false};
+  const closed=()=>child.exitCode!==null||child.signalCode!==null;
+  let forced=false;
+  if(!closed()) {
+    child.kill(signal);
+    try {await wait(closed,'owned app process closure',timeoutMs);}
+    catch(error) {
+      if(!closed()){forced=true;child.kill('SIGKILL');await wait(closed,'forced owned app process closure',timeoutMs);}
+    }
+  }
+  assert(closed(),'Owned app is still running; closed storage capture refused');
+  return {closed:true,forced};
 }
 
 export function planSharedReply(body, authorization) {
@@ -41,6 +97,7 @@ export function planSharedReply(body, authorization) {
     return finish({ case: 'followup', text: 'Shared synthetic follow-up.', pause: false });
   }
   if (prompt.includes('RESOURCE_STOP')) return finish({ case: 'cancel', text: 'Shared acknowledged partial.', pause: true });
+  if (prompt.includes('RESOURCE_LONG')) return finish({ case: 'long-output', text: LONG_OUTPUT, pause: false });
   if (prompt.includes('RESOURCE_HELLO')) return finish({ case: 'short', text: 'Shared synthetic answer.', pause: false });
   // Local model metadata/title requests are bounded fixture operations, not live
   // inference. Unknown prompts are refused rather than falsely passing a journey.
@@ -96,10 +153,11 @@ export async function startSharedFixture() {
         return res.end(JSON.stringify({ object: 'list', data: [{ id: 'pi-native-fixture', object: 'model', type: 'llm', max_context_length: 8192 }] }));
       }
       assert(req.method === 'POST' && req.url === '/local/v1/chat/completions', 'Unknown fixture route');
-      let raw = ''; for await (const chunk of req) { raw += chunk; assert(Buffer.byteLength(raw) <= 262144, 'Fixture request too large'); }
+      let raw = ''; for await (const chunk of req) { raw += chunk; assert(Buffer.byteLength(raw) <= FIXTURE_BUDGET.requestBytes, 'Fixture request too large'); }
       const body = JSON.parse(raw), reply = planSharedReply(body, req.headers.authorization);
+      assert(Buffer.byteLength(reply.text)<=FIXTURE_BUDGET.outputBytes,'Fixture output too large');
       record = { index: requests.length, case: reply.case, startMs, endMs: null,
-        requestBytes: Buffer.byteLength(raw), frames: 0, frameBytes: 0, completed: false, failed: false };
+        requestBytes: Buffer.byteLength(raw), outputContentBytes:Buffer.byteLength(reply.text), frames: 0, frameBytes: 0, completed: false, failed: false };
       requests.push(record);
       res.on('close', () => { record.endMs ??= performance.now(); });
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-cache' });
@@ -207,7 +265,9 @@ export const browserSelect = `
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));return true;`;
 
 export const browserSend = `
-  const [id,prompt,cancel]=arguments,api=window.__resourceApi;
+  const [id,prompt,cancel,suppliedExpected]=arguments,api=window.__resourceApi;
+  const expected=suppliedExpected??(cancel?'Shared acknowledged partial.':prompt.includes('FOLLOWUP')?'Shared synthetic follow-up.':'Shared synthetic answer.');
+  const firstVisibleText=expected.split('\\n')[0];
   const pause=()=>new Promise(ok=>setTimeout(ok,50));
   const until=async(fn,label)=>{const end=performance.now()+45000;while(performance.now()<end){const value=await fn();if(value)return value;await pause()}throw new Error('Scenario deadline: '+label)};
   const before=(await api.getConversation(id)).messages.length;
@@ -216,18 +276,21 @@ export const browserSend = `
   field.focus();field.value=prompt;field.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:prompt}));
   window.__resourceIpc=[];const events=[{kind:'send',atMs:performance.now()}];(await until(()=>button('Send message'),'Send message')).click();
   const admitted=await until(async()=>{const chat=await api.getConversation(id);return chat.messages.length>before&&chat.messages.at(-1)},'request admission');
-  await until(async()=>{const chat=await api.getConversation(id),message=chat.messages.find(row=>row.id===admitted.id);if(message&&!['pending','streaming','completed'].includes(message.status))throw new Error('Before first visible answer: '+message.status+': '+(message.errorMessage??message.error??''));return document.querySelector('[data-chat-message-id="'+admitted.id+'"]')?.textContent?.includes(cancel?'Shared acknowledged partial.':prompt.includes('FOLLOWUP')?'Shared synthetic follow-up.':'Shared synthetic answer.')},'first visible answer');
+  await until(async()=>{const chat=await api.getConversation(id),message=chat.messages.find(row=>row.id===admitted.id);if(message&&!['pending','streaming','completed'].includes(message.status))throw new Error('Before first visible answer: '+message.status+': '+(message.errorMessage??message.error??''));return document.querySelector('[data-chat-message-id="'+admitted.id+'"]')?.textContent?.includes(firstVisibleText)},'first visible answer');
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));events.push({kind:'first_visible',atMs:performance.now()});
   if(cancel){events.push({kind:'cancel_request',atMs:performance.now()});(await until(()=>button('Stop response'),'Stop response')).click()}
   const terminal=await until(async()=>{const chat=await api.getConversation(id);const message=chat.messages.find(row=>row.id===admitted.id);return message&&!['pending','streaming'].includes(message.status)&&!chat.activeRequestId&&message},'terminal settlement');
   if(!cancel&&terminal.status!=='completed')throw new Error('Scenario did not complete');
+  if(!cancel&&terminal.content!==expected)throw new Error('Terminal answer differs from exact synthetic output');
   if(cancel&&terminal.status==='completed')throw new Error('Stop announced completion');
   await new Promise(ok=>requestAnimationFrame(()=>requestAnimationFrame(ok)));events.push({kind:cancel?'cancel_settled':'terminal',atMs:performance.now()});
   const ipc=window.__resourceIpc.slice();window.__resourceIpc=[];
   const observer=window.__resourceObserverMetadata;
   observer.failures=window.__resourceObserver.failures;
   if(globalThis.__piModuleInvokeObserver!==window.__resourceObserver||observer.failures)observer.verified=false;
-  return {events,ipc,observer,terminalStatus:terminal.status,messageCount:(await api.getConversation(id)).messages.length};`;
+  return {events,ipc,observer,terminalStatus:terminal.status,exactTerminalContent:!cancel,
+    terminalContentBytes:typeof terminal.content==='string'?new TextEncoder().encode(terminal.content).byteLength:null,
+    messageCount:(await api.getConversation(id)).messages.length};`;
 
 export async function runSharedResourceGate(options) {
   for (const port of [1430, 1442, 1443, 4445]) assert.equal(listenerPids(port).length, 0, 'Required port has another owner');
@@ -239,6 +302,8 @@ export async function runSharedResourceGate(options) {
       'UI detection polls at 50ms then waits two frames; provider/renderer clock calibration has recorded round-trip uncertainty.',
       'An identical generated Vite overlay observes @tauri-apps/api/core module invoke after setup. Direct injected bridge calls and startup bypass it. Byte counts are UTF-8 JSON args/result proxies, not actual native wire bytes; observer overhead applies to both lanes.',
       'Observer getConversation calls contribute to IPC/latency; no performance win/adoption verdict.'], verdict: 'unproven-pending-acceptance' };
+  report.fixtureBudget={...FIXTURE_BUDGET,longFixture:'256-line bounded output, not long history or context-cap acceptance',expectedCommittedMessages:SHARED_JOURNEYS.length*2};
+  report.limits.push('Storage measures logical file bytes in generated app/document roots before launch and after final process closure. Allocation and checkpoint state are unknown; no database/content reads or checkpoint operation.');
   try {
     for (const lane of (options.first==='pi'?['pi','old']:['old','pi'])) {
       const source = options[`${lane}-source`], binary = options[`${lane}-binary`], laneRoot = join(options.root, lane);
@@ -252,6 +317,8 @@ export async function runSharedResourceGate(options) {
         frontendSourceSha256: frontendSourceDigest(source), lockfileSha256: hash(readFileSync(join(source,'pnpm-lock.yaml'))),
         frontendReceiptVerified: false, rendererRssBytes: null, allProcessRssBytes: null,
         startupIpcCoverage: 'unknown', protocol: 'compatible', provider: 'fixture', profile: 'debug', presentation: foreground ? 'explicit-foreground' : 'background' };
+      output.storage={boundary:'generated app/document data root only; driver logs and measurement config excluded',
+        before:captureStorageMetadata(dataRoot,{writerAbsent:true})};
       output.measurementOverlay=createInvokeObserverConfig(source,laneRoot);
       report.lanes.push(output);
       let app, server, session, timer, rss = [], pinnedStart;
@@ -284,7 +351,7 @@ export async function runSharedResourceGate(options) {
       const stop = async signal => {
         clearInterval(timer);timer=undefined;
         if(session){try{await wd(`/session/${session.sessionId}`,undefined,'DELETE')}catch{}session=undefined}
-        if(app&&app.exitCode===null){app.kill(signal);await Promise.race([new Promise(ok=>app.once('exit',ok)),delay(5000)]);if(app.exitCode===null)app.kill('SIGKILL')}
+        return stopOwnedResourceProcess(app,signal);
       };
       try {
         const fd=openSync(join(laneRoot,'frontend.log'),'a',0o600);
@@ -297,15 +364,20 @@ export async function runSharedResourceGate(options) {
         await wd(`/session/${session.sessionId}/execute/sync`,{script:'location.reload();return true',args:[]});
         await initializeResourceWorkspace({execute,output,expectedOverlay:output.measurementOverlay,phase:'normal reloaded workspace',afterTimeOrigin:previousTimeOrigin,timeoutMs:30000});
         output.phase='initial conversation selection';await execute(browserSelect,[id]);
-        for(const [scenario,prompt,cancel] of [['short','RESOURCE_HELLO',false],['followup','RESOURCE_FOLLOWUP',false],['cancel','RESOURCE_STOP',true]]){
+        let expectedMessages=0;
+        for(const {scenario,prompt,cancel,expected} of SHARED_JOURNEYS){
           output.phase=scenario;const firstRequest=fixture.requests.length;
           const before=performance.now(),renderer=await execute('return performance.now();'),after=performance.now();
           const rendererZero=(before+after)/2-renderer;
-          const result=await execute(browserSend,[id,prompt,cancel]);
+          const result=await execute(browserSend,[id,prompt,cancel,expected]);
           if(cancel)await waitUntil(()=>fixture.requests.slice(firstRequest).every(row=>row.endMs!==null),'cancelled transport settlement',5000);
           const events=[...result.events,...result.ipc].map(row=>({...row,atMs:row.atMs+rendererZero}));
           const bounds=result.events.map(row=>row.atMs+rendererZero),start=bounds[0],end=bounds.at(-1);
           const requests=fixture.requests.slice(firstRequest);
+          assert.equal(requests.length,FIXTURE_BUDGET.requestsPerJourney,'Unexpected synthetic inference count');
+          assert(requests.every(row=>row.case===scenario&&!row.failed&&row.requestBytes<=FIXTURE_BUDGET.requestBytes&&row.frameBytes<=FIXTURE_BUDGET.responseFrameBytes&&row.outputContentBytes===Buffer.byteLength(expected)),'Synthetic provider accounting differs');
+          expectedMessages+=2;assert.equal(result.messageCount,expectedMessages,'Unexpected committed message count');
+          if(!cancel){assert.equal(result.exactTerminalContent,true);assert.equal(result.terminalContentBytes,Buffer.byteLength(expected),'Terminal output byte count differs');}
           const serverComplete=requests.length>0&&requests.every(row=>!row.failed&&row.endMs!==null&&row.startMs>=start&&row.endMs<=end);
           for(const row of requests){if(row.startMs>=start)events.push({kind:'provider_start',atMs:row.startMs,dispatch:row.index});if(row.endMs!==null&&row.endMs>=start)events.push({kind:'provider_end',atMs:row.endMs,dispatch:row.index})}
           events.push(...rss.filter(row=>row.atMs>=start&&row.atMs<=end));
@@ -313,17 +385,23 @@ export async function runSharedResourceGate(options) {
           assert.equal(coverage,'complete','Actual module invoke observation missing or incomplete; IPC must not be fabricated');
           output.journeys.push({scenario,cache:'warm-process',events:events.map(row=>({...row,atMs:row.atMs-start})).sort((a,b)=>a.atMs-b.atMs),ipcCoverage:coverage,ipcCoverageScope:'@tauri-apps/api/core module invoke only',ipcByteUnits:'UTF-8 JSON args/result proxies',actualWireBytesCoverage:'unknown',ipcObserver:result.observer,providerCoverage:'partial',serverIntervalCoverage:serverComplete?'complete':'partial',
             terminalStatus:result.terminalStatus,messageCount:result.messageCount,clockCalibrationUncertaintyMs:(after-before)/2,pollingUncertaintyMs:50,
+            fixtureAccounting:{requests:requests.length,requestBytes:requests.reduce((sum,row)=>sum+row.requestBytes,0),expectedOutputContentBytes:Buffer.byteLength(expected),terminalContentBytes:result.terminalContentBytes,exactTerminalContent:result.exactTerminalContent,
+              ...(scenario==='long-output'?{outputLines:LONG_OUTPUT_LINES,scope:'long output only'}:{})},
             providerFrames:requests.reduce((sum,row)=>sum+(row.frames??0),0),providerFrameBytes:requests.reduce((sum,row)=>sum+(row.frameBytes??0),0)});
         }
         const beforeRestart=fixture.requests.length;await stop('SIGKILL');await launch();await delay(1000);
         assert.equal(fixture.requests.length,beforeRestart,'Restart silently replayed inference');
         output.phase='restored conversation selection';await execute(browserSelect,[id]);
         output.restart={noImplicitRequests:true,messageCount:await execute('return(await window.__resourceApi.getConversation(arguments[0])).messages.length;',[id])};
-        assert.equal(output.restart.messageCount,6,'Committed history did not survive restart');
-        output.status='passed-core-fixture';
+        assert.equal(output.restart.messageCount,SHARED_JOURNEYS.length*2,'Committed history did not survive restart');
       } finally {
-        await stop('SIGTERM');if(server){try{process.kill(-server.pid,'SIGTERM')}catch{}}
+        try {
+          output.finalProcessClosure=await stop('SIGTERM');
+          output.storage.after=captureStorageMetadata(dataRoot,{writerAbsent:output.finalProcessClosure.closed});
+          output.storage.growth=storageGrowth(output.storage.before,output.storage.after);
+        } finally {if(server){try{process.kill(-server.pid,'SIGTERM')}catch{}}}
       }
+      output.status='passed-core-fixture';
       assert.equal(hash(readFileSync(binary)),output.binarySha256,'Measured binary changed');
       assert.equal(frontendSourceDigest(source),output.frontendSourceSha256,'Served frontend changed during capture');
       assert.equal(hash(readFileSync(output.measurementOverlay.corePath)),output.measurementOverlay.originalCoreSha256,'Measured Tauri module changed');

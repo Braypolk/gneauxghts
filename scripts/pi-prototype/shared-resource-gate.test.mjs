@@ -1,10 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { planSharedReply, cleanEnvironment, DUMMY_AUTHORIZATION, initializeResourceWorkspace, browserSend, browserSelect, installInvokeObserver, observedIpcCoverage } from './shared-resource-gate.mjs';
+import { planSharedReply, cleanEnvironment, DUMMY_AUTHORIZATION, initializeResourceWorkspace, browserSend, browserSelect, installInvokeObserver, observedIpcCoverage, LONG_OUTPUT, LONG_OUTPUT_LINES, SHARED_JOURNEYS, FIXTURE_BUDGET, captureStorageMetadata, storageGrowth, stopOwnedResourceProcess } from './shared-resource-gate.mjs';
 import {parseArguments,OLD_SHA256} from './shared-resource-gate.mjs';
 import {parseParityArguments} from './paired-parity-gate.mjs';
 import {createHash} from 'node:crypto';
-import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,realpathSync,rmSync,symlinkSync,unlinkSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 
@@ -37,7 +37,7 @@ test('stop fixture streams a partial and unknown prompts cannot pass', () => {
 });
 test('source-free fixture uses the actual offered final formatter and keeps cancellation paused',()=>{
   const tools=[{type:'function',function:{name:'final_result_1',parameters:{type:'object',properties:{segments:{type:'array'}}}}}];
-  for(const prompt of ['RESOURCE_HELLO','RESOURCE_FOLLOWUP','RESOURCE_STOP']) {
+  for(const prompt of ['RESOURCE_HELLO','RESOURCE_FOLLOWUP','RESOURCE_LONG','RESOURCE_STOP']) {
     const messages=[{role:'assistant',content:'Shared synthetic answer.'},{role:'user',content:prompt}];
     const reply=planSharedReply({messages,tools});
     assert.equal(reply.tool.name,'final_result_1');
@@ -46,6 +46,82 @@ test('source-free fixture uses the actual offered final formatter and keeps canc
     assert.equal(planSharedReply({messages,tools:[]}).tool,undefined);
   }
   assert.throws(()=>planSharedReply({messages:[{role:'user',content:'RESOURCE_FOLLOWUP'}],tools}),/omitted prior source-free answer/);
+});
+test('long fixture is exact bounded output through both actual offered response shapes',()=>{
+  assert.equal(LONG_OUTPUT_LINES,256);assert.equal(LONG_OUTPUT.split('\n').length,256);
+  assert.equal(LONG_OUTPUT.split('\n')[0],'Synthetic output line 001: bounded.');
+  assert.equal(LONG_OUTPUT.split('\n').at(-1),'Synthetic output line 256: bounded.');
+  assert(Buffer.byteLength(LONG_OUTPUT)>Buffer.byteLength('Shared synthetic answer.')*100);
+  assert(Buffer.byteLength(LONG_OUTPUT)<=FIXTURE_BUDGET.outputBytes);
+  const messages=[{role:'user',content:'RESOURCE_LONG'}];
+  const plain=planSharedReply({messages});
+  const structured=planSharedReply({messages,tools:[{type:'function',function:{name:'actual_baseline_formatter',parameters:{properties:{segments:{type:'array'}}}}}]});
+  assert.equal(plain.case,'long-output');assert.equal(plain.text,LONG_OUTPUT);assert.equal(plain.pause,false);assert.equal(plain.tool,undefined);
+  assert.equal(structured.tool.name,'actual_baseline_formatter');
+  assert.deepEqual(JSON.parse(structured.tool.arguments),{segments:[{text:LONG_OUTPUT,sources:[]}]});
+  assert.deepEqual(SHARED_JOURNEYS.map(row=>row.scenario),['short','followup','long-output','cancel']);
+  assert.equal(SHARED_JOURNEYS.length*2,8);assert.equal(FIXTURE_BUDGET.requestsPerJourney,1);
+});
+async function runLongBrowserSend(terminalContent) {
+  const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
+  let sent=false;const observer={failures:0};
+  const api={async getConversation(){return {messages:sent?[{id:'user',role:'user',content:'RESOURCE_LONG'},
+    {id:'answer',role:'assistant',status:'completed',content:terminalContent}]:[]};}};
+  const field={disabled:false,focus(){},dispatchEvent(){assert.equal(this.value,'RESOURCE_LONG');}};
+  const send={disabled:false,textContent:'',getAttribute(){return 'Send message';},click(){sent=true;}};
+  const browserDocument={querySelector(selector){return selector.startsWith('textarea')?field:{textContent:LONG_OUTPUT};},querySelectorAll(){return [send];}};
+  const browserWindow={__resourceApi:api,__resourceIpc:[],__resourceObserver:observer,__resourceObserverMetadata:{installed:true,verified:true}};
+  const run=new AsyncFunction('browserWindow','browserDocument','BrowserInputEvent','expected',
+    `const window=browserWindow,document=browserDocument,InputEvent=BrowserInputEvent,globalThis={__piModuleInvokeObserver:window.__resourceObserver};
+     const requestAnimationFrame=callback=>callback();return(async function(){${browserSend}}).apply(null,['conversation','RESOURCE_LONG',false,expected]);`);
+  return run(browserWindow,browserDocument,class {},LONG_OUTPUT);
+}
+test('actual normal Send script validates all long terminal bytes, not only a visible prefix',async()=>{
+  const result=await runLongBrowserSend(LONG_OUTPUT);
+  assert.equal(result.exactTerminalContent,true);assert.equal(result.terminalContentBytes,Buffer.byteLength(LONG_OUTPUT));
+  assert.equal(result.messageCount,2);assert.deepEqual(result.events.map(row=>row.kind),['send','first_visible','terminal']);
+  await assert.rejects(runLongBrowserSend(LONG_OUTPUT.split('\n').slice(0,-1).join('\n')),/Terminal answer differs/);
+  await assert.rejects(runLongBrowserSend(LONG_OUTPUT+'\nUnexpected extra output'),/Terminal answer differs/);
+  await assert.rejects(runLongBrowserSend(LONG_OUTPUT.replace('line 128','line 999')),/Terminal answer differs/);
+});
+test('storage snapshots count only generated-root file metadata and retain unknown allocation/checkpoint state',()=>{
+  const folder=realpathSync(mkdtempSync(join(tmpdir(),'pi-storage-metadata-'))),root=join(folder,'data');mkdirSync(root);
+  try {
+    writeFileSync(join(folder,'native.log'),'outside log'.repeat(100));writeFileSync(join(folder,'observer-config.mjs'),'outside overlay');
+    const before=captureStorageMetadata(root,{writerAbsent:true});assert.equal(before.logicalBytes,0);assert.equal(before.fileCount,0);
+    mkdirSync(join(root,'vault'));mkdirSync(join(root,'vault','.gneauxghts'));
+    for(const [name,value] of [['state.sqlite','not an SQLite database'],['history.sqlite3','123'],['other.db','12345'],['state.sqlite-wal','1234567'],['state.sqlite-shm','123456789']])
+      writeFileSync(join(root,'vault','.gneauxghts',name),value);
+    writeFileSync(join(root,'vault','Conversation.md'),'synthetic markdown');writeFileSync(join(root,'settings.json'),'{}');
+    const after=captureStorageMetadata(root,{writerAbsent:true}),growth=storageGrowth(before,after);
+    assert.equal(after.fileCount,7);assert.equal(after.bytesByKind.sqlite,Buffer.byteLength('not an SQLite database')+8);
+    assert.equal(after.bytesByKind.wal,7);assert.equal(after.bytesByKind.shm,9);
+    assert.equal(after.bytesByKind.markdown,Buffer.byteLength('synthetic markdown'));assert.equal(after.bytesByKind.other,2);
+    assert.equal(after.logicalBytes,Object.values(after.bytesByKind).reduce((a,b)=>a+b,0));
+    assert.deepEqual(growth.bytesByKind,after.bytesByKind);assert.equal(growth.logicalBytes,after.logicalBytes);
+    assert.equal(after.allocatedBytes,null);assert.equal(after.checkpointPerformed,false);assert.equal(after.checkpointState,'unknown');assert.equal(after.contentRead,false);
+    assert(!after.files.some(file=>file.path.includes('native.log')||file.path.includes('observer-config')));
+    unlinkSync(join(root,'vault','.gneauxghts','state.sqlite-wal'));
+    const closed=captureStorageMetadata(root,{writerAbsent:true});assert.equal(closed.bytesByKind.wal,0);
+    assert.equal(storageGrowth(after,closed).bytesByKind.wal,-7);
+    assert.throws(()=>captureStorageMetadata(root),/absent owned writer/);
+    symlinkSync(join(folder,'native.log'),join(root,'linked-log'));
+    assert.throws(()=>captureStorageMetadata(root,{writerAbsent:true}),/Storage symlink refused/);
+  }finally{rmSync(folder,{recursive:true,force:true});}
+});
+test('owned closure recognizes signal exits and awaits forced termination before storage may be captured',async()=>{
+  const killed=[],child={exitCode:null,signalCode:null,kill(signal){killed.push(signal);}};
+  const phases=[];
+  const result=await stopOwnedResourceProcess(child,'SIGTERM',{wait:async(check,phase,timeout)=>{
+    phases.push(phase);assert.equal(timeout,5000);assert.equal(check(),false);
+    if(phases.length===1)throw new Error('closure deadline');child.signalCode='SIGKILL';assert.equal(check(),true);return true;
+  }});
+  assert.deepEqual(result,{closed:true,forced:true});assert.deepEqual(killed,['SIGTERM','SIGKILL']);
+  assert.deepEqual(phases,['owned app process closure','forced owned app process closure']);
+  assert.deepEqual(await stopOwnedResourceProcess(child,'SIGTERM'),{closed:true,forced:false});assert.equal(killed.length,2);
+  const stuck={exitCode:null,signalCode:null,kill(){}};
+  await assert.rejects(stopOwnedResourceProcess(stuck,'SIGTERM',{wait:async()=>{throw new Error('still live');}}),/still live/);
+  await assert.rejects(stopOwnedResourceProcess(stuck,'SIGTERM',{wait:async()=>true}),/still running/);
 });
 test('real browser Send reports terminal provider failure before waiting out visible-answer deadline',async()=>{
   const AsyncFunction=Object.getPrototypeOf(async function(){}).constructor;
