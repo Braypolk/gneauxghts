@@ -397,18 +397,34 @@ it('reconciles terminal activity when its process owner retires during the evide
 it('reopens the committed actionable failure without exposing unsafe provider diagnostics',async()=>{
   const {MemoryStorage}=await import('@earendil-works/pi-durable/storage/memory');
   const settings:ChatSettings={provider:'local',model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',localBaseUrl:'http://localhost:1234/v1',reasoningEffort:'off',serviceTier:'standard',webAccess:'off',defaultVaultAccess:'none',atlasVisibility:'hidden'};
-  for(const diagnostic of ['Evidence changed before delivery; read again','Native provider HTTP 401','Authorization: Bearer sk-private-secret; request body: {"messages":["private authored text"]}']) {
+  const validationFailures=[
+    ['Current notes are still updating; retry the read','Notes are still updating. Wait a moment, then Retry.'],
+    ['Current notes changed during the read; retry the read','Notes changed while they were being checked. Retry to read fresh evidence.'],
+    ['Current note validation could not complete; retry the read','Notes could not be checked. Retry the request.'],
+  ].flatMap(([reason,message])=>['Evidence','Context'].map(kind=>[`${kind} validation unavailable: ${reason}`,message] as const));
+  const generic='The model request failed. Check the model and connection settings, then Retry.';
+  const cases=[
+    ['Evidence changed before delivery; read again','Evidence changed before delivery; read again'],
+    ['Native provider HTTP 401','Native provider HTTP 401'],
+    ['Authorization: Bearer sk-private-secret; request body: {"messages":["private authored text"]}',generic],
+    ...validationFailures,
+    ...validationFailures.map(([diagnostic])=>[`${diagnostic}; private path: /private/authored-note.md; sk-private-secret`,generic] as const),
+  ];
+  for(const [diagnostic,expected] of cases) {
     probe.store=new MemoryStorage();probe.store.close=async()=>{};probe.failure=diagnostic;
     const api=createPiChatApi({getSettings:async()=>settings} as ChatApi);let conversationId='';
     try {
       conversationId=(await api.createConversation()).id;const failed=Promise.withResolvers<string>();const off=await api.on('chat://failed',event=>failed.resolve(event.error));
       await api.sendMessage({conversationId,content:'Trigger a failed request'});const visible=await failed.promise;off();
-      if(diagnostic.startsWith('Authorization:')){expect(visible).toBe('The model request failed. Check the model and connection settings, then Retry.');}
-      else expect(visible).toContain(diagnostic);
-      expect(visible).not.toMatch(/sk-private-secret|private authored text|messages/);
+      expect(visible).toBe(expected);
+      expect(visible).not.toMatch(/sk-private-secret|private authored text|messages|authored-note/);
       await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();probe.failure='A different volatile diagnostic';
       const reopened=createPiChatApi({getSettings:async()=>settings} as ChatApi);
-      try {const restored=await reopened.getConversation(conversationId);expect(restored.messages.at(-1)?.errorMessage).toBe(visible);}
+      try {
+        const restored=await reopened.getConversation(conversationId);expect(restored.messages.at(-1)?.errorMessage).toBe(visible);
+        const submissions=await probe.store.scanSubmissions({conversationId:Number(conversationId.slice(3)) as ConversationId},128,undefined,context);
+        expect(submissions.items).toContainEqual(expect.objectContaining({status:'unanswered',detail:diagnostic}));
+      }
       finally {await (reopened as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
     } finally {probe.failure='';await (api as ChatApi & {prototypeClose():Promise<void>}).prototypeClose();}
   }
