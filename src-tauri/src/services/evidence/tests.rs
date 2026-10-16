@@ -1,5 +1,6 @@
 use super::*;
 mod coverage;
+mod batch_validation;
 
 #[test]
 fn search_freshness_survives_unrelated_legacy_note_identity_assignment() {

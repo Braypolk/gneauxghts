@@ -1299,10 +1299,9 @@ impl EvidenceSession {
         allowed: Option<&HashSet<String>>,
         excluded: &HashSet<String>,
     ) -> Result<bool, String> {
-        for citation in self.admitted.values() {
-            if check_citation(state, citation, allowed, excluded)?.is_none() {
-                return Ok(false);
-            }
+        let citations = self.admitted.values().collect::<Vec<_>>();
+        if check_citations(state, &citations, allowed, excluded)?.is_none() {
+            return Ok(false);
         }
         let mut versions = HashMap::<Vec<String>, String>::new();
         Ok(self
@@ -1631,28 +1630,84 @@ pub(crate) fn check_citation(
     allowed: Option<&HashSet<String>>,
     excluded: &HashSet<String>,
 ) -> Result<Option<(PathBuf, String)>, String> {
+    Ok(check_citations(state, &[citation], allowed, excluded)?
+        .and_then(|mut current| current.pop()))
+}
+
+#[cfg(test)]
+thread_local! {
+    static CITATION_VALIDATION_HOOK: std::cell::RefCell<Option<Box<dyn FnMut(CitationValidationEvent<'_>)>>> = Default::default();
+}
+
+#[cfg(test)]
+enum CitationValidationEvent<'a> {
+    AttemptStarted,
+    SourceValidated(&'a PassageCitation),
+}
+
+#[cfg(test)]
+fn observe_citation_validation(event: CitationValidationEvent<'_>) {
+    CITATION_VALIDATION_HOOK.with(|hook| {
+        if let Some(hook) = hook.borrow_mut().as_mut() {
+            hook(event);
+        }
+    });
+}
+
+/// Admit the complete set at one timeline generation. Reuse lasts only for this
+/// validation attempt; an invalidated attempt repeats every source and proof.
+fn check_citations(
+    state: &AppState,
+    citations: &[&PassageCitation],
+    allowed: Option<&HashSet<String>>,
+    excluded: &HashSet<String>,
+) -> Result<Option<Vec<(PathBuf, String)>>, String> {
+    if citations.is_empty() {
+        return Ok(Some(Vec::new()));
+    }
     let timeline = state.note_timeline();
     let access = timeline.current_content(AllowedScope::policy(allowed, excluded));
     // An overlapping observation/publication can invalidate a one-shot read
     // without changing this source. Wait for settlement and repeat all canonical
     // and proof checks, never merely retry an already captured projection.
-    let mut current = access
+    let current = access
         .read_refreshable(|| {
-            Ok(
-                validate_citation_snapshot(state, citation, allowed, excluded)
-                    .map(|(path, title)| Candidate {
-                        citation: citation.clone(),
-                        path,
-                        title,
-                        section: String::new(),
-                        score: 0.0,
-                        provenance: None,
-                        context: String::new(),
-                        task: None,
-                    })
-                    .into_iter()
-                    .collect::<Vec<_>>(),
-            )
+            #[cfg(test)]
+            observe_citation_validation(CitationValidationEvent::AttemptStarted);
+            let mut current = Vec::with_capacity(citations.len());
+            let mut canonical = HashMap::<PathBuf, String>::new();
+            for citation in citations {
+                let Some((path, title, raw)) =
+                    validate_citation_snapshot(state, citation, allowed, excluded)
+                else {
+                    return Ok(Vec::new());
+                };
+                if canonical.get(&path).is_some_and(|previous| previous != &raw) {
+                    return Ok(Vec::new());
+                }
+                canonical.insert(path.clone(), raw);
+                current.push(Candidate {
+                    citation: (*citation).clone(),
+                    path,
+                    title,
+                    section: String::new(),
+                    score: 0.0,
+                    provenance: None,
+                    context: String::new(),
+                    task: None,
+                });
+                #[cfg(test)]
+                observe_citation_validation(CitationValidationEvent::SourceValidated(citation));
+            }
+            // An external edit need not have reached the timeline observer yet.
+            // Recheck earlier sources after the last source/proof was inspected.
+            if canonical
+                .iter()
+                .any(|(path, raw)| fs::read_to_string(path).ok().as_ref() != Some(raw))
+            {
+                return Ok(Vec::new());
+            }
+            Ok(current)
         })
         .map_err(|error| {
             // Timeline errors may include private paths or storage diagnostics.
@@ -1665,7 +1720,17 @@ pub(crate) fn check_citation(
                 "Current note validation could not complete; retry the read"
             }.to_string()
         })?;
-    Ok(current.pop().map(|c| (c.path, c.title)))
+    if current.len() != citations.len()
+        || current
+            .iter()
+            .zip(citations)
+            .any(|(current, expected)| &current.citation != *expected)
+    {
+        return Ok(None);
+    }
+    Ok(Some(
+        current.into_iter().map(|c| (c.path, c.title)).collect(),
+    ))
 }
 
 fn validate_citation_snapshot(
@@ -1673,7 +1738,7 @@ fn validate_citation_snapshot(
     citation: &PassageCitation,
     allowed: Option<&HashSet<String>>,
     excluded: &HashSet<String>,
-) -> Option<(PathBuf, String)> {
+) -> Option<(PathBuf, String, String)> {
     if excluded.contains(&citation.note_id)
         || allowed.is_some_and(|ids| !ids.contains(&citation.note_id))
     {
@@ -1712,7 +1777,7 @@ fn validate_citation_snapshot(
                 &citation.excerpt,
             )
             .ok()?
-            .then_some((path, title));
+            .then_some((path, title, raw));
     }
     if body_at(&raw, &title, &citation.location).get(citation.start..citation.end)?
         != citation.excerpt
@@ -1729,7 +1794,7 @@ fn validate_citation_snapshot(
     if fs::read_to_string(&path).ok().as_deref() != Some(raw.as_str()) {
         return None;
     }
-    Some((path, title))
+    Some((path, title, raw))
 }
 
 #[cfg(test)]
