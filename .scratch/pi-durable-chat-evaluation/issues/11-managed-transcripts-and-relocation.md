@@ -41,3 +41,24 @@ projection and native effect receipts. Extract publication policy without restor
 ChatService lifecycle ownership.
 
 ## Comments
+
+### Independent implementation follow-on — 2026-10-15 (acceptance pending)
+
+Implemented the Pi committed-state transcript builder and coalescing publisher,
+plus native derived publication receipts, conflict observation/restoration,
+explicit conversion through the native NoteTimeline effect boundary, and
+vault-identity-bound location mapping. `Chats/Pi/pi-N/Origin.md` and existing
+`^msg_pi-assistant-N` Save backlinks remain stable. Legacy transcript recovery
+is not imported. Accepted Keep JSON/hashes and native proof tokens/canonical
+bytes remain unchanged; location interpretation is native and restricted to
+roots previously bound to the surviving vault identity.
+
+Focused TypeScript validation: `pnpm exec vitest run
+src/lib/prototypes/pi/transcript.test.ts` passed 6 tests, covering committed
+text, provisional structured output suppression, interrupted output, 1,200-turn
+history, publication races, and nonrejecting projection failures. Native tests
+were added for receipt/classification/recovery, external edit/delete/restore,
+own-write observations, inert legacy artifacts, vault identity mapping and an
+uncertain Keep across relocation with an intervening ordinary edit. Native
+compilation/test execution and integrated desktop/iOS/live acceptance remain
+pending; no acceptance or phase-completion claim is made by this comment.

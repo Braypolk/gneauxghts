@@ -42,6 +42,7 @@ export interface AgentPlanEntry {
 }
 
 export type AgentPermissionKind =
+  | 'noteRead'
   | 'processExecution'
   | 'fileMutation'
   | 'networkMutation'
@@ -373,6 +374,8 @@ export interface ChatConversation extends ChatConversationSummary {
   messages: ChatMessage[];
   activeRequestId: string | null;
   projectionPath: string | null;
+  projectionWarning?: string | null;
+  projectionConflict?: 'edited' | 'missing' | 'occupied' | null;
   excerptMessageIds: Record<string, string>;
 }
 

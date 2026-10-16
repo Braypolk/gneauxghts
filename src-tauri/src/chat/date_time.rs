@@ -59,6 +59,7 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    #[cfg(not(feature = "pi-prototype"))]
     #[test]
     fn legacy_chat_requests_can_omit_editor_conventions() {
         let request =
@@ -66,6 +67,10 @@ mod tests {
                 "conversationId":"legacy", "content":"What is due today?", "activeNote":null
             }));
         assert!(request.is_ok());
+    }
+
+    #[test]
+    fn date_time_context_rejects_unknown_fields_and_hour_cycles() {
         for invalid in [
             json!({"locale":"en-US","timeZone":"UTC","dateOrder":["month","day","year"],"hourCycle":"h12","extra":true}),
             json!({"locale":"en-US","timeZone":"UTC","dateOrder":["month","day","year"],"hourCycle":"unknown"}),

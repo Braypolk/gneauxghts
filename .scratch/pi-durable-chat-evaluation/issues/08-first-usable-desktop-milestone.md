@@ -37,3 +37,54 @@ before remaining phase work without claiming full parity.
   approval round once implementation is authorized. Final closure is 09–13.
 
 ## Comments
+
+### 2026-10-15 — prepared normal-workspace fixture acceptance
+
+Added a separate `interactive-gate` runner, ordinary workspace UI driver and
+synthetic compatible/Responses provider contract. The gate uses fresh generated
+data only, preserves the diagnostic baseline route, records phase screenshots/
+request receipts and checks no inference for Save or automatic network replay on
+relaunch. Conversation/review setup is Pi-owned and synthetic notes enter native
+NoteTimeline commands; normal sends, permissions, model/session selection,
+editor/review actions and whole Save use the retained UI. Explicit repeated-text
+append initiation uses public Save parameters and is labeled separately from the
+UI-initiated whole-answer journey. See [desktop acceptance](../desktop-acceptance.md)
+for commands, matrix and remaining work.
+
+Preparation is not acceptance: dependencies 01–07 were still undergoing native
+integration when this harness was written. No build, native launch, live provider,
+private-vault access, user feedback or completed 08 is claimed by the implementation
+agent. Pure fixture contract tests pass **12 checks** without opening network
+listeners. The root orchestrator owns the native lease and subsequent receipts.
+
+Preparation verification: `pnpm check` passes with **0 errors/0 warnings** plus
+E2E TypeScript; the root/runner safety suite passes **3 tests**, including inherited
+interactive-fixture refusal for manual evaluation and private-root refusal for the
+new gate. The orchestrator's first native attempts found a startup synchronization
+bug (WebDriver session before document load) and then selected-context setup in a
+single pane. The runner now follows the established ready `tauri` driver protocol,
+waits for the actual workspace and preserves frontend/native logs. The driver now
+keeps a real editor mounted beside chat via the normal split control before
+selecting text; the canonical selected-cursor assertion remains mandatory. These
+repairs are preparation, not a passed native gate.
+
+### 2026-10-15 — active Stop receipt and separate failure phase preparation
+
+The orchestrator's subsequent native run reached a real active-stream Stop and
+explicit Retry; its first STOP request closed without provider completion. The
+next proposal send exposed a stale conversation-read race, owned by lifecycle
+integration. This is partial native evidence, not a passed base gate or completed
+milestone. The interrupted-process setup now targets its exact new message and
+requires streaming status before reporting termination-ready state.
+
+Prepared an optional `failures` phase in `interactiveFailures.ts`, enabled after
+the base relaunch with `PI_PROTOTYPE_INTERACTIVE_FAILURES=true`. It checks visible
+checkpoint failure/recovery, stale citation refusal, changed-target Keep conflict,
+and dirty ordinary editor preservation during passive proposal arrival. Dedicated
+synthetic notes isolate these effects from the base kept/saved identities. The
+dirty-arrival fixture delays one provider tool reply for 1200 ms while actual
+ordinary editing continues; it must observe local bytes differing from canonical
+bytes at arrival, or it fails without claiming dirty-buffer protection. Both
+protocol planner suites now pass **14 checks**. Native execution of this phase
+remains pending; aggregate typecheck currently reports concurrent compaction and
+transcript integration errors, with no diagnostics in the prepared driver files.

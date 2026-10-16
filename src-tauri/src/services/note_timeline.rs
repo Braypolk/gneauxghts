@@ -29,6 +29,8 @@ mod history_mode;
 mod lifecycle;
 mod observation;
 mod publication;
+#[cfg(feature = "pi-prototype")]
+pub(crate) use publication::PrototypePublicationProof;
 #[cfg(any(test, feature = "e2e-wdio"))]
 mod test_support;
 

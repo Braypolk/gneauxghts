@@ -700,15 +700,60 @@ export class TauriChatApi implements ChatApi {
 
 const nativeChatApi = new TauriChatApi();
 let prototypeApi: Promise<ChatApi> | undefined;
-export const chatApi: ChatApi = import.meta.env.VITE_PI_PROTOTYPE === 'true'
-  ? new Proxy(nativeChatApi, { get(target, key) {
-      const value = Reflect.get(target, key);
-      if (typeof value !== 'function' && !(typeof key === 'string' && key.startsWith('prototype'))) return value;
-      return (...args: unknown[]) => {
-        prototypeApi ??= import('$lib/prototypes/pi/chatApi').then(({createPiChatApi}) => createPiChatApi(nativeChatApi));
-        return prototypeApi.then(api => Reflect.get(api,key).apply(api,args));
-      };
-    } }) : nativeChatApi;
+const loadPrototypeApi=()=>prototypeApi ??= import('$lib/prototypes/pi/chatApi').then(({createPiChatApi})=>createPiChatApi(nativeChatApi));
+function deferredPiMethod<K extends keyof ChatApi>(key:K):ChatApi[K] {
+  return ((...args:unknown[])=>loadPrototypeApi().then(api=>(api[key] as (...values:unknown[])=>unknown)(...args))) as ChatApi[K];
+}
+// Every evaluation operation is named here. No missing operation can fall back
+// to native conversation or run coordination.
+const piChatApi:ChatApi={
+  getSettings:deferredPiMethod('getSettings'),
+  setDefaults:deferredPiMethod('setDefaults'),
+  setAtlasVisibility:deferredPiMethod('setAtlasVisibility'),
+  getComposerDraft:deferredPiMethod('getComposerDraft'),
+  setComposerDraft:deferredPiMethod('setComposerDraft'),
+  getKeyStatus:deferredPiMethod('getKeyStatus'),
+  setApiKey:deferredPiMethod('setApiKey'),
+  createConversation:deferredPiMethod('createConversation'),
+  listConversations:deferredPiMethod('listConversations'),
+  getConversation:deferredPiMethod('getConversation'),
+  branchFromMessage:deferredPiMethod('branchFromMessage'),
+  findConversationByProjectionPath:deferredPiMethod('findConversationByProjectionPath'),
+  renameConversation:deferredPiMethod('renameConversation'),
+  archiveConversation:deferredPiMethod('archiveConversation'),
+  setConversationVaultAccess:deferredPiMethod('setConversationVaultAccess'),
+  setConversationProvider:deferredPiMethod('setConversationProvider'),
+  listOpenAiModels:deferredPiMethod('listOpenAiModels'),
+  listLocalModels:deferredPiMethod('listLocalModels'),
+  getModelCapabilities:deferredPiMethod('getModelCapabilities'),
+  setLocalModelCapabilities:deferredPiMethod('setLocalModelCapabilities'),
+  suggestContext:deferredPiMethod('suggestContext'),
+  sendMessage:deferredPiMethod('sendMessage'),
+  cancelRequest:deferredPiMethod('cancelRequest'),
+  decidePermission:deferredPiMethod('decidePermission'),
+  retryMessage:deferredPiMethod('retryMessage'),
+  createExcerpt:deferredPiMethod('createExcerpt'),
+  rememberExcerpt:deferredPiMethod('rememberExcerpt'),
+  unrememberExcerpt:deferredPiMethod('unrememberExcerpt'),
+  listGrants:deferredPiMethod('listGrants'),
+  grantNote:deferredPiMethod('grantNote'),
+  revokeNote:deferredPiMethod('revokeNote'),
+  setNoteExcluded:deferredPiMethod('setNoteExcluded'),
+  listNotePolicies:deferredPiMethod('listNotePolicies'),
+  searchNotesForPolicy:deferredPiMethod('searchNotesForPolicy'),
+  listPendingProposals:deferredPiMethod('listPendingProposals'),
+  prepareNoteSave:deferredPiMethod('prepareNoteSave'),
+  getProposalDraft:deferredPiMethod('getProposalDraft'),
+  checkpointProposalDraft:deferredPiMethod('checkpointProposalDraft'),
+  commitAgentProposal:deferredPiMethod('commitAgentProposal'),
+  dismissAgentProposal:deferredPiMethod('dismissAgentProposal'),
+  resolveProjectionConflict:deferredPiMethod('resolveProjectionConflict'),
+  on:deferredPiMethod('on'),
+ };
+Object.assign(piChatApi,Object.fromEntries(['prototypeCheckpoint','prototypeState','prototypeResolvePassage','prototypeFault','prototypeClose'].map(key=>[key,(...args:unknown[])=>loadPrototypeApi().then(api=>{
+  const operation=(api as unknown as Record<string,(...values:unknown[])=>unknown>)[key];if(!operation)throw new Error(`Unknown Pi evaluation operation ${key}`);return operation(...args);
+})])));
+export const chatApi:ChatApi=import.meta.env.VITE_PI_PROTOTYPE === 'true'?piChatApi:nativeChatApi;
 
 export async function resolveCurrentPassage(conversationId: string, evidenceId: string) {
   type Resolved={source: RawSource; markdown: string; historicalRevisionId?: string; selection: {anchor: number; head: number} | null};

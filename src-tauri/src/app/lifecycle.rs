@@ -1,4 +1,6 @@
-use crate::{chat::ChatService, index::AppState, vault_watcher::VaultWatcherHandle};
+#[cfg(not(feature = "pi-prototype"))]
+use crate::chat::ChatService;
+use crate::{index::AppState, vault_watcher::VaultWatcherHandle};
 use serde::Serialize;
 use std::sync::{Condvar, Mutex};
 use tauri::Manager;
@@ -228,6 +230,7 @@ impl AppLifecycle {
                 false,
             );
         };
+        #[cfg(not(feature = "pi-prototype"))]
         let Some(chat) = app.try_state::<ChatService>() else {
             return PrepareRestartReceipt::failed(
                 "Chat service unavailable".to_string(),
@@ -236,12 +239,39 @@ impl AppLifecycle {
             );
         };
 
+        #[cfg(not(feature = "pi-prototype"))]
         if let Err(error) = chat.quiesce_for_restart() {
             let can_resume = chat.resume_after_failed_restart().is_ok();
             return PrepareRestartReceipt::failed(error, false, can_resume);
         }
+        #[cfg(feature = "pi-prototype")]
+        let Some(database) = app.try_state::<crate::pi_prototype::NativeDatabase>() else {
+            return PrepareRestartReceipt::failed("Pi storage unavailable".into(), false, false);
+        };
+        #[cfg(feature = "pi-prototype")]
+        let Some(transport) = app.try_state::<crate::pi_prototype_transport::NativeTransport>() else {
+            return PrepareRestartReceipt::failed(
+                "Pi provider transport unavailable".into(),
+                false,
+                false,
+            );
+        };
+        #[cfg(feature = "pi-prototype")]
+        if let Err(error) = database
+            .quiesce_for_restart(app)
+            .and_then(|()| transport.quiesce_for_restart())
+        {
+            let can_resume = database.resume_after_failed_restart().is_ok()
+                && transport.resume_after_failed_restart().is_ok();
+            return PrepareRestartReceipt::failed(error, false, can_resume);
+        }
         if let Err(error) = state.semantic.quiesce_for_restart() {
+            #[cfg(not(feature = "pi-prototype"))]
             let can_resume = chat.resume_after_failed_restart().is_ok()
+                && state.semantic.resume_after_failed_restart().is_ok();
+            #[cfg(feature = "pi-prototype")]
+            let can_resume = database.resume_after_failed_restart().is_ok()
+                && transport.resume_after_failed_restart().is_ok()
                 && state.semantic.resume_after_failed_restart().is_ok();
             return PrepareRestartReceipt::failed(error, false, can_resume);
         }
@@ -262,6 +292,8 @@ impl AppLifecycle {
         // partially released running vault.
         let mut timeline_portable = false;
         let terminal_result = (|| -> Result<(), String> {
+            #[cfg(feature = "pi-prototype")]
+            database.finish_restart_shutdown()?;
             if let Some(mut watcher) = self
                 .watcher
                 .lock()
@@ -288,7 +320,7 @@ impl AppLifecycle {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pi-prototype")))]
 mod tests {
     use super::*;
     use crate::{app::EventBus, semantic::SemanticState, state::RunningVault};

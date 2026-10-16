@@ -46,158 +46,13 @@ const DEFAULT_CONVERSATION_TITLE: &str = "New conversation";
 const MAX_CONVERSATION_TITLE_CHARS: usize = 56;
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum VaultAccess {
-    None,
-    Approved,
-    Full,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum ChatServiceTier {
-    Standard,
-    Flex,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum WebAccess {
-    Off,
-    #[default]
-    Auto,
-}
-
-impl WebAccess {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Auto => "auto",
-        }
-    }
-
-    fn parse(value: &str) -> Self {
-        match value {
-            "off" => Self::Off,
-            _ => Self::Auto,
-        }
-    }
-}
-
-impl ChatServiceTier {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Standard => "standard",
-            Self::Flex => "flex",
-        }
-    }
-
-    fn parse(value: &str) -> Self {
-        match value {
-            "flex" => Self::Flex,
-            _ => Self::Standard,
-        }
-    }
-}
-
-impl VaultAccess {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::None => "none",
-            Self::Approved => "approved",
-            Self::Full => "full",
-        }
-    }
-
-    fn parse(value: &str) -> Self {
-        match value {
-            "none" => Self::None,
-            "full" => Self::Full,
-            "approved" | "limited" => Self::Approved,
-            _ => Self::Approved,
-        }
-    }
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatDefaults {
-    pub(crate) provider: String,
-    pub(crate) model: String,
-    #[serde(default = "default_openai_model")]
-    pub(crate) openai_model: String,
-    #[serde(default = "default_local_model")]
-    pub(crate) local_model: String,
-    #[serde(default = "default_local_base_url")]
-    pub(crate) local_base_url: String,
-    #[serde(default = "default_reasoning_effort")]
-    pub(crate) reasoning_effort: String,
-    pub(crate) service_tier: ChatServiceTier,
-    #[serde(default)]
-    pub(crate) web_access: WebAccess,
-    pub(crate) default_access: VaultAccess,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatSettings {
-    pub(crate) provider: String,
-    pub(crate) model: String,
-    #[serde(default = "default_openai_model")]
-    pub(crate) openai_model: String,
-    #[serde(default = "default_local_model")]
-    pub(crate) local_model: String,
-    #[serde(default = "default_local_base_url")]
-    pub(crate) local_base_url: String,
-    #[serde(default = "default_reasoning_effort")]
-    pub(crate) reasoning_effort: String,
-    pub(crate) service_tier: ChatServiceTier,
-    #[serde(default)]
-    pub(crate) web_access: WebAccess,
-    pub(crate) default_access: VaultAccess,
-    pub(crate) atlas_visibility: String,
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct LocalModelCapabilitySelection {
-    pub(crate) images: bool,
-    pub(crate) tools: bool,
-    pub(crate) audio: bool,
-    pub(crate) video: bool,
-    pub(crate) reasoning_effort: String,
-}
-
-impl Default for LocalModelCapabilitySelection {
-    fn default() -> Self {
-        Self {
-            images: false,
-            tools: true,
-            audio: false,
-            video: false,
-            reasoning_effort: DEFAULT_REASONING_EFFORT.to_string(),
-        }
-    }
-}
-
-impl Default for ChatSettings {
-    fn default() -> Self {
-        Self {
-            provider: "openai".to_string(),
-            model: DEFAULT_MODEL.to_string(),
-            openai_model: DEFAULT_MODEL.to_string(),
-            local_model: DEFAULT_LOCAL_MODEL.to_string(),
-            local_base_url: DEFAULT_LOCAL_BASE_URL.to_string(),
-            reasoning_effort: DEFAULT_REASONING_EFFORT.to_string(),
-            service_tier: ChatServiceTier::Standard,
-            web_access: WebAccess::Auto,
-            default_access: VaultAccess::Full,
-            atlas_visibility: "hidden".to_string(),
-        }
-    }
-}
-
+use crate::chat_domain::validate_reasoning_effort;
+#[cfg(test)]
+use crate::chat_domain::DEFAULT_REASONING_EFFORT;
+pub(crate) use crate::chat_domain::{
+    ChatDefaults, ChatServiceTier, ChatSettings, LocalModelCapabilitySelection, VaultAccess,
+    WebAccess,
+};
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatConversationSummary {
@@ -212,33 +67,6 @@ pub(crate) struct ChatConversationSummary {
     pub(crate) provider: String,
     pub(crate) model: String,
     pub(crate) reasoning_effort: String,
-}
-
-fn default_openai_model() -> String {
-    DEFAULT_MODEL.to_string()
-}
-
-fn default_local_model() -> String {
-    DEFAULT_LOCAL_MODEL.to_string()
-}
-
-fn default_local_base_url() -> String {
-    DEFAULT_LOCAL_BASE_URL.to_string()
-}
-
-const DEFAULT_REASONING_EFFORT: &str = "medium";
-
-fn default_reasoning_effort() -> String {
-    DEFAULT_REASONING_EFFORT.to_string()
-}
-
-fn validate_reasoning_effort(value: &str) -> Result<&str, String> {
-    let value = value.trim();
-    if crate::agent_runtime::local_reasoning::valid_option(value) {
-        Ok(value)
-    } else {
-        Err("Reasoning setting must be a nonempty identifier of at most 64 characters".to_string())
-    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -305,22 +133,7 @@ pub(crate) struct ChatAttachment {
     pub(crate) data_base64: String,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatSource {
-    pub(crate) kind: String,
-    pub(crate) note_id: Option<String>,
-    pub(crate) note_path: Option<String>,
-    pub(crate) title: String,
-    pub(crate) excerpt: String,
-    pub(crate) url: Option<String>,
-    pub(crate) anchor: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) revision: Option<crate::services::note_timeline::RevisionCitation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) passage: Option<crate::services::evidence::PassageCitation>,
-}
-
+pub(crate) use crate::chat_domain::ChatSource;
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatRunContextItem {
@@ -380,25 +193,7 @@ pub(crate) struct ChatProjectionRelocation {
     pub(crate) current_paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatGrant {
-    pub(crate) note_id: String,
-    pub(crate) note_path: Option<String>,
-    pub(crate) title: String,
-    pub(crate) granted_at_millis: u64,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatNotePolicy {
-    pub(crate) note_id: String,
-    pub(crate) note_path: Option<String>,
-    pub(crate) title: String,
-    pub(crate) disposition: String,
-    pub(crate) updated_at_millis: u64,
-}
-
+pub(crate) use crate::chat_domain::{ChatGrant, ChatNotePolicy};
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatRequestAccepted {
@@ -565,6 +360,7 @@ pub(crate) struct ProjectionConflictConversion {
 }
 
 struct ChatServiceInner {
+    domain: crate::chat_domain::ChatDomain,
     db_path: PathBuf,
     notes_root: PathBuf,
     work: Arc<ChatWorkTracker>,
@@ -745,6 +541,10 @@ impl ChatService {
     ) -> Result<Self, String> {
         let service = Self {
             inner: Arc::new(ChatServiceInner {
+                domain: crate::chat_domain::ChatDomain::new(
+                    notes_root.clone(),
+                    vault_data_dir.clone(),
+                )?,
                 db_path: vault_data_dir.join("ai.sqlite3"),
                 notes_root,
                 work: Arc::new(ChatWorkTracker::new()),
@@ -759,178 +559,42 @@ impl ChatService {
     }
 
     pub(crate) fn get_settings(&self) -> Result<ChatSettings, String> {
-        self.connection()?
-            .query_row(
-                "SELECT provider, model, openai_model, local_model, local_base_url,
-                        reasoning_effort, service_tier, default_access, atlas_visibility, web_access
-                 FROM chat_settings WHERE id = 1",
-                [],
-                |row| {
-                    Ok(ChatSettings {
-                        provider: row.get(0)?,
-                        model: row.get(1)?,
-                        openai_model: row.get(2)?,
-                        local_model: row.get(3)?,
-                        local_base_url: row.get(4)?,
-                        reasoning_effort: row.get(5)?,
-                        service_tier: ChatServiceTier::parse(&row.get::<_, String>(6)?),
-                        default_access: VaultAccess::parse(&row.get::<_, String>(7)?),
-                        atlas_visibility: row.get(8)?,
-                        web_access: WebAccess::parse(&row.get::<_, String>(9)?),
-                    })
-                },
-            )
-            .map_err(|error| error.to_string())
+        self.inner.domain.get_settings()
     }
 
     pub(crate) fn set_defaults(&self, settings: ChatDefaults) -> Result<ChatSettings, String> {
-        let model = settings.model.trim();
-        if model.is_empty() {
-            return Err("A model is required".to_string());
-        }
-        if settings.provider != "openai" && settings.provider != "local" {
-            return Err("Provider must be openai or local".to_string());
-        }
-        let reasoning_effort = validate_reasoning_effort(&settings.reasoning_effort)?;
-        crate::agent_runtime::validate_local_base_url(&settings.local_base_url)?;
-        self.connection()?
-            .execute(
-                "UPDATE chat_settings
-                 SET provider = ?1, model = ?2, openai_model = ?3, local_model = ?4,
-                     local_base_url = ?5, reasoning_effort = ?6, service_tier = ?7,
-                     default_access = ?8, web_access = ?9
-                 WHERE id = 1",
-                params![
-                    settings.provider,
-                    model,
-                    settings.openai_model.trim(),
-                    settings.local_model.trim(),
-                    settings.local_base_url.trim(),
-                    reasoning_effort,
-                    settings.service_tier.as_str(),
-                    settings.default_access.as_str(),
-                    settings.web_access.as_str()
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        self.get_settings()
+        self.inner.domain.set_defaults(settings)
     }
 
     pub(crate) fn set_atlas_visibility(&self, visibility: &str) -> Result<(), String> {
-        if !matches!(visibility, "hidden" | "remembered" | "all") {
-            return Err("Atlas visibility must be hidden, remembered, or all".to_string());
-        }
-        self.connection()?
-            .execute(
-                "UPDATE chat_settings SET atlas_visibility = ?1 WHERE id = 1",
-                [visibility],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
+        self.inner.domain.set_atlas_visibility(visibility)
     }
 
     pub(crate) fn local_model_capabilities(
         &self,
         model: &str,
     ) -> Result<LocalModelCapabilitySelection, String> {
-        let model = model.trim();
-        if model.is_empty() {
-            return Ok(LocalModelCapabilitySelection::default());
-        }
-        self.connection()?
-            .query_row(
-                "SELECT images, tools, audio, video, reasoning_effort
-                 FROM chat_local_model_capabilities WHERE model = ?1",
-                [model],
-                |row| {
-                    Ok(LocalModelCapabilitySelection {
-                        images: row.get::<_, i64>(0)? != 0,
-                        tools: row.get::<_, i64>(1)? != 0,
-                        audio: row.get::<_, i64>(2)? != 0,
-                        video: row.get::<_, i64>(3)? != 0,
-                        reasoning_effort: row.get(4)?,
-                    })
-                },
-            )
-            .optional()
-            .map(|selection| selection.unwrap_or_default())
-            .map_err(|error| error.to_string())
+        self.inner.domain.local_model_capabilities(model)
     }
 
     pub(crate) fn set_local_model_capabilities(
         &self,
         model: &str,
-        mut capabilities: LocalModelCapabilitySelection,
+        capabilities: LocalModelCapabilitySelection,
     ) -> Result<LocalModelCapabilitySelection, String> {
-        let model = model.trim();
-        if model.is_empty() {
-            return Err("A local model is required".to_string());
-        }
-        capabilities.reasoning_effort =
-            validate_reasoning_effort(&capabilities.reasoning_effort)?.to_string();
-        self.connection()?
-            .execute(
-                "INSERT INTO chat_local_model_capabilities
-                   (model, images, tools, audio, video, reasoning_effort, updated_at_millis)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
-                 ON CONFLICT(model) DO UPDATE SET
-                   images = excluded.images,
-                   tools = excluded.tools,
-                   audio = excluded.audio,
-                   video = excluded.video,
-                   reasoning_effort = excluded.reasoning_effort,
-                   updated_at_millis = excluded.updated_at_millis",
-                params![
-                    model,
-                    capabilities.images,
-                    capabilities.tools,
-                    capabilities.audio,
-                    capabilities.video,
-                    capabilities.reasoning_effort,
-                    to_i64(now_millis())?
-                ],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(capabilities)
+        self.inner
+            .domain
+            .set_local_model_capabilities(model, capabilities)
     }
 
     /// Unsent composer text for a slot. A slot is either a conversation or a
     /// pane that has not created its conversation yet.
     pub(crate) fn get_composer_draft(&self, slot: &str) -> Result<String, String> {
-        let slot = normalize_composer_draft_slot(slot)?;
-        self.connection()?
-            .query_row(
-                "SELECT body FROM chat_composer_drafts WHERE slot = ?1",
-                [&slot],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()
-            .map(|body| body.unwrap_or_default())
-            .map_err(|error| error.to_string())
+        self.inner.domain.get_composer_draft(slot)
     }
 
     pub(crate) fn set_composer_draft(&self, slot: &str, body: &str) -> Result<(), String> {
-        let slot = normalize_composer_draft_slot(slot)?;
-        let connection = self.connection()?;
-
-        // An empty draft is an absence, not a value worth keeping around.
-        if body.is_empty() {
-            connection
-                .execute("DELETE FROM chat_composer_drafts WHERE slot = ?1", [&slot])
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        } else {
-            connection
-                .execute(
-                    "INSERT INTO chat_composer_drafts (slot, body, updated_at_millis)
-                     VALUES (?1, ?2, ?3)
-                     ON CONFLICT(slot) DO UPDATE SET body = excluded.body,
-                       updated_at_millis = excluded.updated_at_millis",
-                    params![slot, body, to_i64(now_millis())?],
-                )
-                .map(|_| ())
-                .map_err(|error| error.to_string())
-        }
+        self.inner.domain.set_composer_draft(slot, body)
     }
 
     #[cfg_attr(not(test), allow(dead_code))]
@@ -1795,102 +1459,27 @@ impl ChatService {
     }
 
     pub(crate) fn grant_note(&self, note_id: &str, title: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "INSERT INTO chat_limited_grants (note_id, title, granted_at_millis)
-                 VALUES (?1, ?2, ?3)
-                 ON CONFLICT(note_id) DO UPDATE SET title = excluded.title",
-                params![note_id, title, to_i64(now_millis())?],
-            )
-            .map_err(|error| error.to_string())?;
-        connection
-            .execute(
-                "INSERT INTO chat_note_policies (note_id, disposition, title, updated_at_millis)
-                 VALUES (?1, 'approved', ?2, ?3)
-                 ON CONFLICT(note_id) DO UPDATE SET disposition = 'approved',
-                   title = excluded.title, updated_at_millis = excluded.updated_at_millis",
-                params![note_id, title, to_i64(now_millis())?],
-            )
-            .map_err(|error| error.to_string())?;
+        self.inner.domain.grant_note(note_id, title)?;
         self.cancel_active_requests();
         Ok(())
     }
 
     pub(crate) fn revoke_note(&self, note_id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "DELETE FROM chat_limited_grants WHERE note_id = ?1",
-                [note_id],
-            )
-            .map_err(|error| error.to_string())?;
-        connection
-            .execute(
-                "DELETE FROM chat_note_policies
-                 WHERE note_id = ?1 AND disposition = 'approved'",
-                [note_id],
-            )
-            .map_err(|error| error.to_string())?;
+        self.inner.domain.revoke_note(note_id)?;
         self.cancel_active_requests();
         Ok(())
     }
 
     pub(crate) fn granted_note_ids(&self) -> Result<HashSet<String>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT note_id FROM chat_note_policies WHERE disposition = 'approved'")
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<HashSet<_>, _>>()
-            .map_err(|error| error.to_string())
+        self.inner.domain.granted_note_ids()
     }
 
     pub(crate) fn list_grants(&self) -> Result<Vec<ChatGrant>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT note_id, title, updated_at_millis
-                 FROM chat_note_policies WHERE disposition = 'approved' ORDER BY title",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(ChatGrant {
-                    note_id: row.get(0)?,
-                    note_path: None,
-                    title: row.get(1)?,
-                    granted_at_millis: row.get::<_, i64>(2)?.max(0) as u64,
-                })
-            })
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())
+        self.inner.domain.list_grants()
     }
 
     pub(crate) fn list_note_policies(&self) -> Result<Vec<ChatNotePolicy>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT note_id, title, disposition, updated_at_millis
-                 FROM chat_note_policies ORDER BY disposition, title",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(ChatNotePolicy {
-                    note_id: row.get(0)?,
-                    note_path: None,
-                    title: row.get(1)?,
-                    disposition: row.get(2)?,
-                    updated_at_millis: row.get::<_, i64>(3)?.max(0) as u64,
-                })
-            })
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())
+        self.inner.domain.list_note_policies()
     }
 
     pub(crate) fn set_note_excluded(
@@ -1899,48 +1488,15 @@ impl ChatService {
         title: &str,
         excluded: bool,
     ) -> Result<(), String> {
-        let connection = self.connection()?;
-        if excluded {
-            connection
-                .execute(
-                    "INSERT INTO chat_note_policies
-                     (note_id, disposition, title, updated_at_millis)
-                     VALUES (?1, 'excluded', ?2, ?3)
-                     ON CONFLICT(note_id) DO UPDATE SET disposition = 'excluded',
-                       title = excluded.title, updated_at_millis = excluded.updated_at_millis",
-                    params![note_id, title, to_i64(now_millis())?],
-                )
-                .map_err(|error| error.to_string())?;
-            connection
-                .execute(
-                    "DELETE FROM chat_limited_grants WHERE note_id = ?1",
-                    [note_id],
-                )
-                .map_err(|error| error.to_string())?;
-        } else {
-            connection
-                .execute(
-                    "DELETE FROM chat_note_policies
-                     WHERE note_id = ?1 AND disposition = 'excluded'",
-                    [note_id],
-                )
-                .map_err(|error| error.to_string())?;
-        }
-        // A policy change invalidates any in-flight tool view.
+        self.inner
+            .domain
+            .set_note_excluded(note_id, title, excluded)?;
         self.cancel_active_requests();
         Ok(())
     }
 
     pub(crate) fn excluded_note_ids(&self) -> Result<HashSet<String>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT note_id FROM chat_note_policies WHERE disposition = 'excluded'")
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<HashSet<_>, _>>()
-            .map_err(|error| error.to_string())
+        self.inner.domain.excluded_note_ids()
     }
 
     pub(crate) fn note_is_allowed(
@@ -1948,14 +1504,7 @@ impl ChatService {
         access: &VaultAccess,
         note_id: &str,
     ) -> Result<bool, String> {
-        if self.excluded_note_ids()?.contains(note_id) {
-            return Ok(false);
-        }
-        match access {
-            VaultAccess::None => Ok(false),
-            VaultAccess::Full => Ok(true),
-            VaultAccess::Approved => Ok(self.granted_note_ids()?.contains(note_id)),
-        }
+        self.inner.domain.note_is_allowed(access, note_id)
     }
 
     pub(crate) fn notes_root(&self) -> &Path {

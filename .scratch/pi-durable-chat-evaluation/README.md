@@ -121,7 +121,8 @@ safe to erase.
 
 ```sh
 pnpm pi:prototype diagnostics   # read-only diagnostic page, fresh background root
-pnpm pi:prototype ui-gate       # native fixture/editor/restart gate
+pnpm pi:prototype ui-gate       # diagnostic baseline/editor/restart gate
+env -u PI_PROTOTYPE_DATA pnpm pi:prototype interactive-gate # normal-workspace first-milestone fixtures
 pnpm pi:prototype fault-gate    # native fixture faults
 pnpm pi:prototype ios-ui-gate   # dedicated simulator fixture gate
 python3 -B -W error::ResourceWarning -m unittest discover -s scripts/pi-prototype -p '*_test.py' -v
@@ -132,7 +133,9 @@ Diagnostics/gates are separate from copied-vault use. The diagnostics page is
 read-only/unavailable unless the native process has explicitly enabled the synthetic
 HTTP fixture; use `gate`/`ui-gate` to execute it. Navigating to that route in the
 manual app cannot seed Pi data. Gates reject a nonempty
-explicit data root; their compiled entry remains `/pi-prototype`. Manual use rejects
+explicit data root; diagnostic gate entries remain `/pi-prototype`. The separate
+`interactive-gate` opens `/`, allocates a fresh generated root and records the
+[normal workspace acceptance matrix](desktop-acceptance.md). Manual use rejects
 inherited HTTP-fixture/UI-fault variables. The simulator entry retains the previous
 SDK workaround and uses its own bundle container; desktop copied data is not
 silently transferred into iOS. See the [historical validation](../pi-durable-prototype/validation.md)

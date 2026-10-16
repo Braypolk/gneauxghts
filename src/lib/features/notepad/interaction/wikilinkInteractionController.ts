@@ -1,3 +1,4 @@
+import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
 
@@ -36,7 +37,8 @@ export interface WikilinkInteractionControllerDeps<
   setActivePane: (paneId: TPaneId) => void;
   openChatProjection: (
     paneId: TPaneId,
-    path: string
+    path: string,
+    targetAnchor?: string | null
   ) => Promise<boolean>;
   getWikilinkState: (
     paneId: TPaneId
@@ -82,14 +84,16 @@ export function createWikilinkInteractionController<
     rawTarget: string
   ) {
     deps.setActivePane(paneId);
-    if (
-      rawTarget.replaceAll('\\', '/').startsWith('Chats/')
-    ) {
-      const path = rawTarget.split('#', 1)[0];
+    const target = parseWikilink(rawTarget).target.replaceAll('\\', '/');
+    if (target.startsWith('Chats/')) {
+      const separator = target.indexOf('#');
+      const path = separator < 0 ? target : target.slice(0, separator);
+      const anchor = separator < 0 ? null : target.slice(separator + 1);
       if (
         await deps.openChatProjection(
           paneId,
-          path.endsWith('.md') ? path : `${path}.md`
+          path.endsWith('.md') ? path : `${path}.md`,
+          anchor
         )
       ) {
         return;

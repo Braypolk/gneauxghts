@@ -1,10 +1,13 @@
 use super::{current_time_millis, ForgottenNoteSummary, RestoredForgottenNote};
+#[cfg(not(feature = "pi-prototype"))]
+use crate::chat::ChatService;
+#[cfg(not(feature = "pi-prototype"))]
+use crate::index::build_indexed_note;
 pub(super) use crate::services::note_timeline::resolve_forgotten_target_path;
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pi-prototype")))]
 use crate::services::note_timeline::{LifecyclePublicationFailure, NoteIdentity};
 use crate::{
-    chat::ChatService,
-    index::{build_indexed_note, AppState},
+    index::AppState,
     note,
     services::note_timeline::{MutationWarningStage, NoteMutationWarning},
     state::{
@@ -18,14 +21,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+#[cfg(not(feature = "pi-prototype"))]
 use tauri::Manager;
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pi-prototype")))]
 use crate::services::note_timeline::{
     forgotten_note_identity, prepare_forgotten_note_markdown, publish_note_move,
     resolve_restore_target_path, AFTER_FORGET_METADATA_STAGED, BEFORE_FORGOTTEN_PUBLICATION,
 };
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pi-prototype")))]
 static BEFORE_FORGOTTEN_PURGE: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
     std::sync::Mutex::new(None);
 
@@ -154,17 +158,23 @@ pub(crate) async fn restore_forgotten_notes<R: tauri::Runtime>(
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
     super::on_app_worker(app.clone(), move |state| {
+        #[cfg(not(feature = "pi-prototype"))]
         let chat_service = app
             .try_state::<ChatService>()
             .ok_or_else(|| "Application state unavailable".to_string())?;
-        restore_forgotten_notes_with_state(state, &chat_service, forgotten_paths)
+        restore_forgotten_notes_with_state(
+            state,
+            #[cfg(not(feature = "pi-prototype"))]
+            &chat_service,
+            forgotten_paths,
+        )
     })
     .await?
 }
 
 pub(crate) fn restore_forgotten_notes_with_state(
     state: &AppState,
-    chat_service: &ChatService,
+    #[cfg(not(feature = "pi-prototype"))] chat_service: &ChatService,
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, state)?;
@@ -192,6 +202,7 @@ pub(crate) fn restore_forgotten_notes_with_state(
                 };
                 restored
             }
+            #[cfg(not(feature = "pi-prototype"))]
             ForgottenItemKind::Chat => {
                 if !forgotten_path.is_dir() {
                     state
@@ -249,6 +260,10 @@ pub(crate) fn restore_forgotten_notes_with_state(
                 }
                 (original_path, metadata_warning)
             }
+            #[cfg(feature = "pi-prototype")]
+            ForgottenItemKind::Chat => {
+                return Err("Restoring legacy chats is unavailable in the Pi evaluation".into())
+            }
         };
 
         let restored_note = RestoredForgottenNote {
@@ -271,17 +286,23 @@ pub(crate) async fn delete_forgotten_notes<R: tauri::Runtime>(
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
     super::on_app_worker(app.clone(), move |state| {
+        #[cfg(not(feature = "pi-prototype"))]
         let chat_service = app
             .try_state::<ChatService>()
             .ok_or_else(|| "Application state unavailable".to_string())?;
-        delete_forgotten_notes_with_state(state, &chat_service, forgotten_paths)
+        delete_forgotten_notes_with_state(
+            state,
+            #[cfg(not(feature = "pi-prototype"))]
+            &chat_service,
+            forgotten_paths,
+        )
     })
     .await?
 }
 
 pub(crate) fn delete_forgotten_notes_with_state(
     state: &AppState,
-    chat_service: &ChatService,
+    #[cfg(not(feature = "pi-prototype"))] chat_service: &ChatService,
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, state)?;
@@ -300,7 +321,17 @@ pub(crate) fn delete_forgotten_notes_with_state(
             state,
             &forgotten_note,
             current_time_millis()?,
-            |conversation_id| chat_service.delete_archived_conversation(conversation_id),
+            |conversation_id| {
+                #[cfg(not(feature = "pi-prototype"))]
+                {
+                    chat_service.delete_archived_conversation(conversation_id)
+                }
+                #[cfg(feature = "pi-prototype")]
+                {
+                    let _ = conversation_id;
+                    Err("Deleting legacy chats is unavailable in the Pi evaluation".into())
+                }
+            },
         )?;
     }
 
@@ -398,10 +429,18 @@ pub(super) fn cleanup_expired_forgotten_notes(
         }
         if forgotten_note.purge_at_millis <= now {
             purge_forgotten_item(state, &forgotten_note, now, |conversation_id| {
-                ChatService::delete_persisted_conversation(
-                    state.running_vault().data_dir(),
-                    conversation_id,
-                )
+                #[cfg(not(feature = "pi-prototype"))]
+                {
+                    ChatService::delete_persisted_conversation(
+                        state.running_vault().data_dir(),
+                        conversation_id,
+                    )
+                }
+                #[cfg(feature = "pi-prototype")]
+                {
+                    let _ = conversation_id;
+                    Err("Purging legacy chats is unavailable in the Pi evaluation".into())
+                }
             })?;
         }
     }
@@ -434,7 +473,7 @@ fn purge_forgotten_item(
     delete_conversation: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
     let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
-    #[cfg(test)]
+    #[cfg(all(test, not(feature = "pi-prototype")))]
     {
         let hook = BEFORE_FORGOTTEN_PURGE.lock().unwrap().take();
         if let Some(hook) = hook {
@@ -482,7 +521,7 @@ fn remove_forgotten_item_path(path: &Path, kind: &ForgottenItemKind) -> Result<(
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "pi-prototype")))]
 mod tests {
     use super::*;
     use crate::state::{

@@ -103,6 +103,11 @@
   const snapshot = $derived($controller);
   let titleDraft = $state('');
   let actionError = $state<string | null>(null);
+  let resolvingProjection = $state(false);
+  async function resolveProjection(resolution: 'convertToNote' | 'restoreTranscript') {
+    resolvingProjection = true;
+    try { await controller.resolveProjectionConflict(resolution); } finally { resolvingProjection = false; }
+  }
   let previewAttachment = $state<ChatAttachmentInput | null>(null);
   let composerElement = $state<HTMLTextAreaElement | null>(null);
   let reportedConversationId: string | null | undefined;
@@ -217,6 +222,16 @@
     onOpenMenu={(menu) => (openMenu = menu)}
     onFocusComposer={focusChatComposer}
   />
+
+  {#if snapshot.conversation?.status === 'projectionConflict'}
+    <div role="alert" class="px-4 py-3 text-sm">
+      <p>The exported transcript was {snapshot.conversation.projectionConflict === 'missing' ? 'removed' : 'changed outside chat'}. Resolve it to continue.</p>
+      <button type="button" disabled={resolvingProjection} onclick={() => resolveProjection('convertToNote')}>Keep edited copy as a note</button>
+      <button type="button" disabled={resolvingProjection} onclick={() => resolveProjection('restoreTranscript')}>Restore transcript from chat</button>
+    </div>
+  {:else if snapshot.conversation?.projectionWarning}
+    <div role="status" class="px-4 py-3 text-sm">{snapshot.conversation.projectionWarning} Reopen the app to retry the transcript export.</div>
+  {/if}
 
   <ChatMessageList
     {controller}

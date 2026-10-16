@@ -17,6 +17,8 @@ use rusqlite::OpenFlags;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 mod codec;
+#[cfg(feature = "pi-prototype")]
+pub(super) mod prototype_renames;
 use codec::{AuthoredState, LineDelta};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -872,6 +874,51 @@ pub(super) fn publication_capture_outcome(
     intent: &PreparedHistoryIntent,
 ) -> Result<CaptureOutcome, HistoryError> {
     editing_windows::capture_outcome(&open_store(store)?, intent.as_str())
+}
+
+#[cfg(feature = "pi-prototype")]
+pub(super) fn verify_prototype_publication(
+    store: &Store,
+    token: &str,
+    note: &NoteIdentity,
+    canonical: &str,
+) -> Result<bool, HistoryError> {
+    let connection = open_store(store)?;
+    match editing_windows::receipt_outcome(&connection, token)? {
+        super::editing_window_policy::TokenOutcome::ReturnOriginalOutcome => {}
+        super::editing_window_policy::TokenOutcome::RecoverExactIntent
+        | super::editing_window_policy::TokenOutcome::RemainAbandoned => return Ok(false),
+        _ => return Err("Stale or unavailable accepted-publication proof".into()),
+    }
+    let owner: String = connection.query_row(
+        "SELECT note_id FROM publication_receipts WHERE intent_id=?1",
+        [editing_windows::receipt_key(token)?],
+        |row| row.get(0),
+    )?;
+    if owner != note.as_str() {
+        return Err("Accepted-publication proof belongs to another Note Identity".into());
+    }
+    let revision_id = match editing_windows::capture_outcome(&connection, token)? {
+        CaptureOutcome::Revision { revision_id } => revision_id,
+        CaptureOutcome::Unchanged { result_hash } => {
+            if result_hash != authored_content_hash(canonical) {
+                return Err(
+                    "Accepted-publication proof does not match its exact canonical payload".into(),
+                );
+            }
+            return Ok(true);
+        }
+        _ => return Err("Accepted-publication proof has no retained point outcome".into()),
+    };
+    let revision = reconstruct(store, note, &RevisionIdentity::from_persisted(revision_id))?;
+    let actual = AuthoredState {
+        unmanaged_frontmatter: revision.unmanaged_frontmatter,
+        body: revision.body,
+    };
+    if actual != AuthoredState::from_canonical(canonical) {
+        return Err("Accepted-publication proof does not match its exact canonical payload".into());
+    }
+    Ok(true)
 }
 
 pub(super) fn prepare_publication(
@@ -3585,6 +3632,10 @@ pub(super) fn compact(store: &Store, maximum_reclaim_bytes: u64) -> Result<(), H
 pub(super) fn clean_close(store: &Store) -> Result<(), HistoryError> {
     let connection = open_store(store)?;
     recover_pending_with_connection(&connection, false)?;
+    #[cfg(feature = "pi-prototype")]
+    if connection.query_row("SELECT EXISTS(SELECT 1 FROM prototype_prepared_renames)", [], |row| row.get::<_, bool>(0))? {
+        return Err("Reconcile interrupted proposal rename before portable close".into());
+    }
     if !editing_windows::pending(&connection, None)?.is_empty() {
         return Err("Finalize Editing Windows before portable close".into());
     }
@@ -4441,6 +4492,8 @@ fn open_store(store: &Store) -> Result<Connection, HistoryError> {
         .map_err(|error| {
             HistoryError::from(error).with_context("Maintain Note Timeline access indexes")
         })?;
+    #[cfg(feature = "pi-prototype")]
+    prototype_renames::initialize(&connection)?;
     let activate_session = ACTIVE_HISTORY_STORE_SESSIONS
         .lock()
         .map_err(|_| "Note Timeline history store sessions lock poisoned".to_string())?
@@ -4586,11 +4639,11 @@ fn recover_pending_with_connection(
                     #[cfg(feature = "e2e-wdio")]
                     crate::e2e_process_fault::hit("recovery-publication-captured");
                 } else {
-                    editing_windows::abandon(connection, &intent_id)?;
+                    abandon_unpublished_intent(connection, &intent_id)?;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                editing_windows::abandon(connection, &intent_id)?;
+                abandon_unpublished_intent(connection, &intent_id)?;
             }
             Err(error) => {
                 return Err(format!(
@@ -4602,6 +4655,17 @@ fn recover_pending_with_connection(
         }
     }
     Ok(())
+}
+
+// A Pi rename may contain its exact pre-publication base at the destination.
+// Read-only recovery retains that correlation; only NoteTimeline's explicit
+// proof recovery may restore it while holding canonical mutation ownership.
+fn abandon_unpublished_intent(connection: &Connection, intent_id: &str) -> Result<(), HistoryError> {
+    #[cfg(feature = "pi-prototype")]
+    if prototype_renames::contains(connection, intent_id)? {
+        return Ok(());
+    }
+    editing_windows::abandon(connection, intent_id)
 }
 
 // A separate connection avoids requiring mutable access from read-capability
@@ -4669,12 +4733,21 @@ fn finalize_intent(
         } else {
             LifecycleEventKind::Moved
         };
+        // An evaluation review's rename and unchanged-body receipt are one
+        // canonical effect. The existing lifecycle reference protects its scoped
+        // receipt from retry-watermark retirement until history is cleared.
+        #[cfg(feature = "pi-prototype")]
+        let correlated_intent = (intent.source
+            == MutationSource::AcceptedChatProposal.as_storage_value())
+        .then_some(intent_id);
+        #[cfg(not(feature = "pi-prototype"))]
+        let correlated_intent: Option<&str> = None;
         transaction
             .execute(
                 "INSERT INTO lifecycle_events (
                    event_id, note_id, predecessor_kind, predecessor_id, kind,
                    occurred_at_millis, previous_path, path, payload_version, intent_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
                 params![
                     event_id,
                     intent.note_id,
@@ -4684,6 +4757,7 @@ fn finalize_intent(
                     occurred_at,
                     head.current_path.to_string_lossy().into_owned(),
                     intent.target_path.to_string_lossy().into_owned(),
+                    correlated_intent,
                 ],
             )
             .map_err(HistoryError::from)?;

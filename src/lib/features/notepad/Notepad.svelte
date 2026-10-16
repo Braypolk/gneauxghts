@@ -525,8 +525,8 @@
       getWikilinkController: (paneId) =>
         getPaneControllers(paneId).wikilinkController,
       setActivePane: workspaceStore.setActivePaneId,
-      openChatProjection: (paneId, path) =>
-        chatCoordinator.openProjection(paneId, path),
+      openChatProjection: (paneId, path, anchor) =>
+        chatCoordinator.openProjection(paneId, path, anchor),
       getWikilinkState: (paneId) =>
         getPaneRuntime(paneId).ui.wikilinkAutocomplete,
     });

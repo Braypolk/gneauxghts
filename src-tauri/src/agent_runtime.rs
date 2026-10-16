@@ -1,8 +1,8 @@
 mod compaction;
 mod compatible_chat;
 mod context_measurement;
-pub(crate) mod local_reasoning;
-mod model_metadata;
+pub(crate) use crate::provider_config::local_reasoning;
+use crate::provider_config::model_metadata;
 mod openai_model;
 mod result_stream;
 mod usage_context;
@@ -26,7 +26,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use url::Url;
 
 // Progress can continue across context compactions. Malformed output and
 // repeated identical actions retain their separate recovery guards.
@@ -1216,58 +1215,11 @@ pub(crate) fn supported_reasoning_effort(
     supported.then(|| effort.to_string())
 }
 
-pub(crate) fn ensure_compatible_chat_supported() -> Result<(), String> {
-    if cfg!(target_os = "android") {
-        Err("OpenAI-compatible server chat is available on desktop and iOS".to_string())
-    } else {
-        Ok(())
-    }
-}
-
-pub(crate) fn openai_api_base_url() -> Result<String, String> {
-    // A separate opt-in test build can exercise the Responses wire protocol
-    // without live credentials. Ordinary and release builds always use OpenAI.
-    #[cfg(all(debug_assertions, feature = "e2e-chat-fixture"))]
-    if let Ok(value) = std::env::var("GNEAUXGHTS_OPENAI_FIXTURE_URL") {
-        validate_openai_fixture_url(&value)?;
-        return Ok(value);
-    }
-    Ok("https://api.openai.com/v1".to_string())
-}
-
-#[cfg(any(test, all(debug_assertions, feature = "e2e-chat-fixture")))]
-fn validate_openai_fixture_url(value: &str) -> Result<(), String> {
-    validate_local_base_url(value)?;
-    let parsed = Url::parse(value).map_err(|_| "Invalid fixture URL".to_string())?;
-    let loopback = match parsed.host() {
-        Some(url::Host::Domain(host)) => host == "localhost",
-        Some(url::Host::Ipv4(host)) => host.is_loopback(),
-        Some(url::Host::Ipv6(host)) => host.is_loopback(),
-        None => false,
-    };
-    if !loopback {
-        return Err("OpenAI protocol fixtures must use a loopback address".to_string());
-    }
-    Ok(())
-}
-
-pub(crate) fn validate_local_base_url(value: &str) -> Result<(), String> {
-    let parsed = Url::parse(value.trim())
-        .map_err(|_| "Enter a valid OpenAI-compatible base URL".to_string())?;
-    if !parsed.username().is_empty() || parsed.password().is_some() {
-        return Err("Local model URLs cannot contain credentials".to_string());
-    }
-    if parsed.query().is_some() || parsed.fragment().is_some() {
-        return Err("Local model URLs cannot contain a query or fragment".to_string());
-    }
-    parsed
-        .host_str()
-        .ok_or_else(|| "Local model URL must include a host".to_string())?;
-    if parsed.scheme() != "http" && parsed.scheme() != "https" {
-        return Err("Local model URL must use HTTP or HTTPS".to_string());
-    }
-    Ok(())
-}
+#[cfg(test)]
+use crate::provider_config::validate_openai_fixture_url;
+pub(crate) use crate::provider_config::{
+    ensure_compatible_chat_supported, openai_api_base_url, validate_local_base_url,
+};
 
 #[cfg(test)]
 mod tests {

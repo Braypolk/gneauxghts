@@ -91,10 +91,17 @@ describe('wikilink interaction controller', () => {
     expect(harness.setActivePane).toHaveBeenCalledWith(paneId);
     expect(
       harness.openChatProjection
-    ).toHaveBeenCalledWith(paneId, 'Chats/Ideas.md');
+    ).toHaveBeenCalledWith(paneId, 'Chats/Ideas.md', 'reply');
     expect(
       harness.wikilinkController.openWikilink
     ).not.toHaveBeenCalled();
+  });
+
+  it('routes a saved Pi origin to its exact answer anchor without a transcript file', async () => {
+    const harness = setup();
+    await harness.controller.openWikilink(paneId, 'Chats/Pi/pi-1/Origin#^msg_pi-assistant-2|Open in chat');
+    expect(harness.openChatProjection).toHaveBeenCalledWith(paneId, 'Chats/Pi/pi-1/Origin.md', '^msg_pi-assistant-2');
+    expect(harness.wikilinkController.openWikilink).not.toHaveBeenCalled();
   });
 
   it('falls through when a chat projection is unavailable', async () => {

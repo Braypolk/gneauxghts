@@ -7,6 +7,7 @@ import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { openNativeSqlite } from './nativeSqlite';
 import { nativeModels, nativeTransportStats } from './nativeProvider';
 import { Evidence, notesExtension, evidenceSources, AdmittedAnswer } from './notesExtension';
+import { fixtureProviderAdmissions, fixtureAdmissionProbe, restoreProviderSwitchProbe, rememberProviderSwitchProbe } from './providerProbe';
 import { ReviewTask } from './reviews';
 
 const Probe = defineDoc({ kind: 'gneauxghts.prototype.probe', version: 1, scope: 'session',
@@ -89,11 +90,16 @@ export async function nativeProbe() {
       const permitted = new Set<number>();
       const policies = new Map();
       const registry = probeRegistry(); registry.install(notesExtension(permitted,policies));
-      harness = await Harness.open(await SqliteStorage.open(await openNativeSqlite()), { models: nativeModels(policies, async (policy,answer) => {
+      const providerAdmissions=fixtureProviderAdmissions(policies);registry.install(providerAdmissions.extension);
+      await fixtureAdmissionProbe(mark);
+      const providerModels=nativeModels(policies, async (policy,answer) => {
         await harness!.commit(async tx => {const doc = await tx.doc(AdmittedAnswer,String(policy.taskId),'');doc.text=answer.text;doc.sourcesJson=JSON.stringify(answer.sources);},context);
-      }), registry,
+      });
+      for(const provider of ['local','openai'] as const)providerModels.registerModel(provider,'pi-native-fixture-b');
+      harness = await Harness.open(await SqliteStorage.open(await openNativeSqlite()), { models: providerModels, registry,
         settings: { progress: { partialIntervalMs: 10, outputIntervalMs: 10 }, retry: { enabled: false, maxRetries: 0 } } }, context);
-      for (const provider of ['local', 'openai']) {
+      await restoreProviderSwitchProbe(harness,mark);
+      for (const provider of ['local', 'openai'] as const) {
         const conversation = await harness.createConversation({ ownership: {kind: 'ownerless'},
           agent: { model: {provider, modelId: 'pi-native-fixture'} } }, context);
         permitted.add(conversation.id);
@@ -105,6 +111,7 @@ export async function nativeProbe() {
           if (event.type === 'message_update') updates++;
           if (event.type === 'tool_execution_end') tools++;
         } });
+        await providerAdmissions.admit(harness,conversation.id,provider);
         const submitted = await conversation.submit({type:'input',content:`READ_NOTE:${note.noteId}`},context);
         const receipt = await submitted.wait(context);
         assert(receipt.status === 'done', `${provider} native turn failed: ${JSON.stringify(receipt)}`);
@@ -113,17 +120,23 @@ export async function nativeProbe() {
         assert(binding && evidenceSources(binding).some(source => source.excerpt.includes('seven pear trees')), 'Canonical read/citation binding absent');
         assert(updates > 0 && nativeTransportStats.chunks > chunksBefore + 1, `${provider} native streaming/progress absent`);
         await harness.commit(async tx => { (await tx.doc(Evidence, conversation.id)).sourcesJson = '[]'; }, context);
+        await conversation.configure({model:{provider,modelId:'pi-native-fixture-b'}},context);
+        await providerAdmissions.admit(harness,conversation.id,provider,'pi-native-fixture-b');
         const followup = await conversation.submit({type:'input',content:'Followup'},context);
         assert((await followup.wait(context)).status === 'done', `${provider} followup failed`);
-        await mark(`${provider}: native streamed turn, scoped read/citation, follow-up`);
+        await mark(`${provider}: native streamed turn, scoped read/citation, follow-up and model switch`);
+        await rememberProviderSwitchProbe(harness,provider,conversation.id);
+        await providerAdmissions.admit(harness,conversation.id,provider,'pi-native-fixture-b');
         const slow = await conversation.submit({type:'input',content:'SLOW_CANCEL'},context);
         await new Promise(resolve => setTimeout(resolve,200));
         await conversation.abort(context);
         assert((await slow.wait(context)).status !== 'done', `${provider} cancellation announced success`);
         await mark(`${provider}: native inference cancellation`);
+        await providerAdmissions.admit(harness,conversation.id,provider,'pi-native-fixture-b');
         const partial = await conversation.submit({type:'input',content:'PARTIAL_FAILURE'},context);
         assert((await partial.wait(context)).status !== 'done', `${provider} partial stream announced success`);
         await mark(`${provider}: partial stream fails terminally`);
+        await providerAdmissions.release(conversation.id);
         await events.stop();
       }
       const previousUi=await harness.snapshot(UiProbe,context);

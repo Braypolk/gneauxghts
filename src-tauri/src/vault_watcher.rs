@@ -1,5 +1,6 @@
+#[cfg(not(feature = "pi-prototype"))]
+use crate::chat::ChatService;
 use crate::{
-    chat::ChatService,
     index::AppState,
     semantic::db::content_hash,
     services::note_timeline::{
@@ -533,10 +534,9 @@ fn flush_dirty_batch(
             projection_modified_millis,
             filesystem_modified_millis,
         } = observed;
-        let owner = app_handle
-            .try_state::<ChatService>()
-            .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
+        let owner = managed_chat_projection_owner(app_handle, &path);
         if let Some(chat_id) = owner {
+            #[cfg(not(feature = "pi-prototype"))]
             if let Some(chat) = app_handle.try_state::<ChatService>() {
                 // A queued event can outlive self-save suppression or observe
                 // an in-flight publication. Compare current bytes with the
@@ -545,6 +545,8 @@ fn flush_dirty_batch(
                     continue;
                 }
             }
+            #[cfg(feature = "pi-prototype")]
+            if !crate::pi_prototype_transcript::observe(notes_dir, &chat_id)? { continue; }
             let kind = crate::note::document_kind(&markdown);
             state.events.vault_document_changed(
                 &path,
@@ -564,10 +566,9 @@ fn flush_dirty_batch(
         });
     }
     for path in resolved.removed {
-        let owner = app_handle
-            .try_state::<ChatService>()
-            .and_then(|chat| chat.projection_owner_for_path(&path).ok().flatten());
+        let owner = managed_chat_projection_owner(app_handle, &path);
         if let Some(chat_id) = owner {
+            #[cfg(not(feature = "pi-prototype"))]
             if let Some(chat) = app_handle.try_state::<ChatService>() {
                 // A queued event can outlive self-save suppression or observe
                 // an in-flight publication. Compare current bytes with the
@@ -576,6 +577,8 @@ fn flush_dirty_batch(
                     continue;
                 }
             }
+            #[cfg(feature = "pi-prototype")]
+            if !crate::pi_prototype_transcript::observe(notes_dir, &chat_id)? { continue; }
             state.events.vault_document_changed(
                 &path,
                 true,
@@ -787,11 +790,21 @@ fn reconciliation_observations(
     observations
 }
 
+fn managed_chat_projection_owner(app_handle: &AppHandle, path: &Path) -> Option<String> {
+    #[cfg(not(feature = "pi-prototype"))]
+    {
+        app_handle
+            .try_state::<ChatService>()
+            .and_then(|chat| chat.projection_owner_for_path(path).ok().flatten())
+    }
+    #[cfg(feature = "pi-prototype")]
+    {
+        app_handle.try_state::<AppState>().and_then(|state|
+            crate::pi_prototype_transcript::owner_for_path(state.running_vault().root(),path).ok().flatten())
+    }
+}
 fn is_managed_chat_projection(app_handle: &AppHandle, path: &Path) -> bool {
-    app_handle
-        .try_state::<ChatService>()
-        .and_then(|chat| chat.projection_owner_for_path(path).ok().flatten())
-        .is_some()
+    managed_chat_projection_owner(app_handle, path).is_some()
 }
 
 fn observe_reconciliation_state(

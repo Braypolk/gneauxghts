@@ -38,6 +38,7 @@ export interface ChatController extends Readable<ChatControllerState> {
   renameConversation(title: string): Promise<boolean>;
   archiveConversation(conversationId?: string, retentionDays?: ForgottenNoteRetentionPreference): Promise<ForgottenNoteSummary | null>;
   openConversation(conversationId: string): Promise<ChatConversation | null>;
+  resolveProjectionConflict(resolution: 'convertToNote' | 'restoreTranscript'): Promise<boolean>;
   branchFromMessage(messageId: string): Promise<ChatConversation | null>;
   send(input: ChatSendInput): Promise<ChatSendOutcome>;
   suggestContext(input: {
@@ -297,6 +298,18 @@ export class ChatControllerStore implements ChatController {
         error: errorText(error, 'Unable to open this conversation.')
       });
       return null;
+    }
+  }
+
+  async resolveProjectionConflict(resolution: 'convertToNote' | 'restoreTranscript') {
+    const id = this.conversation?.id;
+    if (!id || this.isSending || this.#isDisposed()) return false;
+    try {
+      await this.#api.resolveProjectionConflict(id, resolution);
+      return Boolean(await this.openConversation(id));
+    } catch (error) {
+      this.#metadata({ error: errorText(error, 'Unable to resolve the transcript conflict.') });
+      return false;
     }
   }
 

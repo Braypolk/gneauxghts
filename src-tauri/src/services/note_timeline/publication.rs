@@ -1,5 +1,189 @@
 use super::*;
 
+#[cfg(all(test, feature = "pi-prototype"))]
+static INTERRUPT_PROTOTYPE_AFTER_RENAME: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(all(test, feature = "pi-prototype"))]
+static INTERRUPT_PROTOTYPE_AFTER_CANONICAL: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Exact canonical publication prepared by NoteTimeline. Only the trusted native
+/// effect ledger retains this opaque proof; Pi review documents never receive it.
+#[cfg(feature = "pi-prototype")]
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct PrototypePublicationProof {
+    token: String,
+    note_id: String,
+    path: PathBuf,
+    canonical_markdown: String,
+}
+#[cfg(feature = "pi-prototype")]
+impl PrototypePublicationProof {
+    pub(crate) fn location(&self) -> &Path { &self.path }
+}
+#[cfg(feature = "pi-prototype")]
+type PrototypeProofRecorder<'a> =
+    &'a dyn Fn(&PrototypePublicationProof) -> Result<(), HistoryError>;
+
+#[cfg(all(test, feature = "pi-prototype"))]
+mod pi_review_tests {
+    use super::*;
+    use crate::{app::EventBus, semantic::SemanticState};
+
+    #[test]
+    fn unchanged_review_rename_proof_survives_more_than_64_later_publications() {
+        let _guard = crate::test_support::lock_test_env();
+        let data = crate::test_support::TestDir::new("pi-unchanged-receipt-data");
+        let notes = crate::test_support::TestDir::new("pi-unchanged-receipt-vault");
+        crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::test_support::save_and_finalize(
+            &state,
+            "Original".into(),
+            "Before".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let source = PathBuf::from(created.path.unwrap());
+        let target = notes.path().join("Moved.md");
+        let identity = NoteIdentity::new(created.note_id.unwrap());
+        let hash = crate::semantic::db::content_hash(&fs::read_to_string(&source).unwrap());
+        let proof = std::cell::RefCell::new(None);
+        state
+            .note_timeline()
+            .edit_prototype_note_with_proof(
+                &source,
+                &target,
+                &identity,
+                &hash,
+                "Before",
+                Some(&|value| {
+                    *proof.borrow_mut() = Some(value.clone());
+                    Ok(())
+                }),
+            )
+            .unwrap();
+        let proof = proof.into_inner().unwrap();
+        for index in 0..70 {
+            state
+                .note_timeline()
+                .save_note(
+                    MutationSource::Editor,
+                    "Moved",
+                    &format!("Later ordinary edit {index}"),
+                    Some(target.to_string_lossy().into_owned()),
+                )
+                .unwrap()
+                .unwrap();
+        }
+        let current = fs::read_to_string(&target).unwrap();
+        let recovered = state
+            .note_timeline()
+            .recover_prototype_publication(&proof)
+            .unwrap()
+            .unwrap();
+        assert_eq!(recovered.note_id(), &identity);
+        assert!(recovered.canonical_markdown().contains("Before"));
+        assert_eq!(fs::read_to_string(&target).unwrap(), current);
+        assert!(current.contains("Later ordinary edit 69"));
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn accepted_review_changes_location_and_body_once_and_rejects_changed_base_or_collision() {
+        let _guard = crate::test_support::lock_test_env();
+        let data = crate::test_support::TestDir::new("pi-review-publication-data");
+        let notes = crate::test_support::TestDir::new("pi-review-publication-vault");
+        crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
+        crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
+        crate::state::ensure_vault_scaffold(notes.path()).unwrap();
+        let state = AppState::new(
+            SemanticState::new_disabled("disabled"),
+            EventBus::disabled(),
+        )
+        .unwrap();
+        let created = crate::test_support::save_and_finalize(
+            &state,
+            "Original".into(),
+            "---\nproject: atlas\n---\n\nBefore".into(),
+            None,
+        )
+        .unwrap()
+        .unwrap();
+        let source = PathBuf::from(created.path.unwrap());
+        let identity = NoteIdentity::new(created.note_id.unwrap());
+        let raw = fs::read_to_string(&source).unwrap();
+        let hash = crate::semantic::db::content_hash(&raw);
+        let target = notes.path().join("Independent location.md");
+        let timeline = state.note_timeline();
+        assert!(timeline
+            .edit_prototype_note(&source, &target, &identity, "wrong base", "After")
+            .is_err());
+        assert_eq!(fs::read_to_string(&source).unwrap(), raw);
+        assert!(!target.exists());
+        fs::write(&target, "Other note").unwrap();
+        assert!(timeline
+            .edit_prototype_note(&source, &target, &identity, &hash, "After")
+            .is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), "Other note");
+        assert_eq!(fs::read_to_string(&source).unwrap(), raw);
+        fs::remove_file(&target).unwrap();
+        let committed = timeline
+            .edit_prototype_note(
+                &source,
+                &target,
+                &identity,
+                &hash,
+                "---\nproject: atlas\n---\n\nAfter",
+            )
+            .unwrap();
+        assert_eq!(committed.note_id.as_str(), identity.as_str());
+        assert_eq!(committed.path, target);
+        assert!(!source.exists());
+        let canonical = fs::read_to_string(&target).unwrap();
+        assert!(canonical.contains("project: atlas"));
+        assert!(canonical.contains("After"));
+        assert!(timeline
+            .edit_prototype_note(&source, &target, &identity, &hash, "Replay must not write")
+            .is_err());
+        assert_eq!(fs::read_to_string(&target).unwrap(), canonical);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+}
+
+#[cfg(feature = "pi-prototype")]
+fn require_prototype_base(
+    raw: &str,
+    identity: &NoteIdentity,
+    expected_hash: &str,
+) -> Result<(), HistoryError> {
+    if crate::note::parse_note(raw)
+        .frontmatter
+        .managed
+        .as_ref()
+        .map(|m| m.id.as_str())
+        != Some(identity.as_str())
+    {
+        return Err(HistoryError::Stale(
+            "Target identity changed; review again".into(),
+        ));
+    }
+    if crate::semantic::db::content_hash(raw) != expected_hash {
+        return Err(HistoryError::Stale(
+            "Target changed; review refreshed content and Keep again".into(),
+        ));
+    }
+    Ok(())
+}
+
 #[derive(Clone, Copy)]
 pub(super) enum PublicationPathScope {
     Destination,
@@ -9,6 +193,11 @@ pub(super) enum PublicationPathScope {
 pub(super) enum PublicationMode<'a> {
     Replace,
     CreateNew,
+    #[cfg(feature = "pi-prototype")]
+    Prototype {
+        record: PrototypeProofRecorder<'a>,
+        create_new: bool,
+    },
     Restore {
         selected: &'a RevisionIdentity,
         expected_hash: &'a str,
@@ -274,20 +463,202 @@ impl<'a> NoteTimeline<'a> {
         path: &Path,
         markdown: &str,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
-        self.create_note_at_with_identity(source, path, markdown, None)
+        self.create_note_at_with_identity(
+            source,
+            path,
+            markdown,
+            None,
+            #[cfg(feature = "pi-prototype")]
+            None,
+        )
+    }
+
+    /// One accepted Pi effect may change body and location independently. Check
+    /// the captured identity/base and destination under the same admission as
+    /// the retained history intent, rename and canonical publication.
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn edit_prototype_note(
+        &self,
+        current_path: &Path,
+        target_path: &Path,
+        identity: &NoteIdentity,
+        expected_hash: &str,
+        markdown: &str,
+    ) -> Result<NoteMutationResult, HistoryError> {
+        self.edit_prototype_note_with_proof(
+            current_path,
+            target_path,
+            identity,
+            expected_hash,
+            markdown,
+            None,
+        )
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn edit_prototype_note_with_proof(
+        &self,
+        current_path: &Path,
+        target_path: &Path,
+        identity: &NoteIdentity,
+        expected_hash: &str,
+        markdown: &str,
+        record: Option<PrototypeProofRecorder<'_>>,
+    ) -> Result<NoteMutationResult, HistoryError> {
+        let root = self.runtime.store.vault_root();
+        let current = crate::state::validate_current_path(
+            Some(current_path.to_string_lossy().into_owned()),
+            root,
+        )?
+        .ok_or("Missing note path")?;
+        let target = crate::proposals::canonical_agent_commit_target(root, target_path)?;
+        self.with_admitted_publication(
+            PublicationPathScope::Destination,
+            Some(&current),
+            Some(identity),
+            |_| {
+                // A byte-preserving independent move still invalidates location
+                // approval. Resolve again both before and under file ownership.
+                let located = crate::state::resolve_note_path_by_id(root, identity.as_str())?;
+                if located.as_deref() != Some(current.as_path()) {
+                    return Err(HistoryError::Stale(
+                        "Target location changed; review its current location and Keep again".into(),
+                    ));
+                }
+                Ok((target.clone(), fs::read_to_string(&current)?))
+            },
+            |path, raw, admitted| {
+                require_prototype_base(&raw, identity, expected_hash)?;
+                if admitted != *identity {
+                    return Err(HistoryError::Stale(
+                        "Target identity changed; review again".into(),
+                    ));
+                }
+                if path != current {
+                    match fs::symlink_metadata(&path) {
+                        Ok(_) => return Err(HistoryError::Stale(
+                            "Review destination occupied; choose another location and Keep again"
+                                .into(),
+                        )),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(error.into()),
+                    }
+                }
+                crate::note::reject_chat_projection_write(&raw)?;
+                crate::note::reject_chat_projection_write(markdown)?;
+                let repaired =
+                    self.prepare_publication(Some(&current), Some(identity), markdown)?;
+                let canonical =
+                    crate::note::prepare_note_markdown(&repaired, Some(&raw), Some(None))?.0;
+                Ok(self
+                    .publish_authored(
+                        MutationSource::AcceptedChatProposal,
+                        path,
+                        Some(current.clone()),
+                        canonical,
+                        record
+                            .map(|record| PublicationMode::Prototype {
+                                record,
+                                create_new: false,
+                            })
+                            .unwrap_or(PublicationMode::Replace),
+                    )?
+                    .expect("replacement never returns occupied")
+                    .mutation)
+            },
+        )
     }
 
     // A native publication intent may reserve the Note Identity before writing
     // Markdown, so a crash cannot mistake unrelated equal text for its receipt.
     #[cfg(feature = "pi-prototype")]
     pub(crate) fn create_prototype_note_at(
-        &self, path: &Path, markdown: &str, identity: &NoteIdentity,
+        &self,
+        path: &Path,
+        markdown: &str,
+        identity: &NoteIdentity,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
-        self.create_note_at_with_identity(MutationSource::AcceptedChatProposal, path, markdown, Some(identity))
+        self.create_note_at_with_identity(
+            MutationSource::AcceptedChatProposal,
+            path,
+            markdown,
+            Some(identity),
+            None,
+        )
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn create_prototype_note_with_proof(
+        &self,
+        path: &Path,
+        markdown: &str,
+        identity: &NoteIdentity,
+        record: PrototypeProofRecorder<'_>,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.create_note_at_with_identity(
+            MutationSource::AcceptedChatProposal,
+            path,
+            markdown,
+            Some(identity),
+            Some(record),
+        )
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn recover_prototype_publication(
+        &self,
+        proof: &PrototypePublicationProof,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.recover_prototype_publication_at(proof, &proof.path)
+    }
+
+    /// The native location adapter supplies only a location resolved from this
+    /// vault's retained root binding. Token, identity and canonical bytes remain
+    /// unchanged and must still verify against the timeline's retained receipt.
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn recover_prototype_publication_at(
+        &self,
+        proof: &PrototypePublicationProof,
+        path: &Path,
+    ) -> Result<Option<NoteMutationResult>, HistoryError> {
+        self.runtime.store.require_path(path)?;
+        let identity = NoteIdentity::new(proof.note_id.clone());
+        self.retry_history_recovery(self.runtime.store.vault_root())?;
+        // Startup reads do not mutate canonical files. Reconcile only this
+        // exact prepared token under the ordinary canonical mutation owner.
+        crate::state::with_note_file_mutation(|| {
+            let _operation = self.runtime.begin_operation()?;
+            let _mutation = self.begin_current_content_mutation()?;
+            history_store::prototype_renames::recover(
+                &self.runtime.store, &proof.token, &identity, path, &proof.canonical_markdown,
+            )
+        })?;
+        if !history_store::verify_prototype_publication(
+            &self.runtime.store,
+            &proof.token,
+            &identity,
+            &proof.canonical_markdown,
+        )? {
+            return Ok(None);
+        }
+        Ok(Some(NoteMutationResult {
+            payload_version: PayloadVersion::V1,
+            source: MutationSource::AcceptedChatProposal,
+            note_id: identity,
+            path: path.to_path_buf(),
+            canonical_markdown: proof.canonical_markdown.clone(),
+            diagnostics: vec![],
+            warning: None,
+        }))
     }
 
     fn create_note_at_with_identity(
-        &self, source: MutationSource, path: &Path, markdown: &str, retained_identity: Option<&NoteIdentity>,
+        &self,
+        source: MutationSource,
+        path: &Path,
+        markdown: &str,
+        retained_identity: Option<&NoteIdentity>,
+        #[cfg(feature = "pi-prototype")] record: Option<PrototypeProofRecorder<'_>>,
     ) -> Result<Option<NoteMutationResult>, HistoryError> {
         let path = crate::state::validate_current_path(
             Some(path.to_string_lossy().into_owned()),
@@ -310,7 +681,16 @@ impl<'a> NoteTimeline<'a> {
                 }
                 let repaired = crate::note::repair_managed_note_identity(&raw, identity.as_str())?;
                 let canonical = crate::note::prepare_note_markdown(&repaired, None, Some(None))?.0;
-                self.publish_authored(source, path, None, canonical, PublicationMode::CreateNew)
+                #[cfg(feature = "pi-prototype")]
+                let mode = record
+                    .map(|record| PublicationMode::Prototype {
+                        record,
+                        create_new: true,
+                    })
+                    .unwrap_or(PublicationMode::CreateNew);
+                #[cfg(not(feature = "pi-prototype"))]
+                let mode = PublicationMode::CreateNew;
+                self.publish_authored(source, path, None, canonical, mode)
                     .map(|outcome| outcome.map(|outcome| outcome.mutation))
             },
         )
@@ -333,6 +713,34 @@ impl<'a> NoteTimeline<'a> {
                 canonical,
             )?
             .into_parts();
+        #[cfg(feature = "pi-prototype")]
+        if let PublicationMode::Prototype { record, .. } = &mode {
+            if let Some(previous) = previous_path.as_deref().filter(|previous| *previous != path) {
+                let prepared = (|| {
+                    let base = fs::read_to_string(previous)?;
+                    history_store::prototype_renames::prepare(
+                        &self.runtime.store, history_intent.as_str(), previous, &path, &base,
+                    )
+                })();
+                if let Err(error) = prepared {
+                    return Err(history_intent.abandon_after_history_failure(error));
+                }
+            }
+            let identity = crate::note::parse_note(&canonical)
+                .frontmatter
+                .managed
+                .ok_or("Prepared publication has no Note Identity")?
+                .id;
+            let proof = PrototypePublicationProof {
+                token: history_intent.as_str().into(),
+                note_id: identity,
+                path: path.clone(),
+                canonical_markdown: canonical.clone(),
+            };
+            if let Err(error) = record(&proof) {
+                return Err(history_intent.abandon_after_history_failure(error));
+            }
+        }
         let revision_id = if let PublicationMode::Restore {
             selected,
             expected_hash,
@@ -375,6 +783,15 @@ impl<'a> NoteTimeline<'a> {
                 return Err(history_intent.abandon_after_history_failure(error.into()));
             }
         }
+        #[cfg(all(test, feature = "pi-prototype"))]
+        if moved_from.is_some() && matches!(mode, PublicationMode::Prototype { .. })
+            && INTERRUPT_PROTOTYPE_AFTER_RENAME.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            // Model process loss at the actual fs::rename boundary, without
+            // poisoning the shared file owner or relying on a write rollback.
+            history_store::release_publication_receipt(&self.runtime.store, &history_intent)?;
+            self.runtime.require_released_capture_recovery()?;
+            return Err("simulated process interruption after prepared rename".into());
+        }
         #[cfg(test)]
         {
             let hook = AFTER_SAVE_RENAME.lock().unwrap().take();
@@ -383,7 +800,18 @@ impl<'a> NoteTimeline<'a> {
             }
         }
         let expected_write = crate::vault_watcher::record_expected_write(&path, &canonical);
-        let write = if matches!(mode, PublicationMode::CreateNew) {
+        let mut create_new = matches!(mode, PublicationMode::CreateNew);
+        #[cfg(feature = "pi-prototype")]
+        {
+            create_new |= matches!(
+                mode,
+                PublicationMode::Prototype {
+                    create_new: true,
+                    ..
+                }
+            );
+        }
+        let write = if create_new {
             match crate::state::atomic_create_note(&path, canonical.as_bytes()) {
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     history_intent.abandon()?;
@@ -418,6 +846,13 @@ impl<'a> NoteTimeline<'a> {
             expected.commit();
         }
         expected_write.commit();
+        #[cfg(all(test, feature = "pi-prototype"))]
+        if matches!(mode, PublicationMode::Prototype { .. })
+            && INTERRUPT_PROTOTYPE_AFTER_CANONICAL.swap(false, std::sync::atomic::Ordering::SeqCst) {
+            history_store::release_publication_receipt(&self.runtime.store, &history_intent)?;
+            self.runtime.require_released_capture_recovery()?;
+            return Err("simulated process interruption after canonical publication".into());
+        }
         Ok(Some(AuthoredPublication {
             revision_id,
             mutation: self.mutate(NoteMutation {
@@ -575,3 +1010,7 @@ impl<'a> NoteTimeline<'a> {
         NoteMutationResult::from_publication(source, outcome)
     }
 }
+
+#[cfg(all(test, feature = "pi-prototype"))]
+#[path = "tests/prototype_rename_recovery.rs"]
+mod prototype_rename_recovery_tests;

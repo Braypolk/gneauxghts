@@ -36,8 +36,15 @@
   setContext(workspaceTitleSlotKey, () => workspaceTitleSlot);
 
   onMount(() => {
-    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && new URL(location.href).searchParams.has('piUiTest')) {
+    const probeQuery = new URL(location.href).searchParams;
+    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piTranscriptTest')) {
+      void import('$lib/prototypes/pi/iosTranscriptProbe').then(({runIosTranscriptProbe})=>runIosTranscriptProbe());
+    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piExpandedTest')) {
+      void import('$lib/prototypes/pi/expandedProbe').then(({runExpandedProbe})=>runExpandedProbe());
+    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piUiTest')) {
       void import('$lib/prototypes/pi/uiProbe').then(({runUiProbe})=>runUiProbe());
+    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piInteractiveTest')) {
+      void import('$lib/prototypes/pi/interactiveProbe').then(({runInteractiveProbe})=>runInteractiveProbe());
     }
     const disposeBackgroundPersistence = installBackgroundPersistence();
     if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && /Mac/i.test(navigator.platform)) {

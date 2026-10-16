@@ -31,6 +31,7 @@ fs.writeFileSync(process.env.PI_TEST_CAPTURE, JSON.stringify({ args, config, vit
   const env = { ...process.env, PATH: `${bin}:${process.env.PATH}`, PI_PROTOTYPE_DATA: root, PI_TEST_CAPTURE: capture };
   delete env.PI_PROTOTYPE_HTTP_FIXTURE;
   delete env.PI_PROTOTYPE_UI_GATE;
+  delete env.PI_PROTOTYPE_INTERACTIVE_GATE;
   delete env.PI_PROTOTYPE_FAULT;
   delete env.PI_PROTOTYPE_DIAGNOSTICS;
   try {
@@ -61,6 +62,14 @@ fs.writeFileSync(process.env.PI_TEST_CAPTURE, JSON.stringify({ args, config, vit
     });
     assert.notEqual(refused.status, 0);
     assert.match(refused.stderr, /forbidden for manual evaluation/);
+    const inheritedInteractive = spawnSync(process.execPath, ['scripts/pi-prototype/run.mjs', 'desktop'], {
+      env: { ...env, PI_PROTOTYPE_INTERACTIVE_GATE: 'true' }, encoding: 'utf8'
+    });
+    assert.notEqual(inheritedInteractive.status, 0);
+    assert.match(inheritedInteractive.stderr, /forbidden for manual evaluation/);
+    const interactive = spawnSync(process.execPath, ['scripts/pi-prototype/run.mjs', 'interactive-gate'], { env, encoding: 'utf8' });
+    assert.notEqual(interactive.status, 0);
+    assert.match(interactive.stderr, /fresh generated root/);
     const gate = spawnSync(process.execPath, ['scripts/pi-prototype/run.mjs', 'gate'], { env, encoding: 'utf8' });
     assert.notEqual(gate.status, 0);
     assert.match(gate.stderr, /empty disposable root/);

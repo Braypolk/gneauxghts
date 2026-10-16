@@ -6,7 +6,7 @@ import { resolve, join, isAbsolute } from 'node:path';
 import { evaluationRoot, dataOperation } from './evaluation-data.mjs';
 
 const mode = process.argv[2] ?? 'desktop';
-const modes = ['desktop', 'installed', 'build', 'setup', 'status', 'reset', 'diagnostics', 'ios', 'gate', 'ios-gate', 'ui-gate', 'ios-ui-gate', 'fault-gate'];
+const modes = ['desktop', 'installed', 'build', 'setup', 'status', 'reset', 'diagnostics', 'ios', 'gate', 'ios-gate', 'ui-gate', 'ios-ui-gate', 'fault-gate', 'interactive-gate', 'ios-interactive-gate'];
 if (!modes.includes(mode)) throw new Error(`Use ${modes.join(', ')}`);
 const sourceArgs = process.argv.slice(3);
 if (mode === 'setup') {
@@ -40,9 +40,10 @@ if (['status', 'reset'].includes(mode)) {
 }
 const baseConfig = JSON.parse(readFileSync('scripts/pi-prototype/tauri.prototype.conf.json', 'utf8'));
 const diagnostic = mode.endsWith('gate') || mode === 'diagnostics' || (mode === 'ios' && process.env.PI_PROTOTYPE_DIAGNOSTICS === 'true');
-const nativeConfig = diagnostic ? { ...baseConfig, app: { ...baseConfig.app,
-  windows: baseConfig.app.windows.map(window => ({ ...window, url: 'pi-prototype', title: 'Pi fixture diagnostics — disposable synthetic data' })) } } : baseConfig;
+const nativeConfig = diagnostic && !['interactive-gate', 'fault-gate'].includes(mode) ? { ...baseConfig, app: { ...baseConfig.app,
+  windows: baseConfig.app.windows.map(window => ({ ...window, url: process.env.PI_PROTOTYPE_TRANSCRIPT_GATE === 'true' ? '/?piTranscriptTest=1' : process.env.PI_PROTOTYPE_EXPANDED_GATE === 'true' ? '/?piExpandedTest=1' : 'pi-prototype', title: 'Pi fixture diagnostics — disposable synthetic data' })) } } : baseConfig;
 if (mode.endsWith('gate')) {
+  if (mode === 'interactive-gate' && process.env.PI_PROTOTYPE_DATA) throw new Error('Interactive gate always allocates a fresh generated root; unset PI_PROTOTYPE_DATA');
   // A gate may not seed/kill/reset a private evaluation root. Explicit test roots
   // must be empty; otherwise the gate scripts allocate their own temporary root.
   if (process.env.PI_PROTOTYPE_DATA && existsSync(process.env.PI_PROTOTYPE_DATA)
@@ -54,12 +55,12 @@ if (mode.endsWith('gate')) {
   }
   const gateEnv = { ...process.env };
   delete gateEnv.GNEAUXGHTS_E2E_FOREGROUND;
-  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode.startsWith('ios') ? 'ios' : mode === 'fault-gate' ? 'fault' : 'desktop'}-gate.mjs`], {
+  const result = spawnSync(process.execPath, [`scripts/pi-prototype/${mode === 'ios-interactive-gate' ? 'ios-interactive' : mode.startsWith('ios') ? 'ios' : mode === 'fault-gate' ? 'fault' : mode === 'interactive-gate' ? 'desktop-interactive' : 'desktop'}-gate.mjs`], {
     stdio: 'inherit', env: { ...gateEnv, PI_PROTOTYPE_DIAGNOSTICS: 'true', ...(mode.includes('ui') ? { PI_PROTOTYPE_UI_GATE: 'true' } : {}) }
   });
   process.exit(result.status ?? 1);
 }
-if (!diagnostic && (process.env.PI_PROTOTYPE_HTTP_FIXTURE || process.env.PI_PROTOTYPE_UI_GATE || process.env.PI_PROTOTYPE_FAULT || process.env.PI_PROTOTYPE_DIAGNOSTICS)) {
+if (!diagnostic && (process.env.PI_PROTOTYPE_HTTP_FIXTURE || process.env.PI_PROTOTYPE_UI_GATE || process.env.PI_PROTOTYPE_INTERACTIVE_GATE || process.env.PI_PROTOTYPE_EXPANDED_GATE || process.env.PI_PROTOTYPE_FOLLOWONS_GATE || process.env.PI_PROTOTYPE_TRANSCRIPT_GATE || process.env.PI_PROTOTYPE_FAULT || process.env.PI_PROTOTYPE_DIAGNOSTICS)) {
   throw new Error('Fixture/fault environment is forbidden for manual evaluation; use a separate gate');
 }
 const root = mode === 'ios' || mode === 'diagnostics'

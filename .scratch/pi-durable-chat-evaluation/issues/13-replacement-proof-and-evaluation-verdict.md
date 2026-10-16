@@ -39,3 +39,12 @@ functions. Feature passes alone cannot establish reduced maintained coordination
   migrate original data or revise ADR 0001 into production adoption here.
 
 ## Comments
+
+2026-10-15: Prepared an independent [bounded removal CLI and reproduction
+contract](../removal-experiment-preparation.md). Read-only planning establishes
+that the explicit legacy-file allowlist is disjoint from the current conservative
+Pi source graph; seven pure tests cover the graph, isolated removal/archive/diff
+and provenance/omission boundaries. The working source remains unchanged. The
+native owner must still execute preparation on a frozen source, preserve exact
+manifest/ledger/diff and build/native gate receipts, and complete the paired
+comparison/verdict requirements. No removal build or acceptance is claimed here.
