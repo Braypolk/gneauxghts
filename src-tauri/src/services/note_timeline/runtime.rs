@@ -1,5 +1,7 @@
 mod verification;
 mod windows;
+#[cfg(feature = "pi-prototype")]
+pub(super) mod pi_refresh_diagnostics;
 use super::{history_store, HistoryError, NoteIdentity};
 use crate::index::NoteTimelineOwnerToken;
 use std::{
@@ -29,6 +31,8 @@ struct NoteTimelineOperationBarrier {
 struct CurrentContentState {
     generation: u64,
     active_mutations: usize,
+    #[cfg(feature = "pi-prototype")]
+    diagnostics: pi_refresh_diagnostics::Diagnostics,
 }
 
 #[derive(Default)]
@@ -40,10 +44,16 @@ struct CurrentContentCoordinator {
 #[derive(Clone, Copy)]
 pub(super) struct CurrentContentVersion {
     generation: u64,
+    #[cfg(feature = "pi-prototype")]
+    diagnostic_active: [usize; pi_refresh_diagnostics::ORIGIN_COUNT],
+    #[cfg(feature = "pi-prototype")]
+    diagnostic_begun: [u64; pi_refresh_diagnostics::ORIGIN_COUNT],
 }
 
 pub(super) struct CurrentContentMutationGuard {
     coordinator: Arc<CurrentContentCoordinator>,
+    #[cfg(feature = "pi-prototype")]
+    diagnostic_origin: Option<pi_refresh_diagnostics::MutationOrigin>,
 }
 
 #[derive(Clone)]
@@ -77,6 +87,11 @@ impl Drop for CurrentContentMutationGuard {
         if let Ok(mut state) = self.coordinator.state.lock() {
             state.active_mutations = state.active_mutations.saturating_sub(1);
             state.generation = state.generation.wrapping_add(1);
+            #[cfg(feature = "pi-prototype")]
+            if let Some(origin) = self.diagnostic_origin {
+                let (generation, active) = (state.generation, state.active_mutations);
+                state.diagnostics.mutation(origin, false, generation, active);
+            }
             if state.active_mutations == 0 {
                 self.coordinator.settled.notify_all();
             }
@@ -197,8 +212,31 @@ impl NoteTimelineRuntime {
         *self.recovery_lock_observer.lock().unwrap() = observer;
     }
 
+    #[track_caller]
     pub(super) fn begin_current_content_mutation(
         &self,
+    ) -> Result<CurrentContentMutationGuard, HistoryError> {
+        #[cfg(feature = "pi-prototype")]
+        {
+            return self.begin_current_content_mutation_with_origin(
+                pi_refresh_diagnostics::MutationOrigin::caller(std::panic::Location::caller().file()),
+            );
+        }
+        #[cfg(not(feature = "pi-prototype"))]
+        self.begin_current_content_mutation_inner()
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(super) fn begin_current_content_mutation_with_origin(
+        &self,
+        origin: pi_refresh_diagnostics::MutationOrigin,
+    ) -> Result<CurrentContentMutationGuard, HistoryError> {
+        self.begin_current_content_mutation_inner(origin)
+    }
+
+    fn begin_current_content_mutation_inner(
+        &self,
+        #[cfg(feature = "pi-prototype")] origin: pi_refresh_diagnostics::MutationOrigin,
     ) -> Result<CurrentContentMutationGuard, HistoryError> {
         let mut state = self
             .current_content
@@ -207,9 +245,18 @@ impl NoteTimelineRuntime {
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
         state.active_mutations = state.active_mutations.saturating_add(1);
         state.generation = state.generation.wrapping_add(1);
+        #[cfg(feature = "pi-prototype")]
+        let diagnostic_origin = state.diagnostics.enabled.then_some(origin);
+        #[cfg(feature = "pi-prototype")]
+        if let Some(origin) = diagnostic_origin {
+            let (generation, active) = (state.generation, state.active_mutations);
+            state.diagnostics.mutation(origin, true, generation, active);
+        }
         drop(state);
         Ok(CurrentContentMutationGuard {
             coordinator: Arc::clone(&self.current_content),
+            #[cfg(feature = "pi-prototype")]
+            diagnostic_origin,
         })
     }
 
@@ -220,6 +267,10 @@ impl NoteTimelineRuntime {
             .lock()
             .map(|state| CurrentContentVersion {
                 generation: state.generation,
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_active: state.diagnostics.active(),
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_begun: state.diagnostics.begun(),
             })
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?)
     }
@@ -255,6 +306,32 @@ impl NoteTimelineRuntime {
             .lock()
             .map(|state| state.active_mutations == 0 && state.generation == version.generation)
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?)
+    }
+
+    // TEMPORARY PI REFRESH DIAGNOSTIC: comparison is unchanged; capture only
+    // closed labels/counters while the existing coordinator lock is owned.
+    #[cfg(feature = "pi-prototype")]
+    pub(super) fn current_content_is_current_for_attempt(
+        &self,
+        version: CurrentContentVersion,
+        attempt: usize,
+        caller: &std::panic::Location<'_>,
+    ) -> Result<bool, HistoryError> {
+        let mut state = self.current_content.state.lock()
+            .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
+        let current = state.active_mutations == 0 && state.generation == version.generation;
+        if !current && state.diagnostics.enabled {
+            let (generation, active) = (state.generation, state.active_mutations);
+            state.diagnostics.invalidated(attempt, caller, version.generation,
+                version.diagnostic_active, version.diagnostic_begun, generation, active);
+        }
+        Ok(current)
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(super) fn temporary_refresh_diagnostic_snapshot(&self) -> Option<serde_json::Value> {
+        let snapshot = self.current_content.state.lock().ok()?.diagnostics.snapshot()?;
+        serde_json::to_value(snapshot).ok()
     }
 
     pub(super) fn begin_operation(&self) -> Result<OperationGuard, HistoryError> {
@@ -581,7 +658,11 @@ impl SemanticSourceAdmission {
             Self {
                 coordinator: coordinator.clone(),
             },
-            CurrentContentMutationGuard { coordinator },
+            CurrentContentMutationGuard {
+                coordinator,
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_origin: None,
+            },
         )
     }
     pub(crate) fn capture(&self) -> Result<Option<SemanticSourceVersion>, String> {
@@ -593,6 +674,10 @@ impl SemanticSourceAdmission {
         Ok(
             (state.active_mutations == 0).then_some(SemanticSourceVersion(CurrentContentVersion {
                 generation: state.generation,
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_active: state.diagnostics.active(),
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_begun: state.diagnostics.begun(),
             })),
         )
     }
@@ -636,6 +721,8 @@ mod semantic_admission_tests {
             assert!(admission.capture().unwrap().is_none());
             let _mutation = CurrentContentMutationGuard {
                 coordinator: coordinator.clone(),
+                #[cfg(feature = "pi-prototype")]
+                diagnostic_origin: None,
             };
         }
         let published = std::sync::atomic::AtomicBool::new(false);

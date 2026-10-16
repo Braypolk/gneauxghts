@@ -174,12 +174,28 @@ impl<'a> NoteTimeline<'a> {
         })
     }
 
+    #[track_caller]
     pub(super) fn begin_current_content_mutation(
         &self,
     ) -> Result<CurrentContentMutationGuard, HistoryError> {
         let mutation = self.runtime.begin_current_content_mutation()?;
         crate::commands::search_commands::invalidate_result_caches();
         Ok(mutation)
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(super) fn begin_current_content_mutation_with_origin(
+        &self,
+        origin: runtime::pi_refresh_diagnostics::MutationOrigin,
+    ) -> Result<CurrentContentMutationGuard, HistoryError> {
+        let mutation = self.runtime.begin_current_content_mutation_with_origin(origin)?;
+        crate::commands::search_commands::invalidate_result_caches();
+        Ok(mutation)
+    }
+
+    #[cfg(feature = "pi-prototype")]
+    pub(crate) fn temporary_refresh_diagnostic_snapshot(&self) -> Option<serde_json::Value> {
+        self.runtime.temporary_refresh_diagnostic_snapshot()
     }
 
     pub(super) fn recover_pending_deletions(&self) -> Result<(), HistoryError> {

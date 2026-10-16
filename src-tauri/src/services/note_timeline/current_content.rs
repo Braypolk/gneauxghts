@@ -225,16 +225,23 @@ impl CurrentContentAccess<'_> {
     /// Only repeatable projection queries belong here. Mutating commands must
     /// keep their single-execution read path. An invalidated projection is not
     /// evidence that the vault has no items.
+    #[track_caller]
     pub(crate) fn read_refreshable<T: CurrentContentProjection>(
         &self,
         mut query: impl FnMut() -> Result<T, String>,
     ) -> Result<T, String> {
-        for _ in 0..3 {
+        for _attempt in 1..=3 {
             self.runtime.await_current_content_settled()?;
             let (_operation, version) = self.prepare_read()?;
             let mut projection = query()?;
             let eligibility = self.eligibility()?;
-            if !self.runtime.current_content_is_current(version)? {
+            #[cfg(feature = "pi-prototype")]
+            let current = self.runtime.current_content_is_current_for_attempt(
+                version, _attempt, std::panic::Location::caller(),
+            )?;
+            #[cfg(not(feature = "pi-prototype"))]
+            let current = self.runtime.current_content_is_current(version)?;
+            if !current {
                 continue;
             }
             projection.retain_current(&mut |item| eligibility.retains(item));
