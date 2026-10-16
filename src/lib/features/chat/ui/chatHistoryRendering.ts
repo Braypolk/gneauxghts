@@ -5,42 +5,42 @@ export function renderChatHistoryInBatches(
   render: (count: number) => void
 ) {
   let count = alreadyRendered;
-  let cancelled = false;
-  let cancelPending: (() => void) | undefined;
+  let stopped = false;
+  let channel: MessageChannel | undefined;
+
+  function stop() {
+    stopped = true;
+    if (!channel) return;
+    channel.port1.onmessage = null;
+    channel.port1.close();
+    channel.port2.close();
+    channel = undefined;
+  }
 
   function batch() {
-    if (cancelled) return;
+    if (stopped) return;
     count = Math.min(total, count + 8);
-    render(count);
-    if (count >= total || cancelled) return;
+    try {
+      render(count);
+    } catch (error) {
+      stop();
+      throw error;
+    }
+    if (count >= total) {
+      stop();
+      return;
+    }
+    if (stopped) return;
 
-    // WKWebView may suspend animation frames while its window is hidden.
-    // Keep readiness progressing without mounting the whole thread at once.
-    let settled = false;
-    let frame: number | undefined;
-    const timer = setTimeout(advance, 50);
-    function clearPending() {
-      clearTimeout(timer);
-      if (frame !== undefined) cancelAnimationFrame(frame);
+    // Message-port tasks yield between bounded DOM updates without depending
+    // on animation frames or chained timers, both throttled in native windows.
+    if (!channel) {
+      channel = new MessageChannel();
+      channel.port1.onmessage = batch;
     }
-    function advance() {
-      if (settled) return;
-      settled = true;
-      clearPending();
-      cancelPending = undefined;
-      batch();
-    }
-    cancelPending = () => {
-      settled = true;
-      clearPending();
-    };
-    frame = requestAnimationFrame(advance);
+    channel.port2.postMessage(null);
   }
 
   batch();
-  return () => {
-    cancelled = true;
-    cancelPending?.();
-    cancelPending = undefined;
-  };
+  return stop;
 }

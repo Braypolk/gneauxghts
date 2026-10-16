@@ -6,6 +6,7 @@ import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import type { ChatAttachmentInput, ChatMessage, ChatProvider } from '$lib/features/chat/types';
 import { nativeTransportStats } from './nativeProvider';
 import { acquireFollowonsConversation, followonsReasoningMode, type FollowonsConversationControls } from './followonsConversation';
+import { discardFollowonsSaveReview, type FollowonsSaveReviewControls } from './followonsSaveReview';
 import { settleFollowonsEditorSelections } from './followonsEditorContext';
 import { focusProbeChatComposer, probeChatPane } from './probeChatSend';
 import { probePaneTitle } from './probePaneTitle';
@@ -104,6 +105,33 @@ function attachment(name: string, mimeType: string, bytes: string, kind: 'file' 
 }
 function noteCitations(message: ChatMessage) { return message.citations.filter(item => item.kind === 'note'); }
 
+const saveReviewControls = (conversationId: string): FollowonsSaveReviewControls => ({
+  open: async id => {
+    const target = await until(() => {
+      const strip = document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
+      if (strip && visibleProbeControl(strip)) return { strip };
+      const card = document.querySelector<HTMLElement>(`[aria-label="Pending note proposals"] [data-proposal-id="${id}"]`);
+      const review = card && button('Review in editor', card);
+      return review && visibleProbeControl(review) ? { review } : undefined;
+    }, 'owned web Save normal review control');
+    if ('review' in target) { target.review!.click(); await pause(); }
+    await until(() => {
+      const strip = document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
+      return strip && visibleProbeControl(strip) ? strip : undefined;
+    }, 'owned web Save mounted editor review');
+  },
+  discard: async id => {
+    const strip = await until(() => document.querySelector<HTMLElement>(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'owned web Save strip');
+    const discard = await until(() => ['Discard', 'Undo All', 'Undo Remaining'].map(label => button(label, strip)).find(node => node && visibleProbeControl(node)), 'owned web Save normal discard');
+    discard.click();
+  },
+  settled: async id => {
+    await until(async () => !(await api.listPendingProposals(conversationId)).some(proposal => proposal.id === id), 'owned web Save durable dismissal');
+    await until(() => !document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'owned web Save retained review cleared');
+    assert((await api.dismissAgentProposal(id)).status === 'dismissed', 'Owned web Save did not retain its exact durable dismissal');
+  },
+});
+
 export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | undefined> {
   const config = await invoke<{ fixture: boolean; interactiveGate: boolean; expandedGate: boolean; followonsGate?: boolean }>('pi_probe_config');
   if (!config.fixture || !config.interactiveGate || !config.expandedGate || !config.followonsGate || !new URL(location.href).searchParams.has('piExpandedTest')) return;
@@ -196,7 +224,7 @@ export async function runExpandedFollowonsProbe(): Promise<FollowonsReport | und
       const draft = await api.getProposalDraft(proposal.id);
       assert(draft.markdown.includes('https://example.com/pi-followons'), 'Saved whole/selection draft lost authored web link');
       assert(draft.markdown.includes('Open in chat'), 'Saved whole/selection draft lost source-chat navigation');
-      await api.dismissAgentProposal(proposal.id);
+      await discardFollowonsSaveReview(saveReviewControls(hosted), proposal.id);
     }
     assert(nativeTransportStats.bytes === transportBefore.bytes && nativeTransportStats.chunks === transportBefore.chunks, 'Deterministic web Save invoked inference');
     await mark('whole and selection web Save preserve links without inference', { drafts: 2 });
