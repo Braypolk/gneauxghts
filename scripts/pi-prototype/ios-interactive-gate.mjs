@@ -51,7 +51,7 @@ const executable = join(app, info.CFBundleExecutable);
 const evidence = { gate: 'ios-shared-workspace-fixture', status: 'running', root, app, simulator: selected, bundle, fixtureUrl: fixtureConfig.url,
   executableSha256: createHash('sha256').update(readFileSync(executable)).digest('hex'),
   constraints: { xcode: run('xcodebuild', ['-version']), simulatorSdk: run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
-    runtime: selected.runtime, rustBuild: 'run.mjs exact pi-prototype,tauri/custom-protocol; existing generated Rust script replacement',
+    runtime: selected.runtime, rustBuild: 'Executable hash is observed here; exact Cargo features are supplied by the separate compiler receipt. run.mjs retains the generated Rust script replacement.',
     background: 'Preferences foregrounding plus artificial STOP/CONT of the exact owned native app process; WKWebView helpers may continue. Does not establish OS suspension or memory pressure.',
     originNavigation: 'shared Open in chat fixture synthesizes editor keyboard navigation; touch gesture remains unverified' },
   phases: [], screenshots: [], unobserved: [] };
