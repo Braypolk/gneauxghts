@@ -4,8 +4,10 @@ import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, copyFileSync, cpSy
 import { tmpdir } from 'node:os';
 import { resolve, join, isAbsolute } from 'node:path';
 import { evaluationRoot, dataOperation } from './evaluation-data.mjs';
+import { iosBuildFeatures } from './ios-build-features.mjs';
 
 const mode = process.argv[2] ?? 'desktop';
+if (process.env.PI_PROTOTYPE_IOS_CRASH_FIXTURES && mode !== 'ios') throw new Error('iOS crash fixture packaging is allowed only in explicit simulator builds');
 const modes = ['desktop', 'installed', 'build', 'setup', 'status', 'reset', 'diagnostics', 'ios', 'gate', 'ios-gate', 'ui-gate', 'ios-ui-gate', 'fault-gate', 'interactive-gate', 'ios-interactive-gate', 'ios-live-gate'];
 if (!modes.includes(mode)) throw new Error(`Use ${modes.join(', ')}`);
 const sourceArgs = process.argv.slice(3);
@@ -108,7 +110,7 @@ if (mode === 'ios') {
   writeFileSync(scheme, readFileSync(scheme, 'utf8').replaceAll('container:gneauxghts.xcodeproj', 'container:pi-prototype.xcodeproj'));
   writeFileSync(project, readFileSync(project, 'utf8').replace(/shellScript = "pnpm tauri ios xcode-script[^\n]+;/,
     'shellScript = "echo Pi Rust library built by scripts/pi-prototype/run.mjs";'));
-  run('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--target', 'aarch64-apple-ios-sim', '--lib', '--features', 'pi-prototype,tauri/custom-protocol'],
+  run('cargo', ['build', '--manifest-path', 'src-tauri/Cargo.toml', '--target', 'aarch64-apple-ios-sim', '--lib', '--features', iosBuildFeatures(env)],
     { TAURI_CONFIG: readFileSync(config, 'utf8') });
   mkdirSync(join(apple, 'Externals/arm64/debug'), { recursive: true });
   copyFileSync('src-tauri/target/aarch64-apple-ios-sim/debug/libgneauxghts_lib.a', join(apple, 'Externals/arm64/debug/libapp.a'));

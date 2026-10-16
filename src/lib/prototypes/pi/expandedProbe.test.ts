@@ -1,10 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), shared: vi.fn(), followons: vi.fn(), storage: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), shared: vi.fn(), followons: vi.fn(), storage: vi.fn(), evidence: vi.fn(), suspension: vi.fn(), restored: vi.fn(), publication: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state } }));
-vi.mock('./interactiveProbe', () => ({ runInteractiveProbe: mocks.shared }));
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, getSettings: async()=>({localBaseUrl:'http://127.0.0.1:1443/local/v1'}), prototypeCheckpoint: vi.fn() } }));
+vi.mock('./interactiveProbe', () => ({ runInteractiveProbe: mocks.shared, captureSharedSuspensionUi: vi.fn() }));
 vi.mock('./expandedFollowonsProbe', () => ({ runExpandedFollowonsProbe: mocks.followons }));
 vi.mock('./nativeStorageFaultProbe', () => ({ runNativeStorageFaultProbe: mocks.storage }));
+vi.mock('./supplementalEvidenceProbe',()=>({runSupplementalEvidenceProbe:mocks.evidence}));
+vi.mock('./supplementalSuspensionProbe',()=>({runSupplementalSuspensionProbe:mocks.suspension,verifySupplementalSuspensionRelaunch:mocks.restored}));
+vi.mock('./iosPublicationFaultProbe',()=>({maybeRunIosPublicationFaultProbe:mocks.publication}));
 import { runExpandedProbe } from './expandedProbe';
 
 describe('explicit native expanded journey wrapper', () => {
@@ -15,6 +18,7 @@ describe('explicit native expanded journey wrapper', () => {
     vi.stubGlobal('history', { state: null, replaceState: (_state: unknown, _title: string, url: string | URL) => { location.href = String(url); } });
     mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? { fixture: true, interactiveGate: true, expandedGate: true } : undefined);
     mocks.state.mockResolvedValue({});
+    mocks.evidence.mockResolvedValue({status:'passed'}); mocks.suspension.mockResolvedValue(undefined); mocks.restored.mockResolvedValue(undefined); mocks.publication.mockResolvedValue(undefined);
     mocks.storage.mockResolvedValue({ status: 'passed' });
     mocks.followons.mockResolvedValue({ gate: 'expanded-native-followons-fixture', status: 'passed', checks: [] });
     mocks.shared.mockImplementation(async () => ({ gate: 'first-usable-desktop-fixture',
@@ -54,7 +58,9 @@ describe('explicit native expanded journey wrapper', () => {
     expect(result?.shared.map(value => value.phase)).toEqual(['relaunch', 'failures']);
     expect(result).toMatchObject({ status: 'passed', followons: { status: 'passed' }, storageFaults: { status: 'passed' } });
     expect(mocks.shared.mock.invocationCallOrder.at(-1)).toBeLessThan(mocks.followons.mock.invocationCallOrder[0]);
-    expect(mocks.followons.mock.invocationCallOrder[0]).toBeLessThan(mocks.storage.mock.invocationCallOrder[0]);
+    expect(mocks.restored.mock.invocationCallOrder[0]).toBeLessThan(mocks.shared.mock.invocationCallOrder[0]);
+    expect(mocks.followons.mock.invocationCallOrder[0]).toBeLessThan(mocks.evidence.mock.invocationCallOrder[0]);
+    expect(mocks.evidence.mock.invocationCallOrder[0]).toBeLessThan(mocks.storage.mock.invocationCallOrder[0]);
     expect(mocks.storage).toHaveBeenCalledWith({ phase: 'last-after-ui', generatedSyntheticRoot: true });
   });
   it.each([undefined, { status: 'failed', error: 'native follow-on admission failed' }])('never closes owners after an enabled absent or failed follow-on report', async followons => {
@@ -73,6 +79,19 @@ describe('explicit native expanded journey wrapper', () => {
     expect(result).toMatchObject({ status: 'failed', followons: observed, error: 'Error: Follow-on deadline: Reasoning effort' });
     expect(mocks.invoke).toHaveBeenLastCalledWith('pi_ui_report', { report: result });
     expect(mocks.storage).not.toHaveBeenCalled();
+  });
+  it.each([undefined, {status:'failed',error:'source race leaked'}])('keeps owners open when supplemental evidence fails', async evidence => {
+    mocks.state.mockResolvedValue(relaunchState);
+    mocks.invoke.mockImplementation(async command => command === 'pi_probe_config' ? {fixture:true,interactiveGate:true,expandedGate:true,followonsGate:true} : undefined);
+    mocks.evidence.mockResolvedValue(evidence);
+    expect(await runExpandedProbe()).toMatchObject({status:'failed'});
+    expect(mocks.storage).not.toHaveBeenCalled();
+  });
+  it('routes owned publication recovery before shared state admission', async () => {
+    const publication={gate:'ios-native-publication-fault',status:'passed'};
+    mocks.publication.mockResolvedValue(publication);
+    expect(await runExpandedProbe()).toBeUndefined();
+    expect(mocks.state).not.toHaveBeenCalled(); expect(mocks.shared).not.toHaveBeenCalled();
   });
   it('preserves the default expanded route without opting into follow-ons', async () => {
     mocks.state.mockResolvedValue(relaunchState);

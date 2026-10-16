@@ -1,10 +1,34 @@
 import { createServer } from 'node:http';
 import { setTimeout as delay } from 'node:timers/promises';
 import { planFollowonsReply } from './followons-fixture.mjs';
+import { createSupplementalEvidenceControl, planSupplementalEvidenceReply } from './supplemental-evidence-fixture.mjs';
+import { planSupplementalReviewReply } from './supplemental-review-fixture.mjs';
 
 export function planWorkspaceReply(body, compatible, attempt = 1, followons = false) {
-  return (followons ? planFollowonsReply(body, compatible, attempt) : undefined)
+  const reply = (followons ? planSupplementalEvidenceReply(body, compatible)
+    ?? planSupplementalReviewReply(body, compatible)
+    ?? planFollowonsReply(body, compatible, attempt) : undefined)
     ?? planInteractiveReply(body, compatible, attempt);
+  return followons && reply.journey === 'INTERRUPT' && attempt === 1
+    ? { ...reply, pause: false, holdUntilClosed: true } : reply;
+}
+
+/** Process interruption belongs to the driver's owned termination/teardown.
+ * Longer UI journeys cannot let a guessed provider timer finish this request.
+ * Call only after emitting the partial text, and never emit terminal frames.
+ */
+export async function holdInteractiveInterruption(record, res) {
+  if (!Number.isFinite(record.firstTextAt)) throw new Error('Interruption hold must follow actual streamed text');
+  if (record.completed) throw new Error('Cannot hold a completed interruption');
+  record.interruptHeldAt = Date.now();
+  await new Promise(resolve => {
+    const closed = () => {
+      record.interruptClosedAt = Date.now(); record.closed = true; record.closedAt ??= record.interruptClosedAt;
+      resolve();
+    };
+    res.once('close', closed);
+    if (res.destroyed) { res.removeListener('close', closed); closed(); }
+  });
 }
 
 // Synthetic protocols for the ordinary workspace gate. No native state or
@@ -91,9 +115,11 @@ export function planInteractiveReply(body, compatible, attempt = 1) {
 
 export async function startInteractiveFixture(port = 1443, { followons = process.env.PI_PROTOTYPE_FOLLOWONS_GATE === 'true' } = {}) {
   const requests = [], attempts = new Map();
+  const supplementalEvidence = createSupplementalEvidenceControl();
   const server = createServer(async (req, res) => {
     let captured; const startedAt = Date.now();
     try {
+      if (followons && await supplementalEvidence.handle(req, res)) return;
       if (req.headers.authorization) throw new Error('Fixture must never receive credentials');
       let raw = ''; for await (const chunk of req) { raw += chunk; if (raw.length > 262144) throw new Error('Oversize request'); }
       const body = JSON.parse(raw); captured = { path: req.url, body, requestBytes: Buffer.byteLength(raw) };
@@ -118,6 +144,8 @@ export async function startInteractiveFixture(port = 1443, { followons = process
         await send(chunk({ role: 'assistant' }));
         if (reply.tool) await send(chunk({ tool_calls: [{ index: 0, id: callId, type: 'function', function: reply.tool }] }));
         else { record.firstTextAt = Date.now(); await send(chunk({ content: reply.text })); }
+        if (reply.barrier) { await supplementalEvidence.hold(reply.barrier, record, res); if (res.destroyed) return; }
+        if (reply.holdUntilClosed) { await holdInteractiveInterruption(record, res); return; }
         if (reply.pause) { record.pauseStartedAt = Date.now(); await delay(30000); record.pauseFinishedAt = Date.now(); if (res.destroyed) return; }
         await send({ id: callId, object: 'chat.completion.chunk', model: body.model, choices: [{ index: 0, delta: {}, finish_reason: reply.tool ? 'tool_calls' : 'stop' }], usage: { prompt_tokens: inputUsage, completion_tokens: outputUsage, total_tokens: inputUsage + outputUsage } });
         record.completed = true; record.completedAt = Date.now(); res.end('data: [DONE]\n\n');
@@ -129,6 +157,8 @@ export async function startInteractiveFixture(port = 1443, { followons = process
         if (!reply.tool) record.firstTextAt = Date.now();
         await send(reply.tool ? { type: 'response.function_call_arguments.delta', output_index: 0, delta: reply.tool.arguments }
           : { type: 'response.output_text.delta', output_index: 0, content_index: 0, delta: reply.text });
+        if (reply.barrier) { await supplementalEvidence.hold(reply.barrier, record, res); if (res.destroyed) return; }
+        if (reply.holdUntilClosed) { await holdInteractiveInterruption(record, res); return; }
         if (reply.pause) { record.pauseStartedAt = Date.now(); await delay(30000); record.pauseFinishedAt = Date.now(); if (res.destroyed) return; }
         const done = reply.tool ? { ...item, arguments: reply.tool.arguments, status: 'completed' } : { ...item, status: 'completed', content: [{ type: 'output_text', text: reply.text, annotations: [] }] };
         await send({ type: 'response.output_item.done', output_index: 0, item: done });
@@ -138,5 +168,5 @@ export async function startInteractiveFixture(port = 1443, { followons = process
     } catch (error) { requests.push({ ...captured, error: String(error) }); if (!res.headersSent) res.writeHead(500); res.end(String(error)); }
   });
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
-  return { requests, close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) };
+  return { requests, supplementalEvidence, close: () => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }) };
 }

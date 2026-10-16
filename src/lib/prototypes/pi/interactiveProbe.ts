@@ -5,6 +5,8 @@ import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { nativeTransportStats } from './nativeProvider';
 import type { ChatMessage, ChatProposalDraft } from '$lib/features/chat/types';
+import { prepareSupplementalReviewProbe, verifySupplementalReviewRestored, type SupplementalReviewState } from './supplementalReviewProbe';
+import { prepareSupplementalOrdinary, captureSupplementalSuspensionUi, type SuspensionOrdinary } from './supplementalSuspensionProbe';
 import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openProbeChatSplit } from './probeSplit';
@@ -15,7 +17,7 @@ import { probePaneTitle } from './probePaneTitle';
 import { assertSharedKeepDraft, assertSharedMountedReview, assertSharedPublication, expectedSharedEditorMarkdown, expectedSharedKeepDraft, sharedProofDigest, type SharedCanonicalNote, type SharedKeepPlan } from './sharedKeepProof';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
-  editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
+  supplementalReview?: SupplementalReviewState; supplementalOrdinary?: SuspensionOrdinary; editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
 type ProbeApi = ChatApi & { prototypeState(): Promise<{ interactiveStateJson?: string }>; prototypeCheckpoint(value: unknown): Promise<void>; prototypeFault(id: string, fault: string): Promise<void> };
 const api = chatApi as ProbeApi;
 const timings: Array<Record<string, unknown>> = [];
@@ -152,12 +154,14 @@ async function setModel(id: string, provider: 'local' | 'openai', model: string)
   await click('Use', picker);
   await until(async () => { const conversation = await api.getConversation(id); return conversation.provider === provider && conversation.model === model; }, 'Pi model configuration');
 }
-async function openSource(message: ChatMessage) {
+export async function openSource(message: ChatMessage, expected?: SuspensionOrdinary) {
   assert(message.citations.length, 'No admitted current citation');
   const label = message.citations[0].label;
-  const citation = await until(() => Array.from(document.querySelectorAll<HTMLButtonElement>('button[data-slot="inline-citation"]')).find(node => node.textContent?.includes(label)), 'normal current source button');
+  const row = await until(() => document.querySelector<HTMLElement>(`[data-chat-message-id="${message.id}"]`), 'exact current source message');
+  row.scrollIntoView({ block: 'nearest' });
+  const citation = await until(() => Array.from(row.querySelectorAll<HTMLButtonElement>('button[data-slot="inline-citation"]')).find(node => !node.disabled && visibleProbeControl(node) && node.textContent?.includes(label)), 'normal current source button in exact message');
   citation.click();
-  return until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString().includes('orchard')), 'current note opened by citation');
+  return until(() => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view && (expected ? view.state.doc.toString() === expected.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === expected.title : view.state.doc.toString().includes('orchard'))), 'current note opened by citation');
 }
 
 /** Compact Keep returns to chat and can unmount the editor. Re-enter through
@@ -229,11 +233,27 @@ export async function openSharedSavedOrigin(conversationId: string, messageId: s
     keyboardPlatform: { platform: navigator.platform, appleMobile, metaKey, ctrlKey: !metaKey } };
 }
 
+async function openSupplementalOrdinary(note: SuspensionOrdinary) {
+  assert(note.conversationId && note.sourceMessageId, 'Ordinary suspension note lacks actual admitted citation');
+  await selectConversation(note.conversationId);
+  const message = (await api.getConversation(note.conversationId)).messages.find(value => value.id === note.sourceMessageId);
+  assert(message, 'Ordinary suspension citation message is absent');
+  return openSource(message, note);
+}
+
+export async function captureSharedSuspensionUi() {
+  const json = (await api.prototypeState()).interactiveStateJson;
+  assert(json, 'Missing shared suspension interactive state');
+  return captureSupplementalSuspensionUi({ api, state: JSON.parse(json) as State, until,
+    openOrdinary: openSupplementalOrdinary, openReview: currentReview, selectConversation });
+}
+
 export async function runInteractiveProbe() {
-  const config = await invoke<{ fixture: boolean; interactiveGate: boolean }>('pi_probe_config');
+  const config = await invoke<{ fixture: boolean; interactiveGate: boolean; followonsGate?: boolean }>('pi_probe_config');
   if (!config.fixture || !config.interactiveGate) return;
   (window as Window & { __piInteractiveTimings?: typeof timings }).__piInteractiveTimings = timings;
   const phase = new URL(location.href).searchParams.get('piInteractiveTest');
+  const supplemental = config.followonsGate === true && new URL(location.href).searchParams.has('piExpandedTest');
   const report: { gate: string; phase: string | null; status: string; checks: string[]; receipts: Record<string, unknown>; error?: string; visible?: string } = {
     gate: 'first-usable-desktop-fixture', phase, status: 'running', checks: [], receipts: { timings }
   };
@@ -356,7 +376,21 @@ export async function runInteractiveProbe() {
         await mark('normal Retry explicitly resumes native inference');
         const keep = await newProposal(state.a, 'PI_UI:CREATE'); state.keepId = keep.id;
         state.editedBody = 'Actual retained editor text survives a native process restart.'; state.editedTitle = 'Pi edited interactive title';
-        const draft = await editReview(keep.id, state.editedBody, state.editedTitle);
+        let draft = await editReview(keep.id, state.editedBody, state.editedTitle);
+        if (supplemental) {
+          state.supplementalReview = await prepareSupplementalReviewProbe({ api, conversationId: state.a, proposalId: keep.id,
+            openReview: currentReview, openChat, send, until });
+          draft = state.supplementalReview.retainedDraft;
+          state.editedBody = draft.markdown; state.editedTitle = draft.title;
+          report.receipts.supplementalReview = state.supplementalReview;
+          state.supplementalOrdinary = await prepareSupplementalOrdinary({ until, openOrdinary: async note => {
+            const cited = await send(state.a, `PI_UI:READ:${note.noteId}`);
+            return openSource(cited, note);
+          } });
+          const freshCitation = await send(state.a, `PI_UI:READ:${state.supplementalOrdinary.noteId}`);
+          Object.assign(state.supplementalOrdinary, { conversationId: state.a, sourceMessageId: freshCitation.id });
+          await persist(state);
+        }
         const discard = await newProposal(state.a, 'PI_UI:CREATE'); state.discardId = discard.id;
         await currentReview(discard.id); const restored = await currentReview(keep.id); assert(restored.state.doc.toString() === state.editedBody, 'Review switch lost edits');
         await mark('editable proposal body/title checkpoint and review switching', { proposalId: keep.id, version: draft.version });
@@ -374,6 +408,8 @@ export async function runInteractiveProbe() {
         await mark('relaunch restores committed history, model and interrupted partial without replay');
         const view = await currentReview(state.keepId); const draft = await api.getProposalDraft!(state.keepId);
         assert(view.state.doc.toString() === state.editedBody && draft.title === state.editedTitle, 'Relaunch lost reviewed edits');
+        if (state.supplementalReview) report.receipts.supplementalReviewRestored = await verifySupplementalReviewRestored({ api,
+          state: state.supplementalReview, openReview: currentReview, openChat, until });
         await proveKeep(state.keepId, state.a, 'kept', draft);
         await settleReview(state.discardId, false, state.a); await mark('relaunch edited review Keep and Discard; duplicate Keep returns canonical receipt');
         await openChat(); const retry = await until(() => { const root = document.querySelector(`[data-chat-message-id="${state.interruptedId}"]`); return root ? button('Retry', root) : undefined; }, 'interrupted Retry'); retry.click();

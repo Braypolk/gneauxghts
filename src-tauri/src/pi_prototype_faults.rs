@@ -2,7 +2,7 @@
 //! No Pi lifecycle state, credentials, or upstream hooks live here.
 
 pub(crate) fn armed(boundary: &str, content: &str) -> Option<String> {
-    #[cfg(feature = "e2e-wdio")]
+    #[cfg(any(feature = "e2e-wdio", feature = "e2e-chat-fixture"))]
     {
         if !matches!(boundary, "prepared-review" | "transport-completed")
             || std::env::var("PI_PROTOTYPE_INTERACTIVE_GATE").as_deref() != Ok("true")
@@ -20,12 +20,12 @@ pub(crate) fn armed(boundary: &str, content: &str) -> Option<String> {
         { return None; }
         Some(scope)
     }
-    #[cfg(not(feature = "e2e-wdio"))]
+    #[cfg(not(any(feature = "e2e-wdio", feature = "e2e-chat-fixture")))]
     { let _ = (boundary, content); None }
 }
 
 pub(crate) fn crash(boundary: &str, scope: &str, detail: serde_json::Value) -> Result<(), String> {
-    #[cfg(feature = "e2e-wdio")]
+    #[cfg(any(feature = "e2e-wdio", feature = "e2e-chat-fixture"))]
     {
         use std::io::Write;
         // Revalidate at the actual crash, not only when transport was admitted.
@@ -42,8 +42,8 @@ pub(crate) fn crash(boundary: &str, scope: &str, detail: serde_json::Value) -> R
         file.sync_all().map_err(|error|error.to_string())?;
         std::process::exit(86);
     }
-    #[cfg(not(feature = "e2e-wdio"))]
-    { let _ = (boundary, scope, detail); Err("Native crash fixture requires e2e-wdio".into()) }
+    #[cfg(not(any(feature = "e2e-wdio", feature = "e2e-chat-fixture")))]
+    { let _ = (boundary, scope, detail); Err("Native crash fixture requires an explicit native fixture feature".into()) }
 }
 
 /// Scoped synthetic transport only: withhold protocol terminal events while

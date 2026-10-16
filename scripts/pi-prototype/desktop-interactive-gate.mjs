@@ -12,6 +12,8 @@ import { createWebDriverRequest, waitUntil, listenerPids } from '../../e2e/suppo
 import { startInteractiveFixture } from './interactive-fixture.mjs';
 import { assertExpandedPhase } from './expanded-report.mjs';
 import { verifyFollowonsReceipts } from './followons-fixture.mjs';
+import { verifySupplementalEvidenceReceipts } from './supplemental-evidence-fixture.mjs';
+import { verifySupplementalReviewReceipts } from './supplemental-review-fixture.mjs';
 
 const followons = process.env.PI_PROTOTYPE_FOLLOWONS_GATE === 'true';
 if (process.env.PI_PROTOTYPE_DATA) throw new Error('Interactive gate always allocates a fresh generated root; unset PI_PROTOTYPE_DATA');
@@ -89,6 +91,17 @@ try {
   evidence.activeStop = { firstTextAt: stop.firstTextAt, closedAt: stop.closedAt, completed: stop.completed, pauseStartedAt: stop.pauseStartedAt, pauseFinishedAt: stop.pauseFinishedAt };
   await wd(`/session/${session.sessionId}`, undefined, 'DELETE'); session = undefined;
   await stopApp('SIGKILL'); await delay(300);
+  const firstInterruptions = fixture.requests.filter(request => request.journey === 'INTERRUPT');
+  assert.equal(firstInterruptions.length, 1, 'First phase must leave exactly one interrupted provider request');
+  const interrupted = firstInterruptions[0];
+  assert(!interrupted.completed, 'Interrupted provider request completed before owned termination');
+  await waitUntil(() => interrupted.closed, 'owned termination closes interrupted native provider stream', 30000);
+  assert(!interrupted.completed, 'Interrupted provider request completed while transport termination was pending');
+  assert(interrupted.firstTextAt <= interrupted.closedAt, 'Interrupted stream did not deliver its acknowledged partial before termination');
+  if (followons) assert(Number.isFinite(interrupted.interruptHeldAt) && interrupted.firstTextAt <= interrupted.interruptHeldAt
+    && interrupted.interruptHeldAt <= interrupted.interruptClosedAt, 'Expanded interruption did not remain held until actual transport closure');
+  evidence.activeInterruption = { firstTextAt: interrupted.firstTextAt, heldAt: interrupted.interruptHeldAt,
+    closedAt: interrupted.closedAt, interruptClosedAt: interrupted.interruptClosedAt, completed: interrupted.completed };
   const beforeRelaunch = fixture.requests.length;
   await launch(); await delay(1000);
   assert.equal(fixture.requests.length, beforeRelaunch, 'Relaunch silently dispatched provider work before explicit Retry');
@@ -98,11 +111,28 @@ try {
   assert(fixture.requests.some(request => request.path === '/openai/v1/responses'), 'Responses protocol not exercised');
   assert(fixture.requests.some(request => request.model === 'pi-native-fixture-b'), 'Model switch did not reach native provider');
   assert(!fixture.requests.some(request => request.error), 'Fixture request contract failed');
+  const interruptionRequests = fixture.requests.filter(request => request.journey === 'INTERRUPT');
+  assert.equal(interruptionRequests.length, 2, 'Interrupted provider work requires exactly one explicit Retry');
+  assert(interruptionRequests[0].closed && !interruptionRequests[0].completed && interruptionRequests[1].completed,
+    'Interrupted provider request completed before termination or explicit Retry failed');
   const receipts = followons ? relaunched.shared.find(value => value.phase === 'relaunch').receipts : relaunched.receipts;
   const saves = receipts['public deterministic repeated-selection append uses retained UI review and exact target'];
   assert.deepEqual(saves.before, saves.after, 'Save inference counters changed');
   if (followons) {
     evidence.followons = verifyFollowonsReceipts(fixture.requests, relaunched.followons);
+    evidence.supplementalEvidence = verifySupplementalEvidenceReceipts(fixture.requests, relaunched.supplementalEvidence);
+    evidence.supplementalEvidenceBarriers = fixture.supplementalEvidence.snapshot();
+    const reviewState = first.shared.find(value => value.phase === 'first')?.receipts.supplementalReview;
+    evidence.supplementalReview = verifySupplementalReviewReceipts(fixture.requests, reviewState);
+    assert.equal(evidence.supplementalReview.requestCount, 3, 'Supplemental refinement requires exactly read, refine and final native requests');
+    const refinementRequests = fixture.requests.filter(record => record.journey === 'SUPPLEMENTAL_REVIEW_REFINE');
+    assert.equal(refinementRequests.length, 3, 'Unexpected supplemental refinement provider work');
+    assert(refinementRequests.every(record => record.completed) && refinementRequests[0].tool === 'read_note_proposal'
+      && refinementRequests[1].tool === 'refine_note_proposal' && refinementRequests[2].tool === null,
+    'Supplemental refinement native request chain differs');
+    const restoredReview = relaunched.shared.find(value => value.phase === 'relaunch')?.receipts.supplementalReviewRestored;
+    assert.equal(restoredReview?.proposalId, reviewState.proposalId, 'Supplemental restored review lost its proposal identity');
+    assert.deepEqual(restoredReview.draft, reviewState.retainedDraft, 'Supplemental restored review differs from exact pre-interruption checkpoint');
     evidence.storageFaults = relaunched.storageFaults;
     evidence.unobserved = relaunched.unobserved;
   }

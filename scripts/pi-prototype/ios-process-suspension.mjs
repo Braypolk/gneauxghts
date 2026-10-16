@@ -1,7 +1,39 @@
 import assert from 'node:assert/strict';
 import { performance } from 'node:perf_hooks';
+import { randomUUID } from 'node:crypto';
 
 export const ownedIosBundle = 'com.braypolkinghorne.gneauxghts.pi-prototype';
+
+/** Inert challenge state: only the driver issues a challenge after CONT. */
+export function createIosSuspensionChallenges({ now = Date.now, nonce = randomUUID } = {}) {
+  let launchId;
+  const issued = new Map(), acknowledged = new Map();
+  const bind = id => {
+    assert(typeof id === 'string' && /^[a-zA-Z0-9-]{8,64}$/.test(id), 'Invalid suspension launch identity');
+    assert(!launchId || launchId === id, 'Suspension control belongs to another launch');
+    launchId = id;
+  };
+  return {
+    discover(id) { bind(id); return { gate: 'owned-ios-suspension-control', launchId }; },
+    issue(stage, id) {
+      bind(id); assert(['foreground', 'lease-continue'].includes(stage), 'Invalid suspension challenge stage');
+      assert(!issued.has(stage), 'Suspension challenge already issued');
+      const command = { stage, launchId, nonce: nonce(), issuedAt: now() };
+      assert(typeof command.nonce === 'string' && command.nonce.length >= 16, 'Invalid suspension nonce');
+      issued.set(stage, command); return command;
+    },
+    read(stage, id) { bind(id); return issued.get(stage) ?? null; },
+    acknowledge(value) {
+      bind(value?.launchId); const command = issued.get(value?.stage);
+      assert(command && value.nonce === command.nonce, 'Fresh driver suspension challenge required');
+      assert(!acknowledged.has(value.stage), 'Suspension challenge already acknowledged');
+      const receipt = { ...command, acknowledgedAt: now() };
+      assert(receipt.acknowledgedAt >= command.issuedAt, 'Suspension acknowledgement precedes challenge');
+      acknowledged.set(value.stage, receipt); return receipt;
+    },
+    receipt(stage) { return acknowledged.get(stage); },
+  };
+}
 
 export function parseOwnedIosLaunch(output, bundle = ownedIosBundle) {
   assert.equal(bundle, ownedIosBundle, 'Refuse another app bundle');
@@ -44,7 +76,7 @@ export async function suspendOwnedIosProcess({ owner, inspect, signal, wait, now
   assert(durationMs >= 13000 && durationMs <= 15000, 'Suspension duration must be 13–15 seconds');
   Object.assign(receipt, { kind: 'artificial-owned-native-process-suspension', owner, requestedDurationMs: durationMs,
     limits: ['WKWebView helper processes may continue; this is not OS suspension or memory pressure.',
-      'The retained phase report is static; no fresh post-CONT UI read or lease-commit proof is established.'] });
+      'This process receipt alone does not establish UI retention or lease rollback; those require separate fresh challenge acknowledgements.'] });
   assert(!assertOwnedIosProcess(owner, inspect).state.includes('T'), 'Owned native process was already stopped');
   let attempted = false, failure;
   try {

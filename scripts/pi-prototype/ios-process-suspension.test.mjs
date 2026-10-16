@@ -1,8 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ownedIosBundle, parseOwnedIosLaunch, parseIosProcess, captureOwnedIosProcess, suspendOwnedIosProcess } from './ios-process-suspension.mjs';
+import { ownedIosBundle, parseOwnedIosLaunch, parseIosProcess, captureOwnedIosProcess, suspendOwnedIosProcess, createIosSuspensionChallenges } from './ios-process-suspension.mjs';
 
 const executable = '/Users/fixture/CoreSimulator/Application/owned/Gneauxghts Pi Prototype.app/Gneauxghts Pi Prototype';
+
+test('fresh challenge cannot be acknowledged before issue, by another launch, with an old nonce, or twice', () => {
+  let now = 100;
+  const challenges = createIosSuspensionChallenges({ now: () => now, nonce: () => 'fresh-driver-nonce-1234' });
+  const launchId = 'fixture-launch-1234';
+  assert.equal(challenges.discover(launchId).launchId, launchId);
+  assert.equal(challenges.read('foreground', launchId), null);
+  assert.throws(() => challenges.acknowledge({ stage: 'foreground', launchId, nonce: 'old' }), /Fresh driver/);
+  const command = challenges.issue('foreground', launchId); now += 10;
+  assert.throws(() => challenges.acknowledge({ ...command, launchId: 'unrelated-launch-1234' }), /another launch/);
+  assert.throws(() => challenges.acknowledge({ ...command, nonce: 'old' }), /Fresh driver/);
+  assert.equal(challenges.acknowledge(command).acknowledgedAt, 110);
+  assert.equal(challenges.receipt('foreground').issuedAt, 100);
+  assert.throws(() => challenges.acknowledge(command), /already acknowledged/);
+  assert.throws(() => challenges.issue('foreground', launchId), /already issued/);
+  assert.throws(() => challenges.issue('unrelated-stage', launchId), /Invalid suspension challenge stage/);
+  assert.throws(() => createIosSuspensionChallenges().discover('../bad'), /Invalid suspension launch identity/);
+});
 function fixture() {
   let time = 100, current = { pid: 123, state: 'S', startedAt: 'Thu Oct 15 10:00:00 2026', executable };
   const signals = [], inspect = () => ({ ...current });

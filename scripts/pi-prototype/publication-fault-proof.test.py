@@ -51,6 +51,28 @@ class PublicationProofTests(unittest.TestCase):
             with self.assertRaises(AssertionError):
                 proof.snapshot(root, 'pi-review-2')
 
+    def test_explicit_ios_vault_keeps_native_ledger_and_documents_vault_separate(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            data = Path(temporary)
+            root = data / 'Library/Application Support/com.braypolkinghorne.gneauxghts.pi-prototype'
+            native = root / 'PROTOTYPE-wipe-me'
+            native.mkdir(parents=True)
+            vault = data / 'Documents/PROTOTYPE-wipe-me'
+            vault.mkdir(parents=True)
+            target = vault / 'Reviewed.md'
+            target.write_text('Exact iOS authored bytes')
+            with closing(sqlite3.connect(native / 'publication-receipts.sqlite')) as db, db:
+                db.execute('CREATE TABLE effects(id TEXT,note_id TEXT,target_path TEXT)')
+                db.execute('INSERT INTO effects VALUES(?,?,?)', ('pi-review-2:1', 'id', str(target)))
+            result = proof.snapshot(root, 'pi-review-2', vault)
+            self.assertEqual(len(result['canonicalSha256']), 64)
+            self.assertEqual(result['publications'], 0)
+            for wrong in [data / 'Outside', data / 'Documents/private-vault', native / 'vault']:
+                with self.assertRaises(AssertionError):
+                    proof.snapshot(root, 'pi-review-2', wrong)
+            with self.assertRaises(AssertionError):
+                proof.snapshot(data, 'pi-review-2', vault)
+
 
 if __name__ == '__main__':
     unittest.main()
