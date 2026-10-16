@@ -11,78 +11,79 @@ acceptance gate is satisfied; unverified external prerequisites are not passes.
 
 ## Current checkpoint — 2026-10-16
 
-Current frozen diagnostic capture is **v30**, HEAD `3b6d156`, at
-`/private/tmp/pi-removal-final-20261015-v30`, canonical manifest
-`edec64b2a5c5a800853ccd41b109f61c1e75c009f6d4fc95fa818ba7fadda162`.
-[v29→v30 diff](/private/tmp/pi-removal-final-20261015-v30/v29-v30-source-diff.json)
-contains exactly `interactiveFailures.ts` and its new test. Native files are
-identical to **v29** (including the v27 fixture wrapper), not the earlier
-`b52b1a6` baseline. All three iOS source copies verified 1505 retained files/52
-legacy absences each. Lifecycle ownership is unchanged; projection semantics
-include guard `00e472f`, with no measured speed improvement.
+Frozen diagnostic capture **v31**, HEAD `31ef99f`, is at
+`/private/tmp/pi-removal-final-20261015-v31`, canonical manifest
+`d2aad8a3cadb3ec7bc90ca832efe9b1a19b893c99bbd95a5c778e753f32c1260`.
+[v30→v31 diff](/private/tmp/pi-removal-final-20261015-v31/v30-v31-source-diff.json)
+contains exactly `probeCitation.ts`/test and `interactiveFailures.ts`/test.
+No product/native change: native bytes remain identical to v30/v29, including
+the v27 fixture wrapper, not the earlier `b52b1a6` baseline. All three iOS copies
+verified 1505 retained files/52 legacy absences. Product lifecycle ownership is
+unchanged; projection includes `00e472f`, with no measured speed improvement.
 
-Actual v29 expanded **dt88yt whole FAILED**, exit1/26 requests, on canonical
-`8beca79e11a0fdce62a373b35f8d108adf785d9680f7072129840bb2d570a3f7`,
-binary `36b1b2f7543109cf547ba5767bd609c0b5aaeea1641c6db7d4a21f123ec43b81`.
-[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-dt88yt/ios-interactive-gate.json)
-retains first14 and six relaunch checks passed, including the three independent
-publication plans/read-backs, normal Open note/exact canonical editor body/title,
-and **observed scroll to the exact originating message**. Native
-`keyboardPlatform` is `iPhone`, `appleMobile:true`, `metaKey:true`, `ctrlKey:false`.
-The later failures phase stopped at `Mounted review has no corresponding title
-input`; these passed slices do not make the whole gate pass. The closed 51-entry
-container is preserved at
-`/private/tmp/pi-owned-simulator-after-v29-expanded-failure-20261015`; only the
-owned bundle was uninstalled.
+Actual v30 expanded **71i6Ij whole FAILED**, 32 requests, first14/relaunch6 plus
+one failure-checkpoint check passed (versions before2/failed2/recovered3), under
+SHA `dc4cdcec417c4e8839e3b34811e7db6036f7a589c0e91323a840072b82021c83`.
+[Receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-71i6Ij/ios-interactive-gate.json)
+retains the later `normal stale-source error` selector deadline. The actual normal
+alert was `Unable to open the referenced note.`; the resolver refused before
+opening. This does not relabel the failed gate. Closed 52-entry backup:
+`/private/tmp/pi-owned-simulator-after-v30-expanded-failure-20261015`.
 
-Reviewed fixture fix `3b6d156` acquires the standard compact title portal and
-supported normal split, preserving ownership checks. Seventy-three focused checks
-in six files, Svelte zero errors/warnings and root `check:e2e` passed. The earlier
-573 checks in 65 affected frontend files predate this fix and are not added to
-that count. Support checks passed 38 with escalation; the original sandbox `EPERM`
-failure log remains retained. These are helper/static checks, not native acceptance.
-The v30 iOS build sequence is running
-(`/private/tmp/pi-removal-v30-ios-builds-20261015.log`). Expanded compilation
-completed SHA `dc4cdcec417c4e8839e3b34811e7db6036f7a589c0e91323a840072b82021c83`
-([compiled-only receipt](/private/tmp/pi-removal-final-20261015-v30/artifacts/ios-expanded-build.json)),
-bound to the v30 canonical manifest. Remaining builds are pending; **no v30
-native pass yet**. Actual full-follow-on expanded run started (11445),
-log `/private/tmp/pi-removal-v30-ios-expanded-actual-20261015.log`, with no result
-yet; the builder is now on transcript. Desktop compilation waits until all three
-iOS builders close.
+Reviewed v31 fixture proof binds the exact visible issued source/current message
+pane. Its scoped own-composer refusal permits the exact generic fallback only
+with mandatory API withholding and unchanged exact EditorView membership/body/
+title/selection/review. Ownership checks remain strict. The 125 focused checks in
+eight files, Svelte zero errors/warnings and root `check:e2e` passed; this is
+prepared diagnostic proof, not native acceptance. Earlier 573 affected frontend
+checks predate these changes; 38 escalated support checks passed with the original
+sandbox `EPERM` failure retained. Do not add overlapping suite counts.
 
-Historical v28 **djWH4K whole failed** after first14/relaunch5, exact publication
-plans/read-backs and normal Open note/editor succeeded, then exact-origin scroll
-failed. Its [receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-djWH4K/ios-interactive-gate.json)
-and closed 51-entry backup remain retained; v29 now verifies the mobile Meta
-correction on its own pin. All v28 variants compiled, including unrun live
-`55320711869a21decd1a37bcad4e1e544ad250d24d0c5bcda39ccc1921589978`.
-Fresh default E2E compiled SHA
-`f3774b58edce7c16c25e164254abbe708107317d11caf232b4c73ff00ef3dfff`
-([receipt](/private/tmp/pi-v28-default-build-closed-20261015.json)); smoke remains
-unrun. Prior v27 **z3TtcW transcript PASS** and v26 **ZlW6lU local-live PASS** keep
-their own exact pins in the [matrix](validation-matrix.md), not a combined final
-pass. Artificial STOP/CONT's false fresh-UI/durable-following-relaunch flags stay
-false; hosted live is user-deferred, physical touch/device/OS pressure and normal
-Settings vault relocation remain unverified.
+**v30 transcript 0cCfVn whole PASS** (six synthetic requests), executable
+`53712878aa60d22561ecae1ec1422c0ed342eb1b15edf6a33b8c37952021e63c`,
+[receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-transcript-0cCfVn/ios-transcript-gate.json).
+**v30 local-live B6Dw3j whole PASS**, executable
+`dca8b4de82f2afb32e8432df9be968fbe07e2bf96541eaec113d3919782e4697`,
+[receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-live-B6Dw3j/ios-live-gate.json):
+two normal Sends/three completed real POST200, 15 total requests including metadata;
+normal source/citation, Save/edit acknowledgement/background, pending restart,
+Keep/duplicate and final committed restart passed without inference replay.
+Both retain v30 canonical
+`edec64b2a5c5a800853ccd41b109f61c1e75c009f6d4fc95fa818ba7fadda162`;
+no cross-artifact whole final pass follows. Transcript closed 46-entry backup:
+`/private/tmp/pi-owned-simulator-after-v30-transcript-20261015`.
 
-Scale **v5** remains running untouched on frozen v22. The 04:59:45 UTC memory
-projection of **676/1005** submissions is historical progress only, not final
-durable seed/history/identity/provider accounting. The
-[v30 desktop queue](/private/tmp/pi-final-desktop-queue-v30-20261015.json) waits
-for full v5 closure and desktop build. Its planned scope is final expanded →
-publication faults → native crashes → desktop transcript → owned churn v4 →
-three paired resources alternating Pi/old/Pi → fresh default smoke. Resources
-also require the explicit v30 iOS-closure marker. No queued gate has started or
-passed; previous queues were superseded before any gate/log start. Resource
-coverage/cache/observer/IPC/storage unknowns and regressions remain explicit;
-no cost/adoption verdict follows.
+All three v30 iOS variants compiled; desktop was not built. All three v31 iOS
+builds started (29693), log `/private/tmp/pi-removal-v31-ios-builds-20261015.log`;
+expanded compilation completed SHA
+`1b98f56f15756214f4c356086d6faef953f9c2cf453b6bcb1996bec70836678f`
+([compiled-only receipt](/private/tmp/pi-removal-final-20261015-v31/artifacts/ios-expanded-build.json)).
+Actual full-follow-on expanded run92673 started, log
+`/private/tmp/pi-removal-v31-ios-expanded-actual-20261015.log`, with no result yet.
+Remaining builds are pending; **no v31 native pass yet**. Separate-target persistent app build39179
+started, log `/private/tmp/pi-v31-persistent-app-build-20261015.log`, with no build
+pass yet; the manual app remains closed.
 
-The manual rebuilt desktop app remains normally closed; Command-Q/runner8295
-exit0, retained copied data/no reset/no inference are recorded in its
-[close receipt](/private/tmp/pi-final-manual-close-before-resources-v22-20261015.json).
-Earlier bounded desktop live/original-seal proof remains on `c74a53e`/
-`9328ff2f…57b2`. Full platform/default/scale/cost acceptance and the goal remain open.
+Historical v29 **dt88yt whole failed** later compact title-input acquisition after
+first14/relaunch6, exact publication/editor and observed origin scroll passed.
+Its keyboardPlatform was iPhone/appleMobile true/Meta true/Ctrl false; closed
+51-entry backup and [receipt](/private/var/folders/kt/bvxdjthn7558236cmffqpndm0000gp/T/gneauxghts-pi-ios-interactive-dt88yt/ios-interactive-gate.json)
+remain retained. v28 djWH4K/v27 lvqjxb and earlier failures keep their own scope.
+Artificial STOP/CONT false fresh-UI/durable-following-relaunch flags remain false.
+Hosted live is user-deferred; physical touch/device/OS pressure and standalone
+normal Settings vault relocation remain unverified.
+
+Scale **v5** remains untouched/running on frozen v22: **701/1005** at
+05:08:28 UTC is historical memory progress only, not final durable seed/history/
+identity/provider accounting. New v31 queue76661 waits for full v5 closure and
+desktop build. v30 queue97996 was superseded before **any** gate, exit143
+([receipt](/private/tmp/pi-final-desktop-queue-v30-superseded-20261015.json)); v5
+was not interrupted. Final expanded/fault/crash/transcript/churn, three paired
+Pi/old/Pi resources and fresh default smoke have no new queued result. Explicit
+iOS closure remains required before resources; coverage/cache/observer/IPC/storage
+unknowns and regressions stay visible. Earlier manual desktop live/original-seal
+proof and platform passes retain their own pins. Full acceptance, cost/verdict
+and the goal remain open; no closure/archive/adoption claim.
 
 ## Current assignments
 
