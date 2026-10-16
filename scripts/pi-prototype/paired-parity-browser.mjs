@@ -5,6 +5,47 @@ export function reviewedTitlePlan(currentTitle, requestedTitle, draftTitleEditab
     titleEditing: draftTitleEditable ? 'editable' : 'readonly-baseline',
     changeTitle: draftTitleEditable && currentTitle !== requestedTitle };
 }
+/** Observe the mounted review's real final checkpoint/Keep, without issuing an
+ * effect or assuming resolved drafts remain readable in every baseline. */
+export async function observePublicKeep(api,id,before,perform,wait) {
+  const checkpoint=api.checkpointProposalDraft,commit=api.commitAgentProposal;
+  const checkpointOwn=Object.getOwnPropertyDescriptor(api,'checkpointProposalDraft');
+  const commitOwn=Object.getOwnPropertyDescriptor(api,'commitAgentProposal');
+  let acknowledged=structuredClone(before),accepted;
+  api.checkpointProposalDraft=async function(...args) {
+    const result=await checkpoint.apply(this,args);
+    if(args[0]===id)acknowledged=structuredClone(result);
+    return result;
+  };
+  api.commitAgentProposal=async function(...args) {
+    const result=await commit.apply(this,args);
+    if(args[0]===id)accepted={draft:structuredClone(acknowledged),receipt:structuredClone(result),markdown:args[1],version:args[2]};
+    return result;
+  };
+  try {
+    await perform();
+    const observed=await wait(()=>accepted,'observed normal UI Keep receipt');
+    if(observed.receipt.status!=='committed'||observed.version!==observed.draft.version||observed.markdown!==observed.draft.markdown
+      ||observed.receipt.committedMarkdown!==observed.draft.markdown)throw new Error('UI Keep did not commit its exact acknowledged draft');
+    for(const key of ['markdown','title','path'])if(observed.draft[key]!==before[key])throw new Error('Keep altered reviewed bytes/destination');
+    return {draft:observed.draft,receipt:observed.receipt};
+  } finally {
+    if(checkpointOwn)Object.defineProperty(api,'checkpointProposalDraft',checkpointOwn);else delete api.checkpointProposalDraft;
+    if(commitOwn)Object.defineProperty(api,'commitAgentProposal',commitOwn);else delete api.commitAgentProposal;
+  }
+}
+/** Pi must reject stale versions. The pinned old owner returns its existing
+ * receipt before inspecting the duplicate's version; record that difference. */
+export async function verifyDuplicateKeep(api,id,draft,lane) {
+  if(!['old','pi'].includes(lane))throw new Error('Explicit duplicate comparison lane required');
+  let stale,rejected=false;try{stale=await api.commitAgentProposal(id,draft.markdown,draft.version-1);}catch{rejected=true;}
+  if(lane==='pi'&&!rejected)throw new Error('Stale duplicate Keep accepted by Pi');
+  const first=await api.commitAgentProposal(id,draft.markdown,draft.version),second=await api.commitAgentProposal(id,draft.markdown,draft.version);
+  if(first.status!=='committed'||JSON.stringify(first)!==JSON.stringify(second))throw new Error('Duplicate Keep changed receipt');
+  if(!rejected&&JSON.stringify(stale)!==JSON.stringify(first))throw new Error('Baseline stale duplicate changed existing receipt');
+  if(first.committedMarkdown!==draft.markdown)throw new Error('Receipt differs from accepted body');
+  return {id,version:draft.version,...first,staleDuplicate:rejected?'rejected':'accepted-existing-receipt'};
+}
 export async function parityBrowserAction(action,args={}) {
   const check=(value,message)=>{if(!value)throw new Error(message);};
   const pause=()=>new Promise(ok=>setTimeout(ok,60));
@@ -32,9 +73,10 @@ export async function parityBrowserAction(action,args={}) {
     await api.setDefaults({...settings,provider,model:'pi-native-fixture',localModel:'pi-native-fixture',openaiModel:'pi-native-fixture',
       localBaseUrl:'http://127.0.0.1:1443/local/v1',reasoningEffort:'off',defaultVaultAccess:'full'});
     await api.setLocalModelCapabilities('pi-native-fixture',{tools:true,images:false,audio:false,video:false,reasoningEffort:'off'});
-    window.__pairedParity.provider=provider;return true;
+    check(['old','pi'].includes(args.lane),'Explicit paired runtime lane required');
+    window.__pairedParity.provider=provider;window.__pairedParity.lane=args.lane;return true;
   }
-  const {api,EditorView,invoke,state,provider}=window.__pairedParity;
+  const {api,EditorView,invoke,state,provider,lane}=window.__pairedParity;
   if(action==='quiesce')return invoke('prepare_restart');
   const openChat=async()=>{
     if(!document.querySelector('[aria-label="Thought partner chat"]'))await click('Open thought partner');
@@ -83,12 +125,12 @@ export async function parityBrowserAction(action,args={}) {
   const keep=async(id,conversationId)=>{
     await currentReview(id);await openChat();
     const before=await api.getProposalDraft(id);
-    const strip=await until(()=>document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`),'review action strip');
-    (await until(()=>button('Keep All',strip)??button('Keep Remaining',strip),'normal Keep')).click();
-    await until(async()=>!(await api.listPendingProposals(conversationId)).some(value=>value.id===id),'native publication');
-    const accepted=await api.getProposalDraft(id);
-    check(accepted.markdown===before.markdown&&accepted.title===before.title&&accepted.path===before.path,'Keep altered reviewed bytes/destination');
-    state.kept.push({id,draft:accepted});return accepted;
+    const observed=await observePublicKeep(api,id,before,async()=>{
+      const strip=await until(()=>document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`),'review action strip');
+      (await until(()=>button('Keep All',strip)??button('Keep Remaining',strip),'normal Keep')).click();
+      await until(async()=>!(await api.listPendingProposals(conversationId)).some(value=>value.id===id),'native publication');
+    },until);
+    state.kept.push({id,...observed});return observed.draft;
   };
   if(action==='seed') {
     check(!(await api.listConversations()).length,'Fresh generated conversations required');
@@ -148,7 +190,7 @@ export async function parityBrowserAction(action,args={}) {
     check(keptSave.title===edited.reviewedTitle,'Save changed admitted review title');
     // Obtain the exact receipt through public duplicate Keep, preserving its
     // final hunk-decision version, so selection can name the native destination.
-    const final=await api.getProposalDraft(proposal.id),receipt=await api.commitAgentProposal(proposal.id,final.markdown,final.version);
+    const receipt=state.kept.find(item=>item.id===proposal.id).receipt;
     check(receipt.status==='committed'&&receipt.noteId,'Save lacks canonical identity');state.savedNoteId=receipt.noteId;
     const duplicate=await api.prepareNoteSave(state.full,answer.id);check(duplicate.id===proposal.id&&duplicate.status==='committed','Duplicate Save changed identity');
     const selected=await api.prepareNoteSave(state.full,answer.id,{markdown:'Echo phrase.',text:'Echo phrase.',occurrence:1},{targetNoteId:receipt.noteId,heading:'Selected addition'});
@@ -157,13 +199,7 @@ export async function parityBrowserAction(action,args={}) {
   }
   if(action==='duplicates') {
     const receipts=[];
-    for(const {id,draft} of state.kept) {
-      let rejected=false;try{await api.commitAgentProposal(id,draft.markdown,draft.version-1);}catch{rejected=true;}
-      check(rejected,'Stale duplicate Keep accepted');
-      const first=await api.commitAgentProposal(id,draft.markdown,draft.version),second=await api.commitAgentProposal(id,draft.markdown,draft.version);
-      check(first.status==='committed'&&JSON.stringify(first)===JSON.stringify(second),'Duplicate Keep changed receipt');
-      check(first.committedMarkdown===draft.markdown,'Receipt differs from accepted body');receipts.push({id,version:draft.version,...first});
-    }
+    for(const {id,draft} of state.kept)receipts.push(await verifyDuplicateKeep(api,id,draft,lane));
     const append=receipts.at(-1);check(append.noteId===state.savedNoteId,'Append changed canonical identity');
     check((append.committedMarkdown.match(/Echo phrase\./g)??[]).length===3,'Selection append changed repeated-text occurrence count');
     return receipts;

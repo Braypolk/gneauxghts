@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {initializeParityWorkspace} from './paired-parity-gate.mjs';
-import {reviewedTitlePlan,parityBrowserAction} from './paired-parity-browser.mjs';
+import {reviewedTitlePlan,parityBrowserAction,observePublicKeep,verifyDuplicateKeep} from './paired-parity-browser.mjs';
 
 test('review title admission preserves read-only baseline and skips unchanged Save titles',()=>{
   assert.deepEqual(reviewedTitlePlan('Original baseline','Requested title',false),{
@@ -10,8 +10,56 @@ test('review title admission preserves read-only baseline and skips unchanged Sa
     reviewedTitle:'Requested title',draftTitleEditable:true,titleEditing:'editable',changeTitle:true});
   assert.equal(reviewedTitlePlan('Saved original','Saved original',true).changeTitle,false);
   assert.equal(reviewedTitlePlan('Saved original','Saved original',false).changeTitle,false);
-  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});return (${parityBrowserAction.toString()});`;
+  const script=`const reviewedTitlePlan=(${reviewedTitlePlan.toString()});const observePublicKeep=(${observePublicKeep.toString()});const verifyDuplicateKeep=(${verifyDuplicateKeep.toString()});return (${parityBrowserAction.toString()});`;
   assert.doesNotThrow(()=>new Function(script));
+});
+
+test('normal UI Keep observes the final acknowledged version without reading a resolved baseline draft',async()=>{
+  const before={version:3,markdown:'Human reviewed body',title:'Baseline title',path:'/generated/Plan.md',decisions:[]};
+  let resolved=false,commits=0,checkpoints=0;
+  const receipt={status:'committed',committedMarkdown:before.markdown,noteId:'canonical-id',applied:{path:before.path}};
+  const api={
+    async getProposalDraft(){assert(!resolved,'That review is already resolved.');return before;},
+    async checkpointProposalDraft(id,draft){assert.equal(id,'review-1');checkpoints++;return {...draft,version:4};},
+    async commitAgentProposal(id,markdown,version){assert.equal(id,'review-1');assert.equal(markdown,before.markdown);assert.equal(version,4);commits++;resolved=true;return receipt;}
+  };
+  const originalCheckpoint=api.checkpointProposalDraft,originalCommit=api.commitAgentProposal;
+  const observed=await observePublicKeep(api,'review-1',before,async()=>{
+    const final=await api.checkpointProposalDraft('review-1',{...before,decisions:[{status:'kept'}]});
+    await api.commitAgentProposal('review-1',final.markdown,final.version);
+  },async check=>{const result=check();assert(result);return result;});
+  assert.equal(commits,1);assert.equal(checkpoints,1);assert.equal(observed.draft.version,4);
+  assert.deepEqual(observed.draft.decisions,[{status:'kept'}]);assert.deepEqual(observed.receipt,receipt);
+  await assert.rejects(api.getProposalDraft(),/already resolved/);
+  assert.equal(api.checkpointProposalDraft,originalCheckpoint);assert.equal(api.commitAgentProposal,originalCommit);
+});
+
+test('Keep observation rejects mismatched commit version and restores prototype methods after failure',async()=>{
+  const before={version:3,markdown:'Reviewed body',title:'Plan',path:'/generated/Plan.md'};
+  const prototype={async checkpointProposalDraft(id,draft){return draft;},async commitAgentProposal(){return {status:'committed',committedMarkdown:before.markdown};}};
+  const api=Object.create(prototype);
+  await assert.rejects(observePublicKeep(api,'review-1',before,async()=>{await api.commitAgentProposal('review-1',before.markdown,2);},async check=>check()),/exact acknowledged draft/);
+  assert.equal(Object.hasOwn(api,'checkpointProposalDraft'),false);assert.equal(Object.hasOwn(api,'commitAgentProposal'),false);
+});
+
+test('baseline stale duplicate preserves its existing receipt while Pi requires version rejection',async()=>{
+  const draft={version:4,markdown:'Accepted body'},receipt={status:'committed',committedMarkdown:draft.markdown,noteId:'canonical-id'};
+  const versions=[];
+  const baseline={async commitAgentProposal(id,markdown,version){versions.push(version);return receipt;}};
+  const old=await verifyDuplicateKeep(baseline,'review-1',draft,'old');
+  assert.equal(old.staleDuplicate,'accepted-existing-receipt');assert.deepEqual(versions,[3,4,4]);
+  await assert.rejects(verifyDuplicateKeep(baseline,'review-1',draft,'pi'),/Stale duplicate Keep accepted by Pi/);
+  const pi={async commitAgentProposal(id,markdown,version){if(version!==draft.version)throw new Error('Stale');return receipt;}};
+  assert.equal((await verifyDuplicateKeep(pi,'review-1',draft,'pi')).staleDuplicate,'rejected');
+});
+
+test('baseline capability handling cannot accept a changed stale or duplicate receipt',async()=>{
+  const draft={version:4,markdown:'Accepted body'},receipt={status:'committed',committedMarkdown:draft.markdown,noteId:'canonical-id'};
+  const changedStale={async commitAgentProposal(id,markdown,version){return version===3?{...receipt,noteId:'different-id'}:receipt;}};
+  await assert.rejects(verifyDuplicateKeep(changedStale,'review-1',draft,'old'),/stale duplicate changed existing receipt/);
+  let count=0;const changedDuplicate={async commitAgentProposal(){return ++count===3?{...receipt,noteId:'different-id'}:receipt;}};
+  await assert.rejects(verifyDuplicateKeep(changedDuplicate,'review-1',draft,'old'),/Duplicate Keep changed receipt/);
+  await assert.rejects(verifyDuplicateKeep(changedStale,'review-1',draft,undefined),/Explicit duplicate comparison lane/);
 });
 
 test('initialization timeout retains the latest bounded browser error and failed phase',async()=>{

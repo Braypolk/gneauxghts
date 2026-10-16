@@ -33,7 +33,7 @@ The same user scenarios and public outcomes run in each lane:
 | Create and human review | Normal composer asks for creation; actual lane proposal tool stages it; retained editor changes the body in both lanes and title only when the normal title input permits editing; normal Keep publishes those exact admitted fields. |
 | Faithful whole-answer Save | Normal answer Save control stages its exact completed answer and Open in chat link; retained editor adds the explicit append heading; normal Keep publishes it; repeated public Save preserves proposal identity. |
 | Second repeated selection append | Public Save selects occurrence 1 of `Echo phrase.` and names the saved Note Identity and heading; retained editor reviews; normal Keep appends once to that same canonical identity. |
-| Duplicate Keep | Exact final acknowledged hunk-decision version is supplied explicitly; stale version must reject; two duplicate Keeps must return equal committed receipts, dispatch no inference, change no canonical bytes, add no NoteTimeline publication, and leave one file per Note Identity. |
+| Duplicate Keep | Exact final acknowledged hunk-decision version is supplied explicitly; Pi must reject a stale version; the old baseline may reuse its existing receipt and records that behavior explicitly; two duplicate Keeps must return equal committed receipts, dispatch no inference, change no canonical bytes, add no NoteTimeline publication, and leave one file per Note Identity. |
 
 The dialect adapter is explicit. Old reads use `read_notes` with
 `purpose=answer`; Pi direct reads use `read_note`. Old creates use
