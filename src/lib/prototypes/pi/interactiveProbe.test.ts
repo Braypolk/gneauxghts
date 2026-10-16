@@ -1,11 +1,17 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { InteractiveFailureJourney } from './interactiveFailures';
+import { EditorView } from '@codemirror/view';
+import { EditorState } from '@codemirror/state';
+import { documentReviewField, reviewProjection, setDocumentReview } from '$lib/features/proposals/reviewExtension';
+import type { ChatProposalDraft } from '$lib/features/chat/types';
+import type { SharedKeepPlan } from './sharedKeepProof';
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), conversation: vi.fn(), failures: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), conversation: vi.fn(), failures: vi.fn(), state: vi.fn(), pending: vi.fn(), draft: vi.fn(), commit: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('$lib/features/chat/api', () => ({ chatApi: {
-  prototypeState: async () => ({ interactiveStateJson: JSON.stringify({ a: 'a', savedId: 'saved', savedNoteId: 'note' }) }),
+  prototypeState: async () => mocks.state() ?? ({ interactiveStateJson: JSON.stringify({ a: 'a', savedId: 'saved', savedNoteId: 'note' }) }),
   getConversation: mocks.conversation,
+  listPendingProposals: mocks.pending, getProposalDraft: mocks.draft, commitAgentProposal: mocks.commit,
 } }));
 vi.mock('./nativeProvider', () => ({ nativeTransportStats: {} }));
 vi.mock('./interactiveFailures', () => ({ runInteractiveFailures: mocks.failures }));
@@ -96,7 +102,7 @@ function compactWorkspace() {
     state.collapsed = true; state.docked = false;
     await journey.startSend('a', 'PI_UI:REFINE:pending-proposal');
   });
-  return { state, rail, field, composer, send, foreignField, foreignComposer, foreignSend, messages };
+  return { state, rail, field, composer, send, foreignField, foreignComposer, foreignSend, messages, pane };
 }
 
 async function run() {
@@ -169,5 +175,114 @@ describe('interactive refinement Send after compact review editing', () => {
     expect(workspace.field.focus).not.toHaveBeenCalled();
     expect(workspace.send.click).not.toHaveBeenCalled();
     expect(workspace.foreignSend.click).not.toHaveBeenCalled();
+  });
+});
+
+/** Drive the actual relaunch caller through its normal Keep control. End after
+ * read-back rather than fabricating the remaining unrelated Retry/Save journey. */
+describe('interactive relaunch consumes independent normal Keep proof', () => {
+  beforeEach(() => { vi.resetAllMocks(); vi.useRealTimers(); vi.stubGlobal('window', {}); vi.stubGlobal('location', { href: 'http://tauri.localhost/?piInteractiveTest=relaunch' }); });
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  function keepWorkspace(corruption?: 'version' | 'decisions' | 'markdown' | 'title' | 'path', mountingCheckpoint = false) {
+    const workspace = compactWorkspace();
+    const before: ChatProposalDraft = { version: 4, markdown: 'Actual retained review body.', title: 'Reviewed title', path: '/vault/Reviewed title.md',
+      decisions: [{ id: 'hunk', status: 'modified', from: 0, to: 28, baseFrom: 0, baseTo: 0, proposedFrom: 0, proposedTo: 28, oldText: '', newText: 'Initial body' }] };
+    const mounted = structuredClone(before);
+    if (mountingCheckpoint) {
+      before.version = 1; before.decisions = [];
+      mounted.version = 2; mounted.decisions[0].status = 'pending';
+    }
+    const expectedKeepVersion = mounted.version + 1;
+    let durable = structuredClone(mounted), clicked = false, readBack = false, reads = 0;
+    const published: Array<{ receipts: { publicationPlans?: { kept?: SharedKeepPlan }; kept?: unknown }; error?: string }> = [];
+    const editorPane = { querySelector: () => ({ value: before.title }) };
+    const state = EditorState.create({ doc: mounted.markdown, extensions: [documentReviewField] }).update({ effects: setDocumentReview.of({ reviewId: 'exact-review', hunks: mounted.decisions }) }).state;
+    const view = { dom: { isConnected: true, closest: () => editorPane }, state: { doc: state.doc, field: (field: unknown) => field === reviewProjection ? state.field(documentReviewField) : undefined } };
+    vi.spyOn(EditorView, 'findFromDOM').mockReturnValue(view as unknown as EditorView);
+    const picker = { disabled: false, textContent: 'Conversations', getAttribute: () => null, click: vi.fn() };
+    const item = { textContent: 'Pi interactive A', click: vi.fn() };
+    Object.assign(workspace.pane, { querySelectorAll: (selector: string) => selector === 'button' ? [picker] : [item] });
+    const keep = { disabled: false, textContent: 'Keep All', getAttribute: () => null, click: vi.fn(() => {
+      const plan = published.at(-1)?.receipts.publicationPlans?.kept;
+      expect(plan).toMatchObject({ proposalId: 'keep', reviewId: 'exact-review', reviewedDraft: mounted, expectedKeepDraft: { version: expectedKeepVersion, decisions: [{ status: 'kept' }] } });
+      clicked = true;
+      durable = { ...structuredClone(mounted), version: corruption === 'version' ? 19 : expectedKeepVersion,
+        decisions: mounted.decisions.map(hunk => ({ ...hunk, status: corruption === 'decisions' ? 'modified' : 'kept' })) };
+    }) };
+    const queryAll = document.querySelectorAll.bind(document);
+    Object.assign(document, {
+      querySelector: (selector: string) => selector.includes('data-proposal-strip') ? { querySelectorAll: () => [keep] } : {},
+      querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' ? [view.dom] : queryAll(selector),
+    });
+    mocks.state.mockReturnValue({ interactiveStateJson: JSON.stringify({ a: 'a', keepId: 'keep', discardId: 'discard', interruptedId: 'interrupted', editedBody: before.markdown, editedTitle: before.title }) });
+    mocks.conversation.mockResolvedValue({ title: 'Pi interactive A', model: 'pi-native-fixture-b', messages: [{ id: 'interrupted', status: 'error', content: 'Acknowledged partial fixture text.' }] });
+    mocks.pending.mockImplementation(async () => {
+      if (readBack) throw new Error('Observed end of normal Keep proof');
+      return clicked ? [] : [{ id: 'keep', noteId: null, preview: { reviewId: 'exact-review' } }];
+    });
+    mocks.draft.mockImplementation(async () => {
+      reads++;
+      // The relaunch caller reads its staged snapshot after acquiring the view;
+      // the next normal mount acknowledgement has seeded hunk decisions.
+      const value = structuredClone(mountingCheckpoint && reads <= 2 ? before : durable);
+      if (reads === 2 && (corruption === 'markdown' || corruption === 'title' || corruption === 'path')) value[corruption] += ' changed';
+      return value;
+    });
+    const receipt = { status: 'committed', noteId: 'stable', applied: { kind: 'createNote', path: before.path, previousPath: null }, committedMarkdown: before.markdown, message: null };
+    mocks.commit.mockResolvedValue(receipt);
+    mocks.invoke.mockImplementation(async (command, payload) => {
+      if (command === 'pi_probe_config') return { fixture: true, interactiveGate: true };
+      if (command === 'pi_ui_report') published.push(structuredClone(payload.report));
+      if (command === 'read_note') { readBack = true; return { noteId: 'stable', path: before.path, title: before.title, markdown: before.markdown }; }
+    });
+    return { keep, published, before, mounted, receipt };
+  }
+
+  it('records the full pre-click prediction and uses its version/body for duplicate Keep and canonical read-back', async () => {
+    const workspace = keepWorkspace();
+    const report = await runInteractiveProbe();
+    expect(workspace.keep.click).toHaveBeenCalledOnce();
+    expect(mocks.commit).toHaveBeenCalledExactlyOnceWith('keep', workspace.before.markdown, 5);
+    expect(mocks.invoke).toHaveBeenCalledWith('read_note', { noteId: 'stable', path: workspace.before.path });
+    expect(report).toMatchObject({ receipts: { kept: workspace.receipt } });
+    expect(report?.error).toBe('Error: Observed end of normal Keep proof');
+  });
+
+  it.each(['version', 'decisions'] as const)('rejects wrong normal Keep %s before any duplicate commit', async corruption => {
+    const workspace = keepWorkspace(corruption);
+    expect(await runInteractiveProbe()).toMatchObject({ status: 'failed', error: 'Error: Normal shared Keep checkpoint differs from independently predicted full draft' });
+    expect(workspace.keep.click).toHaveBeenCalledOnce();
+    expect(workspace.published.some(report => report.receipts.publicationPlans?.kept)).toBe(true);
+    expect(mocks.commit).not.toHaveBeenCalled();
+    expect(mocks.invoke.mock.calls.some(([command]) => command === 'read_note')).toBe(false);
+  });
+
+  it('allows an initial v1 draft without decisions to mount/acknowledge pending hunks at v2 and predicts Keep v3', async () => {
+    const workspace = keepWorkspace(undefined, true);
+    const report = await runInteractiveProbe();
+    expect(workspace.before).toMatchObject({ version: 1, decisions: [] });
+    expect(workspace.keep.click).toHaveBeenCalledOnce();
+    expect(mocks.commit).toHaveBeenCalledExactlyOnceWith('keep', workspace.before.markdown, 3);
+    expect(report).toMatchObject({ receipts: { publicationPlans: { kept: { reviewedDraft: workspace.mounted, expectedKeepDraft: { version: 3 } } }, kept: workspace.receipt } });
+    expect(report?.error).toBe('Error: Observed end of normal Keep proof');
+  });
+
+  it.each(['version', 'decisions'] as const)('still rejects wrong post-Keep %s after mount acknowledgement advances the staged snapshot', async corruption => {
+    const workspace = keepWorkspace(corruption, true);
+    expect(await runInteractiveProbe()).toMatchObject({ status: 'failed', error: 'Error: Normal shared Keep checkpoint differs from independently predicted full draft' });
+    expect(workspace.keep.click).toHaveBeenCalledOnce();
+    expect(mocks.commit).not.toHaveBeenCalled();
+  });
+
+  it.each(['markdown', 'title', 'path'] as const)('retains caller-authored %s comparison before clicking Keep', async corruption => {
+    const workspace = keepWorkspace(corruption, true);
+    const report = await runInteractiveProbe();
+    expect(report?.status).toBe('failed');
+    // Relaunch already checks its persisted title; body/path are checked by the
+    // common proveKeep callback against the mounted acknowledgement.
+    expect(report?.error).toBe(corruption === 'title' ? 'Error: Relaunch lost reviewed edits' : 'Error: Mounted shared review changed caller-authored body, title or path');
+    expect(workspace.keep.click).not.toHaveBeenCalled();
+    expect(mocks.commit).not.toHaveBeenCalled();
   });
 });

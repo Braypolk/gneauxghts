@@ -57,8 +57,10 @@ manual force-quit and backgrounding retain their existing semantics. Live gates
 without the synthetic fixture environment cannot enter this diagnostic. Adding
 the wrapper changes native prototype bytes and requires fresh build/byte pins;
 do not describe the resulting native binary as unchanged. The transcript probe
-records every returned close receipt before asserting portable readiness, so
-`failed-ui-report.json` retains native failure details. It performs no Pi/API
+records every returned close receipt before asserting portable readiness, so the
+sandbox `ui-report.json` retains native failure details. The native owner can
+preserve it as `failed-ui-report.json` in the run evidence root before uninstalling
+the owned bundle; the driver does not create that copy automatically. It performs no Pi/API
 read after portable closure; only the bounded diagnostic report is published
 before the driver terminates the process.
 

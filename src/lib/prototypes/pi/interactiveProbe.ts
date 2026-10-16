@@ -4,14 +4,15 @@ import { invoke } from '@tauri-apps/api/core';
 import { EditorView } from '@codemirror/view';
 import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { nativeTransportStats } from './nativeProvider';
-import type { ChatMessage } from '$lib/features/chat/types';
-import { acquireProbeReview } from './probeReview';
+import type { ChatMessage, ChatProposalDraft } from '$lib/features/chat/types';
+import { acknowledgedProbeDraft, acquireProbeReview } from './probeReview';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openProbeChatSplit } from './probeSplit';
 import { openVisibleProbeChat, visibleProbeControl } from './probeChatFocus';
 import { revealProbeReadActivity } from './probeReadActivity';
 import { focusProbeChatComposer, probeChatPane, probeComposerSend, probeChatSendDiagnostics } from './probeChatSend';
 import { probePaneTitle } from './probePaneTitle';
+import { assertSharedKeepDraft, assertSharedMountedReview, assertSharedPublication, expectedSharedEditorMarkdown, expectedSharedKeepDraft, sharedProofDigest, type SharedCanonicalNote, type SharedKeepPlan } from './sharedKeepProof';
 
 type State = { a: string; b: string; permission: string; source: { noteId: string; path: string }; keepId?: string; discardId?: string;
   editedBody?: string; editedTitle?: string; stoppedId?: string; interruptedId?: string; savedId?: string; savedNoteId?: string; savedPath?: string };
@@ -86,10 +87,10 @@ async function send(id: string, content: string) {
   await until(() => Array.from(document.querySelectorAll('[aria-label="Assistant response"]')).some(node => node.textContent?.includes(message.content.replace(/\[.*?\]\(.*?\)/g, '').trim().slice(0, 25))), 'rendered admitted answer');
   return message;
 }
-async function currentReview(id: string) {
+async function currentReview(id: string, reviewId?: string) {
   const draft = await api.getProposalDraft!(id);
   const editor = () => {
-    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title);
+    return Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.dom.isConnected && view.state.doc.toString() === draft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === draft.title && (reviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === reviewId));
   };
   return acquireProbeReview({ editor, openChat, until,
     card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
@@ -102,15 +103,42 @@ async function editReview(id: string, body: string, title: string) {
   input(field, title); await pause(); field.blur();
   return until(async () => { const draft = await api.getProposalDraft!(id); return draft.markdown === body && draft.title === title ? draft : undefined; }, 'acknowledged body/title checkpoint');
 }
-async function settleReview(id: string, keep: boolean, conversationId: string) {
-  await currentReview(id); await openChat();
+async function settleReview(id: string, keep: boolean, conversationId: string, beforeKeep?: (plan: SharedKeepPlan) => Promise<void>) {
+  const pending = (await api.listPendingProposals(conversationId)).find(proposal => proposal.id === id);
+  const reviewId = pending?.preview.reviewId;
+  assert(typeof reviewId === 'string' && reviewId.length > 0, 'Shared proposal lacks exact pending review identity');
+  const view = await currentReview(id, reviewId);
+  let plan: SharedKeepPlan | undefined;
+  if (keep) {
+    assert(beforeKeep, 'Shared Keep requires independently recorded pre-click plan');
+    const draft = await acknowledgedProbeDraft({ draft: () => api.getProposalDraft!(id), until, working: () => {
+      const projection = view.state.field(reviewProjection, false);
+      const title = probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value;
+      assert(view.dom.isConnected && projection?.reviewId === reviewId && title !== undefined, 'Mounted shared review identity or connection differs');
+      return { markdown: view.state.doc.toString(), title, decisions: projection.hunks };
+    } });
+    assertSharedMountedReview(draft, reviewId, { connected: view.dom.isConnected, markdown: view.state.doc.toString(),
+      title: probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value, projection: view.state.field(reviewProjection, false) });
+    const expectedKeepDraft = expectedSharedKeepDraft(draft, reviewId);
+    const expectedEditorMarkdown = expectedSharedEditorMarkdown(expectedKeepDraft);
+    plan = { proposalId: id, reviewId, expectedNoteId: pending?.noteId ?? null, reviewedDraft: structuredClone(draft), expectedKeepDraft,
+      expectedEditorMarkdown, expectedDraftSha256: await sharedProofDigest(JSON.stringify(expectedKeepDraft)), expectedEditorSha256: await sharedProofDigest(expectedEditorMarkdown) };
+    await beforeKeep(plan);
+  }
+  await openChat();
   const strip = await until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'normal review action strip');
-  if (keep) { const action = await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip), 'Keep All'); action.click(); }
+  if (keep) {
+    const action = await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip), 'Keep All');
+    const current = (await api.listPendingProposals(conversationId)).find(proposal => proposal.id === id);
+    assert(current?.preview.reviewId === reviewId, 'Pending shared review identity changed before normal Keep');
+    assertSharedKeepDraft(plan!.reviewedDraft, await api.getProposalDraft!(id));
+    action.click();
+  }
   else await click('Discard', strip);
   await until(async () => !(await api.listPendingProposals(conversationId)).some(proposal => proposal.id === id), keep ? 'native Keep receipt' : 'native Discard');
-  // Keep checkpoints the final hunk decisions before publication. A draft
-  // captured before clicking Keep is therefore not its duplicate effect key.
-  return api.getProposalDraft!(id);
+  const settled = await api.getProposalDraft!(id);
+  if (plan) assertSharedKeepDraft(plan.expectedKeepDraft, settled);
+  return settled;
 }
 async function newProposal(id: string, prompt: string) {
   const before = new Set((await api.listPendingProposals(id)).map(value => value.id));
@@ -158,6 +186,29 @@ export async function runInteractiveProbe() {
     if (published.status === 'failed') throw new Error(published.error);
   };
   const persist = (state: State) => api.prototypeCheckpoint({ interactiveStateJson: JSON.stringify(state) });
+  const proveKeep = async (id: string, conversationId: string, role: 'kept' | 'saved' | 'appended', reviewed: ChatProposalDraft) => {
+    let plan: SharedKeepPlan | undefined;
+    const settled = await settleReview(id, true, conversationId, async value => {
+      plan = value;
+      // Normal review mounting may seed/acknowledge hunks after the caller's
+      // staged API snapshot. Preserve its authored fields while the connected,
+      // acknowledged capture owns the independent version/decision prediction.
+      assert(reviewed.markdown === value.reviewedDraft.markdown && reviewed.title === value.reviewedDraft.title && reviewed.path === value.reviewedDraft.path,
+        'Mounted shared review changed caller-authored body, title or path');
+      const plans = (report.receipts.publicationPlans ??= {}) as Record<string, SharedKeepPlan>;
+      plans[role] = value;
+      const published = await publish(); // Retain the independent expectation before normal Keep.
+      assert(published.status !== 'failed', published.error ?? 'Shared pre-click plan publication failed');
+    });
+    assert(plan, 'Missing shared pre-click publication plan');
+    const receipt = await api.commitAgentProposal(id, plan.expectedKeepDraft.markdown, plan.expectedKeepDraft.version);
+    const canonical = await invoke<SharedCanonicalNote>('read_note', { noteId: receipt.noteId, path: plan.expectedKeepDraft.path });
+    assertSharedPublication(plan, receipt, canonical);
+    report.receipts[role] = receipt;
+    const proofs = (report.receipts.publicationReadBacks ??= {}) as Record<string, unknown>;
+    proofs[role] = { settledDraft: settled, canonical, editorSha256: await sharedProofDigest(canonical.markdown) };
+    return receipt;
+  };
   try {
     await until(() => document.querySelector('[data-testid="workspace-pane"]'), 'actual native workspace');
     if (phase === 'seed') {
@@ -254,11 +305,7 @@ export async function runInteractiveProbe() {
         await mark('relaunch restores committed history, model and interrupted partial without replay');
         const view = await currentReview(state.keepId); const draft = await api.getProposalDraft!(state.keepId);
         assert(view.state.doc.toString() === state.editedBody && draft.title === state.editedTitle, 'Relaunch lost reviewed edits');
-        const keptDraft = await settleReview(state.keepId, true, state.a);
-        assert(keptDraft.markdown === draft.markdown && keptDraft.title === draft.title && keptDraft.path === draft.path, 'Keep changed reviewed text or destination');
-        const receipt = await api.commitAgentProposal(state.keepId, keptDraft.markdown, keptDraft.version);
-        assert(receipt.status === 'committed' && receipt.committedMarkdown?.includes(state.editedBody), 'Duplicate Keep differs from reviewed bytes');
-        report.receipts.kept = receipt;
+        await proveKeep(state.keepId, state.a, 'kept', draft);
         await settleReview(state.discardId, false, state.a); await mark('relaunch edited review Keep and Discard; duplicate Keep returns canonical receipt');
         await openChat(); const retry = await until(() => { const root = document.querySelector(`[data-chat-message-id="${state.interruptedId}"]`); return root ? button('Retry', root) : undefined; }, 'interrupted Retry'); retry.click();
         await until(async () => (await api.getConversation(state.a)).messages.some(value => value.id !== state.interruptedId && value.content === 'Retried fixture complete.' && value.status === 'completed'), 'restart Retry completion');
@@ -279,9 +326,7 @@ export async function runInteractiveProbe() {
           card: () => document.querySelector(`section[data-proposal-id="${save.id}"]`) ?? undefined,
           openCard: card => click('Review in editor', card) });
         saveDraft = await editReview(save.id, `${saveDraft.markdown}\n\n## Selected addition\n`, saveDraft.title);
-        const keptSave = await settleReview(save.id, true, state.b);
-        assert(keptSave.markdown === saveDraft.markdown && keptSave.title === saveDraft.title && keptSave.path === saveDraft.path, 'Save Keep changed reviewed text or destination');
-        const saved = await api.commitAgentProposal(save.id, keptSave.markdown, keptSave.version);
+        const saved = await proveKeep(save.id, state.b, 'saved', saveDraft);
         assert(saved.status === 'committed' && saved.noteId && saved.applied?.path, 'Save Keep lacks native receipt'); state.savedNoteId = saved.noteId; state.savedPath = saved.applied.path; report.receipts.saved = saved;
         const duplicate = await api.prepareNoteSave!(state.b, message.id); assert(duplicate.id === save.id && duplicate.status === 'committed', 'Repeated Save changed effect identity');
         await mark('normal whole-answer Save review Keep and duplicate Save preserve faithful content/origin');
@@ -290,9 +335,8 @@ export async function runInteractiveProbe() {
         // are recorded separately from the UI-initiated whole-answer journey.
         const selection = await api.prepareNoteSave!(state.b, message.id, { markdown: 'Echo phrase.', text: 'Echo phrase.', occurrence: 1 }, { targetNoteId: state.savedNoteId, heading: 'Selected addition' });
         const selected = await api.getProposalDraft!(selection.id); assert(selected.markdown.includes('Selected addition'), 'Explicit append heading absent');
-        await currentReview(selection.id); const keptSelection = await settleReview(selection.id, true, state.b);
-        assert(keptSelection.markdown === selected.markdown && keptSelection.title === selected.title && keptSelection.path === selected.path, 'Append Keep changed reviewed text or destination');
-        const appended = await api.commitAgentProposal(selection.id, keptSelection.markdown, keptSelection.version); assert(appended.noteId === state.savedNoteId, 'Append changed target identity'); report.receipts.appended = appended;
+        await currentReview(selection.id);
+        const appended = await proveKeep(selection.id, state.b, 'appended', selected); assert(appended.noteId === state.savedNoteId, 'Append changed target identity'); report.receipts.appended = appended;
         assert(nativeTransportStats.chunks === noInference.chunks && nativeTransportStats.bytes === noInference.bytes, 'Save or Keep dispatched inference');
         await mark('public deterministic repeated-selection append uses retained UI review and exact target', { before: noInference, after: { ...nativeTransportStats } });
         // Use the normal editor keyboard navigation, including the origin alias.
