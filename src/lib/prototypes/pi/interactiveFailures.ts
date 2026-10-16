@@ -1,9 +1,9 @@
 // Optional fixture acceptance phase. Mutations use retained native commands;
 // review admission, errors and resolutions use the normal workspace controls.
 import { invoke } from '@tauri-apps/api/core';
-import type { EditorView } from '@codemirror/view';
+import { EditorView } from '@codemirror/view';
 import type { ChatApi } from '$lib/features/chat/api';
-import type { ChatAgentProposal, ChatMessage } from '$lib/features/chat/types';
+import type { ChatAgentProposal, ChatCitation, ChatMessage } from '$lib/features/chat/types';
 import type { NoteSession } from '$lib/features/notepad/model/types';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { acknowledgedProbeDraft } from './probeReview';
@@ -12,6 +12,7 @@ import { prepareFailureReviewControls } from './interactiveFailureReview';
 import { probePaneTitle } from './probePaneTitle';
 import { visibleProbeControl } from './probeChatFocus';
 import { openProbeChatSplit } from './probeSplit';
+import { focusProbeChatComposer } from './probeChatSend';
 
 type FailureApi = ChatApi & { prototypeFault(id: string, fault: string): Promise<void> };
 export interface InteractiveFailureJourney {
@@ -37,6 +38,41 @@ async function until<T>(read: () => T | Promise<T>, description: string): Promis
 const buttons = (root: ParentNode, label: string) => Array.from(root.querySelectorAll<HTMLButtonElement>('button')).find(node => !node.disabled && (node.textContent?.trim() === label || node.getAttribute('aria-label') === label));
 const strip = (id: string) => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`);
 const rewrite = (view: EditorView, markdown: string) => view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: markdown }, userEvent: 'input.type' });
+
+/** Bind stale refusal evidence to the real originating pane/composer and the
+ * exact currently retained EditorViews, including compact collapsed frames. */
+export async function observeFailureStaleSource(input: {
+  api: ChatApi; conversationId: string; cited: ChatMessage; noteId: string; change(): Promise<void>;
+}) {
+  const { api, conversationId, cited, noteId } = input;
+  const sources = cited.citations.filter((value): value is Extract<ChatCitation, { kind: 'note' }> => value.kind === 'note' && value.noteId === noteId && Boolean(value.passage));
+  assert(sources.length, 'Stale-source setup has no exact admitted note passage');
+  const pane = document.querySelector<HTMLElement>(`[data-chat-message-id="${cited.id}"]`)?.closest<HTMLElement>('[data-testid="workspace-pane"]');
+  assert(pane?.isConnected && pane.dataset.paneKind === 'chat', 'Stale source message lacks its mounted owning chat pane');
+  const composer = await focusProbeChatComposer(pane, until);
+  const errorRoot = composer.closest<HTMLElement>('.chat-composer-footer');
+  assert(errorRoot, 'Stale source owner lacks its normal composer error surface');
+  const mountedEditors = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node));
+  const retainedEditors = mountedEditors();
+  assert(retainedEditors.length && retainedEditors.every(view => view?.dom.isConnected), 'Stale source requires genuinely retained editor ownership');
+  return observeStaleProbeCitation({ messageId: cited.id, citationIds: sources.map(value => value.id), pane, errorRoot, until, change: input.change,
+    working: () => {
+      const current = mountedEditors();
+      assert(current.length === retainedEditors.length && current.every((view, index) => view === retainedEditors[index] && view?.dom.isConnected), 'Stale source replaced retained editor membership or identity');
+      return retainedEditors.map(view => {
+        const owner = view!.dom.closest<HTMLElement>('[data-testid="workspace-pane"]');
+        const title = probePaneTitle(owner, 'editor');
+        assert(owner?.isConnected && owner.dataset.paneKind === 'editor' && title?.isConnected, 'Stale source lost retained editor pane/title ownership');
+        return { paneId: owner.dataset.paneId, markdown: view!.state.doc.toString(), title: title.value,
+          selection: view!.state.selection.toJSON(), review: view!.state.field(reviewProjection, false) ?? null };
+      });
+    },
+    unavailable: async () => {
+      const original = sources.map(value => value.passage!.id);
+      const current = (await api.getConversation(conversationId)).messages.find(value => value.id === cited.id);
+      return Boolean(current) && original.every(id => !current!.citations.some(value => value.kind === 'note' && value.passage?.id === id));
+    } });
+}
 
 export async function runInteractiveFailures(journey: InteractiveFailureJourney) {
   const { api, conversationId: conversation, mark } = journey;
@@ -157,14 +193,8 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
   // never open or highlight a stale range as if it were current evidence.
   const stale = await note('Pi stale citation orchard');
   const cited = await journey.send(conversation, `PI_UI:READ:${stale.noteId}`);
-  assert(cited.citations.length, 'Stale-source setup has no admitted citation');
-  const sourceError = await observeStaleProbeCitation({ messageId: cited.id, until,
-    change: () => change(stale, 'The synthetic orchard source changed after the answer was admitted.'),
-    unavailable: async () => {
-      const original = cited.citations.filter(value => value.kind === 'note').map(value => value.passage?.id).filter(Boolean);
-      const current = (await api.getConversation(conversation)).messages.find(value => value.id === cited.id);
-      return original.length > 0 && Boolean(current) && original.every(id => !current!.citations.some(value => value.kind === 'note' && value.passage?.id === id));
-    } });
+  const sourceError = await observeFailureStaleSource({ api, conversationId: conversation, cited, noteId: stale.noteId,
+    change: () => change(stale, 'The synthetic orchard source changed after the answer was admitted.') });
   await mark('changed canonical source refuses stale citation navigation visibly', { messageId: cited.id, noteId: stale.noteId, ...sourceError });
 
   // A new canonical target revision after preparation must block publication.

@@ -1,10 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { EditorView } from '@codemirror/view';
+import { EditorView } from '@codemirror/view';
 import { EditorState } from '@codemirror/state';
 import { documentReviewField, reviewProjection, setDocumentReview } from '$lib/features/proposals/reviewExtension';
-import { proposal } from '$lib/features/chat/chatTestSupport';
+import { message, proposal } from '$lib/features/chat/chatTestSupport';
 import type { ChatProposalDraft } from '$lib/features/chat/types';
-import { runInteractiveFailures, type InteractiveFailureJourney } from './interactiveFailures';
+import { observeFailureStaleSource, runInteractiveFailures, type InteractiveFailureJourney } from './interactiveFailures';
+import type { ChatApi } from '$lib/features/chat/api';
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
 
@@ -132,5 +133,91 @@ describe('actual compact failure acceptance setup', () => {
     workspace.journey.selectConversation = async id => { await select(id); if (workspace.selectConversation.mock.calls.length > 1) workspace.state[flag] = true; };
     expect(await failure(workspace)).toMatch(/replaced the working editor|changed the exact acknowledged review/);
     expect(workspace.fault).not.toHaveBeenCalled();
+  });
+});
+
+function staleCallerWorkspace() {
+  const state = { error: '', connected: true, replacement: false, missingEditor: false, ambiguousComposer: false,
+    titleAvailable: true, title: 'Retained authored title', paneId: 'editor-1', change: '' };
+  let editorState = EditorState.create({ doc: 'Retained authored body' });
+  const editorTitle = { isConnected: true, get value() { return state.title; } };
+  const editorPane = { isConnected: true, get dataset() { return { paneKind: 'editor', paneId: state.paneId }; },
+    querySelector: () => state.titleAvailable ? editorTitle : null };
+  const editor = { get state() { return editorState; }, dom: { get isConnected() { return state.connected; }, closest: () => editorPane } } as unknown as EditorView;
+  const editorNode = {} as HTMLElement;
+  vi.spyOn(EditorView, 'findFromDOM').mockImplementation(() => state.replacement ? { ...editor } as EditorView : editor);
+  const footer = { isConnected: true, closest: () => null, getClientRects: () => [1],
+    querySelectorAll: () => state.error ? [{ isConnected: true, closest: () => null, getClientRects: () => [1], querySelector: () => ({ textContent: state.error }) }] : [] };
+  const slot = {};
+  const composer = { isConnected: true, disabled: false, getClientRects: () => [1],
+    closest: (selector: string) => selector === '.chat-composer-footer' ? footer : selector === '.workspace-chat-slot' ? slot : null };
+  const chatTitle = { value: 'Chat A', closest: () => null, getClientRects: () => [1],
+    focus: vi.fn(() => { Object.assign(document, { activeElement: chatTitle }); }) };
+  const control = { isConnected: true, disabled: false, dataset: { chatNoteCitationId: 'issued-source' }, closest: () => null, getClientRects: () => [1],
+    click: vi.fn(() => {
+      state.error = 'Unable to open the referenced note.';
+      if (state.change === 'identity') state.replacement = true;
+      if (state.change === 'membership') state.missingEditor = true;
+      if (state.change === 'connection') state.connected = false;
+      if (state.change === 'title') state.title += ' changed';
+      if (state.change === 'pane') state.paneId = 'foreign-editor';
+      if (state.change === 'markdown') editorState = editorState.update({ changes: { from: 0, to: editorState.doc.length, insert: 'Opened stale note' } }).state;
+      if (state.change === 'selection') editorState = editorState.update({ selection: { anchor: 4 } }).state;
+    }) };
+  const card = { isConnected: true, closest: (selector: string) => selector === '[data-testid="workspace-pane"]' ? pane : null,
+    getClientRects: () => [1], querySelectorAll: () => [control] };
+  const pane = { isConnected: true, dataset: { paneKind: 'chat' }, closest: () => null, getClientRects: () => [1],
+    querySelector: (selector: string) => selector === '[data-chat-message-id="cited"]' ? card : null };
+  vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
+  vi.stubGlobal('document', { activeElement: null, querySelector: () => card,
+    querySelectorAll: (selector: string) => selector === '[data-testid="note-editor"] .cm-editor' ? state.missingEditor ? [] : [editorNode]
+      : selector === 'textarea[aria-label="Message"]' ? state.ambiguousComposer ? [composer, { ...composer }] : [composer]
+      : selector === '.mobile-workspace-title-slot [aria-label="Chat title"]' ? [chatTitle]
+      : selector === '[data-testid="workspace-pane"][data-pane-kind="chat"]' ? [pane]
+      : selector === '[data-testid="workspace-pane"][data-pane-kind="editor"]' ? [editorPane] : [] });
+  const cited = message({ id: 'cited', conversationId: 'A', citations: [{ id: 'issued-source', kind: 'note', noteId: 'orchard', notePath: '/vault/Orchard.md', label: 'Orchard', sectionLabel: null, startLine: null, excerpt: null,
+    passage: { id: 'issued-passage', noteId: 'orchard', contentHash: 'hash', location: 'body', start: 0, end: 4, excerpt: 'Body', revisions: [] } }] });
+  const getConversation = vi.fn(async () => ({ messages: [{ ...cited, citations: [] }] }));
+  return { state, control, chatTitle, getConversation,
+    input: { api: { getConversation } as unknown as ChatApi, conversationId: 'A', cited, noteId: 'orchard', change: vi.fn(async () => {}) } };
+}
+
+describe('actual failure-phase stale-source binding', () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); vi.unstubAllGlobals(); });
+
+  it('uses the exact message owner and normal title focus to bind its portaled composer, current API and retained editor snapshot', async () => {
+    const fixture = staleCallerWorkspace();
+    const result = await observeFailureStaleSource(fixture.input);
+    expect(fixture.chatTitle.focus).toHaveBeenCalledOnce();
+    expect(fixture.control.click).toHaveBeenCalledOnce();
+    expect(fixture.getConversation).toHaveBeenCalledExactlyOnceWith('A');
+    expect(result).toMatchObject({ citationId: 'issued-source', apiWithheld: true,
+      workingBefore: [{ paneId: 'editor-1', title: 'Retained authored title', markdown: 'Retained authored body', selection: { ranges: [{ anchor: 0, head: 0 }], main: 0 }, review: null }] });
+    expect(result.workingAfter).toEqual(result.workingBefore);
+  });
+
+  it.each(['identity', 'membership', 'connection', 'title', 'pane', 'markdown', 'selection'])('rejects real caller snapshot corruption (%s) despite exact normal refusal', async change => {
+    const fixture = staleCallerWorkspace(); fixture.state.change = change;
+    await expect(observeFailureStaleSource(fixture.input)).rejects.toThrow(/replaced retained editor|changed retained editor/);
+  });
+
+  it('does not borrow a foreign mobile title for an unmounted retained editor title', async () => {
+    const fixture = staleCallerWorkspace(); fixture.state.titleAvailable = false;
+    await expect(observeFailureStaleSource(fixture.input)).rejects.toThrow('lost retained editor pane/title ownership');
+    expect(fixture.control.click).not.toHaveBeenCalled();
+  });
+
+  it('refuses ambiguous portaled composers before canonical mutation or citation click', async () => {
+    const fixture = staleCallerWorkspace(); fixture.state.ambiguousComposer = true;
+    await expect(observeFailureStaleSource(fixture.input)).rejects.toThrow('unambiguous retained composer');
+    expect(fixture.input.change).not.toHaveBeenCalled();
+    expect(fixture.control.click).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller whose admitted passage belongs to a different note', async () => {
+    const fixture = staleCallerWorkspace(); fixture.input.noteId = 'foreign-note';
+    await expect(observeFailureStaleSource(fixture.input)).rejects.toThrow('no exact admitted note passage');
+    expect(fixture.control.click).not.toHaveBeenCalled();
   });
 });
