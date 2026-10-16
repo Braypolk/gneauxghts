@@ -8,6 +8,7 @@ import type { NoteSession } from '$lib/features/notepad/model/types';
 import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { acknowledgedProbeDraft } from './probeReview';
 import { observeStaleProbeCitation } from './probeCitation';
+import { prepareFailureReviewControls } from './interactiveFailureReview';
 
 type FailureApi = ChatApi & { prototypeFault(id: string, fault: string): Promise<void> };
 export interface InteractiveFailureJourney {
@@ -97,6 +98,14 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
   const first = await journey.newProposal(conversation, 'PI_UI:CREATE');
   const second = await journey.newProposal(conversation, 'PI_UI:CREATE');
   const editor = await journey.currentReview(first.id);
+  const controls = await prepareFailureReviewControls({ conversationId: conversation, proposalId: first.id,
+    selectConversation: journey.selectConversation, until,
+    strip: () => {
+      const node = strip(first.id);
+      return node && !node.closest('[hidden],[inert],[aria-hidden="true"]') && node.getClientRects().length > 0
+        && getComputedStyle(node).visibility !== 'hidden' ? node : undefined;
+    },
+    working: () => ({ connected: editor.dom.isConnected, markdown: editor.state.doc.toString(), title: mountedWorking(editor).title }) });
   const before = await acknowledgedProbeDraft({ draft: () => draft(first.id), until,
     working: () => mountedWorking(editor) });
   const edited = 'Synthetic unacknowledged editor bytes survive a failed checkpoint.';
@@ -112,7 +121,7 @@ export async function runInteractiveFailures(journey: InteractiveFailureJourney)
   const recovered = await draft(first.id);
   assert(recovered.markdown === edited && recovered.version > before.version, 'Retry did not acknowledge the retained editor bytes');
   await discard(second.id); await discard(first.id);
-  await mark('failed checkpoint pins live review; recovery acknowledges exact edited bytes', { proposalId: first.id, beforeVersion: before.version, failedVersion: failed.version, recoveredVersion: recovered.version, markdown: recovered.markdown });
+  await mark('failed checkpoint pins live review; recovery acknowledges exact edited bytes', { ...controls, beforeVersion: before.version, failedVersion: failed.version, recoveredVersion: recovered.version, markdown: recovered.markdown });
 
   // A source selected before a canonical edit must produce a visible error,
   // never open or highlight a stale range as if it were current evidence.
