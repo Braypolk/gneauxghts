@@ -9,16 +9,17 @@ import { join, resolve } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 import { waitUntil, listenerPids } from '../../e2e/support/nativeTransport.mjs';
 import { startInteractiveFixture } from './interactive-fixture.mjs';
+import { prepareIosFixture } from './ios-fixture-config.mjs';
 import { assertInteractiveTransport } from './expanded-report.mjs';
 import { retainExpandedPhase } from './retain-expanded-phase.mjs';
 import { verifyFollowonsReceipts } from './followons-fixture.mjs';
 import { captureOwnedIosProcess, assertOwnedIosProcess, parseOwnedIosLaunch, parseIosProcess, suspendOwnedIosProcess } from './ios-process-suspension.mjs';
 
 const followons = process.env.PI_PROTOTYPE_FOLLOWONS_GATE === 'true';
+const fixtureConfig = prepareIosFixture(process.env, listenerPids);
 assert(!process.env.PI_PROTOTYPE_DATA, 'Allocate a fresh synthetic root; unset PI_PROTOTYPE_DATA');
 const simulator = process.env.PI_PROTOTYPE_SIMULATOR;
 assert(simulator, 'Set PI_PROTOTYPE_SIMULATOR to the explicitly owned, already booted disposable simulator');
-assert.equal(listenerPids(1443).length, 0, 'Fixture port 1443 has an unrelated owner; do not terminate it');
 const bundle = 'com.braypolkinghorne.gneauxghts.pi-prototype';
 const root = mkdtempSync(join(tmpdir(), 'gneauxghts-pi-ios-interactive-'));
 const evidencePath = join(root, 'ios-interactive-gate.json');
@@ -41,7 +42,7 @@ assert(existsSync(app), 'Missing isolated simulator app');
 const info = JSON.parse(run('plutil', ['-convert', 'json', '-o', '-', join(app, 'Info.plist')]));
 assert.equal(info.CFBundleIdentifier, bundle, 'Refuse installing another app bundle');
 const executable = join(app, info.CFBundleExecutable);
-const evidence = { gate: 'ios-shared-workspace-fixture', status: 'running', root, app, simulator: selected, bundle,
+const evidence = { gate: 'ios-shared-workspace-fixture', status: 'running', root, app, simulator: selected, bundle, fixtureUrl: fixtureConfig.url,
   executableSha256: createHash('sha256').update(readFileSync(executable)).digest('hex'),
   constraints: { xcode: run('xcodebuild', ['-version']), simulatorSdk: run('xcrun', ['--sdk', 'iphonesimulator', '--show-sdk-version']),
     runtime: selected.runtime, rustBuild: 'run.mjs exact pi-prototype,tauri/custom-protocol; existing generated Rust script replacement',
@@ -51,7 +52,7 @@ const evidence = { gate: 'ios-shared-workspace-fixture', status: 'running', root
 let fixture, data, first;
 const flush = () => writeFileSync(evidencePath, JSON.stringify({ ...evidence, requests: fixture?.requests ?? [] }, null, 2));
 try {
-  fixture = await startInteractiveFixture(1443, { followons });
+  fixture = await startInteractiveFixture(fixtureConfig.port, { followons });
   spawnSync('xcrun', ['simctl', 'terminate', simulator, bundle]);
   spawnSync('xcrun', ['simctl', 'uninstall', simulator, bundle]);
   run('xcrun', ['simctl', 'install', simulator, app]);
@@ -61,7 +62,7 @@ try {
   const inspect = pid => parseIosProcess(run('/bin/ps', ['-ww', '-p', String(pid), '-o', 'pid=,stat=,lstart=,comm='], { LC_ALL: 'C' }, 2000));
   const reportPath = join(data, 'Library/Application Support', bundle, 'PROTOTYPE-wipe-me/ui-report.json');
   const launch = () => run('xcrun', ['simctl', 'launch', simulator, bundle], {
-    SIMCTL_CHILD_PI_PROTOTYPE_HTTP_FIXTURE: 'http://127.0.0.1:1443',
+    ...fixtureConfig.launchEnv,
     SIMCTL_CHILD_PI_PROTOTYPE_INTERACTIVE_GATE: 'true', SIMCTL_CHILD_PI_PROTOTYPE_EXPANDED_GATE: 'true',
     SIMCTL_CHILD_PI_PROTOTYPE_FOLLOWONS_GATE: String(followons) });
   const phase = (name, prior) => waitUntil(() => {

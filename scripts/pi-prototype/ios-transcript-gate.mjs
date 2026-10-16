@@ -8,6 +8,7 @@ import { join, resolve, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { listenerPids, waitUntil } from '../../e2e/support/nativeTransport.mjs';
 import { startInteractiveFixture } from './interactive-fixture.mjs';
+import { prepareIosFixture } from './ios-fixture-config.mjs';
 import { sha256, assertRecoveredEffect } from './native-transcript-gate.mjs';
 
 export function assertContainerChange(previous, next) {
@@ -20,10 +21,10 @@ export function assertIosTranscriptReport(report, phase, launchId) {
   return report;
 }
 export async function runIosTranscriptGate() {
+  const fixtureConfig = prepareIosFixture(process.env, listenerPids);
   assert(!process.env.PI_PROTOTYPE_DATA, 'Fresh generated simulator data only; unset PI_PROTOTYPE_DATA');
   const simulator=process.env.PI_PROTOTYPE_SIMULATOR, appPath=process.env.PI_PROTOTYPE_IOS_APP;
   assert(simulator && appPath, 'Set explicitly owned disposable simulator and prebuilt PI_PROTOTYPE_IOS_APP');
-  assert.equal(listenerPids(1443).length,0,'Fixture port has an unrelated owner');
   const app=resolve(appPath), bundle='com.braypolkinghorne.gneauxghts.pi-prototype';
   const run=(command,args,extra={})=>{const value=spawnSync(command,args,{env:{...process.env,...extra},encoding:'utf8'});assert.equal(value.status,0,value.stderr||value.stdout);return value.stdout.trim();};
   const info=JSON.parse(run('plutil',['-convert','json','-o','-',join(app,'Info.plist')]));assert.equal(info.CFBundleIdentifier,bundle);
@@ -33,14 +34,14 @@ export async function runIosTranscriptGate() {
   // Never uninstall a pre-existing evaluation app with unknown ownership.
   assert.notEqual(spawnSync('xcrun',['simctl','get_app_container',simulator,bundle,'data'],{encoding:'utf8'}).status,0,'Requires absent prototype bundle; preserve prior evaluation data before starting');
   const root=realpathSync(mkdtempSync(join(tmpdir(),'gneauxghts-pi-ios-transcript-'))), evidencePath=join(root,'ios-transcript-gate.json');
-  const report={gate:'ios-native-transcript-relocation',status:'running',root,bundle,simulator:selected,app,executableSha256:sha256(readFileSync(join(app,info.CFBundleExecutable))),phases:[],screenshots:[],
+  const report={gate:'ios-native-transcript-relocation',status:'running',root,bundle,simulator:selected,app,fixtureUrl:fixtureConfig.url,executableSha256:sha256(readFileSync(join(app,info.CFBundleExecutable))),phases:[],screenshots:[],
     constraints:{xcode:run('xcodebuild',['-version']),sdk:run('xcrun',['--sdk','iphonesimulator','--show-sdk-version']),runtime:selected.runtime},
     limits:['Normal WKWebView controls receive programmatic events; touch gestures, physical device pressure and live providers remain unobserved.','Relocation transfers only generated app-owned roots between fresh installations of the same isolated bundle; standalone Settings-selected vault relocation is not established.']};
   let fixture,data,installed=false;
   const flush=()=>writeFileSync(evidencePath,JSON.stringify({...report,requests:fixture?.requests??[]},null,2));
   const roots=container=>({native:join(container,'Library/Application Support',bundle,'PROTOTYPE-wipe-me'),vault:join(container,'Documents/PROTOTYPE-wipe-me')});
   const install=()=>{run('xcrun',['simctl','install',simulator,app]);installed=true;data=realpathSync(run('xcrun',['simctl','get_app_container',simulator,bundle,'data']));return roots(data);};
-  const launch=()=>run('xcrun',['simctl','launch',simulator,bundle],{SIMCTL_CHILD_PI_PROTOTYPE_HTTP_FIXTURE:'http://127.0.0.1:1443',SIMCTL_CHILD_PI_PROTOTYPE_INTERACTIVE_GATE:'true',SIMCTL_CHILD_PI_PROTOTYPE_EXPANDED_GATE:'true'});
+  const launch=()=>run('xcrun',['simctl','launch',simulator,bundle],{...fixtureConfig.launchEnv,SIMCTL_CHILD_PI_PROTOTYPE_INTERACTIVE_GATE:'true',SIMCTL_CHILD_PI_PROTOTYPE_EXPANDED_GATE:'true'});
   const terminate=()=>{if(installed)spawnSync('xcrun',['simctl','terminate',simulator,bundle],{encoding:'utf8'});};
   const phase=async(name,previous)=>assertIosTranscriptReport(await waitUntil(()=>{
     try{const value=JSON.parse(readFileSync(join(roots(data).native,'ui-report.json'),'utf8'));if(value.gate==='ios-native-transcript-fixture'&&value.status==='failed')return value;return value.phase===name&&value.launchId!==previous&&value;}catch(error){if(error.code==='ENOENT'||error instanceof SyntaxError)return false;throw error;}
@@ -48,7 +49,7 @@ export async function runIosTranscriptGate() {
   const screenshot=name=>{const path=join(root,`${name}.png`);run('xcrun',['simctl','io',simulator,'screenshot',path]);report.screenshots.push(path);};
   const snapshot=(paths,name)=>{const value=JSON.parse(run('python3',['-B','scripts/pi-prototype/verify-ios-transcript-effects.py',paths.native,paths.vault]));writeFileSync(join(root,`${name}-native.json`),JSON.stringify(value,null,2));return value;};
   try{
-    fixture=await startInteractiveFixture();const firstRoots=install();report.originalContainer=data;launch();
+    fixture=await startInteractiveFixture(fixtureConfig.port);const firstRoots=install();report.originalContainer=data;launch();
     const edit=await phase('awaiting-external-edit');report.phases.push(edit);flush();
     const transcript=edit.receipts['awaiting-external-edit'].projectionPath;
     await waitUntil(()=>{const bytes=readFileSync(transcript,'utf8');return bytes.includes(edit.receipts['awaiting-external-edit'].content)&&!bytes.includes('Thought partner · pending');},'committed native projection');
