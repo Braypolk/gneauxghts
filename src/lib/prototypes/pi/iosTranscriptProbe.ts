@@ -91,16 +91,23 @@ async function send(id: string, content: string) {
   const message = await until(async () => { const messages = (await api.getConversation(id)).messages; const value = messages.length > count && messages.at(-1); return value && !['pending', 'streaming'].includes(value.status) ? value : undefined; }, 'terminal committed assistant');
   assert(message.status === 'completed', `Request ${message.status}: ${message.errorMessage}`); return message;
 }
-async function review(id: string, trace: ProbeTrace) {
+async function reviewEditor(id: string, trace: ProbeTrace, automaticReviewId?: string) {
   trace('review:begin', { id });
   const draft = await api.getProposalDraft!(id);
-  const editor = () => Array.from(document.querySelectorAll<HTMLInputElement>('[data-testid="note-title"]')).some(node => node.value === draft.title)
-    ? Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor')).map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === draft.markdown)
-    : undefined;
-  await acquireProbeReview({ editor, openChat: () => open(trace), until,
+  const editor = () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+    .map(node => EditorView.findFromDOM(node)).find(view => {
+      if (!view || view.state.doc.toString() !== draft.markdown) return false;
+      const title = view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]');
+      return title?.value === draft.title && (automaticReviewId === undefined || view.state.field(reviewProjection, false)?.reviewId === automaticReviewId);
+    });
+  const view = await acquireProbeReview({ editor, openChat: () => open(trace), until, waitForAutomaticMount: automaticReviewId !== undefined,
     card: () => document.querySelector(`section[data-proposal-id="${id}"]`) ?? undefined,
     openCard: card => { trace('review:open-card', { id }); return click('Review in editor', card); } });
   trace('review:editor-ready', { id });
+  return view;
+}
+async function review(id: string, trace: ProbeTrace) {
+  await reviewEditor(id, trace);
   await open(trace);
   return until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${id}"]`), 'normal review strip');
 }
@@ -110,7 +117,10 @@ async function wholeSave(conversationId: string, messageId: string, trace: Probe
   const before = new Set((await api.listPendingProposals(conversationId)).map(value => value.id));
   const answer = await until(() => document.querySelector(`[data-chat-message-id="${messageId}"]`), 'exact message Save control');
   await click('Save to note', answer);
-  return until(async () => (await api.listPendingProposals(conversationId)).find(value => !before.has(value.id)), 'UI-staged whole-answer Save');
+  const proposal = await until(async () => (await api.listPendingProposals(conversationId)).find(value => !before.has(value.id)), 'UI-staged whole-answer Save');
+  // Pending is published before the normal Save handler finishes presenting its review.
+  await reviewEditor(proposal.id, trace, String(proposal.preview.reviewId ?? proposal.id));
+  return proposal;
 }
 async function acknowledgedPending(id: string, trace: ProbeTrace) {
   await review(id, trace);

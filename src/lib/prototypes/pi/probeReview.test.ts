@@ -23,7 +23,7 @@ describe('ordinary workspace probe review acquisition',()=>{
     // The confirmation itself performs no checkpoint or version substitution.
     expect(await Promise.resolve(stored)).toEqual(baseline);
   });
-  it('observes the Save coordinator delayed editor mount even when no chat card appears',async()=>{
+  it.each([false,true])('observes the Save coordinator delayed editor mount (automatic wait: %s)',async waitForAutomaticMount=>{
     const draft:ChatProposalDraft={version:1,title:'Saved Pi answer',path:'/vault/Saved.md',markdown:'Faithful answer\n\n[[Chats/Pi/pi-10/Origin|Open in chat]]',decisions:[]};
     const proposal:ChatAgentProposal={id:'save-1',runId:null,conversationId:'conversation-1',assistantMessageId:'answer-1',kind:'create',noteId:null,
       title:draft.title,suggestedPath:draft.path,baseHash:null,payload:{markdown:draft.markdown},preview:{proposedEditorMarkdown:draft.markdown},status:'pending',createdAtMillis:1,updatedAtMillis:1};
@@ -39,7 +39,9 @@ describe('ordinary workspace probe review acquisition',()=>{
     try {
       const saving=Promise.resolve(coordinator.selectionActions.onSaveToNote!({conversationId:'conversation-1',messageId:'answer-1'}));
       await loading.promise;expect(editor).toBeUndefined();
-      const openCard=vi.fn(async()=>undefined),openChat=vi.fn(async()=>undefined);
+      const openCard=vi.fn(async()=>undefined),openChat=vi.fn(async()=>{
+        if(waitForAutomaticMount)throw new Error('Open chat raced automatic Save review mount');
+      });
       const until=async<V>(read:()=>V|Promise<V>,label:string):Promise<NonNullable<V>>=>{
         for(let poll=0;poll<3;poll++) {
           const value=await read();if(value)return value as NonNullable<V>;
@@ -47,11 +49,19 @@ describe('ordinary workspace probe review acquisition',()=>{
         }
         throw new Error(`Interactive UI deadline: ${label}`);
       };
-      await expect(acquireProbeReview({editor:()=>editor,card:()=>undefined,openChat,openCard,until})).resolves.toEqual({markdown:draft.markdown,title:draft.title});
-      expect(openCard).not.toHaveBeenCalled();expect(openChat).toHaveBeenCalledOnce();
+      await expect(acquireProbeReview({editor:()=>editor,card:()=>undefined,openChat,openCard,until,waitForAutomaticMount})).resolves.toEqual({markdown:draft.markdown,title:draft.title});
+      expect(openCard).not.toHaveBeenCalled();expect(openChat).toHaveBeenCalledTimes(waitForAutomaticMount?0:1);
       expect(api.prepareNoteSave).toHaveBeenCalledExactlyOnceWith('conversation-1','answer-1',undefined,{copyIntent:undefined,targetNoteId:undefined,heading:undefined});
       expect(loadDurableProposal).toHaveBeenCalledOnce();
     } finally {mount.resolve();coordinator.dispose();}
+  });
+  it('fails closed when normal Save never mounts its exact review despite a card being present',async()=>{
+    const openChat=vi.fn(async()=>undefined),openCard=vi.fn(async()=>undefined);
+    const until=async<V>(read:()=>V|Promise<V>,label:string):Promise<NonNullable<V>>=>{
+      expect(await read()).toBeUndefined();throw new Error(`deadline: ${label}`);
+    };
+    await expect(acquireProbeReview({editor:()=>undefined,card:()=>({id:'save-1'}),openChat,openCard,until,waitForAutomaticMount:true})).rejects.toThrow('deadline: normal Save-mounted proposal review');
+    expect(openChat).not.toHaveBeenCalled();expect(openCard).not.toHaveBeenCalled();
   });
   it('opens the matching card once and waits for its editor without repeated clicks',async()=>{
     const card={id:'pending'},editor={id:'retained'};let mounted=false,polls=0;

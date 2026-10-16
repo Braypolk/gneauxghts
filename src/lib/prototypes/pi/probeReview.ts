@@ -7,8 +7,11 @@ export async function acquireProbeReview<T,C>(input: {
   openChat(): Promise<void>;
   openCard(card: C): Promise<void>;
   until<V>(read: () => V | Promise<V>, label: string): Promise<NonNullable<V>>;
+  /** Only after a normal Save action has already started automatic presentation. */
+  waitForAutomaticMount?: boolean;
 }): Promise<NonNullable<T>> {
   const ready=input.editor();if(ready)return ready;
+  if(input.waitForAutomaticMount)return input.until(input.editor,'normal Save-mounted proposal review');
   await input.openChat();
   let opened=false;
   return input.until(async()=>{

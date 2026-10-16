@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), checkpoint: vi.fn(), open: vi.fn(), create: vi.fn(), get: vi.fn() }));
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), checkpoint: vi.fn(), open: vi.fn(), create: vi.fn(), get: vi.fn(), pending: vi.fn(), draft: vi.fn(), editor: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
-vi.mock('@codemirror/view', () => ({ EditorView: {} }));
-vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get } }));
+vi.mock('@codemirror/view', () => ({ EditorView: { findFromDOM: mocks.editor } }));
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get, listPendingProposals: mocks.pending, getProposalDraft: mocks.draft } }));
 vi.mock('./probeReview', () => ({ acknowledgedProbeDraft: vi.fn(), acquireProbeReview: vi.fn() }));
 vi.mock('$lib/features/proposals/reviewExtension', () => ({ reviewProjection: {} }));
 vi.mock('./probeChatFocus', () => ({ openVisibleProbeChat: mocks.open }));
 
 import { iosTranscriptDomReceipt, runIosTranscriptProbe } from './iosTranscriptProbe';
+import { acquireProbeReview } from './probeReview';
 
 function control(label = 'Expand retained chat') {
   return { tagName: 'BUTTON', textContent: '', getAttribute: (name: string) => name === 'aria-label' ? label : null,
@@ -110,6 +111,56 @@ describe('iOS transcript probe snapshot admission', () => {
     expect(receipt.panes?.[0]).toMatchObject({ collapsed: true, frameInert: true, frameAriaHidden: 'true' });
     expect(receipt.chats?.[0]).toMatchObject({ paneId: 'retained-pane', hidden: true, inert: true, ariaHidden: true });
     expect(click).not.toHaveBeenCalled(); expect(focus).not.toHaveBeenCalled();
+  });
+
+  it('settles the exact automatic Save mount before attempting normal chat review controls', async () => {
+    const draft = { version: 1, title: 'Saved Pi answer', markdown: 'Faithful answer with Origin', path: '/vault/Saved.md', decisions: [] };
+    const proposal = { id: 'saved', preview: { reviewId: 'exact-save-review' } };
+    const messages: { id: string; status: string; content: string; citations: { label: string }[] }[] = [];
+    let conflictVisible = false, conflictKind = 'edited', saved = false;
+    let title = draft.title, reviewId = 'foreign-review';
+    const view = { state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId }) },
+      dom: { closest: () => ({ querySelector: () => ({ value: title }) }) } };
+    mocks.editor.mockReturnValue(view);
+    mocks.state.mockResolvedValue(undefined);
+    mocks.create.mockResolvedValueOnce({ id: 'local' }).mockResolvedValueOnce({ id: 'openai' });
+    mocks.get.mockImplementation(async () => ({ title: 'Local chat', messages: [...messages], projectionConflict: conflictKind }));
+    mocks.pending.mockImplementation(async () => saved ? [proposal] : []);
+    mocks.draft.mockResolvedValue(draft);
+    mocks.invoke.mockImplementation(async (command, args) => {
+      if (command === 'pi_probe_config') return { fixture: true, interactiveGate: true, expandedGate: true };
+      if (command === 'save_note') return { noteId: 'source', path: '/vault/Source.md' };
+      if (command === 'pi_ui_report' && args.report.phase === 'awaiting-external-edit') conflictVisible = true;
+      if (command === 'pi_ui_report' && args.report.phase === 'awaiting-external-delete') { conflictVisible = true; conflictKind = 'missing'; }
+    });
+    const makeButton = (label: string, click = () => {}) => Object.assign(control(label), { click });
+    const buttons = [makeButton('Conversations'), makeButton('Send message', () => messages.push({ id: `answer-${messages.length}`, status: 'completed', content: 'Faithful answer', citations: [{ label: 'Orchard' }] })),
+      makeButton('Keep edited copy as a note', () => { conflictVisible = false; }), makeButton('Save to note', () => { saved = true; })];
+    const restore = makeButton('Restore transcript from chat', () => { conflictVisible = false; });
+    const answer = { querySelectorAll: () => [buttons[3]] };
+    vi.stubGlobal('InputEvent', class {});
+    vi.stubGlobal('document', { activeElement: null,
+      querySelector: (selector: string) => selector === '[aria-label="Chat title"]' ? { value: 'Local chat' }
+        : selector === 'textarea[aria-label="Message"]' ? { disabled: false, focus() {}, dispatchEvent() {} }
+          : selector.startsWith('[data-chat-message-id=') ? answer : {},
+      querySelectorAll: (selector: string) => selector === 'button' ? [...buttons, ...(conflictVisible ? [restore] : [])]
+        : selector === '[role="menuitem"]' ? [Object.assign(makeButton('Local chat'), { textContent: 'Local chat' })]
+          : selector === '[data-testid="note-editor"] .cm-editor' ? [{}] : [],
+    });
+    vi.mocked(acquireProbeReview).mockImplementationOnce(async input => {
+      expect(input.waitForAutomaticMount).toBe(true);
+      expect(input.editor()).toBeUndefined(); // Same bytes/title cannot admit a foreign projection.
+      reviewId = 'exact-save-review'; title = 'Foreign title';
+      expect(input.editor()).toBeUndefined();
+      title = draft.title; expect(input.editor()).toBe(view);
+      throw new Error('Observed exact automatic Save settlement');
+    });
+    const result = await runIosTranscriptProbe();
+    expect(result).toMatchObject({ status: 'failed', error: 'Error: Observed exact automatic Save settlement',
+      checks: ['watcher-driven external edit/delete and normal Convert/Restore buttons'] });
+    expect(acquireProbeReview).toHaveBeenCalledOnce();
+    expect(mocks.open).toHaveBeenCalledTimes(2); // Conversation selection and Save; no racing review header.
+    expect(mocks.checkpoint).not.toHaveBeenCalled();
   });
 
   it('never replaces the actual failure when DOM diagnostics are unavailable', async () => {

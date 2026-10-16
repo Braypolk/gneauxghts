@@ -6,6 +6,7 @@ import { chatApi, type ChatApi } from '$lib/features/chat/api';
 import { nativeTransportStats } from './nativeProvider';
 import type { ChatMessage } from '$lib/features/chat/types';
 import { acquireProbeReview } from './probeReview';
+import { reviewProjection } from '$lib/features/proposals/reviewExtension';
 import { openProbeChatSplit } from './probeSplit';
 import { openVisibleProbeChat } from './probeChatFocus';
 import { revealProbeReadActivity } from './probeReadActivity';
@@ -267,6 +268,14 @@ export async function runInteractiveProbe() {
         const answerElement = await until(() => document.querySelector(`[data-chat-message-id="${message.id}"]`), 'answer Save control'); await click('Save to note', answerElement);
         const save = await until(async () => (await api.listPendingProposals(state.b)).find(value => !before.has(value.id)), 'whole answer Save review'); state.savedId = save.id;
         let saveDraft = await api.getProposalDraft!(save.id); assert(saveDraft.markdown.includes('Echo phrase. Echo phrase.') && saveDraft.markdown.includes('Open in chat'), 'Whole-answer Save altered answer/origin');
+        // Save publishes pending before its asynchronous normal editor presentation completes.
+        await acquireProbeReview({ waitForAutomaticMount: true, until, openChat,
+          editor: () => Array.from(document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-editor'))
+            .map(node => EditorView.findFromDOM(node)).find(view => view?.state.doc.toString() === saveDraft.markdown &&
+              view.dom.closest('[data-pane-frame]')?.querySelector<HTMLInputElement>('[data-testid="note-title"]')?.value === saveDraft.title &&
+              view.state.field(reviewProjection, false)?.reviewId === String(save.preview.reviewId ?? save.id)),
+          card: () => document.querySelector(`section[data-proposal-id="${save.id}"]`) ?? undefined,
+          openCard: card => click('Review in editor', card) });
         saveDraft = await editReview(save.id, `${saveDraft.markdown}\n\n## Selected addition\n`, saveDraft.title);
         const keptSave = await settleReview(save.id, true, state.b);
         assert(keptSave.markdown === saveDraft.markdown && keptSave.title === saveDraft.title && keptSave.path === saveDraft.path, 'Save Keep changed reviewed text or destination');
