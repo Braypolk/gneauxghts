@@ -43,3 +43,9 @@ compaction/usage-context policy and Pi notes/provider task APIs. Legacy modules
 are behavior references, not reusable lifecycle owners.
 
 ## Comments
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+The isolated Pi research worker and safe summaries are integrated, including the owner-scoped query correction. Matrix **D** records worker summaries and 23 passed follow-on UI checks; focused actual-Harness checks are preparation evidence.
+
+The whole **D** run failed strict parent-summary proof: adjacent selected context kept the parent below its threshold. Source-free fixture setup is corrected/prepared and requires a native rerun. **S** scale v4 remains running/pending, with no completed history/compaction accounting result. See the [current validation matrix](../validation-matrix.md); worker summaries cannot substitute for parent proof.

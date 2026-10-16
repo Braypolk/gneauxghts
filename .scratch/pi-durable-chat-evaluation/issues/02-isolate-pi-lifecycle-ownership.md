@@ -95,3 +95,9 @@ production ownership decision.
 - Replaced both the evaluation implementation Proxy and outer lazy API Proxy with exhaustive typed ChatApi objects. Retained native delegates are named settings, composer configuration, keys/model capabilities and note-access policy operations; no lifecycle operation can fall through to TauriChatApi. Deferred branching/excerpts/transcript conflict resolution explicitly fail.
 - Pi request, conversation, review and answer state stays in Pi records/documents. Frontend quiesce closes watchers and Harness before acknowledging the native lifecycle token; policy-change events cancel active requests across API instances. A failed native restart can reopen a fresh paused Harness through the same caller API.
 - Behavioral test proves unsupported operations never call their legacy native counterparts; TypeScript checks the complete interface. Native build/exclusion and shutdown acceptance remain owned by the orchestrator/native ticket02; this comment does not claim those gates passed.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+The explicit Pi ChatApi/native domain seam is integrated. Matrix **R** records 52 legacy files physically absent from compiled comparison builds and lifecycle exclusion checks; **F/C/T/D** record actual native slices. The ordinary deliverable retains its default runtime.
+
+Final captured-source compilation began at 03:42 UTC on 2026-10-16 and has no passed result yet. Recheck that build, the default path and the full native matrix before acceptance. See the [current validation matrix](../validation-matrix.md); earlier implementation-agent pending statements above are historical.

@@ -51,3 +51,9 @@ Validation: focused Vitest `save.test.ts` and `wikilinkInteractionController.tes
 
 
 Review hardening: fragment lookup now receives an explicitly authorized current Note Identity resolver. Pi checks current access, selected grants and global exclusions before consulting the note catalog; the retained default checks its conversation policy before unique disk lookup. Recorded source paths never authorize reads or select replacement notes. Canonicalized source paths must remain inside the running vault and the current ordinary-note identity must match; missing, duplicate or replaced identities fail explicitly. Edited/historical excerpts still fall back to note-level links when they are ambiguous within the verified same note. Additional Rust fixtures cover rename plus path replacement, stale catalog ownership, duplicate identity, revoked/excluded lookup rejection and outside-vault paths; native execution remains pending the root lease.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Deterministic whole-answer and verified-selection Save are integrated. Matrix **P** records whole Save/origin, explicit selection append and closed duplicates; **M** records normal Save → approved Keep → Open in chat through the persistent local-live app.
+
+The final full Save/platform matrix remains open. **I** failed the normal Save editor-readiness race; wait/publication-proof corrections are prepared, with no corrected native pass yet. See the [current validation matrix](../validation-matrix.md) for exact scope and failure provenance.

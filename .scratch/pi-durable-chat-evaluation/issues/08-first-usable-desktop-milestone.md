@@ -88,3 +88,9 @@ bytes at arrival, or it fails without claiming dirty-buffer protection. Both
 protocol planner suites now pass **14 checks**. Native execution of this phase
 remains pending; aggregate typecheck currently reports concurrent compaction and
 transcript integration errors, with no diagnostics in the prepared driver files.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+The normal-UI harness, persistent app and handoff checklist are integrated. Matrix **M** records a passed/closed bounded persistent local-live scope; **D** records 14 first-launch and ten relaunch checks passed. These are actual observations beyond the historical preparation comments above.
+
+The complete expanded fixture run **D** still failed its strict parent-summary receipt. Hosted live is explicitly user-deferred; no user feedback is invented or made an implicit dependency. Expanded acceptance remains open. See the [current validation matrix](../validation-matrix.md) and its remaining gate queue.

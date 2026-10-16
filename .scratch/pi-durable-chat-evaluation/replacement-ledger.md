@@ -17,43 +17,46 @@ does not declare that final freeze. The [spec](spec.md),
 and [removal reproduction contract](removal-experiment-preparation.md) define
 the remaining gates.
 
-## Latest source checkpoint — 2026-10-15
+## Latest source checkpoint — 2026-10-16
 
-v21 is captured at `/private/tmp/pi-removal-final-20261015-v21`, canonical
-manifest `1cb0607bf44b45b756d6bc92e41d51a9fe5251a24b3dac09add65393a581890e`.
-It is **uncompiled** while scale v4 holds the native lease. Source preparation is
-frozen and committed through `8aeacdf`. Independent Standards/Spec review found
-one iOS live acceptance-proof defect: a marker-containing wrong canonical body
-could pass. Exact independently acknowledged body/title/path/review/version and
-ordinary canonical `read_note` checks after Keep and relaunch resolve it; focused
-re-review found no remaining findings. There is no new native acceptance or final
-common-source acceptance freeze. The v17 native pins below retain their scopes.
+Final source is frozen through `b52b1a6` and captured as **v22** at
+`/private/tmp/pi-removal-final-20261015-v22`, canonical manifest
+`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`.
+Its desktop removal build compiled and passed all three lifecycle exclusion tests;
+binary SHA `e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`.
+Receipt: `artifacts/desktop-build.json`; complete compiler/exclusion log:
+`/private/tmp/pi-removal-v22-desktop-build.log`. Three iOS variants are compiling.
+This establishes compilation/exclusion, not completed native journeys.
 
-Broader v20 validation passed 609/609 frontend tests in 81 files and 157/157 Node
-checks. The localized proof correction subsequently passed 16 Vitest/four Node
-checks and full types (zero errors/warnings). Logs remain under `/private/tmp`.
-The prepared Save readiness, source-free compaction setup, owned-resource churn,
-local iOS live and artificial STOP/CONT checks still require actual native runs.
-The historical inventory below has not been relabeled as final source metrics.
+Scale **v5** now runs the full fresh fixture against this final source. Superseded
+v4 was deliberately ended at 03:45 UTC on October 16, after read-only progress
+reported 1005 conversations and 401 submissions. Its final receipt is failed
+(`TypeError: fetch failed`) with 421 provider requests and no complete seed or
+identity accounting. `operator-stop.json` records the verified owned-app SIGTERM
+and reason: rerun the indexed parent query on delivered source. v4 is incomplete
+and ineligible for guarded continuation. Compilation/pure-test CPU overlaps scale;
+no scale timing/resource comparison is claimed. Native app/simulator journeys
+remain serialized. See the [current validation matrix](validation-matrix.md) for
+all 13 tickets, pinned prior passes/failures and the remaining queue.
 
-Scale v4 is running, last derived projection 359 replies; progress alone is not
-final durable seed/history/identity/accounting proof. Native builds/CUA do not
-overlap, while pure-test/source-capture CPU overlap precludes a performance
-claim. Resource v8 and closed manual local acceptance remain scoped evidence.
-The manual `c74a53e` bundle is closed and local-configured. Hosted live work is
-user-deferred. Complete replacement/iOS/scale/cost acceptance remains open.
+The persistent manual `c74a53e` bundle is closed and configured locally. Its bounded
+live acceptance and original-vault seal remain valid for that pin. Hosted live is
+user-deferred. Complete native/platform/scale/cost acceptance and the goal remain
+open; historical sections below retain earlier observations, not current running
+or permission states.
 
-## Current source inventory at v21 capture
+## Current source inventory at v22 capture
 
 The source inventory was refreshed after the localized proof correction. It is
 an inventory of maintained source, not measured savings or executable-function
-counts. The 52 comparison-tree deletions remain absent in v21; the default
-deliverable still deletes zero legacy files. v21 is not yet compiled.
+counts. The 52 comparison-tree deletions remain absent in v22; the default
+deliverable still deletes zero legacy files. The v22 desktop compiler and three
+lifecycle exclusion checks passed; native journey results remain separate.
 
-| Bounded inventory | Baseline `4b5ff2de` | Current v21 |
+| Bounded inventory | Baseline `4b5ff2de` | Current v22 |
 | --- | ---: | ---: |
-| Pi normal static TS closure from `chatApi.ts` | 5 files / 42,679 bytes / 494 lines | 17 files / 173,383 bytes / 2,020 lines |
-| All non-test Pi TS, including diagnostics | 8 files / 69,293 bytes / 799 lines | 43 files / 367,209 bytes / 4,296 lines |
+| Pi normal static TS closure from `chatApi.ts` | 5 files / 42,679 bytes / 494 lines | 17 files / 173,405 bytes / 2,020 lines |
+| All non-test Pi TS, including diagnostics | 8 files / 69,293 bytes / 799 lines | 43 files / 367,231 bytes / 4,296 lines |
 | Separate Pi TS tests | 0 files | 35 files / 242,146 bytes / 2,780 lines |
 | Top-level native `pi_*.rs`, excluding separate test files | 4 files / 32,508 bytes / 570 lines | 12 files / 195,427 bytes / 4,100 lines |
 | Seven explicitly extracted domain/command paths | Embedded in other modules | 92,288 bytes / 2,365 lines |
@@ -63,7 +66,7 @@ within the Pi directory, using the installed TypeScript parser. It excludes
 dynamic imports, shared UI/domain modules and third-party dependencies. Lines
 are physical LF lines; bytes are UTF-8. The closure's sorted
 `path + NUL + fileSHA256 + LF` inventory hash is
-`08de8e72efa19c603acad6db93ba901a76557fc3c8baa2923a3c6e154ca38e96`.
+`2ca43b081d5905fc23fbf6b3fde155400a2683efcf3f4ddd0466f4e10174c59f`.
 Its 481 syntax function bodies include 403 arrows; 73 per-file distinct named
 function declarations/expressions have bodies. Baseline equivalents are 151
 bodies / 137 arrows / 11 names. These are syntax counts, not a comparison with

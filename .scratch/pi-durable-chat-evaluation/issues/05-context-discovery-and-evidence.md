@@ -107,3 +107,9 @@ no inferred excerpt/access authority, and empty/truncated results. Combined evid
 and suggestion tests pass 14 cases. Latest Svelte check reports only an unrelated
 interactive-probe `vaultAccess: 'selected'` fixture error, reported to the orchestrator;
 these suggestion/evidence files have no type errors.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Native context/policy/evidence services and Pi bindings are integrated. Matrix **P** records selected/current/retained evidence and grants; **M** records actual discovery → Deny, then fresh Allow once → read/citation/canonical navigation through normal local-live UI.
+
+Final race, revocation and platform checks remain open. The paired grant API subset does not establish paired permission-dialog parity. See the [current validation matrix](../validation-matrix.md) for receipt provenance; earlier preparation/typecheck limitations above are historical.

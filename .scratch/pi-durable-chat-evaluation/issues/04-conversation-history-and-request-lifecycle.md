@@ -52,3 +52,9 @@ event contracts and native request/answer admission seams.
 - Integrated ticket03 frozen native admissions, ticket05 context/evidence/permission helpers, ticket06 review helpers and ticket07 deterministic Save/origin helpers. Permission identity is derived by ticket05 inside its tool transaction from Pi's atomically admitted LiveDoc run input, avoiding a post-submit identity race.
 - Validation: focused lifecycle/API/provider/evidence/Save suite passes 39 tests across five files. New behavior checks include >1,000 ordered records, failed atomic admission, original Retry snapshot after newer turns, real Harness slow-stream Stop retains acknowledged partial text and Retry after a newer turn preserves that output and original history, source-free follow-up after switching/reopen with exact timestamps and zero unrequested inference and zero retained event watchers through repeated switches, canonical app context omitted from authored-question replay, and unsupported-capability isolation. TypeScript reports no errors in the modified API/lifecycle files.
 - Native crash/partial persistence faults, resource measurements, live providers and actual desktop/iOS UI acceptance are still pending orchestrator acceptance; no native/app/provider commands were run by this agent.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Pi admission, durable checkpoints, projection and paging are integrated. Matrix **D** records first/relaunch/failure slices, **C** actual crash recovery, and **M** a short active Stop followed by a separate Retry completing READY. The earlier long-count Retry was stopped and is not a completed Retry result.
+
+The final concurrent/session/lifecycle matrix remains open. **S** scale v4 is running/pending: derived projection progress is not completed 1005-history, identity or provider-accounting proof. See the [current validation matrix](../validation-matrix.md) for bounded results and remaining gates.

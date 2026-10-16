@@ -44,3 +44,9 @@ relaunch passed separately; they do not establish this expanded matrix.
 Preserve default background automation; hands-on launch is an explicit workflow.
 
 ## Comments
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Fault/crash/storage/iOS drivers and suspension/local-live preparations are integrated. Matrix **F/C** records four passed native cases each, **D** five passed native-storage checks, and **I** a passed watcher slice. The whole expanded desktop and iOS transcript runs remain failed at their documented boundaries.
+
+Final desktop/iOS expanded and transcript checks remain open. Prepared artificial suspension, local-iOS-live and owned churn have not executed. Hosted live is explicitly user-deferred; simulator evidence does not establish physical touch/device/radio or real OS-pressure guarantees. See the [current validation matrix](../validation-matrix.md).

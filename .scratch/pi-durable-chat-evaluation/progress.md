@@ -9,33 +9,33 @@ where dependencies and file ownership allow. The actual persistent goal was
 created successfully. It remains active until every required implementation and
 acceptance gate is satisfied; unverified external prerequisites are not passes.
 
-## Current checkpoint — 2026-10-15
+## Current checkpoint — 2026-10-16
 
-Latest captured source is **v21**, canonical manifest
-`1cb0607bf44b45b756d6bc92e41d51a9fe5251a24b3dac09add65393a581890e`, at
-`/private/tmp/pi-removal-final-20261015-v21`. It is **not compiled** while scale v4
-holds the native lease. Independent Standards/Spec review found one iOS live
-publication-proof defect; exact acknowledged body/title/path/review/version and
-ordinary canonical read-back now resolve it. Focused correction re-review has
-no remaining findings. Preparation is frozen and committed through `8aeacdf`;
-no new native gate is accepted.
+Final source is frozen through `b52b1a6` and captured as **v22** at
+`/private/tmp/pi-removal-final-20261015-v22`, canonical manifest
+`3b3c6cfb273de778f6f859d4074332993ca36b771496d3d5578ab6645973c8a5`.
+Its desktop removal build compiled and passed all three lifecycle exclusion tests;
+binary SHA `e6cfcd12d2a042d21bd8df2f9bc8f357a587e6c9b272c2aa93a06d05877d7635`.
+Receipt: `artifacts/desktop-build.json`; complete compiler/exclusion log:
+`/private/tmp/pi-removal-v22-desktop-build.log`. Three iOS variants are compiling.
+This establishes compilation/exclusion, not completed native journeys.
 
-Broad frontend **609/609 in 81 files** and Node **157/157** passed before the
-localized proof correction; its 16 Vitest and four Node checks passed afterward.
-Full types are 0 errors / 0 warnings. Existing v17 publication/crash/transcript and paired
-compatible/Responses subset passes retain their pinned scopes. Resource v8
-passed core/long-output fixtures, with no performance-win claim. Latest expanded
-desktop and iOS transcript failures remain retained; corrected runs are pending.
+Scale **v5** now runs the full fresh fixture against this final source. Superseded
+v4 was deliberately ended at 03:45 UTC on October 16, after read-only progress
+reported 1005 conversations and 401 submissions. Its final receipt is failed
+(`TypeError: fetch failed`) with 421 provider requests and no complete seed or
+identity accounting. `operator-stop.json` records the verified owned-app SIGTERM
+and reason: rerun the indexed parent query on delivered source. v4 is incomplete
+and ineligible for guarded continuation. Compilation/pure-test CPU overlaps scale;
+no scale timing/resource comparison is claimed. Native app/simulator journeys
+remain serialized. See the [current validation matrix](validation-matrix.md) for
+all 13 tickets, pinned prior passes/failures and the remaining queue.
 
-Scale v4 is still running. Its last derived projection showed 359 replies,
-which is progress only, not durable final seed/history/accounting acceptance.
-No native build/CUA overlaps; pure tests/source-capture CPU may overlap, so no
-scale timing/performance claim is made. The persistent manual `c74a53e` product
-bundle is closed, local-configured, with bounded live acceptance and original
-seal proof retained. Full required proof and the persistent goal remain open.
-
-Historical sections below retain earlier failures and observations; this current
-checkpoint and latest receipt section supersede former running/approval states.
+The persistent manual `c74a53e` bundle is closed and configured locally. Its bounded
+live acceptance and original-vault seal remain valid for that pin. Hosted live is
+user-deferred. Complete native/platform/scale/cost acceptance and the goal remain
+open; historical sections below retain earlier observations, not current running
+or permission states.
 
 ## Current assignments
 
@@ -53,7 +53,7 @@ checkpoint and latest receipt section supersede former running/approval states.
 | 10 | Integrated attachments and hosted web | Provider/native checks pass; native follow-on journeys pending | `ticket10_prepare` |
 | 11 | Integrated transcript export/conflicts and relocation | Complete synthetic desktop transcript/root-relocation gate passed; iOS/standalone Settings move pending | `ticket11_prepare`; root integration |
 | 12 | Native/iOS drivers and real SQLite fault probe implemented | Publication/crash slices and full iOS first phase pass; complete expanded/relaunch/iOS matrix pending | `ticket08_acceptance`, `ticket12_prepare`; root native lease |
-| 13 | v21 captured/uncompiled; v17 publication/crash/transcript slices passed; latest expanded failed strict parent-summary proof; resource module IPC observed/full cost unproven | Complete removal-native/default/paired/resource evidence and verdict pending | `ticket13_prepare`, `ticket04_lifecycle`, `replacement_ledger`; root native lease |
+| 13 | v22 desktop compiled/exclusion passed; v17 publication/crash/transcript slices passed; latest expanded failed strict parent-summary proof; resource module IPC observed/full cost unproven | Complete removal-native/default/paired/resource evidence and verdict pending | `ticket13_prepare`, `ticket04_lifecycle`, `replacement_ledger`; root native lease |
 
 Independent implementation proceeds against agreed interfaces while acceptance
 dependencies remain gates. This does not declare prerequisites accepted early.

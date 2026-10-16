@@ -77,3 +77,9 @@ Use pinned APIs; document any justified version change.
   credentials at the authorized metadata check. The user must configure Pi
   Settings explicitly; no ordinary-app keys were read/copied and no live
   provider requests were made by this implementation agent.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Frozen native provider routing and model refresh are integrated. Matrix **D** records normal model/protocol checks, **P** compatible and Responses prepared subsets, and **M** normal Settings with configured local inference. The earlier unconfigured-namespace/live-unverified comment is historical for that checkpoint.
+
+The final both-protocol matrix remains open. Hosted live is explicitly user-deferred; synthetic Responses results do not establish hosted live. See the [current validation matrix](../validation-matrix.md) for exact artifact and coverage limits.

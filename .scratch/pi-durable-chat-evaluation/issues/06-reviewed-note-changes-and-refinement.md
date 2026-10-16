@@ -96,3 +96,9 @@ document runtime and global review workflow; Pi owns durable pending records.
   correlation, a deliberately cleared/unavailable timeline proof, or a same-path
   authored no-op whose unreferenced receipt has retired remain fail-closed if
   today's target differs. They cannot authorize replay or overwrite.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Durable review/refinement and narrow canonical effects are integrated. Matrix **D** records real review plus checkpoint/conflict/dirty-buffer slices; **F/C/T** record recovery and duplicate-effect slices; **M** records approved normal Keep in the persistent local-live app.
+
+The final full review/refinement/termination/iOS matrix remains open; partial native runs do not close every race. See the [current validation matrix](../validation-matrix.md) for the exact passed scope and artifact pins. Earlier implementation-agent native-pending statements above describe their original checkpoints.

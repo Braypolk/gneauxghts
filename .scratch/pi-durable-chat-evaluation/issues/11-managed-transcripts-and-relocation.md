@@ -62,3 +62,9 @@ own-write observations, inert legacy artifacts, vault identity mapping and an
 uncertain Keep across relocation with an intervening ordinary edit. Native
 compilation/test execution and integrated desktop/iOS/live acceptance remain
 pending; no acceptance or phase-completion claim is made by this comment.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Committed transcript projection, conflict handling and identity-bound relocation mapping are integrated. Matrix **T** records complete desktop watcher/Save/generated-root relocation/uncertain-Keep slices; **I** records passed iOS watcher external edit/delete and normal Convert/Restore checks.
+
+The whole **I** run failed normal Save editor readiness; corrected Save, selection-B and relocation remain unpassed. Standalone normal Settings vault relocation also remains unproven. See the [current validation matrix](../validation-matrix.md) for exact scopes; the earlier native-pending implementation comment is historical.

@@ -109,3 +109,9 @@ close-receipt test writes do not establish native recovery. The orchestrator own
 execution of the authorized original-source export, native recovery and adoption;
 this implementation agent performed none of those actions. See [recovery run
 instructions](../README.md) for exact commands and limits.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Copy/recovery/setup and the separate persistent app are integrated. Matrix **M** records 209 copied files, repeated launches retaining model/history/review, approved synthetic edits leaving the original unchanged, and normal shutdown. This is bounded actual local-live evidence; agent observations are not user trial feedback.
+
+Final comparison/resource and remaining platform gates stay open. See the [current validation matrix](../validation-matrix.md) for receipt provenance and scope; earlier preparation-only comments above are historical.

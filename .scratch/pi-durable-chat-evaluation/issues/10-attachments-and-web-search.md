@@ -39,3 +39,9 @@ Existing attachment/context admission, capability/web-search policy,
 `ChatComposer.svelte`, Pi ChatApi/provider extension and native transport.
 
 ## Comments
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Native attachment admission, retained bytes and web-search routing are integrated. Matrix **D** records bounded attachment/web follow-ons within its 23 passed UI checks; the whole expanded desktop run remains failed for its separate strict parent-summary boundary.
+
+The complete both-protocol failure/restart/Retry matrix remains open. Bounded hosted live web is not established and is explicitly user-deferred. See the [current validation matrix](../validation-matrix.md) for receipt scope and remaining native gates.

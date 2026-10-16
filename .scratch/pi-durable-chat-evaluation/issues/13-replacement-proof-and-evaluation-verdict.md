@@ -48,3 +48,9 @@ and provenance/omission boundaries. The working source remains unchanged. The
 native owner must still execute preparation on a frozen source, preserve exact
 manifest/ledger/diff and build/native gate receipts, and complete the paired
 comparison/verdict requirements. No removal build or acceptance is claimed here.
+
+### 2026-10-15 — integrated implementation and bounded evidence reconciliation
+
+Removal/compiler/ledger and paired-capture tooling are integrated. Matrix **R/F/C/T** records actual removed-tree native slices, **P** both-protocol prepared subsets, and **U** a bounded paired core/long-output pass. Observed Pi bridge/storage increases and measurement/binding limits remain disclosed; no performance-win or savings conclusion follows.
+
+Final v22 source compilation began at 03:42 UTC on 2026-10-16 without a passed result yet; **S** scale v4 remains running/pending. Compilation overlaps scale v4 for functional coverage only; it does not establish scale cost. Final build/native/default, churn, retention/collection and comparable cost gates remain open. See the [current validation matrix](../validation-matrix.md) for exact evidence and queue. No acceptance, closure, archive, adoption or final verdict is claimed.
