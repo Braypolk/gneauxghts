@@ -89,6 +89,21 @@ async function acknowledge(id: string, conversationId: string) {
     return { markdown: view.state.doc.toString(), title: title.value, path: draft.path, decisions: projection.hunks };
   } });
 }
+export async function keepIosLiveReview(input: { view: EditorView; proposalId: string; conversationId: string; reviewId: string; reviewedDraft: ChatProposalDraft }) {
+  assertIosLiveReview(input.reviewId, input.view.state.field(reviewProjection, false));
+  assert(input.view.dom.isConnected && input.view.state.doc.toString() === input.reviewedDraft.markdown && probePaneTitle(input.view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === input.reviewedDraft.title, 'Live working review changed before Keep');
+  // Compact chat navigation replaces the pane's editor. Retain the independent
+  // mounted proof above, then bind normal Keep to the same acknowledged draft
+  // and pending review rather than reading a destroyed EditorView's old DOM.
+  await openChat();
+  const strip = await until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${input.proposalId}"]`), 'normal retained review strip');
+  const keep = await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip), 'normal retained Keep');
+  const pending = (await api.listPendingProposals(input.conversationId)).find(proposal => proposal.id === input.proposalId);
+  assertIosLiveReview(input.reviewId, typeof pending?.preview.reviewId === 'string' ? { reviewId: pending.preview.reviewId } : undefined);
+  const draft = await api.getProposalDraft!(input.proposalId);
+  assert(JSON.stringify(draft) === JSON.stringify(input.reviewedDraft), 'Acknowledged live review changed before normal Keep');
+  keep.click();
+}
 export async function openIosLiveSource(message: ChatMessage, noteId: string) {
   admittedProbeRead(message, noteId); await openChat(); await revealProbeReadActivity({ message, noteId, until });
   const card = await until(() => document.querySelector(`[data-chat-message-id="${message.id}"]`), 'cited live answer');
@@ -162,12 +177,7 @@ export async function runIosLiveProbe(): Promise<Report | undefined> {
       assert(JSON.stringify(acknowledged) === JSON.stringify(state.reviewedDraft), 'Mounted live review differs from pre-relaunch acknowledgement');
       // Capture the expected content before Keep can produce any receipt.
       const expectedSha256 = await digest(state.reviewedDraft.markdown);
-      await openChat();
-      const strip = await until(() => document.querySelector(`[data-proposal-strip="active"][data-proposal-id="${state.proposalId}"]`), 'normal retained review strip');
-      const keep = await until(() => button('Keep All', strip) ?? button('Keep Remaining', strip), 'normal retained Keep');
-      assertIosLiveReview(state.reviewId, view.state.field(reviewProjection, false));
-      assert(view.state.doc.toString() === state.reviewedDraft.markdown && probePaneTitle(view.dom.closest<HTMLElement>('[data-testid="workspace-pane"]'), 'editor')?.value === state.reviewedDraft.title, 'Live working review changed before Keep');
-      keep.click();
+      await keepIosLiveReview({ view, proposalId: state.proposalId, conversationId: state.conversationId, reviewId: state.reviewId, reviewedDraft: state.reviewedDraft });
       await until(async () => !(await api.listPendingProposals(state.conversationId)).some(value => value.id === state.proposalId), 'native kept publication');
       const draft = await api.getProposalDraft!(state.proposalId), receipt = await api.commitAgentProposal(state.proposalId, draft.markdown, draft.version);
       assert(receipt.status === 'committed' && receipt.noteId, 'Live Keep failed to return a committed Note Identity');

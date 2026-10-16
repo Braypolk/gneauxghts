@@ -2,11 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render } from 'svelte/server';
 import ChatMarkdown from '$lib/features/chat/ui/ChatMarkdown.svelte';
 import { message as chatMessage } from '$lib/features/chat/chatTestSupport';
-const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn(), create: vi.fn(), get: vi.fn() }));
+import type { EditorView } from '@codemirror/view';
+const mocks = vi.hoisted(() => ({ invoke: vi.fn(), state: vi.fn(), list: vi.fn(), settings: vi.fn(), defaults: vi.fn(), capabilities: vi.fn(), checkpoint: vi.fn(), create: vi.fn(), get: vi.fn(), pending: vi.fn(), draft: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: vi.fn() }));
-vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get } }));
-import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, openIosLiveSource, runIosLiveProbe } from './iosLiveProbe';
+vi.mock('$lib/features/chat/api', () => ({ chatApi: { prototypeState: mocks.state, listConversations: mocks.list, getSettings: mocks.settings, setDefaults: mocks.defaults, setLocalModelCapabilities: mocks.capabilities, prototypeCheckpoint: mocks.checkpoint, createConversation: mocks.create, getConversation: mocks.get, listPendingProposals: mocks.pending, getProposalDraft: mocks.draft } }));
+import { IOS_LIVE, assertIosLiveSettings, assertIosLivePublication, assertIosLiveReview, iosLiveEnabled, iosLiveUntil, keepIosLiveReview, openIosLiveSource, runIosLiveProbe } from './iosLiveProbe';
 import type { ChatCitation, ChatProposalDraft } from '$lib/features/chat/types';
 import type { CommitNoteReviewResult } from '$lib/types/proposals';
 describe('explicit iOS live probe admission and deadlines', () => {
@@ -142,6 +143,57 @@ describe('live Keep binds the exact independently acknowledged review', () => {
   const draft: ChatProposalDraft = { markdown: 'Original answer and source links.\n\nSynthetic iOS live review edit retained 12.', title: 'Pi iOS live saved answer', path: '/owned/vault/Pi iOS live saved answer.md', version: 4, decisions: [] };
   const receipt: CommitNoteReviewResult = { status: 'committed', noteId: 'stable-note', committedMarkdown: draft.markdown, applied: { kind: 'createNote', path: draft.path, previousPath: null }, message: null };
   const canonical = { noteId: receipt.noteId, path: draft.path, title: draft.title, markdown: draft.markdown };
+  afterEach(() => vi.unstubAllGlobals());
+  function reviewToChat(onOpen = () => {}) {
+    const state = { connected: true, chat: false };
+    const visible = { closest: () => null, getClientRects: () => [1] };
+    const title = { value: draft.title };
+    const pane = { querySelector: () => title };
+    const view = { state: { doc: { toString: () => draft.markdown }, field: () => ({ reviewId: 'exact-review', hunks: draft.decisions }) },
+      dom: { get isConnected() { return state.connected; }, closest: () => state.connected ? pane : null } } as unknown as EditorView;
+    const open = { ...visible, disabled: false, getAttribute: () => 'Open thought partner',
+      click: vi.fn(() => { state.connected = false; state.chat = true; onOpen(); }) };
+    const keep = { ...visible, disabled: false, textContent: 'Keep All', getAttribute: () => null, click: vi.fn() };
+    const strip = { querySelectorAll: () => [keep] };
+    vi.stubGlobal('getComputedStyle', () => ({ visibility: 'visible' }));
+    vi.stubGlobal('document', {
+      querySelector: (selector: string) => selector === '[data-proposal-strip="active"][data-proposal-id="exact-proposal"]' && state.chat ? strip : null,
+      querySelectorAll: (selector: string) => selector === '[aria-label="Thought partner chat"]' ? state.chat ? [visible] : [] : selector === 'button' ? [open] : [],
+    });
+    mocks.pending.mockResolvedValue([{ id: 'exact-proposal', preview: { reviewId: 'exact-review' } }]);
+    mocks.draft.mockResolvedValue(draft);
+    return { view, state, title, open, keep, input: { view, proposalId: 'exact-proposal', conversationId: 'exact-conversation', reviewId: 'exact-review', reviewedDraft: draft } };
+  }
+  it('keeps the exact acknowledged review when normal chat navigation tears down its editor before showing Keep', async () => {
+    const fixture = reviewToChat();
+    await expect(keepIosLiveReview(fixture.input)).resolves.toBeUndefined();
+    expect(fixture.state.connected).toBe(false);
+    expect(fixture.open.click).toHaveBeenCalledOnce();
+    expect(fixture.keep.click).toHaveBeenCalledOnce();
+    expect(mocks.pending).toHaveBeenLastCalledWith('exact-conversation');
+    expect(mocks.draft).toHaveBeenLastCalledWith('exact-proposal');
+  });
+  it.each(['body', 'title', 'review', 'detached'] as const)('refuses a changed mounted %s before leaving the review editor', async changed => {
+    const fixture = reviewToChat();
+    if (changed === 'body') vi.spyOn(fixture.view.state.doc, 'toString').mockReturnValue('Changed body');
+    if (changed === 'title') fixture.title.value = 'Changed title';
+    if (changed === 'review') vi.spyOn(fixture.view.state, 'field').mockReturnValue({ reviewId: 'foreign-review' } as never);
+    if (changed === 'detached') fixture.state.connected = false;
+    await expect(keepIosLiveReview(fixture.input)).rejects.toThrow(changed === 'review' ? 'Mounted live review identity mismatch' : 'Live working review changed before Keep');
+    expect(fixture.open.click).not.toHaveBeenCalled();
+    expect(fixture.keep.click).not.toHaveBeenCalled();
+  });
+  it.each([{ markdown: 'Changed body' }, { title: 'Changed title' }, { path: '/vault/Foreign.md' }, { version: 99 }, { decisions: [{ index: 0, decision: 'keep' }] }])('refuses changed acknowledged fields after normal chat navigation (%j)', async changed => {
+    const fixture = reviewToChat(() => mocks.draft.mockResolvedValue({ ...draft, ...changed }));
+    await expect(keepIosLiveReview(fixture.input)).rejects.toThrow('Acknowledged live review changed before normal Keep');
+    expect(fixture.state.connected).toBe(false);
+    expect(fixture.keep.click).not.toHaveBeenCalled();
+  });
+  it('refuses a different pending review identity after normal chat navigation', async () => {
+    const fixture = reviewToChat(() => mocks.pending.mockResolvedValue([{ id: 'exact-proposal', preview: { reviewId: 'foreign-review' } }]));
+    await expect(keepIosLiveReview(fixture.input)).rejects.toThrow('Mounted live review identity mismatch');
+    expect(fixture.keep.click).not.toHaveBeenCalled();
+  });
   it('accepts the same exact editor-facing body, title, path and Note Identity', () => {
     expect(() => assertIosLivePublication(draft, receipt, canonical)).not.toThrow();
   });
