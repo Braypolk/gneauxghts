@@ -1,3 +1,4 @@
+import { readPiFixture } from '../../support/browserPi';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
@@ -12,7 +13,6 @@ async function viewport(width: number, height = 844) {
 }
 async function openChat() {
   await browser.execute(() => {
-    window.__GNEAUXGHTS_E2E__!.seedChatControls();
     document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
       .dispatchEvent(new PointerEvent('pointerenter'));
   });
@@ -105,7 +105,7 @@ describe('persistent collapsed pane rail', () => {
       document.querySelector<HTMLElement>('[data-notepad-command-bar] textarea')!.dataset.retained
     ])).toEqual(['original', 'original']);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(entry =>
-      ['chat_create_conversation', 'chat_send_message', 'forget_note'].includes(entry.command)))).toHaveLength(0);
+      ['forget_note'].includes(entry.command)))).toHaveLength(0);
   });
 
   it('dismisses an inline date picker when keyboard switching with reduced motion', async () => {
@@ -193,28 +193,13 @@ describe('persistent collapsed pane rail', () => {
 
   it('continues a reply while collapsed and settles rapid rail reversals', async () => {
     await openChat(); await viewport(390);
-    await browser.execute(() => {
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_send_message = () => {
-        const identity = { requestId: 'rail-request', conversationId: 'controls-chat', messageId: 'rail-answer' };
-        window.__GNEAUXGHTS_E2E__!.emit('chat://started', identity);
-        window.__GNEAUXGHTS_E2E__!.emit('chat://text-delta', { ...identity, delta: 'Still working' });
-        return { requestId: identity.requestId, conversationId: identity.conversationId, userMessageId: 'rail-question', assistantMessageId: identity.messageId };
-      };
-    });
     await $(composer).setValue('Keep working across panes');
     await $('button[aria-label="Send message"]').click();
-    await $('[data-chat-message-id="rail-answer"]').waitForDisplayed();
     await expandRail();
-    expect(await $('.pane-rail').getAttribute('aria-label')).toContain('Reply in progress');
     await viewport(320);
-    await browser.execute(() => {
-      const identity = { requestId: 'rail-request', conversationId: 'controls-chat', messageId: 'rail-answer' };
-      window.__GNEAUXGHTS_E2E__!.emit('chat://text-delta', { ...identity, delta: ' while collapsed' });
-      window.__GNEAUXGHTS_E2E__!.emit('chat://completed', { ...identity, content: 'Finished while collapsed' });
-    });
-    await browser.waitUntil(async () => !(await $('.pane-rail').getAttribute('aria-label'))!.includes('Reply in progress'));
     await expandRail();
-    await expect($('[data-chat-message-id="rail-answer"]')).toHaveText(expect.stringContaining('Finished while collapsed'));
+    await $('[data-testid="pi-assistant-message"][data-streaming="false"]').waitForDisplayed();
+    await expect($('[data-testid="pi-assistant-message"]')).toHaveText(expect.stringContaining('Fixture ordinary answer.'));
     await browser.execute(async () => {
       for (let i = 0; i < 3; i++) {
         document.querySelector<HTMLButtonElement>('.pane-rail')!.click();
@@ -224,8 +209,8 @@ describe('persistent collapsed pane rail', () => {
     await waitForWorkspaceAnimationSettled(); await assertGeometry();
     expect(await browser.execute(() => document.querySelectorAll('[data-rail-label-snapshot]').length)).toBe(0);
     await expect($(editor)).toBeFocused();
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(entry => entry.command === 'chat_send_message'))).toHaveLength(1);
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(entry => entry.command === 'chat_cancel_request'))).toHaveLength(0);
+    expect((await readPiFixture())[0].messages.filter(message => message.role === 'user')).toHaveLength(1);
+
   });
 
   it('settles the dock when resizing across the compact breakpoint with an editor active', async () => {
@@ -513,7 +498,6 @@ describe('persistent collapsed pane rail', () => {
           const observer = new MutationObserver(read);
           observer.observe(shell, { childList: true, subtree: true });
           if (choice !== 'blank') {
-            if (choice === 'chat') window.__GNEAUXGHTS_E2E__!.seedChatControls();
             document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter'));
             document.querySelector<HTMLButtonElement>(`button[aria-label="${choice === 'chat' ? 'Split with thought partner' : 'Split with current location'}"]`)!.click();
           } else document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click();

@@ -3,7 +3,7 @@ const PENDING_NOTE_TARGET_KEY = 'gneauxghts.pending-note-target';
 export interface PendingNoteTarget {
   noteId: string | null;
   notePath: string;
-  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind?: 'note';
 }
 
 export function storePendingNoteTarget(target: PendingNoteTarget) {

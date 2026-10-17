@@ -11,7 +11,6 @@ export type {
   EditorSelection,
   EditorSnapshot,
   EditorViewCallbacks,
-  ProposalReviewExtension,
   ReplaceEditorContentOptions,
   ReplaceEditorDocumentOptions,
   RestoreCursorPositionOptions,

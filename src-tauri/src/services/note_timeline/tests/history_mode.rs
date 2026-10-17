@@ -543,7 +543,6 @@ fn version_restore_is_complete_hash_bound_append_only_and_reversible_after_resta
     assert_eq!(restored_metadata.id, before_metadata.id);
     assert_eq!(restored_metadata.created_at, before_metadata.created_at);
     assert_eq!(restored_metadata.trashed_at, before_metadata.trashed_at);
-    assert_eq!(restored_metadata.kind, before_metadata.kind);
     assert_eq!(path.file_stem().unwrap(), "Renamed current title");
 
     let restarted = AppState::new(

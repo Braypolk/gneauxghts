@@ -130,9 +130,12 @@ pub(super) fn read_with_version(
     let path = &eligibility.active_notes[note_id.as_str()];
     let canonical = fs::read_to_string(path).map_err(|error| history_failure(error.to_string()))?;
     let parsed = crate::note::parse_note(&canonical);
-    if parsed.frontmatter.managed.as_ref().is_some_and(|metadata| {
-        metadata.id != note_id.as_str() || metadata.kind != crate::note::DocumentKind::Note
-    }) {
+    if parsed
+        .frontmatter
+        .managed
+        .as_ref()
+        .is_some_and(|metadata| metadata.id != note_id.as_str())
+    {
         return Ok(None);
     }
     if history_store::current_content_hash(&access.runtime.store, note_id)?.as_deref()

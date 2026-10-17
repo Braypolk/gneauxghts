@@ -13,8 +13,7 @@ describe('consistent split entry', () => {
       for (const action of actions) {
         it(`uses the shared opening curve from ${source} via ${action} at ${width}px`, async () => {
           await resetBrowserWorkspace();
-          await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-          await browser.setWindowSize(width, 1000);
+                await browser.setWindowSize(width, 1000);
           await waitForWorkspaceAnimationSettled();
           if (source === 'chat') {
             await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open thought partner"]')!.click());

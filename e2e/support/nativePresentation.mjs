@@ -2,7 +2,7 @@ import { basename } from 'node:path';
 
 export const foregroundNativeSpecs = [
   'search-focus', 'pane-animation', 'chat-pane-animation', 'workspace-dock-outline',
-  'chat-typing', 'note-timeline-phase-1-3', 'editing-windows'
+  'note-timeline-phase-1-3', 'editing-windows'
 ];
 
 export function requireNativeForeground(reason, env = process.env) {

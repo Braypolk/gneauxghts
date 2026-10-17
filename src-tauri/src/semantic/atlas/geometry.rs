@@ -656,8 +656,7 @@ fn homogeneous_theme(group: &[String], nodes: &[WorkingNode]) -> bool {
     !center.is_empty()
         && group.iter().all(|id| {
             by_id.get(id.as_str()).is_some_and(|n| {
-                n.has_semantic_content
-                    && crate::semantic::similarity::cosine_similarity(&n.embedding, &center) >= 0.96
+                crate::semantic::similarity::cosine_similarity(&n.embedding, &center) >= 0.96
             })
         })
 }

@@ -23,7 +23,7 @@ function exhaustiveValues<Union>() {
 }
 
 const MUTATION_SOURCES = exhaustiveValues<HistoryMutationSource>()([
-  'editor', 'taskAction', 'acceptedChatProposal', 'externalEdit',
+  'editor', 'taskAction', 'agentPublication', 'externalEdit',
   'versionRestore', 'noteCreation', 'baselineInitialization', 'recoveryReconciliation'
 ]);
 const LIFECYCLE_KINDS = exhaustiveValues<HistoryLifecycleEventKind>()([

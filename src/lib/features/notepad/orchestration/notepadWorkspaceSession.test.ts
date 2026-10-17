@@ -336,30 +336,6 @@ it('retires a pending open and disk refresh when the workspace is disposed', asy
   expect(f.paneLifecycle.bindDocument).not.toHaveBeenCalled();
 });
 
-it('rechecks review pane capacity after waiting behind a departing pane', async () => {
-  const f = setup();
-  await f.commands.setPaneKind(f.first, 'chat');
-  const entered = deferred<void>();
-  const opened = deferred<ReturnType<typeof createSessionSnapshot>>();
-  vi.mocked(openNoteSession).mockImplementationOnce(() => {
-    entered.resolve();
-    return opened.promise;
-  });
-  const opening = f.commands.openNotePath('/vault/b.md', { noteId: 'b' });
-  await entered.promise;
-  const showing = f.commands.presentReviewDocument({
-    document: f.initialDocument, noteId: 'a', path: '/vault/a.md'
-  });
-  await f.commands.splitWorkspace('thoughtPartner');
-  await f.commands.splitWorkspace('thoughtPartner');
-  opened.resolve(createSessionSnapshot(persistedSession('b')));
-  await opening;
-  expect(await showing).toBeNull();
-  expect(f.workspace.paneOrder).toHaveLength(3);
-  expect(f.paneLifecycle.disposePane).toHaveBeenCalledWith('notepad-pane-2');
-  f.workspace.assertInvariants();
-});
-
 it('keeps pane capacity when two splits finish asynchronous preparation together', async () => {
   const f = setup();
   await f.commands.splitWorkspace('thoughtPartner');
@@ -376,25 +352,4 @@ it('keeps pane capacity when two splits finish asynchronous preparation together
 
   expect(f.workspace.paneOrder).toHaveLength(f.deps.maxVisiblePanes);
   f.workspace.assertInvariants();
-});
-
-it.each(['committed', 'external race'] as const)('reconciles an admitted durable publication after route disposal (%s)', async outcome => {
-  const f = setup();
-  updateDocumentMarkdown(f.initialDocument, 'accepted text');
-  const snapshot = persistedSession('a', outcome === 'committed' ? 'accepted text' : 'external change');
-  vi.mocked(readNoteSession).mockResolvedValueOnce(snapshot);
-  f.commands.dispose();
-  await f.commands.acknowledgeDocumentCommit({
-    document: f.initialDocument, path: '/vault/a.md', markdown: 'accepted text', committedMarkdown: 'accepted text', commitWarning: null
-  });
-  if (outcome === 'committed') {
-    expect(f.persistence.hasCleanBuffer(f.initialDocument)).toBe(true);
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('accepted text');
-  } else {
-    expect(f.initialDocument.working.markdown).toBe('accepted text');
-    expect(f.initialDocument.externalSync).toMatchObject({
-      kind: 'conflict', external: { document: { content: { markdown: 'external change' } } }
-    });
-  }
-  expect(f.paneLifecycle.bindDocument).not.toHaveBeenCalled();
 });

@@ -79,3 +79,29 @@ pub(crate) fn unique_path_in_dir(
 
     unreachable!("unbounded path search always returns")
 }
+
+use crate::state::is_forgotten_note_path;
+
+pub(crate) fn canonical_agent_commit_target(
+    notes_dir: &Path,
+    path: &Path,
+) -> Result<PathBuf, String> {
+    let notes_dir = fs::canonicalize(notes_dir).map_err(|error| error.to_string())?;
+    let parent = path
+        .parent()
+        .ok_or_else(|| "Creation target has no parent directory".to_string())?;
+    let parent = fs::canonicalize(parent).map_err(|error| error.to_string())?;
+    let file_name = path
+        .file_name()
+        .ok_or_else(|| "Creation target has no file name".to_string())?;
+    let target = parent.join(file_name);
+    if !target.starts_with(&notes_dir)
+        || is_forgotten_note_path(&target, &notes_dir)
+        || !target
+            .extension()
+            .is_some_and(|extension| extension.eq_ignore_ascii_case("md"))
+    {
+        return Err(format!("Invalid note path: {}", path.display()));
+    }
+    Ok(target)
+}

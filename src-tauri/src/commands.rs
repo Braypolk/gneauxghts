@@ -1,18 +1,12 @@
 pub(crate) mod asset_commands;
 pub(crate) mod atlas_commands;
-#[cfg(not(feature = "pi-prototype"))]
-pub(crate) mod chat_commands;
-#[cfg(feature = "pi-prototype")]
-#[path = "commands/pi_chat_commands.rs"]
-pub(crate) mod chat_commands;
 pub(crate) mod forgotten_note_commands;
 pub(crate) mod history_commands;
 mod index_bridge;
 pub(crate) mod media_search;
 pub(crate) mod note_persistence;
 mod note_session;
-#[cfg(not(feature = "pi-prototype"))]
-pub(crate) mod proposal_commands;
+pub(crate) mod pi_chat_commands;
 pub(crate) mod search_commands;
 pub(crate) mod task_commands;
 pub(crate) mod wikilink_commands;

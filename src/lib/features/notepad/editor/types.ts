@@ -1,4 +1,3 @@
-import type { Compartment, Extension } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
@@ -23,8 +22,6 @@ export interface EditorController {
   sharedResources: SharedEditorResources | null;
   paneKey: symbol;
   onMarkdownChange: (markdown: string) => void;
-  /** Compartment for proposal review decorations / read-only mode. */
-  proposalReviewCompartment: Compartment;
 }
 
 export interface EditorViewCallbacks {
@@ -81,5 +78,3 @@ export interface SwapEditorRuntimeOptions {
 export interface RestoreCursorPositionOptions {
   scrollIntoView?: boolean;
 }
-
-export type ProposalReviewExtension = Extension | readonly Extension[] | null;

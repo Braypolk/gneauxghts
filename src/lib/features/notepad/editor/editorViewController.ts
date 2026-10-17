@@ -1,5 +1,5 @@
 import { tick } from 'svelte';
-import { Compartment, Transaction } from '@codemirror/state';
+import { Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { CursorPosition } from './editorViewState';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
@@ -50,7 +50,6 @@ function buildPaneBinding(
   markdown: string,
   selection: EditorSelection | null
 ) {
-  const proposalReviewCompartment = new Compartment();
   const paneExtensions = createPaneExtensions(
     getController,
     editorRoot,
@@ -60,14 +59,12 @@ function buildPaneBinding(
     markdown,
     [
       ...createMarkdownBaseExtensions(),
-      proposalReviewCompartment.of([]),
       ...paneExtensions.extensions
     ],
     selection
   );
   return {
     state,
-    proposalReviewCompartment,
     slashMenuApi: paneExtensions.slashMenuApi,
     selectionMenuApi: paneExtensions.selectionMenuApi
   };
@@ -79,14 +76,12 @@ function bindController(
   sharedResources: SharedEditorResources | null,
   viewCallbacks: EditorViewCallbacks,
   onMarkdownChange: (markdown: string) => void,
-  paneKey: symbol,
-  proposalReviewCompartment: Compartment
+  paneKey: symbol
 ) {
   controller.runtime = runtime;
   controller.sharedResources = sharedResources;
   controller.paneKey = paneKey;
   controller.onMarkdownChange = onMarkdownChange;
-  controller.proposalReviewCompartment = proposalReviewCompartment;
   sharedResources?.registerViewCallbacks(controller.view, viewCallbacks);
   runtime.attachController(controller);
 }
@@ -137,8 +132,7 @@ export async function createEditor({
     runtime,
     sharedResources,
     paneKey: Symbol('editor-pane'),
-    onMarkdownChange,
-    proposalReviewCompartment: binding.proposalReviewCompartment
+    onMarkdownChange
   };
   bindController(
     controller,
@@ -146,8 +140,7 @@ export async function createEditor({
     sharedResources,
     viewCallbacks,
     onMarkdownChange,
-    controller.paneKey,
-    binding.proposalReviewCompartment
+    controller.paneKey
   );
   binding.slashMenuApi.register(view);
   binding.selectionMenuApi.register(view);
@@ -209,8 +202,7 @@ export function swapEditorRuntime(
     sharedResources,
     viewCallbacks,
     onMarkdownChange,
-    paneKey,
-    binding.proposalReviewCompartment
+    paneKey
   );
   binding.slashMenuApi.register(view);
   binding.selectionMenuApi.register(view);

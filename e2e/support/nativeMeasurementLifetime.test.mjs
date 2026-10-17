@@ -93,39 +93,3 @@ test('timeline paint deadline cancels the nested frame and settles once', () => 
   assert.equal(renderer.completed.length, 1);
   assert.match(renderer.completed[0].error, /stalled at paint/);
 });
-
-test('chat typing paint timeout releases listener and leaves no pending frame or timer', async () => {
-  const renderer = fakeRenderer();
-  let releases = 0;
-  renderer.globals.window.__TAURI__ = { event: { listen: async () => () => { releases++; } } };
-  const callback = rendererCallback('../specs/native/chat-typing.spec.ts', 'samples', renderer.globals);
-  callback(renderer.done);
-  await settle();
-  renderer.frame();
-  const late = [...renderer.frames.values()][0];
-  renderer.timer(5000);
-  await settle();
-  late(10);
-  assert.equal(renderer.completed.length, 1);
-  assert.match(renderer.completed[0].error, /paint exceeded/);
-  assert.equal(releases, 1);
-  assert.equal(renderer.frames.size, 0);
-  assert.equal(renderer.timers.size, 0);
-});
-
-test('chat typing releases a listener acquired after the overall deadline without typing', async () => {
-  const renderer = fakeRenderer();
-  let attach;
-  let releases = 0;
-  renderer.globals.window.__TAURI__ = { event: { listen: () => new Promise(resolve => { attach = resolve; }) } };
-  const callback = rendererCallback('../specs/native/chat-typing.spec.ts', 'samples', renderer.globals);
-  callback(renderer.done);
-  renderer.timer(20000);
-  attach(() => { releases++; });
-  await settle();
-  assert.equal(releases, 1);
-  assert.equal(renderer.completed.length, 1);
-  assert.equal(renderer.textarea.value, '');
-  assert.equal(renderer.frames.size, 0);
-  assert.equal(renderer.timers.size, 0);
-});

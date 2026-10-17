@@ -14,6 +14,7 @@ export class DocumentRuntime {
   private _saveTimerId: number | null = null;
   private _saveQueue: Promise<void> | null = null;
   private _pendingSaveOperation: (() => Promise<void>) | null = null;
+  private _publicationLease: { token: symbol; releaseRoot?: () => void } | null = null;
 
   constructor(documentHandle: DocumentHandle) {
     this.documentHandle = documentHandle;
@@ -28,6 +29,7 @@ export class DocumentRuntime {
         assetRootPath: initial.assetRootPath,
         onStorePastedImage: initial.storePastedImage
       });
+      if (this._publicationLease) this._publicationLease.releaseRoot = this._resources.runtime.acquirePublicationLease();
     }
     return this._resources;
   }
@@ -67,6 +69,17 @@ export class DocumentRuntime {
     return this._saveQueue ?? Promise.resolve();
   }
 
+  acquirePublicationLease(): () => void {
+    if (this._publicationLease) throw new Error('Document publication is already settling.');
+    const lease = { token: Symbol('publication'), releaseRoot: this._resources?.runtime.acquirePublicationLease() };
+    this._publicationLease = lease;
+    return () => {
+      if (this._publicationLease !== lease) return;
+      lease.releaseRoot?.();
+      this._publicationLease = null;
+    };
+  }
+
   /**
    * Keep at most one running and one latest pending operation. Repeated save
    * requests while a write is in flight all join the same drain promise, and
@@ -103,6 +116,7 @@ export class DocumentRuntime {
   }
 
   dispose(): void {
+    if (this._publicationLease) throw new Error('Cannot dispose a document while publication is settling.');
     this.clearSaveTimer();
     this._resources?.destroy();
     this._resources = null;

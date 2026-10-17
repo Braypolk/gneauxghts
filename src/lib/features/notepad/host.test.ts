@@ -55,7 +55,6 @@ describe('createNotepadFeatureHost', () => {
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,
       getActiveEditor: () => ({
-        isReady: () => true,
         focus: () => true,
         focusAtEnd: () => true,
         readSnapshot: () => ({
@@ -64,7 +63,6 @@ describe('createNotepadFeatureHost', () => {
           revision: 1
         }),
         readSelection: () => ({ anchor: 0, head: 5, selectedText: 'Hello' }),
-        readCurrentBlock: () => null,
         replaceDocument: () => true,
         insertMarkdown: (markdown) => {
           inserted = markdown;
@@ -77,7 +75,6 @@ describe('createNotepadFeatureHost', () => {
         closeSlashMenu: () => {},
         closeSelectionMenu: () => {},
         closeDatePicker: () => {},
-        addReadOnlyOverlay: () => ({ dispose: () => {} }),
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {
@@ -128,12 +125,10 @@ describe('createNotepadFeatureHost', () => {
     const host = createNotepadFeatureHost({
       getActiveDocument: () => document,
       getActiveEditor: () => ({
-        isReady: () => true,
         focus: () => true,
         focusAtEnd: () => true,
         readSnapshot: () => null,
         readSelection: () => null,
-        readCurrentBlock: () => null,
         replaceDocument: () => true,
         insertMarkdown: () => {
           insertionCount += 1;
@@ -146,7 +141,6 @@ describe('createNotepadFeatureHost', () => {
         closeSlashMenu: () => {},
         closeSelectionMenu: () => {},
         closeDatePicker: () => {},
-        addReadOnlyOverlay: () => ({ dispose: () => {} }),
       }),
       focusActiveEditor: () => {},
       saveActiveDocument: async () => {},

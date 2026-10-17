@@ -12,12 +12,6 @@ pub(crate) struct HistoricalPassage {
     pub(crate) source: MutationSource,
 }
 
-impl HistoricalPassage {
-    pub(crate) fn recorded_at_millis(&self) -> u64 {
-        self.time_evidence.occurred_at_millis()
-    }
-}
-
 pub(crate) struct HistoricalChange {
     pub(crate) proof: HistoricalPassage,
     pub(crate) location: String,

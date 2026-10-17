@@ -212,7 +212,7 @@ describe('composer draft persistence', () => {
     h.persistence.record('becomes the first message');
     await vi.advanceTimersByTimeAsync(100);
 
-    h.persistence.resetSlot('conversation:new');
+    h.persistence.promoteSlot('conversation:new', '');
     await vi.advanceTimersByTimeAsync(0);
 
     expect(h.drafts.has('pane:left')).toBe(false);
@@ -233,7 +233,7 @@ describe('composer draft persistence', () => {
     expect(h.applied).toEqual([]);
     expect(h.drafts.has('pane:left')).toBe(false);
     expect(h.drafts.get('conversation:new')).toBe('Keep after failed send');
-    h.persistence.resetSlot('conversation:new');
+    h.persistence.promoteSlot('conversation:new', '');
     expect(h.drafts.has('conversation:new')).toBe(false);
   });
 
@@ -242,7 +242,7 @@ describe('composer draft persistence', () => {
 
     await h.persistence.openSlot('pane:left');
     h.persistence.record('abandoned');
-    h.persistence.resetSlot('pane:left');
+    h.persistence.promoteSlot('pane:left', '');
     await vi.advanceTimersByTimeAsync(100);
 
     expect(h.drafts.has('pane:left')).toBe(false);

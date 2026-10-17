@@ -1,5 +1,3 @@
-#[cfg(not(feature = "pi-prototype"))]
-use crate::chat::ChatService;
 use crate::{
     index::AppState,
     semantic::db::content_hash,
@@ -521,88 +519,6 @@ fn flush_dirty_batch(
         .filter(|p| !p.starts_with(notes_dir.join("assets")))
         .collect();
     let resolved = resolve_batch(notes_dir, paths)?;
-    let mut ordinary_present = Vec::new();
-    let mut ordinary_removed = Vec::new();
-
-    // Managed projection paths are authoritative in ai.sqlite3. External
-    // edits/deletes become classified conflicts and never enter the generic
-    // note, task, or semantic pipelines.
-    for observed in resolved.present {
-        let ObservedFile {
-            path,
-            markdown,
-            projection_modified_millis,
-            filesystem_modified_millis,
-        } = observed;
-        let owner = managed_chat_projection_owner(app_handle, &path);
-        if let Some(chat_id) = owner {
-            #[cfg(not(feature = "pi-prototype"))]
-            if let Some(chat) = app_handle.try_state::<ChatService>() {
-                // A queued event can outlive self-save suppression or observe
-                // an in-flight publication. Compare current bytes with the
-                // committed chat receipt after that publication settles.
-                if !chat.mark_projection_detached_if_needed(&chat_id)? {
-                    continue;
-                }
-            }
-            #[cfg(feature = "pi-prototype")]
-            if !crate::pi_prototype_transcript::observe(notes_dir, &chat_id)? { continue; }
-            let kind = crate::note::document_kind(&markdown);
-            state.events.vault_document_changed(
-                &path,
-                false,
-                kind,
-                "externalChatProjection",
-                Some(chat_id.clone()),
-            );
-            state.events.chat_projection_conflict(chat_id, &path, false);
-            continue;
-        }
-        ordinary_present.push(ObservedFile {
-            path,
-            markdown,
-            projection_modified_millis,
-            filesystem_modified_millis,
-        });
-    }
-    for path in resolved.removed {
-        let owner = managed_chat_projection_owner(app_handle, &path);
-        if let Some(chat_id) = owner {
-            #[cfg(not(feature = "pi-prototype"))]
-            if let Some(chat) = app_handle.try_state::<ChatService>() {
-                // A queued event can outlive self-save suppression or observe
-                // an in-flight publication. Compare current bytes with the
-                // committed chat receipt after that publication settles.
-                if !chat.mark_projection_detached_if_needed(&chat_id)? {
-                    continue;
-                }
-            }
-            #[cfg(feature = "pi-prototype")]
-            if !crate::pi_prototype_transcript::observe(notes_dir, &chat_id)? { continue; }
-            state.events.vault_document_changed(
-                &path,
-                true,
-                if path
-                    .file_name()
-                    .is_some_and(|name| name == "Conversation.md")
-                {
-                    crate::note::DocumentKind::ChatIndex
-                } else {
-                    crate::note::DocumentKind::ChatTranscript
-                },
-                "externalChatProjection",
-                Some(chat_id.clone()),
-            );
-            state.events.chat_projection_conflict(chat_id, &path, true);
-            continue;
-        }
-        ordinary_removed.push(path);
-    }
-    let resolved = ResolvedBatch {
-        present: ordinary_present,
-        removed: ordinary_removed,
-    };
-
     // Rename detection: pair a removed path with a present path that has the
     // same content hash. Content-identical move => re-key existing embeddings
     // instead of delete + re-embed.
@@ -679,15 +595,11 @@ fn flush_dirty_batch(
             )
             .with_canonical_markdown(observed.markdown.clone()),
         );
-        if !crate::note::semantic_recall_eligible(&observed.markdown) {
-            state.semantic.queue_delete_note(&observed.path)?;
-        } else {
-            state.semantic.queue_note_update(
-                &observed.path,
-                observed.markdown.clone(),
-                observed.projection_modified_millis,
-            )?;
-        }
+        state.semantic.queue_note_update(
+            &observed.path,
+            observed.markdown.clone(),
+            observed.projection_modified_millis,
+        )?;
         state.mark_notes_index_dirty(&observed.path, "watcher")?;
         state.events.vault_note_changed(&observed.path, false);
     }
@@ -790,25 +702,7 @@ fn reconciliation_observations(
     observations
 }
 
-fn managed_chat_projection_owner(app_handle: &AppHandle, path: &Path) -> Option<String> {
-    #[cfg(not(feature = "pi-prototype"))]
-    {
-        app_handle
-            .try_state::<ChatService>()
-            .and_then(|chat| chat.projection_owner_for_path(path).ok().flatten())
-    }
-    #[cfg(feature = "pi-prototype")]
-    {
-        app_handle.try_state::<AppState>().and_then(|state|
-            crate::pi_prototype_transcript::owner_for_path(state.running_vault().root(),path).ok().flatten())
-    }
-}
-fn is_managed_chat_projection(app_handle: &AppHandle, path: &Path) -> bool {
-    managed_chat_projection_owner(app_handle, path).is_some()
-}
-
 fn observe_reconciliation_state(
-    app_handle: &AppHandle,
     state: &tauri::State<'_, AppState>,
     notes_dir: &Path,
     known_paths: &[PathBuf],
@@ -821,14 +715,9 @@ fn observe_reconciliation_state(
         VaultObservation::reconciliation_scan(notes_dir.to_path_buf(), observed_at_millis),
     );
 
-    let known_paths = known_paths
-        .iter()
-        .filter(|path| !is_managed_chat_projection(app_handle, path))
-        .cloned()
-        .collect::<Vec<_>>();
+    let known_paths = known_paths.iter().cloned().collect::<Vec<_>>();
     let present_paths = present_paths
         .iter()
-        .filter(|path| !is_managed_chat_projection(app_handle, path))
         .cloned()
         .map(|path| {
             let modified_at_millis = fs::metadata(&path)
@@ -885,13 +774,7 @@ fn spawn_background_reconcile_loop(
             match state.reconcile_full_vault_scan_observing(
                 &notes_dir,
                 |known_paths, present_paths| {
-                    observe_reconciliation_state(
-                        &app_handle,
-                        &state,
-                        &notes_dir,
-                        known_paths,
-                        present_paths,
-                    )
+                    observe_reconciliation_state(&state, &notes_dir, known_paths, present_paths)
                 },
             ) {
                 Err(error) => eprintln!("vault reconcile error: {error}"),

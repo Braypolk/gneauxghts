@@ -1,5 +1,4 @@
-//! Compile the real application with --features pi-prototype as well as these
-//! source checks: construction-only checks cannot prove runtime exclusion.
+//! The ordinary default module graph contains one Pi runtime and no legacy lifecycle.
 use quote_tokens::Compact;
 use std::{
     fs,
@@ -19,19 +18,17 @@ mod quote_tokens {
 fn source(path: &str) -> String {
     fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join(path)).unwrap()
 }
-fn cfg_is_pi_enabled(meta: &syn::Meta) -> bool {
+fn cfg_is_default_enabled(meta: &syn::Meta) -> bool {
     match meta {
         syn::Meta::Path(path) => !path.is_ident("test"),
-        syn::Meta::NameValue(value) if value.path.is_ident("feature") => {
-            matches!(&value.value,syn::Expr::Lit(syn::ExprLit{lit:syn::Lit::Str(value),..}) if value.value()=="pi-prototype")
-        }
+        syn::Meta::NameValue(value) if value.path.is_ident("feature") => false,
         syn::Meta::List(list) if list.path.is_ident("cfg") || list.path.is_ident("all") => {
             use syn::parse::Parser;
             syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated
                 .parse2(list.tokens.clone())
                 .unwrap()
                 .iter()
-                .all(cfg_is_pi_enabled)
+                .all(cfg_is_default_enabled)
         }
         syn::Meta::List(list) if list.path.is_ident("any") => {
             use syn::parse::Parser;
@@ -39,15 +36,15 @@ fn cfg_is_pi_enabled(meta: &syn::Meta) -> bool {
                 .parse2(list.tokens.clone())
                 .unwrap()
                 .iter()
-                .any(cfg_is_pi_enabled)
+                .any(cfg_is_default_enabled)
         }
         syn::Meta::List(list) if list.path.is_ident("not") => {
-            !cfg_is_pi_enabled(&syn::parse2(list.tokens.clone()).unwrap())
+            !cfg_is_default_enabled(&syn::parse2(list.tokens.clone()).unwrap())
         }
         _ => true,
     }
 }
-fn pi_modules(path: &Path, found: &mut Vec<PathBuf>) {
+fn default_modules(path: &Path, found: &mut Vec<PathBuf>) {
     found.push(path.to_owned());
     let parsed = syn::parse_file(&fs::read_to_string(path).unwrap()).unwrap();
     let parent = path.parent().unwrap();
@@ -65,7 +62,7 @@ fn pi_modules(path: &Path, found: &mut Vec<PathBuf>) {
             || module
                 .attrs
                 .iter()
-                .any(|attr| attr.path().is_ident("cfg") && !cfg_is_pi_enabled(&attr.meta))
+                .any(|attr| attr.path().is_ident("cfg") && !cfg_is_default_enabled(&attr.meta))
         {
             continue;
         }
@@ -91,13 +88,13 @@ fn pi_modules(path: &Path, found: &mut Vec<PathBuf>) {
                 base.join(module.ident.to_string()).join("mod.rs")
             }
         });
-        pi_modules(&child, found);
+        default_modules(&child, found);
     }
 }
 #[test]
-fn evaluation_module_graph_excludes_entire_legacy_runtime() {
+fn ordinary_module_graph_excludes_entire_legacy_runtime() {
     let mut modules = Vec::new();
-    pi_modules(
+    default_modules(
         &Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lib.rs"),
         &mut modules,
     );
@@ -114,7 +111,7 @@ fn evaluation_module_graph_excludes_entire_legacy_runtime() {
             !modules
                 .iter()
                 .any(|path| path.file_name().unwrap() == excluded),
-            "legacy module {excluded} reachable in Pi graph"
+            "legacy module {excluded} reachable in ordinary graph"
         );
     }
     assert!(modules.iter().any(|path| path.ends_with("pi_chat.rs")));
@@ -139,7 +136,9 @@ fn retained_domain_never_stores_pi_lifecycle_state() {
             if forbidden.contains(' ') {
                 !domain.contains(forbidden)
             } else {
-                !domain.split(|c: char| !c.is_alphanumeric() && c != '_').any(|token| token == forbidden)
+                !domain
+                    .split(|c: char| !c.is_alphanumeric() && c != '_')
+                    .any(|token| token == forbidden)
             },
             "retained domain contains {forbidden}"
         );
@@ -170,9 +169,13 @@ fn pi_dispatch_has_only_retained_domain_commands() {
         assert!(!commands.contains(forbidden));
     }
     let composition = source("src/lib.rs").compact();
-    assert!(composition.contains(
-        "#[cfg(not(feature=\"pi-prototype\"))]{letchat_service=ChatService::new_managed"
-    ));
+    assert!(composition.contains("app.manage(pi_chat::storage::NativeDatabase::default())"));
+    assert!(composition.contains("app.manage(pi_chat::transport::NativeTransport::default())"));
+    assert!(composition
+        .contains("app.manage(pi_chat::authority::AuthorityStore::new(&vault_data_dir)?"));
+    assert!(!composition.contains("ChatService::"));
+    assert!(!composition.contains("pi_prototype"));
+    assert!(!source("Cargo.toml").contains("pi-prototype"));
     let lifecycle = source("src/app/lifecycle.rs").compact();
     let close = lifecycle
         .find("database.finish_restart_shutdown()?")
@@ -186,4 +189,16 @@ fn pi_dispatch_has_only_retained_domain_commands() {
     );
     assert!(lifecycle.contains("database.quiesce_for_restart(app)"));
     assert!(lifecycle.contains("transport.quiesce_for_restart()"));
+}
+
+#[test]
+fn webview_generation_advances_on_started_for_every_platform() {
+    let composition = source("src/lib.rs");
+    let hook = composition.split("builder.on_page_load").nth(1).unwrap();
+    let started = hook.find("PageLoadEvent::Started").unwrap();
+    let advance = hook.find("advance_webview_generation()").unwrap();
+    let desktop = hook.find("#[cfg(desktop)]").unwrap();
+    assert!(started < advance && advance < desktop);
+    assert!(hook.contains("PageLoadEvent::Finished"));
+    assert!(hook.contains(".show()"));
 }

@@ -193,27 +193,42 @@ mod tests {
     }
 
     #[test]
-    fn persist_note_rejects_chat_projection_paths_without_mutating_them() {
-        let fixture = crate::test_support::TestVault::new("state-persist-chat-projection");
-        let notes_dir = fixture.notes.path();
-        let projection_path = notes_dir.join("Part 001.md");
-        let projection = "---\ngneauxghts:\n  id: transcript-1\n  kind: chatTranscript\n  chat_id: chat-1\n  part: 1\n  projection_hash: abc\n---\n\nTranscript";
-        fs::write(&projection_path, projection).expect("write projection");
+    fn obsolete_projection_metadata_does_not_restrict_note_save_or_identity() {
+        let fixture = crate::test_support::TestVault::new("state-unclassified-note-save");
+        let original_path = fixture.notes.path().join("Original.md");
+        let original = "---\nproject: keep-me\ngneauxghts:\n  id: stable-note\n  created_at: 2026-01-01T00:00:00Z\n  kind: chatTranscript\n  chat_id: old-chat\n  part: 1\n  projection_hash: old-hash\n---\n\nOriginal body";
+        fs::write(&original_path, original).unwrap();
 
-        let error = save(
+        let renamed = save(
             &fixture.state,
-            "Renamed transcript",
-            "Changed",
-            Some(projection_path.as_path()),
+            "Renamed",
+            "Updated body",
+            Some(&original_path),
         )
-        .expect_err("projection write rejected");
-
-        assert!(error.contains("read-only"));
-        assert!(projection_path.exists());
+        .unwrap()
+        .unwrap();
+        let saved = fs::read_to_string(&renamed).unwrap();
+        let parsed = crate::note::parse_note(&saved);
+        let metadata = parsed.frontmatter.managed.unwrap();
+        assert_eq!(metadata.id, "stable-note");
+        assert_eq!(metadata.created_at, "2026-01-01T00:00:00Z");
         assert_eq!(
-            fs::read_to_string(projection_path).expect("read"),
-            projection
+            parsed.frontmatter.raw_other.as_deref(),
+            Some("project: keep-me")
         );
+        assert_eq!(parsed.body, "Updated body");
+        assert!(!original_path.exists());
+        for retired in ["kind:", "chat_id:", "part:", "projection_hash:"] {
+            assert!(!saved.contains(retired));
+        }
+        let identity = crate::services::note_timeline::NoteIdentity::new("stable-note");
+        assert!(!fixture
+            .state
+            .note_timeline()
+            .open_history_mode(identity)
+            .revisions()
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

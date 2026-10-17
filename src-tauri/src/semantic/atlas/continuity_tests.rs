@@ -6,7 +6,6 @@ fn node(id: &str, theme: usize, ordinal: usize) -> WorkingNode {
     embedding[theme] = 1.0;
     embedding[3] = ordinal as f32 * 0.001;
     WorkingNode {
-        has_semantic_content: true,
         id: id.into(),
         note_id: Some(id.into()),
         note_path: format!("/vault/{id}.md"),
@@ -236,12 +235,6 @@ fn named_clouds_survive_recovery_and_cache_invalidation() {
         reopened.rename(key, &id, None).unwrap().label.as_deref(),
         Some("Gardening")
     );
-    assert!(reopened
-        .load(AtlasGenerationKey {
-            chat_visibility: AtlasChatVisibilityKey::All
-        })
-        .unwrap()
-        .is_none());
 }
 #[test]
 fn long_labels_and_dense_notes_have_readable_accepted_geometry() {
@@ -383,7 +376,7 @@ fn supported_subthemes_are_visible_before_promotion_and_polls_do_not_add_evidenc
 }
 
 #[test]
-fn unrelated_replacement_retires_the_named_identity_and_placeholder_notes_stay_outside() {
+fn unrelated_replacement_retires_the_named_identity() {
     let (mut nodes, edges) = fixture();
     let mut first = update(&mut nodes, &edges, &MapState::default(), 100);
     let old = first.nodes[0].cloud.clone().unwrap();
@@ -413,12 +406,6 @@ fn unrelated_replacement_retires_the_named_identity_and_placeholder_notes_stay_o
         .clouds
         .iter()
         .any(|c| c.id == old && !c.active && c.user_name.as_deref() == Some("Original theme")));
-    for n in &mut nodes {
-        n.has_semantic_content = false;
-    }
-    let empty = update(&mut nodes, &edges, &next, 300);
-    assert!(empty.clouds.iter().all(|c| !c.active));
-    assert!(empty.nodes.iter().all(|n| n.cloud.is_none()));
 }
 #[test]
 fn model_change_resets_evidence_without_erasing_names_or_places() {

@@ -1,15 +1,11 @@
 use super::{current_time_millis, ForgottenNoteSummary, RestoredForgottenNote};
-#[cfg(not(feature = "pi-prototype"))]
-use crate::chat::ChatService;
-#[cfg(not(feature = "pi-prototype"))]
-use crate::index::build_indexed_note;
-pub(super) use crate::services::note_timeline::resolve_forgotten_target_path;
-#[cfg(all(test, not(feature = "pi-prototype")))]
-use crate::services::note_timeline::{LifecyclePublicationFailure, NoteIdentity};
+#[cfg(test)]
+use crate::services::note_timeline::{
+    LifecyclePublicationFailure, MutationWarningStage, NoteIdentity,
+};
 use crate::{
     index::AppState,
     note,
-    services::note_timeline::{MutationWarningStage, NoteMutationWarning},
     state::{
         forgotten_notes_root, read_state, read_unpruned_state, validate_current_path,
         ForgottenItemKind, PersistedForgottenNote,
@@ -21,19 +17,15 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
-#[cfg(not(feature = "pi-prototype"))]
-use tauri::Manager;
 
-#[cfg(all(test, not(feature = "pi-prototype")))]
+#[cfg(test)]
 use crate::services::note_timeline::{
     forgotten_note_identity, prepare_forgotten_note_markdown, publish_note_move,
     resolve_restore_target_path, AFTER_FORGET_METADATA_STAGED, BEFORE_FORGOTTEN_PUBLICATION,
 };
-#[cfg(all(test, not(feature = "pi-prototype")))]
+#[cfg(test)]
 static BEFORE_FORGOTTEN_PURGE: std::sync::Mutex<Option<Box<dyn FnOnce() + Send>>> =
     std::sync::Mutex::new(None);
-
-const FORGOTTEN_DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
 
 #[tauri::command]
 pub(crate) fn get_forgotten_note_retention_days() -> Result<u32, String> {
@@ -78,57 +70,6 @@ pub(crate) fn forget_note_with_state(
     Ok(None)
 }
 
-pub(super) fn register_forgotten_chat_folder(
-    state: &AppState,
-    notes_dir: &Path,
-    original_path: &Path,
-    forgotten_path: &Path,
-    title: &str,
-    conversation_id: &str,
-    retention_days: u32,
-) -> Result<ForgottenNoteSummary, String> {
-    validate_retention_days(retention_days)?;
-    if !original_path.starts_with(notes_dir)
-        || original_path.starts_with(forgotten_notes_root(notes_dir))
-    {
-        return Err("Forgotten note restore path is outside the notes directory".to_string());
-    }
-    if !forgotten_path.is_dir()
-        || !forgotten_path.starts_with(forgotten_notes_root(notes_dir))
-        || conversation_id.trim().is_empty()
-    {
-        return Err("Forgotten chat folder is invalid".to_string());
-    }
-    let forgotten_at_millis = current_time_millis()?;
-    let purge_at_millis = forgotten_at_millis
-        .saturating_add(u64::from(retention_days).saturating_mul(FORGOTTEN_DAY_MILLIS));
-
-    let forgotten_note = PersistedForgottenNote {
-        note_id: None,
-        forgotten_path: forgotten_path.to_string_lossy().into_owned(),
-        original_path: original_path.to_string_lossy().into_owned(),
-        title: title.to_string(),
-        forgotten_at_millis,
-        purge_after_days: retention_days,
-        purge_at_millis,
-        kind: ForgottenItemKind::Chat,
-        conversation_id: Some(conversation_id.to_string()),
-    };
-    state
-        .app_state_storage()
-        .insert_forgotten_note(&forgotten_note)?;
-    let mut summary = build_forgotten_note_summary(&forgotten_note);
-    if let Err(error) = state.app_state_storage().finish_forgetting(&forgotten_note) {
-        merge_lifecycle_warning(
-            &mut summary.commit_warning,
-            MutationWarningStage::DirtyRecovery,
-            "The chat was forgotten, but navigation bookkeeping is awaiting retry",
-            error,
-        );
-    }
-    Ok(summary)
-}
-
 #[tauri::command]
 pub(crate) async fn list_forgotten_notes<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
@@ -158,23 +99,20 @@ pub(crate) async fn restore_forgotten_notes<R: tauri::Runtime>(
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
     super::on_app_worker(app.clone(), move |state| {
-        #[cfg(not(feature = "pi-prototype"))]
-        let chat_service = app
-            .try_state::<ChatService>()
-            .ok_or_else(|| "Application state unavailable".to_string())?;
-        restore_forgotten_notes_with_state(
-            state,
-            #[cfg(not(feature = "pi-prototype"))]
-            &chat_service,
-            forgotten_paths,
-        )
+        restore_forgotten_notes_impl(state, forgotten_paths)
     })
     .await?
 }
 
+#[cfg(test)]
 pub(crate) fn restore_forgotten_notes_with_state(
     state: &AppState,
-    #[cfg(not(feature = "pi-prototype"))] chat_service: &ChatService,
+    forgotten_paths: Vec<String>,
+) -> Result<Vec<RestoredForgottenNote>, String> {
+    restore_forgotten_notes_impl(state, forgotten_paths)
+}
+fn restore_forgotten_notes_impl(
+    state: &AppState,
     forgotten_paths: Vec<String>,
 ) -> Result<Vec<RestoredForgottenNote>, String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, state)?;
@@ -190,7 +128,6 @@ pub(crate) fn restore_forgotten_notes_with_state(
         .into_iter()
         .filter(|item| selected_paths.contains(&item.forgotten_path))
     {
-        let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         let (restored_path, commit_warning) = match forgotten_note.kind {
             ForgottenItemKind::Note => {
                 let Some(restored) = state
@@ -202,67 +139,10 @@ pub(crate) fn restore_forgotten_notes_with_state(
                 };
                 restored
             }
-            #[cfg(not(feature = "pi-prototype"))]
             ForgottenItemKind::Chat => {
-                if !forgotten_path.is_dir() {
-                    state
-                        .app_state_storage()
-                        .remove_forgotten_note(&forgotten_note)?;
-                    continue;
-                }
-                let conversation_id = forgotten_note
-                    .conversation_id
-                    .as_deref()
-                    .ok_or_else(|| "Forgotten chat is missing its conversation id".to_string())?;
-                let original_path = PathBuf::from(&forgotten_note.original_path);
-                let (relocation, metadata_warning) = crate::state::with_note_file_mutation(|| {
-                    if !state
-                        .app_state_storage()
-                        .forgotten_note_matches(&forgotten_note)?
-                    {
-                        return Err("The forgotten item changed before recovery".to_string());
-                    }
-                    let relocation = chat_service.restore_conversation_folder(
-                        conversation_id,
-                        &forgotten_path,
-                        &original_path,
-                    )?;
-                    let warning = state
-                        .app_state_storage()
-                        .remove_forgotten_note(&forgotten_note)
-                        .err()
-                        .map(|error| {
-                            NoteMutationWarning::single(
-                                MutationWarningStage::DirtyRecovery,
-                                "The chat was recovered, but recovery bookkeeping is awaiting retry".to_string(),
-                                error,
-                            )
-                        });
-                    Ok::<_, String>((relocation, warning))
-                })?;
-                for path in &relocation.current_paths {
-                    let markdown = fs::read_to_string(path).map_err(|error| error.to_string())?;
-                    let note = build_indexed_note(path, &markdown, current_time_millis()?);
-                    if let Err(error) = state.upsert_managed_chat_projection(path.clone(), note) {
-                        eprintln!(
-                            "restored chat projection index update failed for {}: {error}",
-                            path.display()
-                        );
-                        let _ = state.mark_notes_index_dirty(path, "restored-chat-retry");
-                    }
-                }
-                if let Err(error) =
-                    super::chat_commands::sync_chat_recall(chat_service, state, conversation_id)
-                {
-                    eprintln!(
-                        "restored chat semantic recall update failed for {conversation_id}: {error}"
-                    );
-                }
-                (original_path, metadata_warning)
-            }
-            #[cfg(feature = "pi-prototype")]
-            ForgottenItemKind::Chat => {
-                return Err("Restoring legacy chats is unavailable in the Pi evaluation".into())
+                return Err(
+                    "Legacy chat restoration is unsupported by the current chat store".into(),
+                );
             }
         };
 
@@ -286,23 +166,20 @@ pub(crate) async fn delete_forgotten_notes<R: tauri::Runtime>(
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
     super::on_app_worker(app.clone(), move |state| {
-        #[cfg(not(feature = "pi-prototype"))]
-        let chat_service = app
-            .try_state::<ChatService>()
-            .ok_or_else(|| "Application state unavailable".to_string())?;
-        delete_forgotten_notes_with_state(
-            state,
-            #[cfg(not(feature = "pi-prototype"))]
-            &chat_service,
-            forgotten_paths,
-        )
+        delete_forgotten_notes_impl(state, forgotten_paths)
     })
     .await?
 }
 
+#[cfg(test)]
 pub(crate) fn delete_forgotten_notes_with_state(
     state: &AppState,
-    #[cfg(not(feature = "pi-prototype"))] chat_service: &ChatService,
+    forgotten_paths: Vec<String>,
+) -> Result<(), String> {
+    delete_forgotten_notes_impl(state, forgotten_paths)
+}
+fn delete_forgotten_notes_impl(
+    state: &AppState,
     forgotten_paths: Vec<String>,
 ) -> Result<(), String> {
     let notes_dir = super::prepare_notes_dir_with_state(true, state)?;
@@ -317,32 +194,10 @@ pub(crate) fn delete_forgotten_notes_with_state(
         .into_iter()
         .filter(|item| selected_paths.contains(&item.forgotten_path))
     {
-        purge_forgotten_item(
-            state,
-            &forgotten_note,
-            current_time_millis()?,
-            |conversation_id| {
-                #[cfg(not(feature = "pi-prototype"))]
-                {
-                    chat_service.delete_archived_conversation(conversation_id)
-                }
-                #[cfg(feature = "pi-prototype")]
-                {
-                    let _ = conversation_id;
-                    Err("Deleting legacy chats is unavailable in the Pi evaluation".into())
-                }
-            },
-        )?;
+        purge_forgotten_item(state, &forgotten_note, current_time_millis()?)?;
     }
 
     Ok(())
-}
-
-fn validate_retention_days(retention_days: u32) -> Result<(), String> {
-    match retention_days {
-        1 | 7 | 30 => Ok(()),
-        _ => Err("Unsupported forgotten note retention window".to_string()),
-    }
 }
 
 pub(super) fn build_forgotten_note_summary(
@@ -363,19 +218,6 @@ pub(super) fn build_forgotten_note_summary(
         kind: forgotten_item_kind_name(&forgotten_note.kind).to_string(),
         conversation_id: forgotten_note.conversation_id.clone(),
         commit_warning: None,
-    }
-}
-
-fn merge_lifecycle_warning(
-    warning: &mut Option<NoteMutationWarning>,
-    stage: MutationWarningStage,
-    message: &str,
-    issue: String,
-) {
-    let next = NoteMutationWarning::single(stage, message.to_string(), issue);
-    match warning {
-        Some(warning) => warning.merge(next),
-        None => *warning = Some(next),
     }
 }
 
@@ -408,6 +250,9 @@ pub(super) fn cleanup_expired_forgotten_notes(
     let now = current_time_millis()?;
     state.note_timeline().purge_expired_missing_notes(now)?;
     for forgotten_note in read_unpruned_state(notes_dir)?.forgotten_notes {
+        if forgotten_note.kind == ForgottenItemKind::Chat {
+            continue;
+        }
         let forgotten_path = Path::new(&forgotten_note.forgotten_path);
         let active_path = Path::new(&forgotten_note.original_path);
         let recovered = crate::state::with_note_file_mutation(|| {
@@ -428,20 +273,7 @@ pub(super) fn cleanup_expired_forgotten_notes(
             continue;
         }
         if forgotten_note.purge_at_millis <= now {
-            purge_forgotten_item(state, &forgotten_note, now, |conversation_id| {
-                #[cfg(not(feature = "pi-prototype"))]
-                {
-                    ChatService::delete_persisted_conversation(
-                        state.running_vault().data_dir(),
-                        conversation_id,
-                    )
-                }
-                #[cfg(feature = "pi-prototype")]
-                {
-                    let _ = conversation_id;
-                    Err("Purging legacy chats is unavailable in the Pi evaluation".into())
-                }
-            })?;
+            purge_forgotten_item(state, &forgotten_note, now)?;
         }
     }
 
@@ -470,41 +302,21 @@ fn purge_forgotten_item(
     state: &AppState,
     forgotten_note: &PersistedForgottenNote,
     occurred_at_millis: u64,
-    delete_conversation: impl FnOnce(&str) -> Result<(), String>,
 ) -> Result<(), String> {
-    let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
-    #[cfg(all(test, not(feature = "pi-prototype")))]
+    if forgotten_note.kind == ForgottenItemKind::Chat {
+        return Err("Legacy chat deletion is unsupported by the current chat store".into());
+    }
+    #[cfg(test)]
     {
         let hook = BEFORE_FORGOTTEN_PURGE.lock().unwrap().take();
         if let Some(hook) = hook {
             hook();
         }
     }
-    if forgotten_note.kind == ForgottenItemKind::Note {
-        state
-            .note_timeline()
-            .purge_selected_forgotten_note(forgotten_note, occurred_at_millis)?;
-        Ok(())
-    } else {
-        crate::state::with_note_file_mutation(|| {
-            if !state
-                .app_state_storage()
-                .forgotten_note_matches(forgotten_note)?
-            {
-                return Err("The forgotten item changed before deletion".to_string());
-            }
-            if let Some(conversation_id) = forgotten_note.conversation_id.as_deref() {
-                delete_conversation(conversation_id)?;
-            }
-            if forgotten_path.exists() {
-                remove_forgotten_item_path(&forgotten_path, &forgotten_note.kind)?;
-            }
-            state
-                .app_state_storage()
-                .remove_forgotten_note(forgotten_note)?;
-            Ok(())
-        })
-    }
+    state
+        .note_timeline()
+        .purge_selected_forgotten_note(forgotten_note, occurred_at_millis)
+        .map_err(|error| error.to_string())
 }
 
 fn forgotten_item_kind_name(kind: &ForgottenItemKind) -> &'static str {
@@ -514,19 +326,14 @@ fn forgotten_item_kind_name(kind: &ForgottenItemKind) -> &'static str {
     }
 }
 
-fn remove_forgotten_item_path(path: &Path, kind: &ForgottenItemKind) -> Result<(), String> {
-    match kind {
-        ForgottenItemKind::Note => fs::remove_file(path).map_err(|error| error.to_string()),
-        ForgottenItemKind::Chat => fs::remove_dir_all(path).map_err(|error| error.to_string()),
-    }
-}
-
-#[cfg(all(test, not(feature = "pi-prototype")))]
+#[cfg(test)]
 mod tests {
     use super::*;
+
+    const FORGOTTEN_DAY_MILLIS: u64 = 24 * 60 * 60 * 1000;
     use crate::state::{
         db_insert_forgotten_note, db_remove_forgotten_note, db_set_forgotten_original_path,
-        write_state, write_unpruned_state,
+        write_unpruned_state,
     };
     use crate::{
         services::note_timeline::{
@@ -610,10 +417,6 @@ mod tests {
             let notes = TestDir::new("restore-stale-purge-notes");
             set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
             crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-            let service =
-                ChatService::new(notes.path().to_path_buf(), notes.path().join(".gneauxghts"))
-                    .unwrap();
-            let chat = service;
             let app = AppState::new(
                 crate::semantic::SemanticState::new_disabled("disabled"),
                 crate::app::EventBus::disabled(),
@@ -653,7 +456,6 @@ mod tests {
                     } else {
                         delete_forgotten_notes_with_state(
                             &state,
-                            &chat.clone(),
                             vec![forgotten.forgotten_path.clone()],
                         )
                     }
@@ -663,7 +465,6 @@ mod tests {
                     .unwrap();
                 let restored = restore_forgotten_notes_with_state(
                     &state,
-                    &chat.clone(),
                     vec![forgotten.forgotten_path.clone()],
                 )
                 .unwrap();
@@ -693,12 +494,8 @@ mod tests {
                     let retained = read_unpruned_state(notes.path()).unwrap();
                     assert_eq!(retained.forgotten_notes.len(), 1);
                     assert_eq!(retained.forgotten_notes[0].purge_after_days, 30);
-                    restore_forgotten_notes_with_state(
-                        &state,
-                        &chat.clone(),
-                        vec![retained_path.clone()],
-                    )
-                    .unwrap();
+                    restore_forgotten_notes_with_state(&state, vec![retained_path.clone()])
+                        .unwrap();
                 }
                 assert!(!state
                     .note_timeline()
@@ -719,123 +516,13 @@ mod tests {
     }
 
     #[test]
-    fn restored_chat_survives_a_stale_selected_or_expired_purge() {
-        let _guard = lock_test_env();
-        for (cleanup, archive_again) in [(false, false), (true, false), (false, true), (true, true)]
-        {
-            let data = TestDir::new("restore-stale-chat-purge-data");
-            crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
-            let notes = TestDir::new("restore-stale-chat-purge-notes");
-            set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
-            crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-            let service =
-                ChatService::new(notes.path().to_path_buf(), notes.path().join(".gneauxghts"))
-                    .unwrap();
-            let conversation = service
-                .create_conversation(Some("Keep restored conversation".into()), None)
-                .unwrap();
-            let chat = service;
-            let app = AppState::new(
-                crate::semantic::SemanticState::new_disabled("disabled"),
-                crate::app::EventBus::disabled(),
-            )
-            .unwrap();
-            let state = &app;
-            let forgotten = super::super::chat_commands::archive_conversation_with_state(
-                &chat.clone(),
-                &state,
-                conversation.summary.id.clone(),
-                true,
-                7,
-            )
-            .unwrap()
-            .unwrap();
-            if cleanup {
-                let mut expired = read_unpruned_state(notes.path()).unwrap();
-                expired.forgotten_notes[0].forgotten_at_millis = 0;
-                expired.forgotten_notes[0].purge_at_millis = 1;
-                write_unpruned_state(&expired).unwrap();
-            }
-            let (selected_tx, selected_rx) = std::sync::mpsc::channel();
-            let (release_tx, release_rx) = std::sync::mpsc::channel();
-            *BEFORE_FORGOTTEN_PURGE.lock().unwrap() = Some(Box::new(move || {
-                selected_tx.send(()).unwrap();
-                release_rx
-                    .recv_timeout(std::time::Duration::from_secs(10))
-                    .unwrap();
-            }));
-            std::thread::scope(|scope| {
-                let deleting = scope.spawn(|| {
-                    if cleanup {
-                        cleanup_expired_forgotten_notes(notes.path(), &state)
-                    } else {
-                        delete_forgotten_notes_with_state(
-                            &state,
-                            &chat.clone(),
-                            vec![forgotten.forgotten_path.clone()],
-                        )
-                    }
-                });
-                selected_rx
-                    .recv_timeout(std::time::Duration::from_secs(10))
-                    .unwrap();
-                let restored = restore_forgotten_notes_with_state(
-                    &state,
-                    &chat.clone(),
-                    vec![forgotten.forgotten_path.clone()],
-                )
-                .unwrap();
-                let retained_path = if archive_again {
-                    let archived = super::super::chat_commands::archive_conversation_with_state(
-                        &chat.clone(),
-                        &state,
-                        conversation.summary.id.clone(),
-                        true,
-                        30,
-                    )
-                    .unwrap()
-                    .unwrap();
-                    assert_eq!(archived.forgotten_path, forgotten.forgotten_path);
-                    archived.forgotten_path
-                } else {
-                    restored[0].restored_path.clone()
-                };
-                release_tx.send(()).unwrap();
-                assert!(deleting
-                    .join()
-                    .unwrap()
-                    .unwrap_err()
-                    .contains("changed before deletion"));
-                assert!(Path::new(&retained_path).is_dir());
-                let retained = chat.get_conversation(&conversation.summary.id).unwrap();
-                assert_eq!(
-                    retained.summary.status,
-                    if archive_again { "archived" } else { "active" }
-                );
-                let records = read_unpruned_state(notes.path()).unwrap().forgotten_notes;
-                assert_eq!(records.len(), usize::from(archive_again));
-                if archive_again {
-                    assert_eq!(records[0].purge_after_days, 30);
-                }
-            });
-            set_notes_root_override(None).unwrap();
-        }
-    }
-
-    #[test]
-    fn concurrent_archive_and_failed_forget_preserve_only_owned_metadata_and_navigation() {
+    fn concurrent_cleanup_and_failed_forget_preserve_only_owned_metadata_and_navigation() {
         let _guard = lock_test_env();
         let data = TestDir::new("concurrent-forgotten-data");
         crate::state::initialize_app_data_dir(data.path().to_path_buf()).unwrap();
         let notes = TestDir::new("concurrent-forgotten-notes");
         set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
         crate::state::ensure_vault_scaffold(notes.path()).unwrap();
-        let service =
-            ChatService::new(notes.path().to_path_buf(), notes.path().join(".gneauxghts")).unwrap();
-        let conversation = service
-            .create_conversation(Some("Concurrent archive".into()), None)
-            .unwrap();
-        let chat = service;
         let app = AppState::new(
             crate::semantic::SemanticState::new_disabled("disabled"),
             crate::app::EventBus::disabled(),
@@ -861,7 +548,7 @@ mod tests {
                 .recv_timeout(std::time::Duration::from_secs(10))
                 .unwrap();
         }));
-        let summary = std::thread::scope(|scope| {
+        std::thread::scope(|scope| {
             let failed = scope.spawn(|| forget_note_with_state(&state, Some(path.clone()), 7));
             staged_rx
                 .recv_timeout(std::time::Duration::from_secs(10))
@@ -875,24 +562,6 @@ mod tests {
                 result
             });
             assert!(cleanup_rx
-                .recv_timeout(std::time::Duration::from_millis(50))
-                .is_err());
-            let (archive_tx, archive_rx) = std::sync::mpsc::channel();
-            let archive_state = state;
-            let archive_chat = &chat;
-            let archive_id = conversation.summary.id.clone();
-            let archive = scope.spawn(move || {
-                let result = super::super::chat_commands::archive_conversation_with_state(
-                    &archive_chat,
-                    &archive_state,
-                    archive_id,
-                    true,
-                    7,
-                );
-                archive_tx.send(()).unwrap();
-                result
-            });
-            assert!(archive_rx
                 .recv_timeout(std::time::Duration::from_millis(50))
                 .is_err());
             crate::state::db_mark_note_opened("concurrent-selection").unwrap();
@@ -914,14 +583,9 @@ mod tests {
                 .unwrap_err()
                 .contains("injected note publication failure"));
             cleanup.join().unwrap().unwrap();
-            archive.join().unwrap().unwrap().unwrap()
         });
         let after = read_unpruned_state(notes.path()).unwrap();
-        assert_eq!(after.forgotten_notes.len(), 1);
-        assert_eq!(
-            after.forgotten_notes[0].forgotten_path,
-            summary.forgotten_path
-        );
+        assert!(after.forgotten_notes.is_empty());
         assert_eq!(
             after.last_opened_note_id.as_deref(),
             Some("concurrent-selection")
@@ -1084,12 +748,6 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("restart app state");
-        let chat_service = ChatService::new(
-            notes.path().to_path_buf(),
-            crate::state::vault_data_dir().expect("resolve vault data"),
-        )
-        .expect("construct chat service");
-        let chat = chat_service;
         let restarted_app = restarted;
         let restarted = &restarted_app;
         cleanup_expired_forgotten_notes(notes.path(), &restarted)
@@ -1122,7 +780,6 @@ mod tests {
         fs::write(&original_path, "Unrelated current note").expect("reuse original path");
         let restored = restore_forgotten_notes_with_state(
             &restarted_app,
-            &chat,
             vec![recovered_from.to_string_lossy().into_owned()],
         )
         .expect("recover forgotten note");
@@ -1252,12 +909,6 @@ mod tests {
             crate::app::EventBus::disabled(),
         )
         .expect("restart app state");
-        let chat_service = ChatService::new(
-            notes.path().to_path_buf(),
-            crate::state::vault_data_dir().expect("resolve vault data"),
-        )
-        .expect("construct chat service");
-        let chat = chat_service;
         let restarted_app = restarted_state;
         let retained = read_unpruned_state(notes.path()).expect("read forgotten state");
         assert_eq!(retained.forgotten_notes.len(), 1);
@@ -1276,7 +927,6 @@ mod tests {
 
         let restored = restore_forgotten_notes_with_state(
             &restarted_app,
-            &chat,
             vec![forgotten_path.to_string_lossy().into_owned()],
         )
         .expect("recover forgotten note");
@@ -1459,112 +1109,50 @@ mod tests {
     }
 
     #[test]
-    fn chat_folder_uses_the_forgotten_item_recovery_lifecycle() {
-        let _guard = lock_test_env();
-        let app_data = TestDir::new("forgotten-chat-folder-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        let root = TestDir::new("forgotten-chat-folder");
-        set_notes_root_override(Some(root.path().to_path_buf())).expect("override notes root");
-        let original_path = root.path().join("Chats").join("2026-07-28-chat");
-        let forgotten_path = root.path().join(".forgotten").join("2026-07-28-chat");
-        fs::create_dir_all(&forgotten_path).expect("create forgotten chat folder");
-        fs::write(forgotten_path.join("Conversation.md"), "# Release planning")
-            .expect("write conversation index");
-        fs::write(forgotten_path.join("Part 001.md"), "## You\n\nShip it")
-            .expect("write transcript part");
-        let state = AppState::new(
-            crate::semantic::SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
-
-        let summary = register_forgotten_chat_folder(
-            &state,
-            root.path(),
-            &original_path,
-            &forgotten_path,
-            "Release planning",
-            "conversation-1",
-            7,
-        )
-        .expect("register forgotten chat folder");
-
-        assert!(forgotten_path.starts_with(root.path().join(".forgotten")));
-        assert!(forgotten_path.is_dir());
-        assert_eq!(summary.original_path, original_path.to_string_lossy());
-        assert_eq!(summary.purge_after_days, 7);
-        assert_eq!(summary.kind, "chat");
-        assert_eq!(summary.conversation_id.as_deref(), Some("conversation-1"));
-
-        let persisted_state = read_state(root.path()).expect("read forgotten note state");
-        assert_eq!(persisted_state.forgotten_notes.len(), 1);
+    fn unsupported_legacy_chat_recovery_and_deletion_preserve_files_and_metadata() {
+        let fixture = crate::test_support::TestVault::new("unsupported-forgotten-chat");
+        let forgotten_path = fixture.notes.path().join(".forgotten/legacy-chat");
+        fs::create_dir_all(&forgotten_path).unwrap();
+        let authored_path = forgotten_path.join("Conversation.md");
+        fs::write(&authored_path, "Retained authored transcript").unwrap();
+        let item = PersistedForgottenNote {
+            forgotten_path: forgotten_path.to_string_lossy().into_owned(),
+            original_path: fixture
+                .notes
+                .path()
+                .join("Chats/legacy-chat")
+                .to_string_lossy()
+                .into_owned(),
+            title: "Legacy chat".into(),
+            forgotten_at_millis: 0,
+            purge_after_days: 1,
+            purge_at_millis: 1,
+            kind: ForgottenItemKind::Chat,
+            conversation_id: Some("legacy-chat".into()),
+            note_id: None,
+        };
+        fixture
+            .state
+            .app_state_storage()
+            .insert_forgotten_note(&item)
+            .unwrap();
+        let paths = vec![item.forgotten_path.clone()];
+        assert!(restore_forgotten_notes_impl(&fixture.state, paths.clone())
+            .unwrap_err()
+            .contains("unsupported"));
+        assert!(delete_forgotten_notes_impl(&fixture.state, paths)
+            .unwrap_err()
+            .contains("unsupported"));
+        cleanup_expired_forgotten_notes(fixture.notes.path(), &fixture.state).unwrap();
         assert_eq!(
-            persisted_state.forgotten_notes[0].forgotten_path,
-            forgotten_path.to_string_lossy()
+            fs::read_to_string(authored_path).unwrap(),
+            "Retained authored transcript"
         );
-        assert_eq!(
-            persisted_state.forgotten_notes[0].kind,
-            ForgottenItemKind::Chat
-        );
-
-        set_notes_root_override(None).expect("clear notes root override");
-    }
-
-    #[test]
-    fn expired_chat_folder_deletes_the_archive_and_conversation_history() {
-        let _guard = lock_test_env();
-        let root = TestDir::new("expired-forgotten-chat-folder");
-        set_notes_root_override(Some(root.path().to_path_buf())).expect("override notes root");
-        let data_dir = root.path().join(".gneauxghts");
-        fs::create_dir_all(&data_dir).expect("create vault data");
-        let service =
-            ChatService::new(root.path().to_path_buf(), data_dir).expect("create chat service");
-        let conversation = service
-            .create_conversation(Some("Temporary chat".to_string()), None)
-            .expect("create conversation");
-        let snapshot = service
-            .forgotten_folder_snapshot(&conversation.summary.id)
-            .expect("load folder snapshot");
-        let forgotten_root = forgotten_notes_root(root.path());
-        fs::create_dir_all(&forgotten_root).expect("create forgotten root");
-        let forgotten_path = resolve_forgotten_target_path(root.path(), &snapshot.original_path);
-        service
-            .archive_conversation_folder(&conversation.summary.id, &forgotten_path)
-            .expect("archive conversation folder");
-        let app_data = TestDir::new("expired-forgotten-chat-app-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf())
-            .expect("initialize app data");
-        let state = AppState::new(
-            crate::semantic::SemanticState::new_disabled("disabled"),
-            crate::app::EventBus::disabled(),
-        )
-        .expect("construct app state");
-        register_forgotten_chat_folder(
-            &state,
-            root.path(),
-            &snapshot.original_path,
-            &forgotten_path,
-            &snapshot.title,
-            &conversation.summary.id,
-            1,
-        )
-        .expect("register forgotten chat");
-
-        let mut persisted_state = read_state(root.path()).expect("read forgotten state");
-        persisted_state.forgotten_notes[0].forgotten_at_millis = 0;
-        persisted_state.forgotten_notes[0].purge_at_millis = 0;
-        write_state(root.path(), &persisted_state).expect("expire forgotten chat");
-
-        cleanup_expired_forgotten_notes(root.path(), &state).expect("clean up expired chat");
-
-        assert!(!forgotten_path.exists());
-        assert!(service.get_conversation(&conversation.summary.id).is_err());
-        assert!(read_state(root.path())
-            .expect("read cleaned state")
-            .forgotten_notes
-            .is_empty());
-
-        set_notes_root_override(None).expect("clear notes root override");
+        assert!(fixture
+            .state
+            .app_state_storage()
+            .forgotten_note_matches(&item)
+            .unwrap());
     }
 
     #[test]
@@ -1630,17 +1218,9 @@ mod tests {
             .as_deref(),
             Some(identity.as_str())
         );
-        let chat = ChatService::new(
-            fixture.notes.path().to_path_buf(),
-            fixture.notes.path().join(".gneauxghts"),
-        )
-        .unwrap();
-        let restored = restore_forgotten_notes_with_state(
-            &fixture.state,
-            &chat,
-            vec![forgotten.forgotten_path],
-        )
-        .unwrap();
+        let restored =
+            restore_forgotten_notes_with_state(&fixture.state, vec![forgotten.forgotten_path])
+                .unwrap();
         let markdown = fs::read_to_string(&restored[0].restored_path).unwrap();
         let parsed = note::parse_note(&markdown);
         let metadata = parsed.frontmatter.managed.unwrap();

@@ -1,5 +1,4 @@
 use super::*;
-use crate::services::evidence::{EvidenceSession, ReadRequest, SearchRequest};
 
 fn millis(date: &str) -> u64 {
     chrono::DateTime::parse_from_rfc3339(date)
@@ -48,70 +47,7 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
     );
     let after = millis("2026-09-07T00:00:00-06:00");
     let before = millis("2026-09-14T00:00:00-06:00");
-    let mut request = SearchRequest {
-        after: Some(after),
-        before: Some(before),
-        limit: Some(20),
-        ..Default::default()
-    };
-    let mut session = EvidenceSession::default();
-    let mut items = Vec::new();
-    loop {
-        let page = session
-            .search(&f.state, None, &HashSet::new(), request.clone())
-            .unwrap();
-        let ids: Vec<String> = page["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|i| i["evidenceId"].as_str().unwrap().into())
-            .collect();
-        // This lineage fixture exhaustively inspects every changed range in
-        // separate bounded read sessions. A real agent selects necessary ranges
-        // within one shared allowance; budget delivery has dedicated regressions.
-        for id in ids {
-            let mut reader = EvidenceSession::default();
-            let mut discovery = request.clone();
-            discovery.cursor = None;
-            loop {
-                let found = reader
-                    .search(&f.state, None, &HashSet::new(), discovery.clone())
-                    .unwrap();
-                if found["items"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .any(|item| item["evidenceId"] == id)
-                {
-                    break;
-                }
-                discovery.cursor = Some(
-                    found["nextCursor"]
-                        .as_str()
-                        .expect("Selected fixture range must remain discoverable")
-                        .into(),
-                );
-            }
-            let pages = f.read_evidence_pages(
-                &mut reader,
-                ReadRequest {
-                    evidence_ids: vec![id],
-                    ..Default::default()
-                },
-            );
-            let returned: Vec<_> = pages
-                .iter()
-                .flat_map(|page| page["items"].as_array().unwrap())
-                .cloned()
-                .collect();
-            assert_eq!(returned.len(), 1);
-            items.extend(returned);
-        }
-        match page["nextCursor"].as_str() {
-            Some(cursor) => request.cursor = Some(cursor.into()),
-            None => break,
-        }
-    }
+    let items = f.activity_ranges(after, before);
     let marker_is_activity = |line: &str| {
         let marker = body.find(line).unwrap() + 3; // checked x, not task words
         items.iter().any(|i| {
@@ -166,15 +102,6 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
             assert_eq!(task["currentStatus"], "open", "{item}");
         }
     }
-    if let Ok(output) = std::env::var("GNEAUX_TASK_EVIDENCE_OUTPUT") {
-        fs::write(output, serde_json::to_string_pretty(&serde_json::json!({
-            "id":"weekly_tasks_real_timeline", "question":"What tasks did I do this week? For this test, this week is September 7 through September 13, 2026, in America/Denver. Report what the notes establish about completion, not just what text was edited.",
-            "resolvedPeriod":{"after":after,"before":before,"timezone":"America/Denver"},
-            "sources":items,
-            "expected":"Identify Send renewal proposal and Close weekly report as recorded complete in the period. Archive old invoices was already complete before the period. Keep capitalization only changed [x] to [X], so it also remains an older completion. Publish onboarding guide only had wording edited, so its old completion is not this week's accomplishment. Ship urgent patch and reopened Review metrics are incomplete. Planning prose is not a completed task. The later file write and added 'to Mia' wording do not move the checkbox's completion evidence out of the week. Do not claim these records independently prove real-world work dates."
-        })).unwrap()).unwrap();
-    }
-
     // Clearing history establishes an unknown baseline, not a new completion.
     f.state.note_timeline().clear_note_history(&f.note).unwrap();
     f.clock
@@ -184,22 +111,8 @@ fn weekly_task_evidence_tracks_checkbox_ranges_not_file_or_task_wording_edits() 
         "Publish updated onboarding guide",
     ));
     f.seal();
-    let mut baseline = EvidenceSession::default();
-    let page = baseline
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                after: Some(after),
-                before: Some(before),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let item = page["items"]
-        .as_array()
-        .unwrap()
+    let items = f.activity_ranges(after, before);
+    let item = items
         .iter()
         .find(|i| i["task"]["text"] == "Publish updated onboarding guide")
         .expect("wording activity remains visible");
@@ -220,20 +133,8 @@ fn rewriting_a_checked_tasks_entire_description_is_not_a_new_completion() {
     f.clock.store(2_000_000, Ordering::SeqCst);
     f.save("- [x] Completely rewritten wording");
     f.seal();
-    let mut session = EvidenceSession::default();
-    let page = session
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                after: Some(1_500_000),
-                before: Some(2_500_000),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let item = &page["items"][0];
+    let items = f.activity_ranges(1_500_000, 2_500_000);
+    let item = &items[0];
     assert_eq!(item["task"]["currentStatus"], "completed");
     assert_eq!(
         item["task"]["statusMarkerChangedInPeriod"], false,
@@ -265,22 +166,8 @@ fn restoring_a_checked_task_reports_restore_without_redating_its_marker() {
     history
         .confirm_restore(selected.as_str(), &preview.current_authored_content_hash)
         .unwrap();
-    let mut session = EvidenceSession::default();
-    let page = session
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                after: Some(1),
-                before: Some(u64::MAX),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let item = page["items"]
-        .as_array()
-        .unwrap()
+    let items = f.activity_ranges(1, u64::MAX);
+    let item = items
         .iter()
         .find(|i| i["task"]["matchedRangeIncludesStatusMarker"] == true)
         .expect("restored marker activity");
@@ -301,22 +188,8 @@ fn restoring_a_checked_task_reports_restore_without_redating_its_marker() {
     f.clock.store(later + 60_000, Ordering::SeqCst);
     f.save("- [x] Archive records");
     f.seal();
-    let mut session = EvidenceSession::default();
-    let page = session
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                after: Some(1),
-                before: Some(u64::MAX),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let task = &page["items"]
-        .as_array()
-        .unwrap()
+    let items = f.activity_ranges(1, u64::MAX);
+    let task = &items
         .iter()
         .find(|i| i["task"]["matchedRangeIncludesStatusMarker"] == true)
         .unwrap()["task"];
@@ -338,22 +211,8 @@ fn task_checkbox_window_straddling_week_start_is_explicitly_uncertain() {
     f.clock.store(monday + 2_000, Ordering::SeqCst);
     f.save("- [x] Boundary task\nFollow-up");
     f.seal();
-    let mut session = EvidenceSession::default();
-    let page = session
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                after: Some(monday),
-                before: Some(monday + 86_400_000),
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let item = page["items"]
-        .as_array()
-        .unwrap()
+    let items = f.activity_ranges(monday, monday + 86_400_000);
+    let item = items
         .iter()
         .find(|i| i["task"]["matchedRangeIncludesStatusMarker"] == true)
         .unwrap();
@@ -369,16 +228,4 @@ fn task_checkbox_window_straddling_week_start_is_explicitly_uncertain() {
     );
     assert_eq!(task["statusMarkerTime"]["minWallMillis"], monday - 2_000);
     assert_eq!(task["statusMarkerTime"]["maxWallMillis"], monday + 2_000);
-    if let Ok(output) = std::env::var("GNEAUX_TASK_BOUNDARY_EVIDENCE_OUTPUT") {
-        let id = item["evidenceId"].as_str().unwrap().to_string();
-        let (read, _) = session
-            .read(&f.state, None, &HashSet::new(), &[id], false)
-            .unwrap();
-        fs::write(output, serde_json::to_string_pretty(&serde_json::json!({
-            "id":"weekly_task_boundary", "question":"What tasks did I complete since Monday, September 7? The reporting period here is September 7, 2026, in America/Denver. Can this task definitely count as completed in that period?",
-            "resolvedPeriod":{"after":monday,"before":monday+86_400_000,"timezone":"America/Denver"},
-            "sources":read["items"],
-            "expected":"Boundary task is currently recorded complete, but its retained status-change window straddles Sunday/Monday by two seconds on each side. Do not count it as definitely completed during Monday's reporting period or choose a precise completion instant. State uncertainty; overlap alone is insufficient."
-        })).unwrap()).unwrap();
-    }
 }

@@ -55,10 +55,10 @@
   const fullWidth = new MediaQuery('(max-width: 639px)');
   let optionsButton = $state<HTMLButtonElement | null>(null);
   let optionsOpen = $state(false);
-  const chatController = $derived(viewModel.paneKind === 'chat' ? viewModel.chat.session.controller : null);
+  const chatBinding = $derived(viewModel.paneKind === 'chat' ? viewModel.chat.session.binding : null);
   const railStatus = $derived(viewModel.paneKind === 'editor'
     ? viewModel.documentStatus.kind === 'idle' ? '' : viewModel.documentStatus.label
-    : $chatController?.error || ($chatController?.isSending ? 'Reply in progress' : ''));
+    : $chatBinding?.error || ($chatBinding?.view?.docs['pi.live']?.run ? 'Reply in progress' : ''));
   $effect(() => { if (collapsed) optionsOpen = false; });
   let showEditorLoadingIndicator = $state(false);
   $effect(() => {
@@ -79,7 +79,7 @@
     titleDraftBelongsToCurrentDocument ? titleDraft ?? viewModel.titleValue : viewModel.titleValue
   );
   const railTitle = $derived(viewModel.paneKind === 'chat'
-    ? $chatController?.conversation?.title || $chatController?.conversationDraft.title || 'Thought partner'
+    ? $chatBinding?.title || 'Thought partner'
     : displayedTitle.trim() || 'Untitled note');
   const splitPaneTopActions = $derived(
     getPaneTopActions(viewModel.paneKind, 'split')
@@ -371,34 +371,19 @@
         </div>
       {:else}
         <div class="chat-pane-shell flex min-h-0 min-w-0 max-w-full flex-1 overflow-hidden">
-          {#if viewModel.chat.session.controller}
-            <ChatPanel
-              controller={viewModel.chat.session.controller}
-              conversationId={viewModel.chat.session.conversationId}
-              draftSlot={viewModel.chat.session.draftSlot}
-              contextNote={viewModel.chat.context.note}
-              getActiveNoteSnapshot={viewModel.chat.context.getActiveNoteSnapshot}
-              targetAnchor={viewModel.chat.session.targetAnchor}
-              variant="pane"
-              {composerDock}
-              headerActions={paneButtons}
-              headerSplit={viewModel.showCloseButton}
-              {mobileTitleActive}
-              selectionActions={viewModel.chat.context.selectionActions}
-              onConversationChange={viewModel.chat.session.onConversationChange}
-              onOpenCitation={viewModel.chat.context.onOpenCitation}
-              onOpenWikilink={viewModel.chat.context.onOpenWikilink}
-              onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
-              proposalSnapshot={viewModel.chat.proposalReview.snapshot}
-              onProposalKeepAll={viewModel.chat.proposalReview.onKeepAll}
-              onProposalUndoAll={viewModel.chat.proposalReview.onUndoAll}
-              onProposalReview={viewModel.chat.proposalReview.onReview}
-              onProposalRetry={viewModel.chat.proposalReview.onRetry}
-              onProposalCopyCurrent={viewModel.chat.proposalReview.onCopyCurrent}
-              onProposalReloadDisk={viewModel.chat.proposalReview.onReloadDisk}
-              onReviewAgentProposal={viewModel.chat.proposalReview.onReviewAgentProposal}
-            />
-          {/if}
+          <ChatPanel
+            binding={viewModel.chat.session.binding}
+            conversationId={viewModel.chat.session.conversationId}
+            draftSlot={viewModel.chat.session.draftSlot}
+            variant="pane"
+            {composerDock}
+            headerActions={paneButtons}
+            headerSplit={viewModel.showCloseButton}
+            {mobileTitleActive}
+            onConversationChange={viewModel.chat.session.onConversationChange}
+            onOpenSource={viewModel.chat.context.onOpenSource}
+            onSurfaceHandleChange={viewModel.chat.session.onSurfaceHandleChange}
+          />
         </div>
       {/if}
     </div>

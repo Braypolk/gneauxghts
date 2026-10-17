@@ -2,8 +2,6 @@ import {
   Annotation,
   EditorState,
   Transaction,
-  StateEffect,
-  type ChangeSpec,
   type EditorSelection as CmEditorSelection,
 } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -15,16 +13,6 @@ import type {
 } from './types';
 import { createMarkdownBaseExtensions } from './editorShortcuts';
 import { imageResizeHistory } from '../images/imageResizeHistory';
-import type { ProposalPreview } from '$lib/types/proposals';
-import { createReviewProjection, documentReviewField, proposalTransaction, publishReviewProjection, resolveReviewHunk, reviewProjection, setDocumentReview } from '$lib/features/proposals/reviewExtension';
-
-interface ReviewCallbacks {
-  onKeep: (reviewId: string, hunkId: string) => void;
-  onUndo: (reviewId: string, hunkId: string) => void;
-  onChange: () => void;
-  onMarkdownChange: (markdown: string) => void;
-}
-
 function documentRoot(markdown: string) {
   return EditorState.create({
     doc: markdown,
@@ -34,7 +22,7 @@ function documentRoot(markdown: string) {
       keymap.of(historyKeymap),
       createMarkdownBaseExtensions()
     ]
-  }).update({ effects: StateEffect.appendConfig.of(documentReviewField) }).state;
+  });
 }
 
 // CodeMirror annotations are nominal values. Keep the synchronization marker
@@ -79,7 +67,6 @@ function updateViewPreservingViewport(
 
 function collectHistoryAnnotations(transaction: Transaction) {
   const annotations = [];
-  if (transaction.annotation(proposalTransaction)) annotations.push(proposalTransaction.of(true));
   const addToHistory = transaction.annotation(Transaction.addToHistory);
   if (addToHistory === false) {
     annotations.push(Transaction.addToHistory.of(false));
@@ -120,9 +107,8 @@ export class EditorDocumentRuntime {
   >();
   #rootState: EditorState;
   #markdownCache: string | null = null;
-  #reviewCallbacks: ReviewCallbacks | null = null;
-  readonly #keepReviewHunk = (reviewId: string, hunkId: string) => this.#reviewCallbacks?.onKeep(reviewId, hunkId);
-  readonly #undoReviewHunk = (reviewId: string, hunkId: string) => this.#reviewCallbacks?.onUndo(reviewId, hunkId);
+  #publicationLease: symbol | null = null;
+  #adoptingPublication = false;
 
   constructor(initialMarkdown = '') {
     this.#rootState = documentRoot(initialMarkdown);
@@ -139,7 +125,6 @@ export class EditorDocumentRuntime {
 
   attachController(controller: EditorController) {
     this.#paneControllers.set(controller.paneKey, controller);
-    this.#publishReview();
   }
 
   detachController(controller: EditorController) {
@@ -147,67 +132,23 @@ export class EditorDocumentRuntime {
   }
 
   destroy() {
-    this.#reviewCallbacks = null;
+    this.#assertMutationAdmitted();
     this.#paneControllers.clear();
   }
 
-  get review() { return this.#rootState.field(documentReviewField); }
-
-  beginReview(preview: ProposalPreview, callbacks: ReviewCallbacks, working?: { markdown: string; decisions: import('$lib/features/proposals/reviewExtension').ReviewHunkState[] }) {
-    if (this.review) throw new Error('A review is already active for this document.');
-    if (this.markdown !== preview.baseEditorMarkdown) throw new Error('Note changed before review.');
-    this.#reviewCallbacks = callbacks;
-    this.applyRootTransactions([this.#rootState.update({
-      changes: working ? { from: 0, to: this.markdown.length, insert: working.markdown } : preview.hunks.map(hunk => ({ from: hunk.baseFrom, to: hunk.baseTo, insert: hunk.newText })),
-      effects: setDocumentReview.of({ reviewId: preview.reviewId, hunks: working?.decisions.length ? working.decisions : preview.hunks.map(hunk => ({ ...hunk, from: hunk.proposedFrom, to: hunk.proposedTo, status: 'pending' })) }),
-      annotations: [proposalTransaction.of(true), Transaction.addToHistory.of(false), isolateHistory.of('full')]
-    })], null);
+  acquirePublicationLease() {
+    if (this.#publicationLease) throw new Error('The editor already has a protected operation.');
+    const token = Symbol('publication');
+    this.#publicationLease = token;
+    return () => { if (this.#publicationLease === token) this.#publicationLease = null; };
   }
 
-  bindReviewCallbacks(reviewId: string, callbacks: ReviewCallbacks) {
-    if (this.review?.reviewId !== reviewId) return;
-    this.#reviewCallbacks = callbacks;
-    this.#publishReview();
-  }
-
-  resolveReview(reviewId: string, ids: string[], status: 'kept' | 'undone', changes?: ChangeSpec) {
-    if (this.review?.reviewId !== reviewId) return false;
-    this.applyRootTransactions([this.#rootState.update({
-      changes,
-      effects: ids.map(id => resolveReviewHunk.of({ id, status })),
-      annotations: [proposalTransaction.of(true), Transaction.addToHistory.of(false), isolateHistory.of('full')]
-    })], null);
-    return true;
-  }
-
-  endReview(reviewId: string) {
-    if (this.review?.reviewId !== reviewId) return;
-    this.#rootState = this.#rootState.update({ effects: setDocumentReview.of(null) }).state;
-    this.#publishReview();
-    this.#reviewCallbacks = null;
-  }
-
-  #reviewEffect(controller: EditorController, state = controller.view.state) {
-    const projection = state.field(reviewProjection, false);
-    const review = this.review;
-    return review && this.#reviewCallbacks
-      ? projection
-        ? publishReviewProjection.of(review)
-        : controller.proposalReviewCompartment.reconfigure(createReviewProjection(
-            review, this.#keepReviewHunk, this.#undoReviewHunk))
-      : projection ? controller.proposalReviewCompartment.reconfigure([]) : undefined;
-  }
-
-  #publishReview() {
-    for (const controller of this.#paneControllers.values()) {
-      const effect = this.#reviewEffect(controller);
-      if (effect) controller.view.update([controller.view.state.update({ effects: effect })]);
-    }
+  #assertMutationAdmitted() {
+    if (this.#publicationLease && !this.#adoptingPublication) throw new Error('Canonical publication is settling.');
   }
 
   ensureMarkdown(markdown: string) {
     if (
-      this.review ||
       this.#paneControllers.size > 0 ||
       this.markdown === markdown
     ) {
@@ -225,6 +166,8 @@ export class EditorDocumentRuntime {
       controller.view.update(transactions);
       return;
     }
+    // Reject the whole batch: later selections may refer to rejected text.
+    if (this.#publicationLease && !this.#adoptingPublication) return;
 
     for (const transaction of docChangedTransactions) {
       this.#rootState = this.#rootState.update({
@@ -236,22 +179,18 @@ export class EditorDocumentRuntime {
       ).state;
     }
 
-    // Publish root metadata in the same view update as its text. Rendering an
-    // intermediate pane state would expose old decoration ranges in the new doc.
-    const finalState = transactions[transactions.length - 1].state;
-    const effect = this.#reviewEffect(controller, finalState);
-    controller.view.update(effect ? [...transactions, finalState.update({ effects: effect })] : transactions);
+    controller.view.update(transactions);
     this.#markdownCache = null;
     this.revision += 1;
     this.#broadcastTransactions(docChangedTransactions, controller.paneKey);
     this.#notifyMarkdownChange(controller.paneKey);
-    this.#reviewCallbacks?.onChange();
   }
 
   applyRootTransactions(
     transactions: readonly Transaction[],
     preferredPaneKey: symbol | null
   ) {
+    if (transactions.some(transaction => transaction.docChanged)) this.#assertMutationAdmitted();
     for (const transaction of transactions) {
       this.#rootState = transaction.state;
     }
@@ -259,8 +198,6 @@ export class EditorDocumentRuntime {
       (transaction) => transaction.docChanged
     );
     if (docChangedTransactions.length === 0) {
-      this.#publishReview();
-      this.#reviewCallbacks?.onChange();
       return;
     }
 
@@ -271,10 +208,10 @@ export class EditorDocumentRuntime {
       selection: this.#rootState.selection
     });
     this.#notifyMarkdownChange(preferredPaneKey);
-    this.#reviewCallbacks?.onChange();
   }
 
   replaceMarkdown(markdown: string, options: RuntimeReplaceOptions = {}) {
+    this.#assertMutationAdmitted();
     if (!options.flushHistory && this.markdown === markdown) {
       return false;
     }
@@ -312,7 +249,6 @@ export class EditorDocumentRuntime {
               insert: markdown
             },
             selection,
-            effects: this.#reviewEffect(controller),
             annotations: [
               paneSyncAnnotation.of(true),
               Transaction.addToHistory.of(false),
@@ -324,8 +260,6 @@ export class EditorDocumentRuntime {
       });
     }
 
-    this.#publishReview();
-    if (!this.review) this.#reviewCallbacks = null;
     this.revision += 1;
     if (options.notifyMarkdownChange !== false) {
       this.#notifyMarkdownChange(options.preferredPaneKey ?? null);
@@ -339,10 +273,13 @@ export class EditorDocumentRuntime {
    * fresh shared undo root while pane selections and viewports remain local.
    */
   adoptCommittedMarkdown(markdown: string) {
-    return this.replaceMarkdown(markdown, {
-      flushHistory: true,
-      notifyMarkdownChange: false
-    });
+    this.#adoptingPublication = true;
+    try {
+      return this.replaceMarkdown(markdown, {
+        flushHistory: true,
+        notifyMarkdownChange: false
+      });
+    } finally { this.#adoptingPublication = false; }
   }
 
   /** Restore a transient draft without presenting it as another pane edit. */
@@ -375,6 +312,7 @@ export class EditorDocumentRuntime {
   }
 
   undo(preferredPaneKey: symbol | null) {
+    if (this.#publicationLease) return false;
     return undo({
       state: this.#rootState,
       dispatch: (transaction) =>
@@ -383,6 +321,7 @@ export class EditorDocumentRuntime {
   }
 
   redo(preferredPaneKey: symbol | null) {
+    if (this.#publicationLease) return false;
     return redo({
       state: this.#rootState,
       dispatch: (transaction) =>
@@ -420,7 +359,6 @@ export class EditorDocumentRuntime {
           changes: transaction.changes,
           selection: applyHere ? restoreSelection.selection : undefined,
           scrollIntoView: applyHere,
-          effects: index === transactions.length - 1 ? this.#reviewEffect(controller, paneState) : undefined,
           annotations: [
             paneSyncAnnotation.of(true),
             Transaction.addToHistory.of(false)
@@ -438,10 +376,6 @@ export class EditorDocumentRuntime {
   }
 
   #notifyMarkdownChange(preferredPaneKey: symbol | null) {
-    if (this.review && this.#reviewCallbacks) {
-      this.#reviewCallbacks.onMarkdownChange(this.markdown);
-      return;
-    }
     const preferredController = preferredPaneKey
       ? this.#paneControllers.get(preferredPaneKey)
       : null;

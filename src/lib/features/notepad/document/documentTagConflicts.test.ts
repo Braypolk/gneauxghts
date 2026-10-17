@@ -20,7 +20,7 @@ function setup(tagsError?: string, tags = tagsError ? [] : ['old']) {
   const state = createNotepadState(note);
   bindNotepadStateToVault(state, '/vault');
   const editing = createDocumentEditingService({
-    state, isApplyingProgrammaticUpdate: () => false, shouldSuppressAutosave: () => false,
+    state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => false, resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(), clearSelectedRelatedText: vi.fn(),
     scheduleAutosave: vi.fn(), scheduleSearch: vi.fn(), scheduleRelated: vi.fn()

@@ -1,4 +1,4 @@
-import { Compartment, EditorState, Transaction, type TransactionSpec, type Extension } from '@codemirror/state';
+import { EditorState, Transaction, type TransactionSpec, type Extension } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { vi } from 'vitest';
 import type { EditorDocumentRuntime } from './editorDocumentRuntime';
@@ -11,11 +11,10 @@ export function createRuntimePane(
   onMarkdownChange: (markdown: string) => void = vi.fn(),
   extensions: Extension[] = []
 ) {
-  const proposalReviewCompartment = new Compartment();
   let state = EditorState.create({
     doc: markdown,
     selection: { anchor },
-    extensions: [proposalReviewCompartment.of([]), ...extensions]
+    extensions
   });
   const scrollDOM = {
     scrollTop: 0,
@@ -53,8 +52,7 @@ export function createRuntimePane(
     runtime,
     sharedResources: null,
     paneKey: Symbol('pane'),
-    onMarkdownChange,
-    proposalReviewCompartment
+    onMarkdownChange
   };
   runtime.attachController(controller);
   return {

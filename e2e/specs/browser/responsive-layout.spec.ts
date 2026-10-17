@@ -1,7 +1,6 @@
 import { navigateAppTab } from '../../support/appNavigation';
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
-import { chatHistoryFixture } from '../../support/chatHistoryFixture';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 
 async function viewport(width: number, height: number) {
@@ -23,7 +22,6 @@ async function expectInViewport(selector: string) {
   }, selector), { timeoutMsg: `Expected ${selector} inside the viewport` });
 }
 async function splitChat(seed = true) {
-  if (seed) await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter')));
   await $('button[aria-label="Split with thought partner"]').click();
   await $('[data-notepad-command-bar] textarea').waitForEnabled();
@@ -67,21 +65,6 @@ describe('responsive layout interactions', () => {
   });
 
   for (const [width, height] of [[640, 560], [844, 390]]) {
-    it(`selects the last conversation from a bounded split picker at ${width}×${height}`, async () => {
-      const fixture = chatHistoryFixture(2);
-      await browser.execute(fixture => {
-        window.__GNEAUXGHTS_E2E__!.seedChatControls();
-        const summaries = Array.from({ length: 30 }, (_, i) => ({ ...fixture, id: `chat-${i}`, title: `Conversation ${i}` }));
-        window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_list_conversations = () => summaries;
-        window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_get_conversation = args => ({ ...fixture, id: args.conversationId, title: summaries.find(item => item.id === args.conversationId)!.title });
-      }, fixture);
-      await viewport(1024, 768); await splitChat(false); await viewport(width, height);
-      await $('button[aria-label="Conversations"]').click();
-      await expectInViewport('[role="menu"][aria-label="Conversations"]');
-      const last = await $('[role="menu"][aria-label="Conversations"]').$('button=Conversation 29');
-      await last.scrollIntoView(); await last.click();
-      await expect($('[data-pane-kind="chat"] input')).toHaveValue('Conversation 29');
-    });
   }
 
   it('fits calendar contents in a medium split and a 320px task dialog', async () => {
@@ -211,7 +194,6 @@ describe('responsive layout interactions', () => {
   });
 
   it('scrolls local model configuration controls in a short landscape window', async () => {
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
     await viewport(844, 390); await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
     const provider = await $('[data-settings-anchor="chat-provider"] select');

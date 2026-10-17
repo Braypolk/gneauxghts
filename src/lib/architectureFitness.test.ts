@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
@@ -105,13 +105,11 @@ describe('architecture fitness: state ownership', () => {
     expect(nodes(paneKinds!, ts.isLiteralTypeNode).map(node => name(node.literal))).not.toContain('history');
   });
 
-  it('keeps chat operation state in its machine and shared backend snapshots in AppStore', () => {
-    const chatFields = fields('src/lib/features/chat/controller.svelte.ts', 'class', 'ChatControllerStore');
-    expect(chatFields.filter(field => [
-      'machine', 'controllerLifecycle', 'selectionOperation', 'requestOperation',
-      'settings', 'conversations', 'conversationDraft', 'conversation', 'proposals',
-      'modelCapabilities', 'isInitializing', 'isLoadingConversation', 'isSending', 'activity'
-    ].includes(field.replace(/^#/, '')))).toEqual([]);
+  it('keeps Pi as the sole chat runtime and shared backend snapshots in AppStore', () => {
+    for (const path of ['features/chat/controller.svelte.ts', 'features/chat/api.ts', 'features/chat/machines', 'prototypes/pi']) {
+      expect(existsSync(`${root}/src/lib/${path}`), path).toBe(false);
+    }
+    expect(calls(source('src/lib/features/chat/pi/runtime.ts'), 'open').length).toBeGreaterThan(0);
     const settingsFields = fields('src/lib/features/settings/store.svelte.ts', 'class', 'SettingsStore');
     // Either mirrored snapshot is forbidden, not just the pair together.
     expect(settingsFields.filter(field => ['vaultInfo', 'semanticStatus'].includes(field))).toEqual([]);

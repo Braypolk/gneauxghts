@@ -88,11 +88,9 @@ impl AtlasMapStore {
         }
     }
 
-    fn head_path(&self, key: AtlasGenerationKey) -> PathBuf {
-        self.root.join(format!(
-            "head-{}.json",
-            key.chat_visibility.signature_value()
-        ))
+    fn head_path(&self, _key: AtlasGenerationKey) -> PathBuf {
+        // Keep the established notes-map head filename; names and places are durable.
+        self.root.join("head-hidden.json")
     }
 
     pub(super) fn epoch(&self) -> u64 {
@@ -157,20 +155,14 @@ impl AtlasMapStore {
 
     fn collect_metadata(&self) -> Result<(), String> {
         let mut retain = HashSet::new();
-        for visibility in [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ] {
-            let path = self.head_path(AtlasGenerationKey {
-                chat_visibility: visibility,
-            });
-            if path.exists() {
-                let head: Head = read(&path)?;
-                retain.insert(head.current);
-                retain.extend(head.previous);
-            }
+
+        let path = self.head_path(AtlasGenerationKey);
+        if path.exists() {
+            let head: Head = read(&path)?;
+            retain.insert(head.current);
+            retain.extend(head.previous);
         }
+
         for entry in std::fs::read_dir(&self.root).map_err(|e| e.to_string())? {
             let entry = entry.map_err(|e| e.to_string())?;
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -184,28 +176,22 @@ impl AtlasMapStore {
 
     pub(super) fn referenced_artifacts(&self, cache: &Path) -> Result<HashSet<String>, String> {
         let mut files = HashSet::new();
-        for visibility in [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ] {
-            let path = self.head_path(AtlasGenerationKey {
-                chat_visibility: visibility,
-            });
-            if !path.exists() {
-                continue;
-            }
-            let head: Head = read(&path)?;
-            for name in std::iter::once(head.current).chain(head.previous) {
-                if let Ok(state) = read::<MapState>(&self.root.join(name)) {
-                    if state.artifact_path.parent() == Some(cache) {
-                        if let Some(file) = state.artifact_path.file_name() {
-                            files.insert(file.to_string_lossy().into_owned());
-                        }
+
+        let path = self.head_path(AtlasGenerationKey);
+        if !path.exists() {
+            return Ok(files);
+        }
+        let head: Head = read(&path)?;
+        for name in std::iter::once(head.current).chain(head.previous) {
+            if let Ok(state) = read::<MapState>(&self.root.join(name)) {
+                if state.artifact_path.parent() == Some(cache) {
+                    if let Some(file) = state.artifact_path.file_name() {
+                        files.insert(file.to_string_lossy().into_owned());
                     }
                 }
             }
         }
+
         Ok(files)
     }
 

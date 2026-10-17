@@ -1,3 +1,5 @@
+mod search;
+
 use crate::{
     index::AppState,
     note::DocumentKind,
@@ -56,8 +58,7 @@ fn matches_date_filters(note: &crate::index::IndexedNote, filters: VaultDateFilt
             .is_none_or(|value| note.updated_at_millis <= value)
 }
 
-/// Compatibility adapter for interactive note selection. Agent search/read
-/// uses EvidenceSession directly so coverage and activity semantics remain explicit.
+/// Interactive query search under the native current-content delivery boundary.
 pub(crate) fn retrieve_vault_notes(
     state: &AppState,
     query: &str,
@@ -89,7 +90,6 @@ fn retrieve_vault_notes_unchecked(
     excluded_note_ids: &HashSet<String>,
     date_filters: VaultDateFilters,
 ) -> Result<Vec<VaultRetrievalItem>, String> {
-    use super::evidence::{EvidenceSession, SearchMode, SearchRequest};
     if query.trim().is_empty() && !date_filters.is_active() {
         return Ok(Vec::new());
     }
@@ -106,69 +106,8 @@ fn retrieve_vault_notes_unchecked(
         })
         .map(|n| n.note_id.clone())
         .collect();
-    let mut evidence = EvidenceSession::default();
-    let mut request = SearchRequest {
-        query: if query.trim().is_empty() {
-            ".*".into()
-        } else {
-            query.into()
-        },
-        mode: if query.trim().is_empty() {
-            SearchMode::Regex
-        } else {
-            SearchMode::Hybrid
-        },
-        limit: Some(20),
-        ..Default::default()
-    };
-    let mut results = Vec::new();
-    let mut seen = HashSet::new();
-    let limit = limit.clamp(1, 20);
-    loop {
-        let page = evidence
-            .search(state, Some(&eligible), excluded_note_ids, request.clone())
-            .map_err(|error| error.to_string())?;
-        let index = state
-            .notes_index
-            .lock()
-            .map_err(|_| "Notes index unavailable")?;
-        for item in page["items"].as_array().into_iter().flatten() {
-            let Some((path, n)) = item["noteId"]
-                .as_str()
-                .and_then(|id| index.get_note_by_note_id(id))
-            else {
-                continue;
-            };
-            if !seen.insert(n.note_id.clone()) {
-                continue;
-            }
-            results.push(VaultRetrievalItem {
-                note_id: n.note_id.clone(),
-                note_path: path.clone(),
-                title: n.title.clone(),
-                excerpt: item["preview"].as_str().unwrap_or_default().into(),
-                section_label: item["section"].as_str().unwrap_or_default().into(),
-                score: item["score"].as_f64().unwrap_or_default() as f32,
-            });
-            if results.len() == limit {
-                return Ok(results);
-            }
-        }
-        drop(index);
-        if page["budgetExhausted"] == true {
-            break;
-        }
-        let Some(cursor) = page["nextCursor"].as_str() else {
-            break;
-        };
-        // The compatibility picker returns bounded best-effort note matches.
-        // Discovery previews consume the same allowance as ordinary evidence.
-        if evidence.used() >= super::evidence::EVIDENCE_BYTES {
-            break;
-        }
-        request.cursor = Some(cursor.to_string());
-    }
-    Ok(results)
+    let eligible = eligible.difference(excluded_note_ids).cloned().collect();
+    search::search(state, &eligible, query, limit)
 }
 
 #[cfg(test)]

@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { navigateToPendingTaskTarget, openRecentTask, openSearchResult, openResolvedNoteLink, type NavigationContext, type OpenContext } from './openFlow';
-import { revealEditorTextTarget, focusEditorAtDocumentLine, waitForEditorPaint } from './navigation';
+import { navigateToPendingTaskTarget, openRecentTask, openSearchResult, openResolvedNoteLink, openNoteCitation, type NavigationContext, type OpenContext } from './openFlow';
+import { revealEditorTextTarget, revealEditorCitationTarget, focusEditorAtDocumentLine, waitForEditorPaint } from './navigation';
 import { Text } from '@codemirror/state';
 import type { SearchItem } from '$lib/types/semantic';
-vi.mock('./navigation', () => ({ revealEditorTextTarget: vi.fn(() => true), focusEditorAtDocumentLine: vi.fn(() => true), waitForEditorPaint: vi.fn(async () => {}) }));
+vi.mock('./navigation', () => ({ revealEditorTextTarget: vi.fn(() => true), revealEditorCitationTarget: vi.fn(() => true), focusEditorAtDocumentLine: vi.fn(() => true), waitForEditorPaint: vi.fn(async () => {}) }));
 function fixture() {
   let id = 'a';
   const root = {} as HTMLDivElement;
@@ -19,6 +19,24 @@ beforeEach(() => { vi.clearAllMocks(); vi.mocked(waitForEditorPaint).mockResolve
 afterEach(() => vi.unstubAllGlobals());
 
 describe('post-open navigation admission', () => {
+  it('opens a cited note normally and selects only its exact passage', async () => {
+    const f = fixture();
+    expect(await openNoteCitation(f.openContext, f.getContext, { noteId: 'b', path: '/vault/b.md', location: { quote: 'exact quote' } })).toBe(true);
+    expect(f.openContext.openNotePath).toHaveBeenCalledWith('b', '/vault/b.md', { focusEditorAfterOpen: true });
+    expect(revealEditorCitationTarget).toHaveBeenCalledWith(f.root, 'exact quote');
+    expect(revealEditorTextTarget).not.toHaveBeenCalled();
+  });
+  it('keeps normal note positioning for whole-note citations', async () => {
+    const f = fixture();
+    expect(await openNoteCitation(f.openContext, f.getContext, { noteId: 'b', path: '/vault/b.md' })).toBe(true);
+    expect(revealEditorCitationTarget).not.toHaveBeenCalled();
+  });
+  it('does not select a cited passage when navigation is superseded during paint', async () => {
+    const f = fixture();
+    vi.mocked(waitForEditorPaint).mockImplementation(async () => { f.change('c'); });
+    expect(await openNoteCitation(f.openContext, f.getContext, { noteId: 'b', path: '/vault/b.md', location: { quote: 'exact quote' } })).toBe(false);
+    expect(revealEditorCitationTarget).not.toHaveBeenCalled();
+  });
   it('focuses a Recent Task using note B after opening from note A', async () => {
     const f = fixture(); await openRecentTask(f.openContext, f.getContext, f.task);
     expect(f.openContext.openNotePath).toHaveBeenCalledWith('b', '/vault/b.md', { focusEditorAfterOpen: true });

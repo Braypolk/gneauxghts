@@ -274,7 +274,6 @@ mod tests {
         ]
         .into_iter()
         .map(|(id, x, cloud)| WorkingNode {
-            has_semantic_content: true,
             id: id.into(),
             note_id: Some(id.into()),
             note_path: format!("/vault/{id}.md"),

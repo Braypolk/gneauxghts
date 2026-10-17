@@ -7,7 +7,6 @@ import type {
 } from '$lib/types/atlas';
 import { vaultFixture } from '$lib/app/testFixtures';
 import type { VaultInfo } from '$lib/types/vault';
-import type { AtlasChatVisibility } from '$lib/features/chat/types';
 
 const appStoreMock = vi.hoisted(() => ({
   bootstrap: vi.fn(async () => undefined),
@@ -120,7 +119,7 @@ describe('AtlasStore stale-while-revalidate', () => {
     const stale = atlasResponse(1, { stale: true, publishInProgress: true });
     const current = atlasResponse(2);
     const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .fn<() => Promise<VaultAtlasResponse>>()
       .mockResolvedValueOnce(stale)
       .mockResolvedValueOnce(current);
     const store = new AtlasStore(loadAtlas);
@@ -173,7 +172,7 @@ describe('AtlasStore stale-while-revalidate', () => {
   it('continues capped-delay polling beyond the former attempt ceiling', async () => {
     const pending = atlasResponse(1, { stale: true, publishInProgress: true });
     const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .fn<() => Promise<VaultAtlasResponse>>()
       .mockResolvedValue(pending);
     const store = new AtlasStore(loadAtlas);
 
@@ -189,7 +188,7 @@ describe('AtlasStore stale-while-revalidate', () => {
     const pending = atlasResponse(1, { stale: true, publishInProgress: true });
     const debounced = deferred<VaultAtlasResponse>();
     const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
+      .fn<() => Promise<VaultAtlasResponse>>()
       .mockResolvedValueOnce(pending)
       .mockImplementationOnce(() => debounced.promise)
       .mockResolvedValueOnce(atlasResponse(2));
@@ -211,88 +210,25 @@ describe('AtlasStore stale-while-revalidate', () => {
     store.dispose();
   });
 
-  it('initializes visibility from persisted chat settings before loading the atlas', async () => {
-    const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
-      .mockResolvedValue(atlasResponse(1));
-    const store = new AtlasStore(loadAtlas, async () => 'remembered', async () => undefined);
 
-    await store.initialize();
-
-    expect(store.chatVisibility).toBe('remembered');
-    expect(loadAtlas).toHaveBeenCalledWith('remembered');
-    store.dispose();
-  });
-
-  it('preserves a local visibility selection while persisted settings are loading', async () => {
-    const persisted = deferred<AtlasChatVisibility>();
-    const saveVisibility = vi.fn(async (_visibility: AtlasChatVisibility) => undefined);
-    const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
-      .mockResolvedValue(atlasResponse(1));
-    const store = new AtlasStore(loadAtlas, () => persisted.promise, saveVisibility);
-
-    const initialize = store.initialize();
-    store.setChatVisibility('all');
-    persisted.resolve('remembered');
-    await initialize;
-    await Promise.resolve();
-
-    expect(store.chatVisibility).toBe('all');
-    expect(loadAtlas).toHaveBeenCalledWith('all');
-    expect(saveVisibility).toHaveBeenCalledWith('all');
-    store.dispose();
-  });
-
-  it('discards an obsolete visibility request and loads the selected variant', async () => {
-    const obsolete = deferred<VaultAtlasResponse>();
-    const initial = atlasResponse(1);
-    const selectedVariant = atlasResponse(3);
-    const loadAtlas = vi
-      .fn<(visibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>>()
-      .mockResolvedValueOnce(initial)
-      .mockImplementationOnce(() => obsolete.promise)
-      .mockResolvedValueOnce(selectedVariant);
-    const store = new AtlasStore(loadAtlas, async () => 'hidden', async () => undefined);
-    await store.initialize();
-
-    const oldRefresh = store.refresh();
-    store.setChatVisibility('all');
-
-    expect(store.response).toBeNull();
-
-    await vi.advanceTimersByTimeAsync(0);
-    obsolete.resolve(atlasResponse(2));
-    await oldRefresh;
-    await vi.advanceTimersByTimeAsync(80);
-
-    expect(loadAtlas.mock.calls.map(([visibility]) => visibility)).toEqual([
-      'hidden',
-      'hidden',
-      'all'
-    ]);
-    expect(store.response).toBe(selectedVariant);
-    store.dispose();
-  });
 });
 
 describe('AtlasStore asynchronous admission', () => {
   afterEach(() => { vi.clearAllMocks(); vi.useRealTimers(); });
 
-  it('joins initialization and never subscribes after disposal during visibility loading', async () => {
-    const visibility = deferred<AtlasChatVisibility>();
-    const loadVisibility = vi.fn(() => visibility.promise);
+  it('joins initialization and never subscribes after disposal during bootstrap', async () => {
+    const bootstrap = deferred<undefined>();
+    appStoreMock.bootstrap.mockImplementationOnce(() => bootstrap.promise);
     const loader = vi.fn(async () => atlasResponse(1));
-    const store = new AtlasStore(loader, loadVisibility);
+    const store = new AtlasStore(loader);
     const first = store.initialize();
     const joined = store.initialize();
     expect(first).toBe(joined);
-    expect(loadVisibility).toHaveBeenCalledOnce();
+    expect(appStoreMock.bootstrap).toHaveBeenCalledOnce();
     store.dispose();
-    visibility.resolve('all');
+    bootstrap.resolve(undefined);
     await first;
     expect(appStoreMock.subscribeNoteSaved).not.toHaveBeenCalled();
-    expect(store.chatVisibility).toBe('hidden');
     expect(store.response).toBeNull();
     expect(loader).not.toHaveBeenCalled();
   });
@@ -301,7 +237,7 @@ describe('AtlasStore asynchronous admission', () => {
     const old = deferred<VaultAtlasResponse>();
     const current = deferred<VaultAtlasResponse>();
     const loader = vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(current.promise);
-    const store = new AtlasStore(loader, async () => 'hidden');
+    const store = new AtlasStore(loader);
     const refresh = store.refresh();
     store.dispose();
     const reopened = store.initialize();
@@ -315,9 +251,9 @@ describe('AtlasStore asynchronous admission', () => {
     store.dispose();
   });
 
-  it.each(['query', 'clear', 'visibility', 'cache', 'dispose'] as const)('invalidates a pending search immediately on %s', async (change) => {
+  it.each(['query', 'clear', 'cache', 'dispose'] as const)('invalidates a pending search immediately on %s', async (change) => {
     const result = deferred<import('$lib/types/atlas').AtlasSearchResponse>();
-    const store = new AtlasStore(async () => atlasResponse(1), async () => 'hidden', async () => undefined, () => result.promise);
+    const store = new AtlasStore(async () => atlasResponse(1), () => result.promise);
     store.setSearchQuery('old');
     const searching = store.runSearch();
     if (change === 'query') {
@@ -327,7 +263,6 @@ describe('AtlasStore asynchronous admission', () => {
       store.setSearchQuery('old');
     }
     if (change === 'clear') store.setSearchQuery('');
-    if (change === 'visibility') store.setChatVisibility('all');
     if (change === 'cache') await store.clearCache();
     if (change === 'dispose') store.dispose();
     result.resolve({ status: 'ready', reason: null, query: 'old', generatedAtMillis: 1, matches: [] });
@@ -339,7 +274,7 @@ describe('AtlasStore asynchronous admission', () => {
 
   it('suppresses stale search errors during the new query debounce', async () => {
     let reject!: (error: Error) => void;
-    const store = new AtlasStore(async () => atlasResponse(1), async () => 'hidden', async () => undefined, () => new Promise((_resolve, no) => { reject = no; }));
+    const store = new AtlasStore(async () => atlasResponse(1), () => new Promise((_resolve, no) => { reject = no; }));
     store.setSearchQuery('old'); const searching = store.runSearch();
     store.setSearchQuery('new'); reject(new Error('old failure')); await searching;
     expect(store.searchError).toBeNull();
@@ -370,15 +305,12 @@ describe('Atlas activation freshness', () => {
   it('retains cached display but revalidates after events were detached', async () => {
     const revalidation = deferred<VaultAtlasResponse>();
     const loader = vi.fn().mockResolvedValueOnce(atlasResponse(1)).mockReturnValueOnce(revalidation.promise);
-    const visibility = deferred<AtlasChatVisibility>();
-    const loadVisibility = vi.fn<() => Promise<AtlasChatVisibility>>().mockResolvedValueOnce('hidden').mockReturnValueOnce(visibility.promise);
-    const store = new AtlasStore(loader, loadVisibility);
+    const store = new AtlasStore(loader);
     await store.initialize();
     store.dispose();
     const reopening = store.initialize();
     expect(store.response?.revision).toBe(1);
     expect(store.isRevalidating).toBe(true);
-    visibility.resolve('hidden');
     await vi.waitFor(() => expect(loader).toHaveBeenCalledTimes(2));
     expect(store.response?.revision).toBe(1);
     expect(store.isRevalidating).toBe(true);
@@ -390,7 +322,7 @@ describe('Atlas activation freshness', () => {
 
   it('does not discard the Running Vault graph for a staged next-launch selection', async () => {
     appStoreMock.vaultInfo = vaultFixture;
-    const store = new AtlasStore(async () => atlasResponse(1), async () => 'hidden');
+    const store = new AtlasStore(async () => atlasResponse(1));
     await store.initialize();
     store.selectedNodeId = 'note-1';
     const callback = vi.mocked(appStoreMock.subscribeVaultChanged).mock.calls.at(-1)?.[0];

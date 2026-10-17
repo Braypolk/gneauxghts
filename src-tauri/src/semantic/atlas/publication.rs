@@ -88,18 +88,12 @@ fn atlas_root(cache_dir: &Path) -> PathBuf {
     cache_dir.join("atlas")
 }
 
-fn ready_pointer_path(cache_dir: &Path, key: AtlasGenerationKey) -> PathBuf {
-    atlas_root(cache_dir).join(format!(
-        "ready-{}.json",
-        key.chat_visibility.signature_value()
-    ))
+fn ready_pointer_path(cache_dir: &Path, _key: AtlasGenerationKey) -> PathBuf {
+    atlas_root(cache_dir).join("ready.json")
 }
 
-fn label_ready_pointer_path(cache_dir: &Path, key: AtlasGenerationKey) -> PathBuf {
-    atlas_root(cache_dir).join(format!(
-        "label-ready-{}.json",
-        key.chat_visibility.signature_value()
-    ))
+fn label_ready_pointer_path(cache_dir: &Path, _key: AtlasGenerationKey) -> PathBuf {
+    atlas_root(cache_dir).join("label-ready.json")
 }
 
 pub(super) fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> {
@@ -131,28 +125,19 @@ fn gc_unreferenced_generations(cache_dir: &Path) -> Result<(), String> {
 
 fn collect_generations(cache_dir: &Path, mut referenced: HashSet<String>) -> Result<(), String> {
     let root = atlas_root(cache_dir);
-    for visibility in [
-        AtlasChatVisibilityKey::Hidden,
-        AtlasChatVisibilityKey::Remembered,
-        AtlasChatVisibilityKey::All,
-    ] {
-        if let Ok(pointer) = read_json::<AtlasReadyPointer>(&ready_pointer_path(
-            cache_dir,
-            AtlasGenerationKey {
-                chat_visibility: visibility,
-            },
-        )) {
-            referenced.insert(pointer.artifact_file);
-        }
-        if let Ok(pointer) = read_json::<AtlasLabelReadyPointer>(&label_ready_pointer_path(
-            cache_dir,
-            AtlasGenerationKey {
-                chat_visibility: visibility,
-            },
-        )) {
-            referenced.insert(pointer.artifact_file);
-        }
+
+    if let Ok(pointer) =
+        read_json::<AtlasReadyPointer>(&ready_pointer_path(cache_dir, AtlasGenerationKey))
+    {
+        referenced.insert(pointer.artifact_file);
     }
+    if let Ok(pointer) = read_json::<AtlasLabelReadyPointer>(&label_ready_pointer_path(
+        cache_dir,
+        AtlasGenerationKey,
+    )) {
+        referenced.insert(pointer.artifact_file);
+    }
+
     let Ok(entries) = fs::read_dir(&root) else {
         return Ok(());
     };
@@ -220,10 +205,7 @@ impl AtlasWorkerContext {
         self.debug.record_with_metrics(
             "atlas",
             "build_started",
-            Some(format!(
-                "chat_visibility={}",
-                generation_key.chat_visibility.signature_value()
-            )),
+            Some(format!("map={}", "notes")),
             None,
             |metrics| metrics.atlas_request_count += 1,
         );
@@ -251,14 +233,11 @@ impl AtlasWorkerContext {
         {
             return Err(ATLAS_DEPENDENCIES_NOT_READY.to_string());
         }
-        let indexed_notes = visible_atlas_notes(
-            load_atlas_note_embeddings(&connection)?,
-            &metadata,
-            self.dimensions,
-        )
-        .into_iter()
-        .filter(|note| Path::new(&note.note_path).is_file())
-        .collect::<Vec<_>>();
+        let indexed_notes =
+            visible_atlas_notes(load_atlas_note_embeddings(&connection)?, &metadata)
+                .into_iter()
+                .filter(|note| Path::new(&note.note_path).is_file())
+                .collect::<Vec<_>>();
 
         // SQLite placements are bootstrap hints only. Accepted geography and
         // arrival seeds are owned by stable_layout once durable notes exist.
@@ -294,9 +273,6 @@ impl AtlasWorkerContext {
                 let updated_at_millis = crate::note::parse_rfc3339_millis(&note.updated_at)
                     .unwrap_or(note.modified_millis);
                 WorkingNode {
-                    has_semantic_content: !note
-                        .semantic_input_hash
-                        .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX),
                     id: note.note_path.clone(),
                     note_id,
                     note_path: note.note_path.clone(),
@@ -491,11 +467,7 @@ impl AtlasWorkerContext {
         AtlasMapStore::overlay(&map, &mut response);
         let root = atlas_root(&self.cache_dir);
         fs::create_dir_all(&root).map_err(|err| err.to_string())?;
-        let artifact_file = format!(
-            "generation-{}-{}.json",
-            generation_key.chat_visibility.signature_value(),
-            structural_generation
-        );
+        let artifact_file = format!("generation-{}-{}.json", "notes", structural_generation);
         atomic_write_json(
             &root.join(&artifact_file),
             &AtlasGenerationArtifact {
@@ -571,14 +543,11 @@ impl AtlasWorkerContext {
         let mut connection = open_database(&self.db_path)?;
         crate::semantic::ensure_schema(&connection)?;
         let metadata = persisted_atlas_inputs(&connection, generation_key)?.metadata;
-        let note_embeddings = visible_atlas_notes(
-            load_atlas_note_embeddings(&connection)?,
-            &metadata,
-            self.dimensions,
-        )
-        .into_iter()
-        .map(|note| (note.note_path, normalized_embedding(note.embedding)))
-        .collect::<HashMap<_, _>>();
+        let note_embeddings =
+            visible_atlas_notes(load_atlas_note_embeddings(&connection)?, &metadata)
+                .into_iter()
+                .map(|note| (note.note_path, normalized_embedding(note.embedding)))
+                .collect::<HashMap<_, _>>();
 
         let generated_at = current_time_millis()?;
         let model_fingerprint = self.provider.model_info().fingerprint();
@@ -597,11 +566,7 @@ impl AtlasWorkerContext {
             )
             .to_hex()[..16]
         );
-        let artifact_file = format!(
-            "label-generation-{}-{}.json",
-            generation_key.chat_visibility.signature_value(),
-            label_generation
-        );
+        let artifact_file = format!("label-generation-{}-{}.json", "notes", label_generation);
         let artifact_path = root.join(&artifact_file);
         let published = std::sync::Mutex::new(HashMap::<String, AtlasPublishedLabel>::new());
         let write_artifact = |labels: &HashMap<String, AtlasPublishedLabel>, complete: bool| {

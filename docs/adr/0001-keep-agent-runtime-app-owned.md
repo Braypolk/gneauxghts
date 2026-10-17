@@ -1,8 +1,13 @@
 ---
-status: accepted
+status: superseded by ADR-0012
 ---
 
 # Keep the agent runtime app-owned
+
+[ADR 0012](0012-found-ordinary-chat-on-pi.md) records the accepted new-user Pi
+rebuild and its scoped supersessions. The implementation described below is
+historical and retired from ordinary chat; it is not a current runtime requirement.
+
 
 Gneauxghts owns the durable chat run lifecycle, context assembly, event
 protocol, guardrails, proposal policy, and permission policy. Provider client/model

@@ -42,7 +42,7 @@ Covered regressions:
 - Repeated note A / note B switching with assertions that editor documents never cross-contaminate.
 - Note → chat → note lifecycle with scroll restoration.
 
-Use this layer for note operations, proposal projection/review, chat rendering, pane transitions, and external-sync UI states whenever backend behavior can be deterministic.
+Use this layer for note operations, Pi chat rendering, pane transitions, settings, and external-sync UI states when backend behavior can be deterministic.
 
 ## Native Tauri layer
 
@@ -52,7 +52,7 @@ Run:
 pnpm test:e2e:native
 ```
 
-The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The four deterministic background smoke specs (lifecycle, command/event transport, images and chat-to-note) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`. Native focus IPC is denied by default; its permission is added only when the E2E process starts with explicit foreground opt-in. The lifecycle spec verifies that denial, and background scenarios check native focus after each test.
+The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The deterministic background smoke specs (lifecycle, command/event transport, images and Pi native/publication/compaction/adapters) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`. Native focus IPC is denied by default; its permission is added only when the E2E process starts with explicit foreground opt-in. The lifecycle spec verifies that denial, and background scenarios check native focus after each test.
 
 Native coverage across the background and explicit foreground lanes:
 
@@ -82,52 +82,26 @@ flashes and AppKit's opening animation before WebDriver could connect. Sampling
 does not establish that no shorter-than-5-ms frame exists. The probe kills only
 its own fixture processes and does not test clean-exit persistence.
 
-## Opt-in local-agent evidence check
+## Ordinary Pi acceptance
 
-`e2e/specs/native/agent-date-evidence.spec.ts` exercises real native ChatService,
-AgentRuntime, and model-selected evidence tools against a disposable synthetic
-vault. It is skipped unless `GNEAUX_LIVE_NATIVE=1`. Supply an explicit local
-endpoint, model, and output artifact; it never chooses a hosted fallback.
+`piChatNative.spec.ts`, `piChatPublication.spec.ts`, `piChatCompaction.spec.ts` and
+`piChatAdapters.spec.ts`
+exercise ordinary chat against the deterministic provider in
+`support/piProviderFixture.mjs`. They use actual Pi Harness, native storage,
+authority, transport, citations and NoteTimeline publication. The provider is a
+fixture; these checks make no live-model claim. `piChatLocal.spec.ts` is the
+separate live local-model lane. Every native suite writes only its generated
+fixture vault and starts on the ordinary `/` route.
 
-After building the native E2E binary, run just this spec:
+The deterministic Pi specs run by default in the native smoke lane without extra
+acceptance flags. Only live-model checks require opt-in; use
+`GNEAUX_PI_COMPACTION_LOCAL=1` to run compaction against the configured local model
+instead of its deterministic provider.
 
-```sh
-GNEAUX_LIVE_NATIVE=1 \
-GNEAUX_LIVE_ENDPOINT=http://100.117.20.29:1234/v1 \
-GNEAUX_LIVE_MODEL=qwen/qwen3.8-27b \
-GNEAUX_LIVE_OUTPUT="$PWD/.scratch/date-handling/native-baseline.json" \
-  pnpm exec wdio run e2e/wdio.native.conf.ts \
-  --spec e2e/specs/native/agent-date-evidence.spec.ts
-```
-
-The first question is submitted through the Svelte composer and opens a rendered
-current-passage citation. Answers must contain app-constructed durable links, with
-no unresolved model references, and retain those links when the conversation is reloaded. Subsequent questions use production chat IPC, followed
-by source exclusion and canonical-edit invalidation checks. Retrieval is lexical
-for this baseline. Raw answers, tool activity, usage, and citation resolutions
-are saved for separate semantic grading; passing execution is not a claim of
-answer correctness. Existing deterministic browser tests remain the primary
-coverage for chat controller lifecycle behavior.
-
-### Focused bounded research worker
-
-`e2e/specs/native/research-worker.spec.ts` is opt-in with
-`GNEAUX_RESEARCH_NATIVE=1` and the same explicit `GNEAUX_LIVE_ENDPOINT`,
-`GNEAUX_LIVE_MODEL` and `GNEAUX_LIVE_OUTPUT` variables above. After building the
-native artifact, run that spec alone with `pnpm exec wdio run
-e2e/wdio.native.conf.ts --spec e2e/specs/native/research-worker.spec.ts`.
-`GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` additionally records assembled request
-counters, separating the worker's three executable evidence tools from its
-structured result formatter, without recording private worker text.
-
-The real native chat must deliver actually read, validated worker evidence for
-current content, retained history and broad discovery. Parent direct retrieval
-cannot satisfy those cases. Valid partial delivery remains useful worker evidence
-and must keep its coverage limits. A separate excluded-scope case requires an
-explicit research failure followed by parent direct evidence. Every admitted
-passage resolves through production validation and an excluded canary must never
-appear. These model-dependent checks complement deterministic selection,
-isolation and budget contracts; one passing run does not guarantee all goals.
+The browser fixture uses an actual Pi Harness with MemoryStorage and a synthetic
+provider for presentation journeys. Its native-boundary mocks retain settings,
+composer drafts and explicit source navigation, with no retired ChatApi commands.
+It is available only with both development mode and `VITE_E2E_BROWSER=true`.
 
 ## Default automated gate
 
@@ -162,23 +136,14 @@ or launching the app. `pnpm test:e2e:native:run` runs exactly those files in fre
 background invocations. Search focus, pane motion, populated chat motion, dock
 outline and the History/Editing Window journeys that assert editor focus are
 retained in `node e2e/support/nativeSuite.mjs foreground`.
-That lane also reruns chat-to-note with its native painted block-cursor assertion
-enabled; the background run reports that assertion as pending while checking
-real source navigation, durable block links and saved-note retention.
-That lane and `pnpm test:e2e:native:measurement` require an explicit
-`GNEAUXGHTS_E2E_FOREGROUND=1`. The measurement lane selects measurement scenarios;
-its 1 MiB sustained-edit case reports observations and has no latency pass/fail
-budget. Chat typing additionally requires the explicit context-delay setting
-below. `node e2e/support/nativeSuite.mjs live --list` lists the provider-dependent
-lane; running it still requires each scenario's explicit opt-in, endpoint, model
-and artifact path. Passing a live execution/citation contract does not grade prose.
+The foreground and measurement lanes require explicit
+`GNEAUXGHTS_E2E_FOREGROUND=1`. The measurement lane retains the Editing Window
+scenarios. `node e2e/support/nativeSuite.mjs live --list` lists the actual local
+model Pi lane. Provider-dependent checks and native windows remain explicit.
 
-Browser scenarios are split by document isolation, proposal review, external sync,
-panes, History selection/return, missing-note recovery and citation navigation.
-Independent cases reset local/session storage on an inert same-origin page before
-mounting the application. The strict backend fixture rejects unknown commands and
-note identities and delivers registered events; prototype experiments supply
-explicit command overrides instead of rewriting fixture source.
+Browser scenarios reset local/session storage on an inert same-origin page before
+mounting the application. The strict backend rejects unknown commands and note
+identities. Retained chat presentation checks observe Pi history and submissions.
 
 All managed Vite launchers require a per-process identity response and stop only
 the process group they started. An occupied port is an admission failure. Native
@@ -189,16 +154,16 @@ their fault timing and durability assertions remain scenario-specific.
 
 | Scenario | Browser | Native |
 | --- | --- | --- |
-| Note/proposal switching isolation | Primary | Smoke only |
+| Note switching isolation | Primary | Smoke only |
 | External edit conflict choices and stale completions | Primary | Filesystem event smoke |
 | Note/chat scroll and pane lifecycle | Primary | Window integration smoke |
-| Rig run start/cancel/retry/reopen | Primary | Not required |
+| Pi streaming, queue, Stop, new attempt and reopen | Presentation | Native and live acceptance |
 | App restart and window geometry | Not applicable | Primary |
 | Note Timeline capture, paging, diff, restore, and editor-state return | Fixture coverage | Primary |
 | Missing Note deletion, retained-history paging, and safe recovery | Fixture coverage | Primary |
 | Corrupt reset and forgotten recovery across restart | Fixture coverage | Primary |
 
-Future cases should extend the app-owned IPC fixture or a native temp-vault fixture. They should not bypass document, pane, chat, proposal, or external-sync controllers.
+Future cases should extend the app-owned IPC fixture or a native temp-vault fixture. They should use the document and pane owners, actual Pi Harness, and ordinary external-sync seams.
 
 ## Actual native process relaunch
 
@@ -283,48 +248,6 @@ return and visible/focused final frames, then stops its owned app, server and
 scoped caffeinate. Run fixtures sequentially without source edits/heavy checks.
 
 
-### Evidence inspection
-
-Sources and quotation requests use ordinary chat. Every sourced answer offers
-Show evidence for exact delivered excerpts, historical/current labels and recorded
-timing. The native date-evidence suite includes missing-outcome and explicit-success
-cases through that same runtime; citation resolution does not by itself establish
-answer quality. There is no source-preview toggle or alternate execution mode.
-
-If the native test ports are occupied, set `GNEAUXGHTS_E2E_PORT` (Vite) for both build and run, and `TAURI_WEBDRIVER_PORT` for the run. Defaults remain 1430 and 4445. Debug artifact admission checks its recorded dev port to prevent loading a different server. For example, build with `GNEAUXGHTS_E2E_PORT=1431 node e2e/support/buildNative.mjs`, then add `GNEAUXGHTS_E2E_PORT=1431 TAURI_WEBDRIVER_PORT=4446` to the test invocation.
-
-
-### Chat typing responsiveness
-
-After building the native E2E binary, run `GNEAUXGHTS_E2E_FOREGROUND=1 GNEAUXGHTS_E2E_CHAT_CONTEXT_DELAY_MS=2000 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-typing.spec.ts` (add matching dev/driver port overrides when used). This opt-in test delays real related-note searches in the E2E-only worker path, types through the Svelte composer, and asserts input-to-paint latency, a single in-flight search and eventual search of the latest draft. It uses a disposable vault, disabled semantic search and no model calls. The normal app build contains no delay/event probe.
-
-### Inventory budget regression
-
-Run `query-inventory.spec.ts` with `GNEAUX_QUERY_NATIVE=1` and
-`GNEAUX_INVENTORY_BUDGET=1` plus the existing local endpoint, model and output
-variables. It creates nine allowed synthetic notes and an excluded canary, runs
-ordinary and quotation-focused inventories, and checks further model work after retrieval,
-coverage or explicit budget gaps, passage links, exact current or historical
-navigation and persisted reload.
-Use an isolated dev/WebDriver port pair for concurrent checkouts.
-
-### Context measurement only
-
-Set `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` to record counter-only assembled-request
-and reported-usage diagnostics. It does not alter context or output limits.
-Run the ignored Rust `live_context_measurement_synthetic_matrix` with the local
-endpoint/model variables and an **absolute** `GNEAUX_LIVE_OUTPUT` path. Run
-`query-inventory.spec.ts` with `GNEAUX_QUERY_NATIVE=1` and
-`GNEAUX_CONTEXT_NATIVE=1` for persisted inventory, tool-evidence and research
-measurements. Use the same diagnostics variable for the native app process.
-
-Current chat implementation and archived experiment status are indexed in
-[the integration record](../docs/architecture/current-evidence-integration.md). General
-structured query routing and terminal inventories have been removed. Evidence
-capabilities accept explicit date ranges and return intermediate results for
-further tools and synthesis; native inventory checks validate that composition. Historical benchmark reports describe the
-code tested at their recorded dates, not additional active runtime pipelines.
-
 ### Pane animation
 
 `pane-animation.spec.ts` in the browser suite samples real pane widths during
@@ -341,74 +264,13 @@ records frame intervals and widths for both close directions. Keep the desktop
 unlocked and avoid concurrent builds or benchmarks during this measurement.
 
 Populated chat restoration is covered by `browser/chat-pane-animation.spec.ts`
-and `native/chat-pane-animation.spec.ts`. The native fixture inserts 100 synthetic
-messages only after validating the disposable E2E vault root. It verifies complete
-history, initial scroll position, incremental rendering, and a generous 150 ms
-ceiling for a severe UI-thread stall in the debug build. Rebuild the native E2E
-binary after Rust changes. Run browser and native suites sequentially: both Vite
-servers generate shared SvelteKit files, which can reload an active browser test.
-Run these two native motion specs in separate invocations for fresh fixture
-vaults; they use the same fixture note title. Foreground-focus assertions require
-the native test window to stay active throughout the run.
+and `native/chat-pane-animation.spec.ts`. Histories are seeded through public Pi
+operations after validating the disposable vault. These checks retain mounted
+editors, normal picker selection and latest-message positioning; they do not write
+legacy SQLite chat tables. Run browser and native suites sequentially because
+both Vite servers generate shared SvelteKit files.
 
-
-### Activity follow-ups with retained history
-
-Build the native E2E binary, then run the actual chat runtime against a local
-model using synthetic notes in a disposable vault:
-
-```sh
-GNEAUX_ACTIVITY_NATIVE=1 \
-GNEAUX_LIVE_ENDPOINT=http://127.0.0.1:1234/v1 \
-GNEAUX_LIVE_MODEL=your-loaded-model \
-GNEAUX_LIVE_OUTPUT=/tmp/activity-followups.json \
-pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/activity-followups.spec.ts
-```
-
-The fixture records an explicit interval, then changes current status afterward.
-Two fresh conversations (override with `GNEAUX_LIVE_REPEATS=1..3`) must acquire
-retained change evidence and current-status evidence, finish successfully, exclude
-a private canary, and resolve their citations. The first turn goes through the
-composer and opens/highlights an actually cited current body passage. A new
-related status note is added before a follow-up, which must read it freshly.
-A final explicit research request must record a research outcome and read/cite
-historical evidence and independently read/cite the newly added current status
-through research or direct fallback. In-flight answer events
-are saved on the 300-second request deadline; a title citation may navigate
-without a body selection and is not used for the highlighting assertion. Review each saved answer against
-the included semantic rubric: recorded completion, superseded plans, cancellation,
-unchanged old backlog, inferred actions, and disclosed coverage. Passing citation
-checks alone does not establish answer quality. Offline evidence-contract tests
-cover fixed last-week dates, clock uncertainty, assistant-transcript exclusion,
-revoked access, cleared history, partial batches, and read continuations.
-
-### Editor date conventions and task deadlines
-
-Build the native E2E binary, then use a configured local model in a disposable
-synthetic vault:
-
-```sh
-GNEAUX_CHAT_DATES_NATIVE=1 \
-GNEAUX_LIVE_ENDPOINT=http://127.0.0.1:1234/v1 \
-GNEAUX_LIVE_MODEL=your-loaded-model \
-GNEAUX_LIVE_OUTPUT=/tmp/chat-dates.json \
-pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/chat-dates.spec.ts
-```
-
-Three fresh conversations check current deadline evidence, validated research
-reads, and a pending reviewed edit with British numeric date order. The proposal
-must resolve `01/02/2027` to February 1, consolidate only the parent's valid
-annotations, preserve children and unrelated text, and leave canonical Markdown
-unchanged. Excluded notes stay inaccessible and body citations must resolve.
-Inspect saved answers for correct overdue/today/tomorrow classification, completed
-and undated children, invalid/code examples and stated coverage. Citation checks
-alone do not prove those claims. Each request records partial output on its
-300-second deadline; the model endpoint and output path must be explicit.
-
-### Request latency diagnostics
-
-The opt-in `request-latency.spec.ts` records real native request and polling
-costs. Reusable metadata-only transport capture and offline analysis live in
-`support/latency/`. The [measurement report and reproduction](../.scratch/chat-reliability/latency-probe/README.md)
-retain the original results and limitations. No live inference is part of the
-ordinary smoke suite.
+The retired activity, exact-passage, research, promotion, context-selection and
+latency suites belong to historical evaluation. They are no longer executable
+acceptance lanes. iOS simulator acceptance lives under `scripts/pi-chat/`; its
+status is recorded in the rebuild tracker, independently of desktop evidence.

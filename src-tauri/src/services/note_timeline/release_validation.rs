@@ -249,16 +249,16 @@ fn evaluation_recover_stopped_copy() {
     );
     assert!(root.is_absolute());
     assert_eq!(root.canonicalize().unwrap(), root);
-    let marker: serde_json::Value = serde_json::from_slice(
-        &fs::read(root.join("pi-stopped-recovery.json")).unwrap(),
-    )
-    .unwrap();
+    let marker: serde_json::Value =
+        serde_json::from_slice(&fs::read(root.join("pi-stopped-recovery.json")).unwrap()).unwrap();
     assert_eq!(marker["kind"], "gneauxghts-pi-stopped-recovery-v1");
     assert_eq!(marker["root"].as_str(), root.to_str());
     assert!(!root.join("pi-evaluation.json").exists());
     let notes = root.join("PROTOTYPE-wipe-me/vault");
     assert_eq!(notes.canonicalize().unwrap(), notes);
-    assert!(root.join("note-timeline-history-observations.json").is_file());
+    assert!(root
+        .join("note-timeline-history-observations.json")
+        .is_file());
     let database = notes.join(".gneauxghts/history.sqlite3");
     let before = {
         let db = rusqlite::Connection::open_with_flags(
@@ -275,7 +275,10 @@ fn evaluation_recover_stopped_copy() {
     crate::state::initialize_app_data_dir(root.clone()).unwrap();
     crate::state::set_notes_root_override(Some(notes.clone())).unwrap();
     let state = state();
-    state.note_timeline().initialize_existing_notes(&notes).unwrap();
+    state
+        .note_timeline()
+        .initialize_existing_notes(&notes)
+        .unwrap();
     state.note_timeline().clean_close(&notes).unwrap();
     assert!(state.note_timeline().is_cleanly_closed().unwrap());
     drop(state);
@@ -283,13 +286,17 @@ fn evaluation_recover_stopped_copy() {
     let db = rusqlite::Connection::open_with_flags(
         &database,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ).unwrap();
+    )
+    .unwrap();
     let after = db.query_row(
         "SELECT vault_id, history_generation, store_instance_id, clean_close_sequence, portability_state FROM history_metadata WHERE singleton=1",
         [],
         |row| Ok((row.get::<_, String>(0)?, row.get::<_, u64>(1)?, row.get::<_, String>(2)?, row.get::<_, u64>(3)?, row.get::<_, String>(4)?)),
     ).unwrap();
-    assert_eq!((&after.0, after.1, &after.2), (&before.0, before.1, &before.2));
+    assert_eq!(
+        (&after.0, after.1, &after.2),
+        (&before.0, before.1, &before.2)
+    );
     assert!(after.3 > before.3);
     assert_eq!(after.4, "portable");
     println!("PI_EVALUATION_RECOVERY {{\"portable\":true,\"identityRetained\":true,\"cleanCloseAdvanced\":true}}");

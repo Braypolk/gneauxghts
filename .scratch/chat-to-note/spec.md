@@ -1,4 +1,6 @@
-# Chat-to-note flow
+# Historical chat-to-note flow
+
+> Superseded by [the Pi rebuild](../archive/pi-chat-rebuild-scope.md). Whole-answer/selection promotion, editable proposal UI, research and transcript publication are retired. Native typed create/update authority, canonical proof and document conflict protection continue through the new publication foundation; this document is historical.
 
 Type: spec
 Design confirmed: 2026-10-14

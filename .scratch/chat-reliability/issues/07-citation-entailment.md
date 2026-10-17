@@ -1,8 +1,8 @@
 # Verify that cited passages support the associated claim
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
-Resolution: open
+Resolution: superseded old-runtime investigation; semantic entailment deferred
 
 ## Evidence
 
@@ -163,3 +163,8 @@ malformed-result retries, late events, stale/excluded sources and final renderin
 This closes the integration slice, not semantic entailment. Next compare fresh
 live/native answers against the existing claim-to-source rubric; retain issue 07
 open until answer support and attribution improve on that evidence.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Semantic claim support remains deferred; Pi source identity admission does not establish entailment. A future quality investigation needs current Pi traces and its own scope.

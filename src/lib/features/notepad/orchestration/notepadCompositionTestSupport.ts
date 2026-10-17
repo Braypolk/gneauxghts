@@ -53,9 +53,8 @@ export function createNotepadComposition(initial: SessionSnapshot = createSessio
     getNavigationDocument, getNavigationPaneId, getPaneDocument,
     getDocumentByHandle: handle => state.documentsByHandle[handle] ?? null
   });
-  let isReviewing = (_document: NoteDraftState) => false;
   const editing = createDocumentEditingService<NotepadPaneId>({
-    state, isApplyingProgrammaticUpdate: () => false, shouldSuppressAutosave: document => isReviewing(document),
+    state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => false, resetPaneCommandAfterBodyInput: () => {},
     clearRecentlyForgotten: () => { state.recentlyForgotten = null; }, clearSelectedRelatedText: () => {},
     scheduleAutosave: document => persistence.scheduleAutosave(document), scheduleSearch: vi.fn(), scheduleRelated: vi.fn()
@@ -64,8 +63,7 @@ export function createNotepadComposition(initial: SessionSnapshot = createSessio
     title, markdown, path: path ?? `/vault/${title}.md`, noteId: path?.split('/').pop()?.replace('.md', '') ?? 'new-note'
   }));
   const persistence = createNotepadPersistenceController({
-    getDocumentSession: getNavigationDocument, saveNoteSession: save, documentEditing: editing,
-    shouldSuppressPersistence: document => isReviewing(document)
+    getDocumentSession: getNavigationDocument, saveNoteSession: save, documentEditing: editing
   });
   const deps: NotepadWorkspaceSessionOptions = {
     state, workspace, maxVisiblePanes: 3, canSplitWorkspace: () => true,
@@ -78,17 +76,15 @@ export function createNotepadComposition(initial: SessionSnapshot = createSessio
     },
     persistence, documents, documentEditing: editing, paneLifecycle,
     derivedViews: {
-      discoverPendingProposals: vi.fn(),
       clearSearch: vi.fn(), scheduleSearchIfNeeded: vi.fn(), scheduleRelatedIfNeeded: vi.fn(),
       clearSelectedRelatedText: vi.fn(), loadRecentNotes: vi.fn(async () => []),
     },
-    forgottenNoteRetentionPreference: () => 7, isReviewingDocument: document => isReviewing(document)
+    forgottenNoteRetentionPreference: () => 7
   };
   const commands = createNotepadWorkspaceSession(deps);
   return {
     first, initialDocument, state, workspace, commands, deps, paneLifecycle, editing, persistence, save,
     getPaneDocument, getNavigationDocument, getPaneRuntime,
-    setReviewing: (predicate: typeof isReviewing) => { isReviewing = predicate; },
     async dispose() {
       commands.dispose();
       const owned = [...documentRegistry.values()].filter(runtime => !previousRuntimes.has(runtime));

@@ -1,4 +1,6 @@
-# Chat work index
+# Historical chat work index
+
+> The former runtime and its executable probes are retired by [the Pi rebuild](../archive/pi-chat-rebuild-scope.md). The observations below retain their original scope and pins; they are not a current implementation queue. Semantic citation entailment is deferred, while issued-source identity admission is implemented. Current acceptance belongs to [rebuild progress](../archive/pi-chat-rebuild.md).
 
 The earlier implemented milestones are complete. Editor date integration is complete;
 its [historical record](../archive/completed-work.md#chat-date-context) retains the

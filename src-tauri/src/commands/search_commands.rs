@@ -1113,8 +1113,7 @@ fn build_related_fingerprint(
     .unwrap()
 }
 
-/// Ordinary search excludes chat projections before normalization and truncation.
-/// Evidence/chat callers retain the reusable merger's broader kind policy.
+/// Normalize ranked lexical and semantic results before combining them.
 #[allow(clippy::too_many_arguments)]
 fn merge_note_candidates(
     mut lexical: Vec<ScoredSearchResult>,
@@ -1145,14 +1144,8 @@ fn merge_note_candidates(
         item.score = 61.0 / (61.0 + rank as f32);
     }
     merge_hybrid_candidates(
-        lexical
-            .into_iter()
-            .filter(|item| item.result.document_kind == crate::note::DocumentKind::Note)
-            .collect(),
-        semantic
-            .into_iter()
-            .filter(|item| item.document_kind == crate::note::DocumentKind::Note)
-            .collect(),
+        lexical,
+        semantic,
         query,
         current_path,
         limit,
@@ -2117,7 +2110,7 @@ mod command_composition_regressions {
     }
 
     #[test]
-    fn ordinary_search_filters_chat_candidates_before_ranking_and_limit() {
+    fn ordinary_search_ranks_candidates_before_limit() {
         let candidate = |title: &str, score, kind| SemanticChunkMatch {
             note_path: format!("/notes/{title}.md"),
             note_title: title.into(),
@@ -2133,7 +2126,7 @@ mod command_composition_regressions {
         let results = merge_note_candidates(
             vec![],
             vec![
-                candidate("chat", 10.0, crate::note::DocumentKind::ChatIndex),
+                candidate("three", 0.5, crate::note::DocumentKind::Note),
                 candidate("one", 2.0, crate::note::DocumentKind::Note),
                 candidate("two", 1.0, crate::note::DocumentKind::Note),
             ],

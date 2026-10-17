@@ -5,10 +5,10 @@ import { foregroundNativeSpecs, requireNativeForeground } from './nativePresenta
 
 // Keep deterministic UI contracts separate from provider and measurement opt-ins.
 export const nativeSuites = {
-  smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'chat-to-note'],
-  foreground: [...foregroundNativeSpecs.filter(name => name !== 'chat-typing'), 'chat-to-note'],
-  measurement: ['editing-windows', 'chat-typing'],
-  live: ['activity-followups', 'query-inventory', 'chat-dates', 'research-worker', 'research-comparison', 'agent-date-evidence', 'chat-to-note-live']
+  smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'piChatNative', 'piChatPublication', 'piChatCompaction', 'piChatAdapters'],
+  foreground: [...foregroundNativeSpecs],
+  measurement: ['editing-windows'],
+  live: ['piChatLocal']
 };
 
 export async function runNativeSpecs(files, {

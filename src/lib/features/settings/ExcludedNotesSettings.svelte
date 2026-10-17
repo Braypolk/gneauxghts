@@ -1,7 +1,7 @@
 <script lang="ts">
   import { LoaderCircle, Search, ShieldOff, X } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { TauriChatApi } from '$lib/features/chat/api';
+  import { chatSettings } from '$lib/features/chat/pi/settings';
   import type {
     ChatNoteCandidate,
     ChatNotePolicy
@@ -11,7 +11,7 @@
     sortedExcludedPolicies
   } from './excludedNotes';
 
-  const api = new TauriChatApi();
+  const api = chatSettings;
 
   let policies = $state<ChatNotePolicy[]>([]);
   let query = $state('');
@@ -85,7 +85,7 @@
     error = null;
     message = null;
     try {
-      await api.setNoteExcluded(candidate.noteId, candidate.title, true);
+      await api.setNoteExcluded(candidate.noteId, true);
       const now = Date.now();
       policies = [
         ...policies.filter((policy) => policy.noteId !== candidate.noteId),
@@ -112,7 +112,7 @@
     error = null;
     message = null;
     try {
-      await api.setNoteExcluded(policy.noteId, policy.title, false);
+      await api.setNoteExcluded(policy.noteId, false);
       policies = policies.filter(
         (candidate) =>
           candidate.noteId !== policy.noteId ||

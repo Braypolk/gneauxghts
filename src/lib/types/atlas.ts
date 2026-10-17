@@ -24,7 +24,7 @@ export interface AtlasNode {
   notePath: string;
   title: string;
   fileName: string;
-  documentKind: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind: 'note';
   x: number;
   y: number;
   radius: number;

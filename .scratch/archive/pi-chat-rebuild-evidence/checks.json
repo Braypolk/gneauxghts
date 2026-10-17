@@ -1,0 +1,35 @@
+{
+  "recordedAt": "2026-10-16T22:28:28.072Z",
+  "native": {
+    "passed": 706,
+    "failed": 0,
+    "ignored": 19,
+    "seconds": 87.89,
+    "logSha256": "9642e9a7a9e962d6718ac3ee2a755f18cf0338d1c468442053aa34243b44535f"
+  },
+  "nativeIntegrationsPrevious": 24,
+  "typecheckFinal": {
+    "errors": 0,
+    "warnings": 0
+  },
+  "controllerFinal": {
+    "passed": 7,
+    "failed": 0
+  },
+  "normalProductionBuild": "passed",
+  "normalProductionProbeMarkers": 0,
+  "scopedIndependentReviews": "no remaining blocking findings",
+  "limits": [
+    "Native integrations24/24 are unchanged-path earlier evidence; current full native706 and frontend1109/support32 reruns pass.",
+    "Selected evidence omits raw provider bodies and private controller configuration.",
+    "Simulator-only iOS acceptance; no physical-device or live hosted acceptance."
+  ],
+  "frontendCurrentFull": {
+    "passed": 1109,
+    "files": 139
+  },
+  "nodeSupportCurrentFull": {
+    "passed": 32,
+    "failed": 0
+  }
+}

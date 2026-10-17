@@ -224,7 +224,10 @@ impl NoteTimelineRuntime {
     }
 
     #[cfg(test)]
-    pub(super) fn set_settlement_clock(&self, clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>) {
+    pub(super) fn set_settlement_clock(
+        &self,
+        clock: Arc<dyn Fn() -> std::time::Instant + Send + Sync>,
+    ) {
         *self.settlement_clock.lock().unwrap() = Some(clock);
     }
 
@@ -258,11 +261,16 @@ impl NoteTimelineRuntime {
     pub(super) fn settled_current_content_version(
         &self,
     ) -> Result<Option<CurrentContentVersion>, HistoryError> {
-        let state = self.current_content.state.lock()
+        let state = self
+            .current_content
+            .state
+            .lock()
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
-        Ok((state.active_mutations == 0).then_some(CurrentContentVersion {
-            generation: state.generation,
-        }))
+        Ok(
+            (state.active_mutations == 0).then_some(CurrentContentVersion {
+                generation: state.generation,
+            }),
+        )
     }
 
     fn settlement_now(&self) -> std::time::Instant {
@@ -295,9 +303,7 @@ impl NoteTimelineRuntime {
         let (state, _) = self
             .current_content
             .settled
-            .wait_timeout_while(state, remaining, |state| {
-                state.active_mutations != 0
-            })
+            .wait_timeout_while(state, remaining, |state| state.active_mutations != 0)
             .map_err(|_| "Note Timeline current-content lock poisoned".to_string())?;
         if state.active_mutations != 0 {
             return Err(HistoryError::Stale(
@@ -470,7 +476,10 @@ impl NoteTimelineRuntime {
         {
             let observer = self.replay_lock_observer.lock().unwrap().clone();
             if let Some(observer) = observer {
-                if matches!(self.observation_replay.try_lock(), Err(std::sync::TryLockError::WouldBlock)) {
+                if matches!(
+                    self.observation_replay.try_lock(),
+                    Err(std::sync::TryLockError::WouldBlock)
+                ) {
                     observer(ReplayLockEvent::Contended);
                 }
             }

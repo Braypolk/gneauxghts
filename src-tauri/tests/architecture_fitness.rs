@@ -120,20 +120,10 @@ fn clean_task_commands_delegate_canonical_mutation_to_the_task_service() {
 #[test]
 fn ordinary_note_writers_use_typed_note_timeline_mutations() {
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
-    let chat = repository_module_tree("src-tauri/src/chat.rs");
-    let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
     let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
     let task_production = tasks.as_str();
 
-    assert_contains_none(
-        &chat,
-        &[
-            "unique_converted_note_path(",
-            "fs::write(&target, ordinary_note)",
-        ],
-    );
-
-    for source in [&note_persistence, &proposals, task_production] {
+    for source in [note_persistence.as_str(), task_production] {
         assert_contains_none(
             source,
             &[
@@ -267,15 +257,6 @@ fn timeline_commands_expose_only_the_closed_command_error_contract() {
             "{command} must return the closed Note Timeline command error"
         );
     }
-}
-
-#[test]
-fn agent_permissions_stay_product_owned_transient_and_pre_tool() {
-    let permissions = repository_file("src-tauri/src/agent_permissions.rs");
-    let registration = repository_file("src-tauri/src/lib.rs");
-
-    assert!(registration.contains("commands::chat_commands::chat_decide_permission"));
-    assert_contains_none(&permissions, &["rig_agent", "rig_core", "fs::write"]);
 }
 
 #[test]
@@ -472,8 +453,6 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
     let note_persistence = repository_file("src-tauri/src/commands/note_persistence.rs");
     let state_persistence = repository_file("src-tauri/src/state/persistence.rs");
     let forgotten = repository_file("src-tauri/src/commands/forgotten_note_commands.rs");
-    let proposals = repository_file("src-tauri/src/commands/proposal_commands.rs");
-    let proposal_writers = repository_file("src-tauri/src/proposals.rs");
     let tasks = repository_file("src-tauri/src/services/task_mutation.rs");
 
     assert_contains_none(
@@ -508,7 +487,7 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
             "prepare: impl FnOnce",
         ],
     );
-    for caller in [&proposals, &tasks, &proposal_writers, &note_persistence] {
+    for caller in [&tasks, &note_persistence] {
         assert_contains_none(
             caller,
             &[
@@ -527,57 +506,9 @@ fn note_identity_continuity_stays_inside_the_timeline_and_catalog_boundary() {
         );
     }
     assert_contains_none(
-        &format!("{note_persistence}\n{forgotten}\n{proposals}\n{tasks}"),
+        &format!("{note_persistence}\n{forgotten}\n{tasks}"),
         &["repair_managed_note_identity"],
     );
-}
-
-#[test]
-fn ordinary_chat_history_is_on_demand_and_cannot_mint_history_mode_access() {
-    let tools = repository_file("src-tauri/src/agent_tools.rs");
-    let history_tool = repository_file("src-tauri/src/agent_tools/current_history.rs");
-    assert_contains_all(
-        &tools,
-        &[
-            ".tool(ModelTool(FindNotesTool(self.clone())))",
-            ".tool(ModelTool(ReadNotesTool(self.clone())))",
-            ".tool(ModelTool(ResearchNotesTool(self.clone())))",
-        ],
-    );
-    let evidence = repository_file("src-tauri/src/services/evidence.rs");
-    for source in [
-        &tools,
-        &history_tool,
-        &repository_file("src-tauri/src/agent_tools/interface.rs"),
-        &evidence,
-        &repository_file("src-tauri/src/agent_tools/research.rs"),
-        &repository_module_tree("src-tauri/src/chat.rs"),
-    ] {
-        assert_contains_none(
-            source,
-            &[
-                "open_history_mode(",
-                "HistoryModeGrant",
-                "history_store::",
-                ".reconstruct(",
-            ],
-        );
-    }
-    for function in [
-        "active_note_context",
-        "selected_context_prompt",
-        "explicit_wikilink_context",
-    ] {
-        assert_contains_none(
-            rust_function(&tools, function),
-            &[
-                ".provenance(",
-                ".provenance_page(",
-                "current_history_payload",
-                ".activity(",
-            ],
-        );
-    }
 }
 
 #[test]
@@ -628,14 +559,6 @@ fn interactive_history_waits_run_offthread_and_readiness_stays_observational() {
                 "delete_forgotten_notes",
             ],
         ),
-        (
-            "src-tauri/src/commands/proposal_commands.rs",
-            vec!["commit_agent_proposal"],
-        ),
-        (
-            "src-tauri/src/commands/chat_commands.rs",
-            vec!["chat_archive_conversation"],
-        ),
     ] {
         let source = repository_file(path);
         for command in commands {
@@ -679,7 +602,9 @@ fn explicit_restart_has_one_joining_frontend_action_and_one_backend_owner() {
     assert_contains_none(&settings, &["plugin-process", "relaunch("]);
 
     assert_contains_none(&backend, &["is_cleanly_closed("]);
-    let chat_quiesce = backend.find("chat.quiesce_for_restart()").unwrap();
+    let chat_quiesce = backend
+        .find("database\n            .quiesce_for_restart(app)")
+        .unwrap();
     let semantic_quiesce = backend
         .find("state.semantic.quiesce_for_restart()")
         .unwrap();
@@ -715,8 +640,31 @@ fn explicit_restart_has_one_joining_frontend_action_and_one_backend_owner() {
 }
 
 #[test]
-fn coordinator_is_the_only_production_chat_handoff_to_the_runtime() {
-    let chat = repository_module_tree("src-tauri/src/chat.rs");
-    assert_contains_all(&chat, &["AgentRunCoordinator::execute("]);
-    assert_contains_none(&chat, &["AgentRuntime::run("]);
+fn pi_native_publication_and_reads_use_retained_domain_owners() {
+    let publication = repository_file("src-tauri/src/pi_chat/publication.rs");
+    let notes = repository_file("src-tauri/src/pi_chat/notes.rs");
+    assert_contains_all(
+        &publication,
+        &[
+            ".create_note_with_proof(",
+            ".update_note_with_proof(",
+            ".reconcile_publication(",
+        ],
+    );
+    assert_contains_none(
+        &publication,
+        &["atomic_write_note", "atomic_create_note", "fs::write("],
+    );
+    assert_contains_all(&notes, &[".current_content(", ".read_note("]);
+    for source in [&publication, &notes] {
+        assert_contains_none(
+            source,
+            &[
+                "open_history_mode(",
+                "history_store::",
+                "AgentRuntime",
+                "ChatService",
+            ],
+        );
+    }
 }

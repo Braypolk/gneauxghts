@@ -33,6 +33,63 @@ impl ObservationReceipt {
 }
 
 impl<'a> NoteTimeline<'a> {
+    /// A Running Vault can reopen at a different absolute location before its
+    /// first background reconciliation. Admit continuity from canonical bytes,
+    /// through the same retained observation protocol as a missed external move.
+    /// The outgoing editor draft is never observation evidence.
+    pub(super) fn reconcile_publication_location(
+        &self,
+        continuity_path: Option<&Path>,
+        note_id: &NoteIdentity,
+    ) -> Result<(), HistoryError> {
+        let Some(path) = continuity_path else {
+            return Ok(());
+        };
+        let _operation = self.runtime.begin_operation()?;
+        self.runtime.store.require_path(path)?;
+        let _current_content_mutation = self.begin_current_content_mutation()?;
+        self.runtime.with_observation_replay(|| {
+            self.recover_pending_deletions()?;
+            self.replay_retained_observations(None)?;
+            let Some(previous_path) = history_store::current_path(&self.runtime.store, note_id)?
+            else {
+                return Ok(());
+            };
+            if previous_path == path {
+                return Ok(());
+            }
+            if previous_path.try_exists()? {
+                return Err(HistoryError::Stale(
+                    "Note location continuity conflicts with a surviving former path".into(),
+                ));
+            }
+            // Decide continuity and capture its evidence under the same replay
+            // owner as publication. A competing save cannot make these bytes
+            // stale before the observation enters the durable ledger.
+            let canonical = fs::read_to_string(path)?;
+            if crate::note::parse_note(&canonical)
+                .frontmatter
+                .managed
+                .as_ref()
+                .map(|metadata| metadata.id.as_str())
+                != Some(note_id.as_str())
+            {
+                return Err(HistoryError::Stale(
+                    "Note location continuity requires the canonical Note Identity".into(),
+                ));
+            }
+            self.observe_owned(
+                VaultObservation::reconciled_state(
+                    path.to_path_buf(),
+                    crate::time::current_time_millis()?,
+                    None,
+                )
+                .with_canonical_markdown(canonical),
+            )?;
+            Ok(())
+        })
+    }
+
     pub(crate) fn observe(
         &self,
         observation: VaultObservation,
@@ -43,26 +100,31 @@ impl<'a> NoteTimeline<'a> {
             self.runtime.store.require_path(path)?;
         }
         let _current_content_mutation = self.begin_current_content_mutation()?;
-        self.runtime.with_observation_replay(|| {
-            self.recover_pending_deletions()?;
-            let observation = self.capture_observed_markdown(observation)?;
-            if observation.kind == VaultObservationKind::ReconciliationScan {
-                self.replay_retained_observations(None)?;
-                return self.apply_observation(observation);
-            }
+        self.runtime
+            .with_observation_replay(|| self.observe_owned(observation))
+    }
 
-            let requested_sequence =
-                history_store::retain_observation(&self.runtime.store, &observation)?;
-            #[cfg(feature = "e2e-wdio")]
-            crate::e2e_process_fault::hit("observation-retained");
-            Ok(self
-                .replay_retained_observations(Some(requested_sequence))?
-                .ok_or_else(|| {
-                    format!(
-                        "Retained Note Timeline observation {requested_sequence} was not replayed"
-                    )
-                })?)
-        })
+    /// The caller owns observation replay through capture, retention and apply.
+    fn observe_owned(
+        &self,
+        observation: VaultObservation,
+    ) -> Result<ObservationReceipt, HistoryError> {
+        self.recover_pending_deletions()?;
+        let observation = self.capture_observed_markdown(observation)?;
+        if observation.kind == VaultObservationKind::ReconciliationScan {
+            self.replay_retained_observations(None)?;
+            return self.apply_observation(observation);
+        }
+
+        let requested_sequence =
+            history_store::retain_observation(&self.runtime.store, &observation)?;
+        #[cfg(feature = "e2e-wdio")]
+        crate::e2e_process_fault::hit("observation-retained");
+        Ok(self
+            .replay_retained_observations(Some(requested_sequence))?
+            .ok_or_else(|| {
+                format!("Retained Note Timeline observation {requested_sequence} was not replayed")
+            })?)
     }
 
     pub(super) fn recover_retained_observations(&self) -> Result<(), HistoryError> {

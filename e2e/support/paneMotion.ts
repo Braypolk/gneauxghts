@@ -51,7 +51,7 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       focused: document.hasFocus(),
       visible: document.visibilityState === 'visible',
       moving: !!document.querySelector('[data-pane-motion]'),
-      messages: document.querySelectorAll('[data-chat-message-id]').length,
+      messages: document.querySelectorAll('[data-testid="pi-user-message"], [data-testid="pi-assistant-message"]').length,
       chatBusy: document.querySelector('[role="log"]')?.getAttribute('aria-busy') === 'true',
       border: (() => {
         const border = document.querySelector<HTMLElement>('[data-pane-border]');

@@ -20,7 +20,7 @@ function deps(hasLoadedInitialSession = false): NotepadSessionLifecycleDeps {
     registerTransientMenuListeners: () => vi.fn(), getWorkspaceShell: () => null, ensurePaneEditors: vi.fn().mockResolvedValue(undefined),
     refreshCurrentNote: vi.fn().mockResolvedValue(undefined), updateRelatedLayout: vi.fn(), scheduleRelated: vi.fn(),
     openNote: vi.fn().mockResolvedValue(undefined), navigateToTaskTarget: vi.fn().mockResolvedValue(undefined),
-    openChatProjection: vi.fn().mockResolvedValue(undefined), focusNavigationPane: vi.fn(), onVaultNoteChanged: vi.fn(), dispose: vi.fn()
+    focusNavigationPane: vi.fn(), onVaultNoteChanged: vi.fn(), dispose: vi.fn()
   };
 }
 beforeEach(() => {

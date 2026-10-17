@@ -1,5 +1,6 @@
 <script lang="ts">
   import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
+  import { assertWorkspaceMutationAdmitted } from './document/documentPublicationAdmission';
   import { nextEditorFrame } from './editor/editorPresentation';
   import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
@@ -11,20 +12,19 @@
   import ExternalLinkActions from "./editor/ExternalLinkActions.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
-  import type { createProposalOrchestration } from "$lib/features/proposals/proposalOrchestration";
   import { appSettings } from "$lib/appSettings.svelte";
   import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
   import {
     createNotepadFeatureHost,
     type NotepadFeatureHost,
   } from "$lib/features/notepad/host";
-  import { shouldSuppressAutosaveForDocument } from "$lib/features/proposals/reviewSession.svelte";
   import { focusInputAtEnd } from "$lib/features/notepad/navigation/navigation";
   import { registerPendingNoteSaveHandler } from "$lib/features/notepad/navigation/pendingNoteSave";
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
     openSearchResult,
+    openNoteCitation,
     type NavigationContext,
     type OpenContext,
   } from "$lib/features/notepad/navigation/openFlow";
@@ -50,7 +50,9 @@
   } from "$lib/features/notepad/related/layout";
   import { createNotepadRefreshController } from "$lib/features/notepad/orchestration/notepadRefreshController";
   import { createNotepadSessionLifecycle } from "$lib/features/notepad/orchestration/notepadSessionLifecycle";
-  import { createNotepadProposalAdapter } from "$lib/features/notepad/orchestration/notepadProposalAdapter";
+  import { mountPublicationDocumentOwner } from "$lib/features/chat/pi/publication";
+  import { openPiSource } from "$lib/features/chat/pi/citations";
+  import { getNearestEditorPaneId } from "$lib/features/notepad/workspace/paneRoles";
   import { NotepadChatCoordinator } from "$lib/features/notepad/orchestration/notepadChatCoordinator.svelte";
   import { createNotepadChatPaneAdapter } from "$lib/features/notepad/orchestration/notepadChatPaneAdapter";
   import { paneCommandNoteLabel } from "$lib/features/notepad/pane/paneViewModelFactory";
@@ -131,7 +133,6 @@
     keyboardShortcuts,
   } from "$lib/keyboardShortcuts.svelte";
   import "$lib/features/notepad/editor/editor.css";
-  import "$lib/features/proposals/review.css";
   import "$lib/features/notepad/editor/editorTypography.css";
   import "$lib/features/notepad/markdown/inlineFormatting.css";
 
@@ -139,6 +140,7 @@
   type PaneId = NotepadPaneId;
   type NativeE2EEditorState = {
     activePaneId: PaneId;
+    workspaceOperationPending: boolean;
     paneIds: PaneId[];
     paneKind: ReturnType<typeof getPaneKind>;
     noteId: string | null;
@@ -150,9 +152,14 @@
   };
   type NativeE2EWindow = Window & {
     __GNEAUXGHTS_NATIVE_E2E__?: {
+      piNativeInvokeProbe: () => Promise<typeof import("$lib/e2e/piNativeInvokeProbe")>;
+      piChat: () => Promise<import("$lib/features/chat/pi/runtime").PiChat>;
+      piContext: () => Promise<typeof import("$lib/features/chat/pi/runtime").PI_CONTEXT>;
+      piPublicationTask: () => Promise<typeof import("$lib/features/chat/pi/publication").PublicationTask>;
+      readPiChatState: () => Array<Pick<import("$lib/features/chat/ui/piConversationView").PiViewSnapshot, "title" | "view" | "entries" | "authority" | "error" | "read" | "provider" | "model" | "initialized" | "loading"> & { paneId: PaneId; conversationId: number | null }>;
       readEditorState: () => NativeE2EEditorState;
       contractProbe: NativeContractProbe;
-      openRevisionCitation: (citation: Extract<import("$lib/features/chat/types").ChatCitation, { kind: "note" }>) => Promise<void>;
+      openRevisionCitation: (citation: { noteId: string; label: string; notePath: string; revision: import("$lib/types/history").RevisionCitation }) => Promise<void>;
       setEditorSelection: (anchor: number, head: number) => boolean;
     };
   };
@@ -347,44 +354,9 @@
     return runtime;
   }
 
-  let proposalOrchestrationInstance: ReturnType<
-    typeof createProposalOrchestration
-  > | null = null;
-  function getProposalOrchestration() {
-    if (!proposalOrchestrationInstance) {
-      throw new Error("Proposal orchestration is not ready yet.");
-    }
-    return proposalOrchestrationInstance;
-  }
-
   const chatCoordinator = new NotepadChatCoordinator<PaneId>(initialPaneIds, {
-    getPaneOrder: () => paneOrder,
     getActivePaneId: () => activePaneId,
     getPaneKind,
-    getPaneDocument: getPaneDocumentSession,
-    getEditorPaneIds: () => getEditorPaneIds(),
-    getPaneConversationId: (paneId) =>
-      workspaceStore.getPaneState(paneId).chatConversationId,
-    setPaneConversationId: (paneId, conversationId) =>
-      workspaceStore.setPaneConversationId(paneId, conversationId),
-    setStoredPaneKind: (paneId, kind) =>
-      workspaceStore.setPaneKind(paneId, kind),
-    setActivePane: workspaceStore.setActivePaneId,
-    touchPaneLocation: (paneId) => touchPaneLocationForHistory(paneId),
-    splitWorkspace: () => commands.splitWorkspace(),
-    resolvePaneCommandChoice: (paneId, choice) =>
-      commands.resolvePaneCommandChoice(paneId, choice),
-    focusPane: (paneId) => commands.focusPaneAfterShortcut(paneId),
-    getProposalOrchestration,
-    openSavedNote: async proposal => {
-      const noteId = proposal.payload.committedNoteId;
-      const path = proposal.payload.committedPath;
-      if (typeof noteId !== 'string' || typeof path !== 'string') throw new Error('The saved note could not be located.');
-      await commands.openNotePath(path, { noteId, revealEditorAfterOpen: true, focusEditorAfterOpen: false });
-    },
-    clearRecentlyForgottenNote: () => setRecentlyForgotten(null),
-    forgottenNoteRetentionPreference: () =>
-      appSettings.forgottenNoteRetentionPreference,
     startNewNote: () => commands.startNewNoteFlow(),
     forgetNote: () => commands.clearNotepad(),
     unforgetNote: () => commands.unforgetNotepad(),
@@ -434,7 +406,7 @@
     const paneId = createNotepadPaneId();
     try {
       ensurePaneRuntime(paneId);
-      chatCoordinator.ensureController(paneId);
+      chatCoordinator.ensureBinding(paneId);
       ensurePaneControllers(paneId);
       return paneId;
     } catch (error) {
@@ -525,8 +497,6 @@
       getWikilinkController: (paneId) =>
         getPaneControllers(paneId).wikilinkController,
       setActivePane: workspaceStore.setActivePaneId,
-      openChatProjection: (paneId, path, anchor) =>
-        chatCoordinator.openProjection(paneId, path, anchor),
       getWikilinkState: (paneId) =>
         getPaneRuntime(paneId).ui.wikilinkAutocomplete,
     });
@@ -635,17 +605,15 @@
   // ---------------------------------------------------------------------------
   // Pane editor sessions serialize mount, swap, replacement and destruction.
   // ---------------------------------------------------------------------------
+  let previousWorkspaceSettled = $state(false);
   function paneShouldMountEditor(paneId: PaneId): boolean {
     return (
+      previousWorkspaceSettled &&
       notepadRuntimeState.hasLoadedInitialSession &&
       paneOrder.includes(paneId) &&
       workspaceStore.hasPane(paneId) &&
       paneHasCapability(getPaneKind(paneId), "edit-document")
     );
-  }
-
-  function discoverPendingProposals(document: NoteDraftState) {
-    void chatCoordinator.showPendingProposalsForDocument(document);
   }
 
   const paneLifecycle = createPaneEditorLifecycle<PaneId>({
@@ -655,9 +623,6 @@
       getPaneControllers(paneId).editorLifecycleController,
     getPaneDocument: getPaneDocumentSession,
     paneShouldMountEditor,
-    onEditorMounted: (_paneId, document) => {
-      discoverPendingProposals(document);
-    },
     closeWikilinkAutocomplete: (paneId) => closeWikilinkAutocomplete(paneId),
   });
 
@@ -677,14 +642,16 @@
   });
 
   let persistence: ReturnType<typeof createNotepadPersistenceController>;
+  let agentPublicationActive = $state(false);
   const documentEditing = createDocumentEditingService<PaneId>({
     state: notepadState,
     isApplyingProgrammaticUpdate: (document) =>
       getPaneIdsForDocument(document).some(
         (paneId) => getPaneRuntime(paneId).ui.isApplyingProgrammaticUpdate,
       ),
-    shouldSuppressAutosave: shouldSuppressAutosaveForDocument,
     isTitleEditing: isTitleInputFocusedForNote,
+    publicationAdmissionChanged: (active) => { agentPublicationActive = active; },
+    isWorkspaceOperationPending: () => commands.isOperationPending() || historyMode.state.phase !== 'inactive',
     resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
       if (
         paneCommandPaneId === paneId &&
@@ -709,8 +676,6 @@
     markNoteOpened,
     documentEditing,
     isActiveNote: (note) => getDocumentSession() === note,
-    shouldSuppressPersistence: (note) =>
-      shouldSuppressAutosaveForDocument(note),
   });
 
   const {
@@ -748,19 +713,17 @@
     });
 
   const workspacePersistence = createWorkspacePersistenceService({
-    flushReviews: () => getProposalOrchestration().flushCheckpoint(),
     flushAllPaneCursorSaves: () => documents.flushAllPendingCursorSaves(),
     getDocuments: () => Object.values(notepadState.documentsByHandle),
     cancelPendingAutosave,
     enqueueSave,
-    isReviewingDocument: (document) =>
-      getProposalOrchestration().isReviewingDocument(document),
   });
 
   const historyMode = new HistoryModeSession({
     finalizeWindow: finalizeNoteEditingWindow,
     flushWorkspace: workspacePersistence.flushAllForNavigation,
     captureWorkspace: (paneId) => {
+      assertWorkspaceMutationAdmitted(notepadState);
       const resolvedPaneId = paneId as PaneId;
       const editorViewState = paneLifecycle.captureViewState(resolvedPaneId);
       const paneDocument = getPaneDocumentSession(resolvedPaneId);
@@ -845,12 +808,14 @@
     loadContext: getHistoryModeContext,
     loadDiff: getHistoryModeDiff,
     loadRestorePreview: previewHistoryRevisionRestore,
-    restoreRevision: (noteId, revisionId, expectedCurrentAuthoredContentHash) =>
-      restoreHistoryRevision(
+    restoreRevision: (noteId, revisionId, expectedCurrentAuthoredContentHash) => {
+      assertWorkspaceMutationAdmitted(notepadState);
+      return restoreHistoryRevision(
         noteId,
         revisionId,
         expectedCurrentAuthoredContentHash,
-      ),
+      );
+    },
     adoptRestoredRevision: async (restored) => {
       await documentEditing.adoptVersionRestore(restored);
     },
@@ -1021,7 +986,6 @@
     state: notepadState,
     workspace: workspaceStore,
     maxVisiblePanes: MAX_VISIBLE_PANES,
-    // Automatic review presentation still requires room beside the chat.
     canSplitWorkspace: () => window.innerWidth >= 640 && window.innerHeight >= 560,
     persistence,
     documents,
@@ -1040,7 +1004,6 @@
       waitForPaneMotion,
     },
     derivedViews: {
-      discoverPendingProposals,
       clearSearch,
       scheduleSearchIfNeeded: scheduleSearch,
       scheduleRelatedIfNeeded: scheduleRelated,
@@ -1049,9 +1012,6 @@
     },
     forgottenNoteRetentionPreference: () =>
       appSettings.forgottenNoteRetentionPreference,
-    checkpointReview: () => getProposalOrchestration().flushCheckpoint(),
-    isReviewingDocument: (document) =>
-      getProposalOrchestration().isReviewingDocument(document),
 
   });
   touchPaneLocationForHistory = commands.touchCurrentLocation;
@@ -1144,18 +1104,8 @@
     },
   });
 
-  const { orchestration: proposalOrchestration } = createNotepadProposalAdapter({
-    workspace: workspaceStore,
-    state: notepadState,
-    commands,
-    documentEditing,
-    getEditor: (paneId) => editorCapabilities.get(paneId) ?? null,
-  });
-  proposalOrchestrationInstance = proposalOrchestration;
-
   const chatPaneAdapter = createNotepadChatPaneAdapter<PaneId>({
     coordinator: chatCoordinator,
-    proposal: proposalOrchestration,
     getPaneOrder: () => paneOrder,
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
@@ -1165,18 +1115,19 @@
     setPaneConversationId: (paneId, conversationId) =>
       workspaceStore.setPaneConversationId(paneId, conversationId),
     touchPaneLocation: (paneId) => touchPaneLocationForHistory(paneId),
-    getPaneSelectedText: (paneId) =>
-      editorCapabilities.get(paneId)?.readSelection()?.selectedText?.trim() ||
-      null,
-    setActivePane: workspaceStore.setActivePaneId,
-    openNote: commands.openNotePath,
-    focusPassage: (paneId, selection) => editorCapabilities.get(paneId)?.focusSelection(selection, { scrollIntoView: true }) ?? false,
-    openRevisionCitation: (paneId, citation) => historyMode.enterCitation(paneId, {
-      noteId: citation.noteId, noteTitle: citation.label, notePath: citation.notePath
-    }, citation.revision!.revisionId),
-    openWikilink,
-    flushPendingAutosave,
-    getNoteSaveQueue: (document) => getNoteSaveQueue(document.handle),
+    openSource: async (paneId, authorityId, sourceId) => {
+      assertWorkspaceMutationAdmitted(notepadState);
+      const destination = await openPiSource(authorityId, sourceId);
+      assertWorkspaceMutationAdmitted(notepadState);
+      if (destination.kind === "unavailable") throw new Error(destination.message);
+      const chat = chatCoordinator.getBinding(paneId);
+      if (destination.limitation) chat.report(new Error(destination.limitation));
+      const target = getNearestEditorPaneId(paneOrder, getPaneKind, paneId) ?? paneId;
+      workspaceStore.setActivePaneId(target);
+      const revealed = await openNoteCitation({ ...getOpenContext(), openNotePath: (noteId, path, options) => commands.openNotePath(path, { ...options, noteId, revealEditorAfterOpen: true }) },
+        () => getNavigationContext(target), destination);
+      if (destination.location && !revealed) chat.report(new Error("The cited passage is unavailable in the current editor. Opened the note without selecting a passage."));
+    },
   });
 
   // Live-follow updates the chat header from the sibling editor, but the chat
@@ -1222,11 +1173,6 @@
     suspendPersistenceForConflict: (document) => {
       cancelPendingAutosave(document);
       invalidatePendingSaveResults(document);
-    },
-    shouldDeferRefresh: (notePath) => {
-      if (!proposalOrchestration.isReviewingPath(notePath)) return false;
-      proposalOrchestration.markConflict(notePath);
-      return true;
     },
   });
 
@@ -1286,12 +1232,6 @@
       saveCursorPosition: documents.saveCursorPositionForDocument,
       getOpenContext,
       getNavigationContext,
-      openChatProjection: (paneId, notePath, blockAnchor) =>
-        chatCoordinator.openProjection(
-          paneId,
-          notePath,
-          blockAnchor,
-        ),
       openSearchResult,
       openRecentTask,
     });
@@ -1325,6 +1265,7 @@
   });
 
   function handleHistoryAwareGlobalKeydown(event: KeyboardEvent) {
+    if (agentPublicationActive) { event.preventDefault(); return; }
     // History owns its keyboard handling, including Escape in inline renaming.
     // Capturing Escape here would close history before the field can cancel it.
     if (!historyMode.isActive && activeTransientUi.kind !== "image-viewer") {
@@ -1358,7 +1299,6 @@
     getPaneKind,
     getPaneDocument: getPaneDocumentSession,
     getChatBindings: chatPaneAdapter.getBindings,
-    isReviewingDocument: proposalOrchestration.isReviewingDocument,
     isNotePinned: (noteId) =>
       searchState.pinnedNotes.some((item) => item.noteId === noteId),
     paneTitleInputClass,
@@ -1481,8 +1421,6 @@
         await navigateToPendingTaskTarget(getNavigationContext(), target);
       }
     },
-    openChatProjection: (notePath) =>
-      chatCoordinator.openProjection(getNavigationPaneId(), notePath),
     focusNavigationPane: () =>
       commands.focusPaneAfterShortcut(getNavigationPaneId()),
     onVaultNoteChanged: (payload) => {
@@ -1501,7 +1439,6 @@
       // app-shell barrier. Keep this best-effort defensive flush until those
       // platform departure routes can be synchronously vetoed.
       void workspacePersistence.flushAllForNavigation();
-      proposalOrchestration.dispose();
       chatCoordinator.dispose();
       syncCurrentFileSearchHighlights("", "all");
       searchState.dispose();
@@ -1510,6 +1447,8 @@
     },
   });
   onMount(() => {
+    const publicationOwner = mountPublicationDocumentOwner(documentEditing);
+    void publicationOwner.ready.catch(error => console.error("Publication owner could not open:", error));
     const unregisterBackgroundSave = registerBackgroundSave(async () => {
       await historyMode.waitForPendingRestore();
       await workspacePersistence.flushAllForBackground();
@@ -1518,7 +1457,16 @@
       registerOpenTaskDocumentMutationHandler(
         openTaskDocumentMutation,
       );
-    const disposeSession = sessionLifecycle.mount();
+    let mounted = true;
+    let disposeSession = () => {};
+    // The shared document state may still be protected by the retired workspace.
+    // A new native bind failure does not prevent ordinary editor initialization.
+    void publicationOwner.previousOwnerSettled.then(() => {
+      if (mounted) {
+        previousWorkspaceSettled = true;
+        disposeSession = sessionLifecycle.mount();
+      }
+    }).catch(error => console.error("The previous workspace could not settle:", error));
     let disposeNativeE2EBridge: (() => void) | null = null;
     // Explicit E2E builds include inspection, selection and citation actions in
     // optimized native tests too; ordinary builds erase this branch.
@@ -1527,6 +1475,14 @@
       const contractProbe = createNativeContractProbe();
       const nativeE2EBridge = {
         contractProbe,
+        piNativeInvokeProbe: () => import("$lib/e2e/piNativeInvokeProbe"),
+        piChat: () => import("$lib/features/chat/pi/runtime").then(module => module.openPiChat()),
+        piContext: () => import("$lib/features/chat/pi/runtime").then(module => module.PI_CONTEXT),
+        piPublicationTask: () => import("$lib/features/chat/pi/publication").then(module => module.PublicationTask),
+        readPiChatState: () => paneOrder.filter(id => getPaneKind(id) === "chat").map(paneId => {
+          const value = chatCoordinator.getBinding(paneId).getSnapshot();
+          return { paneId, conversationId: value.conversation?.id ?? null, title: value.title, view: value.view, entries: value.entries, authority: value.authority, error: value.error, read: value.read, provider: value.provider, model: value.model, initialized: value.initialized, loading: value.loading };
+        }),
         readEditorState: () => {
           const paneId = activePaneId;
           const paneDocument = getPaneDocumentSession(paneId);
@@ -1534,6 +1490,7 @@
           const snapshot = editorCapabilities.get(paneId)?.readSnapshot() ?? null;
           return {
             activePaneId: paneId,
+            workspaceOperationPending: commands.isOperationPending() || historyMode.state.phase !== 'inactive',
             paneIds: [...paneOrder],
             paneKind: getPaneKind(paneId),
             noteId: getDocumentNoteId(paneDocument),
@@ -1547,8 +1504,8 @@
               : null,
           };
         },
-        openRevisionCitation: async (citation: Extract<import("$lib/features/chat/types").ChatCitation, { kind: "note" }>) =>
-          chatPaneAdapter.getBindings(activePaneId).context.onOpenCitation(citation),
+        openRevisionCitation: async (citation: { noteId: string; label: string; notePath: string; revision: import("$lib/types/history").RevisionCitation }) =>
+          historyMode.enterCitation(activePaneId, { noteId: citation.noteId, noteTitle: citation.label, notePath: citation.notePath }, citation.revision!.revisionId),
         setEditorSelection: (anchor: number, head: number) =>
           editorCapabilities.get(activePaneId)?.focusSelection(
             { anchor, head },
@@ -1564,11 +1521,16 @@
       };
     }
     return () => {
+      mounted = false;
+      previousWorkspaceSettled = false;
       unregisterBackgroundSave();
       paneLayoutMotion.cancel();
       disposeNativeE2EBridge?.();
       unregisterTaskMutation();
-      disposeSession();
+      // Retain concrete document resources until native publication effects settle.
+      void publicationOwner.close(() => disposeSession()).catch(error => {
+        console.error("Publication owner could not close; document resources remain retained:", error);
+      });
     };
   });
 
@@ -1615,7 +1577,7 @@
 >
   <div
     class="contents"
-    inert={historyMode.isActive}
+    inert={historyMode.isActive || agentPublicationActive}
     aria-hidden={historyMode.isActive}
   >
   <div

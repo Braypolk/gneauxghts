@@ -1,5 +1,3 @@
-#[cfg(not(feature = "pi-prototype"))]
-use crate::chat::ChatService;
 use crate::{index::AppState, vault_watcher::VaultWatcherHandle};
 use serde::Serialize;
 use std::sync::{Condvar, Mutex};
@@ -8,11 +6,15 @@ use tauri::Manager;
 #[cfg(test)]
 static BEFORE_TERMINAL_RESTART: Mutex<Option<Box<dyn FnOnce() + Send>>> = Mutex::new(None);
 #[cfg(test)]
+static FAIL_SEMANTIC_QUIESCE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+#[cfg(test)]
 pub(crate) fn clear_restart_hook_for_test() {
     *BEFORE_TERMINAL_RESTART
         .lock()
         .unwrap_or_else(|error| error.into_inner()) = None;
     BEFORE_TERMINAL_RESTART.clear_poison();
+    FAIL_SEMANTIC_QUIESCE.store(false, std::sync::atomic::Ordering::SeqCst);
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -230,33 +232,24 @@ impl AppLifecycle {
                 false,
             );
         };
-        #[cfg(not(feature = "pi-prototype"))]
-        let Some(chat) = app.try_state::<ChatService>() else {
-            return PrepareRestartReceipt::failed(
-                "Chat service unavailable".to_string(),
-                false,
-                false,
-            );
-        };
-
-        #[cfg(not(feature = "pi-prototype"))]
-        if let Err(error) = chat.quiesce_for_restart() {
-            let can_resume = chat.resume_after_failed_restart().is_ok();
-            return PrepareRestartReceipt::failed(error, false, can_resume);
-        }
-        #[cfg(feature = "pi-prototype")]
-        let Some(database) = app.try_state::<crate::pi_prototype::NativeDatabase>() else {
+        let Some(database) = app.try_state::<crate::pi_chat::storage::NativeDatabase>() else {
             return PrepareRestartReceipt::failed("Pi storage unavailable".into(), false, false);
         };
-        #[cfg(feature = "pi-prototype")]
-        let Some(transport) = app.try_state::<crate::pi_prototype_transport::NativeTransport>() else {
+        let Some(transport) = app.try_state::<crate::pi_chat::transport::NativeTransport>() else {
             return PrepareRestartReceipt::failed(
                 "Pi provider transport unavailable".into(),
                 false,
                 false,
             );
         };
-        #[cfg(feature = "pi-prototype")]
+        let Some(editors) = app.try_state::<crate::pi_chat::publication::EditorAdmissions>() else {
+            return PrepareRestartReceipt::failed(
+                "Publication owner unavailable".into(),
+                false,
+                false,
+            );
+        };
+
         if let Err(error) = database
             .quiesce_for_restart(app)
             .and_then(|()| transport.quiesce_for_restart())
@@ -265,14 +258,39 @@ impl AppLifecycle {
                 && transport.resume_after_failed_restart().is_ok();
             return PrepareRestartReceipt::failed(error, false, can_resume);
         }
-        if let Err(error) = state.semantic.quiesce_for_restart() {
-            #[cfg(not(feature = "pi-prototype"))]
-            let can_resume = chat.resume_after_failed_restart().is_ok()
-                && state.semantic.resume_after_failed_restart().is_ok();
-            #[cfg(feature = "pi-prototype")]
-            let can_resume = database.resume_after_failed_restart().is_ok()
-                && transport.resume_after_failed_restart().is_ok()
-                && state.semantic.resume_after_failed_restart().is_ok();
+        if let Err(error) = editors.quiesce_for_restart() {
+            let database_resumed = database.resume_after_failed_restart().is_ok();
+            if !database_resumed {
+                return PrepareRestartReceipt::failed(error.message, false, false);
+            }
+            let transport_resumed = transport.resume_after_failed_restart().is_ok();
+            let publication_resumed = editors.resume_after_failed_restart().is_ok();
+            return PrepareRestartReceipt::failed(
+                error.message,
+                false,
+                database_resumed && transport_resumed && publication_resumed,
+            );
+        }
+        let semantic_quiesce = {
+            #[cfg(test)]
+            if FAIL_SEMANTIC_QUIESCE.swap(false, std::sync::atomic::Ordering::SeqCst) {
+                Err("Injected semantic quiescence failure".to_string())
+            } else {
+                state.semantic.quiesce_for_restart()
+            }
+            #[cfg(not(test))]
+            state.semantic.quiesce_for_restart()
+        };
+        if let Err(error) = semantic_quiesce {
+            let database_resumed = database.resume_after_failed_restart().is_ok();
+            if !database_resumed {
+                return PrepareRestartReceipt::failed(error, false, false);
+            }
+            let transport_resumed = transport.resume_after_failed_restart().is_ok();
+            let semantic_resumed = state.semantic.resume_after_failed_restart().is_ok();
+            let publication_resumed = editors.resume_after_failed_restart().is_ok();
+            let can_resume = database_resumed && transport_resumed && semantic_resumed;
+            let can_resume = can_resume && publication_resumed;
             return PrepareRestartReceipt::failed(error, false, can_resume);
         }
 
@@ -287,12 +305,16 @@ impl AppLifecycle {
             }
         }
 
-        // From this point resources are released terminally. A later failure
+        // The frontend Harness-close request is already terminal when chat was
+        // opened. This later boundary also terminally releases native resources.
+        // A later failure
         // remains a closed retry state; editing is never re-enabled against a
         // partially released running vault.
         let mut timeline_portable = false;
         let terminal_result = (|| -> Result<(), String> {
-            #[cfg(feature = "pi-prototype")]
+            editors
+                .finish_restart_shutdown()
+                .map_err(|error| error.message)?;
             database.finish_restart_shutdown()?;
             if let Some(mut watcher) = self
                 .watcher
@@ -320,7 +342,7 @@ impl AppLifecycle {
     }
 }
 
-#[cfg(all(test, not(feature = "pi-prototype")))]
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{app::EventBus, semantic::SemanticState, state::RunningVault};
@@ -352,8 +374,7 @@ mod tests {
         crate::state::set_notes_root_override(Some(notes.path().to_path_buf())).unwrap();
         crate::state::ensure_vault_scaffold(notes.path()).unwrap();
         let running = RunningVault::resolve(app_data.path().to_path_buf()).unwrap();
-        let running_root = running.root().to_path_buf();
-        let running_data = running.data_dir().to_path_buf();
+
         let app = tauri::test::mock_builder()
             .build(tauri::test::mock_context(tauri::test::noop_assets()))
             .unwrap();
@@ -367,7 +388,9 @@ mod tests {
             .unwrap(),
         );
         if with_chat {
-            app.manage(ChatService::new(running_root, running_data).unwrap());
+            app.manage(crate::pi_chat::storage::NativeDatabase::default());
+            app.manage(crate::pi_chat::transport::NativeTransport::default());
+            app.manage(crate::pi_chat::publication::EditorAdmissions::default());
         }
         AppFixture {
             app,
@@ -394,7 +417,7 @@ mod tests {
     }
 
     #[test]
-    fn missing_chat_service_cannot_claim_the_running_workspace_is_resumable() {
+    fn missing_pi_storage_cannot_claim_the_running_workspace_is_resumable() {
         let _guard = crate::test_support::lock_test_env();
         let app = app_with_disposable_vault(false);
 
@@ -403,7 +426,7 @@ mod tests {
         assert!(!receipt.ready);
         assert!(!receipt.timeline_portable);
         assert!(!receipt.can_resume);
-        assert_eq!(receipt.error.as_deref(), Some("Chat service unavailable"));
+        assert_eq!(receipt.error.as_deref(), Some("Pi storage unavailable"));
         crate::state::set_notes_root_override(None).unwrap();
     }
 
@@ -488,6 +511,65 @@ mod tests {
         assert!(retry.timeline_portable);
         assert!(!retry.can_resume);
         assert!(app.state::<AppLifecycle>().is_ready());
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn acknowledged_frontend_close_then_semantic_failure_stays_closed_and_retry_joins() {
+        use tauri::Listener;
+        let _guard = crate::test_support::lock_test_env();
+        let app = app_with_disposable_vault(true);
+        app.state::<crate::pi_chat::storage::NativeDatabase>()
+            .open_for_test(&app._app_data.path().join("pi-lifecycle-fixture.sqlite3"));
+        let acknowledger = app.handle().clone();
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let observed = requests.clone();
+        app.listen_any("pi-chat-quiesce", move |event| {
+            observed.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let payload: serde_json::Value = serde_json::from_str(event.payload()).unwrap();
+            crate::pi_chat::storage::pi_chat_quiesced(
+                acknowledger.state(),
+                payload["token"].as_str().unwrap().to_string(),
+            )
+            .unwrap();
+        });
+        FAIL_SEMANTIC_QUIESCE.store(true, std::sync::atomic::Ordering::SeqCst);
+        let first = app.state::<AppLifecycle>().prepare_restart(app.handle());
+        assert_eq!(
+            first.error.as_deref(),
+            Some("Injected semantic quiescence failure")
+        );
+        assert!(!first.ready && !first.can_resume && !first.timeline_portable);
+        assert!(app
+            .state::<crate::pi_chat::storage::NativeDatabase>()
+            .resume_after_failed_restart()
+            .is_err());
+        let retry = app.state::<AppLifecycle>().prepare_restart(app.handle());
+        assert!(retry.ready, "{retry:?}");
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
+        crate::state::set_notes_root_override(None).unwrap();
+    }
+
+    #[test]
+    fn semantic_failure_before_frontend_close_boundary_remains_reversible() {
+        let _guard = crate::test_support::lock_test_env();
+        let app = app_with_disposable_vault(true);
+        FAIL_SEMANTIC_QUIESCE.store(true, std::sync::atomic::Ordering::SeqCst);
+        let first = app.state::<AppLifecycle>().prepare_restart(app.handle());
+        assert_eq!(
+            first.error.as_deref(),
+            Some("Injected semantic quiescence failure")
+        );
+        assert!(!first.ready && first.can_resume && !first.timeline_portable);
+        assert!(app
+            .state::<crate::pi_chat::storage::NativeDatabase>()
+            .resume_after_failed_restart()
+            .is_ok());
+        assert!(
+            app.state::<AppLifecycle>()
+                .prepare_restart(app.handle())
+                .ready
+        );
         crate::state::set_notes_root_override(None).unwrap();
     }
 }

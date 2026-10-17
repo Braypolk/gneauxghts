@@ -20,7 +20,7 @@ async function publishAtlas(response: VaultAtlasResponse, deleted = false) {
   await browser.execute((atlas, removed) => {
     window.__GNEAUXGHTS_E2E__!.setAtlas(atlas);
     window.__GNEAUXGHTS_E2E__!.emit('vault-note-changed', {
-      documentKind: 'note', notePath: '/e2e/alpha.md', deleted: removed, source: 'external', chatId: null
+      documentKind: 'note', notePath: '/e2e/alpha.md', deleted: removed, source: 'external'
     });
   }, response, deleted);
   if (response.nodes.length) {

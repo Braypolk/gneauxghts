@@ -1,12 +1,11 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { chatHistoryFixture } from '../../support/chatHistoryFixture';
+import { seedPiHistory, openBrowserPiPane, selectPiConversation } from '../../support/browserPi';
 
 async function waitForChat(title: string) {
   await browser.waitUntil(async () =>
-    (await $('input[aria-label="Chat title"]').getValue()) === title &&
-    (await $('[role="log"]').getAttribute('aria-busy')) === 'false');
+    (await $('input[aria-label="Conversation title"]').getValue()) === title);
   await waitForWorkspaceAnimationSettled();
   // Include the correction frame after batched message rendering.
   await browser.executeAsync((done: () => void) =>
@@ -36,32 +35,11 @@ async function scrollTop() {
 describe('chat scroll position retention', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    const first = { ...chatHistoryFixture(40), title: 'First reading chat' };
-    const second = {
-      ...chatHistoryFixture(40), id: 'second-chat', title: 'Second reading chat',
-      messages: chatHistoryFixture(40).messages.map(message => ({
-        ...message, id: `second-${message.ordinal}`, conversationId: 'second-chat'
-      }))
-    };
-    await browser.execute((firstChat, secondChat) => {
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
-      const native = window.__TAURI_INTERNALS__ as {
-        invoke: (cmd: string, args?: unknown) => Promise<unknown>
-      };
-      const original = native.invoke;
-      native.invoke = async (cmd, args) => {
-        if (cmd === 'chat_list_conversations') return [firstChat, secondChat];
-        if (cmd === 'chat_get_conversation') {
-          return (args as { conversationId: string }).conversationId === secondChat.id
-            ? secondChat : firstChat;
-        }
-        return original(cmd, args);
-      };
-      document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
-        .dispatchEvent(new PointerEvent('pointerenter'));
-    }, first, second);
-    await $('button[aria-label="Split with thought partner"]').click();
-    await waitForChat(first.title);
+    await seedPiHistory('First reading chat', 40);
+    await seedPiHistory('Second reading chat', 40);
+    await openBrowserPiPane();
+    await selectPiConversation('First reading chat');
+    await waitForChat('First reading chat');
   });
 
   it('restores each conversation independently after loading its history again', async () => {

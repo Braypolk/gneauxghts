@@ -1,3 +1,4 @@
+import { readPiFixture } from '../../support/browserPi';
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { clickPaneAction, navigateAppTab } from '../../support/appNavigation';
@@ -20,7 +21,6 @@ async function calls(command: string) {
   return browser.execute(name => window.__GNEAUXGHTS_E2E__!.invocations.filter(call => call.command === name), command);
 }
 async function openChat() {
-  await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   if (await browser.execute(() => matchMedia('(any-pointer: coarse)').matches)) {
     await clickPaneAction('Open thought partner');
   } else {
@@ -113,7 +113,7 @@ describe('touch editing actions', () => {
     await $('[aria-label="External link actions"]').waitForDisplayed();
     // Focus and activate the rail without a pointerdown dismissing the menu.
     await browser.execute(() => document.querySelector<HTMLElement>('.pane-rail')!.focus());
-    await browser.keys('Enter');
+    await browser.keys(['Shift', 'Enter', '\uE000']);
     await waitForWorkspaceAnimationSettled();
     await expect($('[aria-label="External link actions"]')).not.toExist();
     await expect($('[data-pane-collapsed] [data-pane-frame]')).toHaveAttribute('inert');
@@ -121,16 +121,16 @@ describe('touch editing actions', () => {
     expect(await browser.execute(() => (window as EditorWindow).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor.markdown)).toBe(markdown);
   });
 
-  it('inserts mobile Return and Shift+Return as newlines, then explicitly sends the multiline draft once', async () => {
+  it('inserts Shift+Return newlines on touch, then explicitly sends the multiline draft once', async () => {
     await openChat();
     const composer = await $('textarea[aria-label="Message"]');
     await composer.setValue('First line'); await browser.keys('Enter'); await browser.keys('Second line');
     await browser.keys(['Shift', 'Enter', '\uE000']); await browser.keys('Third line');
     await expect(composer).toHaveValue('First line\nSecond line\nThird line');
-    expect(await calls('chat_send_message')).toHaveLength(0);
+    expect(await readPiFixture()).toHaveLength(0);
     await $('button[aria-label="Send message"]').click();
-    await browser.waitUntil(async () => (await calls('chat_send_message')).length === 1);
-    expect((await calls('chat_send_message'))[0].args.request).toMatchObject({ content: 'First line\nSecond line\nThird line' });
+    await browser.waitUntil(async () => (await readPiFixture())[0]?.messages.some(message => message.role === 'user') ?? false);
+    expect((await readPiFixture())[0].messages.find(message => message.role === 'user')).toMatchObject({ content: 'First line\nSecond line\nThird line' });
     await expect(composer).toHaveValue('');
   });
 
@@ -143,7 +143,7 @@ describe('touch editing actions', () => {
         expect(await browser.execute((signal: KeyboardEventInit) => document.querySelector('textarea[aria-label="Message"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, ...signal })), signal)).toBe(true);
       }
     }
-    expect(await calls('chat_send_message')).toHaveLength(0);
+    expect(await readPiFixture()).toHaveLength(0);
     await expect(composer).toHaveValue('Composing draft');
   });
 
@@ -151,10 +151,10 @@ describe('touch editing actions', () => {
     await mobile(false); await openChat();
     const composer = await $('textarea[aria-label="Message"]');
     await composer.setValue('Desktop'); await browser.keys(['Shift', 'Enter', '\uE000']); await browser.keys('second line');
-    expect(await calls('chat_send_message')).toHaveLength(0);
+    expect(await readPiFixture()).toHaveLength(0);
     await expect(composer).toHaveValue('Desktop\nsecond line');
     await browser.keys('Enter');
-    await browser.waitUntil(async () => (await calls('chat_send_message')).length === 1);
-    expect((await calls('chat_send_message'))[0].args.request).toMatchObject({ content: 'Desktop\nsecond line' });
+    await browser.waitUntil(async () => (await readPiFixture())[0]?.messages.some(message => message.role === 'user') ?? false);
+    expect((await readPiFixture())[0].messages.find(message => message.role === 'user')).toMatchObject({ content: 'Desktop\nsecond line' });
   });
 });

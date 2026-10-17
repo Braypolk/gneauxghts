@@ -1,6 +1,6 @@
 import { tick } from 'svelte';
-import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
 import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
 import { focusInputAtEnd } from '../navigation/navigation';
 import { captureFocusIntent } from '../navigation/focusIntent';
@@ -25,7 +25,6 @@ import {
 } from '../session/session';
 import {
   adoptSnapshotForPane,
-  findOpenDocument,
   createFreshDraftNote,
   getPaneNote,
   removeNoteIfUnreferenced,
@@ -35,8 +34,8 @@ import {
   type DocumentHandle,
   type NotepadState
 } from '../state/noteStore';
-import { documentRegistry } from '../document/documentRegistry';
 import { cleanupNoteRuntime } from '../session/noteRuntime';
+import { assertWorkspaceMutationAdmitted } from '../document/documentPublicationAdmission';
 import {
   dispatchDocumentExternalSync,
   dispatchDocumentOperation,
@@ -89,7 +88,6 @@ export interface WorkspacePresentation {
   waitForPaneMotion: () => Promise<void>;
 }
 export interface WorkspaceDerivedViews {
-  discoverPendingProposals: (document: NoteDraftState) => void;
   clearSearch: () => void;
   scheduleSearchIfNeeded: () => void;
   scheduleRelatedIfNeeded: (options?: {
@@ -110,8 +108,6 @@ export interface NotepadWorkspaceSessionOptions {
   maxVisiblePanes: number;
   canSplitWorkspace: () => boolean;
   forgottenNoteRetentionPreference: () => ForgottenNoteRetentionPreference;
-  isReviewingDocument?: (document: NoteDraftState) => boolean;
-  checkpointReview?: () => Promise<void>;
   onNavigationBlocked?: () => void;
 }
 class SupersededNavigation extends Error {
@@ -135,6 +131,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   let disposed = false;
   let nextOperationId = 0;
   const activeOperations = new Map<NotepadPaneId, Navigation>();
+  let auxiliaryOperations = 0;
   let departureTail = Promise.resolve();
   let epoch = 0;
   let epochListener: ((value: number) => void) | null = null;
@@ -161,6 +158,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   // Exactly one admission per public action. Nested destination work shares this context.
   async function navigate(paneId: NotepadPaneId, restoring: boolean, action: (operation: Navigation) => Promise<unknown>) {
     if (disposed) return;
+    assertWorkspaceMutationAdmitted(state);
     let releaseDeparture: (() => void) | undefined;
     let acquired = false;
     const operation: Navigation = {
@@ -169,6 +167,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       id: ++nextOperationId,
       restoring,
       check() {
+        assertWorkspaceMutationAdmitted(state);
         if (activeOperations.get(paneId) !== operation) {
           throw new SupersededNavigation();
         }
@@ -211,6 +210,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   }
 
   function activatePaneSession(paneId: NotepadPaneId) {
+    assertWorkspaceMutationAdmitted(state);
     workspace.setActivePaneId(paneId);
     presentation.closeTransientUiExcept(paneId);
   }
@@ -258,16 +258,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     }
   }
 
-  async function finishReviewDocument(document: NoteDraftState) {
-    if (state.documentsByHandle[document.handle] !== document) return;
-    persistence.cancelPendingAutosave(document);
-    await persistence.getNoteSaveQueue(document.handle);
-    if (state.documentsByHandle[document.handle] !== document) return;
-    if (!documentHasCleanBuffer(document)) {
-      await persistence.enqueueSave(document);
-    }
-    releaseDocument(document.handle);
-  }
   // Saves establish identity before the final cursor/MRU capture. Finalization is deliberately separate
   // from save-only preliminary capture: a picker with no destination must not seal an Editing Window.
   async function prepareDocument(paneId: NotepadPaneId, finalize = true) {
@@ -275,13 +265,11 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     persistence.cancelPendingAutosave(getPaneDocument(paneId));
     await persistence.getNoteSaveQueue(getPaneDocument(paneId).handle);
     let document = getPaneDocument(paneId);
-    const retainsReview = () => options.isReviewingDocument?.(document) === true && !documentHasUnresolvedConflict(document);
-    if (retainsReview()) await options.checkpointReview?.();
-    if (!documentCanLeaveWithoutCanonicalWrite(document) && !retainsReview()) {
+    if (!documentCanLeaveWithoutCanonicalWrite(document)) {
       await persistence.enqueueSave(document);
     }
     document = getPaneDocument(paneId);
-    if (!documentHasCleanBuffer(document) && !retainsReview()) {
+    if (!documentHasCleanBuffer(document)) {
       throw new Error('The note could not be saved before leaving the editor.');
     }
     const noteId = getDocumentNoteId(document);
@@ -309,7 +297,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     try {
       const session = await readNoteSession(getDocumentNoteId(note), currentPath);
       if (disposed || getDocumentPath(note) !== currentPath ||
-        // A save/restore/proposal adoption at the same path supersedes this
+        // A save/restore/publication adoption at the same path supersedes this
         // read. Local edits alone retain the baseline and still become a conflict.
         note.savedBaseline !== baselineAtRead) {
         return 'stale' as const;
@@ -375,50 +363,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   async function refreshCurrentNoteFromDisk(source: ExternalRefreshSource = 'windowFocus') {
     return refreshDocumentFromDisk(getNavigationDocument(), { source });
   }
-  /**
-  * Reconciles a successful app-owned proposal write with its open document.
-  * The publication's canonical editor markdown is the ownership proof: when
-  * disk matches it, advance the saved baseline without an external conflict.
-  * Keep the submitted markdown separately to detect typing during publication.
-  */
-  async function acknowledgeDocumentCommit(commit: {
-    document: NoteDraftState;
-    path: string;
-    markdown: string;
-    submittedTitle?: string;
-    committedMarkdown: string;
-    commitWarning: CommittedMutationWarning | null;
-  }) {
-    const { document, path, markdown, committedMarkdown, commitWarning } = commit;
-    // Durable publication outlives the route that requested it. Adopt only into
-    // the same retained document, while navigation callbacks remain retired.
-    if (state.documentsByHandle[document.handle] !== document) return;
-    const snapshot = await readNoteSession(getDocumentNoteId(document), path);
-    if (state.documentsByHandle[document.handle] !== document) return;
-    if (snapshot.markdown !== committedMarkdown) {
-      // The file no longer contains the bytes this app committed. Route the
-      // mismatch through normal external-change protection instead of claiming
-      // ownership of a racing write.
-      if (disposed) {
-        persistence.cancelPendingAutosave(document);
-        persistence.invalidatePendingSaveResults(document);
-        dispatchDocumentExternalSync(document, {
-          type: 'externalCaptured',
-          external: {
-            kind: 'snapshot', source: 'watcher',
-            document: externalDocumentSnapshotFromCommittedNote(snapshot)
-          }
-        });
-      } else {
-        await refreshDocumentFromDisk(document, { source: 'watcher' });
-      }
-      return;
-    }
-    persistence.cancelPendingAutosave(document);
-    persistence.invalidatePendingSaveResults(document);
-    await documentEditing.adoptAcceptedProposal(document, snapshot, markdown, commitWarning, commit.submittedTitle);
-  }
-
   function bumpEpoch() {
     epoch += 1;
     epochListener?.(epoch);
@@ -603,7 +547,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       bindChatContextToNote(operation.paneId, getDocumentNoteId(next), getDocumentPath(next));
     }
     presentation.updateSelectedRelatedText();
-    derivedViews.discoverPendingProposals(next);
     releaseDocument(previous.handle);
     derivedViews.scheduleRelatedIfNeeded({ immediate: true });
     if (!operation.restoring) {
@@ -660,116 +603,8 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     return true;
   }
 
-  async function presentReviewDocument(target: {
-    document: NoteDraftState | null;
-    noteId: string | null;
-    path: string;
-    creation?: boolean;
-  }): Promise<NoteDraftState | null> {
-    if (disposed) return null;
-    let retained = target.document ?? findOpenDocument(state, target);
-    const matchingPane = retained
-      ? workspace.getPaneIdsForDocument(retained.handle).find(
-          id => paneHasCapability(getPaneKind(id), 'edit-document')
-        )
-      : null;
-    const mayCreate = () => options.canSplitWorkspace() &&
-      workspace.paneOrder.length < options.maxVisiblePanes;
-    const createTargetPane = !matchingPane &&
-      mayCreate() && (workspace.getEditorPaneIds().length === 0 ||
-        Boolean(retained && documentRegistry.isReviewing(retained.handle)));
-    const paneId = matchingPane ?? (createTargetPane
-      ? presentation.createPane()
-      : workspace.getNavigationPaneId());
-    let result: NoteDraftState | null = null;
-    let targetCreated = false;
-    try {
-      await navigate(paneId, false, async operation => {
-        await operation.depart();
-        // Admission can wait behind another pane's save; capacity and membership
-        // belong to the workspace at this point, not the earlier target choice.
-        if (createTargetPane ? !mayCreate() : !workspace.paneOrder.includes(paneId)) {
-          return;
-        }
-        if (retained && !state.documentsByHandle[retained.handle]) {
-          retained = null;
-        }
-        if (target.creation && !retained) retained = createFreshDraftNote(state);
-        if (createTargetPane) {
-          const initial = retained ?? createFreshDraftNote(state);
-          workspace.dispatchPaneMembership(paneId, {
-            type: 'createRequested', operationId: operation.id
-          });
-          workspace.completePaneCreation(paneId, operation.id, initial.handle, 'editor');
-          targetCreated = true;
-        }
-        activatePaneSession(paneId);
-        const previous = getPaneDocument(paneId);
-        if (!retained) {
-          const opened = await openDestination(operation, target.path, {
-            noteId: target.noteId, focusEditorAfterOpen: false
-          }, 'editor');
-          if (!opened) return;
-        } else {
-          if (previous.handle !== retained.handle) {
-            if (!canLeaveDocument(previous)) {
-              options.onNavigationBlocked?.();
-              return;
-            }
-            await prepareDocument(paneId);
-            operation.check();
-            touchCurrentLocation(paneId);
-            setPaneDocument(paneId, retained);
-          }
-          if (!workspace.setPaneKind(paneId, 'editor')) {
-            throw new Error('Workspace rejected the review editor.');
-          }
-          workspace.resetPaneCommand();
-          operation.release();
-          await presentDocument(operation, previous, retained, false);
-        }
-        operation.check();
-        if (workspace.activePaneId !== paneId) return;
-        // Explicit review preserves a chat surface beside a lone editor, while
-        // passive proposal arrival never calls this presentation operation.
-        if (workspace.paneOrder.length === 1 && mayCreate()) {
-          const chatPaneId = presentation.createPane();
-          workspace.dispatchPaneMembership(chatPaneId, {
-            type: 'createRequested', operationId: operation.id
-          });
-          workspace.completePaneCreation(
-            chatPaneId, operation.id, getPaneDocument(paneId).handle, 'chat'
-          );
-        }
-        await paneLifecycle.ensurePaneEditors();
-        operation.check();
-        await focusAfterPresentation(operation);
-        if (workspace.activePaneId === paneId) result = getPaneDocument(paneId);
-      });
-    } finally {
-      if (createTargetPane && !targetCreated) {
-        await presentation.disposePaneRuntime(paneId, null);
-      }
-    }
-
-    return result;
-  }
-
-  async function reloadReviewDocument(document: NoteDraftState) {
-    const path = getDocumentPath(document);
-    if (disposed || !path) throw new Error('The reviewed note is no longer available.');
-    persistence.cancelPendingAutosave(document);
-    await persistence.getNoteSaveQueue(document.handle);
-    const revision = document.operation.revision;
-    const snapshot = await readNoteSession(getDocumentNoteId(document), path);
-    if (disposed || getDocumentPath(document) !== path || document.operation.revision !== revision) {
-      throw new Error('The reviewed note changed while loading from disk. Try Reload Disk again.');
-    }
-    persistence.invalidatePendingSaveResults(document);
-    await documentEditing.adoptCleanExternalRefresh(document, snapshot);
-  }
-
   function dispose() {
+    assertWorkspaceMutationAdmitted(state);
     disposed = true;
     for (const operation of activeOperations.values()) operation.focusIntent.dispose();
     activeOperations.clear();
@@ -1198,7 +1033,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       if (choice === 'current' && source) {
         await documents.replacePaneDocument(paneId, placeholder, source, { restoreCursor: true });
         operation.check();
-        derivedViews.discoverPendingProposals(source);
       }
       if (placeholder.handle !== sourceKey) {
         releaseDocument(placeholder.handle);
@@ -1403,10 +1237,14 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   function setRecentlyForgotten(value: ForgottenNote | null) {
     state.recentlyForgotten = value;
   }
+  async function withStandaloneMutation<T>(operation: () => Promise<T>) {
+    assertWorkspaceMutationAdmitted(state);
+    auxiliaryOperations += 1;
+    try { return await operation(); } finally { auxiliaryOperations -= 1; }
+  }
   return {
+    isOperationPending: () => activeOperations.size > 0 || auxiliaryOperations > 0,
     dispose,
-    presentReviewDocument,
-    reloadReviewDocument,
     activatePane,
     focusPaneAfterShortcut,
     splitWorkspace,
@@ -1416,12 +1254,11 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     handleNotepadCommandBarCommand,
     openNotePath,
     startNewNoteFlow,
-    clearNotepad,
-    unforgetNotepad,
+    clearNotepad: (request?: { canRestore?: boolean }) => withStandaloneMutation(() => clearNotepad(request)),
+    unforgetNotepad: () => withStandaloneMutation(unforgetNotepad),
     refreshCurrentNoteIfChanged: () => refreshCurrentNoteFromDisk('windowFocus'),
     refreshCurrentNoteFromTaskMutation: () => refreshCurrentNoteFromDisk('taskMutation'),
     refreshDocumentFromDisk,
-    acknowledgeDocumentCommit,
     touchCurrentLocation,
     goToPreviousLocation,
     openLocationFromHistory,
@@ -1436,8 +1273,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     movePaneCommandHighlight,
     resolvePaneCommandChoice,
     confirmPaneCommandChoiceByHighlight,
-    handlePaneCommandGlobalKeydown,
-    finishReviewDocument
+    handlePaneCommandGlobalKeydown
   };
 }
 export type NotepadWorkspaceSession = ReturnType<typeof createNotepadWorkspaceSession>;

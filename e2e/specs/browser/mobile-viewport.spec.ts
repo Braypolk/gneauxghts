@@ -52,46 +52,11 @@ describe('iPhone viewport geometry', () => {
     }
   });
 
-  it('keeps portalled model controls inside landscape cutouts', async () => {
-    await browser.execute(() => {
-      document.documentElement.style.setProperty('--app-safe-area-left', '62px');
-      document.documentElement.style.setProperty('--app-safe-area-right', '62px');
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
-    });
-    await clickPaneAction('Open thought partner');
-    await $('button[aria-label="AI model"]').click();
-    await $('[aria-label="AI model picker"]').waitForDisplayed();
-    const picker = await browser.execute(() => {
-      const rect = document.querySelector('[aria-label="AI model picker"]')!.closest('.chat-model-menu')!.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-    });
-    expect(picker.left).toBeGreaterThanOrEqual(62);
-    expect(picker.right).toBeLessThanOrEqual(812);
-    expect(picker.top).toBeGreaterThanOrEqual(0);
-    expect(picker.bottom).toBeLessThanOrEqual(402);
-    await browser.keys('Escape');
-    await navigateAppTab('Settings');
-    await $('[data-settings-section="ai"]').click();
-    await $('[data-settings-anchor="chat-provider"] select').selectByAttribute('value', 'local');
-    await $('button[aria-label="Configure fixture-local"]').click();
-    await $('[role="dialog"][aria-labelledby="local-model-editor-title"]').waitForDisplayed();
-    const dialog = await browser.execute(() => {
-      const rect = document.querySelector('[role="dialog"][aria-labelledby="local-model-editor-title"]')!.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-    });
-    expect(dialog.left).toBeGreaterThanOrEqual(62);
-    expect(dialog.right).toBeLessThanOrEqual(812);
-    expect(dialog.top).toBeGreaterThanOrEqual(0);
-    expect(dialog.bottom).toBeLessThanOrEqual(402);
-    await $('[role="dialog"] button[aria-label="Close model editor"]').click();
-  });
-
-  it('keeps image and attachment preview controls clear of landscape cutouts', async () => {
+  it('keeps image viewer controls clear of landscape cutouts', async () => {
     await browser.execute(() => {
       document.documentElement.style.setProperty('--app-safe-area-left', '62px');
       document.documentElement.style.setProperty('--app-safe-area-right', '62px');
       window.__GNEAUXGHTS_E2E__!.seedImageAsset('landscape.png');
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
       const content = document.querySelector<HTMLElement>('.cm-content')!;
       content.focus();
       document.execCommand('selectAll');
@@ -114,25 +79,6 @@ describe('iPhone viewport geometry', () => {
     await $('button[aria-label="Close image viewer"]').click();
     await clickPaneAction('Open thought partner');
     await $('textarea[aria-label="Message"]').waitForEnabled();
-    await browser.execute(() => {
-      const files = new DataTransfer();
-      files.items.add(new File(['Preview text'], 'landscape.txt', { type: 'text/plain' }));
-      const input = document.querySelector<HTMLInputElement>('input[aria-label="Choose attachments"]')!;
-      input.files = files.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await $('button[aria-label="Preview landscape.txt"]').waitForDisplayed();
-    await $('button[aria-label="Preview landscape.txt"]').click();
-    await $('.attachment-preview-dialog').waitForDisplayed();
-    const preview = await browser.execute(() => {
-      const rect = document.querySelector('.attachment-preview-dialog')!.getBoundingClientRect();
-      return { left: rect.left, right: rect.right, top: rect.top, bottom: rect.bottom };
-    });
-    expect(preview.left).toBeGreaterThanOrEqual(62);
-    expect(preview.right).toBeLessThanOrEqual(812);
-    expect(preview.top).toBeGreaterThanOrEqual(0);
-    expect(preview.bottom).toBeLessThanOrEqual(402);
-    await $('button[aria-label="Close preview"]').click();
   });
 
   it('keeps navigation, editor controls and the composer inside the landscape keyboard viewport', async () => {
@@ -141,7 +87,6 @@ describe('iPhone viewport geometry', () => {
       const viewport = Object.assign(new EventTarget(), { width: 874, height: 126, offsetTop: 0, scale: 1 });
       Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
       window.dispatchEvent(new Event('resize'));
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
     });
     await browser.waitUntil(async () => await $('.app-shell').getAttribute('data-keyboard-open') === 'true');
     await browser.waitUntil(async () => await browser.execute(() => document.querySelector('.notepad-editor-shell')?.getAttribute('style')?.includes('--editor-overlay-inset')));
@@ -196,48 +141,6 @@ describe('iPhone viewport geometry', () => {
     });
     expect(composer.top).toBeGreaterThanOrEqual(composer.navBottom);
     expect(composer.bottom).toBeLessThanOrEqual(127);
-    await browser.execute(() => {
-      const files = new DataTransfer(); files.items.add(new File(['Landscape attachment'], 'keyboard.txt', { type: 'text/plain' }));
-      const input = document.querySelector<HTMLInputElement>('input[aria-label="Choose attachments"]')!;
-      input.files = files.files; input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await $('button[aria-label="Preview keyboard.txt"]').waitForExist();
-    await browser.waitUntil(() => browser.execute(() => {
-      const surface = document.querySelector('.chat-composer-surface')!.getBoundingClientRect();
-      const nav = document.querySelector('.app-navigation-header')!.getBoundingClientRect();
-      return surface.top >= nav.bottom && surface.bottom <= 127;
-    }), { timeout: 3000, timeoutMsg: 'Attachments pushed the composer outside the keyboard viewport' });
-    await $('button[aria-label="Remove keyboard.txt"]').scrollIntoView();
-    await $('button[aria-label="Remove keyboard.txt"]').click();
-    await $('textarea[aria-label="Message"]').setValue('Landscape draft');
-    await browser.execute(() => {
-      Object.assign(window.visualViewport!, { height: 402 });
-      window.dispatchEvent(new Event('resize'));
-    });
-    await browser.waitUntil(async () => await $('.app-shell').getAttribute('data-keyboard-open') === 'false');
-    await navigateAppTab('Settings');
-    await browser.waitUntil(async () => new URL(await browser.getUrl()).pathname === '/settings');
-    await navigateAppTab('Gneauxght');
-    await $('textarea[aria-label="Message"]').waitForDisplayed();
-    expect(await $('textarea[aria-label="Message"]').getValue()).toBe('Landscape draft');
-    await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 402, height: 874, deviceScaleFactor: 1, mobile: true });
-    await browser.execute(() => {
-      Object.assign(window.visualViewport!, { width: 402, height: 540 });
-      window.dispatchEvent(new Event('orientationchange'));
-    });
-    await browser.waitUntil(async () => await $('.app-shell').getAttribute('data-keyboard-open') === 'true');
-    await browser.waitUntil(async () => await browser.execute(() => document.querySelector('.app-shell')!.getBoundingClientRect().height === 540));
-    const portrait = await browser.execute(() => {
-      const rect = document.querySelector('textarea[aria-label="Message"]')!.getBoundingClientRect();
-      return { top: rect.top, bottom: rect.bottom };
-    });
-    expect(portrait.top).toBeGreaterThanOrEqual(0);
-    expect(portrait.bottom).toBeLessThanOrEqual(540);
-    await browser.execute(() => {
-      Object.assign(window.visualViewport!, { height: 874 });
-      window.dispatchEvent(new Event('resize'));
-    });
-    await browser.waitUntil(async () => await $('.app-shell').getAttribute('data-keyboard-open') === 'false');
-    expect(await $('textarea[aria-label="Message"]').getValue()).toBe('Landscape draft');
+
   });
 });

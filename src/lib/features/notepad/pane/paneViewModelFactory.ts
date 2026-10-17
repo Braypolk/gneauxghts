@@ -27,7 +27,6 @@ export interface PaneViewModelFactoryDeps {
   getPaneKind: (paneId: NotepadPaneId) => PaneKind;
   getPaneDocument: (paneId: NotepadPaneId) => NoteDraftState;
   getChatBindings: (paneId: NotepadPaneId) => ChatPaneBindings;
-  isReviewingDocument: (document: NoteDraftState) => boolean;
   isNotePinned: (noteId: string) => boolean;
   paneTitleInputClass: string;
   getTransientUiState: () => PaneTransientUiState<NotepadPaneId>;
@@ -83,8 +82,7 @@ export function createPaneViewModelFactory(
           ? document.working.title
           : 'Thought partner',
       titleReadonly:
-        !panePolicy.capabilities['edit-title'] ||
-        (deps.isReviewingDocument(document) && import.meta.env.VITE_PI_PROTOTYPE !== 'true')
+        !panePolicy.capabilities['edit-title']
     };
 
     if (paneKind === 'editor') {

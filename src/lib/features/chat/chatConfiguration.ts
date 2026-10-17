@@ -1,6 +1,5 @@
 import catalog from '$lib/contracts/chat-model-catalog.json';
 import type {
-  ChatConversationSummary,
   ChatProvider,
   ChatReasoningEffort,
   ChatSettings,
@@ -104,7 +103,7 @@ export function configuredChatModel(
 export function chatModelChoices(input: {
   settings: ChatSettings | null;
   current: { provider: ChatProvider; model: string };
-  conversations?: ChatConversationSummary[];
+  conversations?: Array<{ provider: ChatProvider; model: string }>;
   localModels?: LocalModel[];
   openaiModels?: LocalModel[];
 }): ChatModelChoice[] {

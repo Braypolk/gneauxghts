@@ -1,20 +1,5 @@
-#[cfg(not(feature = "pi-prototype"))]
-mod agent_guardrails;
-#[cfg(not(feature = "pi-prototype"))]
-mod agent_permissions;
-#[cfg(not(feature = "pi-prototype"))]
-mod agent_run_coordinator;
-#[cfg(not(feature = "pi-prototype"))]
-mod agent_runtime;
-#[cfg(not(feature = "pi-prototype"))]
-mod agent_tools;
 mod app;
 mod asset_paths;
-#[cfg(not(feature = "pi-prototype"))]
-mod chat;
-#[cfg(feature = "pi-prototype")]
-#[path = "pi_chat.rs"]
-mod chat;
 mod chat_domain;
 mod commands;
 #[cfg(feature = "e2e-wdio")]
@@ -22,30 +7,8 @@ mod e2e_process_fault;
 mod index;
 mod lexical;
 mod note;
-mod note_promotion;
 mod path_utils;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_notes;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_publication;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_save;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_transport;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_faults;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_research;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_context;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_transcript;
-#[cfg(feature = "pi-prototype")]
-mod pi_prototype_relocation;
-mod proposal_policy;
-mod proposals;
+mod pi_chat;
 mod provider_config;
 mod search;
 mod secrets;
@@ -59,8 +22,6 @@ mod time;
 mod vault_watcher;
 
 use app::{AppLifecycle, EventBus};
-#[cfg(not(feature = "pi-prototype"))]
-use chat::ChatService;
 use index::AppState;
 use semantic::SemanticState;
 use state::{initialize_app_data_dir, initialize_documents_dir, set_notes_root_override};
@@ -179,10 +140,21 @@ pub fn run() {
         };
         builder.plugin(window_state.build())
     };
-    #[cfg(desktop)]
     let builder = {
+        #[cfg(desktop)]
         let reveal_main_window = std::sync::Once::new();
         builder.on_page_load(move |webview, payload| {
+            if webview.label() == "main"
+                && matches!(payload.event(), tauri::webview::PageLoadEvent::Started)
+            {
+                if let Some(editors) = webview
+                    .app_handle()
+                    .try_state::<pi_chat::publication::EditorAdmissions>()
+                {
+                    editors.advance_webview_generation();
+                }
+            }
+            #[cfg(desktop)]
             if webview.label() == "main"
                 && matches!(payload.event(), tauri::webview::PageLoadEvent::Finished)
             {
@@ -220,11 +192,6 @@ pub fn run() {
         .plugin(tauri_plugin_wdio::init())
         .plugin(tauri_plugin_wdio_webdriver::init());
 
-    #[cfg(feature = "pi-prototype")]
-    let builder = builder
-        .manage(pi_prototype::NativeDatabase::default())
-        .manage(pi_prototype_transport::NativeTransport::default());
-
     let app = builder
         .setup(move |app| {
             #[cfg(feature = "e2e-wdio")]
@@ -259,18 +226,7 @@ pub fn run() {
                 None => app.path().app_data_dir().map_err(|err| err.to_string())?,
             };
             initialize_app_data_dir(app_data_dir.clone())?;
-            #[cfg(feature = "pi-prototype")]
-            {
-                if !app.config().identifier.ends_with(".pi-prototype") {
-                    return Err("Pi prototype requires its isolated app identity".into());
-                }
-                #[cfg(target_os = "ios")]
-                let root = app.path().document_dir()?.join("PROTOTYPE-wipe-me");
-                #[cfg(not(target_os = "ios"))]
-                let root = app_data_dir.join("PROTOTYPE-wipe-me/vault");
-                std::fs::create_dir_all(&root)?;
-                set_notes_root_override(Some(root))?;
-            }
+
             if let Some(documents_dir) = startup_paths.documents_dir.clone() {
                 initialize_documents_dir(documents_dir)?;
             } else if let Ok(documents_dir) = app.path().document_dir() {
@@ -302,21 +258,12 @@ pub fn run() {
                 semantic,
                 EventBus::new(app.handle().clone()),
             )?);
-            #[cfg(not(feature = "pi-prototype"))]
-            {
-            let chat_service =
-                ChatService::new_managed(notes_dir, vault_data_dir, app.handle().clone())?;
-            if let Some(state) = app.try_state::<AppState>() {
-                chat_service.reconcile_semantic_recall(&state.semantic)?;
-                state.semantic.finish_startup_reconciliation()?;
-            }
-            app.manage(chat_service);
-            }
-            #[cfg(feature = "pi-prototype")]
-            {
-                app.manage(chat_domain::ChatDomain::new(notes_dir, vault_data_dir)?);
-                app.state::<AppState>().semantic.finish_startup_reconciliation()?;
-            }
+            app.manage(chat_domain::ChatDomain::new(vault_data_dir.clone())?);
+            app.manage(pi_chat::authority::AuthorityStore::new(&vault_data_dir)?);
+            app.manage(pi_chat::storage::NativeDatabase::default());
+            app.manage(pi_chat::transport::NativeTransport::default());
+            app.manage(pi_chat::publication::EditorAdmissions::default());
+            app.state::<AppState>().semantic.finish_startup_reconciliation()?;
             // Vault watcher registration walks the notes directory tree
             // recursively; on large vaults that adds noticeable latency to
             // the Tauri `setup` callback before first paint. Move the
@@ -384,81 +331,7 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(keyring_plugin.build())
         .invoke_handler(tauri::generate_handler![
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_sql,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_lifecycle_quiesced,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_probe_report,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_probe_config,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_probe_prepare_close,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype::pi_ui_report,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transport::pi_fetch,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transport::pi_cancel_fetch,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transport::pi_admit_provider_request,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transport::pi_release_provider_request,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transport::pi_prepare_attachments,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_research::pi_enable_adaptive_evidence,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_research::pi_begin_research,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_research::pi_finish_research,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_research::pi_release_research,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_context::pi_context_capacity,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transcript::pi_publish_transcript,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transcript::pi_transcript_status,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_transcript::pi_resolve_transcript_conflict,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_relocation::pi_bind_vault_location,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_relocation::pi_resolve_locations,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_read_note,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_prepare_evidence,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_evidence_operation,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_validate_evidence,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_release_evidence,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_discover_notes,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_continuity_references,
 
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_validate_sources,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_admit_answer,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_resolve_passage,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_validate_review_checkpoint,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_notes::pi_validate_proposal_evidence,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_publication::pi_prepare_review,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_publication::pi_publish_review,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_save::pi_prepare_save,
-            #[cfg(feature = "pi-prototype")]
-            pi_prototype_save::pi_refresh_saved_addition,
             commands::bootstrap_app,
             commands::get_settings_view,
             commands::load_note_session,
@@ -537,74 +410,43 @@ pub fn run() {
             commands::atlas_commands::search_vault_atlas,
             commands::atlas_commands::clear_atlas_cache,
             commands::atlas_commands::rename_atlas_cloud,
-            commands::chat_commands::chat_get_settings,
-            commands::chat_commands::chat_set_defaults,
-            commands::chat_commands::chat_set_atlas_visibility,
-            commands::chat_commands::chat_get_composer_draft,
-            commands::chat_commands::chat_set_composer_draft,
-            commands::chat_commands::chat_get_key_status,
-            commands::chat_commands::chat_set_api_key,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_create_conversation,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_list_conversations,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_get_conversation,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_resolve_passage,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_branch_from_message,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_find_conversation_by_projection_path,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_rename_conversation,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_archive_conversation,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_update_conversation_policy,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_update_conversation_provider,
-            commands::chat_commands::chat_list_local_models,
-            commands::chat_commands::chat_list_openai_models,
-            commands::chat_commands::chat_get_model_capabilities,
-            commands::chat_commands::chat_set_local_model_capabilities,
-            commands::chat_commands::chat_set_note_excluded,
-            commands::chat_commands::chat_list_note_policies,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_search_notes,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_suggest_context,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_list_pending_proposals,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_send_message,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_cancel_request,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_decide_permission,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_retry_message,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_create_excerpt,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_remember_excerpt,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_unremember_excerpt,
-            commands::chat_commands::chat_list_grants,
-            commands::chat_commands::chat_grant_note,
-            commands::chat_commands::chat_revoke_note,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::chat_commands::chat_resolve_projection_conflict,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::proposal_commands::commit_agent_proposal,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::proposal_commands::chat_prepare_note_save,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::proposal_commands::chat_get_proposal_draft,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::proposal_commands::chat_checkpoint_proposal_draft,
-            #[cfg(not(feature = "pi-prototype"))]
-            commands::proposal_commands::dismiss_agent_proposal,
+            commands::pi_chat_commands::chat_get_settings,
+            commands::pi_chat_commands::chat_set_defaults,
+            commands::pi_chat_commands::chat_get_composer_draft,
+            commands::pi_chat_commands::chat_set_composer_draft,
+            commands::pi_chat_commands::chat_get_key_status,
+            commands::pi_chat_commands::chat_set_api_key,
+            commands::pi_chat_commands::chat_list_local_models,
+            commands::pi_chat_commands::chat_list_openai_models,
+            commands::pi_chat_commands::chat_get_model_capabilities,
+            commands::pi_chat_commands::chat_set_local_model_capabilities,
+            commands::pi_chat_commands::chat_list_note_policies,
+            commands::pi_chat_commands::chat_search_policy_notes,
+            commands::pi_chat_commands::pi_chat_bind_authority,
+            commands::pi_chat_commands::pi_chat_authority,
+            commands::pi_chat_commands::pi_chat_validate_authority,
+            commands::pi_chat_commands::pi_chat_set_read_policy,
+            commands::pi_chat_commands::pi_chat_retire_authority,
+            commands::pi_chat_commands::pi_chat_set_exclusion,
+            pi_chat::notes::pi_chat_search_notes,
+            pi_chat::notes::pi_chat_read_note,
+            pi_chat::citations::pi_chat_admit_answer,
+            pi_chat::citations::pi_chat_open_source,
+            pi_chat::publication::pi_chat_set_write_policy,
+            pi_chat::publication::pi_chat_prepare_mutation,
+            pi_chat::publication::pi_chat_approve_mutation,
+            pi_chat::publication::pi_chat_reject_mutation,
+            pi_chat::publication::pi_chat_publish_mutation,
+            pi_chat::publication::pi_chat_reconcile_mutation,
+            pi_chat::publication::pi_chat_bind_editor_owner,
+            pi_chat::publication::pi_chat_admit_editor_publication,
+            pi_chat::publication::pi_chat_release_editor_publication,
+            pi_chat::publication::pi_chat_close_editor_owner,
+            pi_chat::storage::pi_sql,
+            pi_chat::storage::pi_chat_quiesced,
+            pi_chat::transport::pi_chat_model_configuration,
+            pi_chat::transport::pi_chat_fetch,
+            pi_chat::transport::pi_chat_cancel_fetch,
             commands::get_semantic_settings,
             commands::set_semantic_settings,
             commands::get_semantic_status,

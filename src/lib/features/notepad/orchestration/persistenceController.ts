@@ -37,8 +37,6 @@ export interface PersistenceControllerParams {
     DocumentEditingService<string>,
     "captureSave" | "adoptSavedResult"
   >;
-  /** Prevent generic save paths from persisting an editable proposal review. */
-  shouldSuppressPersistence?: (note: NoteDraftState) => boolean;
 }
 
 export function createNotepadPersistenceController(
@@ -87,8 +85,7 @@ export function createNotepadPersistenceController(
 
   async function persistNote(note: NoteDraftState) {
     if (
-      documentHasUnresolvedConflict(note) ||
-      params.shouldSuppressPersistence?.(note)
+      documentHasUnresolvedConflict(note)
     ) {
       return;
     }

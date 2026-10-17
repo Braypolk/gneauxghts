@@ -29,8 +29,6 @@ default = []
 e2e-wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 # Debug-only loopback endpoint for native OpenAI protocol fixture tests.
 e2e-chat-fixture = []
-# Disposable native Pi experiment; never enabled by default.
-pi-prototype = []
 
 [dependencies]
 tauri = { version = "2.11", features = [] }
@@ -66,8 +64,6 @@ similar = { version = "3.2", default-features = false, features = ["bytes", "std
 pulldown-cmark = { version = "0.13.4", default-features = false }
 zstd = "0.13"
 notify = "6.1"
-rig-core = { version = "=0.44.0", default-features = false, features = ["derive", "reqwest", "rustls"] }
-rig-agent = { version = "=0.44.0", default-features = false }
 thiserror = "2"
 url = "2"
 percent-encoding = "2"
@@ -88,8 +84,6 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-rig-core = { version = "=0.44.0", default-features = false, features = ["test-utils"] }
-rig-agent = { version = "=0.44.0", default-features = false, features = ["test-utils"] }
 tauri = { version = "2.11", features = ["test"] }
 
 [patch.crates-io]

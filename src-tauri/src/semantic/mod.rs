@@ -28,7 +28,7 @@ mod test_support;
 use self::{
     activity::BackgroundWorkGate,
     ann::AnnIndexState,
-    atlas::{AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse},
+    atlas::{AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse},
     db::{
         clear_atlas_cache, content_hash, count_indexed_items, delete_note,
         edges_are_stale_for_generation, edges_are_stale_for_model, ensure_schema,
@@ -39,9 +39,8 @@ use self::{
     debug::{SemanticDebugSnapshot, SemanticDebugState},
     embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo},
     indexer::{
-        chat_recall_content_hash, spawn_indexing_worker, ChatRecallExcerpt, IndexingWorkerContext,
-        PendingIndexState, PendingNoteMove, PendingNoteUpdate, PendingSemanticDocument,
-        SemanticWorkQueue,
+        spawn_indexing_worker, IndexingWorkerContext, PendingIndexState, PendingNoteMove,
+        PendingNoteUpdate, PendingSemanticDocument, SemanticWorkQueue,
     },
     litert::GemmaLiteRtEmbeddingProvider,
     note_ann::NoteAnnIndexState,
@@ -579,128 +578,6 @@ impl SemanticState {
         }
     }
 
-    /// Queue the complete immutable remembered set for one conversation. Chat
-    /// recall is sourced from ai.sqlite3, never reconstructed from projection
-    /// Markdown. An empty set removes the semantic document.
-    pub(crate) fn queue_chat_recall(
-        &self,
-        conversation_path: &Path,
-        title: String,
-        excerpts: Vec<ChatRecallExcerpt>,
-        modified_millis: u64,
-    ) -> Result<(), String> {
-        self.queue_chat_recall_inner(conversation_path, title, excerpts, modified_millis, true)
-    }
-
-    pub(crate) fn queue_chat_recall_for_startup(
-        &self,
-        conversation_path: &Path,
-        title: String,
-        excerpts: Vec<ChatRecallExcerpt>,
-        modified_millis: u64,
-    ) -> Result<(), String> {
-        if excerpts.is_empty() {
-            let SemanticStateInner::Active(state) = &self.inner else {
-                return Ok(());
-            };
-            let connection = open_database(&state.db_path)?;
-            ensure_schema(&connection)?;
-            if load_note_record(&connection, &conversation_path.to_string_lossy())?.is_none() {
-                return Ok(());
-            }
-            return self.queue_delete_note_inner(conversation_path, false);
-        }
-        self.queue_chat_recall_inner(conversation_path, title, excerpts, modified_millis, false)
-    }
-
-    /// Remove semantic chat documents that no longer have an authoritative
-    /// conversation in ai.sqlite3. This is deliberately deferred until the
-    /// startup ANN load and note scan have completed.
-    pub(crate) fn queue_orphaned_chat_recall_deletes_for_startup(
-        &self,
-        known_paths: &std::collections::HashSet<PathBuf>,
-    ) -> Result<(), String> {
-        let SemanticStateInner::Active(state) = &self.inner else {
-            return Ok(());
-        };
-        let connection = open_database(&state.db_path)?;
-        ensure_schema(&connection)?;
-        let mut statement = connection
-            .prepare("SELECT path FROM notes WHERE document_kind = 'chatIndex'")
-            .map_err(|err| err.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|err| err.to_string())?;
-        let stored_paths = rows
-            .collect::<Result<Vec<_>, _>>()
-            .map_err(|err| err.to_string())?;
-        for path in stored_paths.into_iter().map(PathBuf::from) {
-            if !known_paths.contains(&path) {
-                self.queue_delete_note_inner(&path, false)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn queue_chat_recall_inner(
-        &self,
-        conversation_path: &Path,
-        title: String,
-        excerpts: Vec<ChatRecallExcerpt>,
-        modified_millis: u64,
-        wake: bool,
-    ) -> Result<(), String> {
-        if excerpts.is_empty() {
-            return self.queue_delete_note(conversation_path);
-        }
-        match &self.inner {
-            SemanticStateInner::Active(state) => {
-                let connection = open_database(&state.db_path)?;
-                ensure_schema(&connection)?;
-                if load_note_record(&connection, &conversation_path.to_string_lossy())?.is_some_and(
-                    |stored| {
-                        stored.document_kind == crate::note::DocumentKind::ChatIndex
-                            && stored.content_hash == chat_recall_content_hash(&excerpts)
-                    },
-                ) {
-                    return Ok(());
-                }
-                state.debug.record_with_metrics(
-                    "index",
-                    "enqueue_chat_recall",
-                    Some(conversation_path.to_string_lossy().into_owned()),
-                    None,
-                    |metrics| metrics.index_job_enqueued_count += 1,
-                );
-                let update = |pending: &mut PendingIndexState| {
-                    pending.deleted_notes.remove(conversation_path);
-                    pending.note_updates.insert(
-                        conversation_path.to_path_buf(),
-                        PendingNoteUpdate {
-                            document: PendingSemanticDocument::ChatRecall { title, excerpts },
-                            modified_millis,
-                        },
-                    );
-                };
-                if wake {
-                    if let Ok(mut runtime) = state.runtime.lock() {
-                        runtime.indexing_in_progress = true;
-                        runtime.current_job_label = Some("Applying changes".to_string());
-                        if !runtime.retry_exhausted {
-                            runtime.health = SemanticHealth::Working;
-                        }
-                        runtime.progress_current = 0;
-                        runtime.progress_total = 1;
-                    }
-                    state.work_queue.enqueue(update)
-                } else {
-                    state.work_queue.stage(update)
-                }
-            }
-            SemanticStateInner::Disabled(_) => Ok(()),
-        }
-    }
-
     pub(crate) fn queue_delete_note(&self, note_path: &Path) -> Result<(), String> {
         self.queue_delete_note_inner(note_path, true)
     }
@@ -1030,19 +907,7 @@ impl SemanticState {
                 }
                 state.work_queue.enqueue(|pending| {
                     let revision = state.index_revision.load(Ordering::Acquire);
-                    // Full rebuild: always enqueue every visibility variant.
-                    for visibility in [
-                        AtlasChatVisibilityKey::Hidden,
-                        AtlasChatVisibilityKey::Remembered,
-                        AtlasChatVisibilityKey::All,
-                    ] {
-                        pending.atlas_requests.insert(
-                            AtlasGenerationKey {
-                                chat_visibility: visibility,
-                            },
-                            revision,
-                        );
-                    }
+                    pending.atlas_requests.insert(AtlasGenerationKey, revision);
                 })
             }
             SemanticStateInner::Disabled(_) => Ok(()),
@@ -1622,13 +1487,8 @@ impl ActiveSemanticState {
                 continue;
             }
             if load_note_record(&connection, &chunk.note_path)?.is_some_and(|record| {
-                if record.document_kind.is_chat_projection() {
-                    return true;
-                }
-                fs::read_to_string(&chunk.note_path).is_ok_and(|markdown| {
-                    crate::note::semantic_recall_eligible(&markdown)
-                        && content_hash(&markdown) == record.content_hash
-                })
+                fs::read_to_string(&chunk.note_path)
+                    .is_ok_and(|markdown| content_hash(&markdown) == record.content_hash)
             }) {
                 current_paths.insert(chunk.note_path.clone());
             }
@@ -1969,106 +1829,6 @@ mod health_tests {
             .stop_rebuildable_projection_work()
             .unwrap();
         assert!(exited, "native Exit left the local runtime running");
-    }
-
-    #[test]
-    fn scoped_query_admits_document_kind_before_candidate_limits() {
-        use crate::note::DocumentKind;
-        use crate::semantic::chunking::SemanticChunk;
-        use crate::semantic::db::{upsert_note_chunks, SemanticNoteMetadata};
-
-        let (state, _signals, temp) = active_status_state(RuntimeState::default());
-        let SemanticStateInner::Active(active) = &state.inner else {
-            unreachable!()
-        };
-        let mut connection = crate::semantic::test_support::database(&active.db_path);
-        let mut paths = Vec::new();
-        // More perfect chat matches than either the requested top-k or the ANN
-        // overfetch floor. The ordinary note is relevant but ranks after them.
-        for (name, kind, count, embedding) in [
-            ("chat", DocumentKind::ChatIndex, 80, vec![1.0, 0.0, 0.0]),
-            ("ordinary", DocumentKind::Note, 1, vec![0.8, 0.6, 0.0]),
-        ] {
-            let path = temp.path().join(format!("{name}.md"));
-            fs::write(&path, name).unwrap();
-            let path = path.to_string_lossy().into_owned();
-            let chunks = (0..count)
-                .map(|ordinal| SemanticChunk {
-                    ordinal,
-                    section_label: name.into(),
-                    text: format!("{name} passage {ordinal}"),
-                    text_hash: format!("{name}-{ordinal}"),
-                    start_line: ordinal + 1,
-                    end_line: ordinal + 1,
-                    block_anchor: None,
-                })
-                .collect::<Vec<_>>();
-            upsert_note_chunks(
-                &mut connection,
-                &path,
-                name,
-                1,
-                &content_hash(name),
-                "",
-                "",
-                kind,
-                &SemanticNoteMetadata::default(),
-                &chunks,
-                &vec![embedding; count],
-            )
-            .unwrap();
-            paths.push(path);
-        }
-        active.ann.rebuild_from_connection(&connection).unwrap();
-        let ordinary = state
-            .semantic_matches_for_text_scoped("query", None, 1, None, Some(DocumentKind::Note))
-            .unwrap();
-        assert_eq!(ordinary.len(), 1);
-        assert_eq!(ordinary[0].note_path, paths[1]);
-        assert_eq!(ordinary[0].document_kind, DocumentKind::Note);
-        let all = state
-            .semantic_matches_for_text_scoped("query", None, 1, None, None)
-            .unwrap();
-        assert_eq!(all.len(), 1);
-        assert_eq!(all[0].document_kind, DocumentKind::ChatIndex);
-        assert_eq!(
-            state.semantic_matches_for_text("query", None, 1).unwrap()[0].document_kind,
-            DocumentKind::ChatIndex
-        );
-        let chat_path_only = &paths[..1];
-        assert!(state
-            .semantic_matches_for_text_scoped(
-                "query",
-                None,
-                1,
-                Some(chat_path_only),
-                Some(DocumentKind::Note)
-            )
-            .unwrap()
-            .is_empty());
-        assert_eq!(
-            state
-                .semantic_matches_for_text_scoped(
-                    "query",
-                    None,
-                    1,
-                    Some(&paths),
-                    Some(DocumentKind::Note)
-                )
-                .unwrap()[0]
-                .note_path,
-            paths[1]
-        );
-        assert!(state
-            .semantic_matches_for_text_scoped(
-                "query",
-                Some(&paths[1]),
-                1,
-                None,
-                Some(DocumentKind::Note)
-            )
-            .unwrap()
-            .is_empty());
     }
 
     #[test]

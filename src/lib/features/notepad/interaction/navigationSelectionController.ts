@@ -26,11 +26,6 @@ export interface NavigationSelectionControllerDeps<
   saveCursorPosition: () => void;
   getOpenContext: () => OpenContext;
   getNavigationContext: (paneId?: TPaneId) => NavigationContext;
-  openChatProjection: (
-    paneId: TPaneId,
-    notePath: string | null,
-    blockAnchor: string | null
-  ) => Promise<boolean>;
   openSearchResult: (
     openContext: OpenContext,
     navigationContext: NavigationContextSource,
@@ -58,18 +53,6 @@ export function createNavigationSelectionController<
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
-    if (
-      result.documentKind &&
-      result.documentKind !== 'note' &&
-      (await deps.openChatProjection(
-        deps.getNavigationPaneId(),
-        result.notePath,
-        result.blockAnchor ?? null
-      ))
-    ) {
-      return;
-    }
-
     deps.resetPaneCommand();
     if (
       deps.getSearchMode() === 'current' &&
@@ -133,18 +116,6 @@ export function createNavigationSelectionController<
   async function handleRelatedItemSelect(
     item: RelatedNoteItem
   ) {
-    if (
-      item.documentKind &&
-      item.documentKind !== 'note' &&
-      (await deps.openChatProjection(
-        deps.getNavigationPaneId(),
-        item.notePath,
-        item.blockAnchor ?? null
-      ))
-    ) {
-      return;
-    }
-
     deps.resetPaneCommand();
     await deps.openSearchResult(
       deps.getOpenContext(),

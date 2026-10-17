@@ -40,7 +40,6 @@ function setup() {
   const activatePane = vi.fn();
   const focusSearchRange = vi.fn();
   const saveCursorPosition = vi.fn();
-  const openChatProjection = vi.fn(async () => false);
   const openSearchResult = vi.fn(async () => undefined);
   const openRecentTask = vi.fn(async () => undefined);
   const afterRender = vi.fn(async () => undefined);
@@ -55,7 +54,6 @@ function setup() {
     saveCursorPosition,
     getOpenContext: () => openContext,
     getNavigationContext: () => navigationContext,
-    openChatProjection,
     openSearchResult,
     openRecentTask,
     afterRender
@@ -67,7 +65,6 @@ function setup() {
     activatePane,
     focusSearchRange,
     saveCursorPosition,
-    openChatProjection,
     openSearchResult,
     openRecentTask,
     afterRender,
@@ -80,28 +77,12 @@ function setup() {
 }
 
 describe('navigation selection controller', () => {
-  it('routes non-note search results to chat while retaining search', async () => {
+  it('opens authored Chats files as ordinary search results', async () => {
     const harness = setup();
-    harness.openChatProjection.mockResolvedValue(true);
-    const result = searchResult({
-      documentKind: 'chatTranscript',
-      notePath: 'Chats/Ideas/Part 001.md',
-      blockAnchor: 'message-1'
-    });
-
+    const result = searchResult({ documentKind: 'note', notePath: 'Chats/Ideas/Part 001.md', blockAnchor: 'reply' });
     await harness.controller.handleSearchResultSelect(result);
-
-    expect(
-      harness.openChatProjection
-    ).toHaveBeenCalledWith(
-      paneId,
-      'Chats/Ideas/Part 001.md',
-      'message-1'
-    );
+    expect(harness.openSearchResult).toHaveBeenCalledWith(expect.anything(), expect.any(Function), result);
     expect(harness.clearSearch).not.toHaveBeenCalled();
-    expect(
-      harness.openSearchResult
-    ).not.toHaveBeenCalled();
   });
 
   it('focuses an in-document search range after render', async () => {

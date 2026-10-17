@@ -39,7 +39,7 @@
   let originSearchActive = $state(false);
   let originSearchExpanded = $state(false);
   let lastSearchActive = false;
-  let isStopping = $state(false);
+  let isStopAction = $state(false);
   let sendOpacity = $state(0.4);
   let frame: number | undefined;
   let settling = $state<number | undefined>();
@@ -230,10 +230,8 @@
           (textarea.getBoundingClientRect().left - textTranslation - composer.getBoundingClientRect().left + parseFloat(textStyle!.paddingLeft))) : measure.textPush
       };
       if (JSON.stringify(next) !== JSON.stringify(measure)) measure = next;
-      if (send) {
-        isStopping = send.getAttribute('aria-label') === 'Stop response';
-        sendOpacity = send.disabled ? 0.4 : 1;
-      }
+      isStopAction = send?.dataset.chatAction === 'stop';
+      sendOpacity = send && !send.disabled ? 1 : 0.4;
     };
     readLayout = read;
     read();
@@ -262,7 +260,7 @@
     const content = new MutationObserver(read);
     size.observe(element);
     content.observe(element, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ['data-search-expanded', 'data-search-layout-expanded', 'data-search-active', 'disabled', 'aria-label'] });
+      attributeFilter: ['data-search-expanded', 'data-search-layout-expanded', 'data-search-active', 'disabled', 'data-chat-action'] });
     const finish = () => {
       cancelFrame();
       settling = undefined;
@@ -317,6 +315,6 @@
     aria-hidden={target !== 'chat-search' || undefined} tabindex={target === 'chat-search' ? 0 : -1} onclick={onChat}
     style="--dock-icon-x:var(--dock-chat-x);--dock-icon-size:var(--dock-chat-size);--dock-icon-opacity:var(--dock-chat-opacity);">
     <MessagesSquare class="dock-chat-icon h-5 w-5" />
-    {#if isStopping}<Square class="dock-send-icon h-3.5 w-3.5" />{:else}<ArrowUp class="dock-send-icon h-4 w-4" />{/if}
+    {#if isStopAction}<Square class="dock-send-icon h-3.5 w-3.5 fill-current" />{:else}<ArrowUp class="dock-send-icon h-4 w-4" />{/if}
   </button>
 </div>

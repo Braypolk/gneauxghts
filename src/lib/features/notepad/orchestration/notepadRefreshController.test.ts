@@ -67,28 +67,16 @@ function setup() {
 }
 
 describe('notepad refresh controller', () => {
-  it('ignores classified chat projection changes', async () => {
+  it('refreshes authored Chats files through ordinary note observation', async () => {
     const harness = setup();
-
     await harness.controller.handleVaultNoteChanged({
-      notePath: '/vault/Chats/example/Part 001.md',
+      notePath: path,
       deleted: false,
-      documentKind: 'chatTranscript',
+      documentKind: 'note',
       source: 'external'
     });
-
-    expect(
-      harness.refreshDocumentFromDisk
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.refreshDerivedViews
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.replaceNoteAcrossPanes
-    ).not.toHaveBeenCalled();
-    expect(
-      harness.suspendPersistenceForConflict
-    ).not.toHaveBeenCalled();
+    expect(harness.refreshDocumentFromDisk).toHaveBeenCalledWith(harness.note, { source: 'watcher' });
+    expect(harness.refreshDerivedViews).toHaveBeenCalledOnce();
   });
 
   it('refreshes the shared loaded document once for every pane reference', async () => {

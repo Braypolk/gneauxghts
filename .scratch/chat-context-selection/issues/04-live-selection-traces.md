@@ -1,6 +1,6 @@
 # Capture synthetic evaluation context choices
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -25,3 +25,8 @@ Retain six provider calls, 1,024 output tokens per call, 64,000 serialized bytes
 Implemented synthetic-only exact request/lifecycle traces, actual per-call usage and bounded paired ablation. Completed 24 runs with `gpt-6-luna`, three repetitions per case/variant, approximately $0.01089 reported-token cost. Manual review accepted 11/12 per variant; each hit one actor-case call cap. Metadata did not establish reliable cost or exploration savings. Original failures and the automated rubric false negative remain recorded.
 
 74 affected tests and 21 architecture checks passed. Standards/Spec follow-up reviews found no remaining implementation issues. See [completed report](../live-selection.md), [summary](../live-selection-summary.json) and [next gathering issue](05-named-source-gathering.md).
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

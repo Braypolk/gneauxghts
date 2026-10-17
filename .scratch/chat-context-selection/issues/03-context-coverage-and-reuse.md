@@ -1,6 +1,6 @@
 # Clarify context scope and repeated delivery
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -25,3 +25,8 @@ Retain short linked excerpts until measured live comparisons justify changing th
 2026-10-09: Proceeding from the user's accepted direction. No additional product input required; preserve existing access, canonical validation, citations, proposal coverage and shared budgets. Paid/live trace collection remains issue 04.
 
 2026-10-09: Implemented explicit read/search/context coverage and actual-delivery overlap tracking. Short links retained; clipping has canonical recovery. Independent reviews found no actionable issues. Offline complete-request comparison measures modest metadata overhead under identical scripted choices, not live savings. See [implementation, measurements and verification](../coverage-and-reuse.md).
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

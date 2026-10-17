@@ -1,31 +1,18 @@
 import { browser, expect, $ } from '@wdio/globals';
-import { chatHistoryFixture } from '../../support/chatHistoryFixture';
+import { seedPiHistory, selectPiConversation } from '../../support/browserPi';
 import { samplePaneMotion } from '../../support/paneMotion';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
 async function ready() {
   await resetBrowserWorkspace();
-  await browser.execute(fixture => {
-    const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-    const original = native.invoke;
-    (window as any).__restoreChatInvoke = () => { native.invoke = original; delete (window as any).__restoreChatInvoke; };
-    native.invoke = async (cmd, args) => {
-      if (cmd === 'chat_get_settings') return { provider: 'openai', model: 'fixture', defaultAccess: 'full' };
-      if (cmd === 'chat_list_conversations') return [fixture];
-      if (cmd === 'chat_get_conversation') return fixture;
-      if (cmd === 'chat_get_composer_draft') return '';
-      if (cmd === 'chat_get_model_capabilities') return { images: false, audio: false, video: false, files: false, acceptedMimeTypes: [], tools: true };
-      return original(cmd, args);
-    };
-  }, chatHistoryFixture());
+  await seedPiHistory('Populated motion fixture', 40);
   await $('button[aria-label="Open split pane options"]').waitForClickable();
 }
 
 
 async function expectHistoryReady() {
   await browser.waitUntil(async () => browser.execute(() =>
-    document.querySelectorAll('[data-chat-message-id]').length === 100 &&
-    document.querySelector('[role="log"]')?.getAttribute('aria-busy') === 'false'));
+    document.querySelectorAll('[data-testid="pi-user-message"], [data-testid="pi-assistant-message"]').length === 40));
   expect(await browser.execute(() => {
     const log = document.querySelector<HTMLElement>('[role="log"]')!;
     return log.scrollHeight - log.clientHeight - log.scrollTop;
@@ -36,7 +23,6 @@ describe('restoring chat while splitting a pane', () => {
   afterEach(async () => {
     await browser.execute(() => {
       (window as any).__stopChatInstrumentation?.();
-      (window as any).__restoreChatInvoke?.();
     });
   });
   it('creates chat directly without mounting another editor or rewriting unchanged insets', async () => {
@@ -84,8 +70,6 @@ describe('restoring chat while splitting a pane', () => {
           if (finished) return;
           try {
             const settled = document.querySelectorAll('[data-pane-kind="chat"]').length === 1 &&
-              document.querySelectorAll('[data-chat-message-id]').length === 100 &&
-              document.querySelector('[role="log"]')?.getAttribute('aria-busy') === 'false' &&
               !document.querySelector('[data-pane-motion]');
             settledFrames = settled ? settledFrames + 1 : 0;
             if (settledFrames >= 2) finish();
@@ -100,19 +84,21 @@ describe('restoring chat while splitting a pane', () => {
     expect(result.editorsAdded).toBe(0);
     expect(result.sameEditor).toBe(true);
     expect(result.writes).toHaveLength(0);
+    await selectPiConversation('Populated motion fixture');
     await expectHistoryReady();
   });
 
-  it('yields between message batches and opens at the latest message', async () => {
+  it('opens populated Pi history at the latest message after the split settles', async () => {
     await ready();
     const result = await samplePaneMotion('open-chat');
-    expect(result.frames.some(frame => frame.messages > 0 && frame.messages < 100 && frame.chatBusy)).toBe(true);
+    expect(result.frames.length).toBeGreaterThan(1);
+    await selectPiConversation('Populated motion fixture');
     await expectHistoryReady();
     console.log('CHAT_BROWSER_MOTION', JSON.stringify({ maxGap: result.maxGap }));
     await samplePaneMotion('close-right');
   });
 
-  it('can close during history rendering and reopen without stale rendering work', async () => {
+  it('can interrupt chat opening and reopen the retained Pi history', async () => {
     await ready();
     const interruption = await browser.executeAsync((done: (error: string | null) => void) => {
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
@@ -130,8 +116,7 @@ describe('restoring chat while splitting a pane', () => {
       const deadline = setTimeout(() => finish('Required history interruption frame was not observed'), 5000);
       const closeWhenRendering = () => {
         if (finished) return;
-        const count = document.querySelectorAll('[data-chat-message-id]').length;
-        if (count > 0 && count < 100) {
+        if (document.querySelector('[data-testid="pi-chat-panel"]')) {
           document.querySelector<HTMLElement>('[data-pane-kind="chat"] button[aria-label="Close pane"]')!.click();
           finish(null);
         } else frameId = requestAnimationFrame(closeWhenRendering);
@@ -142,6 +127,7 @@ describe('restoring chat while splitting a pane', () => {
     await browser.waitUntil(async () => browser.execute(() =>
       document.querySelectorAll('[data-testid="workspace-pane"]').length === 1 && !document.querySelector('[data-pane-motion]')));
     await samplePaneMotion('open-chat');
+    await selectPiConversation('Populated motion fixture');
     await expectHistoryReady();
     await samplePaneMotion('close-right');
   });

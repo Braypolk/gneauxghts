@@ -279,10 +279,13 @@ pub(super) fn read(
                     continue;
                 };
                 let parsed = crate::note::parse_note(&canonical);
-                if parsed.frontmatter.managed.as_ref().is_some_and(|m| {
-                    m.id != id.as_str() || m.kind != crate::note::DocumentKind::Note
-                }) || history_store::current_content_hash(&access.runtime.store, &id)?.as_deref()
-                    != Some(history_store::authored_content_hash(&canonical).as_str())
+                if parsed
+                    .frontmatter
+                    .managed
+                    .as_ref()
+                    .is_some_and(|m| m.id != id.as_str())
+                    || history_store::current_content_hash(&access.runtime.store, &id)?.as_deref()
+                        != Some(history_store::authored_content_hash(&canonical).as_str())
                 {
                     continue;
                 }
@@ -469,7 +472,7 @@ pub(super) fn current_citations(
             .frontmatter
             .managed
             .as_ref()
-            .is_some_and(|m| m.id != note_id || m.kind != crate::note::DocumentKind::Note)
+            .is_some_and(|m| m.id != note_id)
             || history_store::current_content_hash(&access.runtime.store, &id)?.as_deref()
                 != Some(history_store::authored_content_hash(&canonical).as_str())
         {

@@ -57,7 +57,7 @@ impl LexicalLocation {
     }
 }
 
-pub(crate) struct LexicalEvidenceMatch {
+pub(crate) struct LexicalPassageMatch {
     pub(crate) note_id: String,
     pub(crate) text: String,
     pub(crate) section_label: String,
@@ -206,35 +206,93 @@ impl LexicalIndex {
         }
     }
 
-    pub(crate) fn evidence_is_current(
-        &self,
-        entries: &HashMap<PathBuf, IndexedNote>,
-        ids: &HashSet<String>,
-    ) -> bool {
-        let Ok(inner) = self.inner.lock() else {
-            return false;
-        };
-        entries
-            .iter()
-            .filter(|(_, n)| ids.contains(&n.note_id))
-            .all(|(path, n)| {
-                inner.signatures.get(path.to_string_lossy().as_ref()) == Some(n.signature())
-            })
-    }
-
     /// Scope is part of the Tantivy query, before the bounded collector runs.
     /// Return indexed text with its source location rather than UI snippets;
-    /// the evidence owner validates against the corresponding canonical title/body.
-    pub(crate) fn evidence_matches(
+    /// the retrieval owner validates against the corresponding canonical title/body.
+    #[cfg(test)]
+    pub(crate) fn passage_matches(
         &self,
         query_text: &str,
         allowed_ids: &HashSet<String>,
         limit: usize,
-    ) -> Result<(Vec<LexicalEvidenceMatch>, usize), String> {
+    ) -> Result<(Vec<LexicalPassageMatch>, usize), String> {
         if allowed_ids.is_empty() {
             return Ok((Vec::new(), 0));
         }
         let inner = self.inner.lock().map_err(|_| "Lexical index unavailable")?;
+        self.passage_matches_locked(&inner, query_text, allowed_ids, limit)
+    }
+
+    /// Rank current indexed passages and use catalog paragraphs for pending
+    /// projections. One lexical snapshot decides which source owns each note.
+    pub(crate) fn passage_matches_with_catalog(
+        &self,
+        entries: &HashMap<PathBuf, IndexedNote>,
+        query_text: &str,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<Vec<LexicalPassageMatch>, String> {
+        let inner = self.inner.lock().map_err(|_| "Lexical index unavailable")?;
+        let normalized = query_text.to_lowercase();
+        let terms: Vec<_> = normalized.split_whitespace().collect();
+        let mut indexed_ids = HashSet::new();
+        let mut pending: Vec<_> = entries
+            .iter()
+            .filter(|(_, note)| allowed_ids.contains(&note.note_id))
+            .collect();
+        pending.sort_by(|a, b| a.1.note_id.cmp(&b.1.note_id));
+        let mut fallback = Vec::new();
+        for (path, note) in pending {
+            if inner.signatures.get(path.to_string_lossy().as_ref()) == Some(note.signature()) {
+                indexed_ids.insert(note.note_id.clone());
+            } else {
+                // Reuse ordinary catalog matching, but return the whole matching
+                // paragraph so retrieval can recover exact canonical bytes.
+                for matched in search_note(Some(path), note, &normalized, &terms) {
+                    if fallback.len() >= limit {
+                        break;
+                    }
+                    let result = matched.result;
+                    if let Some(paragraph) = note.paragraphs.iter().find(|p| {
+                        p.section_label == result.section_label
+                            && match result.start_line {
+                                Some(line) => p.lines.iter().any(|entry| entry.line_number == line),
+                                None => p.paragraph_index.is_none(),
+                            }
+                    }) {
+                        fallback.push(LexicalPassageMatch {
+                            note_id: note.note_id.clone(),
+                            text: paragraph.text.clone(),
+                            section_label: paragraph.section_label.clone(),
+                            // Ordinary search scales BM25 by 1000 before comparing
+                            // it with catalog relevance. Use that same unit here.
+                            score: matched.score as f32 / 1000.0,
+                            location: if paragraph.paragraph_index.is_none() {
+                                LexicalLocation::Title
+                            } else {
+                                LexicalLocation::Body
+                            },
+                        });
+                    }
+                }
+            }
+        }
+        let (mut indexed, _) =
+            self.passage_matches_locked(&inner, query_text, &indexed_ids, limit)?;
+        indexed.extend(fallback);
+        Ok(indexed)
+    }
+
+    fn passage_matches_locked(
+        &self,
+        inner: &LexicalIndexInner,
+        query_text: &str,
+        allowed_ids: &HashSet<String>,
+        limit: usize,
+    ) -> Result<(Vec<LexicalPassageMatch>, usize), String> {
+        if allowed_ids.is_empty() {
+            return Ok((Vec::new(), 0));
+        }
         let mut parser = QueryParser::for_index(
             &inner.index,
             vec![
@@ -265,7 +323,7 @@ impl LexicalIndex {
                 "body" => LexicalLocation::Body,
                 _ => return Err("Invalid lexical evidence location".into()),
             };
-            results.push(LexicalEvidenceMatch {
+            results.push(LexicalPassageMatch {
                 note_id: string_value(&doc, self.fields.note_id)?,
                 text: string_value(&doc, self.fields.body)?,
                 section_label: string_value(&doc, self.fields.section_label)?,
@@ -378,7 +436,7 @@ impl LexicalIndex {
         let (text_query, _) = query_parser.parse_query_lenient(query_text);
         // This helper serves ordinary note search. Admission must precede the
         // bounded collector so chat paragraphs cannot consume its candidate cap.
-        // Evidence queries retain their independent, cross-kind ID scope.
+        // Scoped passage queries retain their independent ID scope.
         let ordinary_notes = TermSetQuery::new([Term::from_field_text(
             self.fields.document_kind,
             DocumentKind::Note.as_frontmatter_value(),
@@ -587,63 +645,45 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_search_admits_note_kind_before_top_docs_without_narrowing_evidence() {
-        use crate::note::DocumentKind;
+    fn ordinary_search_and_scoped_passages_agree_before_and_after_indexing() {
         use std::collections::HashSet;
-
         let index = LexicalIndex::new().unwrap();
-        let chat_path = PathBuf::from("notes/needle-chat.md");
-        let note_path = PathBuf::from("notes/ordinary.md");
-        let chat_body = (0..200)
-            .map(|i| format!("needle passage {i}"))
-            .collect::<Vec<_>>()
-            .join("\n\n");
-        let chat = build_indexed_note(
-            &chat_path,
-            &format!(
-                "---\ngneauxghts:\n  id: chat-id\n  kind: chatIndex\n---\n# needle\n\n{chat_body}"
-            ),
+        let first_path = PathBuf::from("notes/First.md");
+        let second_path = PathBuf::from("notes/Second.md");
+        let first = build_indexed_note(
+            &first_path,
+            "---\ngneauxghts:\n  id: first-id\n---\n# First\n\nneedle in the first note",
             1,
         );
-        let ordinary = build_indexed_note(&note_path, "---\ngneauxghts:\n  id: ordinary-id\n---\n# Ordinary\n\nA longer ordinary note body includes needle among many unrelated words about gardening and weather.", 1);
-        assert_eq!(chat.document_kind, DocumentKind::ChatIndex);
-        assert!(chat.paragraphs.len() > 160);
-        let entries = HashMap::from([(chat_path.clone(), chat), (note_path.clone(), ordinary)]);
+        let second = build_indexed_note(
+            &second_path,
+            "---\ngneauxghts:\n  id: second-id\n---\n# Second\n\nneedle in the second note",
+            1,
+        );
+        let entries = HashMap::from([(first_path.clone(), first), (second_path.clone(), second)]);
         let search = || {
             index
                 .search_with_catalog(&entries, "needle", "needle", &["needle"], 40, None)
                 .unwrap()
         };
         let fallback = search();
-        assert_eq!(fallback.len(), 1);
-        assert_eq!(fallback[0].result.document_kind, DocumentKind::Note);
-
-        index.upsert_note(&chat_path, &entries[&chat_path]).unwrap();
-        index.upsert_note(&note_path, &entries[&note_path]).unwrap();
+        assert_eq!(fallback.len(), 2);
+        for (path, note) in &entries {
+            index.upsert_note(path, note).unwrap();
+        }
         let indexed = search();
-        assert!(
-            indexed
-                .iter()
-                .all(|hit| hit.result.document_kind == DocumentKind::Note),
-            "indexed ordinary search must apply the same kind boundary as fallback"
-        );
-        assert!(
-            indexed
-                .iter()
-                .any(|hit| hit.result.note_path.as_deref() == note_path.to_str()),
-            "chat paragraphs must not crowd ordinary notes out of the bounded collector"
-        );
-
-        let chat_id = entries[&chat_path].note_id.clone();
-        let (evidence, available) = index
-            .evidence_matches("needle", &HashSet::from([chat_id.clone()]), 3)
+        let paths = |hits: &[crate::search::ScoredSearchResult]| {
+            hits.iter()
+                .map(|hit| hit.result.note_path.clone())
+                .collect::<HashSet<_>>()
+        };
+        assert_eq!(paths(&fallback), paths(&indexed));
+        let (passages, available) = index
+            .passage_matches("needle", &HashSet::from(["second-id".to_string()]), 3)
             .unwrap();
-        assert!(available > 160);
-        assert_eq!(evidence.len(), 3);
-        assert!(
-            evidence.iter().all(|hit| hit.note_id == chat_id),
-            "evidence remains independently scoped across document kinds"
-        );
+        assert_eq!(available, 1);
+        assert_eq!(passages.len(), 1);
+        assert_eq!(passages[0].note_id, "second-id");
     }
 
     #[test]

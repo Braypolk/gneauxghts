@@ -6,7 +6,6 @@ import { expectDockMotion } from '../../support/paneMotion';
 describe('Related and retained dock layout', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   });
 
   for (const width of [1440, 1624]) {

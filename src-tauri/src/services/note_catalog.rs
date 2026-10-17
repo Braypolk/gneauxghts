@@ -19,9 +19,6 @@ use std::{
 pub(crate) enum CatalogWriteMode {
     /// Apply lexical and task projections before returning.
     Synchronous,
-    /// Managed chat projections belong in catalog and lexical search, but
-    /// never participate in the ordinary task projection.
-    ManagedProjection,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -421,73 +418,6 @@ fn projection_timestamp(modified_millis: u64) -> u64 {
 mod tests {
     use super::*;
     use crate::index::build_indexed_note;
-
-    #[test]
-    fn managed_chat_updates_lexical_search_without_changing_task_projection() {
-        let _guard = crate::test_support::lock_test_env();
-        let app_data = crate::test_support::TestDir::new("catalog-managed-chat-app-data");
-        crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
-        crate::state::set_notes_root_override(Some(app_data.path().to_path_buf())).unwrap();
-        let _storage =
-            crate::state::AppStateStorage::bind(&crate::state::vault_data_dir().unwrap()).unwrap();
-        let notes = crate::test_support::TestDir::new("catalog-managed-chat-notes");
-        let path = notes.path().join("Projection.md");
-        let note = "---\ngneauxghts:\n  id: projection-id\n  kind: note\n---\n\nOld lexical body\n\n- [ ] retained ordinary task";
-        let chat = "---\ngneauxghts:\n  id: projection-id\n  kind: chatTranscript\n---\n\nManaged chat lexical body\n\n- [ ] ignored chat task";
-        let index = Mutex::new(NotesIndex::default());
-        let lexical = Arc::new(LexicalIndex::new().unwrap());
-        let retries = CatalogProjectionRetries::default();
-        let catalog = NoteCatalog::new(&index, &lexical, &retries);
-
-        catalog
-            .upsert(
-                path.clone(),
-                build_indexed_note(&path, note, 41),
-                CatalogWriteMode::Synchronous,
-            )
-            .unwrap();
-        catalog
-            .upsert(
-                path.clone(),
-                build_indexed_note(&path, chat, 42),
-                CatalogWriteMode::ManagedProjection,
-            )
-            .unwrap();
-
-        // Ordinary note search excludes managed chat transcripts; evidence search
-        // deliberately retains them within the admitted cross-kind identity scope.
-        assert!(lexical
-            .search("managed", "managed", &["managed"], 10, None)
-            .unwrap()
-            .is_empty());
-        let allowed_ids = std::collections::HashSet::from(["projection-id".to_string()]);
-        let (matches, count) = lexical
-            .evidence_matches("managed", &allowed_ids, 10)
-            .unwrap();
-        assert_eq!(count, 1);
-        assert_eq!(matches.len(), 1);
-        assert_eq!(matches[0].note_id, "projection-id");
-        assert_eq!(matches[0].text, "Managed chat lexical body");
-        let tasks = crate::state::task_projection::load_tasks_for_note_id("projection-id").unwrap();
-        assert_eq!(tasks.len(), 1);
-        assert_eq!(tasks[0].text, "retained ordinary task");
-
-        catalog
-            .remove(&path, CatalogWriteMode::ManagedProjection)
-            .unwrap();
-        let (matches, count) = lexical
-            .evidence_matches("managed", &allowed_ids, 10)
-            .unwrap();
-        assert!(matches.is_empty());
-        assert_eq!(count, 0);
-        assert_eq!(
-            crate::state::task_projection::load_tasks_for_note_id("projection-id")
-                .unwrap()
-                .len(),
-            1
-        );
-        crate::state::set_notes_root_override(None).unwrap();
-    }
 
     #[test]
     fn duplicate_identity_is_resolved_before_lexical_and_task_projection() {

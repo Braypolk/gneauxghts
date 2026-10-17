@@ -110,7 +110,9 @@ pub(crate) enum LifecycleEventKind {
 pub(crate) enum MutationSource {
     Editor,
     TaskAction,
-    AcceptedChatProposal,
+    // Read retained note-history payloads without restoring the retired workflow.
+    #[serde(alias = "acceptedChatProposal")]
+    AgentPublication,
     ExternalEdit,
     VersionRestore,
     NoteCreation,
@@ -123,7 +125,7 @@ impl MutationSource {
         match self {
             Self::Editor => "editor",
             Self::TaskAction => "taskAction",
-            Self::AcceptedChatProposal => "acceptedChatProposal",
+            Self::AgentPublication => "agentPublication",
             Self::ExternalEdit => "externalEdit",
             Self::VersionRestore => "versionRestore",
             Self::NoteCreation => "noteCreation",
@@ -136,7 +138,7 @@ impl MutationSource {
         match value {
             "editor" => Some(Self::Editor),
             "taskAction" => Some(Self::TaskAction),
-            "acceptedChatProposal" => Some(Self::AcceptedChatProposal),
+            "agentPublication" | "acceptedChatProposal" => Some(Self::AgentPublication),
             "externalEdit" => Some(Self::ExternalEdit),
             "versionRestore" => Some(Self::VersionRestore),
             "noteCreation" => Some(Self::NoteCreation),
@@ -1187,14 +1189,14 @@ impl NoteMutation {
     }
 
     #[cfg(test)]
-    pub(super) fn accepted_chat_proposal(
+    pub(super) fn agent_publication(
         history_intent: PreparedHistoryIntent,
         path: PathBuf,
         previous_path: Option<PathBuf>,
         fallback_markdown: String,
     ) -> Self {
         Self::with_source(
-            MutationSource::AcceptedChatProposal,
+            MutationSource::AgentPublication,
             history_intent,
             path,
             previous_path,

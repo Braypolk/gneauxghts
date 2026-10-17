@@ -1,4 +1,6 @@
-# Chat context selection audit
+# Historical chat context selection audit
+
+> Superseded as executable scope by [the Pi rebuild](../archive/pi-chat-rebuild-scope.md). Implicit editor context, selected excerpts, exact passage navigation and filtered/frozen old-chat history are intentionally retired. The original measurements and outcomes below remain historical; current explicit note reads and source admission have new acceptance.
 
 Trace why note context reaches the model before changing retrieval behavior. Cover automatic editor hints, explicit linked notes and attached context, conversation history, model-selected searches and reads, backend scope/ranking/deduplication, and coverage/continuation feedback. Measure representative requests using synthetic vaults and an offline scripted model. Keep private notes and credentials out of artifacts; make no paid provider requests for this audit.
 

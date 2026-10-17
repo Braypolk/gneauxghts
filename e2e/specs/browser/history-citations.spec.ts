@@ -1,57 +1,28 @@
-import { browser, expect, $, $$ } from '@wdio/globals';
+import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
+import { openBrowserPiPane, selectPiConversation } from '../../support/browserPi';
 
-describe('History revision citations', () => {
+describe('Pi note source navigation', () => {
   beforeEach(resetBrowserWorkspace);
 
-  it('opens Revision Citations at exact evidence and leaves chat workspace context intact', async () => {
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__?.seedRevisionChat());
-    const openChat = await $('button[aria-label="Open thought partner in this pane"]');
-    await browser.execute((element: HTMLElement) => element.click(), openChat);
-    const picker = await $('button[aria-label="Conversations"]');
-    await picker.waitForClickable();
-    await picker.click();
-    await $('[role="menuitem"]').click();
-    const citation = await $('[data-chat-note-citation-id="revision:note-beta:note-beta-revision-2"]');
+  it('opens and selects the cited passage in the note instead of revision history', async () => {
+    await browser.executeAsync((done: (error: string | null) => void) => {
+      void window.__GNEAUXGHTS_E2E__!.seedPiChat({ title: 'Note sources', count: 2, revisionSource: true }).then(() => done(null), error => done(String(error)));
+    }).then(error => { expect(error).toBe(null); });
+    await openBrowserPiPane();
+    await selectPiConversation('Note sources');
+    const citation = await $('[data-pi-source]');
     await citation.waitForClickable();
-    expect(await $('button[aria-label="Source-first preview"]').isExisting()).toBe(false);
-    const requestsBeforeEvidence = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot().invocations ?? []);
-    await $('button*=Show evidence').click();
-    const evidence = await $('section[aria-label="Evidence from Beta note"]');
-    await evidence.waitForDisplayed();
-    expect(await evidence.getText()).toContain('Beta body is independent from Alpha.');
-    expect(await evidence.getText()).toContain('Retained revision · not current status');
-    const requestsAfterEvidence = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot().invocations ?? []);
-    expect(requestsAfterEvidence.filter(entry => entry.command === 'chat_send_message').length)
-      .toBe(requestsBeforeEvidence.filter(entry => entry.command === 'chat_send_message').length);
-    await $('button*=Hide evidence').click();
-    await evidence.waitForDisplayed({ reverse: true });
-    const before = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot());
-    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').getText()).not.toContain('removed confidential prose');
+    expect(await citation.getText()).toContain('Beta note');
+    const before = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot());
     await citation.click();
-    const history = await $('[data-testid="history-mode"]');
-    await history.waitForExist();
-    expect(await history.getText()).toContain('removed confidential prose');
-    const requests = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot().invocations ?? []);
-    expect(requests.some(entry => entry.command === 'get_note_history_diff' && entry.args.noteId === 'note-beta' && entry.args.revisionId === 'note-beta-revision-2')).toBe(true);
-    expect(requests.filter(entry => entry.command === 'get_note_history_page' && entry.args.noteId === 'note-beta').length).toBe(0);
-    expect(requests.filter(entry => entry.command === 'get_note_history_context' && entry.args.noteId === 'note-beta').length).toBe(1);
-    expect(await $$('[data-revision-id]').length).toBeLessThanOrEqual(31);
-    const originalIds = await $$('[data-revision-id]').map(row => row.getAttribute('data-revision-id'));
-    await $('button=Load newer history').click();
-    await browser.waitUntil(async () => !(await $('[data-revision-id="note-beta-revision-2"]').isExisting()));
-    expect(await $$('[data-revision-id]').length).toBeLessThanOrEqual(31);
-    await $('button=Load older history').click();
-    await $('[data-revision-id="note-beta-revision-2"]').waitForExist();
-    expect(await $$('[data-revision-id]').map(row => row.getAttribute('data-revision-id'))).toEqual(originalIds);
-    const exit = await $('button[aria-label="Back to workspace"]');
-    await exit.click();
-    await history.waitForExist({ reverse: true });
-    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').isExisting()).toBe(true);
-    const after = await browser.execute(() => window.__GNEAUXGHTS_E2E__?.snapshot());
-    expect(after?.activeNoteId).toBe(before?.activeNoteId);
-    expect(after?.notes).toEqual(before?.notes);
-    expect(await citation.isExisting()).toBe(true);
-    expect(await $('[data-testid="workspace-pane"][data-pane-kind="chat"]').getText()).not.toContain('removed confidential prose');
+    await $('[data-testid="note-editor"] .cm-content').waitForDisplayed();
+    await browser.waitUntil(async () => (await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().activeNoteId)) === 'note-beta');
+    await browser.waitUntil(async () => (await browser.execute(() => window.getSelection()?.toString())) === 'Beta body is independent from Alpha.');
+    expect(await $('[data-testid="history-mode"]').isExisting()).toBe(false);
+    const after = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot());
+    expect(after.invocations.some(entry => entry.command === 'pi_chat_open_source')).toBe(true);
+    expect(after.invocations.some(entry => entry.command === 'get_note_history_context')).toBe(false);
+    expect(after.notes).toEqual(before.notes);
   });
 });

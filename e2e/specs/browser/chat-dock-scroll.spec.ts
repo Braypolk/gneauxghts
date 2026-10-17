@@ -1,27 +1,16 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { chatHistoryFixture } from '../../support/chatHistoryFixture';
+import { seedPiHistory, openBrowserPiPane, selectPiConversation } from '../../support/browserPi';
 import { dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
 
 describe('chat reading position across input modes', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    await browser.execute(fixture => {
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
-      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-      const original = native.invoke;
-      native.invoke = async (cmd, args) => {
-        if (cmd === 'chat_list_conversations') return [fixture];
-        if (cmd === 'chat_get_conversation') return fixture;
-        return original(cmd, args);
-      };
-      document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
-        .dispatchEvent(new PointerEvent('pointerenter'));
-    }, chatHistoryFixture(10));
-    await $('button[aria-label="Split with thought partner"]').click();
-    await $('[data-chat-message-id="motion-9"]').waitForExist();
-    await browser.waitUntil(async () => (await $('[role="log"]').getAttribute('aria-busy')) === 'false');
+    await seedPiHistory('Dock reading fixture', 10);
+    await openBrowserPiPane();
+    await selectPiConversation('Dock reading fixture');
+    await $('[data-testid="pi-assistant-message"]:last-child').waitForExist();
     await waitForWorkspaceAnimationSettled();
   });
 
@@ -59,7 +48,7 @@ describe('chat reading position across input modes', () => {
             const positions = await browser.executeAsync((buttonLabel: string, duration: number,
               done: (result: { scroll: number[]; message: number[]; heights: number[] }) => void) => {
               const log = document.querySelector<HTMLElement>('[role="log"]')!;
-              const message = log.querySelector<HTMLElement>('[data-chat-message-id="motion-9"]')!;
+              const message = log.querySelector<HTMLElement>('[data-testid="pi-assistant-message"]:last-child')!;
               const dock = document.querySelector('[data-input-dock-mode] > .dock-body')!;
               const scroll: number[] = [], messagePositions: number[] = [], heights: number[] = [];
               const read = () => {

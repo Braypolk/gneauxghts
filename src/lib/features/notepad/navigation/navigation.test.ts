@@ -1,6 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { Text } from '@codemirror/state';
-import { resolveEditorTextTarget } from './navigation';
+import { resolveEditorTextTarget, resolveEditorCitationTarget } from './navigation';
+
+describe('exact citation passage navigation', () => {
+  it('selects an exact multi-line quote after UTF-16 text, even beyond the viewport', () => {
+    const prefix = '😀 intro\n' + 'filler\n'.repeat(1000);
+    const quote = '## Lantern\nThe lantern is **turquoise**.';
+    expect(resolveEditorCitationTarget(Text.of((prefix + quote).split('\n')), quote)).toEqual({ from: prefix.length, to: prefix.length + quote.length });
+  });
+  it('rejects changed, blank, repeated and overlapping quotes without fuzzy substitution', () => {
+    expect(resolveEditorCitationTarget(Text.of(['The lantern is blue.']), 'The lantern is turquoise.')).toBeNull();
+    expect(resolveEditorCitationTarget(Text.of(['same', 'same']), 'same')).toBeNull();
+    expect(resolveEditorCitationTarget(Text.of(['aaa']), 'aa')).toBeNull();
+    expect(resolveEditorCitationTarget(Text.of(['blank']), ' ')).toBeNull();
+  });
+});
 
 describe('document navigation targets', () => {
   it('finds unrendered targets in the full document', () => {

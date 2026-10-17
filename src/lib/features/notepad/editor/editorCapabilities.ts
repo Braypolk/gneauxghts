@@ -1,4 +1,3 @@
-import { describeBlockAt, type BlockDescriptor } from '$lib/features/notepad/editor/blockTypes';
 import {
   readEditorState,
   replaceEditorDocument,
@@ -21,15 +20,6 @@ export interface EditorSelectionCapabilitySnapshot {
   selectedText: string;
 }
 
-export interface EditorCurrentBlockSnapshot {
-  block: BlockDescriptor;
-  text: string;
-}
-
-export interface ReadOnlyOverlayHandle {
-  dispose: () => void;
-}
-
 export type EditorMarkdownInsertTarget = 'selection' | 'cursor' | 'end';
 
 export interface EditorMarkdownInsertOptions {
@@ -46,13 +36,10 @@ export interface EditorMarkdownInsertResult {
 
 export interface EditorCapabilityAdapter {
   openImageViewer: (locator: { from: number; to: number; asset: string }) => boolean;
-  /** True when the live CodeMirror controller (and review compartment) exist. */
-  isReady: () => boolean;
   focus: () => boolean;
   focusAtEnd: () => boolean;
   readSnapshot: () => EditorSnapshot | null;
   readSelection: () => EditorSelectionCapabilitySnapshot | null;
-  readCurrentBlock: () => EditorCurrentBlockSnapshot | null;
   replaceDocument: (
     markdown: string,
     options?: {
@@ -81,7 +68,6 @@ export interface EditorCapabilityAdapter {
   closeSlashMenu: () => void;
   closeSelectionMenu: () => void;
   closeDatePicker: () => void;
-  addReadOnlyOverlay: (className: string) => ReadOnlyOverlayHandle;
 
 }
 
@@ -126,10 +112,6 @@ export function createEditorCapabilityAdapter(
   getController: () => EditorController | null
 ): EditorCapabilityAdapter {
   return {
-    isReady: () => {
-      const controller = getController();
-      return Boolean(controller?.view && controller.proposalReviewCompartment);
-    },
     focus: () => {
       const controller = getController();
       if (!controller) return false;
@@ -174,21 +156,6 @@ export function createEditorCapabilityAdapter(
         selectedText: controller.view.state.sliceDoc(selection.from, selection.to)
       };
     },
-    readCurrentBlock: () => {
-      const controller = getController();
-      if (!controller) {
-        return null;
-      }
-      const position = controller.view.state.selection.main.head;
-      const block = describeBlockAt(controller.view.state, position);
-      if (!block) {
-        return null;
-      }
-      return {
-        block,
-        text: controller.view.state.sliceDoc(block.from, block.to)
-      };
-    },
     replaceDocument: (markdown, options = {}) =>
       replaceEditorDocument(getController(), markdown, options),
     insertMarkdown: (markdown, options = {}) =>
@@ -211,20 +178,5 @@ export function createEditorCapabilityAdapter(
       const controller = getController();
       if (controller) selectionMenuHideFromUi(controller.view);
     },
-    addReadOnlyOverlay: (className) => {
-      const controller = getController();
-      if (!controller) {
-        return { dispose: () => {} };
-      }
-      const overlay = document.createElement('div');
-      overlay.className = className;
-      overlay.dataset.editorOverlay = 'readonly';
-      controller.view.dom.appendChild(overlay);
-      return {
-        dispose: () => {
-          overlay.remove();
-        }
-      };
-    }
   };
 }

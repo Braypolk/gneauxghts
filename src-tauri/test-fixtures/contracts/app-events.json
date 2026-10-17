@@ -7,16 +7,7 @@
         "notePath": "/vault/Changed.md",
         "deleted": false,
         "documentKind": "note",
-        "source": "watcher",
-        "chatId": null
-      }
-    },
-    {
-      "channel": "chat://projection-conflict",
-      "payload": {
-        "conversationId": "conversation-1",
-        "notePath": "/vault/Chats/conversation-1/Conversation.md",
-        "deleted": false
+        "source": "watcher"
       }
     },
     {

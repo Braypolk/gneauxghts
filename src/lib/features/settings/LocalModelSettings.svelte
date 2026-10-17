@@ -14,7 +14,7 @@
     X
   } from '@lucide/svelte';
   import { onMount } from 'svelte';
-  import { TauriChatApi } from '$lib/features/chat/api';
+  import { chatSettings } from '$lib/features/chat/pi/settings';
   import type {
     ChatReasoningEffort,
     ChatModelCapabilities,
@@ -36,7 +36,7 @@
 
   let { baseUrl, selectedModel, onSelect, onStatus, onError }: Props = $props();
 
-  const api = new TauriChatApi();
+  const api = chatSettings;
   const defaultCapabilities: LocalModelCapabilitySelection = {
     images: false,
     tools: true,

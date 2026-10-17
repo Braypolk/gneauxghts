@@ -102,8 +102,7 @@ pub(super) fn reconcile(
         let Ok(markdown) = fs::read_to_string(&path) else {
             continue;
         };
-        if content_hash(&markdown) != note_hash || !crate::note::semantic_recall_eligible(&markdown)
-        {
+        if content_hash(&markdown) != note_hash {
             continue;
         }
         let mut inventory = Vec::new();
@@ -303,7 +302,6 @@ pub(crate) fn is_current(root: &Path, item: &ImageMatch) -> bool {
         .zip(root.canonicalize().ok())
         .is_some_and(|(p, r)| p.starts_with(r));
     contained
-        && crate::note::semantic_recall_eligible(&markdown)
         && content_hash(&markdown) == item.note_hash
         && image_inventory::parse(&editor_body(&markdown, &item.note_path))
             .iter()

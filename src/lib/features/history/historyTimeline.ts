@@ -10,7 +10,7 @@ import { compareHistoryRecordsNewestFirst } from './historyModeMachine';
 export const historySourceLabels: Record<HistoryMutationSource, string> = {
   editor: 'Edited',
   taskAction: 'Task updated',
-  acceptedChatProposal: 'Accepted chat suggestion',
+  agentPublication: 'Agent publication',
   externalEdit: 'External edit',
   versionRestore: 'Restored version',
   noteCreation: 'Note created',

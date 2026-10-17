@@ -1,6 +1,6 @@
 # Exercise multi-turn context with enabled local semantic retrieval
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -61,3 +61,8 @@ topic change, new-topic follow-up and final durable reload checks completed.
 See [native validation](../native-validation.md), [manual review](../native-manual-review.json)
 and [issue 07](07-followup-note-referents.md). This issue's implementation covers
 the harness and completed evaluation, not resolution of the new behavioral bug.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

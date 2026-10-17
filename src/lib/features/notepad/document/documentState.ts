@@ -1,6 +1,7 @@
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 import type { NoteSession } from '$lib/features/notepad/model/types';
+import { assertDocumentMutationAdmitted } from './documentPublicationAdmission';
 import {
   createDocumentOperationState,
   isDocumentOperationTokenCurrent,
@@ -305,6 +306,7 @@ function advanceRevision(document: NoteDraftState) {
 }
 
 export function updateDocumentTags(document: NoteDraftState, tags: string[]) {
+  assertDocumentMutationAdmitted(document);
   if (tagsEqual(document.working.tags, tags)) return false;
   document.working.tags = [...tags];
   advanceRevision(document);
@@ -315,6 +317,7 @@ export function updateDocumentTitle(
   document: NoteDraftState,
   title: string
 ) {
+  assertDocumentMutationAdmitted(document);
   if (document.working.title === title) return false;
   document.working.title = title;
   advanceRevision(document);
@@ -325,6 +328,7 @@ export function updateDocumentMarkdown(
   document: NoteDraftState,
   markdown: string
 ) {
+  assertDocumentMutationAdmitted(document);
   if (document.working.markdown === markdown) return false;
   document.working.markdown = markdown;
   advanceRevision(document);
@@ -335,6 +339,7 @@ export function dispatchDocumentOperation(
   document: NoteDraftState,
   event: DocumentOperationEvent
 ) {
+  if (event.type === 'start') assertDocumentMutationAdmitted(document);
   const previous = document.operation;
   document.operation = transitionDocumentOperation(previous, event);
   return document.operation !== previous;
@@ -424,6 +429,7 @@ export function applySessionSnapshotToDocument(
   snapshot: SessionSnapshot,
   options: SnapshotAdoptionOptions = {}
 ) {
+  assertDocumentMutationAdmitted(document);
   return applyExternalSnapshot(document, externalDocumentSnapshotFromSession(snapshot), snapshot.commitWarning ?? null, options);
 }
 

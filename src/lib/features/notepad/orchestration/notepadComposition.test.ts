@@ -91,14 +91,6 @@ describe('composed notepad commands', () => {
     expect(f.save).toHaveBeenCalledOnce();
   });
 
-  it('does not save retained review text when navigating away', async () => {
-    const f = setup(); f.setReviewing(document => document === f.initialDocument);
-    updateDocumentMarkdown(f.initialDocument, 'unaccepted proposal');
-    await f.commands.openNotePath('/vault/b.md', { noteId: 'b', focusEditorAfterOpen: false });
-    expect(f.save).not.toHaveBeenCalled();
-    // Proposal session retains its review document independently of visible panes.
-    expect(f.initialDocument.working.markdown).toBe('unaccepted proposal');
-  });
 
   it('ignores an older external read after a newer canonical adoption at the same path', async () => {
     const f = setup(); const oldRead = deferred<NoteSession>();
@@ -179,24 +171,7 @@ describe('composed notepad commands', () => {
     f.workspace.assertInvariants();
   });
 
-  it('adopts verified proposal read-back without creating an external conflict', async () => {
-    const f = setup(); updateDocumentMarkdown(f.initialDocument, 'After');
-    vi.mocked(readNoteSession).mockResolvedValue(persistedSession('a', 'After'));
-    await f.commands.acknowledgeDocumentCommit({ document: f.initialDocument, path: '/vault/a.md', markdown: 'After', committedMarkdown: 'After', commitWarning: null });
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('After');
-    expect(f.initialDocument.working.markdown).toBe('After');
-    expect(f.initialDocument.externalSync.kind).toBe('noConflict');
-  });
 
-  it('protects reviewed text when canonical proposal read-back has changed', async () => {
-    const f = setup(); updateDocumentMarkdown(f.initialDocument, 'After');
-    vi.mocked(readNoteSession).mockResolvedValue(persistedSession('a', 'racing disk edit'));
-    await f.commands.acknowledgeDocumentCommit({ document: f.initialDocument, path: '/vault/a.md', markdown: 'After', committedMarkdown: 'After', commitWarning: null });
-    expect(readNoteSession).toHaveBeenCalledTimes(2);
-    expect(f.initialDocument.externalSync).toMatchObject({ kind: 'conflict', external: { kind: 'snapshot', document: { content: { markdown: 'racing disk edit' } } } });
-    expect(f.initialDocument.working.markdown).toBe('After');
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('a');
-  });
 
   it('records a newly remembered note identity before starting a fresh draft', async () => {
     const f = setup({ ...createEmptySessionSnapshot(), title: 'Remembered', bodyMarkdown: 'Draft body' });

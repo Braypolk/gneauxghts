@@ -1,4 +1,4 @@
-import { documentRegistry } from '../document/documentRegistry';
+import { assertWorkspaceMutationAdmitted } from '../document/documentPublicationAdmission';
 import {
   createEmptySessionSnapshot,
   type ForgottenNote,
@@ -163,6 +163,7 @@ export function bindNotepadStateToVault(
   state: NotepadState,
   vaultRoot: string
 ) {
+  assertWorkspaceMutationAdmitted(state);
   state.vaultRoot = normalizeVaultRoot(vaultRoot);
   rebuildCanonicalDocumentLookup(state);
 }
@@ -230,6 +231,7 @@ function storeDocument<TPaneId extends string>(
   state: NotepadState<TPaneId>,
   document: NoteDraftState
 ): NoteDraftState {
+  assertWorkspaceMutationAdmitted(state);
   state.documentsByHandle[document.handle] = document;
   const stored = state.documentsByHandle[document.handle];
   rebuildCanonicalDocumentLookup(state);
@@ -240,6 +242,7 @@ export function upsertNote<TPaneId extends string>(
   state: NotepadState<TPaneId>,
   document: NoteDraftState
 ) {
+  assertWorkspaceMutationAdmitted(state);
   return storeDocument(state, document);
 }
 
@@ -256,6 +259,7 @@ export function replacePaneReferenceWithFreshDraft<
   references: PaneDocumentReferences<TPaneId>,
   paneId: TPaneId
 ) {
+  assertWorkspaceMutationAdmitted(state);
   const freshDraft = createFreshDraftNote(state);
   references.setPaneDocumentHandle(paneId, freshDraft.handle);
   return freshDraft;
@@ -266,14 +270,13 @@ export function replaceReferencedNoteWithFreshDraft<TPaneId extends string>(
   references: PaneDocumentReferences<TPaneId>,
   documentHandle: DocumentHandle
 ) {
+  assertWorkspaceMutationAdmitted(state);
   const freshDraft = createFreshDraftNote(state);
   references.replaceDocumentHandleReferences(
     documentHandle,
     freshDraft.handle
   );
-  if (!documentRegistry.isReviewing(documentHandle)) {
-    delete state.documentsByHandle[documentHandle];
-  }
+  delete state.documentsByHandle[documentHandle];
   rebuildCanonicalDocumentLookup(state);
   return freshDraft;
 }
@@ -283,7 +286,8 @@ export function removeNoteIfUnreferenced<TPaneId extends string>(
   references: PaneDocumentReferences<TPaneId>,
   documentHandle: DocumentHandle
 ) {
-  if (references.isDocumentReferenced(documentHandle) || documentRegistry.isReviewing(documentHandle)) return false;
+  assertWorkspaceMutationAdmitted(state);
+  if (references.isDocumentReferenced(documentHandle)) return false;
   delete state.documentsByHandle[documentHandle];
   rebuildCanonicalDocumentLookup(state);
   return true;
@@ -350,6 +354,7 @@ export function adoptSnapshotForPane<TPaneId extends string>(
   paneId: TPaneId,
   snapshot: SessionSnapshot
 ) {
+  assertWorkspaceMutationAdmitted(state);
   const currentDocument = getPaneNote(state, references, paneId);
   const existing = findOpenDocument(state, {
     noteId: snapshot.currentNoteId,

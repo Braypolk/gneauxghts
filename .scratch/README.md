@@ -7,13 +7,13 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
-- [Persistent Pi evaluation app](pi-durable-chat-evaluation/README.md): retained normal-app runbook and supporting evidence for the separately installed copied-vault/local-model evaluation. All 13 implementations and required bounded delivery checks are complete; historical tickets/spec are outside the executable backlog. See the [outcome](archive/pi-durable-chat-evaluation/outcome.md) and [retained progress](pi-durable-chat-evaluation/progress.md). Narrow/continue isolated testing; production/default adoption remains deferred.
-- [iOS readiness](mobile-ios-readiness/spec.md): prioritized implementation plan for recent iPhones; background saves, safe next-launch vault selection and drag cancellation are implemented, with device validation pending. Landscape safe areas and keyboard layout are implemented and simulator-checked. Touch editing, secondary controls and image gestures are implemented. The on-device semantic runtime is bundled and product simulator workflows pass; physical memory/workflow acceptance remains open. Mobile chat now supports both desktop providers on iOS; both protocols pass bounded simulator checks. Keychain persistence, native deadlines/network failures and shared visual proposal review are simulator-checked. Review overlap/styling/touch defects are corrected. [Container relocation](archive/mobile-ios-container-relocation.md) is corrected and verified across legacy recovery and repeated signed simulator replacement, preserving real conflicts. Physical/distribution credentials and physical/live acceptance remain in the device gate. Sync and older-device compatibility are deferred.
-- [Chat reliability](chat-reliability/README.md): request latency and citation entailment are open; this index owns the next steps.
-- [Context selection](chat-context-selection/spec.md): completed selection work and retained follow-ups. Follow [issue 08](chat-context-selection/issues/08-inline-citation-omission.md) for native citation omissions. [Excerpt-only answer scope](archive/excerpt-only-answer-scope.md) is corrected and native-verified; ordinary full-note questions remain supported.
+- [Historical Pi cost findings](pi-durable-chat-evaluation/cost-investigation.md): retired evaluation measurements and comparison caveats. The old optimization backlog is superseded; current performance needs fresh matched measurements.
+- [iOS readiness](mobile-ios-readiness/spec.md): prioritized implementation plan for recent iPhones; background saves, safe next-launch vault selection and drag cancellation are implemented, with device validation pending. Landscape safe areas and keyboard layout are implemented and simulator-checked. Touch editing, secondary controls and image gestures are implemented. The on-device semantic runtime is bundled and product simulator workflows pass; physical memory/workflow acceptance remains open. Historical mobile chat supported both desktop providers on iOS; both protocols pass bounded simulator checks. Its Keychain persistence, native deadlines/network failures and former visual proposal review were simulator-checked; current [Pi simulator acceptance](archive/pi-chat-rebuild-evidence/ios.md) is recorded separately. Review overlap/styling/touch defects are corrected. [Container relocation](archive/mobile-ios-container-relocation.md) is corrected and verified across legacy recovery and repeated signed simulator replacement, preserving real conflicts. Physical/distribution credentials and physical/live acceptance remain in the device gate. Sync and older-device compatibility are deferred.
+- [Historical chat reliability](chat-reliability/README.md): old runtime latency and citation investigations are superseded as executable tickets. Semantic entailment remains deferred and is not established by Pi citation identity admission.
+- [Historical context selection](chat-context-selection/spec.md): measurements and retired implicit-editor/excerpt/frozen-history behavior. Old follow-ups are superseded; current explicit note reads/citations belong to the Pi rebuild.
 - Recent [instruction audit](chat-instruction-audit/spec.md), [context reduction](chat-context-reduction/spec.md) and [tool interface](chat-tool-interface/spec.md) records support those investigations. Their completed steps are measurements, not separate open implementation queues.
 - [Gemma implementation](embeddinggemma-2/spec.md): the selected LiteRT implementation and remaining release-validation limits. Earlier runtime experiments in this folder describe their original checkpoints.
-- [Transcript recovery](chat-transcript-recovery/spec.md): the retained implementation/recovery contract and bounded verification record.
+- [Historical transcript recovery](chat-transcript-recovery/spec.md): retained evidence of the retired importer; Pi performs no old-chat import or managed transcript publication.
 - [Note formatting on load](note-formatting-load/issues/01-formatting-before-readiness.md): retained issue requiring fresh triage against current code.
 
 Raw chat traces, selected source snapshots and failed runs are retained while the
@@ -22,10 +22,10 @@ and reproducible fixtures belong in Git.
 
 ## Deferred or awaiting fresh triage
 
-- [Pi Durable native prototype](archive/pi-durable-native-prototype.md): completed isolated experiment; native desktop/iOS editor and recovery gates pass, but adoption is deferred. No production modules removed; parity and native adapter costs remain. Default runtime unchanged.
+- [Pi Durable native prototype](archive/pi-durable-native-prototype.md): completed isolated experiment. Its adoption verdict belongs to that historical pin; the ordinary Pi rebuild is now implemented and supersedes the executable evaluation route.
 
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.
-- [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is implemented.
+- [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is historical and its UI is retired by the Pi rebuild.
 - [Settings checkpoint](settings-redesign/README.md): further design deferred.
 - [Pane animation](pane-animation/validation.md#remaining-profiling): completed corrections with explicitly limited native verification and remaining profiling suggestions.
 - [Workspace dock motion](workspace-dock-motion/spec.md), [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
@@ -33,7 +33,17 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
-- [Pi Durable interactive evaluation outcome](archive/pi-durable-chat-evaluation/outcome.md): 13 implementations and bounded required desktop/iOS/fault/history/two-launch local handoff acceptance complete. Retains the first unexplained v51 desktop failure, hosted/physical limits and material v38 bridge/storage regressions. Continue narrow isolated testing; default adoption/migration is deferred, with no overall coordination-reduction/full-parity/performance-win claim.
+- [Combined Pi merge readiness](archive/pi-combined-merge-readiness.md): fresh combined checks, corrected scroll/touch/IME regressions and restart test readiness; all browser scenarios covered after focused reruns, native domain guarantees retained. Ready for the agreed desktop merge scope.
+
+- [Shared search/hash cleanup](archive/pi-shared-search-cleanup.md): extracted the retained interactive search and stable Pi receipt hash, removed retired agent evidence protocols, and verified native domain guarantees.
+
+- [Pi pre-merge audit](archive/pi-premerge-audit.md): independent Standards/Spec review, startup quiesce and diagnostic fixes, default native acceptance activation, dead UI/native helper cleanup and merge considerations. Covers the effective checkout, including untracked rebuild files.
+
+- [Pi adapter alignment](archive/pi-chat-adapter-alignment/outcome.md): all six tickets implemented and tested on Pi 1.3.0. Standard provider/options, sanitized diagnostics, Chord observation cancellation and incremental list metadata preserve native permission, citation, publication and shutdown guarantees. Current-source frontend/native checks, all five desktop gates and bounded simulator/reopen acceptance pass. Matched discovery/list counts improve; no total storage or latency claim. Physical-device/live-hosted acceptance remains deferred.
+
+- [Pi ordinary-chat rebuild](archive/pi-chat-rebuild.md): all ten tickets implemented; ordinary chat uses Pi for generic execution/history/standard compaction and native vault owners for domain authority. Desktop and simulator local-model/fault/publication/recovery acceptance complete. Physical-device testing is deferred; initial model tools remain read-only with a tested future create/update foundation. No legacy parity or performance-win claim.
+
+- [Pi Durable interactive evaluation outcome](archive/pi-durable-chat-evaluation/outcome.md): bounded historical acceptance, original failures and resource limits. The later ordinary-chat rebuild supersedes its deferred-adoption recommendation; committed working records are recoverable from Git at `64cc3ff6`.
 
 - [Background native testing](archive/native-background-testing.md): native E2E startup/restarts and focus permissions default to background operation; four smoke files pass, while actual focus/paint checks require explicit foreground opt-in.
 
@@ -41,7 +51,7 @@ and reproducible fixtures belong in Git.
 
 - [Chat evidence freshness](archive/chat-evidence-freshness.md): corrected false change detection from legacy identity bookkeeping, timestamps and internal settlement; actual source changes and access revocation remain blocked.
 
-- [Chat-to-note](archive/chat-to-note.md): faithful whole-answer/selection saves, normal-editor review, durable pending drafts, explicit existing-note additions and conversational refinement. Native review-switching fixture readiness and Retina restoration are corrected. The [cleanup audit](archive/chat-cleanup-audit.md) records the current gate. Local-model journeys pass; physical iOS validation remains unverified.
+- [Historical chat-to-note](archive/chat-to-note.md): retired ordinary-chat feature; the earlier implementation provided faithful whole-answer/selection saves, normal-editor review, durable pending drafts, explicit existing-note additions and conversational refinement. Native review-switching fixture readiness and Retina restoration are corrected. The [cleanup audit](archive/chat-cleanup-audit.md) records the current gate. Local-model journeys pass; physical iOS validation remains unverified.
 
 - [Structured answer source recovery](archive/structured-answer-source-recovery.md): unissued selections become explicit unavailable markers while preserving valid answer text and citations; stale or revoked real evidence still blocks delivery.
 - [Server reasoning options](archive/server-reasoning-options.md): local controls use advertised LM Studio options and defaults; outgoing reasoning is revalidated and mapped to the compatible transport.

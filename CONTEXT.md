@@ -29,12 +29,12 @@ A timeline occurrence that changes a note's status or location without defining 
 _Avoid_: Metadata revision
 
 **Mutation Source**:
-The local origin through which a revision or lifecycle event entered the timeline, such as the editor, a task action, an accepted chat proposal, an external edit, or a restore.
+The local origin through which a revision or lifecycle event entered the timeline, such as the editor, a task action, an agent publication, an external edit, or a restore.
 _Avoid_: Author, collaborator
 
-**Note Proposal**:
-A proposed note creation or change held for user review before becoming canonical note content. Its editable draft and review choices remain pending until the user keeps or discards them.
-_Avoid_: Generated note, unpublished note
+**Agent Publication**:
+A canonical note creation or change made under explicit agent write authority. When review is required, approval applies to the exact content being published.
+_Avoid_: Accepted chat proposal, chat suggestion
 
 **Current-Content Provenance**:
 Retained revision evidence about when and how content still present in a note was introduced, most recently changed, or returned through a Version Restore. Editing Windows supply intervals rather than exact within-window introduction or retyping history.

@@ -832,11 +832,6 @@ fn initialization_preserves_damaged_identity_continuity_without_rewriting_it() {
         "Legacy without managed data",
     )
     .unwrap();
-    fs::write(
-        notes.path().join("Chat.md"),
-        "---\ngneauxghts:\n  id: chat-projection\n  kind: chatTranscript\n---\n\nChat",
-    )
-    .unwrap();
     let damaged_before = fs::read(&damaged_path).unwrap();
     let state = AppState::new(
         SemanticState::new_disabled("disabled"),

@@ -2,8 +2,8 @@ use super::{
     activity::BackgroundWorkGate,
     ann::{AnnIndexState, ANN_MAX_INCREMENTAL_CHUNKS, ANN_MAX_INCREMENTAL_DOCUMENTS},
     atlas::{
-        atlas_structural_build_covers_epoch, atlas_visibilities_for_mutation_batch,
-        AtlasGenerationKey, AtlasLabelRequest, AtlasWorkerContext, ATLAS_DEPENDENCIES_NOT_READY,
+        atlas_structural_build_covers_epoch, AtlasGenerationKey, AtlasLabelRequest,
+        AtlasWorkerContext, ATLAS_DEPENDENCIES_NOT_READY,
     },
     chunking::{chunk_markdown, ChunkedNote},
     db::{
@@ -37,28 +37,9 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ChatRecallExcerpt {
-    pub(crate) anchor: String,
-    pub(crate) quote: String,
-}
-
-pub(crate) fn chat_recall_content_hash(excerpts: &[ChatRecallExcerpt]) -> String {
-    let identity = excerpts
-        .iter()
-        .map(|excerpt| format!("{}\0{}", excerpt.anchor, excerpt.quote))
-        .collect::<Vec<_>>()
-        .join("\0");
-    content_hash(&identity)
-}
-
 #[derive(Clone)]
 pub(crate) enum PendingSemanticDocument {
     NoteMarkdown(String),
-    ChatRecall {
-        title: String,
-        excerpts: Vec<ChatRecallExcerpt>,
-    },
 }
 
 #[derive(Clone)]
@@ -833,7 +814,6 @@ fn process_pending_jobs_with_wait(
                     map_store: context.atlas_map.clone(),
                     db_path: db_path.to_path_buf(),
                     cache_dir: cache_dir.clone(),
-                    dimensions: provider.model_info().dimensions,
                     provider: provider.clone(),
                     debug: debug.clone(),
                     note_ann: note_ann.clone(),
@@ -984,39 +964,14 @@ fn process_pending_jobs_with_wait(
                     _ => {}
                 }
                 if !atlas {
-                    let visibilities = match &job {
-                        SelectedJob::Documents(batch) => atlas_visibilities_for_mutation_batch(
-                            batch.updates.values().any(|update| {
-                                matches!(update.document, PendingSemanticDocument::NoteMarkdown(_))
-                            }),
-                            batch.updates.values().any(|update| {
-                                matches!(
-                                    update.document,
-                                    PendingSemanticDocument::ChatRecall { .. }
-                                )
-                            }),
-                            !batch.deletes.is_empty() || !batch.moves.is_empty(),
-                            false,
-                        ),
-                        _ => atlas_visibilities_for_mutation_batch(false, false, false, true),
-                    };
-                    for visibility in visibilities {
-                        let key = AtlasGenerationKey {
-                            chat_visibility: *visibility,
-                        };
-                        if atlas_structural_build_covers_epoch(&next, key, next_revision) {
-                            continue;
-                        }
-                        if cache_dir
-                            .join("atlas")
-                            .join(format!("ready-{}.json", visibility.signature_value()))
-                            .exists()
-                        {
-                            next.atlas_requests
-                                .entry(key)
-                                .and_modify(|epoch| *epoch = (*epoch).max(next_revision))
-                                .or_insert(next_revision);
-                        }
+                    let key = AtlasGenerationKey;
+                    if !atlas_structural_build_covers_epoch(&next, key, next_revision)
+                        && cache_dir.join("atlas").join("ready.json").exists()
+                    {
+                        next.atlas_requests
+                            .entry(key)
+                            .and_modify(|epoch| *epoch = (*epoch).max(next_revision))
+                            .or_insert(next_revision);
                     }
                 }
             }
@@ -1343,9 +1298,6 @@ fn process_full_scan(
     for path in collect_markdown_files_recursively(notes_dir)? {
         let raw_path = path.to_string_lossy().into_owned();
         let markdown = fs::read_to_string(&path).map_err(|err| err.to_string())?;
-        if !crate::note::semantic_recall_eligible(&markdown) {
-            continue;
-        }
         seen_paths.insert(raw_path.clone());
         let modified_millis = read_modified_millis(&path)?;
         let next_content_hash = content_hash(&markdown);
@@ -1380,13 +1332,8 @@ fn process_full_scan(
 
     let deleted_notes = stored
         .iter()
-        // Chat recall is authoritative in ai.sqlite3 and is reconciled by
-        // ChatService. A filesystem scan must never delete an already-correct
-        // explicit recall row merely because projection Markdown is excluded.
-        .filter(|(stored_path, record)| {
-            record.document_kind == crate::note::DocumentKind::Note
-                && !seen_paths.contains(*stored_path)
-        })
+        // Filesystem reconciliation removes only derived rows for absent notes.
+        .filter(|(stored_path, _)| !seen_paths.contains(*stored_path))
         .map(|(stored_path, _)| PathBuf::from(stored_path))
         .collect::<HashSet<_>>();
     let outcome = process_note_batch(
@@ -1593,41 +1540,10 @@ fn process_note_batch(
     for (note_path, update) in batch.updates {
         let path_str = note_path.to_string_lossy().into_owned();
         let previous_labels = load_note_chunk_labels(connection, &path_str)?;
-        let previous_note = load_note_record(connection, &path_str)?;
         let prepared = match update.document {
             PendingSemanticDocument::NoteMarkdown(markdown) => {
-                if !crate::note::semantic_recall_eligible(&markdown) {
-                    delete_note(connection, &path_str)?;
-                    changed_chunk_count = changed_chunk_count.saturating_add(previous_labels.len());
-                    if changed_chunk_count > ANN_MAX_INCREMENTAL_CHUNKS {
-                        defer_ann_updates = true;
-                        force_ann_rebuild = true;
-                    }
-                    if !defer_ann_updates && !ann.apply_note_delete(&previous_labels)? {
-                        force_ann_rebuild = true;
-                    }
-                    if !defer_ann_updates
-                        && !note_ann.apply_note_delete(
-                            previous_note
-                                .as_ref()
-                                .map(|note| note.stable_ann_label)
-                                .unwrap_or(0),
-                        )?
-                    {
-                        force_note_ann_rebuild = true;
-                    }
-                    scanned_count += 1;
-                    continue;
-                }
                 prepare_note_content(connection, &note_path, &markdown, update.modified_millis)?
             }
-            PendingSemanticDocument::ChatRecall { title, excerpts } => prepare_chat_recall_content(
-                connection,
-                &note_path,
-                &title,
-                &excerpts,
-                update.modified_millis,
-            )?,
         };
         pending_updates.push(PendingIndexedUpdate {
             path_str,
@@ -1703,75 +1619,6 @@ fn index_note_content(
     let mut indexed = persist_prepared_note(connection, &path_str, prepared)?;
     indexed.embedded_count = embedded_count;
     Ok(indexed)
-}
-
-fn prepare_chat_recall_content(
-    connection: &mut rusqlite::Connection,
-    conversation_path: &Path,
-    title: &str,
-    excerpts: &[ChatRecallExcerpt],
-    modified_millis: u64,
-) -> Result<PreparedNoteContent, String> {
-    let path = conversation_path.to_string_lossy().into_owned();
-    let chunks = excerpts
-        .iter()
-        .enumerate()
-        .map(|(ordinal, excerpt)| super::chunking::SemanticChunk {
-            ordinal,
-            section_label: "Remembered passage".to_string(),
-            text: excerpt.quote.clone(),
-            text_hash: content_hash(&excerpt.quote),
-            start_line: 1,
-            end_line: 1,
-            block_anchor: Some(excerpt.anchor.clone()),
-        })
-        .collect::<Vec<_>>();
-    let stored_chunks = load_existing_chunk_embeddings(connection, &path)?;
-    let mut embeddings = vec![Vec::new(); chunks.len()];
-    let mut pending_chunk_indexes = Vec::new();
-    let mut pending_texts = Vec::new();
-    for (index, chunk) in chunks.iter().enumerate() {
-        if let Some(existing) = stored_chunks.get(&chunk.ordinal) {
-            if existing.text_hash == chunk.text_hash && !existing.embedding.is_empty() {
-                embeddings[index] = existing.embedding.clone();
-                continue;
-            }
-        }
-        pending_chunk_indexes.push(index);
-        pending_texts.push(chunk.text.clone());
-    }
-    let timestamp = crate::note::timestamp_millis_to_rfc3339(modified_millis);
-    let semantic_input_hash = hash_parts(
-        std::iter::once("chatIndex")
-            .chain(std::iter::once(title))
-            .chain(chunks.iter().map(|chunk| chunk.text.as_str())),
-    );
-    let structure_hash = hash_parts(["chatIndex", path.as_str(), parent_path(&path)]);
-    let presentation_hash =
-        hash_parts(["chatIndex", title, timestamp.as_str(), timestamp.as_str()]);
-    let metadata = SemanticNoteMetadata {
-        semantic_input_hash,
-        structure_hash,
-        presentation_hash,
-        preview: excerpts
-            .first()
-            .map(|excerpt| excerpt.quote.chars().take(260).collect())
-            .unwrap_or_default(),
-        ..SemanticNoteMetadata::default()
-    };
-    Ok(PreparedNoteContent {
-        title: title.to_string(),
-        modified_millis,
-        content_hash: chat_recall_content_hash(excerpts),
-        created_at: timestamp.clone(),
-        updated_at: timestamp,
-        document_kind: crate::note::DocumentKind::ChatIndex,
-        metadata,
-        chunks,
-        embeddings,
-        pending_chunk_indexes,
-        pending_texts,
-    })
 }
 
 fn prepare_note_content(
@@ -2110,9 +1957,9 @@ mod tests {
         atlas_failure_backoff, dirty_count_allows_incremental, extract_tags, handle_wake,
         merge_retry_batch, process_full_scan, process_note_batch, process_pending_jobs_with_wait,
         run_label_atlas_build, run_structural_atlas_build, semantic_failure_backoff,
-        ChatRecallExcerpt, IndexingWorkerContext, PendingIndexState, PendingNoteMove,
-        PendingNoteUpdate, PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue,
-        WorkerSignal, EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
+        IndexingWorkerContext, PendingIndexState, PendingNoteMove, PendingNoteUpdate,
+        PendingSemanticDocument, SemanticDocumentBatch, SemanticWorkQueue, WorkerSignal,
+        EDGE_MAX_INCREMENTAL_DIRTY_NOTES,
     };
     use crate::test_support::TestDir;
     use crate::{note, semantic::chunking::chunk_markdown};
@@ -2225,9 +2072,8 @@ mod tests {
     }
 
     use crate::semantic::{
-        activity::BackgroundWorkGate,
-        atlas::{AtlasChatVisibilityKey, AtlasGenerationKey},
-        RuntimeState, SemanticHealth, SEMANTIC_RETRY_MAX_ATTEMPTS,
+        activity::BackgroundWorkGate, atlas::AtlasGenerationKey, RuntimeState, SemanticHealth,
+        SEMANTIC_RETRY_MAX_ATTEMPTS,
     };
 
     #[test]
@@ -2539,68 +2385,6 @@ mod tests {
     }
 
     #[test]
-    fn scan_keeps_newer_recall_that_arrives_during_embedding() {
-        let temp = TestDir::new("scan-newer-recall");
-        let notes_dir = temp.path().join("notes");
-        fs::create_dir_all(&notes_dir).unwrap();
-        fs::write(
-            notes_dir.join("Note.md"),
-            "# Note\n\nTrigger scan embedding.",
-        )
-        .unwrap();
-        let db_path = temp.path().join("semantic.sqlite3");
-        let connection = crate::semantic::test_support::database(&db_path);
-        let debug = Arc::new(SemanticDebugState::new());
-        let ann =
-            Arc::new(AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).unwrap());
-        let recorder = Arc::new(RecordingEmbeddingProvider::default());
-        let recall_path = temp.path().join("Chats/Conversation.md");
-        let recall = |quote: &str, modified_millis| PendingNoteUpdate {
-            document: PendingSemanticDocument::ChatRecall {
-                title: "Conversation".into(),
-                excerpts: vec![ChatRecallExcerpt {
-                    anchor: "excerpt".into(),
-                    quote: quote.into(),
-                }],
-            },
-            modified_millis,
-        };
-        let context = worker_context(
-            db_path,
-            notes_dir,
-            recorder.clone(),
-            ann,
-            test_note_ann(&temp.path().join("cache")),
-            debug,
-            PendingIndexState {
-                full_scan_requested: true,
-                note_updates: HashMap::from([(recall_path.clone(), recall("old excerpt", 1))]),
-                ..PendingIndexState::default()
-            },
-        );
-        let pending = context.queue.pending.clone();
-        let update_path = recall_path.clone();
-        let newer = recall("new excerpt", 2);
-        *recorder.before_embed.lock().unwrap() = Some(Box::new(move || {
-            pending
-                .lock()
-                .unwrap()
-                .note_updates
-                .insert(update_path, newer);
-        }));
-        // Stop at the snapshot coalescing delay; both indexing jobs have committed.
-        process_pending_jobs_with_wait(&context, |_| false);
-        let quote: String = connection
-            .query_row(
-                "SELECT text FROM chunks WHERE note_path = ?1",
-                [recall_path.to_string_lossy().as_ref()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(quote, "new excerpt");
-    }
-
-    #[test]
     fn failed_label_claim_keeps_newer_request_and_clears_building_marker() {
         use super::{AtlasGenerationKey, AtlasLabelRequest, SelectedJob};
         let key = AtlasGenerationKey::default();
@@ -2702,7 +2486,6 @@ mod tests {
     fn markdown_from(update: &PendingNoteUpdate) -> &str {
         match &update.document {
             PendingSemanticDocument::NoteMarkdown(markdown) => markdown,
-            PendingSemanticDocument::ChatRecall { .. } => panic!("expected note Markdown"),
         }
     }
 
@@ -2848,9 +2631,7 @@ mod tests {
     #[test]
     fn atlas_building_flags_clear_after_panics() {
         let pending = Arc::new(Mutex::new(PendingIndexState::default()));
-        let key = AtlasGenerationKey {
-            chat_visibility: AtlasChatVisibilityKey::Hidden,
-        };
+        let key = AtlasGenerationKey;
         assert!(
             run_structural_atlas_build::<()>(&pending, key, 7, || panic!("structural panic"))
                 .is_err()
@@ -2871,10 +2652,7 @@ mod tests {
     use crate::semantic::{
         ann::AnnIndexState,
         chunking::SemanticChunk,
-        db::{
-            load_ann_index_signature, load_edge_generation, open_database, upsert_note_chunks,
-            SemanticNoteMetadata,
-        },
+        db::{load_ann_index_signature, load_edge_generation, open_database, upsert_note_chunks},
         debug::SemanticDebugState,
         embed::{EmbeddingInputKind, EmbeddingProvider, ModelInfo, EMBEDDING_BATCH_SIZE},
         note_ann::NoteAnnIndexState,
@@ -3147,244 +2925,6 @@ mod tests {
         assert!(hashes.0.len() >= 32);
         assert!(hashes.1.len() >= 32);
         assert!(hashes.2.len() >= 32);
-    }
-
-    #[test]
-    fn chat_recall_indexes_only_immutable_excerpt_chunks() {
-        let temp = TestDir::new("chat-recall");
-        let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = crate::semantic::test_support::database(&db_path);
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
-        let debug = Arc::new(SemanticDebugState::new());
-        let ann = Arc::new(
-            AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).expect("create ann"),
-        );
-        let note_ann = test_note_ann(&temp.path().join("cache"));
-        let path = temp.path().join("Chats/example/Conversation.md");
-        let update = PendingNoteUpdate {
-            document: PendingSemanticDocument::ChatRecall {
-                title: "A conversation".to_string(),
-                excerpts: vec![
-                    ChatRecallExcerpt {
-                        anchor: "excerpt_one".to_string(),
-                        quote: "first selected quote".to_string(),
-                    },
-                    ChatRecallExcerpt {
-                        anchor: "excerpt_two".to_string(),
-                        quote: "second selected quote".to_string(),
-                    },
-                ],
-            },
-            modified_millis: 1,
-        };
-        process_note_batch(
-            &mut connection,
-            &provider,
-            &ann,
-            &note_ann,
-            SemanticDocumentBatch::new(
-                HashMap::from([(path.clone(), update)]),
-                HashSet::new(),
-                HashMap::new(),
-            ),
-            &debug,
-        )
-        .expect("index recall");
-
-        let (kind, count): (String, usize) = connection
-            .query_row(
-                "SELECT document_kind, chunk_count FROM notes WHERE path = ?1",
-                [path.to_string_lossy().as_ref()],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )
-            .expect("recall document");
-        assert_eq!(kind, "chatIndex");
-        assert_eq!(count, 2);
-        let chunks = connection
-            .prepare("SELECT text, block_anchor FROM chunks WHERE note_path = ?1 ORDER BY ordinal")
-            .unwrap()
-            .query_map([path.to_string_lossy().as_ref()], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
-            })
-            .unwrap()
-            .collect::<Result<Vec<_>, _>>()
-            .unwrap();
-        assert_eq!(
-            chunks,
-            vec![
-                (
-                    "first selected quote".to_string(),
-                    "excerpt_one".to_string()
-                ),
-                (
-                    "second selected quote".to_string(),
-                    "excerpt_two".to_string()
-                ),
-            ]
-        );
-
-        let empty_notes_dir = temp.path().join("notes");
-        fs::create_dir_all(&empty_notes_dir).expect("create empty notes dir");
-        let no_op = process_full_scan(
-            &mut connection,
-            &empty_notes_dir,
-            &provider,
-            &ann,
-            &note_ann,
-            false,
-            &debug,
-        )
-        .expect("ordinary startup scan");
-        assert_eq!(no_op.scanned_count, 0);
-        let preserved: usize = connection
-            .query_row(
-                "SELECT COUNT(*) FROM notes WHERE path = ?1",
-                [path.to_string_lossy().as_ref()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(preserved, 1);
-
-        process_note_batch(
-            &mut connection,
-            &provider,
-            &ann,
-            &note_ann,
-            SemanticDocumentBatch::new(
-                HashMap::new(),
-                HashSet::from([path.clone()]),
-                HashMap::new(),
-            ),
-            &debug,
-        )
-        .expect("delete final recall");
-        let remaining: usize = connection
-            .query_row(
-                "SELECT COUNT(*) FROM notes WHERE path = ?1",
-                [path.to_string_lossy().as_ref()],
-                |row| row.get(0),
-            )
-            .unwrap();
-        assert_eq!(remaining, 0);
-    }
-
-    fn remembering_one_excerpt_sql_work(documents: usize, chunks_per_document: usize) -> usize {
-        let temp = TestDir::new("chat-recall-large-corpus");
-        let db_path = temp.path().join("semantic.sqlite3");
-        let mut connection = crate::semantic::test_support::database(&db_path);
-        for document in 0..documents {
-            let chunks = (0..chunks_per_document)
-                .map(|ordinal| {
-                    let text = format!("document {document} chunk {ordinal}");
-                    SemanticChunk {
-                        ordinal,
-                        section_label: format!("Chunk {ordinal}"),
-                        text_hash: blake3::hash(text.as_bytes()).to_hex().to_string(),
-                        text,
-                        start_line: ordinal + 1,
-                        end_line: ordinal + 1,
-                        block_anchor: None,
-                    }
-                })
-                .collect::<Vec<_>>();
-            let embeddings = (0..chunks_per_document)
-                .map(|ordinal| {
-                    let mut value = vec![0.0, 0.0, 0.0];
-                    value[ordinal % 3] = 1.0;
-                    value
-                })
-                .collect::<Vec<_>>();
-            upsert_note_chunks(
-                &mut connection,
-                &format!("/vault/note-{document}.md"),
-                &format!("Note {document}"),
-                1,
-                &format!("hash-{document}"),
-                "",
-                "",
-                crate::note::DocumentKind::Note,
-                &SemanticNoteMetadata::default(),
-                &chunks,
-                &embeddings,
-            )
-            .expect("seed corpus");
-        }
-
-        let provider: Arc<dyn EmbeddingProvider + Send + Sync> = Arc::new(MockEmbeddingProvider);
-        let debug = Arc::new(SemanticDebugState::new());
-        let ann = Arc::new(
-            AnnIndexState::new(temp.path().join("cache"), 3, debug.clone()).expect("create ann"),
-        );
-        let note_ann = test_note_ann(&temp.path().join("cache"));
-        let recall_path = temp.path().join("Chats/example/Conversation.md");
-        let sql_steps = Arc::new(std::sync::atomic::AtomicUsize::new(0));
-        let observed_steps = sql_steps.clone();
-        connection.progress_handler(
-            1,
-            Some(move || {
-                observed_steps.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                false
-            }),
-        );
-        let outcome = process_note_batch(
-            &mut connection,
-            &provider,
-            &ann,
-            &note_ann,
-            SemanticDocumentBatch::new(
-                HashMap::from([(
-                    recall_path,
-                    PendingNoteUpdate {
-                        document: PendingSemanticDocument::ChatRecall {
-                            title: "One memory".to_string(),
-                            excerpts: vec![ChatRecallExcerpt {
-                                anchor: "excerpt_one".to_string(),
-                                quote: "only this passage is embedded".to_string(),
-                            }],
-                        },
-                        modified_millis: 2,
-                    },
-                )]),
-                HashSet::new(),
-                HashMap::new(),
-            ),
-            &debug,
-        )
-        .expect("index one recall");
-
-        connection.progress_handler(0, None::<fn() -> bool>);
-        let sql_steps = sql_steps.load(std::sync::atomic::Ordering::Relaxed);
-        assert_eq!(outcome.scanned_count, 1);
-        assert_eq!(outcome.embedded_count, 1);
-        let chunk_count: usize = connection
-            .query_row("SELECT COUNT(*) FROM chunks", [], |row| row.get(0))
-            .expect("count chunks");
-        assert_eq!(chunk_count, documents * chunks_per_document + 1);
-        let metrics = debug.snapshot().expect("debug snapshot").metrics;
-        assert_eq!(metrics.ann_rebuild_count, 0);
-        assert_eq!(metrics.edge_rebuild_count, 0);
-        sql_steps
-    }
-
-    #[test]
-    fn remembering_one_excerpt_has_corpus_independent_sql_work_and_no_rebuild() {
-        let small = remembering_one_excerpt_sql_work(4, 8);
-        let larger = remembering_one_excerpt_sql_work(40, 8);
-        assert!(
-            larger <= small + 100,
-            "single recall SQL work grew with corpus: {small} -> {larger}"
-        );
-    }
-
-    #[test]
-    #[ignore = "opt-in semantic 20k-row scale distribution"]
-    fn remembering_one_excerpt_twenty_thousand_chunk_scale() {
-        let small = remembering_one_excerpt_sql_work(4, 8);
-        let large = remembering_one_excerpt_sql_work(200, 100);
-        assert!(
-            large <= small + 100,
-            "single recall SQL work grew with corpus: {small} -> {large}"
-        );
     }
 
     #[test]

@@ -1,11 +1,7 @@
 //! Retained chat configuration and access policy. No conversation, run or review lifecycle.
 use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::HashSet,
-    path::{Path, PathBuf},
-    sync::Arc,
-};
+use std::{path::PathBuf, sync::Arc};
 const DEFAULT_MODEL: &str = "gpt-5.6-terra";
 const DEFAULT_LOCAL_MODEL: &str = "";
 const DEFAULT_LOCAL_BASE_URL: &str = "http://localhost:1234/v1";
@@ -13,7 +9,6 @@ const DEFAULT_LOCAL_BASE_URL: &str = "http://localhost:1234/v1";
 #[serde(rename_all = "camelCase")]
 pub(crate) enum VaultAccess {
     None,
-    Approved,
     Full,
 }
 
@@ -22,30 +17,6 @@ pub(crate) enum VaultAccess {
 pub(crate) enum ChatServiceTier {
     Standard,
     Flex,
-}
-
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum WebAccess {
-    Off,
-    #[default]
-    Auto,
-}
-
-impl WebAccess {
-    pub(crate) fn as_str(&self) -> &'static str {
-        match self {
-            Self::Off => "off",
-            Self::Auto => "auto",
-        }
-    }
-
-    pub(crate) fn parse(value: &str) -> Self {
-        match value {
-            "off" => Self::Off,
-            _ => Self::Auto,
-        }
-    }
 }
 
 impl ChatServiceTier {
@@ -68,7 +39,6 @@ impl VaultAccess {
     pub(crate) fn as_str(&self) -> &'static str {
         match self {
             Self::None => "none",
-            Self::Approved => "approved",
             Self::Full => "full",
         }
     }
@@ -77,8 +47,7 @@ impl VaultAccess {
         match value {
             "none" => Self::None,
             "full" => Self::Full,
-            "approved" | "limited" => Self::Approved,
-            _ => Self::Approved,
+            _ => Self::None,
         }
     }
 }
@@ -97,8 +66,6 @@ pub(crate) struct ChatDefaults {
     #[serde(default = "default_reasoning_effort")]
     pub(crate) reasoning_effort: String,
     pub(crate) service_tier: ChatServiceTier,
-    #[serde(default)]
-    pub(crate) web_access: WebAccess,
     pub(crate) default_access: VaultAccess,
 }
 
@@ -116,10 +83,7 @@ pub(crate) struct ChatSettings {
     #[serde(default = "default_reasoning_effort")]
     pub(crate) reasoning_effort: String,
     pub(crate) service_tier: ChatServiceTier,
-    #[serde(default)]
-    pub(crate) web_access: WebAccess,
     pub(crate) default_access: VaultAccess,
-    pub(crate) atlas_visibility: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -154,9 +118,7 @@ impl Default for ChatSettings {
             local_base_url: DEFAULT_LOCAL_BASE_URL.to_string(),
             reasoning_effort: DEFAULT_REASONING_EFFORT.to_string(),
             service_tier: ChatServiceTier::Standard,
-            web_access: WebAccess::Auto,
             default_access: VaultAccess::Full,
-            atlas_visibility: "hidden".to_string(),
         }
     }
 }
@@ -188,31 +150,6 @@ pub(crate) fn validate_reasoning_effort(value: &str) -> Result<&str, String> {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatSource {
-    pub(crate) kind: String,
-    pub(crate) note_id: Option<String>,
-    pub(crate) note_path: Option<String>,
-    pub(crate) title: String,
-    pub(crate) excerpt: String,
-    pub(crate) url: Option<String>,
-    pub(crate) anchor: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) revision: Option<crate::services::note_timeline::RevisionCitation>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub(crate) passage: Option<crate::services::evidence::PassageCitation>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct ChatGrant {
-    pub(crate) note_id: String,
-    pub(crate) note_path: Option<String>,
-    pub(crate) title: String,
-    pub(crate) granted_at_millis: u64,
-}
-
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct ChatNotePolicy {
@@ -229,15 +166,13 @@ pub(crate) struct ChatDomain {
 }
 struct ChatDomainInner {
     db_path: PathBuf,
-    notes_root: PathBuf,
 }
 impl ChatDomain {
-    pub(crate) fn new(notes_root: PathBuf, vault_data_dir: PathBuf) -> Result<Self, String> {
+    pub(crate) fn new(vault_data_dir: PathBuf) -> Result<Self, String> {
         std::fs::create_dir_all(&vault_data_dir).map_err(|e| e.to_string())?;
         let service = Self {
             inner: Arc::new(ChatDomainInner {
                 db_path: vault_data_dir.join("ai.sqlite3"),
-                notes_root,
             }),
         };
         service.initialize()?;
@@ -254,92 +189,19 @@ impl ChatDomain {
             openai_model TEXT NOT NULL DEFAULT 'gpt-5.6-terra', local_model TEXT NOT NULL DEFAULT '',
             local_base_url TEXT NOT NULL DEFAULT 'http://localhost:1234/v1',
             reasoning_effort TEXT NOT NULL DEFAULT 'medium', service_tier TEXT NOT NULL DEFAULT 'standard',
-            default_access TEXT NOT NULL, web_access TEXT NOT NULL DEFAULT 'auto', atlas_visibility TEXT NOT NULL DEFAULT 'hidden');
-          CREATE TABLE IF NOT EXISTS chat_note_policies (note_id TEXT PRIMARY KEY, disposition TEXT NOT NULL CHECK(disposition IN ('approved','excluded')), title TEXT NOT NULL DEFAULT '', updated_at_millis INTEGER NOT NULL);
+            default_access TEXT NOT NULL);
+          CREATE TABLE IF NOT EXISTS chat_note_policies (note_id TEXT PRIMARY KEY, disposition TEXT NOT NULL CHECK(disposition = 'excluded'), title TEXT NOT NULL DEFAULT '', updated_at_millis INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS chat_composer_drafts (slot TEXT PRIMARY KEY,body TEXT NOT NULL,updated_at_millis INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS chat_local_model_capabilities (model TEXT PRIMARY KEY, images INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 1,audio INTEGER NOT NULL DEFAULT 0,video INTEGER NOT NULL DEFAULT 0,reasoning_effort TEXT NOT NULL DEFAULT 'medium',updated_at_millis INTEGER NOT NULL);
         ").map_err(|e|e.to_string())?;
-        for (table, column, definition) in [
-            (
-                "chat_settings",
-                "openai_model",
-                "TEXT NOT NULL DEFAULT 'gpt-5.6-terra'",
-            ),
-            ("chat_settings", "local_model", "TEXT NOT NULL DEFAULT ''"),
-            (
-                "chat_settings",
-                "local_base_url",
-                "TEXT NOT NULL DEFAULT 'http://localhost:1234/v1'",
-            ),
-            (
-                "chat_settings",
-                "reasoning_effort",
-                "TEXT NOT NULL DEFAULT 'medium'",
-            ),
-            (
-                "chat_settings",
-                "service_tier",
-                "TEXT NOT NULL DEFAULT 'standard'",
-            ),
-            (
-                "chat_settings",
-                "web_access",
-                "TEXT NOT NULL DEFAULT 'auto'",
-            ),
-            (
-                "chat_settings",
-                "atlas_visibility",
-                "TEXT NOT NULL DEFAULT 'hidden'",
-            ),
-            (
-                "chat_local_model_capabilities",
-                "reasoning_effort",
-                "TEXT NOT NULL DEFAULT 'medium'",
-            ),
-        ] {
-            let present: bool = connection
-                .query_row(
-                    &format!(
-                        "SELECT EXISTS(SELECT 1 FROM pragma_table_info('{table}') WHERE name=?1)"
-                    ),
-                    [column],
-                    |r| r.get(0),
-                )
-                .map_err(|e| e.to_string())?;
-            if !present {
-                connection
-                    .execute_batch(&format!(
-                        "ALTER TABLE {table} ADD COLUMN {column} {definition}"
-                    ))
-                    .map_err(|e| e.to_string())?;
-                if column == "openai_model" {
-                    connection
-                        .execute(
-                            "UPDATE chat_settings SET openai_model=model WHERE provider='openai'",
-                            [],
-                        )
-                        .map_err(|e| e.to_string())?;
-                }
-            }
-        }
         connection.execute("INSERT OR IGNORE INTO chat_settings(id,provider,model,default_access) VALUES(1,'openai',?1,'full')",[DEFAULT_MODEL]).map_err(|e|e.to_string())?;
-        connection
-            .execute(
-                "UPDATE chat_settings SET default_access='approved' WHERE default_access='limited'",
-                [],
-            )
-            .map_err(|e| e.to_string())?;
-        let legacy: bool = connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_limited_grants')",[],|r|r.get(0)).map_err(|e|e.to_string())?;
-        if legacy {
-            connection.execute("INSERT OR IGNORE INTO chat_note_policies(note_id,disposition,title,updated_at_millis) SELECT note_id,'approved',title,granted_at_millis FROM chat_limited_grants",[]).map_err(|e|e.to_string())?;
-        }
         Ok(())
     }
     pub(crate) fn get_settings(&self) -> Result<ChatSettings, String> {
         self.connection()?
             .query_row(
                 "SELECT provider, model, openai_model, local_model, local_base_url,
-                        reasoning_effort, service_tier, default_access, atlas_visibility, web_access
+                        reasoning_effort, service_tier, default_access
                  FROM chat_settings WHERE id = 1",
                 [],
                 |row| {
@@ -352,8 +214,6 @@ impl ChatDomain {
                         reasoning_effort: row.get(5)?,
                         service_tier: ChatServiceTier::parse(&row.get::<_, String>(6)?),
                         default_access: VaultAccess::parse(&row.get::<_, String>(7)?),
-                        atlas_visibility: row.get(8)?,
-                        web_access: WebAccess::parse(&row.get::<_, String>(9)?),
                     })
                 },
             )
@@ -375,7 +235,7 @@ impl ChatDomain {
                 "UPDATE chat_settings
                  SET provider = ?1, model = ?2, openai_model = ?3, local_model = ?4,
                      local_base_url = ?5, reasoning_effort = ?6, service_tier = ?7,
-                     default_access = ?8, web_access = ?9
+                     default_access = ?8
                  WHERE id = 1",
                 params![
                     settings.provider,
@@ -385,25 +245,11 @@ impl ChatDomain {
                     settings.local_base_url.trim(),
                     reasoning_effort,
                     settings.service_tier.as_str(),
-                    settings.default_access.as_str(),
-                    settings.web_access.as_str()
+                    settings.default_access.as_str()
                 ],
             )
             .map_err(|error| error.to_string())?;
         self.get_settings()
-    }
-
-    pub(crate) fn set_atlas_visibility(&self, visibility: &str) -> Result<(), String> {
-        if !matches!(visibility, "hidden" | "remembered" | "all") {
-            return Err("Atlas visibility must be hidden, remembered, or all".to_string());
-        }
-        self.connection()?
-            .execute(
-                "UPDATE chat_settings SET atlas_visibility = ?1 WHERE id = 1",
-                [visibility],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
     }
 
     pub(crate) fn local_model_capabilities(
@@ -510,73 +356,12 @@ impl ChatDomain {
         }
     }
 
-    pub(crate) fn grant_note(&self, note_id: &str, title: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "INSERT INTO chat_note_policies (note_id, disposition, title, updated_at_millis)
-                 VALUES (?1, 'approved', ?2, ?3)
-                 ON CONFLICT(note_id) DO UPDATE SET disposition = 'approved',
-                   title = excluded.title, updated_at_millis = excluded.updated_at_millis",
-                params![note_id, title, to_i64(now_millis())?],
-            )
-            .map_err(|error| error.to_string())?;
-        Ok(())
-    }
-
-    pub(crate) fn revoke_note(&self, note_id: &str) -> Result<(), String> {
-        let connection = self.connection()?;
-        connection
-            .execute(
-                "DELETE FROM chat_note_policies
-                 WHERE note_id = ?1 AND disposition = 'approved'",
-                [note_id],
-            )
-            .map_err(|error| error.to_string())?;
-        clear_legacy_grant(&connection, note_id)?;
-        Ok(())
-    }
-
-    pub(crate) fn granted_note_ids(&self) -> Result<HashSet<String>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT note_id FROM chat_note_policies WHERE disposition = 'approved'")
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<HashSet<_>, _>>()
-            .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn list_grants(&self) -> Result<Vec<ChatGrant>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare(
-                "SELECT note_id, title, updated_at_millis
-                 FROM chat_note_policies WHERE disposition = 'approved' ORDER BY title",
-            )
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| {
-                Ok(ChatGrant {
-                    note_id: row.get(0)?,
-                    note_path: None,
-                    title: row.get(1)?,
-                    granted_at_millis: row.get::<_, i64>(2)?.max(0) as u64,
-                })
-            })
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())
-    }
-
     pub(crate) fn list_note_policies(&self) -> Result<Vec<ChatNotePolicy>, String> {
         let connection = self.connection()?;
         let mut statement = connection
             .prepare(
                 "SELECT note_id, title, disposition, updated_at_millis
-                 FROM chat_note_policies ORDER BY disposition, title",
+                 FROM chat_note_policies WHERE disposition='excluded' ORDER BY title",
             )
             .map_err(|error| error.to_string())?;
         let rows = statement
@@ -592,75 +377,6 @@ impl ChatDomain {
             .map_err(|error| error.to_string())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn set_note_excluded(
-        &self,
-        note_id: &str,
-        title: &str,
-        excluded: bool,
-    ) -> Result<(), String> {
-        let connection = self.connection()?;
-        if excluded {
-            connection
-                .execute(
-                    "INSERT INTO chat_note_policies
-                     (note_id, disposition, title, updated_at_millis)
-                     VALUES (?1, 'excluded', ?2, ?3)
-                     ON CONFLICT(note_id) DO UPDATE SET disposition = 'excluded',
-                       title = excluded.title, updated_at_millis = excluded.updated_at_millis",
-                    params![note_id, title, to_i64(now_millis())?],
-                )
-                .map_err(|error| error.to_string())?;
-            clear_legacy_grant(&connection, note_id)?;
-        } else {
-            connection
-                .execute(
-                    "DELETE FROM chat_note_policies
-                     WHERE note_id = ?1 AND disposition = 'excluded'",
-                    [note_id],
-                )
-                .map_err(|error| error.to_string())?;
-        }
-        // A policy change invalidates any in-flight tool view.
-        Ok(())
-    }
-
-    pub(crate) fn excluded_note_ids(&self) -> Result<HashSet<String>, String> {
-        let connection = self.connection()?;
-        let mut statement = connection
-            .prepare("SELECT note_id FROM chat_note_policies WHERE disposition = 'excluded'")
-            .map_err(|error| error.to_string())?;
-        let rows = statement
-            .query_map([], |row| row.get::<_, String>(0))
-            .map_err(|error| error.to_string())?;
-        rows.collect::<Result<HashSet<_>, _>>()
-            .map_err(|error| error.to_string())
-    }
-
-    pub(crate) fn note_is_allowed(
-        &self,
-        access: &VaultAccess,
-        note_id: &str,
-    ) -> Result<bool, String> {
-        let disposition: Option<String> = self
-            .connection()?
-            .query_row(
-                "SELECT disposition FROM chat_note_policies WHERE note_id=?1",
-                [note_id],
-                |row| row.get(0),
-            )
-            .optional()
-            .map_err(|e| e.to_string())?;
-        Ok(match (access, disposition.as_deref()) {
-            (_, Some("excluded")) | (VaultAccess::None, _) => false,
-            (VaultAccess::Full, _) | (VaultAccess::Approved, Some("approved")) => true,
-            _ => false,
-        })
-    }
-
-    pub(crate) fn notes_root(&self) -> &Path {
-        &self.inner.notes_root
     }
 }
 fn now_millis() -> u64 {
@@ -682,39 +398,48 @@ fn normalize_composer_draft_slot(slot: &str) -> Result<String, String> {
     Ok(slot.to_string())
 }
 
-fn clear_legacy_grant(connection: &Connection, note_id: &str) -> Result<(), String> {
-    let exists:bool=connection.query_row("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='chat_limited_grants')",[],|row|row.get(0)).map_err(|e|e.to_string())?;
-    if exists {
-        connection
-            .execute(
-                "DELETE FROM chat_limited_grants WHERE note_id=?1",
-                [note_id],
-            )
-            .map_err(|e| e.to_string())?;
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     #[test]
+    fn configuration_exposes_only_supported_access_and_preserves_exclusions() {
+        let root = crate::test_support::TestDir::new("chat-current-configuration");
+        let domain = ChatDomain::new(root.path().join("data")).unwrap();
+        let settings = serde_json::to_value(domain.get_settings().unwrap()).unwrap();
+        assert_eq!(settings["defaultAccess"], "full");
+        assert!(settings.get("webAccess").is_none());
+        assert!(settings.get("atlasVisibility").is_none());
+        assert!(serde_json::from_value::<VaultAccess>(serde_json::json!("approved")).is_err());
+        assert!(serde_json::from_value::<VaultAccess>(serde_json::json!("limited")).is_err());
+        assert_eq!(VaultAccess::parse("unknown"), VaultAccess::None);
+
+        let connection = domain.connection().unwrap();
+        assert!(connection
+            .execute(
+                "INSERT INTO chat_note_policies VALUES('approved-note','approved','',0)",
+                []
+            )
+            .is_err());
+        connection
+            .execute(
+                "INSERT INTO chat_note_policies VALUES('private-note','excluded','Private',0)",
+                [],
+            )
+            .unwrap();
+        let policies = domain.list_note_policies().unwrap();
+        assert_eq!(policies.len(), 1);
+        assert_eq!(policies[0].note_id, "private-note");
+        assert_eq!(policies[0].disposition, "excluded");
+    }
+
+    #[test]
     fn retained_configuration_never_initializes_lifecycle_tables() {
         let root = crate::test_support::TestDir::new("chat-domain-retained");
-        let domain = ChatDomain::new(root.path().into(), root.path().join("data")).unwrap();
-        domain.grant_note("approved", "Allowed").unwrap();
-        domain
-            .set_note_excluded("excluded", "Excluded", true)
-            .unwrap();
+        let domain = ChatDomain::new(root.path().join("data")).unwrap();
         domain
             .set_composer_draft("pane:one", "Unsent text")
             .unwrap();
-        assert!(domain
-            .note_is_allowed(&VaultAccess::Approved, "approved")
-            .unwrap());
-        assert!(!domain
-            .note_is_allowed(&VaultAccess::Full, "excluded")
-            .unwrap());
+
         let connection = domain.connection().unwrap();
         let mut stmt = connection
             .prepare("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")
@@ -734,32 +459,10 @@ mod tests {
             ]
         );
         drop(domain);
-        let domain = ChatDomain::new(root.path().into(), root.path().join("data")).unwrap();
+        let domain = ChatDomain::new(root.path().join("data")).unwrap();
         assert_eq!(
             domain.get_composer_draft("pane:one").unwrap(),
             "Unsent text"
         );
-        assert!(domain
-            .note_is_allowed(&VaultAccess::Approved, "approved")
-            .unwrap());
-    }
-    #[test]
-    fn revoked_migrated_grant_cannot_reappear_after_restart() {
-        let root = crate::test_support::TestDir::new("chat-domain-migration");
-        let data = root.path().join("data");
-        std::fs::create_dir_all(&data).unwrap();
-        let connection = Connection::open(data.join("ai.sqlite3")).unwrap();
-        connection.execute_batch("CREATE TABLE chat_limited_grants(note_id TEXT PRIMARY KEY,title TEXT NOT NULL,granted_at_millis INTEGER NOT NULL); INSERT INTO chat_limited_grants VALUES('one','Title',1)").unwrap();
-        drop(connection);
-        let domain = ChatDomain::new(root.path().into(), data.clone()).unwrap();
-        assert!(domain
-            .note_is_allowed(&VaultAccess::Approved, "one")
-            .unwrap());
-        domain.revoke_note("one").unwrap();
-        drop(domain);
-        let domain = ChatDomain::new(root.path().into(), data).unwrap();
-        assert!(!domain
-            .note_is_allowed(&VaultAccess::Approved, "one")
-            .unwrap());
     }
 }

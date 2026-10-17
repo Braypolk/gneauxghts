@@ -70,7 +70,7 @@ describe('native command dispatch and production event admission', () => {
     const changed = (await readProbe()).changed.find(event => event.notePath === saved.path && event.source === 'taskMutation')!;
     assert.equal(changed.deleted, false);
     assert.equal(changed.documentKind, 'note');
-    assert.equal(changed.chatId, null);
+    assert.equal(Object.hasOwn(changed, 'chatId'), false);
     assert.equal((await invoke<NoteSession>('open_note', { noteId: saved.noteId, path: null })).markdown.trim(), '- [ ] Dispatch task');
     await expectSaved(saved);
   });

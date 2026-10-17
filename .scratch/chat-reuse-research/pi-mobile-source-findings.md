@@ -54,7 +54,7 @@ Temporary directory: `/tmp/gneauxghts-pi-browser-check`. Exact `pi-durable`, `pi
 
 Experiment scripts: `entry.mjs`, `provider-entry.mjs`, `check.mjs`, `vm-check.mjs`, `approval-reopen.mjs`, and `chromium-check.mjs` in that temporary directory. npm package lock records exact transitive versions. Chromium used an isolated temporary browser profile and did not access the user's browsing data.
 
-Minimal portable rerun fixtures are preserved in [`pi-probe/`](pi-probe/README.md), including the exact dependency lock. They omit generated bundles, databases, and installed dependencies. Packaging cleanup added unique temporary databases, browser executable selection through `CHROMIUM_EXECUTABLE`, assertions, and cleanup; these preservation edits were not rerun. The VM-only exploratory script was omitted because the actual Chromium proof is stronger.
+The original minimal portable rerun fixtures and exact dependency lock are recoverable from Git at `64cc3ff6` under `.scratch/chat-reuse-research/pi-probe/`; the throwaway project was pruned after the rebuild. They omit generated bundles, databases, and installed dependencies. Packaging cleanup added unique temporary databases, browser executable selection through `CHROMIUM_EXECUTABLE`, assertions, and cleanup; these preservation edits were not rerun. The VM-only exploratory script was omitted because the actual Chromium proof is stronger.
 
 ## Decision implication
 

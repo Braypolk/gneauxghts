@@ -1,7 +1,6 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
 import { clickPaneAction, navigateAppTab } from '../../support/appNavigation';
-import type { ChatProposalDraft } from '../../../src/lib/features/chat/types';
 
 type EditorWindow = typeof window & { __GNEAUXGHTS_NATIVE_E2E__: {
   readEditorState(): { editor: { markdown: string } };
@@ -86,42 +85,6 @@ describe('secondary touch controls and image gestures', () => {
     }
   });
 
-  it('sizes chat, attachments and message actions for touch while preserving small icons', async () => {
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-    await clickPaneAction('Open thought partner');
-    await $('textarea[aria-label="Message"]').waitForEnabled();
-    await $('textarea[aria-label="Message"]').setValue('Touch actions');
-    for (const [width, height] of [[402, 874], [874, 402]]) {
-      await viewport(width, height);
-      for (const selector of ['button[aria-label="Add files or images"]', 'button[aria-label="AI model"]']) await targetSize(selector);
-      // The dock paints a projection over the real, transparent submission target.
-      await targetSize('button[aria-label="Send message"]', 44, false);
-      const icon = await $('button[aria-label="Add files or images"] svg').getSize();
-      expect(icon.width).toBe(16); expect(icon.height).toBe(16);
-    }
-    await browser.execute(() => {
-      const files = new DataTransfer(); files.items.add(new File(['Attachment preview'], 'touch.txt', { type: 'text/plain' }));
-      const input = document.querySelector<HTMLInputElement>('input[aria-label="Choose attachments"]')!;
-      input.files = files.files; input.dispatchEvent(new Event('change', { bubbles: true }));
-    });
-    await targetSize('button[aria-label="Preview touch.txt"]');
-    await targetSize('button[aria-label="Remove touch.txt"]');
-    await $('button[aria-label="Preview touch.txt"]').click();
-    await targetSize('button[aria-label="Close preview"]');
-    await targetSize('a[aria-label="Download touch.txt"]');
-    await $('button[aria-label="Close preview"]').click();
-    await $('button[aria-label="Remove touch.txt"]').click();
-    await expect($('[aria-label="Pending attachments"]')).not.toExist();
-    await $('textarea[aria-label="Message"]').setValue('Touch actions');
-    await $('button[aria-label="Send message"]').click();
-    const response = '[data-chat-message-id="controls-assistant-1"]';
-    await $(response).waitForDisplayed();
-    for (const selector of [`${response} button[aria-label="Copy message as Markdown"]`, `${response} button[aria-label="Branch from here"]`, `${response} button[aria-label="Show context usage"]`]) await targetSize(selector);
-    expect(await $(`${response} button[aria-label="Branch from here"]`).getCSSProperty('opacity')).toMatchObject({ value: 1 });
-    await $(`${response} button[aria-label="Show context usage"]`).click();
-    await $('.chat-context-details').waitForDisplayed();
-  });
-
   it('keeps Related, History and Settings secondary targets usable with unchanged icon sizes', async () => {
     await $('button[aria-label="Expand related notes"]').click();
     await targetSize('button[aria-label="Close related panel"]');
@@ -130,7 +93,6 @@ describe('secondary touch controls and image gestures', () => {
     await targetSize('button[aria-label="Rename revision"]');
     expect((await $('button[aria-label="Rename revision"] svg').getSize()).width).toBe(12);
     await browser.keys('Escape');
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
     await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
     await $('[data-settings-anchor="chat-provider"] select').selectByAttribute('value', 'local');
@@ -154,112 +116,6 @@ describe('secondary touch controls and image gestures', () => {
     });
     await touch('touchStart', [point]); await touch('touchEnd', []);
     await expect($('#provider-api-key')).toHaveAttribute('type', 'text');
-  });
-
-  it('keeps mobile proposal actions above other controls and dismisses without writing', async () => {
-    await expect($('button[aria-label="Expand related notes"]')).toBeDisplayed();
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-    await clickPaneAction('Open thought partner');
-    await $('textarea[aria-label="Message"]').setValue('Review a proposal');
-    await $('button[aria-label="Send message"]').click();
-    await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
-    const originalNotes = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes);
-    await browser.execute(() => {
-      const proposal = {
-        id: 'touch-proposal', runId: 'controls-run', conversationId: 'controls-chat',
-        assistantMessageId: 'controls-assistant-1', kind: 'create', noteId: null,
-        suggestedPath: '/e2e/touch-proposal.md', title: 'Touch proposal', baseHash: null,
-        payload: { markdown: 'Review before writing.' }, preview: {},
-        status: 'pending', createdAtMillis: 1, updatedAtMillis: 1
-      };
-      let pending = true;
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_list_pending_proposals = () => pending ? [proposal] : [];
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.chat_get_proposal_draft = () => ({
-        version: 0, markdown: proposal.payload.markdown, title: proposal.title,
-        path: proposal.suggestedPath, decisions: []
-      } satisfies ChatProposalDraft);
-      window.__GNEAUXGHTS_E2E_COMMANDS__!.dismiss_agent_proposal = () => {
-        pending = false;
-        return { ...proposal, status: 'dismissed' };
-      };
-      window.__GNEAUXGHTS_E2E__!.emit('chat://proposal', proposal);
-    });
-    const region = await $('[aria-label="Pending note proposals"]');
-    await region.waitForDisplayed();
-    for (const label of ['Discard', 'Review in editor']) {
-      const button = await region.$(`button=${label}`);
-      const size = await button.getSize();
-      expect(size.width).toBeGreaterThanOrEqual(44);
-      expect(size.height).toBeGreaterThanOrEqual(44);
-      expect(await browser.execute(label => {
-        const region = document.querySelector('[aria-label="Pending note proposals"]')!;
-        const button = Array.from(region.querySelectorAll('button')).find(b => b.textContent?.trim() === label)!;
-        const box = button.getBoundingClientRect();
-        return document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.closest('button') === button;
-      }, label)).toBe(true);
-    }
-    await expect($('button[aria-label="Expand related notes"]')).not.toExist();
-    await region.$('button=Discard').click();
-    await region.waitForExist({ reverse: true });
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes)).toEqual(originalNotes);
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(i => i.command === 'commit_agent_proposal'))).toHaveLength(0);
-  });
-
-  it('opens a styled update review with touch targets and undoes its highlighted hunk', async () => {
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-    await clickPaneAction('Open thought partner');
-    await $('textarea[aria-label="Message"]').setValue('Review an update');
-    await $('button[aria-label="Send message"]').click();
-    await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
-    const originalNotes = await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes);
-    await browser.execute(() => {
-      const note = window.__GNEAUXGHTS_E2E__!.snapshot().notes.find(n => n.noteId === 'note-alpha')!;
-      const proposal = {
-        id: 'touch-update', runId: 'controls-run', conversationId: 'controls-chat',
-        assistantMessageId: 'controls-assistant-1', kind: 'update', noteId: note.noteId,
-        suggestedPath: null, title: note.title, baseHash: 'fixture-hash', payload: {},
-        preview: { reviewId: 'touch-review', notePath: note.path, title: note.title,
-          baseContentHash: 'fixture-hash', baseEditorMarkdown: note.markdown,
-          proposedEditorMarkdown: 'Reviewed replacement.', hunks: [{ id: 'hunk-1',
-            baseFrom: 0, baseTo: note.markdown.length, proposedFrom: 0,
-            proposedTo: 21, oldText: note.markdown, newText: 'Reviewed replacement.' }] },
-        status: 'pending', createdAtMillis: 1, updatedAtMillis: 1
-      };
-      let pending = true;
-      let draft: ChatProposalDraft = {
-        version: 0, markdown: proposal.preview.proposedEditorMarkdown,
-        title: note.title, path: note.path, decisions: []
-      };
-      const commands = window.__GNEAUXGHTS_E2E_COMMANDS__!;
-      commands.chat_list_pending_proposals = () => pending ? [proposal] : [];
-      commands.chat_get_proposal_draft = ({ proposalId }) => {
-        if (proposalId !== proposal.id || !pending) throw new Error('Proposal is not pending');
-        return draft;
-      };
-      commands.chat_checkpoint_proposal_draft = ({ proposalId, version, markdown, title, path, decisions }) => {
-        if (proposalId !== proposal.id || !pending || version !== draft.version) throw new Error('Stale proposal draft');
-        draft = { version: draft.version + 1, markdown: markdown as string,
-          title: title as string, path: (path as string | undefined) ?? draft.path,
-          decisions: decisions as ChatProposalDraft['decisions'] };
-        return draft;
-      };
-      commands.dismiss_agent_proposal = () => {
-        pending = false;
-        return { ...proposal, status: 'dismissed' };
-      };
-      window.__GNEAUXGHTS_E2E__!.emit('chat://proposal', proposal);
-    });
-    await $('[aria-label="Pending note proposals"]').$('button=Review in editor').click();
-    await $('.cm-editor[data-proposal-review="true"]').waitForDisplayed();
-    await targetSize('.cm-gn-proposal-keep');
-    await targetSize('.cm-gn-proposal-undo');
-    expect((await $('.cm-gn-proposal-actions').getCSSProperty('display')).value).toBe('inline-flex');
-    expect((await $('.cm-gn-proposal-removed-block').getCSSProperty('background-color')).value).not.toBe('rgba(0,0,0,0)');
-    await $('.cm-gn-proposal-undo').click();
-    await $('.cm-editor[data-proposal-review="true"]').waitForExist({ reverse: true });
-    expect(await authoredText()).toBe(originalNotes.find(note => note.noteId === 'note-alpha')!.markdown);
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.snapshot().notes)).toEqual(originalNotes);
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(i => i.command === 'commit_agent_proposal'))).toHaveLength(0);
   });
 
   it('pinches, pans, swipes only at fit, cancels safely and closes without changing the note', async () => {

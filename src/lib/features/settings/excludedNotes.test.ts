@@ -14,13 +14,6 @@ describe('excluded note settings', () => {
       updatedAtMillis: 2
     },
     {
-      noteId: 'note-approved',
-      notePath: 'Shared.md',
-      title: 'Shared',
-      disposition: 'approved' as const,
-      updatedAtMillis: 3
-    },
-    {
       noteId: 'note-a',
       notePath: 'Private/Alpha.md',
       title: 'Alpha',

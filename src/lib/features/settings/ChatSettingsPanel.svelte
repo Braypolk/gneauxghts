@@ -4,7 +4,7 @@
   import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
   import LocalModelSettings from './LocalModelSettings.svelte';
   import { onMount } from 'svelte';
-  import { TauriChatApi } from '$lib/features/chat/api';
+  import { chatSettings } from '$lib/features/chat/pi/settings';
   import type { ChatProvider, ChatSettings } from '$lib/features/chat/types';
   import {
     chatReasoningChoices,
@@ -12,7 +12,7 @@
     OPENAI_CHAT_MODELS
   } from '$lib/features/chat/chatConfiguration';
 
-  const api = new TauriChatApi();
+  const api = chatSettings;
 
   let settings = $state<ChatSettings | null>(null);
   let credentialProvider = $state<ChatProvider>('openai');
@@ -38,7 +38,7 @@
         api.getKeyStatus('openai'),
         api.getKeyStatus('local')
       ]);
-      settings = loadedSettings;
+      settings = { ...loadedSettings, defaultVaultAccess: loadedSettings.defaultVaultAccess === 'full' ? 'full' : 'none' };
       credentialProvider = loadedSettings.provider;
       keyStatuses.openai = openaiKeyStatus.configured;
       keyStatuses.local = localKeyStatus.configured;
@@ -243,12 +243,6 @@
                 <option value="flex">Flex — lower cost, slower</option>
               </select>
             </SettingsField>
-            <SettingsField label="OpenAI web access" anchor="chat-web">
-              <select class="settings-control" bind:value={settings.webAccess}>
-                <option value="auto">Auto — search when useful</option>
-                <option value="off">Off by default</option>
-              </select>
-            </SettingsField>
           {:else}
             <SettingsField label="Server endpoint" anchor="chat-endpoint">
               <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="https://models.example.com/v1" />
@@ -269,24 +263,16 @@
               />
             </div>
           {/if}
-          <SettingsField label="Default vault access" anchor="chat-access">
+          <SettingsField label="Default note access" anchor="chat-access">
             <select class="settings-control" bind:value={settings.defaultVaultAccess}>
-              <option value="none">None</option>
-              <option value="approved">Approved only</option>
-              <option value="full">Full</option>
-            </select>
-          </SettingsField>
-          <SettingsField label="Map chat visibility" anchor="chat-visibility">
-            <select class="settings-control" bind:value={settings.atlasVisibility}>
-              <option value="hidden">Hidden</option>
-              <option value="remembered">Remembered</option>
-              <option value="all">All</option>
+              <option value="full">Full vault</option>
+              <option value="none">No notes</option>
             </select>
           </SettingsField>
         </div>
 
         {#if settings.provider === 'local'}
-          <p class="mt-3 text-xs leading-relaxed text-muted-foreground">Vault search and note changes require a model with tool calling.</p>
+          <p class="mt-3 text-xs leading-relaxed text-muted-foreground">Vault search and note reads require a model with tool calling.</p>
         {/if}
 
         {#if settings.provider === 'openai' && settings.serviceTier === 'flex'}

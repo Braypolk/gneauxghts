@@ -67,7 +67,7 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
       inFlightWrites.delete(completion);
       if (writeQueues.get(targetSlot) === completion) writeQueues.delete(targetSlot);
     };
-    // Own rejection even for fire-and-forget reset/disposal paths.
+    // Own rejection even for fire-and-forget disposal paths.
     void completion.then(settled, settled);
   }
 
@@ -121,24 +121,6 @@ export function createComposerDraftPersistence(deps: ComposerDraftPersistenceDep
       }
       deps.applyDraft(body);
       if (token === loadToken) loadInFlight = false;
-    },
-
-    /**
-     * Declares the composer empty and on `nextSlot`, clearing stored text for
-     * both the outgoing and incoming slots. Used when the user explicitly
-     * starts over and when a draft graduates into a real conversation.
-     */
-    resetSlot(nextSlot: string) {
-      cancelPendingSave();
-      pendingBody = null;
-      loadToken += 1;
-      loadInFlight = false;
-      const previousSlot = slot;
-      slot = nextSlot;
-      if (previousSlot !== null && previousSlot !== nextSlot) {
-        write(previousSlot, '');
-      }
-      write(nextSlot, '');
     },
 
     /** Transfer an unsent draft when its controller creates a durable conversation. */

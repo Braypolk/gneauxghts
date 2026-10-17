@@ -1,4 +1,6 @@
-# Recover chats from surviving transcripts
+# Historical transcript recovery
+
+> Superseded by [the Pi rebuild](../archive/pi-chat-rebuild-scope.md). No old-chat import, managed transcript projection or migration is required. Existing authored transcript files are preserved; the former importer and its tests are retired. The original implementation contract below is historical.
 
 When `.gneauxghts` (including `ai.sqlite3`) is removed, startup must discover
 surviving app-generated conversations in the Running Vault's `Chats` directory.

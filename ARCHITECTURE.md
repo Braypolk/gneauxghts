@@ -2,7 +2,8 @@
 
 Gneauxghts is a local-first desktop notes app. The Svelte frontend owns the
 interactive workspace and open-document experience; the Rust backend owns
-durable files, projections, search, and chat runs. Markdown files in the vault
+durable files, projections, search, chat authority and external-effect proof. Pi owns
+ordinary chat execution and history in the shared WebView runtime. Markdown files in the vault
 are the canonical note representation.
 
 Read [behavior invariants](docs/architecture/behavior-invariants.md) before
@@ -45,9 +46,9 @@ concrete state references, independently of Tauri dispatch.
 | Task-group ordering | `TaskListStore` admits one pending reorder for drag and menu actions; the existing SQLite order transaction merges filtered submissions while preserving omitted ranks |
 | Complete pane navigation, departure ordering, and location history | `NotepadWorkspaceSession` using concrete workspace/document owners and private operation admission |
 | Global history browsing, bounded revision-label, confirmed history-clear, and complete Version Restore actions, entry/exit, paging, and workspace return | `HistoryModeSession` through `historyModeMachine.ts`; it overlays rather than joins pane or document ownership |
-| Chat availability, selection, request lifecycle, and admitted conversation projection | One aggregate ChatController transition; effects submit correlated results |
-| Durable conversations, runs, events, context, and proposal status | `ChatService` |
-| One active proposal review | `ProposalReviewSession.workflow` owns admission/commit; the retained document runtime owns editable body and hunk state |
+| Conversations, immutable entries, submissions, generation/tool tasks, queue, usage, recovery and compaction | Pi Durable/Pi AI/Chord through `features/chat/pi/runtime.ts` |
+| Selected conversation, composer and mounted chat views | `ChatPanel.svelte` and its disposable Pi view binding; workspace retains pane membership |
+| Read/write authority, source identity and exact external-effect proof | Native `pi_chat/authority.rs`, `notes.rs`, `citations.rs` and `publication.rs`; NoteTimeline remains canonical publication owner |
 | Mutually exclusive editor transients | `PaneTransientUiController.active` through `paneTransientUiState.ts` |
 | Semantic indexing work | The backend semantic work queue and worker context |
 | Device-local search runtime and model setup | `GemmaLiteRtEmbeddingProvider`; desktop setup verifies pinned native LiteRT/model bytes; iOS loads the build-verified, signed framework from the app bundle and setup installs model data only. Explicit Settings setup uses semantic work admission; shared snapshots expose setup phases and byte progress independently of inference |
@@ -102,7 +103,7 @@ been adopted by the current editor lifetime.
 
 `NoteTimeline` is the canonical owner for ordinary-note mutation coordination,
 external observations, History Mode reads, current-content provenance, and
-the future explicitly granted agent-restore path. Editor, task, proposal,
+the future explicitly granted agent-restore path. Editor, task, typed agent-publication,
 lifecycle, watcher, and reconciliation callers enter its closed typed contract. Post-publication
 catalog, task, lexical, semantic, warning, and recovery coordination is a
 private timeline implementation detail; no parallel mutation service is
@@ -113,9 +114,8 @@ Frontend adoption of a committed result enters `DocumentEditingService` through
 an operation-specific method. That boundary locates any retained document and
 shared runtime, atomically adopts identity, saved baseline, publication warning,
 and the canonical open-document lookup, and preserves edits that remain newer
-than the committed operation. Proposal acknowledgement verifies read-back against
-the canonical editor-visible Markdown returned by publication, retaining the
-submitted working text separately to recognize later typing. Save and rename
+than the committed operation. Agent publication verifies canonical read-back
+against its receipt while the operation-specific editor lease protects the target. Save and rename
 never replace the document handle, shared editor root, timers, save queue, or pane
 references. If a committed result
 collides with another independently dirty open document, both documents remain
@@ -129,8 +129,8 @@ unmanaged properties changed; an unopened restore target requires no pane or
 document mutation.
 
 Ordinary-note callers use complete `NoteTimeline` save, edit, or exclusive-create
-operations. Task and proposal owners supply their domain transform or approved
-content; they do not receive prepared tokens or orchestrate canonical writes,
+operations. Task and typed agent-publication owners supply their domain transform
+or authorized content; they do not receive prepared tokens or orchestrate canonical writes,
 watcher suppression, abandonment, finalization, or projection repair. Target
 readiness is admitted before acquiring canonical file ownership and checked again
 inside it. The authoritative read and transform remain under that same ownership
@@ -143,7 +143,7 @@ observation replay and staged lifecycle deletion retain their distinct protocols
 content captures without another Note Revision. Under the accepted Editing
 Window contract, distinct ordinary editor publications replace a durable pending
 endpoint; boundary finalization retains its net delta against the preceding
-finalized revision. Distinct task, proposal, restore, and observed changes remain
+finalized revision. Distinct task, agent publication, restore, and observed changes remain
 separate. The integrated default uses this window contract; see the
 [capture contract](docs/architecture/editing-window-contract.md). Exact finalization
 also verifies the managed Note Identity in the published file, and records the
@@ -168,9 +168,10 @@ entry work, and workspace restoration completes before a newer entry captures
 its snapshot.
 
 History Mode requires a grant whose constructor remains private to the timeline
-module. The agent-restore capability is intentionally absent until its
-app-owned current-turn proposal path is implemented; ordinary chat can receive the current-content capability and the scoped read-only
-activity-history capability from ADR 0009. Revision and Lifecycle Event identities
+module. The agent-restore capability remains absent; future Version Restore
+authority requires its own typed operation and decision. Native current-content
+and scoped activity-history capabilities remain role-limited domain facilities,
+while the initial Pi tool surface exposes search/read only. Revision and Lifecycle Event identities
 likewise cannot be minted by callers; their durable issuer belongs inside
 `NoteTimeline`.
 
@@ -228,7 +229,7 @@ Prepared intents are reconciled idempotently against authoritative Markdown
 after restart, so recovery completes history without replaying the file write.
 History finalization likewise reads authoritative Markdown from disk and never
 substitutes caller fallback bytes when that read fails.
-Known publication failures and proposal conflicts explicitly abandon their
+Known publication failures and prepublication conflicts explicitly abandon their
 prepared intent; indeterminate publication outcomes, including failed rename
 rollback and post-publication capture failure, retain recovery evidence.
 Successfully captured Editing Windows are separate durable state, not unresolved
@@ -397,8 +398,9 @@ path cannot make the purged identity readable or appendable again.
 Complete forgotten-note forget, recovery and selected purge operations also belong
 to `NoteTimeline`. Commands select items and map results; the owner stages only the
 selected metadata row, compares current source bytes, guards destination collisions,
-rolls back known failures and retains indeterminate recovery evidence. Chat content
-continues through `ChatService`. Forgotten metadata uses the `AppState`-bound
+rolls back known failures and retains indeterminate recovery evidence. Legacy
+forgotten chat items are unsupported explicitly; they never fall through ordinary
+note deletion or migrate into Pi. Forgotten metadata uses the `AppState`-bound
 app-state database, so a staged next-launch selection cannot redirect lifecycle
 records away from the running vault.
 Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
@@ -473,64 +475,26 @@ document edit dismisses the inline picker before it can apply a stale range.
 The task list derives date filters and optional within-note sorting from that
 Markdown text, with a local-calendar clock for midnight and resume refresh.
 
-### Proposals
+### Agent publication foundation
 
-Editable proposal body and hunk coordinates/status have one document-runtime
-owner, shared by all pane render projections. An active review retains that
-runtime when the last pane leaves or the workspace route unmounts. A returning
-workspace reconnects callbacks to that same root; route disposal retires local
-navigation and review admissions without making proposed bytes eligible for
-ordinary autosave. Durable settlement uses route-independent API calls and an
-already-admitted completion may settle its exact retained document once.
-The global review workflow owns admission and
-durable completion; it does not retain a pane editor or fallback text/hunk copies.
-Keep/undo operations address the retained review identity, including without a
-mounted pane. `NotepadWorkspaceSession.presentReviewDocument` owns explicit review
-presentation; passive arrivals only inspect existing rendered capabilities. Explicit
-reload addresses the retained document, reads and adopts canonical content, and
-rejects stale read completion. Terminal resolution releases review retention, saves
-any remaining ordinary edits, and then reclaims a clean unreferenced document.
-Follow-on save errors remain visible without retrying the durable proposal action.
+Ordinary chat exposes native search/read tools only. Synthetic host-driven create/update
+operations use `pi_chat/publication.rs` and the Pi publication task; future write
+settings and editable mutation review are outside the initial product surface.
+Native admission binds operation, scoped grant, authority revision, exact payload,
+review acceptance when required, and the expected native read state. The retained
+`DocumentEditingService.withAgentPublication` operation supplies a short editor
+publication lease: dirty body/title/tags/identity, unresolved conflicts or pending
+operations block admission, and edits cannot race an admitted publication.
 
-`chat/note_proposals.rs` owns deterministic answer/selection promotion, durable
-origin deduplication, versioned working checkpoints, addition placement and commit
-receipts. Direct Save creates no model run. `ChatService` permits an optional real
-run for those origins and retains distinct saves to one destination. The live
-body, title and hunk decisions remain document-owned; SQLite checkpoints are
-recovery versions. Navigation/background/restart and pre-send barriers join their
-writes. `reviewCheckpoints.ts` serializes recovery writes across route remounts
-and coalesces the latest waiting snapshot without losing location intent or its
-failure. Opening another review checkpoints and releases the outgoing review;
-failed checkpoints block that handoff. Terminal work cannot be checkpointed or
-refined back into a pending state.
-
-Creation review uses a protected empty draft document and the same global review
-workflow as updates. Keep publishes through NoteTimeline; Discard clears the
-creation document before ordinary persistence can resume. Changed destinations
-reconstruct a separable saved addition against the latest identity-bound note;
-ambiguous placement or edits to the surrounding base retain an explicit conflict.
-Refreshed additions and new names after a collision require another Keep.
-Publication/checkpoint/refinement settlement is serialized, and cached commit
-receipts make repeat Keep idempotent. Open note follows the committed identity.
-
-Structured answer finalization records authored segment ranges and their selected
-citation links atomically with terminal content. Selection transfer uses those
-recorded associations (legacy answers use their attached Markdown markers),
-verifies contiguous author text and binds repeated occurrences captured in the
-rendered selection. Promotion resolves recorded source identities to ordinary
-wikilinks plus one transcript/excerpt backlink under [ADR 0011](docs/adr/0011-use-ordinary-note-links-for-chat-promotion.md).
-Passage destinations use ordinary block/paragraph fragments from the source's
-current editor body, with paragraph numbering shared with normal link navigation.
-Edited/historical sources require a unique surviving excerpt to derive a
-position; unavailable or ambiguous passages retain a note-level link.
-These links have ordinary user-maintained semantics; they confer no live citation
-authority or claim-support guarantee.
-
-Agent tools create durable proposals rather than writing notes. Keeping a
-proposal commits through the proposal domain and `NoteTimeline`, then
-synchronizes durable proposal status.
-The open document adopts the verified committed Markdown as its new baseline
-without losing local edits made while the commit was running.
+NoteTimeline owns canonical create/update and retained publication proof. A Pi task
+stores opaque intent/receipt references and reconciles existing proof before retrying
+an uncertain acknowledgement. Revocation prevents new effects without undoing a
+published effect. Canonical adoption uses the verified receipt and read-back through
+the document owner; an external mismatch remains a conflict. Pi owns publication
+task checkpoints; no generic filesystem executor or competing chat status store participates.
+The mutation source is `AgentPublication` (`agentPublication` in IPC and new history
+records). Native history readers accept the former `acceptedChatProposal` tag only
+as the same source, preserving retained revisions and pending-intent recovery.
 
 ### External changes
 
@@ -543,8 +507,8 @@ filesystem outcomes are suppressed as self-saves.
 
 The application uses small state machines rather than one application-wide
 machine. Note persistence, external synchronization, pane lifecycle,
-navigation, chat requests, proposal review, and transient UI can progress
-independently.
+navigation, mounted chat presentation and transient UI can progress
+independently. Pi coordinates generic chat tasks and submissions.
 
 History Mode is a global authored-content-read-only session alongside those owners. Entry first
 crosses the workspace persistence barrier, then obtains role-limited timeline
@@ -589,9 +553,9 @@ including Atlas request batches; runtime status is not a result mailbox.
 Atlas retains its last response for display across route changes but revalidates
 on every activation. Backend publication compatibility decides freshness; a cached
 ready flag cannot prove that no changes occurred while listeners were detached.
-Atlas owns complete cache clearing. Chat defaults and Atlas chat visibility use
-separate backend column updates, so stale settings forms cannot overwrite the
-other operation's fields.
+Atlas owns complete cache clearing and one notes-only map generation. Chat
+conversations are not map documents, semantic recall rows or navigation nodes.
+Chat settings do not configure or invalidate Atlas.
 
 Atlas keeps one semantic worker queue and immutable published generations. Its
 private `semantic/atlas/publication.rs` owns generation/label publication, ready
@@ -654,12 +618,13 @@ policy migrations may repair accepted geometry; ordinary updates restrict repair
 to affected clouds and their ancestors. The current version and migration policy
 live in `semantic/atlas/stable_layout.rs` and its private modules.
 
-Chat's frontend transition admits selection/request events and their conversation
-projection together, then notifies the existing Readable boundary once. Effects
-cannot separately patch selected conversation data after rejected admission. The
-controller owns first-send draft creation and exposes its promotion identity;
-the composer retains text, attachments, draft persistence, and the editor save
-barrier without coordinating create-then-send timing.
+Pi's public conversation/submission operations admit chat work. Mounted bindings
+watch Pi documents/views and page immutable entries for the human-visible transcript;
+they do not persist a second projection or drive a generic application scheduler.
+The composer retains unsent text through the existing native draft owner. Explicit
+note attachments contain Note Identities, resolved through current native authority.
+Pane return targets remain workspace navigation state and never become implicit
+model context.
 
 The notepad's shared input dock owns only the expanded search/chat mode and
 which pane supplies its chat slot. Search stays mounted in its existing owner;
@@ -704,492 +669,169 @@ second layout transition. Focus waits for the shared presentation barrier.
 
 ## Agent runtime
 
-`agent_run_coordinator.rs` is the chat-to-runtime handoff.
-`agent_runtime.rs` adapts the selected provider behind an app-owned runtime entry
-point and event protocol. `ChatService` retains durable run lifecycle and context
-assembly. Private `chat/admission.rs` commits the user message, attachments,
-assistant placeholder, run, and context in one transaction. Private `chat/store.rs`
-owns connection policy and atomic terminal message/source/run persistence; all
-connections enforce foreign keys. `chat/runtime.rs` reports successful completion
-only after that transaction commits. `chat/answer_stream.rs` owns transient
-structured drafts separately from ordinary text. Structured answers are never
-checkpointed before final validation; a failed or cancelled draft has no durable
-answer text or sources. Ordinary text checkpoints use one connection per response;
-checkpoint errors do not prevent UI delta delivery, so that text can lead its
-durable checkpoint. `chat/projection.rs` serializes managed
-transcript publication (filesystem bytes and SQLite hash receipts) with conflict
-classification; a projection failure after admission cannot reject an already
-accepted request. The watcher rechecks current
-projection bytes after publication; queued own-write events cannot detach chats.
-Provider client/model construction belongs to `agent_runtime.rs`. The internal
-chat/runtime request still uses Rig messages; usage, persisted chat and frontend
-contracts use app-owned types.
-Agent event variant fields serialize in the frontend's camelCase contract;
-deserialization also accepts the earlier snake_case fields so saved activity
-retains tool identities, outcome details and timing when reopened.
-For OpenAI-compatible chat, `agent_runtime/compatible_chat.rs` combines all
-assembled system content into one opening system message on every completion
-dispatch, before context admission and measurement. App context and formatter
-instructions retain their order and text; dialogue and tool-result ordering is
-preserved. This accommodates templates that reject additional system messages.
+[ADR 0012](docs/adr/0012-found-ordinary-chat-on-pi.md) records the implemented
+ordinary-chat decision. Desktop and iOS use `features/chat/pi/runtime.ts` and the
+native `pi_chat` module; the old ChatService/ChatController, Rig execution loop,
+managed transcript projection, research/proposal workflow and opt-in evaluation
+composition are retired. Existing authored files and native notes/settings are
+preserved. There is no old-chat import, exact Retry, migration or fallback runtime.
+Desktop replacement, retirement checks and simulator acceptance are recorded in
+[the completed rebuild outcome](.scratch/archive/pi-chat-rebuild.md). Physical-device
+acceptance remains deferred.
 
-At startup, `ChatService` recovers missing conversation identities from surviving
-managed Markdown in `Chats` through its private transcript recovery module.
-Each import commits messages and projection hash receipts atomically without
-rewriting files or replacing existing database conversations. Legacy transcripts
-cannot reconstruct runtime events, attachment bytes, permissions, or evidence
-provenance; recovered chats start with no vault access and conservative assistant
-history evidence markers. SQLite remains authoritative after recovery.
+The subsequent [provider/observation adapter alignment](.scratch/archive/pi-chat-adapter-alignment/outcome.md)
+uses Pi's public factory, option mapping and Chord lifecycle APIs, with sanitized
+runtime diagnostics and incremental list metadata. Its desktop and bounded simulator
+acceptance preserve the native guarantees below.
 
-Before startup recovery, private `chat/relocation.rs` atomically rebinds the closed
-set of vault-owned chat location fields and its vault-root receipt to the Running
-Vault. Absolute IPC paths remain unchanged in shape. Legacy roots require the
-generated transcript layout and a surviving managed conversation identity in the
-current vault; unknown roots remain unresolved. Authored text, URLs, hashes and
-proposal statuses are not rewritten. A previously detached relocated transcript
-is readmitted only when all publication receipts still match current bytes.
-Interrupted proposal commits still require filesystem proof and never replay;
-update commits resolve their Note Identity in the current vault before entering
-the existing NoteTimeline write path.
+### Pi-owned execution and history
 
-`services/evidence.rs` owns current evidence search, ranking, scoped/versioned
-cursors, passage reads and canonical citation validation. `find_notes` uses
-the existing Tantivy paragraphs and reciprocal-rank fusion with local semantic
-candidates; literal/regex modes inspect exact canonical Markdown. Semantic
-availability and approximate coverage are explicit. Interactive note selection
-uses the compatibility adapter in `services/retrieval.rs`; its metadata date
-filters are distinct from agent surviving-content activity periods.
+One Running Vault composition opens upstream `SqliteStorage`, `Harness` and Pi AI
+models. Pi owns immutable history, conversation documents, submissions/inbox,
+generation/tool/compaction tasks, scheduling, queueing, cancellation, recovery,
+usage and progress. `ChatDoc` stores title, opaque native authority reference and
+presentation metadata; provider/agent/usage/inbox state uses Pi's built-in documents.
+Titles derive from the first message without inference. Svelte selection and live
+views are disposable, while composer drafts use their existing presentation owner.
+Forget is a reversible presentation archive in `ChatDoc`: idle chats leave the
+conversation picker, and the pane keeps an ephemeral undo reference. Undo restores
+the same Pi history without inference. Forget does not purge history or alter native
+authority; permanent deletion must retire authority independently. Other mounted
+panes observe the archive and release their selection.
+The composer reuses the ordinary layout and model/reasoning controls. Note names
+are entered in chat text rather than attached through a note picker; the agent
+searches and reads through native authority. The access control offers Full vault
+or No notes, using the native empty attached-notes scope for No notes.
+The UI scans entries for persisted human-visible history rather than assuming the
+active post-compaction `ConversationView.entries` contains the full transcript.
 
-NoteTimeline remains the sole owner of activity reconstruction and range
-provenance. Evidence consumes allowed current-content provenance and, for explicit activity
-queries with `include_history`, the read-only `activity_history` capability. The
-latter reconstructs retained added/removed body and property lines through the
-private timeline store. Historical text is separate from current status; surrounding
-current context is labeled separately.
-Monday-start local weeks resolve to half-open intervals. Baseline knowledge is
-not an introduction date; Editing Window uncertainty remains intact.
+Mounted selections use cancellable Chord observation contexts for watches and
+history reads. Cancelling a selection releases observation only; submissions,
+Stop, withdrawal and native retirement retain their separate operations. Pi
+reports and watch failures feed the bounded ephemeral `pi/diagnostics.ts` sink.
+It publishes curated codes/messages rather than exception or provider payloads;
+reports do not settle work. Actual Harness termination makes the runtime
+unavailable, while normal shutdown clears its diagnostic presentation.
+Conversation-list summaries scan Pi conversations and snapshot `ChatDoc` and
+`AgentDoc` without resolving full agents. Public commit publications update loaded
+metadata; serialized page reads replay intervening metadata changes. This
+disposable list state retains loaded older pages without a native index or durable
+summary mirror. Streaming and usage commits do not rehydrate list rows.
 
-Current-passage citations bind stable note identity, canonical content hash,
-exact UTF-8 coordinates and optional retained revision evidence. Delivery and
-navigation revalidate current bytes and permissions, recovering explicit grants
-from the originating run. The UI opens the current note and focuses the exact,
-unambiguous passage. Historical passage citations instead bind retained UTF-8 coordinates and a validated change proof, and open the retained content revision in History Mode. Legacy Revision Citations also enter History Mode.
-`passage_json` is an additive chat-store migration; canonical Markdown and
-canonical history formats do not change.
+Pi's `Conversation.abort` and submission cancellation own Stop and queue withdrawal.
+Switching panes or conversations does not cancel work. Reopening installs native
+provider-session/authority mappings and model metadata before `harness.resume()`;
+retired authority is denied and its work aborted. Explicitly stopped work stays
+stopped, and terminal failure offers a new submission under current settings.
+There is no frozen request-history copy, exact Retry or extra resume ledger.
 
-`chat/citations.rs` owns ephemeral model references such as `[S1]`. Read tools
-issue these only for delivered passage sources; selected research results receive
-parent references independently of the worker's registry. ChatService constructs
-canonical passage links before terminal persistence/delivery, intersecting the
-registry with currently valid sources. Recognized but unissued `[S#]` references
-and invalid passage destinations become inert unavailable text; other malformed
-model citation text is not automatically recognized. The UI never guesses a
-model reference from a note title.
-Transcripts and branches persist durable destinations, never depend on the
-run-local registry, and continue to revalidate on navigation. Link integrity
-is distinct from whether a claim is supported by its cited passage.
+Normal Pi history retains provider-emitted reasoning, earlier tool results and
+answers as working memory. Reasoning is collapsed by default in presentation and
+uses Pi history/events rather than a transient legacy channel. Standard Pi
+compaction inherits upstream scheduling, summary and recovery defaults without an
+application override. `modelLimits.ts` only translates observed positive model
+limits; unknown capacity remains unknown. Summaries are fallible
+memory, never fresh note evidence or authority. Current-state claims require another
+authorized read. No custom summary engine or background title/research inference runs.
 
-Evidence presentation belongs to the answer. The expandable Show evidence section
-renders exact delivered excerpts as literal text, identifies current passages and
-retained changes, and displays recorded timing without implying complete coverage.
-Citation admission checks exact excerpt bytes for every read. Source links retain
-the same access/freshness validation and current/revision navigation.
-Requests for sources or quotations use the ordinary prompt, history, streaming,
-provider policy and capability set. There is no source-preview command, composer
-mode, restricted registry or selection-only terminal renderer. Legacy `/sources`
-message text remains ordinary user content when retried; saved answers/citations
-are unchanged. Model-written quotations remain distinct from the exact excerpts
-in the evidence panel; citation identity does not validate semantic entailment.
+### Native transport, storage and authority
 
-`chat/assistant_instructions.txt` owns the shared assistant core. Tool mechanics
-are owned by registered descriptions and schemas, and `chat/date_time.rs` supplies
-compact date interpretation beside the run reference. Disabled-tool requests omit
-tool descriptions and receive an explicit unavailable-capability statement.
-Web citation guidance is included only when web access is enabled.
-`agent_tools/capabilities.rs` owns the application-owned capability sets: evidence,
-working-note reads, proposals, research, and planning. Capability restrictions
-intersect the parent's grants; worker identity and response presentation do not
-choose tools inside the runtime. Ordinary chat grants the complete set when
-executable tools are enabled; local model capability settings can disable them. The
-agent chooses and sequences available tools to fulfill the user's objective;
-retrieval never chooses a final response format or terminates a successful run.
+`nativeSqlite.ts` implements upstream `SqliteDatabase` through `pi_chat/storage.rs`.
+The native fresh Pi store is separate from legacy chat/evaluation stores and keeps
+SQLite transaction ownership, rollback, durable commits and orderly close/checkpoint.
+No native message/task mirror or durable UI projection is added. Bridge call/byte,
+provider and database/WAL measurements are diagnostics, not permanent numerical caps.
 
-`agent_runtime/local_reasoning.rs` discovers local reasoning choices from LM
-Studio's `/api/v1/models` metadata, matching the selected model or loaded instance.
-Settings and the composer display those choices; the runtime independently
-revalidates saved preferences before inference. Unsupported preferences fall back
-to the advertised default. Missing metadata leaves reasoning to the server.
-The compatible transport maps `off` to `reasoning_effort=none` and offers `on`
-only when omitting the override preserves an enabled server default. Official
-OpenAI reasoning choices continue to use the curated catalog.
+`nativeProvider.ts` uses Pi AI's compatible local and OpenAI providers through
+`pi_chat/transport.rs`. Rust resolves configured endpoints and credentials; model
+arguments cannot choose arbitrary URLs, headers or native paths. Native authority
+checks occur before dispatch and again before terminal delivery, including ordinary
+tool continuations, recovery and standard compaction. Generation-hook exceptions
+are not a security boundary. Provider response parsing/streaming remains Pi AI owned.
 
-The model-facing interface exposes five tools: `find_notes`, `read_notes`,
-`propose_note_change`, `research_notes`, and `update_plan`. The private interface
-adapter groups operations without moving evidence or proposal ownership.
-`read_notes` requires `purpose=answer` for canonical evidence or `purpose=edit`
-for the current working copy. `purpose=draft` reads versioned unapproved reviews;
-`purpose=chat` reads completed authored answers for faithful transfer. Schemas expose only granted branches, and handlers
-recheck capability grants; an evidence-only research worker cannot regain edit
-reads through the shared tool name. `propose_note_change` requires an explicit
-edit, replace, create, save or refine operation and retains existing stored proposal formats,
-full-read replacement requirements, current hashes and Keep before publication.
-Save and explicit refinement cross the same chat proposal seam as message actions;
-refinement requires a read of the current working version and rejects stale output.
-There is no separate active-note tool; the editor hint supplies identity and
-selection, and ordinary reads obtain the needed content.
+Public Pi AI `createProvider` composes the native transport/admission wrapper with
+the upstream `stream` and `streamSimple` implementations. Startup deduplicates
+selected-model discovery within that pass while restoring every native binding
+before scheduling. The factory catalog holds selected models only. A narrow
+compatibility adapter updates an already-resolved model record after successful
+native discovery, including a first-inference observation of previously unknown
+local capacity, before terminal admission permits the next compaction decision.
+Explicit configuration refresh invalidates that observation; no persisted model
+catalog or whole-server discovery cache is added.
 
-Automatic adjacent-editor context carries only an allowed canonical note identity,
-bounded title and validated selection as a relevance hint. It does not deliver the
-body, admit primary evidence or satisfy rewrite read coverage. It retains canonical
-hash/access revalidation without marking a hint-only response as note evidence.
-The automatic editor hint is an app context message before conversation history,
-separate from the authored user message. Other turn-local app context precedes
-an explicitly labeled authored request, keeping the user's question last.
-Validated selections also supply an exact body-range read cursor through the
-existing `read_notes` answer branch. `services/evidence/reads.rs` registers the
-canonical range without admitting citations, then ordinary read admission checks
-access, freshness, budgets and source references. Selected-excerpt continuations
-stay inside that range and never claim whole-note coverage or suggest a wider
-read. Clipped hints retain a cursor for the full selection; recorded line starts
-disambiguate repeated explicit excerpts. Ambiguous editor text has no guessed
-selector. Selected-context resolution preserves leading empty lines; older
-stored excerpts can correct their start past omitted empty lines only within
-their stored line range. Exact canonical ranges retain whitespace-only chunks
-during paging.
-Excerpt-only intent is an attribution rule in app context and existing
-source guidance, not a permission restriction: ordinary questions can still read
-the canonical note or discover related evidence.
-Delivered note content keeps a durable history marker even when its sources are
-later hidden, so ordinary dialogue remains usable while note-based answers require
-fresh evidence. Working-copy content is read through `read_notes` with `purpose=edit` when relevant.
+`pi_chat/authority.rs` owns durable native read/write scope and authority revisions.
+Full-vault and note-scoped authority both honor exclusions and current eligibility.
+The composer offers Full vault or No notes; model-discovered Note Identities resolve
+to canonical authorized reads. Unsaved editor buffers, automatic editor hints and
+arbitrary files are not model inputs. Restricting
+access retires affected authority and in-flight deliveries, aborts the old Pi context
+and starts a fresh conversation/provider identity. Old history remains human-visible
+but cannot enter the narrower context. Widening read access grants no writes.
 
-Lexical evidence matches retain a typed title/body location through retrieval.
-The evidence owner validates coordinates against that canonical location rather
-than inferring it from a display label or locating every match in body text.
+The existing `ChatDomain` remains a settings, exclusion, model-capability and composer
+draft owner; provider settings and credentials survive retirement.
+Native `pi_chat_*` records in vault data own only domain authority/source/effect proof.
+Pi stores opaque references and task progression. Temporary write grants belong to
+one conversation across reopen; Always grants belong to the Running Vault; explicit
+revocation/deletion ends the relevant authority. Review is independent and default-on.
+The initial model tool registry has no mutation capability.
 
-EvidenceSession separately tracks actual delivered text for run-local reuse;
-discovery freshness proofs, editor hints and working-copy reads grant no answer
-reuse. Exact same-note/version/location overlaps report none, partial or full,
-keeping historical proofs separate. Independent workers reset this tracking and
-only selected evidence delivered back to the parent enters its context.
-Canonical-note and selected-passage coverage follow each read's continuation;
-an earlier unavailable passage prevents a false complete result on the final page.
-`wholeNoteComplete` is true only for a complete canonical-note read across its
-pages. Selected passages never establish this flag. Normal untimed selected reads
-supply canonical `nextReads` selectors; incomplete canonical pages supply their
-exact cursor. These suggestions grant no new access or automatic retrieval.
-Search coverage describes retrieval, and delivery identifies previews. Explicit
-linked bodies and attachments disclose their own completeness, with a canonical
-read selector when clipped. These signals neither suppress evidence nor choose
-when the model must stop.
+### Notes and citations
 
-The tool boundary's `evidence_references.rs` issues compact, context-local evidence
-selectors for discovery and reads, resolving them exactly to canonical IDs before
-ordinary evidence admission. Clones share one registry; independent workers and
-later runs have distinct namespaces. Worker hints use the worker's references,
-and only references backed by actual worker reads may be selected for handoff.
-Parent delivery revalidates canonical identities and issues parent references.
-The registry translates selectors only: durable passage IDs and read-only `[S#]`
-citation authority remain separate. Unknown references are rejected without
-fuzzy matching; legacy canonical selectors retain their normal validation.
+`pi_chat/notes.rs` supplies native lexical search and authorized canonical reads.
+Search previews issue no citation authority. Reads create immutable native source
+receipts bound to Note Identity and actual read state, with Pi tool details retaining
+structured display metadata and normal tool output retaining delivered text. An
+existing finalized revision may identify the read; an unfinished Editing Window
+uses an observed hash/time receipt without inventing a Note Revision. Native reads
+use canonical metadata identity checks rather than treating a path as authority.
 
-`services/evidence/guidance.rs` owns app-authored interpretation contracts for
-source scope, prose, checkbox status facts and current task deadline metadata.
-Named notes are starting points for factual discovery; named-record omissions
-require complete canonical content. The first read
-with each corresponding structure includes its contract in the tool envelope.
-If guidance crowds out an otherwise deliverable passage, a bounded bootstrap
-returns that guidance with a continuation (or research remaining IDs), without
-admitting the pending source. Both the bootstrap and conservative followup
-envelopes must fit the shared allowance.
-The entire normal/research envelope, including pending guidance, is sized before
-charging or admitting anything. The service records guidance during admission,
-before the tool adapter's remaining fallible checks. Failed outer delivery does
-not roll that state back; the intended retry guarantee and current gap are
-recorded in [behavior invariants](docs/architecture/behavior-invariants.md).
-Each independent EvidenceSession tracks delivered contracts. Worker forks reset
-that state while sharing the evidence allowance. Tool history is retained throughout
-a runtime; between-turn compaction starts a new session, so it cannot discard a
-contract while retaining the session's delivery marker. No question classifier or
-new authority crosses the runtime seam.
+`pi/citations.ts` parses only reserved issued-ID tokens and admitted source links;
+`pi_chat/citations.rs` validates every terminal text block against the native binding,
+current authority and issued receipts before Pi receives successful terminal output.
+Malformed/unissued IDs become inert unavailable markers; excluded or retired authority
+cannot deliver fresh answers. Reasoning, usage, signatures and tool handoffs retain
+their Pi protocol shape. This uniform seam also admits standard compaction output
+without imposing an answer formatter or custom summary schema.
 
-Search, activity listing and research accept the same explicit `activity_range`:
-start inclusive and end exclusive, each an ISO date or RFC3339 timestamp, with
-an optional named timezone for local dates. The model interprets the user's
-wording against the supplied run instant and local timezone. The evidence owner
-validates dates, timezone boundaries and scope; it does not parse the question,
-restrict tools to named periods, or route semantic intents. Activity bounds filter recorded text changes, not event dates, deadlines or accomplishments.
-`include_history` requires those bounds and includes retained superseded/removed
-lines; it supports literal/regex content filters, while semantic current searches
-remain separate. Scope excludes non-note transcripts. Each call
-can select its own query, scope and range; only a research worker's inherited
-scope/range is mandatory within that worker.
+Source links display escaped native note titles and open the current note through
+ordinary workspace navigation. Revision/hash receipts remain internal evidence of
+the actual read; later edits do not invalidate it, and navigation warns when current
+content differs. Optional exact unique quotes supplied to `read_note` create native
+passage locations. Navigation rechecks current exclusions, eligibility and quote
+uniqueness, then the live editor verifies and selects the exact quote. Changed or
+ambiguous passages open the note with a limitation instead of a stale selection.
+Citation admission establishes identity and location, not semantic entailment.
+History Mode, current-content provenance
+and retained activity capabilities remain native NoteTimeline facilities; ordinary
+Pi tools initially expose search/read only. Interactive query search uses `services/retrieval.rs` and its private `search` module
+under the native current-content delivery boundary. Lexical and semantic indexes
+rank candidates; canonical snapshots supply bounded previews. Pending lexical
+projections use catalog paragraphs, and external-byte changes invalidate delivery.
+`services/content_hash.rs` preserves the authored-content identity shared by search
+and Pi read receipts. The retired evidence session, worker budgets, inventory/read
+protocol and passage-citation coordinator are removed; native NoteTimeline history
+and provenance capabilities remain independently testable.
 
-Sends and retries snapshot the editor's current Intl locale, numeric Gregorian
-date order, hour cycle and IANA timezone into optional turn-local configuration.
-The validated timezone sets the run reference; legacy callers retain the backend
-local default. The configuration is not persisted authoring provenance and cannot
-reinterpret older note text. Parent and research prompts share date-reading
-semantics; reviewed-edit guidance stays in the parent.
+### External effects and lifetime
 
-Current body reads optionally include bounded `taskDates` metadata from the same
-Markdown checkbox and portable `@due` parsers used by tasks. Entries cover only
-complete delivered marker lines with exact text and canonical UTF-8 coordinates; clipping or
-exceeding the entry bound marks the metadata incomplete. The bound belongs to
-`services/task_dates.rs`. They consume the same
-read/evidence budgets and inherit permission, hash and citation checks. Historical
-reads do not claim current deadlines. The agent composes current reads and local
-calendar comparisons for deadline questions, and working-note reads plus reviewed
-proposals for edits.
+The task-only publication foundation uses native prepare/approve/publish/reconcile
+and NoteTimeline proof for real synthetic create/update. It owns exact payload and
+publication receipts, not a generic chat run coordinator. The document publication
+lease blocks dirty/conflicted targets and adopts committed canonical results through
+the established editor owner. Lost acknowledgements reconcile before another effect;
+Pi recovery alone cannot guarantee exactly-once external publication.
 
-`find_notes` with `result=notes` returns bounded intermediate data grouped by Note Identity,
-with one representative evidence ID, preview and recorded change per note. This
-is discovery only; search with the same scope/range retrieves the other changed
-passages, preserving different revisions at overlapping offsets.
-`find_notes` defaults to passage discovery; `read_notes` with `purpose=answer` accepts selected IDs or a
-known note ID and delivers canonical current content or labeled historical changes,
-with compact validated citations and interval support. Expanded per-range provenance is opt-in; historical identity and timing remain present without expansion. `read_notes` with `purpose=edit`
-is reserved for proposal preparation. Read continuations preserve remaining IDs,
-provenance position, and options. Search continuations preserve scope/range/configuration;
-model callers pass cursor only to find_notes (including retained result kind),
-and purpose=answer plus cursor to read_notes. Delivery completeness is separate from retrieval coverage.
-Passing an activity range to a read returns backend-checked `activitySupport`:
-supported, uncertain, or not_established. Broad current reads and baseline dates
-do not establish whole-passage activity. This check does not validate semantic entailment. Activity results can
-be followed by reads, unrelated searches, planning, research and proposals.
-The private inventory collection has a bounded storage-proof allowance;
-model-facing pages contain bounded previews and consume the same evidence-byte
-allowance as other tools. Limits belong to `services/evidence/inventory.rs` and
-`services/evidence.rs`. Counts are
-per page and coverage/uncertainty remain explicit. Cursors bind range, scope,
-canonical versions and provenance. Model references are issued only on reads.
-
-QueryResolved events retain explicit submitted configuration, resolved range and
-continuation in the existing durable event store. Follow-ups receive only this
-configuration, never earlier result facts as evidence. Legacy query events are
-converted to explicit ranges only for text activity; other date roles never
-become edit filters. Invalid inputs return tool errors for correction within the
-ordinary run guardrails. Nonretryable empty reads report their limiting budget
-and cannot be repeated. No terminal inventory path or question-specific router
-exists.
-
-
-The automatic editor hint is metadata and a validated selection; selected and
-explicit-link excerpts are checked against current canonical bytes. Editing
-reads retain the reviewed proposal working-copy contract. A durable evidence-use
-marker omits note-based answers from subsequent model history and compaction;
-source-free dialogue remains available. Later model history retains bounded,
-currently permitted cited note references in a fresh app-issued context message,
-separate from earlier assistant prose. The bounds and history assembly belong to
-`chat.rs::normalized_rig_history`. Each group links current
-canonical note identities and titles to its answer ordinal and a bounded copy of
-the preceding user request, and marks the latest completed answer. That historical
-user wording preserves conversational intent; it does not establish note facts.
-These navigation hints carry no old excerpts, assistant claims or citation authority. Compacted references
-are rebuilt from stored sources and separate working-note reference IDs on every
-request rather than persisted in summaries. Successful editing acknowledgements
-save those IDs in the terminal transaction, including across reloads and branches;
-working-copy excerpts never become citation sources or later context.
-Access, identity and location are rechecked before inference and delivery; body
-changes alone do not invalidate these metadata hints. Only references admitted
-to the rendered history retain validation bindings. Runtime observers carry an
-independent evidence context so disabling executable tools cannot disable the
-pre-inference checks. Recent user and source-free assistant
-messages retain their full text, subject to the existing recent-message window
-and explicit compaction. Oversized assembled requests fail through context
-admission instead of clipping each message. Old unversioned compactions are ignored.
-Before every model request and final delivery, context versions, search scope
-versions and admitted citations are checked; stale evidence stops the answer.
-Historical UI transcripts are not fresh evidence. Each validation pass assembles
-permissions once, validates each admitted passage identity with all delivered
-provenance proofs, and fingerprints each distinct search scope once. These are
-per-operation reuse rules, never caches across freshness boundaries. Search
-cursor eviction retains earlier scope/version bindings for final validation.
-Search versions bind scoped paths and hashes of actual file bytes; timestamp-only
-updates, delayed derived-index refresh and identity assignment to unrelated legacy
-notes do not imply changed search content. Admitted citations retain exact source
-identity. Citation validation uses NoteTimeline's refreshable current-content read
-to settle overlapping internal operations and repeat canonical/proof checks.
-
-The runtime's `research_notes` worker has a separate prompt/history and only
-evidence discovery/read tools. Its role contract gathers and selects evidence rather
-than inheriting the full assistant's answer, planning and proposal instructions.
-The final JSON contract applies after intermediate tool calls. Its prompt contains
-the focused question, tool-facing scope and explicit range, discovery hints and run
-instant; hints are unread metadata, and internal normalized bounds/default queries
-are not model inputs. It retains the parent's provider/model routing, shares the
-run guard and evidence-byte budget, and returns selected issued/read IDs and gap
-codes. The backend resolves passages; worker prose and intermediate transcripts
-never enter parent context. One worker may run at a time, with invocation-specific
-optional caller-supplied timeout limits owned by `agent_tools/research.rs`, under
-the shared parent guard. Production has no cumulative research-call, token,
-evidence-byte or elapsed-time quota. The agent may invoke research again
-for another question or scope; a lease is released on every exit, and cumulative
-usage includes all invocations. Period-scoped workers
-must obtain their own temporal candidates; direct canonical reads for current-status checks remain with the parent. Provider failure remains explicit;
-there is no local-to-hosted fallback.
-Worker reads inherit the invocation's explicit range when omitted, reject a wider
-submitted range, and preserve cursor-owned options. The handoff identifies already
-read primary items separately from remaining selected candidates: the parent can
-cite delivered items directly and read only remaining IDs, preserving room for
-independent current-context retrieval in the shared allowance.
-
-`AgentRuntimeRequest.output_schema` is an optional app-owned result contract,
-independent of executable capability grants. The private adapter uses the pinned
-engine's Tool output mode so schema formatting does not suppress gathering calls
-on local backends. Its appended result formatter is non-executable: the engine
-returns its arguments rather than dispatching an application action. Research
-uses a closed evidence-ID/gap schema; accidental terminal prose receives the
-engine's bounded output retry under the same call/token/time limits. The evidence
-owner still rejects unread IDs, unknown fields/gaps and oversized selections.
-Isolation clears any parent result schema before assigning the worker contract.
-OpenAI forced web search selects the hosted tool on the initial completion only.
-The app-owned dispatch policy releases that raw selection on subsequent requests,
-including output retries, so gathering tools and the result formatter can run.
-The private compatibility check matches the final
-definition's exact result schema, including collision-renamed formatters, and is
-covered through the production streaming runner. Measurement separates formatter
-count from executable tool count without recording their definitions or content.
-
-Tool-capable chat uses a readable `segments`/`text`/`sources` answer schema.
-Read payloads supply a bare `sourceId` alongside the Markdown citation label;
-discovery `evidenceId` and note identities remain separate retrieval selectors.
-Before each dispatch, `agent_runtime/result_stream.rs` restricts the answer
-formatter's source selections to an enum of currently validated IDs issued to
-that run. Before any read, its sources array permits only an empty selection.
-Worker selection schemas and executable tools are unchanged. The runtime
-identifies the appended formatter by its exact schema after removing only this
-run-local selection annotation (including output retries and renamed formatters),
-then emits internal, non-durable `ResultStream` fragments for that part only.
-Executable arguments and ordinary formatter commentary are not draft answer text.
-`chat/structured_answer.rs` decodes only segment text from bounded JSON prefixes;
-`chat://answer-draft` carries a full literal-text snapshot with request/message
-identity, dispatch attempt and sequence. Raw JSON never enters frontend activity
-or durable event history. The controller rejects old attempts, sequences and
-terminal-run events; draft text has no Markdown, links or citation controls.
-At finalization the app independently rejects malformed/unknown fields, malformed
-or duplicate IDs and stale/excluded passages. Well-formed but unissued selections
-become explicit, inert `[citation unavailable]` markers while preserving other
-segments; they never acquire a source card or link. The app constructs Markdown links and
-persists only selected validated sources. Rig Tool mode retries malformed JSON;
-it does not enforce the app's closed schema. App validation failures are terminal
-and retryable by the user, without an extra automatic model call. Final Markdown
-replaces the draft only after terminal persistence succeeds. Local models without
-tool support keep their ordinary text path. These checks establish source identity
-and shape, not semantic entailment of a model's claims.
-
-Growing source choices do not invalidate rolling context checkpoints or usage
-baselines. Configuration comparison normalizes only this formatter annotation;
-usage projection counts added choice bytes conservatively, and actual dispatch
-measurement includes the constrained schema.
-
-An empty resolved research scope returns `empty_scope` without starting worker
-inference or widening access. Selection accepts raw JSON or one standalone JSON
-code fence; both undergo the same closed-schema, gap-code and actually-read-ID
-validation. Surrounding prose is rejected. Durable `ResearchCompleted` events
-report fixed stage/outcome/reason codes and counters, including selected versus
-actually delivered passages, model/tool attempts, discovery/read calls and tool
-errors. Completed reads remain counted after failure/timeout, without becoming
-delivered evidence. Empty selection preserves a supplied closed gap code; absent
-one it reports unavailable rather than asserting no matching evidence. Events never contain worker text, identifiers, scope
-values or raw provider errors, and do not add user-visible answer parts.
-
-`services/evidence.rs` owns delivery accounting and optional finite byte
-allowances; they are not token counts or quality guarantees. Production runtime
-dispatch enables cumulative evidence delivery without a byte quota because
-provider context is compacted during the run. Budget fields report null for an
-unlimited allowance. Workers share the counter and cannot reconfigure it.
-Explicit finite allowances remain available to focused callers/tests, preserving
-spending across changes and reserving two read pages for parent delivery.
-Each read page remains bounded to 6,000 bytes, including its serialized envelope
-and interpretation guidance; remaining-budget fields are sized conservatively
-before admission even when the allowance has more digits than the fallback.
-Per-page bounds limit individual context growth without limiting total research.
-Search cursors use a bounded cache; eviction does not discard freshness bindings
-or impose a cumulative query limit.
-Model-facing search and read cursors retain their configuration inside the evidence
-session; internal provenance offsets are not model inputs. Historical proofs are
-persisted additively in passage JSON and navigation opens their content revision.
-`agent_guardrails.rs::AgentRunLimits` owns optional shared context-byte,
-aggregate-token, tool-call and elapsed-time ceilings; production defaults leave
-these unlimited. Consecutive identical tool calls still detect a stalled run;
-legitimate rereads after other progress are allowed. `agent_runtime.rs` retains
-bounded invalid-output retries without a cumulative model-call ceiling.
-Opt-in `GNEAUXGHTS_CONTEXT_DIAGNOSTICS=1` wraps the completion model inside the
-runtime seam and observes assembled instructions, messages, tools, documents,
-output schema and provider parameters. ContextMeasured events contain counters
-and runtime/attempt identities only. A bytes/4 baseline is explicitly approximate,
-not eligible for enforcement; media token counts and absent usage remain unknown.
-Configured output limits and independently observed LM Studio loaded capacity are
-reported without inventing an output reserve or substituting advertised capacity.
-The read-only metadata probe is bounded, nonredirecting and nonfatal; its result
-is shared with the usage-driven guard on each local completion attempt. Research forwards these counters but never its
-prose or raw tool content. A pending attempt closes with unknown usage on dropped
-or superseded work. Explicit caller-supplied limits remain authoritative.
-
-A separate per-runtime usage context guard uses reported input tokens and observed
-loaded capacity. Parent and research worker baselines are independent. Only new
-retained text is projected (serialized UTF-8 bytes plus message framing), and
-configuration changes, replaced history, media or absent usage invalidate the
-baseline. Each local runtime reuses one metadata HTTP client. Successful loaded
-capacity observations are refreshed on every request, so server reloads can
-change the allowance. Unavailable metadata uses the model-specific retry backoff
-in `agent_runtime/context_measurement.rs`; a different model probes immediately.
-No positive capacity is cached. `agent_runtime/usage_context.rs` triggers rolling
-compaction at 75% of observed loaded capacity, or earlier to retain a 4,096-token
-answer reserve, 1,024-token margin and 4,096-token compaction reserve. Unknown
-capacity/usage uses serialized request bytes conservatively; unknown capacity
-uses a 96,000-byte trigger rather than guessing a model window. These are working
-context thresholds, not cumulative research quotas or exact tokenization.
-
-`agent_runtime/compaction.rs` owns ephemeral run checkpoints. It asks the same
-provider/model for a bounded, closed-schema summary with no executable tools
-(local summary requests disable reasoning to preserve room for summary text),
-retains the original user prompt and latest assistant/tool-result group verbatim,
-and preserves the opening system instructions. Subsequent requests project this
-summary plus new work from the engine's original transcript. Prefix/configuration
-changes invalidate the checkpoint. A replacement installs atomically only after
-validating its shape, size and reduction. Invalid summaries receive up to two
-retries, each accounted for; failures stop explicitly while retaining
-the original transcript. Cancellation and explicit deadlines also interrupt
-compaction. Summary calls contribute to model-call/token accounting. Source
-freshness is rechecked after summary inference before dispatching the continuation.
-Counter-only
-ContextMeasured events report started/completed/failed/interrupted outcomes even
-when optional diagnostics are off; worker identity remains separate. The frontend
-marks parent compaction without replacing selected-note metadata.
-
-Summaries are fallible working memory, never source evidence, authorization or
-durable resume checkpoints. Scope, source identity, canonical read requirements,
-proposal rules and final freshness checks continue to apply. Existing ChatService
-compaction owns persisted history between user messages; run compaction does not
-rewrite it. The engine retains its original in-memory transcript, so physical
-memory and provider availability still constrain a run.
-
-These bounds are implementation defaults, not measured quality guarantees.
-
-Application tools register through `agent_tools/feedback.rs`. It preserves exact,
-known application validation/recovery messages across Rig's error normalization;
-unknown dependency diagnostics retain redacted feedback. Parent and research use
-the same registration seam. Durable activity summaries consume only model-safe
-feedback (including text errors), count distinct delivered notes, and distinguish
-incomplete delivery. They do not persist raw arguments or internal error strings.
-Successful read outcomes additionally carry app-admitted source destinations in
-`ToolCallUpdated.readSources`. These structured records preserve note names and
-bounded passage previews independently of final answer citations. They replay
-from the existing event store and do not enter model-history context. Discovery
-previews and unissued source IDs cannot become read links. Conversation delivery
-reapplies source policy/freshness; passage navigation resolves both cited and
-read-only sources through the same validated conversation-bound command.
-
-The protocol keeps run identity, structured activity, plans, usage,
-cancellation, bounded guardrails, and transient permission requests under
-product control. Reads obey vault access and exclusions. Note-changing tools
-produce proposals. New side-effecting tools must declare a permission at the
-app-owned pre-tool seam.
-
-See [ADR 0001](docs/adr/0001-keep-agent-runtime-app-owned.md) for the decision
-and replacement strategy.
+WebView page generations bind editor-owner registrations so an actual refresh can
+replace a stale page without admitting concurrent owners. Restart requests the
+frontend Harness close, joins effects and native transport, then checkpoints/closes
+storage and NoteTimeline before relaunch. The first native frontend-close request
+begins irreversible terminal release; timeouts or later failure cannot reopen it.
+Native shutdown re-delivers the same pending request until acknowledged, including
+when the frontend listener is still starting. Retry retains that token and joins
+the same release.
+Background best-effort persistence keeps the Running Vault open. See
+[behavior invariants](docs/architecture/behavior-invariants.md) for these boundaries.
 
 ## Fitness checks
 
@@ -1205,8 +847,8 @@ protect outcomes.
   capability bypasses. Document shapes and reducer behavior are checked by types
   and behavioral tests rather than duplicating their implementation in source scans.
 - `src-tauri/tests/architecture_fitness.rs` checks backend write routing, the
-  storage-neutral role-limited `NoteTimeline` seam, chat run correlation,
-  permissions, and semantic-work ownership.
+  storage-neutral role-limited `NoteTimeline` seam, the single Pi runtime graph,
+  native authority/publication separation, and semantic-work ownership.
 - `src/lib/contracts/ipcFixtures.test.ts` checks representative command and
   event shapes across the Tauri seam.
 

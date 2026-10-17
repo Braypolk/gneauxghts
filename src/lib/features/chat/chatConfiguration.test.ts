@@ -15,9 +15,7 @@ const settings: ChatSettings = {
   localBaseUrl: 'http://localhost:1234/v1',
   reasoningEffort: 'medium',
   serviceTier: 'standard',
-  webAccess: 'auto',
   defaultVaultAccess: 'full',
-  atlasVisibility: 'hidden'
 };
 
 describe('chat configuration', () => {
@@ -37,10 +35,7 @@ describe('chat configuration', () => {
       current: { provider: 'openai', model: 'hosted-model' },
       conversations: [
         {
-          id: 'chat-1', title: 'One', status: 'active', vaultAccess: 'full',
-          createdAtMillis: 1, updatedAtMillis: 2, messageCount: 1,
-          lastMessagePreview: null, provider: 'openai', model: 'other-model',
-          reasoningEffort: 'medium'
+          provider: 'openai', model: 'other-model'
         }
       ],
       localModels: [

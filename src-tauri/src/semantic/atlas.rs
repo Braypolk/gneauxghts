@@ -83,32 +83,11 @@ pub(crate) struct AtlasNoteMetadata {
     pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
     pub(crate) document_kind: DocumentKind,
-    pub(crate) modified_millis: u64,
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize, Hash, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum AtlasChatVisibilityKey {
-    #[default]
-    Hidden,
-    Remembered,
-    All,
-}
-
-impl AtlasChatVisibilityKey {
-    pub(crate) fn signature_value(self) -> &'static str {
-        match self {
-            Self::Hidden => "hidden",
-            Self::Remembered => "remembered",
-            Self::All => "all",
-        }
-    }
-}
-
+/// The one notes-map namespace in the semantic worker's generation queues.
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq)]
-pub(crate) struct AtlasGenerationKey {
-    pub(crate) chat_visibility: AtlasChatVisibilityKey,
-}
+pub(crate) struct AtlasGenerationKey;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct AtlasLabelRequest {
@@ -116,66 +95,20 @@ pub(crate) struct AtlasLabelRequest {
     pub(crate) membership_fingerprint: String,
 }
 
-const NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX: &str = "navigation-only:";
-
 #[derive(Clone, Debug)]
 pub(crate) struct AtlasHardLink {
     pub(crate) source_note_path: String,
     pub(crate) target_note_path: String,
 }
 
-/// Apply the caller's visibility policy to durable semantic rows, then add a
-/// lightweight conversation node for chat indexes that are visible only by
-/// navigation/wikilink structure. The placeholder vector is deterministic and
-/// derived from the path—not transcript content—and is never persisted to the
-/// semantic database.
+/// Keep indexed notes whose current catalog metadata is available.
 fn visible_atlas_notes(
     mut indexed: Vec<StoredAtlasNoteEmbedding>,
     metadata: &HashMap<String, AtlasNoteMetadata>,
-    dimensions: usize,
 ) -> Vec<StoredAtlasNoteEmbedding> {
     indexed.retain(|note| metadata.contains_key(&note.note_path));
-    let mut indexed_paths = indexed
-        .iter()
-        .map(|note| note.note_path.clone())
-        .collect::<HashSet<_>>();
-    let dimensions = indexed
-        .first()
-        .map(|note| note.embedding.len())
-        .filter(|value| *value > 0)
-        .unwrap_or(dimensions.max(1));
-
-    for meta in metadata.values() {
-        if meta.document_kind != DocumentKind::ChatIndex
-            || !indexed_paths.insert(meta.note_path.clone())
-        {
-            continue;
-        }
-        indexed.push(StoredAtlasNoteEmbedding {
-            note_path: meta.note_path.clone(),
-            note_title: meta.title.clone(),
-            modified_millis: meta.modified_millis,
-            semantic_input_hash: format!(
-                "{NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX}{}",
-                meta.note_path
-            ),
-            created_at: String::new(),
-            updated_at: String::new(),
-            embedding: navigation_only_embedding(&meta.note_path, dimensions),
-        });
-    }
     indexed.sort_by(|left, right| left.note_path.cmp(&right.note_path));
     indexed
-}
-
-fn navigation_only_embedding(path: &str, dimensions: usize) -> Vec<f32> {
-    let mut embedding = vec![0.0; dimensions.max(1)];
-    let digest = blake3::hash(path.as_bytes());
-    for (offset, byte) in digest.as_bytes().iter().take(4).enumerate() {
-        let index = ((*byte as usize) + offset * 67) % embedding.len();
-        embedding[index] += 1.0 / (offset as f32 + 1.0);
-    }
-    embedding
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -349,7 +282,6 @@ fn suppress_missing_atlas_nodes(
 
 #[derive(Clone)]
 struct WorkingNode {
-    has_semantic_content: bool,
     id: String,
     note_id: Option<String>,
     note_path: String,
@@ -424,7 +356,6 @@ pub(crate) struct AtlasWorkerContext {
     pub(crate) map_store: Arc<AtlasMapStore>,
     pub(crate) db_path: PathBuf,
     pub(crate) cache_dir: PathBuf,
-    pub(crate) dimensions: usize,
     pub(crate) provider: Arc<dyn EmbeddingProvider + Send + Sync>,
     pub(crate) debug: Arc<SemanticDebugState>,
     pub(crate) note_ann: Arc<NoteAnnIndexState>,
@@ -439,13 +370,10 @@ struct PersistedAtlasInputs {
 
 fn persisted_atlas_inputs(
     connection: &rusqlite::Connection,
-    key: AtlasGenerationKey,
+    _key: AtlasGenerationKey,
 ) -> Result<PersistedAtlasInputs, String> {
     let rows = load_atlas_note_metadata(connection)?;
-    let visible = rows
-        .iter()
-        .filter(|row| atlas_row_visible(row, key.chat_visibility))
-        .collect::<Vec<_>>();
+    let visible = rows.iter().collect::<Vec<_>>();
     let metadata = visible
         .iter()
         .map(|row| {
@@ -464,7 +392,6 @@ fn persisted_atlas_inputs(
                         &row.tags,
                     ),
                     document_kind: row.document_kind,
-                    modified_millis: row.modified_millis,
                 },
             )
         })
@@ -472,7 +399,7 @@ fn persisted_atlas_inputs(
     let hard_links = persisted_hard_links(&rows, &metadata);
     let embeddings = load_atlas_note_dependencies(connection)?;
     let mut source_hasher = blake3::Hasher::new();
-    source_hasher.update(key.chat_visibility.signature_value().as_bytes());
+    source_hasher.update(b"notes");
     let mut input_hasher = blake3::Hasher::new();
     for row in &visible {
         source_hasher.update(row.note_path.as_bytes());
@@ -522,54 +449,7 @@ fn persisted_atlas_inputs(
     })
 }
 
-fn atlas_row_visible(row: &StoredAtlasNoteMetadata, visibility: AtlasChatVisibilityKey) -> bool {
-    match visibility {
-        AtlasChatVisibilityKey::Hidden => row.document_kind == DocumentKind::Note,
-        AtlasChatVisibilityKey::Remembered => {
-            row.document_kind == DocumentKind::Note
-                || (row.document_kind == DocumentKind::ChatIndex && row.chunk_count > 0)
-        }
-        AtlasChatVisibilityKey::All => row.document_kind != DocumentKind::ChatTranscript,
-    }
-}
-
-const ATLAS_VISIBILITIES_ALL: &[AtlasChatVisibilityKey] = &[
-    AtlasChatVisibilityKey::Hidden,
-    AtlasChatVisibilityKey::Remembered,
-    AtlasChatVisibilityKey::All,
-];
-
-/// Remembered + All only. Hidden is notes-only (`atlas_row_visible`), so a
-/// ChatRecall-only mutation cannot change Hidden membership or its layout set.
-const ATLAS_VISIBILITIES_CHAT_AFFECTED: &[AtlasChatVisibilityKey] = &[
-    AtlasChatVisibilityKey::Remembered,
-    AtlasChatVisibilityKey::All,
-];
-
-/// Which per-visibility atlas rebuilds a semantic mutation batch can affect.
-///
-/// Notes appear under every visibility filter, so note markdown updates (and
-/// deletes/moves, whose document kinds are unknown at enqueue time) require
-/// all three variants. ChatRecall updates only touch ChatIndex rows, which
-/// Hidden never includes — rebuilding Hidden would be redundant work.
-///
-/// Non-document jobs (scans, edge refresh, ANN rebuild) should pass
-/// `force_all = true` so every ready variant still refreshes.
-pub(crate) fn atlas_visibilities_for_mutation_batch(
-    has_note_markdown: bool,
-    has_chat_recall: bool,
-    has_deletes_or_moves: bool,
-    force_all: bool,
-) -> &'static [AtlasChatVisibilityKey] {
-    if force_all || has_note_markdown || has_deletes_or_moves || !has_chat_recall {
-        ATLAS_VISIBILITIES_ALL
-    } else {
-        ATLAS_VISIBILITIES_CHAT_AFFECTED
-    }
-}
-
-/// True when a structural build for `key` is already covering `epoch` or newer,
-/// so re-enqueueing the same visibility would only add redundant queue work.
+/// Avoid enqueueing work already covered by an admitted structural build.
 pub(crate) fn atlas_structural_build_covers_epoch(
     pending: &PendingIndexState,
     key: AtlasGenerationKey,
@@ -604,17 +484,9 @@ fn persisted_hard_links(
     let mut seen = HashSet::new();
     let mut links = Vec::new();
     for row in rows {
-        let source = if row.document_kind == DocumentKind::ChatTranscript {
-            Path::new(&row.note_path)
-                .parent()
-                .map(|parent| parent.join("Conversation.md"))
-                .filter(|path| metadata.contains_key(path.to_string_lossy().as_ref()))
-                .map(|path| path.to_string_lossy().into_owned())
-        } else {
-            metadata
-                .contains_key(&row.note_path)
-                .then(|| row.note_path.clone())
-        };
+        let source = metadata
+            .contains_key(&row.note_path)
+            .then(|| row.note_path.clone());
         let Some(source) = source else {
             continue;
         };

@@ -114,3 +114,23 @@ export function revealEditorTextTarget(
   if (focus) view.focus();
   return true;
 }
+
+/** Citation quotes are exact authored text, never fuzzy search hints. */
+export function resolveEditorCitationTarget(doc: Text, quote: string): { from: number; to: number } | null {
+  if (!quote.trim()) return null;
+  const text = doc.toString(), from = text.indexOf(quote);
+  if (from < 0 || text.indexOf(quote, from + 1) >= 0) return null;
+  return { from, to: from + quote.length };
+}
+
+export function revealEditorCitationTarget(editorRoot: HTMLElement | null, quote: string): boolean {
+  const surface = findCmContentElement(editorRoot);
+  if (!(surface instanceof HTMLElement)) return false;
+  const view = EditorView.findFromDOM(surface);
+  if (!view) return false;
+  const range = resolveEditorCitationTarget(view.state.doc, quote);
+  if (!range) return false;
+  view.dispatch({ selection: { anchor: range.from, head: range.to }, effects: editorScrollEffect(view, range.from) });
+  view.focus();
+  return true;
+}

@@ -188,10 +188,8 @@ fn label_artifact_complete_defaults_true_for_legacy_payloads() {
 }
 
 #[test]
-fn variant_targets_coalesce_to_newest_epoch() {
-    let key = AtlasGenerationKey {
-        chat_visibility: AtlasChatVisibilityKey::Remembered,
-    };
+fn map_targets_coalesce_to_newest_epoch() {
+    let key = AtlasGenerationKey;
     let mut pending = PendingIndexState::default();
     for epoch in [3, 8, 5] {
         pending
@@ -211,53 +209,8 @@ fn variant_targets_coalesce_to_newest_epoch() {
 }
 
 #[test]
-fn atlas_visibilities_for_mutation_batch_skips_hidden_for_chat_recall_only() {
-    assert_eq!(
-        atlas_visibilities_for_mutation_batch(false, true, false, false),
-        [
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ]
-    );
-    assert_eq!(
-        atlas_visibilities_for_mutation_batch(true, false, false, false),
-        [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ]
-    );
-    assert_eq!(
-        atlas_visibilities_for_mutation_batch(true, true, false, false),
-        [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ]
-    );
-    assert_eq!(
-        atlas_visibilities_for_mutation_batch(false, true, true, false),
-        [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ]
-    );
-    assert_eq!(
-        atlas_visibilities_for_mutation_batch(false, false, false, true),
-        [
-            AtlasChatVisibilityKey::Hidden,
-            AtlasChatVisibilityKey::Remembered,
-            AtlasChatVisibilityKey::All,
-        ]
-    );
-}
-
-#[test]
 fn atlas_structural_build_covers_epoch_skips_redundant_enqueue() {
-    let key = AtlasGenerationKey {
-        chat_visibility: AtlasChatVisibilityKey::Hidden,
-    };
+    let key = AtlasGenerationKey;
     let mut pending = PendingIndexState::default();
     assert!(!atlas_structural_build_covers_epoch(&pending, key, 4));
     pending.atlas_building.insert(key, 4);
@@ -267,148 +220,31 @@ fn atlas_structural_build_covers_epoch_skips_redundant_enqueue() {
 }
 
 #[test]
-fn persisted_visibility_variants_distinguish_remembered_chat_set() {
-    let row = |path: &str, kind, chunk_count| StoredAtlasNoteMetadata {
-        note_path: path.to_string(),
-        title: path.to_string(),
-        modified_millis: 1,
-        document_kind: kind,
-        note_id: String::new(),
-        preview: String::new(),
-        tags: Vec::new(),
-        wikilink_targets: Vec::new(),
-        chunk_count,
-        presentation_hash: format!("presentation-{path}"),
-    };
-    let note = row("note.md", DocumentKind::Note, 1);
-    let remembered = row("remembered.md", DocumentKind::ChatIndex, 2);
-    let navigation_only = row("navigation.md", DocumentKind::ChatIndex, 0);
-    let transcript = row("transcript.md", DocumentKind::ChatTranscript, 4);
-    assert!(atlas_row_visible(&note, AtlasChatVisibilityKey::Hidden));
-    assert!(!atlas_row_visible(
-        &remembered,
-        AtlasChatVisibilityKey::Hidden
-    ));
-    assert!(atlas_row_visible(
-        &remembered,
-        AtlasChatVisibilityKey::Remembered
-    ));
-    assert!(!atlas_row_visible(
-        &navigation_only,
-        AtlasChatVisibilityKey::Remembered
-    ));
-    assert!(atlas_row_visible(
-        &navigation_only,
-        AtlasChatVisibilityKey::All
-    ));
-    assert!(!atlas_row_visible(&transcript, AtlasChatVisibilityKey::All));
-}
-
-#[test]
-fn gc_preserves_every_referenced_variant_and_removes_orphans() {
+fn gc_preserves_the_referenced_map_and_removes_orphans() {
     let temp = TestDir::new("gc");
     let cache = temp.path().to_path_buf();
     let root = atlas_root(&cache);
     fs::create_dir_all(&root).expect("atlas root");
-    for visibility in [
-        AtlasChatVisibilityKey::Hidden,
-        AtlasChatVisibilityKey::Remembered,
-        AtlasChatVisibilityKey::All,
-    ] {
-        let name = format!("generation-{}-kept.json", visibility.signature_value());
-        fs::write(root.join(&name), b"{}").expect("artifact");
-        atomic_write_json(
-            &ready_pointer_path(
-                &cache,
-                AtlasGenerationKey {
-                    chat_visibility: visibility,
-                },
-            ),
-            &AtlasReadyPointer {
-                format_version: ATLAS_GENERATION_FORMAT_VERSION,
-                structural_generation: "kept".to_string(),
-                target_epoch: 1,
-                published_at_millis: 1,
-                artifact_file: name,
-                dependencies: test_dependencies(visibility.signature_value(), "input"),
-            },
-        )
-        .expect("pointer");
-    }
-    fs::write(root.join("generation-hidden-orphan.json"), b"{}").expect("orphan");
+
+    let name = "generation-notes-kept.json".to_string();
+    fs::write(root.join(&name), b"{}").expect("artifact");
+    atomic_write_json(
+        &ready_pointer_path(&cache, AtlasGenerationKey),
+        &AtlasReadyPointer {
+            format_version: ATLAS_GENERATION_FORMAT_VERSION,
+            structural_generation: "kept".to_string(),
+            target_epoch: 1,
+            published_at_millis: 1,
+            artifact_file: name,
+            dependencies: test_dependencies("notes", "input"),
+        },
+    )
+    .expect("pointer");
+
+    fs::write(root.join("generation-orphan.json"), b"{}").expect("orphan");
     gc_unreferenced_generations(&cache).expect("gc");
-    assert!(!root.join("generation-hidden-orphan.json").exists());
-    assert!(root.join("generation-hidden-kept.json").exists());
-    assert!(root.join("generation-remembered-kept.json").exists());
-    assert!(root.join("generation-all-kept.json").exists());
-}
-
-#[test]
-fn atlas_visibility_filters_hidden_chat_rows_and_adds_navigation_only_chats() {
-    let stored = vec![
-        StoredAtlasNoteEmbedding {
-            note_path: "/vault/note.md".to_string(),
-            note_title: "Note".to_string(),
-            modified_millis: 1,
-            semantic_input_hash: "note-hash".to_string(),
-            created_at: String::new(),
-            updated_at: String::new(),
-            embedding: vec![1.0, 0.0, 0.0],
-        },
-        StoredAtlasNoteEmbedding {
-            note_path: "/vault/Chats/remembered/Conversation.md".to_string(),
-            note_title: "Remembered".to_string(),
-            modified_millis: 1,
-            semantic_input_hash: "recall-hash".to_string(),
-            created_at: String::new(),
-            updated_at: String::new(),
-            embedding: vec![0.0, 1.0, 0.0],
-        },
-    ];
-    let note_meta = AtlasNoteMetadata {
-        note_id: Some("note".to_string()),
-        note_path: "/vault/note.md".to_string(),
-        file_name: "note.md".to_string(),
-        title: "Note".to_string(),
-        preview: String::new(),
-        tags: Vec::new(),
-        document_kind: DocumentKind::Note,
-        modified_millis: 1,
-    };
-    let hidden = visible_atlas_notes(
-        stored.clone(),
-        &HashMap::from([(note_meta.note_path.clone(), note_meta.clone())]),
-        3,
-    );
-    assert_eq!(hidden.len(), 1);
-    assert_eq!(hidden[0].note_path, "/vault/note.md");
-
-    let chat_meta = AtlasNoteMetadata {
-        note_id: Some("chat".to_string()),
-        note_path: "/vault/Chats/new/Conversation.md".to_string(),
-        file_name: "Conversation.md".to_string(),
-        title: "New chat".to_string(),
-        preview: String::new(),
-        tags: Vec::new(),
-        document_kind: DocumentKind::ChatIndex,
-        modified_millis: 2,
-    };
-    let all = visible_atlas_notes(
-        stored,
-        &HashMap::from([
-            (note_meta.note_path.clone(), note_meta),
-            (chat_meta.note_path.clone(), chat_meta),
-        ]),
-        3,
-    );
-    assert_eq!(all.len(), 2);
-    let chat = all
-        .iter()
-        .find(|note| note.note_title == "New chat")
-        .expect("navigation-only chat");
-    assert!(chat
-        .semantic_input_hash
-        .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX));
+    assert!(!root.join("generation-orphan.json").exists());
+    assert!(root.join("generation-notes-kept.json").exists());
 }
 
 fn seed_atlas_garden_note(db: &mut rusqlite::Connection, root: &Path, i: usize) {
@@ -472,7 +308,6 @@ fn label_publication_replaces_a_retained_duplicate_parent_name() {
         map_store: active.atlas_map.clone(),
         db_path: active.db_path.clone(),
         cache_dir: active.atlas_cache_dir.clone(),
-        dimensions: 3,
         provider: active.provider.clone(),
         debug: active.debug.clone(),
         note_ann: active.note_ann.clone(),
@@ -609,7 +444,6 @@ fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_ca
         map_store: active.atlas_map.clone(),
         db_path: active.db_path.clone(),
         cache_dir: active.atlas_cache_dir.clone(),
-        dimensions: 3,
         provider: active.provider.clone(),
         debug: active.debug.clone(),
         note_ann: active.note_ann.clone(),
@@ -699,7 +533,7 @@ fn atlas_native_worker_preserves_names_and_places_through_rebuild_restart_and_ca
             .as_deref(),
         Some("Kitchen garden")
     );
-    // Visibility filtering removes existing files from the served inventory immediately.
+    // Removing a note from the canonical inventory suppresses its derived map rows immediately.
     let mut eligible = persisted_atlas_inputs(&db, key).unwrap().metadata;
     let excluded_path = recovered.nodes[0].note_path.clone();
     let excluded_id = recovered.nodes[0].id.clone();

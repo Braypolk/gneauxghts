@@ -63,13 +63,13 @@ describe('browser fixture command ownership', () => {
     expect(backend.bridge.snapshot().notes).toEqual(before);
   });
 
-  it('provides the model capabilities needed to restore seeded revision chat', async () => {
+  it('retains settings and composer drafts while rejecting retired chat commands', async () => {
     const backend = createBrowserE2eBackend();
-    backend.bridge.seedRevisionChat();
-    const settings = await backend.invoke('chat_get_settings') as { provider: string; model: string };
-    expect(await backend.invoke('chat_get_model_capabilities', { provider: settings.provider, model: settings.model }))
-      .toEqual({ images: false, audio: false, video: false, files: false, acceptedMimeTypes: [], tools: true });
-    expect(await backend.invoke('chat_get_conversation', { conversationId: 'revision-chat' }))
-      .toMatchObject({ id: 'revision-chat', messages: expect.arrayContaining([expect.objectContaining({ id: 'revision-answer' })]) });
+    expect(await backend.invoke('chat_get_settings')).toMatchObject({ provider: 'local', localModel: 'fixture-local' });
+    await backend.invoke('chat_set_composer_draft', { slot: 'pane:a', body: 'Unsent' });
+    expect(await backend.invoke('chat_get_composer_draft', { slot: 'pane:a' })).toBe('Unsent');
+    for (const command of ['chat_create_conversation', 'chat_send_message', 'chat_get_conversation', 'chat_list_pending_proposals']) {
+      await expect(backend.invoke(command)).rejects.toThrow('does not implement');
+    }
   });
 });

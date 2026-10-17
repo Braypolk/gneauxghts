@@ -103,7 +103,7 @@ describe('notepad task mutation adapter', () => {
     const editing = createDocumentEditingService({
       state,
       isApplyingProgrammaticUpdate: () => false,
-      shouldSuppressAutosave: () => false,
+
       isTitleEditing: () => false,
       resetPaneCommandAfterBodyInput: vi.fn(),
       clearRecentlyForgotten: vi.fn(),

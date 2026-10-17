@@ -52,7 +52,7 @@ function editingServiceForState(
   return createDocumentEditingService({
     state,
     isApplyingProgrammaticUpdate: () => false,
-    shouldSuppressAutosave: () => false,
+
     isTitleEditing: () => false,
     resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(),

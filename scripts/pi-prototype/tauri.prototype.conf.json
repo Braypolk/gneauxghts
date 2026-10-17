@@ -1,6 +1,0 @@
-{
-  "identifier": "com.braypolkinghorne.gneauxghts.pi-prototype",
-  "productName": "Gneauxghts Pi Evaluation",
-  "build": { "devUrl": "http://127.0.0.1:1442", "beforeDevCommand": "pnpm exec vite --host 127.0.0.1 --port 1442 --strictPort" },
-  "app": { "windows": [{ "title": "Pi Evaluation — disposable copied vault", "url": "/", "backgroundThrottling": "disabled" }] }
-}

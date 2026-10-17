@@ -16,7 +16,7 @@ import {
 import { documentRegistry } from './documentRegistry';
 
 function createHarness(
-  options: { suppressAutosave?: boolean; external?: boolean } = {},
+  options: { external?: boolean } = {},
   snapshot = createEmptySessionSnapshot()
 ) {
   const note = createNoteDraftState(snapshot);
@@ -28,7 +28,6 @@ function createHarness(
   const service = createDocumentEditingService({
     state,
     isApplyingProgrammaticUpdate: () => options.external ?? false,
-    shouldSuppressAutosave: () => options.suppressAutosave ?? false,
     isTitleEditing: () => false,
     resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(),
@@ -64,25 +63,6 @@ describe('documentEditingService', () => {
     expect(harness.note.operation.revision).toBe(revision + 1);
   });
 
-  it('suppresses autosave during proposal review while retaining derived views', () => {
-    const harness = createHarness({ suppressAutosave: true });
-    harness.service.recordUserEdit('left', harness.note, 'proposal');
-
-    expect(harness.scheduleAutosave).not.toHaveBeenCalled();
-    expect(harness.scheduleSearch).toHaveBeenCalledOnce();
-    expect(harness.scheduleRelated).toHaveBeenCalledOnce();
-  });
-
-  it('records a retained review edit without a pane or autosave', () => {
-    const harness = createHarness();
-    const revision = harness.note.operation.revision;
-    harness.service.recordReviewEdit(harness.note, 'reviewed text');
-    expect(harness.note.working.markdown).toBe('reviewed text');
-    expect(harness.note.operation.revision).toBe(revision + 1);
-    expect(harness.scheduleSearch).toHaveBeenCalledOnce();
-    expect(harness.scheduleRelated).toHaveBeenCalledOnce();
-    expect(harness.scheduleAutosave).not.toHaveBeenCalled();
-  });
 
   it('does not treat a programmatic editor callback as another edit', () => {
     const harness = createHarness({ external: true });
@@ -297,83 +277,6 @@ describe('documentEditingService', () => {
     expect(runtime.revision).toBe(revision + 1);
     expect(runtime.undo(null)).toBe(false);
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
-  });
-
-  it('adopts proposal warnings without saving unless later edits remain', async () => {
-    const harness = createHarness({}, {
-      ...createEmptySessionSnapshot(),
-      title: 'Plan',
-      bodyMarkdown: 'After',
-      currentNoteId: 'note-id',
-      currentNotePath: '/vault/note.md',
-      lastSavedTitle: 'Plan',
-      lastSavedMarkdown: 'Before',
-      lastSavedNoteId: 'note-id',
-      lastSavedPath: '/vault/note.md'
-    });
-    const warning = {
-      message: 'Projection pending',
-      issues: [{ stage: 'semanticProjection' as const, message: 'retry' }]
-    };
-
-    await harness.service.adoptAcceptedProposal(
-      harness.note,
-      {
-        noteId: 'note-id',
-        title: 'Plan',
-        markdown: 'After',
-        path: '/vault/note.md'
-      },
-      'After',
-      warning
-    );
-
-    expect(harness.note.publication.warning).toEqual(warning);
-    expect(harness.note.savedBaseline?.content.markdown).toBe('After');
-    expect(harness.scheduleAutosave).not.toHaveBeenCalled();
-  });
-
-  it('adopts the published collision filename while retaining only later body edits', async () => {
-    const harness = createHarness({}, { ...createEmptySessionSnapshot(),
-      title: 'Plan', bodyMarkdown: 'Later typing', lastSavedMarkdown: '' });
-    await harness.service.adoptAcceptedProposal(harness.note, {
-      noteId: 'created-id', title: 'Plan 2', markdown: 'Reviewed body', path: '/vault/Plan 2.md'
-    }, 'Reviewed body', null, 'Plan');
-    expect(harness.note.working.title).toBe('Plan 2');
-    expect(harness.note.working.markdown).toBe('Later typing');
-    expect(harness.note.savedBaseline?.content.title).toBe('Plan 2');
-    expect(harness.scheduleAutosave).toHaveBeenCalledOnce();
-  });
-
-  it('preserves a later proposal title edit and schedules only that dirty work', async () => {
-    const harness = createHarness({}, {
-      ...createEmptySessionSnapshot(),
-      title: 'Plan',
-      bodyMarkdown: 'After',
-      currentNoteId: 'note-id',
-      currentNotePath: '/vault/note.md',
-      lastSavedTitle: 'Plan',
-      lastSavedMarkdown: 'Before',
-      lastSavedNoteId: 'note-id',
-      lastSavedPath: '/vault/note.md'
-    });
-    updateDocumentTitle(harness.note, 'Later title');
-
-    await harness.service.adoptAcceptedProposal(
-      harness.note,
-      {
-        noteId: 'note-id',
-        title: 'Plan',
-        markdown: 'After',
-        path: '/vault/note.md'
-      },
-      'After',
-      null
-    );
-
-    expect(harness.note.working.title).toBe('Later title');
-    expect(harness.note.savedBaseline?.content.title).toBe('Plan');
-    expect(harness.scheduleAutosave).toHaveBeenCalledOnce();
   });
 
   it('applies clean external refresh and transient Forgotten-Note Recovery with fixed policies', async () => {

@@ -3,7 +3,7 @@
   "mutationSources": [
     "editor",
     "taskAction",
-    "acceptedChatProposal",
+    "agentPublication",
     "externalEdit",
     "versionRestore",
     "noteCreation",

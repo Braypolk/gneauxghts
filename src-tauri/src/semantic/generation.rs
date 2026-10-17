@@ -144,9 +144,6 @@ impl SemanticGeneration {
         let mut seen = std::collections::HashSet::new();
         for path in crate::path_utils::collect_markdown_files_recursively(root)? {
             let markdown = fs::read_to_string(&path).map_err(|e| e.to_string())?;
-            if !crate::note::semantic_recall_eligible(&markdown) {
-                continue;
-            }
             let key = path.to_string_lossy().into_owned();
             if stored
                 .get(&key)
@@ -156,9 +153,7 @@ impl SemanticGeneration {
             }
             seen.insert(key);
         }
-        if stored.iter().any(|(path, row)| {
-            row.document_kind == crate::note::DocumentKind::Note && !seen.contains(path)
-        }) {
+        if stored.keys().any(|path| !seen.contains(path)) {
             return Ok(ActivationPreparation::StaleSources);
         }
         Ok(ActivationPreparation::Ready(PreparedActivation {

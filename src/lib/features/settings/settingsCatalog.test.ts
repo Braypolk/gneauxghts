@@ -12,6 +12,11 @@ describe('settings discovery', () => {
     expect(searchSettings('theme nonexistent')).toEqual([]);
   });
 
+  it('does not offer an inactive web-search setting', () => {
+    expect(searchSettings('web access')).toEqual([]);
+    expect(searchSettings('browsing')).toEqual([]);
+  });
+
   it.each(['', '  ', '!!!', 'unfindablesetting'])('returns no results for %j', (query) => {
     expect(searchSettings(query)).toEqual([]);
   });

@@ -436,15 +436,12 @@ pub(crate) fn prepare_note_save(
     fallback_identity: Option<&str>,
 ) -> Result<(PathBuf, String), String> {
     let normalized_markdown = note::normalize_wikilink_markdown(markdown);
-    note::reject_chat_projection_write(&normalized_markdown)?;
+
     let existing_markdown = current_path
         .filter(|path| path.exists())
         .map(fs::read_to_string)
         .transpose()
         .map_err(|err| err.to_string())?;
-    if let Some(existing_markdown) = existing_markdown.as_deref() {
-        note::reject_chat_projection_write(existing_markdown)?;
-    }
 
     let mut prepared_markdown = note::prepare_note_markdown(
         &normalized_markdown,

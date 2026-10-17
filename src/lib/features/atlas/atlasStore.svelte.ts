@@ -1,7 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { SvelteMap } from 'svelte/reactivity';
 import { appStore } from '$lib/app/appStore.svelte';
-import { chatApi } from '$lib/features/chat/api';
 import type {
   AtlasCloudName,
   AtlasNode,
@@ -9,7 +8,6 @@ import type {
   AtlasSearchResponse,
   VaultAtlasResponse
 } from '$lib/types/atlas';
-import type { AtlasChatVisibility } from '$lib/features/chat/types';
 
 const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
 const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;
@@ -18,9 +16,7 @@ const ATLAS_SEARCH_HIT_MIN_STRUCTURAL = 0.38;
 const ATLAS_POLL_INITIAL_DELAY_MILLIS = 400;
 const ATLAS_POLL_MAX_DELAY_MILLIS = 2_500;
 
-type AtlasResponseLoader = (chatVisibility: AtlasChatVisibility) => Promise<VaultAtlasResponse>;
-type AtlasChatVisibilityLoader = () => Promise<AtlasChatVisibility>;
-type AtlasChatVisibilitySaver = (visibility: AtlasChatVisibility) => Promise<void>;
+type AtlasResponseLoader = () => Promise<VaultAtlasResponse>;
 
 export class AtlasStore {
   response = $state.raw<VaultAtlasResponse | null>(null);
@@ -32,7 +28,6 @@ export class AtlasStore {
   isSearching = $state(false);
   selectedNodeId = $state<string | null>(null);
   searchQuery = $state('');
-  chatVisibility = $state<AtlasChatVisibility>('hidden');
 
   #refreshTimer: ReturnType<typeof setTimeout> | null = null;
   #pollTimer: ReturnType<typeof setTimeout> | null = null;
@@ -43,31 +38,17 @@ export class AtlasStore {
   #refreshRequestedDuringLoad = false;
   #refreshSequence = 0;
   #pollAttempts = 0;
-  #initialized = false;
   #lifetime = 0;
   #initializePromise: Promise<void> | null = null;
   #disposed = false;
-  #visibilitySequence = 0;
-  #visibilityPersistence = Promise.resolve();
   #searchSequence = 0;
   #loadAtlas: AtlasResponseLoader;
-  #loadChatVisibility: AtlasChatVisibilityLoader;
-  #saveChatVisibility: AtlasChatVisibilitySaver;
 
   constructor(
-    loadAtlas: AtlasResponseLoader = (chatVisibility) =>
-      invoke<VaultAtlasResponse>('get_vault_atlas', { chatVisibility }),
-    loadChatVisibility: AtlasChatVisibilityLoader = async () =>
-      (await chatApi.getSettings()).atlasVisibility,
-    saveChatVisibility: AtlasChatVisibilitySaver = async (visibility) => {
-      await chatApi.setAtlasVisibility(visibility);
-    },
-    private readonly loadSearch = (query: string, chatVisibility: AtlasChatVisibility) =>
-      invoke<AtlasSearchResponse>('search_vault_atlas', { query, chatVisibility })
+    loadAtlas: AtlasResponseLoader = () => invoke<VaultAtlasResponse>('get_vault_atlas'),
+    private readonly loadSearch = (query: string) => invoke<AtlasSearchResponse>('search_vault_atlas', { query })
   ) {
     this.#loadAtlas = loadAtlas;
-    this.#loadChatVisibility = loadChatVisibility;
-    this.#saveChatVisibility = saveChatVisibility;
   }
 
   isRevalidating = $derived(
@@ -102,30 +83,13 @@ export class AtlasStore {
   }
 
   async #initialize(lifetime: number) {
-    this.#initialized = true;
-    const visibilitySequence = this.#visibilitySequence;
-    const persistedVisibility = await this.#loadChatVisibility().catch(() => null);
-    if (lifetime !== this.#lifetime) return;
-    if (
-      persistedVisibility &&
-      visibilitySequence === this.#visibilitySequence &&
-      this.chatVisibility !== persistedVisibility
-    ) {
-      this.#applyChatVisibility(persistedVisibility, false);
-    }
     await appStore.bootstrap().catch(() => undefined);
     if (lifetime !== this.#lifetime) return;
     this.#lastIndexingInProgress = appStore.semanticStatus?.indexingInProgress ?? false;
     this.#lastIndexedAtMillis = appStore.semanticStatus?.lastIndexedAtMillis ?? null;
     const runningPath = appStore.vaultInfo?.runningPath;
     this.#disposeCallbacks.push(
-      appStore.subscribeVaultNoteChanged((event) => {
-        if (!event.documentKind || event.documentKind === 'note') {
-          this.scheduleRefresh();
-          return;
-        }
-        if (this.chatVisibility !== 'hidden') this.scheduleRefresh();
-      }),
+      appStore.subscribeVaultNoteChanged(() => this.scheduleRefresh()),
       appStore.subscribeNoteSaved(() => this.scheduleRefresh()),
       appStore.subscribeVaultChanged((vault) => {
         if (vault.runningPath === runningPath) return;
@@ -162,7 +126,6 @@ export class AtlasStore {
     this.#invalidateSearch();
     this.isLoading = false;
     this.#refreshRequestedDuringLoad = false;
-    this.#initialized = false;
     this.#refreshSequence += 1;
     if (this.#refreshTimer) {
       globalThis.clearTimeout(this.#refreshTimer);
@@ -192,10 +155,9 @@ export class AtlasStore {
   }
 
   async renameCloud(cloudId: string, name: string | null) {
-    const visibility = this.chatVisibility;
     const lifetime = this.#lifetime;
-    const result = await invoke<AtlasCloudName>('rename_atlas_cloud', {cloudId, name, chatVisibility: visibility});
-    if (visibility !== this.chatVisibility || lifetime !== this.#lifetime || !this.response) return;
+    const result = await invoke<AtlasCloudName>('rename_atlas_cloud', {cloudId, name});
+    if (lifetime !== this.#lifetime || !this.response) return;
     if (result.nameRevision < (this.response.nameRevision ?? 0)) { await this.refresh(); return; }
     this.response = {...this.response, nameRevision: result.nameRevision, clouds: this.response.clouds.map(cloud =>
       cloud.id === result.cloudId ? {...cloud, userName: result.userName, label: result.label,
@@ -229,13 +191,12 @@ export class AtlasStore {
       return;
     }
     const lifetime = this.#lifetime;
-    const requestVisibility = this.chatVisibility;
     const sequence = ++this.#refreshSequence;
     this.isLoading = true;
     this.error = null;
     try {
-      const response = await this.#loadAtlas(requestVisibility);
-      if (sequence !== this.#refreshSequence || requestVisibility !== this.chatVisibility) return;
+      const response = await this.#loadAtlas();
+      if (sequence !== this.#refreshSequence) return;
       const prior = this.response;
       if (prior && (prior.nameRevision ?? 0) > (response.nameRevision ?? 0)) {
         const names = new Map(prior.clouds.map(cloud => [cloud.id, cloud]));
@@ -337,7 +298,6 @@ export class AtlasStore {
   async runSearch(query = this.searchQuery.trim()) {
     if (this.#disposed) return;
     const sequence = ++this.#searchSequence;
-    const visibility = this.chatVisibility;
     if (!query) {
       this.searchResponse = null;
       this.searchError = null;
@@ -347,44 +307,17 @@ export class AtlasStore {
     this.isSearching = true;
     this.searchError = null;
     try {
-      const response = await this.loadSearch(query, visibility);
-      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim() || visibility !== this.chatVisibility) return;
+      const response = await this.loadSearch(query);
+      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
       this.searchResponse = response;
     } catch (error) {
-      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim() || visibility !== this.chatVisibility) return;
+      if (sequence !== this.#searchSequence || query !== this.searchQuery.trim()) return;
       this.searchError = String(error);
     } finally {
       if (sequence === this.#searchSequence) {
         this.isSearching = false;
       }
     }
-  }
-
-  setChatVisibility(visibility: AtlasChatVisibility) {
-    if (visibility === this.chatVisibility) return;
-    const sequence = ++this.#visibilitySequence;
-    this.#applyChatVisibility(visibility, true);
-    this.#visibilityPersistence = this.#visibilityPersistence
-      .catch(() => undefined)
-      .then(async () => {
-        if (sequence !== this.#visibilitySequence) return;
-        await this.#saveChatVisibility(visibility);
-      })
-      .catch(() => undefined);
-  }
-
-  #applyChatVisibility(visibility: AtlasChatVisibility, refresh: boolean) {
-    this.#invalidateSearch();
-    this.chatVisibility = visibility;
-    this.selectedNodeId = null;
-    this.#refreshSequence += 1;
-    this.response = null;
-    this.searchResponse = null;
-    this.error = null;
-    this.searchError = null;
-    this.isStale = true;
-    this.#stopPolling();
-    if (refresh && this.#initialized) this.scheduleRefresh(0);
   }
 
   searchMatchForNode(node: AtlasNode): AtlasSearchMatch | null {

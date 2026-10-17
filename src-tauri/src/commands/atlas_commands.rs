@@ -2,9 +2,7 @@ use super::prepare_notes_dir;
 use crate::{
     index::AppState,
     note::DocumentKind,
-    semantic::atlas::{
-        AtlasChatVisibilityKey, AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse,
-    },
+    semantic::atlas::{AtlasGenerationKey, AtlasSearchResponse, VaultAtlasResponse},
     services::note_timeline::{
         AllowedScope, CurrentContentIdentity, CurrentContentItem, CurrentContentProjection,
     },
@@ -12,8 +10,6 @@ use crate::{
 };
 use std::collections::HashSet;
 use tauri::State;
-
-type AtlasChatVisibility = AtlasChatVisibilityKey;
 
 impl CurrentContentItem for crate::semantic::atlas::AtlasNode {
     fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
@@ -95,10 +91,8 @@ impl CurrentContentProjection for AtlasSearchResponse {
 #[tauri::command]
 pub(crate) async fn get_vault_atlas(
     state: State<'_, AppState>,
-    chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<VaultAtlasResponse, String> {
-    let chat_visibility = chat_visibility.unwrap_or_default();
-    let generation_key = AtlasGenerationKey { chat_visibility };
+    let generation_key = AtlasGenerationKey;
     let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(&notes_dir, "get_vault_atlas")?;
     let activity_by_note_id = db_load_note_activity()?;
@@ -126,10 +120,8 @@ pub(crate) fn clear_atlas_cache(state: State<'_, AppState>) -> Result<(), String
 pub(crate) async fn search_vault_atlas(
     state: State<'_, AppState>,
     query: String,
-    chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<AtlasSearchResponse, String> {
-    let chat_visibility = chat_visibility.unwrap_or_default();
-    let generation_key = AtlasGenerationKey { chat_visibility };
+    let generation_key = AtlasGenerationKey;
     let notes_dir = prepare_notes_dir(&state, false)?;
     state.ensure_interactive_index(&notes_dir, "search_vault_atlas")?;
 
@@ -154,16 +146,11 @@ pub(crate) async fn rename_atlas_cloud(
     app: tauri::AppHandle,
     cloud_id: String,
     name: Option<String>,
-    chat_visibility: Option<AtlasChatVisibility>,
 ) -> Result<crate::semantic::atlas::AtlasCloudName, String> {
     super::on_app_worker(app, move |state| {
-        state.semantic.rename_atlas_cloud(
-            AtlasGenerationKey {
-                chat_visibility: chat_visibility.unwrap_or_default(),
-            },
-            &cloud_id,
-            name,
-        )
+        state
+            .semantic
+            .rename_atlas_cloud(AtlasGenerationKey, &cloud_id, name)
     })
     .await?
 }

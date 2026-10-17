@@ -181,7 +181,7 @@ export interface SemanticDebugSnapshot {
 
 export interface SearchItem {
   /** Omitted only by local/current-note results; persisted results always include it. */
-  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind?: 'note';
   noteId: string | null;
   notePath: string | null;
   fileName: string;
@@ -199,7 +199,7 @@ export interface SearchItem {
 }
 
 export interface RelatedNoteItem {
-  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind?: 'note';
   noteId: string | null;
   notePath: string;
   noteTitle: string;
@@ -222,7 +222,7 @@ export interface RelatedNotesResponse {
 export type RetrievalContextScope = 'note' | 'selection' | 'query';
 
 export interface RetrievalContextItem {
-  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind?: 'note';
   noteId: string | null;
   notePath: string | null;
   noteTitle: string;

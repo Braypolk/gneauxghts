@@ -1,8 +1,13 @@
 ---
-status: superseded in part by ADR-0009
+status: superseded in part by ADR-0009 and ADR-0012
 ---
 
 # Limit chat history access to current content
+
+[ADR 0012](0012-found-ordinary-chat-on-pi.md) records the accepted new-user Pi
+rebuild and its scoped supersessions. The implementation described below is
+historical and retired from ordinary chat; it is not a current runtime requirement.
+
 
 The original decision kept removed historical prose out of ordinary model context while allowing Current-Content Provenance and activity metadata for currently permitted notes. [ADR 0009](0009-allow-scoped-retained-activity-evidence.md) supersedes that prose restriction for explicit, scoped activity queries.
 

@@ -15,7 +15,7 @@ pub(super) fn prototype(ids: &[String], nodes: &[WorkingNode]) -> Vec<f32> {
     let ids: HashSet<_> = ids.iter().collect();
     let members = nodes
         .iter()
-        .filter(|n| n.has_semantic_content && ids.contains(&n.id))
+        .filter(|n| ids.contains(&n.id))
         .collect::<Vec<_>>();
     let mut mean = vec![0.0; members.first().map_or(0, |n| n.embedding.len())];
     for node in &members {
@@ -42,7 +42,7 @@ fn overlap(a: &[String], b: &[String]) -> f32 {
 fn evidence(ids: &[String], nodes: &[WorkingNode]) -> String {
     let mut members = nodes
         .iter()
-        .filter(|n| n.has_semantic_content && ids.contains(&n.id))
+        .filter(|n| ids.contains(&n.id))
         .collect::<Vec<_>>();
     members.sort_by_key(|n| note_identity(n));
     let mut hash = blake3::Hasher::new();
@@ -118,24 +118,8 @@ pub(super) fn reconcile(
     previous: &MapState,
     now: u64,
 ) -> Result<(Vec<CloudSpec>, Vec<MapCloud>), String> {
-    let mut semantic_nodes = nodes
-        .iter()
-        .filter(|n| n.has_semantic_content)
-        .cloned()
-        .collect::<Vec<_>>();
-    let semantic_ids = semantic_nodes
-        .iter()
-        .map(|n| n.id.as_str())
-        .collect::<HashSet<_>>();
-    let semantic_edges = edges
-        .iter()
-        .filter(|e| {
-            semantic_ids.contains(e.source_id.as_str())
-                && semantic_ids.contains(e.target_id.as_str())
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    let candidates = geometry::candidate_clouds(&mut semantic_nodes, &semantic_edges);
+    let mut candidate_nodes = nodes.to_vec();
+    let candidates = geometry::candidate_clouds(&mut candidate_nodes, edges);
     let roots = candidates
         .iter()
         .filter(|c| c.parent_id.is_none())
@@ -201,7 +185,7 @@ pub(super) fn reconcile(
         candidate_vectors.push(prototype(&root.member_node_ids, nodes));
     }
     let mut groups: BTreeMap<String, Vec<String>> = BTreeMap::new();
-    for node in nodes.iter().filter(|n| n.has_semantic_content) {
+    for node in nodes.iter() {
         let proposed = roots
             .iter()
             .position(|c| c.member_node_ids.contains(&node.id));
@@ -218,10 +202,10 @@ pub(super) fn reconcile(
         let mut target = proposed.map(|i| candidate_ids[i].clone());
         let candidate_score =
             proposed.map_or(-1.0, |i| similarity(&node.embedding, &candidate_vectors[i]));
-        if node.has_semantic_content && candidate_score < THEME_MIN {
+        if candidate_score < THEME_MIN {
             target = None;
         }
-        if let Some((i, score)) = best_old.filter(|_| node.has_semantic_content) {
+        if let Some((i, score)) = best_old {
             if score >= THEME_MIN && score + RETENTION_MARGIN >= candidate_score {
                 target = Some(old[i].id.clone());
             }

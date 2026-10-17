@@ -1,6 +1,6 @@
 # Preserve conversational note referents across evidence omission
 
-Status: ready-for-agent
+Status: wontfix
 Type: bug
 Resolution: implemented
 
@@ -92,3 +92,8 @@ parent/worker Arc retention cycle. Targeted offline checks total 120 passing.
 Shared instructions remain 3,161 bytes, with no new tool or automatic editor body.
 The final lifecycle correction is verified offline; it was not included in the
 pinned binary used by replay 8. Intermittent citation omission remains issue 08.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

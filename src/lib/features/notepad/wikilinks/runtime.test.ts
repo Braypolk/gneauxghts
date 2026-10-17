@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }));
 
 it('keeps replacement, dismissal, alias and keyboard insertion on the current autocomplete request', async () => {
   const { view } = createCommandView({ doc: '[[]]', selection: { anchor: 2 } });
-  const controller = { view, runtime: null, sharedResources: null, paneKey: Symbol(), onMarkdownChange: () => {}, proposalReviewCompartment: new Compartment() } as unknown as EditorController;
+  const controller = { view, runtime: null, sharedResources: null, paneKey: Symbol(), onMarkdownChange: () => {} } as unknown as EditorController;
   let state = createWikilinkAutocompleteState();
   const runtime = createWikilinkRuntime({ getState: () => state, setState: value => { state = value; }, getCurrentNoteId: () => 'note', getCurrentPath: () => '/note.md', getCurrentTitle: () => 'Note', getCurrentMarkdown: () => view.state.doc.toString(), getEditorController: () => controller, cancelPendingAutosave: vi.fn(), openNotePath: vi.fn(), getNavigationContext: () => ({ currentNoteId: 'note', currentNotePath: '/note.md', editorRoot: null, titleShell: null, focusTitleAtEnd: vi.fn() }), saveCursorPositionForNote: vi.fn() });
   const target = { rawTarget: '', targetFrom: 2, targetTo: 2, left: 0, top: 0, bottom: 0 };

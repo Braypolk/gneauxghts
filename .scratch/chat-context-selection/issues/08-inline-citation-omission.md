@@ -1,6 +1,6 @@
 # Investigate an answer delivered without an inline passage citation
 
-Status: ready-for-agent
+Status: wontfix
 Type: bug
 Resolution: open
 
@@ -72,3 +72,8 @@ has native evidence; this still does not prove the cause of older uncaptured
 omissions. One Flex failure was not retried. Production renderer/prompt unchanged;
 consider narrow handling of exact issued reference variants under existing
 delivery checks, without guessing sources or filling wholly missing citations.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

@@ -1,6 +1,5 @@
 import { createCommandView } from './commandTestSupport';
 import {
-  Compartment,
   Transaction
 } from '@codemirror/state';
 import { describe, expect, it } from 'vitest';
@@ -18,8 +17,7 @@ function createController(markdown: string, anchor: number, head = anchor) {
     runtime: null as unknown as EditorController['runtime'],
     sharedResources: null,
     paneKey: Symbol('test-pane'),
-    onMarkdownChange: () => {},
-    proposalReviewCompartment: new Compartment()
+    onMarkdownChange: () => {}
   } satisfies EditorController;
   return { controller, transactions, focus, readState: () => view.state };
 }

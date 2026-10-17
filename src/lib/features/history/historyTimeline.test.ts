@@ -1,12 +1,18 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildHistoryTimelineItems,
+  historyRevisionSummary,
   type HistoryTimelineItem
 } from './historyTimeline';
 import type {
   HistoryModeRecord,
   HistoryRevisionRecord
 } from './historyModeMachine';
+
+it('labels agent publications without implying a proposal review workflow', () => {
+  expect(historyRevisionSummary(revision('agent', 100, 'agentPublication')))
+    .toBe('Agent publication · 2 lines · 20 characters');
+});
 
 function revision(
   revisionId: string,

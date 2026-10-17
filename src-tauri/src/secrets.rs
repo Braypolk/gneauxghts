@@ -13,9 +13,6 @@ pub(crate) const KEYRING_SERVICE: &str = "com.braypolkinghorne.gneauxghts.creden
 const E2E_KEYRING_SERVICE: &str = "com.braypolkinghorne.gneauxghts-e2e.credentials";
 
 pub(crate) fn keyring_service() -> &'static str {
-    if cfg!(feature = "pi-prototype") {
-        return "com.braypolkinghorne.gneauxghts.pi-prototype.credentials";
-    }
     #[cfg(feature = "e2e-wdio")]
     {
         E2E_KEYRING_SERVICE

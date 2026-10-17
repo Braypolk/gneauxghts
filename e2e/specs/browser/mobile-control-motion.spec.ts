@@ -9,7 +9,6 @@ describe('mobile control presentation during transitions', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
     await browser.setWindowSize(393, 852);
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   });
   afterEach(async () => {
     await browser.sendCommand('Emulation.setTouchEmulationEnabled', { enabled: false });
@@ -77,23 +76,4 @@ describe('mobile control presentation during transitions', () => {
     await expect($('button[aria-label="Show related notes for this note"]')).toHaveElementClass('bg-foreground');
   });
 
-  it('opens and closes model choices without moving the composer or changing its draft', async () => {
-    await $('[data-pane-kind="editor"] button[aria-label="Open thought partner"]').click();
-    await waitForWorkspaceAnimationSettled();
-    const composer = $('textarea[aria-label="Message"]');
-    await composer.setValue('Keep this unfinished thought');
-    const geometry = () => browser.execute(() =>
-      ['.dock-body', '.dock-chat-toggle', '.chat-composer-input'].map(selector => {
-        const box = document.querySelector(selector)!.getBoundingClientRect();
-        return [box.left, box.top, box.width, box.height];
-      }));
-    const before = await geometry();
-    await $('button[aria-label="AI model"]').click();
-    await $('[aria-label="AI provider picker"]').$('button=Server').click();
-    expect(await geometry()).toEqual(before);
-    await browser.keys('Escape');
-    expect(await geometry()).toEqual(before);
-    await expect(composer).toHaveValue('Keep this unfinished thought');
-    await expect($('button[aria-label="AI model"]')).toHaveText('5.6 Sol');
-  });
 });

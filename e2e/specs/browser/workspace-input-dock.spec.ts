@@ -1,7 +1,7 @@
+import { readPiFixture } from '../../support/browserPi';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { chatHistoryFixture } from '../../support/chatHistoryFixture';
 import { dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
 
 const composerSelector = '[data-notepad-command-bar] textarea';
@@ -26,7 +26,6 @@ async function expectMode(mode: 'chat' | 'search') {
 describe('shared workspace input dock', () => {
   beforeEach(async () => {
     await resetBrowserWorkspace();
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
   });
 
   it('keeps settled shells separate and send controls circular at desktop and narrow widths', async () => {
@@ -51,49 +50,6 @@ describe('shared workspace input dock', () => {
       expect(geometry.gap).toBeGreaterThanOrEqual(6);
       expect(geometry.blur).toBe(0);
     }
-  });
-
-  it('reuses mounted inputs and retains search, draft, attachments and configuration across mode switches', async () => {
-    await openChat();
-    await expectMode('chat');
-    const composer = await $(composerSelector);
-    await composer.setValue('Keep my unsent thought');
-    await browser.execute(() => {
-      const input = document.querySelector<HTMLInputElement>('input[aria-label="Choose attachments"]')!;
-      const transfer = new DataTransfer();
-      transfer.items.add(new File(['A pending attachment'], 'notes.txt', { type: 'text/plain' }));
-      input.files = transfer.files;
-      input.dispatchEvent(new Event('change', { bubbles: true }));
-      (window as any).__dockComposer = document.querySelector('[data-notepad-command-bar] textarea');
-      (window as any).__dockSearch = document.querySelector('[data-testid="note-search-input"]');
-    });
-    await $('button[aria-label="Remove notes.txt"]').waitForDisplayed();
-    await $('button[aria-label="AI model"]').click();
-    await $('[aria-label="AI model picker"]').$('button*=5.6 Terra').click();
-    await $('button[aria-label="Expand search"]').click();
-    await expectMode('search');
-    await expect(composer).not.toBeDisplayed();
-    await expect($('[aria-label="AI model picker"]')).not.toBeDisplayed();
-    const search = await $('[data-testid="note-search-input"]');
-    await search.setValue('Alpha');
-    await $('[data-pane-kind="chat"] .pane-header-title-wrap').click();
-    await expectMode('search');
-    await $('[data-testid="note-title"]').click();
-    await expectMode('search');
-    await $('button[aria-label="Expand chat input"]').click();
-    await expectMode('chat');
-    await expect(composer).toHaveValue('Keep my unsent thought');
-    await expect($('button[aria-label="Remove notes.txt"]')).toBeDisplayed();
-    await expect($('button[aria-label="AI model"]')).toHaveText('5.6 Terra');
-    expect(await browser.execute(() =>
-      (window as any).__dockComposer === document.querySelector('[data-notepad-command-bar] textarea') &&
-      (window as any).__dockSearch === document.querySelector('[data-testid="note-search-input"]')
-    )).toBe(true);
-    await $('button[aria-label="Expand search"]').click();
-    await expectMode('search');
-    await expect(search).toHaveValue('Alpha');
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations
-      .filter(item => ['chat_create_conversation', 'chat_send_message'].includes(item.command)))).toHaveLength(0);
   });
 
   it('follows pointer and keyboard pane switches in wide splits while retaining both input drafts', async () => {
@@ -125,8 +81,7 @@ describe('shared workspace input dock', () => {
     }
     await expect(composer).toHaveValue('Keep my unsent thought');
     await expect(search).toHaveValue('Alpha');
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations
-      .filter(item => ['chat_create_conversation', 'chat_send_message'].includes(item.command)))).toHaveLength(0);
+    expect(await readPiFixture()).toHaveLength(0);
   });
 
   for (const width of [1440, 390]) for (const query of ['', 'Alpha']) {
@@ -213,7 +168,7 @@ describe('shared workspace input dock', () => {
     await openChat();
     await $(composerSelector).setValue('Explain this note');
     await $('button[aria-label="Send message"]').click();
-    await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
+    await $('[data-testid="pi-assistant-message"][data-streaming="false"]').waitForDisplayed();
     const geometry = () => browser.execute(() => {
       const dock = document.querySelector('[data-notepad-command-bar]')!.getBoundingClientRect();
       const logElement = document.querySelector('[role="log"]')!;
@@ -377,73 +332,6 @@ describe('shared workspace input dock', () => {
     });
   }
 
-  it('scrolls chat content behind the shared dock fade while keeping the latest message readable', async () => {
-    await browser.execute(fixture => {
-      const native = window.__TAURI_INTERNALS__ as { invoke: (cmd: string, args?: unknown) => Promise<unknown> };
-      const original = native.invoke;
-      native.invoke = async (cmd, args) => {
-        if (cmd === 'chat_list_conversations') return [fixture];
-        if (cmd === 'chat_get_conversation') return fixture;
-        return original(cmd, args);
-      };
-    }, chatHistoryFixture(10));
-    await openChat();
-    await $('[data-chat-message-id="motion-9"]').waitForExist();
-    await browser.waitUntil(async () => (await $('[role="log"]').getAttribute('aria-busy')) === 'false');
-    const layout = () => browser.execute(() => {
-      const log = document.querySelector<HTMLElement>('[role="log"]')!;
-      const dock = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!;
-      const fade = dock.firstElementChild as HTMLElement;
-      const lastMessage = document.querySelector<HTMLElement>('[data-chat-message-id="motion-9"]')!;
-      return { scrollBottom: log.getBoundingClientRect().bottom,
-        dockTop: dock.getBoundingClientRect().top, dockBottom: dock.getBoundingClientRect().bottom,
-        lastBottom: lastMessage.getBoundingClientRect().bottom,
-        mask: getComputedStyle(fade).maskImage, blur: getComputedStyle(fade).backdropFilter };
-    });
-    const atEnd = await layout();
-    // The scroll viewport must continue beneath the fade, rather than clip
-    // text at the dock's top edge. Padding still keeps the last response clear.
-    expect(atEnd.scrollBottom).toBeGreaterThanOrEqual(atEnd.dockBottom - 1);
-    expect(atEnd.lastBottom).toBeLessThanOrEqual(atEnd.dockTop);
-    expect(atEnd.mask).toContain('linear-gradient');
-    expect(atEnd.blur).toContain('blur');
-    const setDraft = (body: string) => browser.execute(value => {
-      const textarea = document.querySelector<HTMLTextAreaElement>('[data-notepad-command-bar] textarea')!;
-      textarea.value = value;
-      textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    }, body);
-    await setDraft('A growing draft\nSecond line\nThird line\nFourth line\nFifth line');
-    await browser.waitUntil(async () => {
-      const current = await layout();
-      return current.dockTop < atEnd.dockTop - 50 && current.lastBottom <= current.dockTop;
-    }, { timeoutMsg: 'Following chat should keep the latest response above a growing input' });
-    await setDraft('');
-    await browser.waitUntil(async () => Math.abs((await layout()).dockTop - atEnd.dockTop) <= 1);
-    await browser.execute(() => {
-      const log = document.querySelector<HTMLElement>('[role="log"]')!;
-      log.scrollTop = Math.round((log.scrollHeight - log.clientHeight) / 2);
-    });
-    await browser.pause(100);
-    const beneathFade = await browser.execute(() => {
-      const log = document.querySelector<HTMLElement>('[role="log"]')!;
-      const dock = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!.getBoundingClientRect();
-      const walker = document.createTreeWalker(log, NodeFilter.SHOW_TEXT);
-      const range = document.createRange();
-      while (walker.nextNode()) {
-        range.selectNodeContents(walker.currentNode);
-        if ([...range.getClientRects()].some(rect => rect.top >= dock.top && rect.bottom <= dock.bottom)) return true;
-      }
-      return false;
-    });
-    expect(beneathFade).toBe(true);
-    const readingPosition = await browser.execute(() => document.querySelector<HTMLElement>('[role="log"]')!.scrollTop);
-    await setDraft('Keep reading here\nSecond line\nThird line\nFourth line\nFifth line');
-    await browser.waitUntil(async () => (await layout()).dockTop < atEnd.dockTop - 50);
-    await browser.pause(100);
-    const afterResize = await browser.execute(() => document.querySelector<HTMLElement>('[role="log"]')!.scrollTop);
-    expect(Math.abs(afterResize - readingPosition)).toBeLessThanOrEqual(1);
-  });
-
   it('slots each chat pane into the same dock without mixing their drafts', async () => {
     await openChat();
     await $(composerSelector).setValue('Right pane thought');
@@ -458,8 +346,7 @@ describe('shared workspace input dock', () => {
     await panes[0].$('.pane-header-title-wrap').click();
     await expect($(composerSelector)).toHaveValue('Left pane thought');
     await expect($$(composerSelector)).toBeElementsArrayOfSize(1);
-    expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations
-      .filter(item => ['chat_create_conversation', 'chat_send_message'].includes(item.command)))).toHaveLength(0);
+    expect(await readPiFixture()).toHaveLength(0);
   });
 
   it('exchanges one constant-width bar and settles rapid reversals without replacing either input', async () => {
@@ -804,7 +691,7 @@ describe('shared workspace input dock', () => {
     }
     // The invisible native control still owns submission and keyboard focus.
     await $('button[aria-label="Send message"]').click();
-    await $('[data-chat-message-id="controls-assistant-1"]').waitForDisplayed();
+    await $('[data-testid="pi-assistant-message"][data-streaming="false"]').waitForDisplayed();
   });
 
   it('coordinates editor/chat replacement in one pane and releases temporary layout projections', async () => {

@@ -17,8 +17,6 @@ use rusqlite::OpenFlags;
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 use serde::{Deserialize, Serialize};
 mod codec;
-#[cfg(feature = "pi-prototype")]
-pub(super) mod prototype_renames;
 use codec::{AuthoredState, LineDelta};
 use std::{
     collections::{BTreeMap, BTreeSet, HashSet},
@@ -876,8 +874,7 @@ pub(super) fn publication_capture_outcome(
     editing_windows::capture_outcome(&open_store(store)?, intent.as_str())
 }
 
-#[cfg(feature = "pi-prototype")]
-pub(super) fn verify_prototype_publication(
+pub(super) fn verify_publication(
     store: &Store,
     token: &str,
     note: &NoteIdentity,
@@ -1096,7 +1093,7 @@ pub(super) fn finalize_publication(
         }
     };
     if intent.0 != target_path.to_string_lossy()
-        || intent.1 != source.as_storage_value()
+        || MutationSource::from_storage_value(&intent.1) != Some(source)
         || intent.2 != result_hash
         || intent.3 != "prepared"
         || intent.4 != canonical_note_id
@@ -2154,6 +2151,30 @@ impl StoredLifecycleHeader {
             path: self.path.map(PathBuf::from),
         })
     }
+}
+
+pub(super) fn current_revision_header(
+    store: &Store,
+    note_id: &NoteIdentity,
+) -> Result<Option<NoteRevisionHeader>, HistoryError> {
+    let connection = open_store(store)?;
+    let stored = connection.query_row(
+        "SELECT revision_id, predecessor_kind, predecessor_id, source, base_revision_id,
+                known_since_millis, committed_at_millis, observed_at_millis,
+                modified_at_millis, payload_version, result_hash,
+                (SELECT selected_revision_id FROM restore_origins WHERE restore_origins.intent_id = revisions.intent_id),
+                (SELECT evidence FROM revision_window_evidence e WHERE e.revision_id = revisions.revision_id)
+         FROM revisions WHERE note_id = ?1 AND revision_id =
+                (SELECT revision_id FROM timeline_heads WHERE note_id = ?1)",
+        params![note_id.as_str()], StoredRevisionHeader::from_row,
+    ).optional()?;
+    stored
+        .map(|header| {
+            header
+                .into_domain(note_id, &connection)
+                .map(|(_, header)| header)
+        })
+        .transpose()
 }
 
 pub(super) fn revisions(
@@ -3632,10 +3653,7 @@ pub(super) fn compact(store: &Store, maximum_reclaim_bytes: u64) -> Result<(), H
 pub(super) fn clean_close(store: &Store) -> Result<(), HistoryError> {
     let connection = open_store(store)?;
     recover_pending_with_connection(&connection, false)?;
-    #[cfg(feature = "pi-prototype")]
-    if connection.query_row("SELECT EXISTS(SELECT 1 FROM prototype_prepared_renames)", [], |row| row.get::<_, bool>(0))? {
-        return Err("Reconcile interrupted proposal rename before portable close".into());
-    }
+
     if !editing_windows::pending(&connection, None)?.is_empty() {
         return Err("Finalize Editing Windows before portable close".into());
     }
@@ -4492,8 +4510,6 @@ fn open_store(store: &Store) -> Result<Connection, HistoryError> {
         .map_err(|error| {
             HistoryError::from(error).with_context("Maintain Note Timeline access indexes")
         })?;
-    #[cfg(feature = "pi-prototype")]
-    prototype_renames::initialize(&connection)?;
     let activate_session = ACTIVE_HISTORY_STORE_SESSIONS
         .lock()
         .map_err(|_| "Note Timeline history store sessions lock poisoned".to_string())?
@@ -4639,11 +4655,11 @@ fn recover_pending_with_connection(
                     #[cfg(feature = "e2e-wdio")]
                     crate::e2e_process_fault::hit("recovery-publication-captured");
                 } else {
-                    abandon_unpublished_intent(connection, &intent_id)?;
+                    editing_windows::abandon(connection, &intent_id)?;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                abandon_unpublished_intent(connection, &intent_id)?;
+                editing_windows::abandon(connection, &intent_id)?;
             }
             Err(error) => {
                 return Err(format!(
@@ -4655,17 +4671,6 @@ fn recover_pending_with_connection(
         }
     }
     Ok(())
-}
-
-// A Pi rename may contain its exact pre-publication base at the destination.
-// Read-only recovery retains that correlation; only NoteTimeline's explicit
-// proof recovery may restore it while holding canonical mutation ownership.
-fn abandon_unpublished_intent(connection: &Connection, intent_id: &str) -> Result<(), HistoryError> {
-    #[cfg(feature = "pi-prototype")]
-    if prototype_renames::contains(connection, intent_id)? {
-        return Ok(());
-    }
-    editing_windows::abandon(connection, intent_id)
 }
 
 // A separate connection avoids requiring mutable access from read-capability
@@ -4733,21 +4738,12 @@ fn finalize_intent(
         } else {
             LifecycleEventKind::Moved
         };
-        // An evaluation review's rename and unchanged-body receipt are one
-        // canonical effect. The existing lifecycle reference protects its scoped
-        // receipt from retry-watermark retirement until history is cleared.
-        #[cfg(feature = "pi-prototype")]
-        let correlated_intent = (intent.source
-            == MutationSource::AcceptedChatProposal.as_storage_value())
-        .then_some(intent_id);
-        #[cfg(not(feature = "pi-prototype"))]
-        let correlated_intent: Option<&str> = None;
         transaction
             .execute(
                 "INSERT INTO lifecycle_events (
                    event_id, note_id, predecessor_kind, predecessor_id, kind,
                    occurred_at_millis, previous_path, path, payload_version, intent_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, ?9)",
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1, NULL)",
                 params![
                     event_id,
                     intent.note_id,
@@ -4757,7 +4753,6 @@ fn finalize_intent(
                     occurred_at,
                     head.current_path.to_string_lossy().into_owned(),
                     intent.target_path.to_string_lossy().into_owned(),
-                    correlated_intent,
                 ],
             )
             .map_err(HistoryError::from)?;
@@ -5099,6 +5094,109 @@ fn managed_note_identity(markdown: &str) -> Result<String, HistoryError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn agent_publication_source_serializes_current_name_and_reads_retained_tag() {
+        assert_eq!(
+            serde_json::to_string(&MutationSource::AgentPublication).unwrap(),
+            "\"agentPublication\""
+        );
+        for tag in ["agentPublication", "acceptedChatProposal"] {
+            assert_eq!(
+                serde_json::from_value::<MutationSource>(serde_json::json!(tag)).unwrap(),
+                MutationSource::AgentPublication
+            );
+            assert_eq!(
+                MutationSource::from_storage_value(tag),
+                Some(MutationSource::AgentPublication)
+            );
+        }
+    }
+
+    #[test]
+    fn agent_publication_recovers_retained_source_tag_but_rejects_other_intent_sources() {
+        let vault = crate::test_support::TestVault::new("agent-publication-source");
+        let store = Store::for_test();
+        for tag in [
+            "agentPublication",
+            "acceptedChatProposal",
+            "taskAction",
+            "unknown",
+        ] {
+            let path = vault.notes.path().join(format!("{tag}.md"));
+            let canonical =
+                crate::note::prepare_note_markdown("Agent-authored content", None, Some(None))
+                    .unwrap()
+                    .0;
+            let intent = prepare_publication(
+                &store,
+                MutationSource::AgentPublication,
+                &path,
+                &canonical,
+                PublicationIntentKind::Create,
+                None,
+            )
+            .unwrap();
+            let key = editing_windows::receipt_key(intent.as_str()).unwrap();
+            let db = open_store(&store).unwrap();
+            let written: String = db
+                .query_row(
+                    "SELECT source FROM prepared_intents WHERE intent_id=?1",
+                    [&key],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(written, "agentPublication");
+            db.execute(
+                "UPDATE prepared_intents SET source=?2 WHERE intent_id=?1",
+                params![key, tag],
+            )
+            .unwrap();
+            drop(db);
+            fs::write(&path, &canonical).unwrap();
+            let result = finalize_publication(
+                &store,
+                &intent,
+                MutationSource::AgentPublication,
+                &path,
+                &canonical,
+            );
+            if matches!(tag, "agentPublication" | "acceptedChatProposal") {
+                result.unwrap();
+                let note = NoteIdentity::new(
+                    crate::note::parse_note(&canonical)
+                        .frontmatter
+                        .managed
+                        .unwrap()
+                        .id,
+                );
+                assert_eq!(
+                    revisions(&store, &note).unwrap()[0].source,
+                    MutationSource::AgentPublication
+                );
+                // Retained revision rows are decoded independently of pending intents.
+                open_store(&store)
+                    .unwrap()
+                    .execute(
+                        "UPDATE revisions SET source='acceptedChatProposal' WHERE note_id=?1",
+                        [note.as_str()],
+                    )
+                    .unwrap();
+                assert_eq!(
+                    revisions(&store, &note).unwrap()[0].source,
+                    MutationSource::AgentPublication
+                );
+            } else {
+                assert!(
+                    result
+                        .unwrap_err()
+                        .to_string()
+                        .contains("exact durable history intent"),
+                    "{tag}"
+                );
+            }
+        }
+    }
 
     const UNUSED_TARGET_INDEX: &str = "CREATE INDEX prepared_intents_by_target
         ON prepared_intents(target_path, source, result_hash, status)";

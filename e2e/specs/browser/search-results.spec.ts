@@ -4,7 +4,6 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 
 async function openChat() {
   await browser.execute(() => {
-    window.__GNEAUXGHTS_E2E__!.seedChatControls();
     document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
       .dispatchEvent(new PointerEvent('pointerenter'));
   });

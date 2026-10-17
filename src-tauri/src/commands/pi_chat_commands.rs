@@ -1,9 +1,8 @@
-//! Explicit evaluation command surface. No legacy conversation/run/proposal dispatch.
+//! Native settings and domain authority commands. Pi owns conversation/task APIs.
 use super::prepare_notes_dir;
 use crate::{
     chat_domain::{
-        ChatDefaults, ChatDomain, ChatGrant, ChatNotePolicy, ChatSettings,
-        LocalModelCapabilitySelection,
+        ChatDefaults, ChatDomain, ChatNotePolicy, ChatSettings, LocalModelCapabilitySelection,
     },
     index::AppState,
 };
@@ -201,14 +200,6 @@ pub(crate) fn chat_set_defaults(
 }
 
 #[tauri::command]
-pub(crate) fn chat_set_atlas_visibility(
-    service: State<'_, ChatDomain>,
-    visibility: String,
-) -> Result<(), String> {
-    service.set_atlas_visibility(&visibility)
-}
-
-#[tauri::command]
 pub(crate) fn chat_get_composer_draft(
     service: State<'_, ChatDomain>,
     slot: String,
@@ -359,18 +350,6 @@ pub(crate) fn chat_set_local_model_capabilities(
 }
 
 #[tauri::command]
-pub(crate) fn chat_set_note_excluded(
-    app: AppHandle,
-    service: State<'_, ChatDomain>,
-    note_id: String,
-    title: String,
-    excluded: bool,
-) -> Result<(), String> {
-    service.set_note_excluded(&note_id, &title, excluded)?;
-    policy_changed(&app)
-}
-
-#[tauri::command]
 pub(crate) fn chat_list_note_policies(
     service: State<'_, ChatDomain>,
     state: State<'_, AppState>,
@@ -384,6 +363,10 @@ pub(crate) fn chat_list_note_policies(
         .lock()
         .map_err(|_| "Notes index lock poisoned".to_string())?;
     for policy in &mut policies {
+        // Missing notes retain a usable identity even without catalog display metadata.
+        if policy.title.is_empty() {
+            policy.title = policy.note_id.clone();
+        }
         let Some((path, note)) = index.get_note_by_note_id(&policy.note_id) else {
             continue;
         };
@@ -398,41 +381,136 @@ pub(crate) fn chat_list_note_policies(
     Ok(policies)
 }
 
+use crate::pi_chat::authority::{
+    AuthoritySnapshot, AuthorityStore, ConversationBinding, DomainResult, ReadPolicy,
+};
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct ExclusionResult {
+    retired_authority_ids: Vec<String>,
+}
+fn changed(app: &AppHandle, ids: Vec<String>) -> DomainResult<ExclusionResult> {
+    app.state::<crate::pi_chat::transport::NativeTransport>()
+        .cancel_authorities(&ids)?;
+    let result = ExclusionResult {
+        retired_authority_ids: ids,
+    };
+    app.emit(
+        "pi-chat-authority-changed",
+        serde_json::json!({"retiredAuthorityIds":result.retired_authority_ids}),
+    )
+    .ok();
+    Ok(result)
+}
+fn change_exclusion(
+    app: &AppHandle,
+    note_id: &str,
+    excluded: bool,
+) -> DomainResult<ExclusionResult> {
+    let ids = app
+        .state::<AuthorityStore>()
+        .set_exclusion(note_id, excluded)?;
+    app.state::<crate::pi_chat::transport::NativeTransport>()
+        .cancel_authorities(&ids)?;
+    let result = ExclusionResult {
+        retired_authority_ids: ids,
+    };
+    app.emit("pi-chat-authority-changed",serde_json::json!({"retiredAuthorityIds":result.retired_authority_ids,"noteId":note_id,"excluded":excluded})).ok();
+    Ok(result)
+}
 #[tauri::command]
-pub(crate) fn chat_list_grants(service: State<'_, ChatDomain>) -> Result<Vec<ChatGrant>, String> {
-    service.list_grants()
+pub(crate) fn pi_chat_bind_authority(
+    state: State<'_, AppState>,
+    store: State<'_, AuthorityStore>,
+    binding: ConversationBinding,
+    read: ReadPolicy,
+) -> DomainResult<AuthoritySnapshot> {
+    if let Some(existing) = store.snapshot_for_binding(&binding)? {
+        return Ok(existing);
+    }
+    crate::pi_chat::notes::validate_attachments(&state, &store, &read)?;
+    store.bind(binding, read)
+}
+#[tauri::command]
+pub(crate) fn pi_chat_authority(
+    store: State<'_, AuthorityStore>,
+    authority_id: String,
+) -> DomainResult<AuthoritySnapshot> {
+    store.snapshot(&authority_id)
+}
+#[tauri::command]
+pub(crate) fn pi_chat_validate_authority(
+    store: State<'_, AuthorityStore>,
+    authority_id: String,
+    conversation_id: u64,
+    provider_session_id: String,
+) -> DomainResult<()> {
+    store.validate_binding(
+        &authority_id,
+        &ConversationBinding {
+            conversation_id,
+            provider_session_id,
+        },
+    )?;
+    Ok(())
+}
+#[tauri::command]
+pub(crate) fn pi_chat_set_read_policy(
+    app: AppHandle,
+    authority_id: String,
+    expected_revision: u64,
+    read: ReadPolicy,
+) -> DomainResult<AuthoritySnapshot> {
+    crate::pi_chat::notes::validate_attachments(
+        &app.state::<AppState>(),
+        &app.state::<AuthorityStore>(),
+        &read,
+    )?;
+    let snapshot =
+        app.state::<AuthorityStore>()
+            .set_read(&authority_id, expected_revision, read)?;
+    // Every revision cancels old leases; only restriction retires the model context.
+    app.state::<crate::pi_chat::transport::NativeTransport>()
+        .cancel_authorities(&[authority_id.clone()])?;
+    if snapshot.retired {
+        changed(&app, vec![authority_id])?;
+    }
+    Ok(snapshot)
+}
+#[tauri::command]
+pub(crate) fn pi_chat_retire_authority(
+    app: AppHandle,
+    authority_id: String,
+    expected_revision: u64,
+) -> DomainResult<()> {
+    app.state::<AuthorityStore>()
+        .retire(&authority_id, expected_revision)?;
+    changed(&app, vec![authority_id])?;
+    Ok(())
+}
+#[tauri::command]
+pub(crate) fn pi_chat_set_exclusion(
+    app: AppHandle,
+    note_id: String,
+    excluded: bool,
+) -> DomainResult<ExclusionResult> {
+    change_exclusion(&app, &note_id, excluded)
 }
 
+/// Settings discovery is host-only; it issues no model evidence or read capability.
 #[tauri::command]
-pub(crate) fn chat_grant_note(
-    app: AppHandle,
-    service: State<'_, ChatDomain>,
+pub(crate) fn chat_search_policy_notes(
     state: State<'_, AppState>,
-    note_id: String,
-) -> Result<(), String> {
+    query: String,
+    limit: Option<usize>,
+) -> Result<Vec<serde_json::Value>, String> {
+    let notes_dir = prepare_notes_dir(&state, false)?;
+    state.ensure_interactive_index(&notes_dir, "chat_search_policy_notes")?;
     let index = state
         .notes_index
         .lock()
-        .map_err(|_| "Notes index lock poisoned".to_string())?;
-    let (_, note) = index
-        .get_note_by_note_id(&note_id)
-        .ok_or_else(|| "That note no longer exists".to_string())?;
-    service.grant_note(&note_id, &note.title)?;
-    policy_changed(&app)
-}
-
-#[tauri::command]
-pub(crate) fn chat_revoke_note(
-    app: AppHandle,
-    service: State<'_, ChatDomain>,
-    note_id: String,
-) -> Result<(), String> {
-    service.revoke_note(&note_id)?;
-    policy_changed(&app)
-}
-
-fn policy_changed(app: &AppHandle) -> Result<(), String> {
-    app.state::<crate::pi_prototype_transport::NativeTransport>()
-        .cancel_for_policy_change()?;
-    app.emit("pi-policy-changed", ()).map_err(|e| e.to_string())
+        .map_err(|_| "Notes index unavailable")?;
+    let query = query.trim().to_lowercase();
+    Ok(index.entries.iter().filter(|(_,note)|note.title.to_lowercase().contains(&query)).take(limit.unwrap_or(12).min(50))
+        .map(|(path,note)|serde_json::json!({"noteId":note.note_id,"title":note.title,"notePath":path.strip_prefix(&notes_dir).unwrap_or(path).to_string_lossy()})).collect())
 }

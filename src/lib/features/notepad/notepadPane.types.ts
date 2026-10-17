@@ -7,7 +7,7 @@ import type { DocumentStatusViewModel } from '$lib/features/notepad/document/doc
 /**
  * Stable fields shared by both pane kinds. Kind-specific capabilities live on
  * the discriminated branches below, so an editor pane never receives nullable
- * chat/proposal props.
+ * chat props.
  */
 interface PaneViewModelBase {
   paneId: NotepadPaneId;

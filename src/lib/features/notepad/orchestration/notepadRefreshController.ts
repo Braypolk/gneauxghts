@@ -14,7 +14,7 @@ import type {
 export interface VaultNoteChangeEvent {
   notePath: string;
   deleted: boolean;
-  documentKind?: 'note' | 'chatIndex' | 'chatTranscript';
+  documentKind?: 'note';
   source?: string | null;
 }
 
@@ -39,7 +39,6 @@ interface NotepadRefreshControllerParams {
   suspendPersistenceForConflict: (
     document: NoteDraftState
   ) => void;
-  shouldDeferRefresh?: (notePath: string) => boolean;
 }
 
 export function createNotepadRefreshController(
@@ -90,17 +89,6 @@ export function createNotepadRefreshController(
   async function handleVaultNoteChanged(
     payload: VaultNoteChangeEvent
   ) {
-    if (
-      payload.documentKind &&
-      payload.documentKind !== 'note'
-    ) {
-      return;
-    }
-    if (params.shouldDeferRefresh?.(payload.notePath)) {
-      await params.refreshDerivedViews();
-      return;
-    }
-
     const document = findLoadedReferencedDocument(
       payload.notePath
     );

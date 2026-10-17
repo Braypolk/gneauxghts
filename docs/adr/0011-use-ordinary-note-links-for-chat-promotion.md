@@ -1,8 +1,13 @@
 ---
-status: accepted
+status: superseded in part by ADR-0012
 ---
 
 # Use ordinary note links when saving chat content
+
+[ADR 0012](0012-found-ordinary-chat-on-pi.md) records the accepted new-user Pi
+rebuild and its scoped supersessions. The implementation described below is
+historical and retired from ordinary chat; it is not a current runtime requirement.
+
 
 When chat content becomes a note, its note citations become ordinary wikilinks
 to the source notes, maintained by the user. This chooses normal authored

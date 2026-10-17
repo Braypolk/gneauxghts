@@ -5,10 +5,9 @@ use std::sync::{
     Arc,
 };
 
-mod evidence_contracts;
 mod prose_tasks;
-mod query_inventory;
 mod refreshable_preparation;
+mod retained_changes;
 mod weekly_tasks;
 
 struct Fixture {
@@ -21,55 +20,32 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// Collect a bounded read, including guidance-only and provenance pages.
-    /// Discovery and citation admission stay on the real evidence service path.
-    fn read_evidence_pages(
-        &self,
-        session: &mut crate::services::evidence::EvidenceSession,
-        mut request: crate::services::evidence::ReadRequest,
-    ) -> Vec<serde_json::Value> {
-        let mut pages = Vec::new();
-        let mut cursors = HashSet::new();
+    /// Exercise native provenance directly, independent of any model tool protocol.
+    fn activity_ranges(&self, after: u64, before: u64) -> Vec<serde_json::Value> {
+        let timeline = self.state.note_timeline();
+        let access = timeline.current_content(AllowedScope::vault());
+        let mut offset = 0;
+        let mut ranges = Vec::new();
         loop {
-            let (page, sources) = session
-                .read_request(&self.state, None, &HashSet::new(), request)
-                .unwrap();
-            assert!(page.to_string().len() <= crate::services::evidence::READ_BYTES);
-            assert!(page["failures"].as_array().unwrap().is_empty(), "{page}");
-            let items = page["items"].as_array().unwrap();
-            assert_eq!(sources.len(), items.len());
-            if items.is_empty() {
-                assert_eq!(page["truncationReason"], "guidance", "{page}");
-                assert!(!page["interpretationGuidance"]
-                    .as_array()
-                    .unwrap()
-                    .is_empty());
+            let page = access.activity(after, before, offset, 8).unwrap();
+            for note in page.items {
+                for range in note.surviving_ranges {
+                    ranges.push(serde_json::json!({
+                        "start": range.start, "end": range.end,
+                        "excerpt": range.text, "supportingContext": range.supporting_context,
+                        "provenance": range.provenance, "task": range.task,
+                    }));
+                }
             }
-            for (citation, _, _) in sources {
-                assert!(crate::services::evidence::validate_citation(
-                    &self.state,
-                    &citation,
-                    None,
-                    &HashSet::new()
-                )
-                .is_some());
+            match page.next_offset {
+                Some(next) => {
+                    assert!(next > offset);
+                    offset = next;
+                }
+                None => break,
             }
-            let cursor = page["nextCursor"].as_str().map(str::to_owned);
-            if cursor.is_none() {
-                assert_eq!(page["delivery"]["complete"], true, "{page}");
-            }
-            pages.push(page);
-            let Some(cursor) = cursor else { break };
-            assert!(
-                cursors.insert(cursor.clone()),
-                "Read cursor did not advance"
-            );
-            request = crate::services::evidence::ReadRequest {
-                cursor: Some(cursor),
-                ..Default::default()
-            };
         }
-        pages
+        ranges
     }
 
     fn new() -> Self {
@@ -211,58 +187,43 @@ fn task_read_retries_a_save_that_overlaps_the_projection_query() {
 }
 
 #[test]
-fn chat_evidence_waits_for_internal_settlement_without_claiming_notes_changed() {
+fn canonical_read_waits_for_settlement_and_delivers_current_bytes() {
     let _guard = crate::test_support::lock_test_env();
     for changed in [false, true] {
         let f = Fixture::new();
         f.save("An unchanged supporting passage.");
-        let mut evidence = crate::services::evidence::EvidenceSession::default();
-        f.read_evidence_pages(
-            &mut evidence,
-            crate::services::evidence::ReadRequest {
-                note_id: Some(f.note.as_str().into()),
-                ..Default::default()
-            },
-        );
-        assert!(evidence.is_current(&f.state, None, &HashSet::new()));
-        let bytes = fs::read(&f.path).unwrap();
         let timeline = f.state.note_timeline();
+        let access = timeline.current_content(AllowedScope::vault());
+        let before = access.read_note(&f.note).unwrap().markdown;
         let mutation = timeline.begin_current_content_mutation().unwrap();
         let (started, ready) = std::sync::mpsc::channel();
         let (finished, result) = std::sync::mpsc::channel();
         std::thread::scope(|scope| {
-            let state = &f.state;
+            let access = &access;
+            let note = &f.note;
             scope.spawn(move || {
                 started.send(()).unwrap();
                 finished
-                    .send(evidence.is_current(state, None, &HashSet::new()))
+                    .send(access.read_note(note).map(|read| read.markdown))
                     .unwrap();
             });
             ready
                 .recv_timeout(std::time::Duration::from_secs(2))
                 .unwrap();
-            assert!(
-                matches!(
-                    result.recv_timeout(std::time::Duration::from_millis(50)),
-                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
-                ),
-                "Internal settlement must not immediately invalidate unchanged evidence"
-            );
+            assert!(matches!(
+                result.recv_timeout(std::time::Duration::from_millis(50)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
             if changed {
                 fs::write(&f.path, "A changed supporting passage.").unwrap();
             }
             drop(mutation);
-            assert_eq!(
-                result
-                    .recv_timeout(std::time::Duration::from_secs(2))
-                    .unwrap(),
-                !changed,
-                "Settlement must recheck the actual canonical bytes"
-            );
+            let after = result
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+                .unwrap();
+            assert_eq!(before == after, !changed);
         });
-        if !changed {
-            assert_eq!(fs::read(&f.path).unwrap(), bytes);
-        }
     }
 }
 
@@ -777,7 +738,7 @@ fn concurrent_reads_and_next_save_serialize_released_capture_recovery() {
 }
 
 #[test]
-fn proposal_and_restore_keep_distinct_sources_and_restore_checks_the_pending_hash() {
+fn agent_publication_and_restore_keep_distinct_sources_and_restore_checks_the_pending_hash() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
     let original = history_store::revisions(&history_store::Store::for_test(), &f.note).unwrap()[0]
@@ -786,18 +747,18 @@ fn proposal_and_restore_keep_distinct_sources_and_restore_checks_the_pending_has
     f.save("B");
     crate::state::with_note_file_mutation(|| -> Result<(), String> {
         let prepared = f.state.note_timeline().prepare_revision_publication(
-            MutationSource::AcceptedChatProposal,
+            MutationSource::AgentPublication,
             &f.path,
             Some(&f.path),
             Some(&f.note),
-            "Proposal",
+            "Agent publication",
         )?;
         let (canonical, intent) = prepared.into_parts();
         fs::write(&f.path, &canonical).unwrap();
         assert!(f
             .state
             .note_timeline()
-            .mutate(NoteMutation::accepted_chat_proposal(
+            .mutate(NoteMutation::agent_publication(
                 intent,
                 f.path.clone(),
                 None,
@@ -830,7 +791,7 @@ fn proposal_and_restore_keep_distinct_sources_and_restore_checks_the_pending_has
         vec![
             (MutationSource::NoteCreation, "A".into()),
             (MutationSource::Editor, "B".into()),
-            (MutationSource::AcceptedChatProposal, "Proposal".into()),
+            (MutationSource::AgentPublication, "Agent publication".into()),
             (MutationSource::Editor, "D".into()),
             (MutationSource::VersionRestore, "A".into())
         ]
@@ -2603,8 +2564,7 @@ mod selected_context;
 mod readiness;
 
 #[test]
-fn focused_evidence_returns_surviving_period_ranges_after_later_edits_and_clear_invalidates() {
-    use crate::services::evidence::{EvidenceSession, ReadRequest, SearchRequest};
+fn native_activity_keeps_surviving_period_ranges_and_clear_removes_proofs() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
     f.save("A kept launch decision.\nRemovedSecret");
@@ -2612,210 +2572,60 @@ fn focused_evidence_returns_surviving_period_ranges_after_later_edits_and_clear_
     f.clock.store(2_000_000, Ordering::SeqCst);
     f.save("A kept launch decision.\nLater unrelated followup");
     f.seal();
-    let mut evidence = EvidenceSession::default();
-    let excluded = HashSet::new();
-    let request = SearchRequest {
-        after: Some(1_000_000),
-        before: Some(1_500_000),
-        ..Default::default()
-    };
-    let page = evidence
-        .search(&f.state, None, &excluded, request.clone())
-        .unwrap();
-    assert!(!page.to_string().contains("RemovedSecret"));
-    let items = page["items"].as_array().unwrap();
-    assert!(!items.is_empty(), "{page}");
-    let ids: Vec<_> = items
+    let timeline = f.state.note_timeline();
+    let access = timeline.current_content(AllowedScope::vault());
+    let page = access.activity(1_000_000, 1_500_000, 0, 20).unwrap();
+    let ranges = f.activity_ranges(1_000_000, 1_500_000);
+    let text = ranges
         .iter()
-        .map(|i| i["evidenceId"].as_str().unwrap().into())
-        .collect();
-    let (mut read, mut sources) = evidence
-        .read(&f.state, None, &excluded, &ids, false)
-        .unwrap();
-    let mut delivered_items = Vec::new();
-    let mut delivered_ids = HashSet::new();
-    for page_number in 0..ids.len() {
-        assert!(read["failures"].as_array().unwrap().is_empty(), "{read}");
-        let page_items = read["items"].as_array().unwrap();
-        assert!(!page_items.is_empty(), "{read}");
-        for item in page_items {
-            assert!(
-                delivered_ids.insert(item["evidenceId"].as_str().unwrap().to_string()),
-                "duplicate delivered passage: {item}"
-            );
-        }
-        delivered_items.extend(page_items.iter().cloned());
-        let Some(cursor) = read["nextCursor"].as_str().map(str::to_string) else {
-            assert_eq!(read["delivery"]["complete"], true, "{read}");
-            break;
-        };
-        assert!(page_number + 1 < ids.len(), "read did not complete: {read}");
-        let (next, next_sources) = evidence
-            .read_request(
-                &f.state,
-                None,
-                &excluded,
-                ReadRequest {
-                    cursor: Some(cursor),
-                    ..Default::default()
-                },
-            )
-            .unwrap();
-        read = next;
-        sources.extend(next_sources);
-    }
-    assert_eq!(delivered_ids, ids.iter().cloned().collect::<HashSet<_>>());
-    read["items"] = serde_json::Value::Array(delivered_items);
-    assert!(read.to_string().contains("launch decision"), "{read}");
-    assert!(read["items"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .all(|item| !item["excerpt"]
+        .map(|r| r["excerpt"].as_str().unwrap())
+        .collect::<String>();
+    assert!(text.contains("launch decision"), "{text}");
+    assert!(!text.contains("RemovedSecret"));
+    // A rewritten line can retain its earlier introduction while carrying a
+    // later last-change date. Activity must preserve both facts, not redate it.
+    for range in ranges.iter().filter(|r| {
+        r["supportingContext"]
             .as_str()
-            .unwrap()
-            .contains("Later unrelated")));
-    assert!(!sources.is_empty());
-    assert!(read["items"][0]["provenance"].is_object());
-    assert!(evidence.is_current(&f.state, None, &excluded));
-    f.state
-        .lexical
-        .sync_with_notes_index(&f.state.notes_index.lock().unwrap().entries)
-        .unwrap();
-    for (query, mode) in [
-        (
-            "launch decision",
-            crate::services::evidence::SearchMode::Lexical,
-        ),
-        (
-            "launch|unmatched",
-            crate::services::evidence::SearchMode::Regex,
-        ),
-    ] {
-        let mut scoped = EvidenceSession::default();
-        let page = scoped
-            .search(
-                &f.state,
-                None,
-                &excluded,
-                SearchRequest {
-                    query: query.into(),
-                    mode,
-                    ..request.clone()
-                },
-            )
-            .unwrap();
-        assert!(!page["items"].as_array().unwrap().is_empty(), "{page}");
+            .is_some_and(|s| s.contains("Later unrelated"))
+    }) {
+        assert_eq!(range["provenance"]["lastChangedAt"]["atMillis"], 2_000_000);
     }
-    f.state.note_timeline().clear_note_history(&f.note).unwrap();
-    assert!(!evidence.is_current(&f.state, None, &excluded));
-    let mut cleared = EvidenceSession::default();
-    assert!(
-        cleared.search(&f.state, None, &excluded, request).unwrap()["items"]
-            .as_array()
-            .unwrap()
-            .is_empty()
+    let citations: Vec<_> = page.items.into_iter().flat_map(|n| n.citations).collect();
+    assert!(!citations.is_empty());
+    assert_eq!(
+        access.current_citations(&citations).unwrap().len(),
+        citations.len()
     );
+    timeline.clear_note_history(&f.note).unwrap();
+    assert!(access.current_citations(&citations).unwrap().is_empty());
+    assert!(f.activity_ranges(1_000_000, 1_500_000).is_empty());
 }
 
 #[test]
-fn activity_passage_coordinates_keep_duplicate_words_and_long_range_tails() {
-    use crate::services::evidence::{EvidenceSession, SearchRequest};
+fn native_activity_ranges_preserve_duplicate_words_and_long_tails() {
     let _guard = crate::test_support::lock_test_env();
     let f = Fixture::new();
-    let body = format!(
+    f.save(&format!(
         "A repeated word\n{} final-tail-marker\nrepeated word",
         "longsegment ".repeat(260)
-    );
-    f.save(&body);
+    ));
     f.seal();
-    let mut evidence = EvidenceSession::default();
-    let mut request = SearchRequest {
-        after: Some(1_000_000),
-        before: Some(1_500_000),
-        limit: Some(1),
-        ..Default::default()
-    };
-    let mut previews = String::new();
-    let mut excerpts = String::new();
-    loop {
-        let page = evidence
-            .search(&f.state, None, &HashSet::new(), request.clone())
-            .unwrap();
-        for item in page["items"].as_array().unwrap() {
-            previews.push_str(item["preview"].as_str().unwrap());
-            let id = item["evidenceId"].as_str().unwrap().to_string();
-            let (read, _) = evidence
-                .read(&f.state, None, &HashSet::new(), &[id], false)
-                .unwrap();
-            for passage in read["items"].as_array().unwrap() {
-                excerpts.push_str(passage["excerpt"].as_str().unwrap());
-            }
-        }
-        match page["nextCursor"].as_str() {
-            Some(cursor) => request.cursor = Some(cursor.into()),
-            None => break,
-        }
-    }
-    assert!(excerpts.contains("final-tail-marker"), "{previews}");
-    assert_eq!(excerpts.matches("repeated").count(), 2);
-    assert_eq!(excerpts.matches("word").count(), 2);
-}
-
-#[test]
-fn current_passage_provenance_continues_without_caching_partial_pages() {
-    use crate::services::evidence::{EvidenceSession, SearchMode, SearchRequest};
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("A alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima");
-    f.seal();
-    f.clock.store(2_000_000, Ordering::SeqCst);
-    f.save("A alpha BRAVO charlie DELTA echo FOXTROT golf HOTEL india JULIET kilo LIMA");
-    f.seal();
-    let mut evidence = EvidenceSession::default();
-    let page = evidence
-        .search(
-            &f.state,
-            None,
-            &HashSet::new(),
-            SearchRequest {
-                query: "alpha".into(),
-                mode: SearchMode::Literal,
-                ..Default::default()
-            },
-        )
-        .unwrap();
-    let id = page["items"][0]["evidenceId"].as_str().unwrap().to_string();
-    let mut offset = 0;
-    let mut seen = HashSet::new();
-    let mut pages = 0;
-    loop {
-        let (read, _) = evidence
-            .read_page(&f.state, None, &HashSet::new(), &[id.clone()], true, offset)
-            .unwrap();
-        let item = &read["items"][0];
-        assert!(item.is_object(), "{read}");
-        let ranges = item["provenance"].as_array().unwrap();
-        for range in ranges {
-            assert!(
-                seen.insert(range["ranges"][0]["start"].as_u64().unwrap()),
-                "repeated page: {read}"
-            );
-        }
-        pages += 1;
-        match item["nextProvenanceOffset"].as_u64() {
-            Some(next) => {
-                assert!(next as usize > offset);
-                offset = next as usize;
-            }
-            None => break,
-        }
-    }
-    assert!(pages > 1);
-    let (plain, _) = evidence
-        .read(&f.state, None, &HashSet::new(), &[id], false)
-        .unwrap();
-    assert!(plain["items"][0]["provenance"].is_null());
+    let raw = fs::read_to_string(&f.path).unwrap();
+    let body = crate::note::parse_note(&raw).body;
+    let ranges = f.activity_ranges(1_000_000, 1_500_000);
+    let text = ranges
+        .iter()
+        .map(|r| {
+            let start = r["start"].as_u64().unwrap() as usize;
+            let end = r["end"].as_u64().unwrap() as usize;
+            assert_eq!(&body[start..end], r["excerpt"].as_str().unwrap());
+            r["excerpt"].as_str().unwrap()
+        })
+        .collect::<String>();
+    assert!(text.contains("final-tail-marker"));
+    assert_eq!(text.matches("repeated").count(), 2);
+    assert_eq!(text.matches("word").count(), 2);
 }
 
 #[test]

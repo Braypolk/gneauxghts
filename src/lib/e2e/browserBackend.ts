@@ -1,7 +1,5 @@
 import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
-import { createChatControlsFixture } from './chatControlsFixture';
 import type { VaultAtlasResponse } from '$lib/types/atlas';
-import type { ChatModelCapabilities } from '$lib/features/chat/types';
 
 import type { NoteFixture, InvokeRecord, TauriCallback, BrowserCommandOverrides } from './browserBackendContract';
 
@@ -49,6 +47,9 @@ const notes = new Map<string, NoteFixture>([
     }
   ]
 ]);
+const composerDrafts = new Map<string, string>();
+const chatSettings = { provider: 'local', model: 'fixture-local', openaiModel: 'gpt-5.6-sol', localModel: 'fixture-local', localBaseUrl: 'http://localhost:1234/v1', defaultAccess: 'full', reasoningEffort: 'on', serviceTier: 'standard' };
+const modelCapabilities = { images: false, audio: false, video: false, tools: true, reasoningEffort: 'on' };
 const historyLabels = new Map<string, string>();
 const historyRestores = new Map<
   string,
@@ -112,7 +113,7 @@ let missingNotes = [
     }
   }
 ];
-let revisionChatEnabled = false;
+
 let historyStorage = { allocatedBytes: 16_384, reclaimableBytes: 512 };
 let forgottenNoteRetentionDays = 7;
 
@@ -328,9 +329,6 @@ function historyRecords(note: NoteFixture) {
 }
 
 function historicalRevision(note: NoteFixture, revisionId: string) {
-  if (revisionChatEnabled && revisionId === 'note-beta-revision-2') {
-    return { revisionId, unmanagedFrontmatter: null, body: 'removed confidential prose\nBeta body is independent from Alpha.' };
-  }
   const restore = historyRestores.get(note.noteId);
   if (restore?.revisionId === revisionId) {
     return {
@@ -654,32 +652,6 @@ function historicalDiff(
       if (activeNote.noteId === saved.noteId || args.currentPath == null) activeNote = saved;
       return session(saved);
     }
-    if (revisionChatEnabled && command === 'chat_get_composer_draft') return '';
-    if (revisionChatEnabled && command === 'chat_get_settings') return {
-      provider: 'openai', model: 'fixture-model', defaultAccess: 'full'
-    };
-    if (revisionChatEnabled && command === 'chat_get_model_capabilities') return {
-      images: false, audio: false, video: false, files: false,
-      acceptedMimeTypes: [], tools: true
-    } satisfies ChatModelCapabilities;
-    if (revisionChatEnabled && (command === 'chat_list_conversations' || command === 'chat_get_conversation')) {
-      const summary = { id: 'revision-chat', title: 'Current note activity', access: 'full', status: 'active',
-        createdAtMillis: 1_800_000_000_000, updatedAtMillis: 1_800_000_000_000, messageCount: 2, detached: false,
-        provider: 'openai', model: 'fixture-model', reasoningEffort: 'medium' };
-      if (command === 'chat_list_conversations') return [summary];
-      return { ...summary, excerpts: [], messages: [
-        { id: 'revision-question', conversationId: summary.id, ordinal: 1, role: 'user', status: 'complete',
-          content: 'When was the current Beta text introduced?', part: 1, createdAtMillis: summary.createdAtMillis, sources: [] },
-        { id: 'revision-answer', conversationId: summary.id, ordinal: 2, role: 'assistant', status: 'complete',
-          content: 'Current text: Beta body is independent from Alpha. [Beta note](revision:note-beta-revision-2)',
-          part: 1, createdAtMillis: summary.createdAtMillis, sources: [{
-            kind: 'revision', noteId: 'note-beta', notePath: '/e2e/beta.md', title: 'Beta note',
-            excerpt: 'Beta body is independent from Alpha.', anchor: 'note-beta-revision-2',
-            revision: { noteId: 'note-beta', revisionId: 'note-beta-revision-2', atMillis: 1_799_998_020_000,
-              source: 'editor', currentExcerpt: 'Beta body is independent from Alpha.' }
-          }] }
-      ] };
-    }
     if (command === 'get_note_history_context') {
       const noteId = String(args.noteId ?? '');
       const revisionId = String(args.revisionId ?? '');
@@ -925,12 +897,23 @@ function historicalDiff(
       listeners.delete(id);
       return null;
     }
-    // Explicit empty/no-op capabilities used by the default fixture. Unsupported
-    // commands fail so a new production dependency cannot silently pass a journey.
-    if (['chat_list_conversations', 'chat_list_archived_conversations', 'list_pending_note_proposals', 'chat_list_pending_proposals', 'chat_list_grants', 'chat_list_note_policies', 'chat_list_openai_models', 'chat_list_local_models'].includes(command)) return [];
-    if (command === 'chat_get_settings') return null;
-    if (command === 'chat_get_composer_draft') return '';
-    if (['remember_note', 'set_last_chat_location', 'chat_set_composer_draft'].includes(command)) return null;
+    if (['chat_list_note_policies', 'chat_list_openai_models'].includes(command)) return [];
+    if (command === 'chat_list_local_models') return [{ id: 'fixture-local', ownedBy: 'local' }];
+    if (command === 'chat_get_settings') return { ...chatSettings };
+    if (command === 'chat_set_defaults') { Object.assign(chatSettings, args.defaults); return { ...chatSettings }; }
+    if (command === 'chat_get_key_status' || command === 'chat_set_api_key') return { provider: args.provider, configured: command === 'chat_set_api_key' };
+    if (command === 'chat_get_composer_draft') return composerDrafts.get(String(args.slot)) ?? '';
+    if (command === 'chat_set_composer_draft') { composerDrafts.set(String(args.slot), String(args.body)); return null; }
+    if (command === 'chat_get_model_capabilities') return { ...modelCapabilities, files: false, acceptedMimeTypes: [], defaultReasoningEffort: modelCapabilities.reasoningEffort, serverReasoningDefault: 'on', reasoningOptions: ['off', 'on'] };
+    if (command === 'chat_set_local_model_capabilities') { Object.assign(modelCapabilities, args.capabilities); return { ...modelCapabilities }; }
+    if (command === 'chat_search_policy_notes') return [...notes.values()].filter(note => note.title.toLowerCase().includes(String(args.query).toLowerCase())).map(note => ({ noteId: note.noteId, title: note.title, notePath: note.path }));
+    if (command === 'pi_chat_open_source') {
+      if (args.sourceId !== 'a'.repeat(48) || !String(args.authorityId).startsWith('browser-authority-')) throw new Error('Unknown browser source');
+      return { kind: 'note', noteId: 'note-beta', path: '/e2e/beta.md', title: 'Beta note', location: { quote: 'Beta body is independent from Alpha.' } };
+    }
+    if (command === 'pi_chat_set_read_policy') return (await import('./piBrowserFixture')).changeBrowserPiRead(String(args.authorityId), Number(args.expectedRevision), args.read as import('$lib/features/chat/pi/authority').ReadPolicy);
+    if (command === 'pi_chat_set_exclusion') return { retiredAuthorityIds: [] };
+    if (['remember_note', 'set_last_chat_location'].includes(command)) return null;
     throw new Error(`Browser fixture does not implement command: ${command}`);
   };
 
@@ -963,7 +946,9 @@ function historicalDiff(
       window.__TAURI_INTERNALS__ = internals;
     },
     setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
-    seedChatControls() { Object.assign(overrides, createChatControlsFixture((event, payload) => bridge.emit(event, payload))); },
+    async seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean }) { return (await import('./piBrowserFixture')).seedBrowserPiChat(options); },
+    async readPiChat() { return (await import('./piBrowserFixture')).readBrowserPiChat(); },
+    async holdNextPiResponse() { (await import('./piBrowserFixture')).holdNextBrowserPiResponse(); },
     emit(event: string, payload: unknown) {
       for (const [id, listener] of [...listeners]) {
         if (listener.event === event) callbacks.get(listener.handler)?.({ event, id, payload });
@@ -985,7 +970,6 @@ function historicalDiff(
       imageAssets.set(name, `data:image/svg+xml;base64,${btoa('<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="800"><rect width="1200" height="800" fill="#527db5"/><circle cx="600" cy="400" r="180" fill="#eebe56"/></svg>')}`);
     },
     configureImageSave(failures = 0, delayMillis = 0) { imageSaveFailures = failures; imageSaveDelay = delayMillis; },
-    seedRevisionChat() { revisionChatEnabled = true; },
     delayNextHistoryPage(delayMillis = 75) {
       nextHistoryPageDelayMillis = delayMillis;
     },

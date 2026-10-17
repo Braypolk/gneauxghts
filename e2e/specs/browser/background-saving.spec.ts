@@ -1,3 +1,4 @@
+import { readPiFixture } from '../../support/browserPi';
 import { browser, $, expect } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
@@ -45,13 +46,12 @@ describe('background saving through mounted owners', () => {
 
   it('persists unsent chat text on background without sending or creating a conversation', async () => {
     await browser.execute(() => {
-      window.__GNEAUXGHTS_E2E__!.seedChatControls();
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter'));
     });
     await $('button[aria-label="Split with thought partner"]').click();
     await $('[data-notepad-command-bar] textarea').waitForEnabled();
     await waitForWorkspaceAnimationSettled();
-    const result = await browser.executeAsync((done: (result: { bodies: unknown[]; sends: number }) => void) => {
+    const result = await browser.executeAsync((done: (result: { bodies: unknown[] }) => void) => {
       const original = window.setTimeout;
       const deferred: number[] = [];
       window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
@@ -69,12 +69,11 @@ describe('background saving through mounted owners', () => {
       original(() => {
         deferred.forEach(id => clearTimeout(id));
         const calls = bridge.invocations.slice(before);
-        done({ bodies: calls.filter(call => call.command === 'chat_set_composer_draft').map(call => call.args.body),
-          sends: calls.filter(call => ['chat_send_message', 'chat_create_conversation'].includes(call.command)).length });
+        done({ bodies: calls.filter(call => call.command === 'chat_set_composer_draft').map(call => call.args.body) });
       }, 100);
     });
     expect(result.bodies).toContain('Unsent thought before locking');
-    expect(result.sends).toBe(0);
+    expect(await readPiFixture()).toHaveLength(0);
     await expect($('[data-notepad-command-bar] textarea')).toHaveValue('Unsent thought before locking');
   });
 });

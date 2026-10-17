@@ -1,6 +1,6 @@
 # Guide relevant gathering and source attribution
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -34,3 +34,8 @@ The final bounded comparison includes all three intents: explicit source record,
 2026-10-10 — Implemented the [reliability plan](../reliability-plan.md); see [report](../reliability.md) and [scoped patch](../reliability-phase.patch). Reads now distinguish whole-note coverage from complete selected delivery and provide safe recovery selectors. Context-local compact evidence selectors preserve canonical IDs, citations, access checks, shared budgets and independent worker authority. The tested source rule treats a named note as a factual starting point while retaining complete canonical checks for named-record omissions.
 
 Offline75 and architecture21 checks pass; independent Standards/Spec reviews found no remaining actionable defects. Thirty bounded synthetic runs retain all failures and smoke/manual discrepancies, with approximately $0.01859235 of reported provider usage. Scope manual results are 6/6 revised versus5/6 original across initial and held-out questions; removing the rule fails canonical absence coverage in1/3. The original absent-actor holdout hits its tool cap; revised returns supported findings with an unresolved approver. Three additional production named-note/selection/long-link checks pass. This resolves the requested implementation and measured comparison, without claiming universal reliability or a general savings rate. Repeated title lookup and long-link prefix recovery remain recorded opportunities; the exact historical narrowed-title/no-related-lead branch remains unproven under controlled discovery.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

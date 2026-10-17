@@ -103,7 +103,6 @@ pub(crate) struct StoredAtlasNoteEmbedding {
     pub(crate) note_path: String,
     pub(crate) note_title: String,
     pub(crate) modified_millis: u64,
-    pub(crate) semantic_input_hash: String,
     pub(crate) created_at: String,
     pub(crate) updated_at: String,
     pub(crate) embedding: Vec<f32>,
@@ -119,7 +118,6 @@ pub(crate) struct StoredAtlasNoteMetadata {
     pub(crate) preview: String,
     pub(crate) tags: Vec<String>,
     pub(crate) wikilink_targets: Vec<String>,
-    pub(crate) chunk_count: usize,
     pub(crate) presentation_hash: String,
 }
 
@@ -171,7 +169,6 @@ pub(crate) struct StoredNoteRecord {
     pub(crate) structure_hash: String,
     pub(crate) presentation_hash: String,
     pub(crate) stable_ann_label: u64,
-    pub(crate) document_kind: DocumentKind,
     pub(crate) note_id: String,
 }
 
@@ -437,7 +434,7 @@ pub(crate) fn load_stored_note_records(
     let mut statement = connection
         .prepare(
             "SELECT path, modified_millis, content_hash, semantic_input_hash,
-                    structure_hash, presentation_hash, stable_ann_label, document_kind, note_id
+                    structure_hash, presentation_hash, stable_ann_label, note_id
              FROM notes",
         )
         .map_err(|err| err.to_string())?;
@@ -454,10 +451,7 @@ pub(crate) fn load_stored_note_records(
                 structure_hash: row.get::<_, String>(4).map_err(|err| err.to_string())?,
                 presentation_hash: row.get::<_, String>(5).map_err(|err| err.to_string())?,
                 stable_ann_label: row.get::<_, u64>(6).map_err(|err| err.to_string())?,
-                document_kind: DocumentKind::from_frontmatter_value(
-                    &row.get::<_, String>(7).map_err(|err| err.to_string())?,
-                ),
-                note_id: row.get::<_, String>(8).map_err(|err| err.to_string())?,
+                note_id: row.get::<_, String>(7).map_err(|err| err.to_string())?,
             },
         );
     }
@@ -473,7 +467,7 @@ pub(crate) fn load_note_record(
         .query_row(
             "
             SELECT modified_millis, content_hash, semantic_input_hash,
-                   structure_hash, presentation_hash, stable_ann_label, document_kind, note_id
+                   structure_hash, presentation_hash, stable_ann_label, note_id
             FROM notes
             WHERE path = ?1
             ",
@@ -486,8 +480,7 @@ pub(crate) fn load_note_record(
                     structure_hash: row.get(3)?,
                     presentation_hash: row.get(4)?,
                     stable_ann_label: row.get(5)?,
-                    document_kind: DocumentKind::from_frontmatter_value(&row.get::<_, String>(6)?),
-                    note_id: row.get(7)?,
+                    note_id: row.get(6)?,
                 })
             },
         )
@@ -1526,7 +1519,7 @@ pub(crate) fn load_atlas_note_embeddings(
     let mut statement = connection
         .prepare(
             "
-            SELECT n.path, n.title, n.modified_millis, n.semantic_input_hash,
+            SELECT n.path, n.title, n.modified_millis,
                    n.created_at, n.updated_at, e.embedding_blob
             FROM note_embeddings e
             INNER JOIN notes n ON n.path = e.note_path
@@ -1542,11 +1535,10 @@ pub(crate) fn load_atlas_note_embeddings(
             note_path: row.get::<_, String>(0).map_err(|err| err.to_string())?,
             note_title: row.get::<_, String>(1).map_err(|err| err.to_string())?,
             modified_millis: row.get::<_, u64>(2).map_err(|err| err.to_string())?,
-            semantic_input_hash: row.get::<_, String>(3).map_err(|err| err.to_string())?,
-            created_at: row.get::<_, String>(4).map_err(|err| err.to_string())?,
-            updated_at: row.get::<_, String>(5).map_err(|err| err.to_string())?,
+            created_at: row.get::<_, String>(3).map_err(|err| err.to_string())?,
+            updated_at: row.get::<_, String>(4).map_err(|err| err.to_string())?,
             embedding: deserialize_embedding(
-                &row.get::<_, Vec<u8>>(6).map_err(|err| err.to_string())?,
+                &row.get::<_, Vec<u8>>(5).map_err(|err| err.to_string())?,
             ),
         });
     }
@@ -1560,7 +1552,7 @@ pub(crate) fn load_atlas_note_metadata(
     let mut statement = connection
         .prepare(
             "SELECT path, title, modified_millis, document_kind, note_id, preview,
-                    tags_json, wikilink_targets_json, chunk_count, presentation_hash
+                    tags_json, wikilink_targets_json, presentation_hash
              FROM notes
              ORDER BY path ASC",
         )
@@ -1579,8 +1571,7 @@ pub(crate) fn load_atlas_note_metadata(
                 preview: row.get(5)?,
                 tags: serde_json::from_str(&tags_json).unwrap_or_default(),
                 wikilink_targets: serde_json::from_str(&wikilinks_json).unwrap_or_default(),
-                chunk_count: row.get(8)?,
-                presentation_hash: row.get(9)?,
+                presentation_hash: row.get(8)?,
             })
         })
         .map_err(|err| err.to_string())?;
@@ -2648,7 +2639,7 @@ mod tests {
             .into_iter()
             .map(|n| {
                 let structure = format!("structure-{}", n.note_path);
-                (n.note_path, n.semantic_input_hash, structure)
+                (n.note_path, "seed-v1".to_string(), structure)
             })
             .collect::<Vec<_>>();
         assert_eq!(

@@ -14,7 +14,7 @@ Keep debounced canonical autosave and durable preparation, but accumulate ordina
 - This revises ADR 0002's immediate-per-commit finalization model and the granularity assumed by ADR 0006. Mandatory durable preparation, committed-result warnings, truthful recovery, and the no-bypass availability decision remain. ADR 0004's finalized identity and portability guarantees remain.
 - Adopted 2026-09-05. The [capture contract](../architecture/editing-window-contract.md) defines fixed deadlines, time evidence, receipt retirement, and boundary ordering. The integrated default provides capture, read, lifecycle, and evidence behavior.
 
-The Editing Window format supersedes the earlier compatibility promise. Point evidence remains valid for creation, baseline, task/proposal/restore/external revisions and explicit Editor rename/move publications. Ordinary Editor revisions require Editing Window evidence. A relabeled old store cannot bypass this validation. The reset preserves current Markdown and advances the generation; old labels, citations, and retained prose are not migrated.
+The Editing Window format supersedes the earlier compatibility promise. Point evidence remains valid for creation, baseline, task action, agent publication, Version Restore, and external revisions, plus explicit Editor rename/move publications. Ordinary Editor revisions require Editing Window evidence. A relabeled old store cannot bypass this validation. The reset preserves current Markdown and advances the generation; old labels, citations, and retained prose are not migrated.
 
 The compact receipt design (2026-09-06) separates unresolved recovery preparation from completed
 receipts and uses each publication token's existing nonce as its private durable

@@ -18,7 +18,6 @@ function setup() {
     selectWikilinkSuggestion: vi.fn()
   };
   const setActivePane = vi.fn();
-  const openChatProjection = vi.fn(async () => true);
   let paneCommandPaneId: string | null = null;
   const state = {
     active: true,
@@ -46,7 +45,6 @@ function setup() {
     getNavigationPaneId: () => paneId,
     getWikilinkController: () => wikilinkController,
     setActivePane,
-    openChatProjection,
     getWikilinkState: () => state
   });
   return {
@@ -54,7 +52,6 @@ function setup() {
     transientUi,
     wikilinkController,
     setActivePane,
-    openChatProjection,
     setPaneCommandPaneId: (value: string | null) => {
       paneCommandPaneId = value;
     }
@@ -80,42 +77,19 @@ describe('wikilink interaction controller', () => {
     ).toBe(true);
   });
 
-  it('opens chat projection wikilinks before ordinary note links', async () => {
+
+
+  it('opens authored Chats paths through ordinary note navigation', async () => {
     const harness = setup();
 
     await harness.controller.openWikilink(
       paneId,
-      'Chats/Ideas#reply'
-    );
-
-    expect(harness.setActivePane).toHaveBeenCalledWith(paneId);
-    expect(
-      harness.openChatProjection
-    ).toHaveBeenCalledWith(paneId, 'Chats/Ideas.md', 'reply');
-    expect(
-      harness.wikilinkController.openWikilink
-    ).not.toHaveBeenCalled();
-  });
-
-  it('routes a saved Pi origin to its exact answer anchor without a transcript file', async () => {
-    const harness = setup();
-    await harness.controller.openWikilink(paneId, 'Chats/Pi/pi-1/Origin#^msg_pi-assistant-2|Open in chat');
-    expect(harness.openChatProjection).toHaveBeenCalledWith(paneId, 'Chats/Pi/pi-1/Origin.md', '^msg_pi-assistant-2');
-    expect(harness.wikilinkController.openWikilink).not.toHaveBeenCalled();
-  });
-
-  it('falls through when a chat projection is unavailable', async () => {
-    const harness = setup();
-    harness.openChatProjection.mockResolvedValue(false);
-
-    await harness.controller.openWikilink(
-      paneId,
-      'Chats/Missing'
+      'Chats/Ideas#^reply|Saved answer'
     );
 
     expect(
       harness.wikilinkController.openWikilink
-    ).toHaveBeenCalledWith('Chats/Missing');
+    ).toHaveBeenCalledWith('Chats/Ideas#^reply|Saved answer');
   });
 
   it('updates selection state before accepting a suggestion', () => {

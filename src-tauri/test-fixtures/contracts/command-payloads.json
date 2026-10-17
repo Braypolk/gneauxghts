@@ -55,63 +55,6 @@
         "updatedEditorMarkdown": "- [x] Ship it\n\nLocal work"
       }
     },
-    "chat_send_message": {
-      "args": {
-        "request": {
-          "conversationId": "conversation-1",
-          "content": "Compare these notes",
-          "attachments": [
-            {
-              "kind": "image",
-              "name": "diagram.png",
-              "mimeType": "image/png",
-              "sizeBytes": 4,
-              "dataBase64": "iVBORw=="
-            }
-          ],
-          "forceWebSearch": true,
-          "activeNote": {
-            "noteId": "note-1",
-            "title": "Title",
-            "path": "/vault/Title.md",
-            "body": "Body",
-            "bodyHash": "body-hash-1",
-            "selection": "Body"
-          },
-          "selectedContext": [
-            {
-              "noteId": "note-2",
-              "sectionLabel": "Decisions",
-              "startLine": 4,
-              "endLine": 9,
-              "blockAnchor": "decision-1",
-              "reason": "related"
-            }
-          ]
-        }
-      },
-      "result": {
-        "requestId": "request-1",
-        "conversationId": "conversation-1",
-        "userMessageId": "message-user-1",
-        "assistantMessageId": "message-assistant-1"
-      }
-    },
-    "commit_agent_proposal": {
-      "args": {
-        "proposalId": "proposal-1",
-        "markdown": "Updated body"
-      },
-      "result": {
-        "status": "committed",
-        "applied": {
-          "kind": "update",
-          "path": "/vault/Title.md",
-          "previousPath": null
-        },
-        "message": null
-      }
-    },
     "set_semantic_settings": {
       "args": {
         "settings": {

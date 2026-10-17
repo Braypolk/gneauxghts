@@ -27,8 +27,7 @@ describe('search scope label animation', () => {
 
   for (const query of ['', 'Alpha']) {
     it(`fades ${query ? 'populated' : 'idle'} editor search into chat without changing the outgoing scope-label widths`, async () => {
-      await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-      if (query) await $('[data-testid="note-search-input"]').setValue(query);
+        if (query) await $('[data-testid="note-search-input"]').setValue(query);
       await waitForWorkspaceAnimationSettled();
       const result = await browser.executeAsync((done: (result: { widths: number[]; frames: number[][] }) => void) => {
         const shell = document.querySelector('.notepad-search-bar')!;
@@ -59,8 +58,7 @@ describe('search scope label animation', () => {
     });
 
     it(`returns from chat to ${query ? 'populated' : 'idle'} editor search without flashing or resizing the scope labels`, async () => {
-      await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-      if (query) await $('[data-testid="note-search-input"]').setValue(query);
+        if (query) await $('[data-testid="note-search-input"]').setValue(query);
       await waitForWorkspaceAnimationSettled();
       await browser.execute(() => document.querySelector<HTMLElement>('[data-pane-kind="editor"] button[aria-label="Open thought partner"]')!.click());
       await $('[data-notepad-command-bar] textarea').waitForEnabled();

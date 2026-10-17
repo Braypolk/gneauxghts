@@ -21,8 +21,8 @@ fn publication_rejects_retained_identity_that_conflicts_with_catalog_owner() {
         .note_timeline()
         .prepare_publication(
             Some(&path),
-            Some(&NoteIdentity::new("stale-proposal-owner")),
-            "Proposed authored content",
+            Some(&NoteIdentity::new("stale-agent-publication-owner")),
+            "Agent-authored content",
         )
         .expect_err("conflicting continuity evidence must not publish");
 
@@ -263,6 +263,308 @@ fn a_cleanly_copied_vault_reconstructs_identical_revision_identity_and_hash() {
     assert_eq!(copied_header.content_hash(), source_header.content_hash());
     assert_eq!(copied_revision, source_revision);
     crate::state::set_notes_root_override(None).unwrap();
+}
+
+#[test]
+fn immediate_editor_save_after_vault_relocation_preserves_identity_and_history() {
+    let _guard = crate::test_support::lock_test_env();
+    let app_data = crate::test_support::TestDir::new("timeline-relocated-save-data");
+    let original = crate::test_support::TestDir::new("timeline-relocated-save-original");
+    let destination = crate::test_support::TestDir::new("timeline-relocated-save-destination");
+    crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
+    crate::state::set_notes_root_override(Some(original.path().to_path_buf())).unwrap();
+    let state = AppState::new(
+        SemanticState::new_disabled("disabled"),
+        EventBus::disabled(),
+    )
+    .unwrap();
+    let created = save_retained_state(&state, "Relocated".into(), "Original body".into(), None)
+        .unwrap()
+        .unwrap();
+    let previous_path = PathBuf::from(created.path.unwrap());
+    let note_id = NoteIdentity::new(created.note_id.unwrap());
+    save_retained_state(
+        &state,
+        "Relocated".into(),
+        "Retained edit".into(),
+        Some(previous_path.to_string_lossy().into_owned()),
+    )
+    .unwrap();
+    let revisions_before = state
+        .note_timeline()
+        .history_mode(HistoryModeGrant::authorized(note_id.clone()))
+        .revisions()
+        .unwrap();
+    assert_eq!(revisions_before.len(), 2);
+    state.note_timeline().clean_close(original.path()).unwrap();
+    state.stop_rebuildable_projection_work().unwrap();
+    drop(state);
+
+    let relocated_root = destination.path().join("vault");
+    fs::rename(original.path(), &relocated_root).unwrap();
+    let relocated_path = relocated_root.join("Relocated.md");
+    crate::state::set_notes_root_override(Some(relocated_root.clone())).unwrap();
+    let restarted = AppState::new(
+        SemanticState::new_disabled("disabled"),
+        EventBus::disabled(),
+    )
+    .unwrap();
+    // Match the native read/save route: cold catalog discovery can precede
+    // timeline reconciliation. No watcher or explicit observation runs here.
+    restarted.prewarm_notes_index(&relocated_root).unwrap();
+    let saved = crate::commands::note_persistence::persist_note_session_with_outcome(
+        &restarted,
+        "Relocated".into(),
+        "Immediate editor save".into(),
+        Some(relocated_path.to_string_lossy().into_owned()),
+    )
+    .expect("first editor save after relocation must reconcile its canonical location")
+    .unwrap();
+    assert_eq!(saved.note_id.as_deref(), Some(note_id.as_str()));
+    assert_eq!(saved.path.as_deref(), relocated_path.to_str());
+    assert!(saved.commit_warning.is_none());
+    assert_eq!(
+        crate::note::parse_note(&fs::read_to_string(&relocated_path).unwrap()).body,
+        "Immediate editor save"
+    );
+    let timeline = restarted.note_timeline();
+    assert!(
+        history_store::pending_window(&timeline.runtime.store, &note_id)
+            .unwrap()
+            .is_some()
+    );
+    timeline.finalize_editing_window(&note_id).unwrap();
+    let history = timeline.history_mode(HistoryModeGrant::authorized(note_id.clone()));
+    let revisions_after = history.revisions().unwrap();
+    assert_eq!(revisions_after.len(), 3);
+    for (before, after) in revisions_before.iter().zip(&revisions_after) {
+        assert_eq!(before.identity(), after.identity());
+        assert_eq!(before.content_hash(), after.content_hash());
+    }
+    assert_eq!(
+        history
+            .reconstruct(revisions_after[0].identity())
+            .unwrap()
+            .body(),
+        "Original body"
+    );
+    assert_eq!(
+        history
+            .reconstruct(revisions_after[1].identity())
+            .unwrap()
+            .body(),
+        "Retained edit"
+    );
+    assert_eq!(
+        history
+            .reconstruct(revisions_after[2].identity())
+            .unwrap()
+            .body(),
+        "Immediate editor save"
+    );
+    assert_eq!(revisions_after[2].source(), MutationSource::Editor);
+    assert!(matches!(
+        revisions_after[2].time_evidence(),
+        RevisionTimeEvidence::EditingWindow { .. }
+    ));
+    let events = history.lifecycle_events().unwrap();
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[1].kind(), LifecycleEventKind::Moved);
+    assert_eq!(events[1].previous_path(), Some(previous_path.as_path()));
+    assert_eq!(events[1].path(), Some(relocated_path.as_path()));
+    assert_eq!(
+        history_store::current_path(&timeline.runtime.store, &note_id).unwrap(),
+        Some(relocated_path)
+    );
+    restarted.stop_rebuildable_projection_work().unwrap();
+    crate::state::set_notes_root_override(None).unwrap();
+}
+
+#[test]
+fn concurrent_publication_location_reconciliation_never_replays_an_older_endpoint() {
+    let fixture = crate::test_support::TestVault::new("timeline-relocation-concurrent-save");
+    let created = save_retained_state(
+        &fixture.state,
+        "Original".into(),
+        "Original body".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let note_id = NoteIdentity::new(created.note_id.unwrap());
+    let previous_path = PathBuf::from(created.path.unwrap());
+    let new_path = fixture.notes.path().join("Moved.md");
+    fs::rename(&previous_path, &new_path).unwrap();
+    let canonical = fs::read_to_string(&new_path).unwrap();
+    let (contended_tx, contended_rx) = mpsc::channel();
+    let timeline = fixture.state.note_timeline();
+    timeline
+        .runtime
+        .set_replay_lock_observer(Some(Arc::new(move |event| {
+            if matches!(event, runtime::ReplayLockEvent::Contended) {
+                let _ = contended_tx.send(());
+            }
+        })));
+
+    thread::scope(|scope| {
+        // A second preflight reaches relocation while the first publisher owns
+        // replay. Its canonical capture must wait until the first publication
+        // completes, rather than retaining the preceding disk snapshot later.
+        let waiting_preflight = crate::state::with_note_file_mutation(|| {
+            timeline.runtime.with_observation_replay(|| {
+                let waiter = scope.spawn(|| {
+                    fixture
+                        .state
+                        .note_timeline()
+                        .reconcile_publication_location(Some(&new_path), &note_id)
+                });
+                contended_rx
+                    .recv_timeout(Duration::from_secs(2))
+                    .expect("relocation preflight waits for replay ownership");
+                let observed = VaultObservation::reconciled_state(
+                    new_path.clone(),
+                    crate::time::current_time_millis().unwrap(),
+                    None,
+                )
+                .with_canonical_markdown(canonical.clone());
+                let sequence =
+                    history_store::retain_observation(&timeline.runtime.store, &observed)?;
+                timeline.replay_retained_observations(Some(sequence))?;
+                let updated = crate::note::prepare_note_markdown(
+                    "Concurrent editor endpoint",
+                    Some(&canonical),
+                    Some(None),
+                )?
+                .0;
+                timeline
+                    .publish_authored(
+                        MutationSource::Editor,
+                        new_path.clone(),
+                        Some(new_path.clone()),
+                        updated,
+                        publication::PublicationMode::Replace,
+                    )?
+                    .expect("replace publication");
+                Ok::<_, HistoryError>(waiter)
+            })
+        })
+        .unwrap();
+        waiting_preflight.join().unwrap().unwrap();
+    });
+    timeline.runtime.set_replay_lock_observer(None);
+    assert!(
+        history_store::pending_window(&timeline.runtime.store, &note_id)
+            .unwrap()
+            .is_some(),
+        "waiting relocation must not seal the concurrent editor endpoint as an external edit"
+    );
+    timeline.finalize_editing_window(&note_id).unwrap();
+    let history = timeline.history_mode(HistoryModeGrant::authorized(note_id));
+    let revisions = history.revisions().unwrap();
+    assert_eq!(
+        revisions.len(),
+        2,
+        "no stale ExternalEdit revision may be appended"
+    );
+    assert_eq!(revisions[1].source(), MutationSource::Editor);
+    assert_eq!(
+        history.reconstruct(revisions[1].identity()).unwrap().body(),
+        "Concurrent editor endpoint"
+    );
+    assert_eq!(
+        crate::note::parse_note(&fs::read_to_string(&new_path).unwrap()).body,
+        "Concurrent editor endpoint"
+    );
+}
+
+#[test]
+fn publication_location_reconciliation_rejects_a_surviving_former_path() {
+    let fixture = crate::test_support::TestVault::new("timeline-relocation-live-owner");
+    let created = save_retained_state(
+        &fixture.state,
+        "Original".into(),
+        "Original body".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let note_id = NoteIdentity::new(created.note_id.unwrap());
+    let previous_path = PathBuf::from(created.path.unwrap());
+    let copy_path = fixture.notes.path().join("Copy.md");
+    fs::copy(&previous_path, &copy_path).unwrap();
+    let before = fs::read(&copy_path).unwrap();
+    let error = fixture
+        .state
+        .note_timeline()
+        .save_note(
+            MutationSource::Editor,
+            "Copy",
+            "Must remain dirty",
+            Some(copy_path.to_string_lossy().into_owned()),
+        )
+        .unwrap_err();
+    assert!(matches!(error, HistoryError::Stale(_)));
+    assert!(error.to_string().contains("surviving former path"));
+    assert_eq!(fs::read(&copy_path).unwrap(), before);
+    let timeline = fixture.state.note_timeline();
+    assert_eq!(
+        history_store::current_path(&timeline.runtime.store, &note_id).unwrap(),
+        Some(previous_path)
+    );
+    assert_eq!(
+        timeline
+            .history_mode(HistoryModeGrant::authorized(note_id))
+            .lifecycle_events()
+            .unwrap()
+            .len(),
+        1
+    );
+}
+
+#[test]
+fn publication_location_reconciliation_rejects_a_foreign_canonical_identity() {
+    let fixture = crate::test_support::TestVault::new("timeline-relocation-foreign-owner");
+    let created = save_retained_state(
+        &fixture.state,
+        "Original".into(),
+        "Original body".into(),
+        None,
+    )
+    .unwrap()
+    .unwrap();
+    let note_id = NoteIdentity::new(created.note_id.unwrap());
+    let previous_path = PathBuf::from(created.path.unwrap());
+    let new_path = fixture.notes.path().join("Moved.md");
+    fs::rename(&previous_path, &new_path).unwrap();
+    let canonical = crate::note::repair_managed_note_identity(
+        &fs::read_to_string(&new_path).unwrap(),
+        "foreign-note-identity",
+    )
+    .unwrap();
+    fs::write(&new_path, &canonical).unwrap();
+    let error = fixture
+        .state
+        .note_timeline()
+        .edit_note(MutationSource::Editor, &new_path, Some(&note_id), |_| {
+            panic!("a foreign canonical identity must fail before the edit runs")
+        })
+        .unwrap_err();
+    assert!(matches!(error, HistoryError::Stale(_)));
+    assert!(error.to_string().contains("canonical Note Identity"));
+    assert_eq!(fs::read_to_string(&new_path).unwrap(), canonical);
+    let timeline = fixture.state.note_timeline();
+    assert_eq!(
+        history_store::current_path(&timeline.runtime.store, &note_id).unwrap(),
+        Some(previous_path)
+    );
+    assert_eq!(
+        timeline
+            .history_mode(HistoryModeGrant::authorized(note_id))
+            .lifecycle_events()
+            .unwrap()
+            .len(),
+        1
+    );
 }
 
 #[test]
@@ -746,7 +1048,7 @@ fn every_app_owned_mutation_source_is_retained_by_the_same_contract() {
         MutationSource::NoteCreation,
         MutationSource::Editor,
         MutationSource::TaskAction,
-        MutationSource::AcceptedChatProposal,
+        MutationSource::AgentPublication,
         MutationSource::VersionRestore,
         MutationSource::RecoveryReconciliation,
     ];
@@ -768,7 +1070,7 @@ fn every_app_owned_mutation_source_is_retained_by_the_same_contract() {
             MutationSource::NoteCreation => NoteMutation::note_creation,
             MutationSource::Editor => NoteMutation::editor,
             MutationSource::TaskAction => NoteMutation::task_action,
-            MutationSource::AcceptedChatProposal => NoteMutation::accepted_chat_proposal,
+            MutationSource::AgentPublication => NoteMutation::agent_publication,
             MutationSource::VersionRestore => NoteMutation::version_restore,
             _ => |intent, path, previous, markdown| {
                 NoteMutation::with_source(
@@ -1606,11 +1908,7 @@ fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
     let occupied = fixture.notes.path().join("Occupied.md");
     fs::write(&occupied, "another note").unwrap();
     assert!(timeline
-        .create_note_at(
-            MutationSource::AcceptedChatProposal,
-            &occupied,
-            "replacement"
-        )
+        .create_note_at(MutationSource::AgentPublication, &occupied, "replacement")
         .unwrap()
         .is_none());
     assert_eq!(fs::read_to_string(&occupied).unwrap(), "another note");
@@ -1619,7 +1917,7 @@ fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
         let link = fixture.notes.path().join("Dangling.md");
         std::os::unix::fs::symlink(fixture.notes.path().join("Missing.md"), &link).unwrap();
         assert!(timeline
-            .create_note_at(MutationSource::AcceptedChatProposal, &link, "replacement")
+            .create_note_at(MutationSource::AgentPublication, &link, "replacement")
             .unwrap()
             .is_none());
         assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
@@ -1630,7 +1928,7 @@ fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
         std::os::unix::fs::symlink(&outside_target, &outside_link).unwrap();
         assert!(timeline
             .create_note_at(
-                MutationSource::AcceptedChatProposal,
+                MutationSource::AgentPublication,
                 &outside_link,
                 "replacement"
             )
@@ -1648,12 +1946,12 @@ fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
     let target = fixture.notes.path().join("New.md");
     crate::state::inject_note_publication_failure_once();
     assert!(timeline
-        .create_note_at(MutationSource::AcceptedChatProposal, &target, "new body")
+        .create_note_at(MutationSource::AgentPublication, &target, "new body")
         .is_err());
     assert!(!target.exists());
     assert_eq!(prepared_history_intent_count_for_test("prepared"), 0);
     assert!(timeline
-        .create_note_at(MutationSource::AcceptedChatProposal, &target, "new body")
+        .create_note_at(MutationSource::AgentPublication, &target, "new body")
         .unwrap()
         .is_some());
     assert!(fs::read_to_string(target).unwrap().ends_with("new body"));

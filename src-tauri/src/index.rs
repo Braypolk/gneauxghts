@@ -314,27 +314,6 @@ impl AppState {
         Ok(())
     }
 
-    /// Managed chat projections participate in the catalog and lexical
-    /// search, but are deliberately isolated from task projection and the
-    /// ordinary save/watcher pipeline.
-    pub(crate) fn upsert_managed_chat_projection(
-        &self,
-        path: PathBuf,
-        note: IndexedNote,
-    ) -> Result<(), String> {
-        crate::services::NoteCatalog::new(
-            &self.notes_index,
-            &self.lexical,
-            &self.catalog_projection_retries,
-        )
-        .upsert(
-            path.clone(),
-            note,
-            crate::services::note_catalog::CatalogWriteMode::ManagedProjection,
-        )?;
-        self.clear_dirty_path(&path)
-    }
-
     pub(crate) fn remove_note_indexes(&self, path: &Path) -> Result<(), String> {
         crate::services::NoteCatalog::new(
             &self.notes_index,
@@ -488,7 +467,7 @@ impl AppState {
     {
         self.catalog_projection_retries
             .retry_pending(&self.lexical)?;
-        let (existing_signatures, existing_paths, managed_chat_paths) = {
+        let (existing_signatures, existing_paths) = {
             let index = self
                 .notes_index
                 .lock()
@@ -500,25 +479,15 @@ impl AppState {
                     .map(|(path, note)| (path.clone(), note.signature.clone()))
                     .collect::<HashMap<_, _>>(),
                 index.entries.keys().cloned().collect::<Vec<_>>(),
-                index
-                    .entries
-                    .iter()
-                    .filter(|(_, note)| note.document_kind.is_chat_projection())
-                    .map(|(path, _)| path.clone())
-                    .collect::<HashSet<_>>(),
             )
         };
         let RefreshScan {
-            mut updates,
+            updates,
             seen_paths,
         } = collect_refresh_updates(notes_dir, &existing_signatures)?;
         // The reconciliation owner may emit typed per-note observations from
         // this exact scan before any index/projection decisions are applied.
         observer(&existing_paths, &seen_paths)?;
-        // Managed chat writes update the catalog directly. If the bytes on
-        // disk later diverge, the chat conflict pipeline owns that state; a
-        // generic reconciliation pass must not index the external edit.
-        updates.retain(|(path, _)| !managed_chat_paths.contains(path));
         let stale_lexical_paths: Vec<PathBuf> = existing_paths
             .iter()
             .filter(|path| !seen_paths.contains(*path))
@@ -1410,17 +1379,13 @@ fn build_indexed_note_with_signature(
         modified_millis,
         created_at_millis,
         updated_at_millis,
-        document_kind: note::document_kind(markdown),
+        document_kind: DocumentKind::Note,
         tags: crate::tags::read_tags(markdown).unwrap_or_default(),
         title: title.clone(),
         title_lower: title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&title, &body),
-        tasks: if note::document_kind(markdown) == DocumentKind::Note {
-            build_tasks(markdown)
-        } else {
-            Vec::new()
-        },
+        tasks: build_tasks(markdown),
         file_name,
     }
 }
@@ -1481,17 +1446,13 @@ fn build_current_override_with_signature(
         modified_millis,
         created_at_millis,
         updated_at_millis,
-        document_kind: note::document_kind(markdown),
+        document_kind: DocumentKind::Note,
         tags: crate::tags::read_tags(markdown).unwrap_or_default(),
         title: effective_title.clone(),
         title_lower: effective_title.to_lowercase(),
         file_name_lower: file_name.to_lowercase(),
         paragraphs: build_paragraphs(&effective_title, &searchable_body),
-        tasks: if note::document_kind(markdown) == DocumentKind::Note {
-            build_tasks(markdown)
-        } else {
-            Vec::new()
-        },
+        tasks: build_tasks(markdown),
         file_name,
     }
 }

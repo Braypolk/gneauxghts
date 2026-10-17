@@ -48,7 +48,6 @@ describe('pane view model document status', () => {
       getChatBindings: () => {
         throw new Error('chat bindings are not used for an editor');
       },
-      isReviewingDocument: () => false,
       isNotePinned: (noteId) => noteId === 'note-1',
       paneTitleInputClass: 'title',
       getTransientUiState: () => ({ kind: 'none' }),

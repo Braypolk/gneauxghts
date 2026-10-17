@@ -55,7 +55,6 @@ describe('mobile control sizing', () => {
   });
 
   it('preserves settings icons and keeps the API key toggle inside its field', async () => {
-    await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
     await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
     const toggle = 'button[aria-label="Show API key"]';

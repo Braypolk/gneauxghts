@@ -1,0 +1,155 @@
+{
+  "scope": "pi-chat-adapter-alignment",
+  "recorded": "2026-10-16",
+  "packages": {
+    "pi-durable": "1.3.0",
+    "pi-ai": "1.3.0",
+    "chord": "1.3.0"
+  },
+  "checks": {
+    "typeErrors": 0,
+    "typeWarnings": 0,
+    "frontendFiles": 145,
+    "frontendTestsPassed": 1159,
+    "supportTestsPassed": 32,
+    "nativeTestsPassed": 709,
+    "nativeIgnored": 19,
+    "controllerTestsPassed": 8,
+    "ordinaryBuildPassed": true,
+    "ordinaryBundleExcludesAcceptanceMarkersAndToken": true
+  },
+  "desktop": [
+    {
+      "gate": "native",
+      "passed": true
+    },
+    {
+      "gate": "publication",
+      "passed": true
+    },
+    {
+      "gate": "compaction",
+      "passed": true
+    },
+    {
+      "gate": "adapters",
+      "passed": true
+    },
+    {
+      "gate": "local",
+      "passed": true
+    }
+  ],
+  "simulator": [
+    {
+      "scenario": "streaming",
+      "textBeforeTerminal": true,
+      "reasoningBeforeTerminal": true,
+      "reasoningCollapsed": true
+    },
+    {
+      "scenario": "diagnostic-reports",
+      "evidenceKind": "synthetic-runtime-report",
+      "state": "open",
+      "noticeCount": 2,
+      "codes": [
+        "runtime_report",
+        "provider_credential"
+      ],
+      "repeatCount": 999,
+      "gettersRead": 0,
+      "sinkSafe": true,
+      "domSafe": true,
+      "noInventedActivity": true,
+      "reportVisible": true,
+      "failureVisible": false,
+      "inferenceCallsUnchanged": true,
+      "nativeAuthorityUnchanged": true,
+      "generationActive": true,
+      "compactionCount": 0
+    },
+    {
+      "scenario": "selection-cancellation",
+      "runningConversationSurvivedSwitch": true,
+      "stopCompleted": true,
+      "independentConversationCompleted": true
+    },
+    {
+      "scenario": "native-read",
+      "nativeReadAndCitation": true,
+      "reasoningExpanded": true
+    },
+    {
+      "scenario": "terminal-presentation",
+      "evidenceKind": "synthetic-terminal-notification",
+      "state": "failed",
+      "noticeCount": 3,
+      "codes": [
+        "runtime_report",
+        "provider_credential",
+        "runtime_failed"
+      ],
+      "repeatCount": 999,
+      "gettersRead": 0,
+      "sinkSafe": true,
+      "domSafe": true,
+      "noInventedActivity": true,
+      "reportVisible": true,
+      "failureVisible": true,
+      "inferenceCallsUnchanged": true,
+      "nativeAuthorityUnchanged": true,
+      "generationActive": false,
+      "compactionCount": 0,
+      "actualHarnessFailure": false
+    }
+  ],
+  "simulatorReopen": {
+    "actualDifferentNativeProcess": true,
+    "historyHashesRetained": true,
+    "sourcesRetained": true,
+    "reasoningCollapsedAfterReopen": true,
+    "noInferenceAfterReopen": true,
+    "diagnosticsFresh": true
+  },
+  "matchedCounts": {
+    "startupDiscovery": {
+      "before": 5,
+      "after": 3,
+      "validBindingsRestored": 5
+    },
+    "listInitial": {
+      "before": {
+        "scans": 1,
+        "handles": 50,
+        "chatSnapshots": 50,
+        "agentSnapshots": 50
+      },
+      "after": {
+        "scans": 1,
+        "handles": 0,
+        "chatSnapshots": 50,
+        "agentSnapshots": 50
+      }
+    },
+    "listRename": {
+      "before": {
+        "scans": 1,
+        "handles": 50,
+        "chatSnapshots": 50,
+        "agentSnapshots": 50
+      },
+      "after": {
+        "scans": 0,
+        "handles": 0,
+        "chatSnapshots": 0,
+        "agentSnapshots": 0
+      }
+    }
+  },
+  "limits": [
+    "Native/simulator terminal notification is presentation evidence; real Harness/storage failure tested separately.",
+    "Simulator uses controlled provider fixtures and programmatic DOM actions.",
+    "Live hosted credentials and physical-device validation deferred.",
+    "No normalized storage, latency, memory or battery improvement claimed."
+  ]
+}

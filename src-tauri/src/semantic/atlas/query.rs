@@ -31,14 +31,11 @@ impl ActiveSemanticState {
         let connection = open_database(&self.db_path)?;
         crate::semantic::ensure_schema(&connection)?;
         let metadata = persisted_atlas_inputs(&connection, generation_key)?.metadata;
-        let indexed_notes = visible_atlas_notes(
-            load_atlas_note_embeddings(&connection)?,
-            &metadata,
-            self.provider.model_info().dimensions,
-        )
-        .into_iter()
-        .filter(|note| Path::new(&note.note_path).is_file())
-        .collect::<Vec<_>>();
+        let indexed_notes =
+            visible_atlas_notes(load_atlas_note_embeddings(&connection)?, &metadata)
+                .into_iter()
+                .filter(|note| Path::new(&note.note_path).is_file())
+                .collect::<Vec<_>>();
         if indexed_notes.is_empty() {
             return Ok(AtlasSearchResponse {
                 status: "empty".to_string(),
@@ -90,19 +87,10 @@ impl ActiveSemanticState {
                 let relative_path = atlas_searchable_note_path(&note.note_path, notes_dir);
                 let preview = meta.map(|item| item.preview.as_str()).unwrap_or("");
                 let tags = meta.map_or(&[] as &[String], |item| item.tags.as_slice());
-                let semantic_score = if note
-                    .semantic_input_hash
-                    .starts_with(NAVIGATION_ONLY_SEMANTIC_HASH_PREFIX)
-                {
-                    0.0
-                } else {
-                    query_embedding
-                        .as_ref()
-                        .map(|embedding| {
-                            atlas_cosine_similarity(embedding, &note.embedding).max(0.0)
-                        })
-                        .unwrap_or(0.0)
-                };
+                let semantic_score = query_embedding
+                    .as_ref()
+                    .map(|embedding| atlas_cosine_similarity(embedding, &note.embedding).max(0.0))
+                    .unwrap_or(0.0);
                 let lexical_score = lexical_note_score(
                     &terms,
                     &[title, file_name, relative_path.as_str(), preview],

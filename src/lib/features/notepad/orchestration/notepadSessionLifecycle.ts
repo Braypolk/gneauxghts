@@ -40,7 +40,6 @@ export interface NotepadSessionLifecycleDeps {
   navigateToTaskTarget: (
     target: ReturnType<typeof consumePendingTaskTarget>
   ) => Promise<void>;
-  openChatProjection: (notePath: string | null) => Promise<unknown>;
   focusNavigationPane: () => void;
   onVaultNoteChanged: (
     payload: Parameters<typeof appStore.subscribeVaultNoteChanged>[0] extends (
@@ -121,17 +120,10 @@ export function createNotepadSessionLifecycle(
         const noteTarget = consumePendingNoteTarget();
         if (noteTarget) {
           skipDefaultFocus = true;
-          if (
-            noteTarget.documentKind &&
-            noteTarget.documentKind !== 'note'
-          ) {
-            await deps.openChatProjection(noteTarget.notePath);
-          } else {
-            await deps.openNote(noteTarget.notePath, {
-              noteId: noteTarget.noteId,
-              focusEditorAfterOpen: true
-            });
-          }
+          await deps.openNote(noteTarget.notePath, {
+            noteId: noteTarget.noteId,
+            focusEditorAfterOpen: true
+          });
         }
 
         if (!current()) return;

@@ -5,7 +5,7 @@ import type { EditorViewState } from '$lib/features/notepad/editor/editorViewSta
 export type HistoryMutationSource =
   | 'editor'
   | 'taskAction'
-  | 'acceptedChatProposal'
+  | 'agentPublication'
   | 'externalEdit'
   | 'versionRestore'
   | 'noteCreation'

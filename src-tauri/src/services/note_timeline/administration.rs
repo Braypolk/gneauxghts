@@ -362,9 +362,6 @@ impl<'a> NoteTimeline<'a> {
             };
             let parsed = crate::note::parse_note(&markdown);
             let metadata = parsed.frontmatter.managed.as_ref();
-            if metadata.is_some_and(|metadata| metadata.kind.is_chat_projection()) {
-                continue;
-            }
             let retained_note_id = candidate.retained_note_id();
             if metadata.is_none() && retained_note_id.is_none() {
                 continue;
@@ -928,12 +925,6 @@ impl<'a> NoteTimeline<'a> {
                     })?;
                     let parsed = crate::note::parse_note(&canonical_markdown);
                     let managed_metadata = parsed.frontmatter.managed;
-                    if managed_metadata
-                        .as_ref()
-                        .is_some_and(|metadata| metadata.kind.is_chat_projection())
-                    {
-                        continue;
-                    }
                     let historical_note_id =
                         history_store::note_identity_for_current_path(&self.runtime.store, &path)?;
                     let embedded_note_id = managed_metadata

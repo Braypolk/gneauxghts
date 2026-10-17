@@ -16,7 +16,7 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 - Blend semantic matches into keyword search.
 - Chat with a vault-aware note agent using hosted OpenAI or a local model
   served through an OpenAI-compatible endpoint such as LM Studio.
-- Review every AI-prepared note update or creation before it is written.
+- Stream answers and optional provider reasoning, inspect tool activity, and open cited notes.
 - Inspect semantic indexing status, model state, and diagnostics from Settings.
 
 ## How Notes Are Stored
@@ -37,7 +37,8 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
       vault.json            # vault identity, schema/version, timestamps
       app-state.sqlite3     # recents, task view state, forgotten-note metadata
       history.sqlite3       # note identities, revisions, Editing Windows, recovery
-      ai.sqlite3            # chats, proposals, access policy, provider configuration
+      ai.sqlite3            # access policy, provider configuration, drafts, publication receipts
+      pi-chat.sqlite3       # Pi conversations, history, tasks and compaction
       atlas-map/            # durable Atlas identities, names, accepted geometry
       cache/                # derived search and Atlas caches
   ```
@@ -49,9 +50,9 @@ Gneauxghts is a local-first desktop notes app built with Tauri, SvelteKit, and R
 - Provider API keys live in the operating system credential store outside the
   vault (macOS Keychain on macOS).
 - Device-specific model and runtime files stay global under app data.
-- Chat history, provider/model metadata, note access policies, and unresolved
-  proposals live in the vault-local `ai.sqlite3`. Provider reasoning and
-  historical tool payloads are not stored.
+- Pi keeps conversation history, provider reasoning, tool payloads and execution
+  state in its vault-local database. Native access policy, provider settings,
+  unsent drafts and future-write publication receipts remain in ai.sqlite3.
 - Opening a vault creates missing `.gneauxghts` scaffolding and reopens existing
   compatible stores. There is no import from older global app-data databases.
 - Switching the vault directory takes effect on the next launch; the newly
@@ -65,28 +66,32 @@ model/runtime installations remain device-local.
 ## Thought Partner and Vault Privacy
 
 New vaults allow the thought partner to search all ordinary notes by default.
-You can switch a conversation to approved-notes-only or no-vault access, and
-exclude individual notes by stable note ID. Exclusions override every
-conversation scope and survive note renames.
+Choose Full vault or No notes in the composer, and exclude individual notes in
+Settings. Exclusions use stable Note Identities, override conversation scope and
+survive note renames. Restricting access starts a fresh model context; previous
+history remains available for human inspection.
 
-Before sending, the chat UI flushes pending autosave for an existing adjacent
-note; protected proposal reviews remain uncommitted. When policy permits, the
-agent receives the active note's identity/title and a validated selection hint,
-rather than its whole body automatically. Explicit wikilinks can supply bounded
-reads of allowed notes. Search, note reads, citations, and proposed changes pass
-through backend access checks. See the [evidence and context contract](docs/architecture/behavior-invariants.md)
-for the read-admission boundary and its current implementation limits.
+The agent reads canonical saved notes through native search/read tools. Mention
+a note in chat when it is relevant; the composer has no attachment picker. It
+does not implicitly share the adjacent editor or unsaved text. Source citations
+open the note, with an exact passage selected when one was supplied and remains
+unambiguous. Search previews alone cannot authorize citations. See the
+[behavior invariants](docs/architecture/behavior-invariants.md#chat) for admission
+and retained-history boundaries.
 
-The agent may search and read allowed notes, but it cannot write them directly.
-Updates and new notes are durable proposals that require Keep; Undo dismisses
-them. Hosted chat inference uses OpenAI. Local chat inference uses the
-configured OpenAI-compatible endpoint, and local conversations never fall back
-to hosted OpenAI. LM Studio's default endpoint is
-`http://localhost:1234/v1`.
-When the selected model supports it, the composer also accepts files from the
-paperclip button and images pasted from the clipboard. Attachments are stored
-with the local chat record so they remain available after reopening or retrying
-a conversation.
+Initial chat is read-only. Native create/update authorization and reviewed
+publication are a tested foundation for future write features; model mutation
+tools and review UI are not yet exposed. Hosted inference uses OpenAI Responses.
+Local inference uses the configured OpenAI-compatible endpoint and never falls
+back to hosted OpenAI. LM Studio's default endpoint is
+http://localhost:1234/v1.
+
+Pi owns execution, queueing, Stop, persisted history, recovery and automatic
+compaction. Compaction reduces model context while preserving human history;
+earlier reads and summaries remain historical working memory, so current-state
+claims require another note read. Terminal failures offer New attempt.
+Forgetting a conversation hides it from the list and offers Undo; it does not
+permanently delete its history.
 
 ## Optional tags
 
@@ -150,15 +155,14 @@ retain selected text and offer Retry/Cancel; retry reuses files already saved.
 - Rust
 - CodeMirror 6 editor
 - SQLite + HNSW-based ANN index for semantic retrieval
-- Rig 0.41 agent runtime
-- Svelte AI Elements primitives for structured chat UI
+- Pi Durable, Pi AI and Chord 1.3.0 for chat execution and persistence
+- Native Rust adapters for WebView storage, transport, vault authority and publication
 
 ## Development
 
 The ownership map, canonical write paths, and runtime seams are documented in
-[ARCHITECTURE.md](ARCHITECTURE.md). The app-owned agent runtime decision is
-recorded in
-[ADR 0001](docs/adr/0001-keep-agent-runtime-app-owned.md).
+[ARCHITECTURE.md](ARCHITECTURE.md). The Pi runtime ownership decision is recorded in
+[ADR 0012](docs/adr/0012-found-ordinary-chat-on-pi.md).
 
 ### Prerequisites
 
@@ -293,4 +297,4 @@ docs/adr/          Architecture decisions and their current scope
   edits are saved before departure; protected proposal reviews await Keep or
   Undo. Other panes keep their current note or chat.
 
-The separately installed [Pi evaluation app](.scratch/pi-durable-chat-evaluation/README.md) supports persistent ordinary chat in an isolated copied vault. Its [bounded evaluation outcome](.scratch/archive/pi-durable-chat-evaluation/outcome.md) records completed implementation/acceptance and material cost/coverage limits. Continue narrow isolated testing; the ordinary default runtime is retained and production adoption remains deferred.
+Ordinary chat uses the shared Pi Durable/Pi AI/Chord runtime on desktop and iOS. The [completed rebuild](.scratch/archive/pi-chat-rebuild.md) records the approved scope and desktop/simulator acceptance. Initial model tools support note search and reads; native create/update authority is a tested foundation for future write features. Physical-device and live hosted-provider acceptance remain deferred.

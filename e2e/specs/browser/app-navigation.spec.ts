@@ -188,8 +188,7 @@ describe('compact app navigation', () => {
           width: divider.getBoundingClientRect().width, left: style.marginLeft, right: style.marginRight };
       });
       expect(spacing).toEqual({ gap: '4px', visible: true, width: 1, left: '4px', right: '4px' });
-      await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedChatControls());
-      await $('button[aria-label="Pin note"]').click();
+        await $('button[aria-label="Pin note"]').click();
       await expect($('button[aria-label="Unpin note"]')).toHaveAttribute('aria-pressed', 'true');
       await $('button[aria-label="Note options"]').click();
       await $('[role="menuitem"][aria-label="Open note history"]').waitForDisplayed();

@@ -36,18 +36,6 @@
   setContext(workspaceTitleSlotKey, () => workspaceTitleSlot);
 
   onMount(() => {
-    const probeQuery = new URL(location.href).searchParams;
-    if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.get('piIosLiveTest') === '1') {
-      void import('$lib/prototypes/pi/iosLiveProbe').then(({runIosLiveProbe})=>runIosLiveProbe());
-    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piTranscriptTest')) {
-      void import('$lib/prototypes/pi/iosTranscriptProbe').then(({runIosTranscriptProbe})=>runIosTranscriptProbe());
-    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piExpandedTest')) {
-      void import('$lib/prototypes/pi/expandedProbe').then(({runExpandedProbe})=>runExpandedProbe());
-    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piUiTest')) {
-      void import('$lib/prototypes/pi/uiProbe').then(({runUiProbe})=>runUiProbe());
-    } else if (import.meta.env.VITE_PI_PROTOTYPE === 'true' && probeQuery.has('piInteractiveTest')) {
-      void import('$lib/prototypes/pi/interactiveProbe').then(({runInteractiveProbe})=>runInteractiveProbe());
-    }
     const disposeBackgroundPersistence = installBackgroundPersistence();
     if (isTauriRuntime() && import.meta.env.VITE_E2E_BROWSER !== 'true' && /Mac/i.test(navigator.platform)) {
       nativeWindowControlsHeight = 32;
@@ -79,10 +67,18 @@
     void appStore.bootstrap().catch((error) => {
       logDevError('[AppStore] bootstrap failed; retry is required before editing', error);
     });
+    if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true' && import.meta.env.VITE_PI_SIMULATOR_ACCEPTANCE === 'true') {
+      void import('$lib/e2e/piSimulatorAcceptance').then(({ runPiSimulatorAcceptance }) => {
+        if (!disposed) return runPiSimulatorAcceptance();
+      }).catch((error) => logDevError('[Pi simulator acceptance] probe failed', error));
+    }
     return () => {
       disposeBackgroundPersistence();
       disposed = true;
       unlisteners.forEach((unlisten) => unlisten());
+      if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true' && import.meta.env.VITE_PI_SIMULATOR_ACCEPTANCE === 'true') {
+        (window as Window & { __PI_SIMULATOR_ACCEPTANCE_STOP__?: () => void }).__PI_SIMULATOR_ACCEPTANCE_STOP__?.();
+      }
     };
   });
 </script>

@@ -118,9 +118,9 @@ fn merge_hybrid_candidates_applies_labels_scores_and_limit() {
 }
 
 #[test]
-fn semantic_only_chat_match_keeps_kind_and_anchor() {
+fn semantic_only_note_match_keeps_kind_and_anchor() {
     let semantic = vec![crate::semantic::SemanticChunkMatch {
-        note_path: "/notes/Chats/example/Conversation.md".to_string(),
+        note_path: "/notes/Example.md".to_string(),
         note_title: "A useful discussion".to_string(),
         section_label: "Remembered passage".to_string(),
         excerpt: "the exact remembered passage".to_string(),
@@ -128,7 +128,7 @@ fn semantic_only_chat_match_keeps_kind_and_anchor() {
         score: 0.9,
         start_line: 1,
         end_line: 1,
-        document_kind: crate::note::DocumentKind::ChatIndex,
+        document_kind: crate::note::DocumentKind::Note,
         block_anchor: Some("excerpt_stable".to_string()),
     }];
 
@@ -146,10 +146,7 @@ fn semantic_only_chat_match_keeps_kind_and_anchor() {
     );
 
     assert_eq!(results.len(), 1);
-    assert_eq!(
-        results[0].document_kind,
-        crate::note::DocumentKind::ChatIndex
-    );
+    assert_eq!(results[0].document_kind, crate::note::DocumentKind::Note);
     assert_eq!(results[0].block_anchor.as_deref(), Some("excerpt_stable"));
     assert_eq!(results[0].reason_labels, vec!["semantic".to_string()]);
 }

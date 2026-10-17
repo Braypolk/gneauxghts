@@ -6,6 +6,17 @@ pub(crate) struct CurrentContentAccess<'a> {
     pub(super) scope: AllowedScope,
 }
 
+/// A canonical read does not create an Editing Window boundary. A revision is
+/// present only when its retained authored payload reconstructs this read.
+pub(crate) struct CanonicalNoteRead {
+    pub(crate) markdown: String,
+    pub(crate) path: PathBuf,
+    pub(crate) title: String,
+    pub(crate) revision: Option<RevisionCitation>,
+    version: CurrentContentVersion,
+    _operation: OperationGuard,
+}
+
 // Current-content delivery policy shared by search, retrieval, tasks, and Atlas.
 
 pub(crate) trait CurrentContentProjection {
@@ -71,6 +82,91 @@ impl CurrentContentEligibility<'_> {
 }
 
 impl CurrentContentAccess<'_> {
+    pub(crate) fn validate_note_read(
+        &self,
+        note_id: &NoteIdentity,
+        read: &CanonicalNoteRead,
+    ) -> Result<bool, HistoryError> {
+        Ok(self.runtime.current_content_is_current(read.version)?
+            && self
+                .eligibility()?
+                .allows_note(Some(note_id.as_str()), read.path.to_str())
+            && fs::read_to_string(&read.path).ok().as_ref() == Some(&read.markdown))
+    }
+    pub(crate) fn read_note(
+        &self,
+        note_id: &NoteIdentity,
+    ) -> Result<CanonicalNoteRead, HistoryError> {
+        for _ in 0..3 {
+            let (operation, version) = self.prepare_refreshable_read()?;
+            let eligibility = self.eligibility()?;
+            if !eligibility.allows_note(Some(note_id.as_str()), None) {
+                return Err(HistoryError::Ineligible(
+                    "Note is unavailable or outside the allowed scope".into(),
+                ));
+            }
+            let path = eligibility.active_notes[note_id.as_str()].clone();
+            let markdown = fs::read_to_string(&path)
+                .map_err(|_| HistoryError::Ineligible("Note is unavailable".into()))?;
+            let parsed = crate::note::parse_note(&markdown);
+            // Eligibility resolves the canonical catalog identity. An external
+            // editor may remove or damage its embedded copy without changing
+            // the known note; only a present conflicting identity displaces it.
+            if parsed.frontmatter.managed.as_ref().is_some_and(|managed| {
+                (!managed.id.trim().is_empty() && managed.id != note_id.as_str())
+                    || managed.trashed_at.is_some()
+            }) {
+                return Err(HistoryError::Ineligible(
+                    "Canonical Note Identity changed; retry the read".into(),
+                ));
+            }
+            self.runtime.ensure_note_ready(note_id)?;
+            let revision =
+                match history_store::current_revision_header(&self.runtime.store, note_id)? {
+                    Some(header)
+                        if history_store::reconstruct(
+                            &self.runtime.store,
+                            note_id,
+                            &header.identity,
+                        )? == history_store::authored_content(&markdown) =>
+                    {
+                        Some(RevisionCitation {
+                            note_id: note_id.as_str().into(),
+                            revision_id: header.identity.as_str().into(),
+                            at_millis: header.time_evidence.occurred_at_millis(),
+                            time_evidence: Some(header.time_evidence),
+                            source: header.source,
+                            current_excerpt: String::new(),
+                        })
+                    }
+                    _ => None,
+                };
+            if fs::read_to_string(&path).ok().as_ref() != Some(&markdown)
+                || !self.runtime.current_content_is_current(version)?
+                || !self
+                    .eligibility()?
+                    .allows_note(Some(note_id.as_str()), path.to_str())
+            {
+                continue;
+            }
+            return Ok(CanonicalNoteRead {
+                markdown,
+                title: path
+                    .file_stem()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+                    .into_owned(),
+                path,
+                revision,
+                version,
+                _operation: operation,
+            });
+        }
+        Err(HistoryError::Stale(
+            "Current note changed during the read; retry the read".into(),
+        ))
+    }
+
     pub(super) fn with_integrity_tracking<T>(
         &self,
         operation: impl FnOnce() -> Result<T, HistoryError>,
@@ -141,11 +237,13 @@ impl CurrentContentAccess<'_> {
                 let path = &eligibility.active_notes[note_id.as_str()];
                 let canonical = fs::read_to_string(path).map_err(|e| e.to_string())?;
                 let parsed = crate::note::parse_note(&canonical);
-                if parsed.frontmatter.managed.as_ref().is_some_and(|m| {
-                    m.id != note_id.as_str() || m.kind != crate::note::DocumentKind::Note
-                }) || history_store::current_content_hash(&self.runtime.store, note_id)?
-                    .as_deref()
-                    != Some(history_store::authored_content_hash(&canonical).as_str())
+                if parsed
+                    .frontmatter
+                    .managed
+                    .as_ref()
+                    .is_some_and(|m| m.id != note_id.as_str())
+                    || history_store::current_content_hash(&self.runtime.store, note_id)?.as_deref()
+                        != Some(history_store::authored_content_hash(&canonical).as_str())
                 {
                     return Ok(());
                 }
@@ -185,7 +283,10 @@ impl CurrentContentAccess<'_> {
             self.runtime.await_current_content_settled(deadline)?;
             let prepared = self.with_integrity_tracking(|| {
                 let operation = self.runtime.begin_operation()?;
-                let timeline = NoteTimeline { state: self.state, runtime: self.runtime };
+                let timeline = NoteTimeline {
+                    state: self.state,
+                    runtime: self.runtime,
+                };
                 let version = self.runtime.with_observation_replay(|| {
                     timeline.recover_pending_deletions()?;
                     self.runtime.settled_current_content_version()
@@ -210,8 +311,7 @@ impl CurrentContentAccess<'_> {
         let mut active_notes = HashMap::new();
         let mut active_paths = HashMap::new();
         for (path, note) in &index.entries {
-            if note.document_kind != crate::note::DocumentKind::Note
-                || !path.starts_with(&notes_root)
+            if !path.starts_with(&notes_root)
                 || crate::state::is_forgotten_note_path(path, &notes_root)
                 || !path.is_file()
             {

@@ -1,6 +1,6 @@
 # Preserve ordinary dialogue after editor hints
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -15,3 +15,8 @@ Evidence: [audit](../audit.md), `hintOnlyHistoryMarker` in [trace](../offline-tr
 ## Comments
 
 2026-10-09: Separated hint freshness from evidence history marking. Actual note reads and explicit body delivery save the durable marker before returning content; marker failures stop delivery and do not grant rewrite read coverage. Added regressions through real terminal storage, history and compaction, including source exclusion and marker failure. See [fixes and verification](../fixes.md).
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

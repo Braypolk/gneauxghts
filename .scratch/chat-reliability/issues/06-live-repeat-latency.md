@@ -1,6 +1,6 @@
 # Bound live request latency and retain timeout diagnostics
 
-Status: needs-triage
+Status: wontfix
 Type: task
 
 ## Evidence
@@ -78,3 +78,8 @@ The opt-in native spec passes all three timing cases; E2E TypeScript checks pass
 See the [report and reproduction](../latency-probe/README.md) for artifacts,
 measurement boundaries and preserved uncertainty. Original issue stays open for
 the unproven timeout, rather than claiming a speculative performance fix.
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

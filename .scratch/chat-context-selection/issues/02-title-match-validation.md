@@ -1,6 +1,6 @@
 # Validate lexical title matches against canonical titles
 
-Status: ready-for-agent
+Status: wontfix
 Type: task
 Resolution: implemented
 
@@ -15,3 +15,8 @@ Evidence: [audit](../audit.md), `freshIndexTitleMatches` and first `searchAltern
 ## Comments
 
 2026-10-09: Added typed title/body locations to lexical matches and canonical validation. Registered-tool regressions cover title-only discovery/read/citation, exclusions, repeated matching body text, and real stale-body rejection. See [fixes and verification](../fixes.md).
+
+
+## Rebuild disposition — 2026-10-16
+
+Superseded as an executable old-runtime ticket by [the Pi rebuild](../../archive/pi-chat-rebuild-scope.md). Retain the original evidence without interpreting its runtime-specific next steps as current work. Current chat behavior and diagnostics are covered by rebuild tickets 02–08/10; intentionally dropped implicit context, exact Retry, formatter/projection or research requirements are not restored.

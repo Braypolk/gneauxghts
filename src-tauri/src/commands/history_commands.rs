@@ -647,7 +647,7 @@ mod tests {
             serialize_contract([
                 MutationSource::Editor,
                 MutationSource::TaskAction,
-                MutationSource::AcceptedChatProposal,
+                MutationSource::AgentPublication,
                 MutationSource::ExternalEdit,
                 MutationSource::VersionRestore,
                 MutationSource::NoteCreation,

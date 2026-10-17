@@ -13,9 +13,8 @@ Native bridges, current evidence policy, live review ownership and canonical
 intent/receipt recovery remain app code. Context/transcript/history/Save and other
 parity gaps prevent adoption; no migration or default enablement was performed.
 
-Detailed [results and deletion ledger](../pi-durable-prototype/results.md),
-[validation and selected evidence](../pi-durable-prototype/validation.md),
-[reproduction](../pi-durable-prototype/README.md) and
-[baseline owner map](../pi-durable-prototype/baseline.md) are retained as prototype
-primary sources. The completed issue files describe this experiment; they are not
-a production execution backlog.
+The later [ordinary-chat rebuild](pi-chat-rebuild.md) superseded this experiment
+and implemented default adoption under a deliberately smaller new-user scope.
+Prototype plans, completed tickets, runner instructions and raw snapshots were
+pruned after consolidation; original committed records remain available in Git
+at `64cc3ff6` under `.scratch/pi-durable-prototype/`.

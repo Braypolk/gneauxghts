@@ -306,15 +306,15 @@ fn selected_context_accepts_canonical_aliases_but_rejects_symlink_escape() {
     crate::state::set_notes_root_override(Some(alias.clone())).unwrap();
     let alias_state = Fixture::state();
     let canonical_path = fs::canonicalize(&a.path).unwrap();
-    // Proposal publication supplies canonicalized paths even when selection is a symlink.
+    // Agent publication supplies canonicalized paths even when selection is a symlink.
     let prepared = alias_state
         .note_timeline()
         .prepare_revision_publication(
-            MutationSource::AcceptedChatProposal,
+            MutationSource::AgentPublication,
             &canonical_path,
             Some(&canonical_path),
             Some(&a.note),
-            "Canonical proposal path",
+            "Canonical agent publication path",
         )
         .unwrap();
     prepared.into_parts().1.abandon().unwrap();

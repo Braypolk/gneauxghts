@@ -4,6 +4,7 @@ import { navigationScrollBehavior } from '$lib/ui/motion';
 import type { SearchItem } from '$lib/types/semantic';
 import {
   revealEditorTextTarget,
+  revealEditorCitationTarget,
   waitForEditorPaint
 } from '$lib/features/notepad/navigation/navigation';
 import { isSemanticOnlyResult } from '$lib/features/notepad/search/search';
@@ -22,19 +23,36 @@ export interface NavigationContext {
 export type NavigationContextSource = () => NavigationContext;
 
 // Keep the same interaction admission through both the note load and later paint.
-async function withNavigationFocus(
+async function withNavigationFocus<T>(
   getContext: NavigationContextSource,
-  action: (getCurrentContext: NavigationContextSource) => Promise<void>
+  action: (getCurrentContext: NavigationContextSource) => Promise<T>
 ) {
   const intent = captureFocusIntent(getContext().signal);
   try {
-    await action(() => {
+    return await action(() => {
       const context = getContext();
       return { ...context, isCurrent: () => intent.isCurrent() && (context.isCurrent?.() ?? true) };
     });
   } finally {
     intent.dispose();
   }
+}
+
+/** Uses ordinary note departure/loading; passage selection rechecks the live editor. */
+export async function openNoteCitation(
+  openContext: OpenContext,
+  getNavigationContext: NavigationContextSource,
+  target: { noteId: string; path: string; location?: { quote: string } }
+): Promise<boolean> {
+  return withNavigationFocus(getNavigationContext, async getCurrentContext => {
+    await openContext.openNotePath(target.noteId, target.path, { focusEditorAfterOpen: true });
+    if (!matchesTarget(getCurrentContext(), target.noteId, target.path)) return false;
+    if (!target.location) return true;
+    await waitForEditorPaint();
+    const context = getCurrentContext();
+    return matchesTarget(context, target.noteId, target.path)
+      && revealEditorCitationTarget(context.editorRoot, target.location.quote);
+  });
 }
 
 function matchesTarget(ctx: NavigationContext, noteId: string | null, path: string | null) {

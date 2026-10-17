@@ -228,6 +228,29 @@ mod tests {
             serde_json::to_value(settings).expect("semantic settings serialize"),
             commands["set_semantic_settings"]["result"],
         );
+        let task_args = &commands["prepare_task_document_mutation"]["args"];
+        let mutation_kind: crate::services::task_mutation::TaskMutationKind =
+            serde_json::from_value(task_args["mutationKind"].clone())
+                .expect("task mutation kind deserializes");
+        let working_markdown = task_args["workingMarkdown"].as_str().unwrap();
+        let prepared = crate::services::task_mutation::PreparedTaskDocumentMutation {
+            task_id: task_args["taskId"].as_str().unwrap().to_string(),
+            note_id: "note-1".into(),
+            note_path: "/vault/Tasks.md".into(),
+            base_hash: crate::services::task_mutation::task_document_hash(working_markdown),
+            updated_editor_markdown: crate::services::task_mutation::transform_task_document(
+                mutation_kind,
+                working_markdown,
+                1,
+                "Ship it",
+            )
+            .expect("task mutation transforms working Markdown"),
+        };
+        assert_eq!(prepared.base_hash, task_args["bodyHash"].as_str().unwrap());
+        assert_eq!(
+            serde_json::to_value(prepared).expect("task preparation serializes"),
+            commands["prepare_task_document_mutation"]["result"],
+        );
         let restart = PrepareRestartReceipt::ready();
         assert_eq!(
             serde_json::to_value(restart).expect("restart receipt serializes"),
@@ -239,8 +262,7 @@ mod tests {
             "save_task_note",
             "clear_last_opened_note",
             "prepare_restart",
-            "chat_send_message",
-            "commit_agent_proposal",
+            "prepare_task_document_mutation",
             "set_semantic_settings",
             "get_semantic_status",
             "retry_semantic_index",

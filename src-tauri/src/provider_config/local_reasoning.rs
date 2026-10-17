@@ -105,10 +105,6 @@ pub(crate) fn wire_effort<'a>(
     metadata: Option<&'a ModelReasoning>,
     requested: Option<&str>,
 ) -> Option<&'a str> {
-    // Internal callers can explicitly disable reasoning for bounded summaries.
-    if requested == Some("none") {
-        return Some("none");
-    }
     let selected = metadata?.selected(requested?)?;
     match selected {
         "off" => Some("none"),
@@ -164,135 +160,9 @@ mod tests {
             None
         );
         assert_eq!(wire_effort(None, Some("medium")), None);
-        assert_eq!(wire_effort(None, Some("none")), Some("none"));
+        assert_eq!(wire_effort(None, Some("none")), None);
         let meta = from_models(&models(json!(["off", "on"]), "off"), "custom-model").unwrap();
         assert_eq!(meta.options, ["off"]);
         assert_eq!(wire_effort(Some(&meta), Some("on")), Some("none"));
-    }
-
-    #[cfg(not(feature = "pi-prototype"))]
-    #[test]
-    fn production_runtime_discovers_options_and_sends_only_compatible_overrides() {
-        use crate::agent_runtime::{
-            AgentProvider, AgentRuntime, AgentRuntimeObserver, AgentRuntimeRequest,
-        };
-        use rig_core::completion::Message;
-        use std::io::{Read, Write};
-        use std::net::TcpListener;
-        use std::sync::Arc;
-        use tokio_util::sync::CancellationToken;
-        for (setting, advertised, expected) in [
-            ("medium", models(json!(["off", "on"]), "on"), None),
-            ("off", models(json!(["off", "on"]), "on"), Some("none")),
-            (
-                "medium",
-                models(json!(["off", "low", "xhigh"]), "xhigh"),
-                Some("xhigh"),
-            ),
-            ("medium", json!({"models":[]}), None),
-        ] {
-            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
-            listener.set_nonblocking(true).unwrap();
-            let base = format!("http://{}/v1", listener.local_addr().unwrap());
-            let (tx, rx) = std::sync::mpsc::channel();
-            let server = std::thread::spawn(move || {
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-                while std::time::Instant::now() < deadline {
-                    let Ok((mut socket, _)) = listener.accept() else {
-                        std::thread::sleep(std::time::Duration::from_millis(5));
-                        continue;
-                    };
-                    socket
-                        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
-                        .unwrap();
-                    let mut bytes = Vec::new();
-                    let header_end = loop {
-                        let mut chunk = [0; 4096];
-                        let count = socket.read(&mut chunk).unwrap();
-                        assert!(count > 0);
-                        bytes.extend_from_slice(&chunk[..count]);
-                        if let Some(end) = bytes.windows(4).position(|w| w == b"\r\n\r\n") {
-                            break end + 4;
-                        }
-                    };
-                    let headers = String::from_utf8_lossy(&bytes[..header_end]).into_owned();
-                    let post = headers.starts_with("POST /v1/chat/completions ");
-                    assert!(headers
-                        .to_ascii_lowercase()
-                        .contains("authorization: bearer test-key"));
-                    let length = headers
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("content-length")
-                                .then(|| value.trim().parse::<usize>().unwrap())
-                        })
-                        .unwrap_or(0);
-                    while bytes.len() < header_end + length {
-                        let mut chunk = [0; 4096];
-                        let count = socket.read(&mut chunk).unwrap();
-                        assert!(count > 0);
-                        bytes.extend_from_slice(&chunk[..count]);
-                    }
-                    let body = if post {
-                        tx.send(
-                            serde_json::from_slice::<Value>(
-                                &bytes[header_end..header_end + length],
-                            )
-                            .unwrap(),
-                        )
-                        .unwrap();
-                        "data: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"model\":\"custom-model\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"OK\"},\"finish_reason\":null}]}\n\ndata: {\"id\":\"test\",\"object\":\"chat.completion.chunk\",\"model\":\"custom-model\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":1,\"completion_tokens\":1,\"total_tokens\":2}}\n\ndata: [DONE]\n\n".to_string()
-                    } else {
-                        assert!(headers.starts_with("GET /api/v1/models "));
-                        advertised.to_string()
-                    };
-                    write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", if post { "text/event-stream" } else { "application/json" }, body.len(), body).unwrap();
-                    if post {
-                        return;
-                    }
-                }
-                panic!("Runtime did not send a completion request");
-            });
-            tauri::async_runtime::block_on(async {
-                let response = tokio::time::timeout(
-                    std::time::Duration::from_secs(8),
-                    AgentRuntime::run(
-                        AgentRuntimeRequest {
-                            provider: AgentProvider::Local,
-                            model: "custom-model".into(),
-                            api_key: Some("test-key".into()),
-                            local_base_url: base,
-                            preamble: "Answer briefly".into(),
-                            output_schema: None,
-                            prompt: Message::user("Say OK"),
-                            history: vec![],
-                            enable_web: false,
-                            require_web: false,
-                            flex: false,
-                            reasoning_effort: Some(setting.into()),
-                        },
-                        None,
-                        AgentRuntimeObserver {
-                            evidence_context: None,
-                            permissions: None,
-                            cancelled: CancellationToken::new(),
-                            on_event: Arc::new(|_| {}),
-                        },
-                        crate::agent_guardrails::AgentRunGuard::new(Default::default()),
-                    ),
-                )
-                .await
-                .unwrap()
-                .unwrap();
-                assert_eq!(response.output, "OK");
-            });
-            server.join().unwrap();
-            let wire = rx.recv().unwrap();
-            assert_eq!(
-                wire.get("reasoning_effort").and_then(Value::as_str),
-                expected
-            );
-        }
     }
 }

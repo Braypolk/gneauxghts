@@ -3,11 +3,9 @@
 // implementation details so callers depend only on the closed domain contract.
 mod activity;
 mod activity_history;
-pub(crate) use activity_history::*;
 mod editing_window_capture;
 mod editing_window_policy;
 mod forgotten;
-pub(crate) use forgotten::resolve_forgotten_target_path;
 #[cfg(test)]
 pub(crate) use forgotten::{
     forgotten_note_identity, prepare_forgotten_note_markdown, publish_note_move,
@@ -29,8 +27,7 @@ mod history_mode;
 mod lifecycle;
 mod observation;
 mod publication;
-#[cfg(feature = "pi-prototype")]
-pub(crate) use publication::PrototypePublicationProof;
+pub(crate) use publication::PublicationProof;
 #[cfg(any(test, feature = "e2e-wdio"))]
 mod test_support;
 
