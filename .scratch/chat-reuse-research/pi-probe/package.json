@@ -1,0 +1,18 @@
+{
+  "dependencies": {
+    "@earendil-works/chord": "1.3.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "@earendil-works/pi-durable": "1.3.0",
+    "esbuild": "0.25.12",
+    "playwright-core": "1.58.2"
+  },
+  "name": "gneauxghts-pi-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "bundle": "node bundle.mjs",
+    "browser": "node chromium.mjs",
+    "approval": "node approval-reopen.mjs"
+  }
+}

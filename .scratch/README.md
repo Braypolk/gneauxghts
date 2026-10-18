@@ -7,6 +7,10 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [Historical Pi vault editing assessment](pi-vault-editing-assessment/assessment.md): public API comparison and six-case staging probe. Its recommendation is now implemented and verified by the [Pi note editing slice](archive/pi-note-editing.md).
+
+- [Historical Pi Durable prototype plan](pi-durable-prototype/spec.md): preserved experiment instructions, superseded by the [completed native prototype](archive/pi-durable-native-prototype.md) and [accepted ordinary-chat rebuild](archive/pi-chat-rebuild.md). These are not executable tickets; desktop and iOS simulator results and their limits live in those outcomes.
+- [Historical chat engine reuse decision](chat-reuse-research/engine-decision.md): source and published-package investigation that led to the Pi prototype. Pi's experimental-API risk, LangGraph's bounded browser interrupt failure and Open WebUI evidence ideas remain research background. The later [ordinary-chat rebuild](archive/pi-chat-rebuild.md) adopted Pi within its agreed desktop and iOS simulator scope; physical-device acceptance remains deferred. The [earlier product scan](chat-reuse-research/product-findings.md) is also historical.
 - [Historical Pi cost findings](pi-durable-chat-evaluation/cost-investigation.md): retired evaluation measurements and comparison caveats. The old optimization backlog is superseded; current performance needs fresh matched measurements.
 - [iOS readiness](mobile-ios-readiness/spec.md): prioritized implementation plan for recent iPhones; background saves, safe next-launch vault selection and drag cancellation are implemented, with device validation pending. Landscape safe areas and keyboard layout are implemented and simulator-checked. Touch editing, secondary controls and image gestures are implemented. The on-device semantic runtime is bundled and product simulator workflows pass; physical memory/workflow acceptance remains open. Historical mobile chat supported both desktop providers on iOS; both protocols pass bounded simulator checks. Its Keychain persistence, native deadlines/network failures and former visual proposal review were simulator-checked; current [Pi simulator acceptance](archive/pi-chat-rebuild-evidence/ios.md) is recorded separately. Review overlap/styling/touch defects are corrected. [Container relocation](archive/mobile-ios-container-relocation.md) is corrected and verified across legacy recovery and repeated signed simulator replacement, preserving real conflicts. Physical/distribution credentials and physical/live acceptance remain in the device gate. Sync and older-device compatibility are deferred.
 - [Historical chat reliability](chat-reliability/README.md): old runtime latency and citation investigations are superseded as executable tickets. Semantic entailment remains deferred and is not established by Pi citation identity admission.
@@ -32,6 +36,38 @@ and reproducible fixtures belong in Git.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools
+
+- [Full Pi uncommitted-change review](archive/pi-uncommitted-review.md): independent Standards/Spec review, repaired acceptance tooling and portable research fixtures, and fresh full unit, native and browser verification. Commits separate retired code, core adapters, chat UI and retained research.
+
+- [Pi create/edit adapter cleanup](archive/pi-create-edit-adapter-cleanup.md): creation uses Pi's saved arguments without a candidate memo; explicit create/edit review shapes preserve pending decisions through Pi's document upgrade. Shared publication and authority validation remain intact.
+
+- [Pi note creation](archive/pi-note-creation.md): explicit creation permission, default review, exact destination/content preview, native create-only publication and stable restart recovery. Shares Pi and the existing publication flow. All 318 frontend tests, 21 desktop journeys, two Settings browser journeys and native permission/recovery/architecture checks pass.
+
+- [Pi editing experience fixes](archive/pi-editing-experience-fixes.md): all five assessed issues are fixed: permission selection races, committed-edit Stop feedback, repair-warning visibility, whitespace and section context. Publication flow and authority validation are preserved. All 307 frontend tests and 16 native editing/publication journeys pass, including restarts and both review layouts.
+
+- [Pi chat adapter cleanup](archive/pi-chat-adapter-cleanup.md): Pi creates app documents atomically, selections use watch-backed metadata/model state, and progress frames retain loaded history. Removes opening-time initialization and redundant reads/merges. All 250 chat/frontend architecture tests and 11 native editing/restart/compaction checks pass; publication implementation is unchanged. Includes the supporting orchestration assessment.
+
+- [Remaining old-chat compatibility cleanup](archive/pi-chat-compatibility-removal.md): removed native authority/grant upgrades, v2 review migration, retired-create decoding, the forgotten-chat variant and the localStorage pointer importer. Current review, citation proof and publication recovery remain; 351 frontend tests, 635 Rust tests, 19 native architecture checks and 15 real macOS journeys pass.
+
+- [Link-only Pi citations](archive/pi-link-only-citations.md): native reads, final answers and summaries share one Markdown representation. Removed legacy token/label compatibility and the provider fallback. After the user deleted older chats, removed the format marker, retirement migration, read-only notice and cutover tests. Only the current format remains; native read proof and permission checks still apply.
+
+- [Historical Pi citation simplification](archive/pi-citation-simplification.md): removed unused answer-source metadata and model-facing read proof, and preserved the single-representation prototype. Its compatibility-dependent verdict is superseded by the link-only implementation above. Native read-backed admission remains.
+
+- [Pi write defaults in Settings](archive/pi-write-defaults-settings.md): AI & Chat exposes the existing vault Off/Always permission and review policy. Chat synchronization, restart persistence, Temporary isolation and pending-edit revocation are verified.
+
+- [Fresh Pi post-edit citations](archive/pi-post-edit-citations.md): committed edits return an authorized canonical read and fresh citation for the final confirmation. Failed reads preserve committed receipts; native current/historical citation and restart journeys pass.
+
+- [Chat edit diff layout](archive/pi-edit-diff-layout.md): Settings → Appearance offers Inline (default) and Side by side, saved on this device. Browser reload and native pending-review/process-restart acceptance pass.
+
+- [Pi edited-note citation feedback](archive/pi-source-navigation-feedback.md): successful historical-source navigation uses a local informational status instead of a retained chat error. Native split-pane and single-pane note/return journeys pass alongside editing and restart acceptance.
+
+- [Readable Pi edit review](archive/pi-edit-review-readability.md): plain-text Before/After blocks and changed-word highlighting replace the technical patch as the default review. Exact details remain available; native approval and restart behavior are unchanged.
+
+- [Concrete Pi editing cleanup](archive/pi-editing-cleanup.md): removed agent-create support, moved exact review display data into Pi working state, and delegated argument repair to the public Pi tool. Publication flow is preserved. Includes native restart, authority, receipt and editor-owner acceptance.
+
+- [Architecture after Pi editing](archive/pi-editing-architecture-review.md): historical follow-up assessment; its three concrete cleanups are implemented. Native effect proof, editor leases and the atomic publication continuation remain justified; broader publication-boundary reorganization was not pursued.
+
+- [Pi note editing slice](archive/pi-note-editing.md): public Pi replacement staging, durable exact review, explicit write permissions and native publication. Six actual macOS editing journeys pass, including pending review across a process restart. Pi owns progression; native effect proof and editor exclusion remain required.
 
 - [Combined Pi merge readiness](archive/pi-combined-merge-readiness.md): fresh combined checks, corrected scroll/touch/IME regressions and restart test readiness; all browser scenarios covered after focused reruns, native domain guarantees retained. Ready for the agreed desktop merge scope.
 
