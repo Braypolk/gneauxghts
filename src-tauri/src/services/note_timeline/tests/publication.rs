@@ -436,15 +436,13 @@ fn concurrent_publication_location_reconciliation_never_replays_an_older_endpoin
                     Some(None),
                 )?
                 .0;
-                timeline
-                    .publish_authored(
-                        MutationSource::Editor,
-                        new_path.clone(),
-                        Some(new_path.clone()),
-                        updated,
-                        publication::PublicationMode::Replace,
-                    )?
-                    .expect("replace publication");
+                timeline.publish_authored(
+                    MutationSource::Editor,
+                    new_path.clone(),
+                    Some(new_path.clone()),
+                    updated,
+                    publication::PublicationMode::Replace,
+                )?;
                 Ok::<_, HistoryError>(waiter)
             })
         })
@@ -1899,60 +1897,4 @@ fn task_transform_reads_the_authoritative_state_after_publication_admission() {
         history.revisions().unwrap().last().unwrap().source(),
         MutationSource::TaskAction
     );
-}
-
-#[test]
-fn exclusive_creation_never_overwrites_and_abandons_failed_publication() {
-    let fixture = crate::test_support::TestVault::new("exclusive-publication");
-    let timeline = fixture.state.note_timeline();
-    let occupied = fixture.notes.path().join("Occupied.md");
-    fs::write(&occupied, "another note").unwrap();
-    assert!(timeline
-        .create_note_at(MutationSource::AgentPublication, &occupied, "replacement")
-        .unwrap()
-        .is_none());
-    assert_eq!(fs::read_to_string(&occupied).unwrap(), "another note");
-    #[cfg(unix)]
-    {
-        let link = fixture.notes.path().join("Dangling.md");
-        std::os::unix::fs::symlink(fixture.notes.path().join("Missing.md"), &link).unwrap();
-        assert!(timeline
-            .create_note_at(MutationSource::AgentPublication, &link, "replacement")
-            .unwrap()
-            .is_none());
-        assert!(fs::symlink_metadata(link).unwrap().file_type().is_symlink());
-        let outside = crate::test_support::TestDir::new("occupied-outside-target");
-        let outside_target = outside.path().join("Outside.md");
-        fs::write(&outside_target, "outside content").unwrap();
-        let outside_link = fixture.notes.path().join("Outside-link.md");
-        std::os::unix::fs::symlink(&outside_target, &outside_link).unwrap();
-        assert!(timeline
-            .create_note_at(
-                MutationSource::AgentPublication,
-                &outside_link,
-                "replacement"
-            )
-            .unwrap()
-            .is_none());
-        assert!(fs::symlink_metadata(outside_link)
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(
-            fs::read_to_string(outside_target).unwrap(),
-            "outside content"
-        );
-    }
-    let target = fixture.notes.path().join("New.md");
-    crate::state::inject_note_publication_failure_once();
-    assert!(timeline
-        .create_note_at(MutationSource::AgentPublication, &target, "new body")
-        .is_err());
-    assert!(!target.exists());
-    assert_eq!(prepared_history_intent_count_for_test("prepared"), 0);
-    assert!(timeline
-        .create_note_at(MutationSource::AgentPublication, &target, "new body")
-        .unwrap()
-        .is_some());
-    assert!(fs::read_to_string(target).unwrap().ends_with("new body"));
 }

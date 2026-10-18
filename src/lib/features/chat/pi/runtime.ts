@@ -1,6 +1,6 @@
 import { invoke } from './nativeInvoke';
 import { listen } from '@tauri-apps/api/event';
-import { AgentDoc, Harness, ProviderDoc, createRegistry, defineDoc, type Conversation, type ConversationId, type Cursor, type ModelRef } from '@earendil-works/pi-durable';
+import { AgentDoc, Harness, ProviderDoc, createRegistry, defineDoc, type Conversation, type ConversationId, type Cursor, type HarnessOptions, type ModelRef } from '@earendil-works/pi-durable';
 import { SqliteStorage } from '@earendil-works/pi-durable/storage/sqlite';
 import { BACKGROUND_CONTEXT, type Context } from '@earendil-works/chord/context';
 import { openNativeSqlite } from './nativeSqlite';
@@ -8,12 +8,17 @@ import { createNativeModels, type ChatProvider, type NativeBinding } from './nat
 import { bindAuthority, readAuthority, retireAuthority, type AuthoritySnapshot, type ReadPolicy } from './authority';
 import { notesExtension } from './notes';
 import { admitProviderMessage } from './citations';
-import { publicationExtension } from './publication';
+import { EditReviewDoc, publicationExtension } from './publication';
+import { editExtension } from './edit';
 import { createPiDiagnostics, type PiDiagnostics } from './diagnostics';
 
 export const PI_CONTEXT = BACKGROUND_CONTEXT;
 export const ChatDoc = defineDoc({ kind: 'gneauxghts.chat', version: 1, scope: 'conversation', history: 'latest', fork: 'initial',
   initial: () => ({ title: '', authorityId: '', createdAtMillis: Date.now(), retired: false as boolean, forgotten: false as boolean }) });
+export const initializeChatDocuments: NonNullable<HarnessOptions['conversationCreated']> = async (tx, conversation) => {
+  await tx.doc(ChatDoc, conversation.id);
+  await tx.doc(EditReviewDoc, conversation.id);
+};
 export type PiChatSettings = {
   provider: ChatProvider; model: string; openaiModel: string; localModel: string; localBaseUrl: string;
   reasoningEffort: string; serviceTier: 'standard' | 'flex'; defaultAccess: 'full' | 'none';
@@ -51,6 +56,7 @@ async function compose(): Promise<PiChat> {
   const registry = createRegistry();
   const diagnostics = createPiDiagnostics();
   registry.install(publicationExtension());
+  registry.install(editExtension(async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? ''));
   registry.install(notesExtension(
     async (api, context) => (await api.snapshot(ChatDoc, api.conversationId, context))?.authorityId ?? '',
     async (input, context) => {
@@ -61,6 +67,7 @@ async function compose(): Promise<PiChat> {
   let harness: Harness;
   try {
     harness = await Harness.open(storage, { registry, models,
+      conversationCreated: initializeChatDocuments,
       onReport: diagnostics.report
     }, PI_CONTEXT);
   } catch (error) { diagnostics.dispose(); await storage.close(PI_CONTEXT).catch(() => {}); throw error; }
@@ -70,22 +77,20 @@ async function compose(): Promise<PiChat> {
     const doc = await harness.snapshot(ChatDoc, id, PI_CONTEXT);
     return doc?.authorityId ? readAuthority(doc.authorityId) : undefined;
   };
-  const installBinding = async (conversation: Conversation, authority: AuthoritySnapshot) => {
-    const provider = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
-    if (!provider) throw new Error('Pi provider identity is unavailable');
-    const binding = { conversationId: conversation.id, providerSessionId: provider.sessionId, authorityId: authority.authorityId };
+  const installBinding = async (binding: NativeBinding) => {
     // Native checks the persisted tuple; the map routes and never grants permission.
     await invoke('pi_chat_validate_authority', binding);
-    bindings.set(provider.sessionId, binding);
+    bindings.set(binding.providerSessionId, binding);
   };
   const bindConversation = async (conversation: Conversation, read?: ReadPolicy) => {
     const provider = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
     const doc = await harness.snapshot(ChatDoc, conversation.id, PI_CONTEXT);
     if (!provider || !doc) throw new Error('Unknown application conversation');
+    const binding = { conversationId: conversation.id, providerSessionId: provider.sessionId };
     const authority = doc.authorityId ? await readAuthority(doc.authorityId)
-      : await bindAuthority({ conversationId: conversation.id, providerSessionId: provider.sessionId }, read ?? defaultReadPolicy(await readPiChatSettings()));
+      : await bindAuthority(binding, read ?? defaultReadPolicy(await readPiChatSettings()));
     if (authority.retired) throw new Error('This conversation has retired access. Start a new conversation.');
-    await installBinding(conversation, authority);
+    await installBinding({ ...binding, authorityId: authority.authorityId });
     if (doc.authorityId !== authority.authorityId) await harness.commit(async tx => {
       (await tx.doc(ChatDoc, conversation.id)).authorityId = authority.authorityId;
     }, PI_CONTEXT);
@@ -146,9 +151,11 @@ async function compose(): Promise<PiChat> {
         if (!conversation || !doc?.authorityId) continue;
         const authority = await readAuthority(doc.authorityId).catch(() => undefined);
         if (!authority || authority.retired) { denied.push(conversation); continue; }
-        await installBinding(conversation, authority);
-        const agent = await conversation.agent(PI_CONTEXT);
-        if (agent.model && (agent.model.provider === 'local' || agent.model.provider === 'openai')) {
+        const provider = await harness.snapshot(ProviderDoc, conversation.id, PI_CONTEXT);
+        if (!provider) throw new Error('Pi provider identity is unavailable');
+        await installBinding({ conversationId: conversation.id, providerSessionId: provider.sessionId, authorityId: authority.authorityId });
+        const agent = await harness.snapshot(AgentDoc, record.id, PI_CONTEXT);
+        if (agent?.model && (agent.model.provider === 'local' || agent.model.provider === 'openai')) {
           const key = JSON.stringify([agent.model.provider, agent.model.modelId]);
           if (!registeredModels.has(key)) {
             await models.registerModel(agent.model.provider, agent.model.modelId);

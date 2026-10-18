@@ -1457,59 +1457,6 @@ fn build_current_override_with_signature(
     }
 }
 
-/// Ordinary wikilink destination for an offset in the parsed note body. Uses
-/// the same editor body and paragraph numbering as normal link navigation.
-pub(crate) fn body_link_reference(raw: &str, title: &str, body_offset: usize) -> Option<String> {
-    let body = note::parse_note(raw).body;
-    let (_, editor_body) = note::extract_file_name_title_and_body(raw, title);
-    // Removing a legacy title heading can retain blank lines preceding it.
-    // Locate the remaining content suffix and retain those editor line offsets.
-    let leading_blank_bytes = editor_body
-        .split_inclusive('\n')
-        .take_while(|line| line.trim().is_empty())
-        .map(str::len)
-        .sum::<usize>();
-    let suffix = editor_body.get(leading_blank_bytes..)?;
-    if suffix.is_empty() {
-        return None;
-    }
-    let base = body.rfind(suffix)?;
-    let editor_offset = body_offset
-        .checked_sub(base)?
-        .checked_add(leading_blank_bytes)?;
-    let line_number = editor_body
-        .get(..editor_offset)?
-        .bytes()
-        .filter(|b| *b == b'\n')
-        .count()
-        + 1;
-    let paragraphs = build_paragraphs(title, &editor_body);
-    let paragraph = paragraphs.iter().find(|paragraph| {
-        paragraph
-            .lines
-            .iter()
-            .any(|line| line.line_number == line_number)
-    })?;
-    if let Some(marker) = paragraph.text.split_whitespace().last().filter(|marker| {
-        marker.strip_prefix('^').is_some_and(|id| {
-            !id.is_empty()
-                && id
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || "_-".contains(c))
-        })
-    }) {
-        if paragraphs
-            .iter()
-            .filter(|p| p.text.split_whitespace().last() == Some(marker))
-            .count()
-            == 1
-        {
-            return Some(marker.into());
-        }
-    }
-    Some(paragraph.section_label.clone())
-}
-
 fn build_paragraphs(title: &str, body: &str) -> Vec<IndexedParagraph> {
     let mut paragraphs = Vec::new();
 

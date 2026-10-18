@@ -1114,7 +1114,6 @@ impl HistoryModeAccess<'_> {
             }
             let timeline = self.state.note_timeline();
             timeline.with_admitted_publication(
-                super::publication::PublicationPathScope::Destination,
                 None,
                 Some(&self.note_id),
                 |_| {
@@ -1168,19 +1167,17 @@ impl HistoryModeAccess<'_> {
                         Some(&self.note_id),
                         &replacement,
                     )?;
-                    let published = timeline
-                        .publish_authored(
-                            MutationSource::VersionRestore,
-                            path.clone(),
-                            Some(path),
-                            canonical,
-                            super::publication::PublicationMode::Restore {
-                                selected: &selected_id,
-                                expected_hash: expected_current_authored_content_hash,
-                                selected_hash: &selected_authored_hash,
-                            },
-                        )?
-                        .expect("restore never returns occupied");
+                    let published = timeline.publish_authored(
+                        MutationSource::VersionRestore,
+                        path.clone(),
+                        Some(path),
+                        canonical,
+                        super::publication::PublicationMode::Restore {
+                            selected: &selected_id,
+                            expected_hash: expected_current_authored_content_hash,
+                            selected_hash: &selected_authored_hash,
+                        },
+                    )?;
                     Ok(HistoryRestoreResult {
                         revision_id: published.revision_id.expect("restore reserves a revision"),
                         mutation: published.mutation,

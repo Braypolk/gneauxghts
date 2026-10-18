@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Harness, MemoryStorage, ProviderDoc, createRegistry, type HarnessSettings } from '@earendil-works/pi-durable';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
+import { admitProviderMessage } from './citations';
 import { createNativeModels, DEFAULT_GENERATION_MAX_TOKENS, type NativeBinding } from './nativeProvider';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
@@ -51,6 +52,10 @@ beforeEach(() => {
       if (retired) throw new Error('Authority retired');
       return;
     }
+    if (command === 'pi_chat_admit_answer') {
+      if (retired) throw new Error('Authority retired');
+      return args.answers.map((answer: { segments: { text: string }[] }) => answer.segments.map(segment => segment.text).join(''));
+    }
     if (command === 'pi_chat_fetch') {
       requestedBodies.push(JSON.parse(args.body));
       const failure = failures.shift();
@@ -81,7 +86,7 @@ beforeEach(() => {
 });
 async function setup(options: { retry?: HarnessSettings['retry'] } = {}) {
   const bindings = new Map<string, NativeBinding>();
-  const models = createNativeModels(bindings);
+  const models = createNativeModels(bindings, admitProviderMessage);
   await models.registerModel('local', 'loaded-model');
   const storage = new MemoryStorage();
   storage.close = async () => {};
@@ -124,7 +129,8 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(JSON.stringify(requestedBodies[0])).toContain('context summarization assistant');
     const fetchCall = native.invoke.mock.calls.find(([command]) => command === 'pi_chat_fetch')!;
     expect(fetchCall[1]).toMatchObject(binding);
-    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_validate_authority')).toHaveLength(2);
+    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_validate_authority')).toHaveLength(1);
+    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_admit_answer')).toHaveLength(1);
   });
 
   it('keeps unknown model output capacity honest while supplying an ordinary request allowance', async () => {
@@ -197,7 +203,8 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(received.at(-1)).toBe('error');
     expect(received).not.toContain('done');
     expect((await stream.result()).stopReason).toBe('error');
-    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_validate_authority')).toHaveLength(2);
+    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_validate_authority')).toHaveLength(1);
+    expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_admit_answer')).toHaveLength(1);
   });
 
   it('keeps unavailable post-inference capacity unknown without repeated metadata polling', async () => {

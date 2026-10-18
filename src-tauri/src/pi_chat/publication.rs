@@ -20,7 +20,7 @@ use std::{
         Mutex,
     },
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 
 #[cfg(test)]
 thread_local! { static BEFORE_PROOF:std::cell::RefCell<Option<Box<dyn FnOnce()>>>=Default::default(); static FAULT:std::cell::Cell<Option<&'static str>>=const { std::cell::Cell::new(None) }; }
@@ -65,6 +65,13 @@ pub(crate) struct PreparedMutation {
     pub payload_hash: String,
     pub review_required: bool,
     pub target: PublicationTarget,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub creation: Option<CreationPreview>,
+}
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub(crate) struct CreationPreview {
+    pub destination: String,
+    pub markdown: String,
 }
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "status", rename_all = "camelCase")]
@@ -90,7 +97,9 @@ struct Payload {
     mutation: Mutation,
     target: PublicationTarget,
     identity: String,
-    raw_base_hash: Option<String>,
+    raw_base_hash: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    creation_markdown: Option<String>,
 }
 struct Intent {
     id: String,
@@ -182,8 +191,8 @@ fn grant_parts(snapshot: &AuthoritySnapshot) -> DomainResult<(&[WriteOperation],
 fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> DomainResult<()> {
     let (operations, scope) = grant_parts(snapshot)?;
     let operation = match payload.mutation {
-        Mutation::Create { .. } => WriteOperation::Create,
         Mutation::Update { .. } => WriteOperation::Update,
+        Mutation::Create { .. } => WriteOperation::Create,
     };
     if !operations.contains(&operation) {
         return Err(DomainError::new(
@@ -192,8 +201,8 @@ fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> Do
         ));
     }
     let path = Path::new(&payload.target.path);
-    let note_allowed =
-        matches!(operation, WriteOperation::Update) && scope.note_ids.contains(&payload.identity);
+    let note_allowed = matches!(payload.mutation, Mutation::Update { .. })
+        && scope.note_ids.contains(&payload.identity);
     let folder_allowed = scope
         .folders
         .iter()
@@ -205,6 +214,32 @@ fn authorize(snapshot: &AuthoritySnapshot, payload: &Payload, root: &Path) -> Do
         ));
     }
     Ok(())
+}
+fn creation_preview(payload: &Payload, root: &Path) -> Option<CreationPreview> {
+    let canonical = payload.creation_markdown.as_ref()?;
+    let parsed = crate::note::parse_note(canonical);
+    let markdown = match parsed.frontmatter.raw_other {
+        Some(other) => format!("---\n{other}---\n\n{}", parsed.body),
+        None => parsed.body,
+    };
+    Some(CreationPreview {
+        destination: Path::new(&payload.target.path)
+            .strip_prefix(root)
+            .ok()?
+            .to_string_lossy()
+            .into(),
+        markdown,
+    })
+}
+fn require_absent(path: &Path) -> DomainResult<()> {
+    match std::fs::symlink_metadata(path) {
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Ok(_) => Err(DomainError::new(
+            "target_exists",
+            "A file already occupies this destination. Choose another title.",
+        )),
+        Err(_) => Err(invalid("The creation destination is unavailable.")),
+    }
 }
 pub(crate) fn prepare(
     state: &AppState,
@@ -224,35 +259,46 @@ pub(crate) fn prepare(
             if let Some(id)=previous {
                 let intent=load(connection,&id)?;
                 if encode(&intent.payload.mutation)? != encode(&mutation)? {return Err(DomainError::new("request_mismatch","The mutation request identity already binds a different payload."));}
-                return Ok(PreparedMutation{intent_id:id,payload_hash:intent.hash,review_required:intent.review_required,target:intent.payload.target});
+                let creation=creation_preview(&intent.payload,&root);
+                return Ok(PreparedMutation{intent_id:id,payload_hash:intent.hash,review_required:intent.review_required,target:intent.payload.target,creation});
             }
-            let markdown=match &mutation{Mutation::Create{markdown,..}|Mutation::Update{markdown,..}=>markdown};
+            let markdown=match &mutation { Mutation::Update{markdown,..}|Mutation::Create{markdown,..}=>markdown };
             if markdown.len()>8*1024*1024{return Err(invalid("Mutation content is too large."));}
 
-            let (target,identity,raw_base_hash)=match &mutation{
+            let (target,identity,raw_base_hash,creation_markdown)=match &mutation{
                 Mutation::Create{folder,title,markdown}=>{
-                    if title.trim().is_empty() || title.len()>1024{return Err(invalid("Supply a note title."));}
-                    let parent=folder_path(&root,folder)?;
+                    if title.trim().is_empty() || title.len()>512 {return Err(invalid("Choose a nonempty note title."));}
+                    let directory=folder_path(&root,folder)?;
+                    if !directory.is_dir() || directory.strip_prefix(&root).map_err(|_|invalid("Invalid folder."))?.components().any(|part|part.as_os_str().to_string_lossy().starts_with('.')) {return Err(invalid("Choose an existing visible vault folder."));}
                     let stem=crate::state::derive_file_stem_from_title_and_markdown(title,markdown);
-                    let path=canonical_target(&root,&parent.join(format!("{stem}.md")))?;
-                    (PublicationTarget{note_id:None,path:path.to_string_lossy().into()},crate::note::generate_unique_id(),None)
-                },
+                    if stem.starts_with('.') {return Err(invalid("Choose a visible note title."));}
+                    let path=canonical_target(&root,&directory.join(format!("{stem}.md")))?;
+                    require_absent(&path)?;
+                    let identity=crate::note::generate_note_id();
+                    // New metadata and identity belong to native creation, never model-provided frontmatter.
+                    let parsed=crate::note::parse_note(&crate::note::normalize_wikilink_markdown(markdown));
+                    let authored=match parsed.frontmatter.raw_other {Some(other)=>format!("---\n{other}---\n\n{}",parsed.body),None=>parsed.body};
+                    let canonical=crate::note::prepare_note_markdown(&authored,None,Some(None)).map_err(|_|invalid("Invalid note content."))?.0;
+                    let canonical=crate::note::repair_managed_note_identity(&canonical,&identity).map_err(|_|invalid("Invalid note identity."))?;
+                    (PublicationTarget{note_id:Some(identity.clone()),path:path.to_string_lossy().into()},identity,String::new(),Some(canonical))
+                }
                 Mutation::Update{note_id,expected_read_source_id,..}=>{
                     let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
                     if source.source.note_id != *note_id{return Err(invalid("The read source belongs to a different note."));}
                     let path=notes::source_navigation_note(state,snapshot,connection,note_id)?;
                     if path != source.canonical_path{return Err(DomainError::new("changed_base","The note location changed after the read."));}
                     let path=canonical_target(&root,&path)?;
-                    (PublicationTarget{note_id:Some(note_id.clone()),path:path.to_string_lossy().into()},note_id.clone(),Some(source.raw_base_hash))
+                    (PublicationTarget{note_id:Some(note_id.clone()),path:path.to_string_lossy().into()},note_id.clone(),source.raw_base_hash,None)
                 }
             };
-            let payload=Payload{mutation,target:target.clone(),identity,raw_base_hash};
+            let payload=Payload{mutation,target:target.clone(),identity,raw_base_hash,creation_markdown};
             authorize(snapshot,&payload,&root)?;
             let json=encode(&payload)?;
             let hash=crate::semantic::db::content_hash(&format!("pi-chat-mutation-v1\0{json}"));
             let id=opaque_id()?;
             connection.execute("INSERT INTO pi_chat_mutations(intent_id,authority_id,authority_revision,request_id,payload_json,payload_hash,review_required) VALUES(?1,?2,?3,?4,?5,?6,?7)",params![id,authority_id,snapshot.revision,request_id,json,hash,snapshot.write.review_before_applying])?;
-            Ok(PreparedMutation{intent_id:id,payload_hash:hash,review_required:snapshot.write.review_before_applying,target})
+            let creation=creation_preview(&payload,&root);
+            Ok(PreparedMutation{intent_id:id,payload_hash:hash,review_required:snapshot.write.review_before_applying,target,creation})
         })
     })
 }
@@ -543,11 +589,17 @@ pub(crate) fn publish(
             if (intent.review_required || snapshot.write.review_before_applying) && !intent.approved{return Err(DomainError::new("review_required","Approve this exact mutation before applying it."));}
             let path=canonical_target(&root,Path::new(&intent.payload.target.path))?;
             if path.to_string_lossy()!=intent.payload.target.path{return Err(DomainError::new("changed_base","The canonical target changed."));}
-            if let Mutation::Update{note_id,expected_read_source_id,..}=&intent.payload.mutation{
-                let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
-                if source.source.note_id!=*note_id || source.canonical_path!=path || source.raw_base_hash!=intent.payload.raw_base_hash.clone().unwrap_or_default(){return Err(DomainError::new("changed_base","The read source no longer matches this target."));}
-                let current=notes::source_navigation_note(state,snapshot,connection,note_id)?;
-                if current!=path{return Err(DomainError::new("changed_base","The note location changed."));}
+            match &intent.payload.mutation {
+                Mutation::Update{note_id,expected_read_source_id,..}=>{
+                    let source=notes::receipt_in(connection,snapshot,expected_read_source_id)?;
+                    if source.source.note_id!=*note_id || source.canonical_path!=path || source.raw_base_hash!=intent.payload.raw_base_hash{return Err(DomainError::new("changed_base","The read source no longer matches this target."));}
+                    let current=notes::source_navigation_note(state,snapshot,connection,note_id)?;
+                    if current!=path{return Err(DomainError::new("changed_base","The note location changed."));}
+                }
+                Mutation::Create{folder,..}=>{
+                    if path.parent()!=Some(folder_path(&root,folder)?.as_path()) {return Err(invalid("The destination folder changed. Prepare again."));}
+                    require_absent(&path)?;
+                }
             }
             Ok(path)
         });
@@ -565,13 +617,12 @@ pub(crate) fn publish(
         };
         let identity=NoteIdentity::new(&intent.payload.identity);
         let outcome=match &intent.payload.mutation {
-            Mutation::Create{markdown,..}=>state.note_timeline().create_note_with_proof(&path,markdown,&identity,&record),
-            Mutation::Update{markdown,..}=>state.note_timeline().update_note_with_proof(&path,&identity,intent.payload.raw_base_hash.as_deref().ok_or_else(||invalid("Missing exact raw base proof."))?,markdown,&record).map(Some),
+            Mutation::Update{markdown,..}=>state.note_timeline().update_note_with_proof(&path,&identity,&intent.payload.raw_base_hash,markdown,&record),
+            Mutation::Create{..}=>state.note_timeline().create_note_with_proof(&path,&identity,intent.payload.creation_markdown.as_deref().ok_or_else(||invalid("Missing prepared creation content."))?,&record),
         };
         let result=match outcome {
-            Ok(Some(outcome))=>committed(outcome)?,
-            Ok(None)=>PublicationResult::Blocked{code:"target_occupied".into(),message:"Creation target is occupied. Prepare another exact mutation.".into()},
-            Err(HistoryError::Stale(_))=>PublicationResult::Blocked{code:"changed_base".into(),message:"Canonical note content or identity changed. Read and prepare again.".into()},
+            Ok(outcome)=>committed(outcome)?,
+            Err(HistoryError::Stale(_))=>if matches!(intent.payload.mutation,Mutation::Create{..}) {PublicationResult::Blocked{code:"target_exists".into(),message:"The creation destination changed. Choose another title.".into()}} else {PublicationResult::Blocked{code:"changed_base".into(),message:"Canonical note content or identity changed. Read and prepare again.".into()}},
             Err(_)=>return Err(DomainError::new("uncertain_publication","Publication could not be confirmed. Reconcile before another attempt.")),
         };
         #[cfg(test)]
@@ -581,7 +632,32 @@ pub(crate) fn publish(
 }
 
 #[tauri::command]
+pub(crate) fn pi_chat_get_write_defaults(
+    state: tauri::State<'_, AppState>,
+    store: tauri::State<'_, AuthorityStore>,
+) -> DomainResult<WritePolicy> {
+    store.require_running_vault(state.running_vault())?;
+    store.vault_write()
+}
+#[tauri::command]
+pub(crate) fn pi_chat_set_write_defaults(
+    app: tauri::AppHandle,
+    state: tauri::State<'_, AppState>,
+    store: tauri::State<'_, AuthorityStore>,
+    write: WritePolicy,
+) -> DomainResult<WritePolicy> {
+    store.require_running_vault(state.running_vault())?;
+    let write = store.set_vault_write(write)?;
+    app.emit(
+        "pi-chat-authority-changed",
+        serde_json::json!({"retiredAuthorityIds":[],"writePolicyChanged":true}),
+    )
+    .ok();
+    Ok(write)
+}
+#[tauri::command]
 pub(crate) fn pi_chat_set_write_policy(
+    app: tauri::AppHandle,
     state: tauri::State<'_, AppState>,
     store: tauri::State<'_, AuthorityStore>,
     authority_id: String,
@@ -589,7 +665,15 @@ pub(crate) fn pi_chat_set_write_policy(
     write: WritePolicy,
 ) -> DomainResult<AuthoritySnapshot> {
     store.require_running_vault(state.running_vault())?;
-    store.set_write(&authority_id, expected_revision, write)
+    let snapshot = store.set_write(&authority_id, expected_revision, write)?;
+    // Review and Always grants are vault-wide; mounted conversations must reread
+    // native authority instead of maintaining copied policy in Pi documents.
+    app.emit(
+        "pi-chat-authority-changed",
+        serde_json::json!({"retiredAuthorityIds":[],"writePolicyChanged":true}),
+    )
+    .ok();
+    Ok(snapshot)
 }
 #[tauri::command]
 pub(crate) async fn pi_chat_prepare_mutation(
@@ -766,7 +850,7 @@ mod tests {
                 WritePolicy {
                     grant: WriteGrant::Temporary {
                         conversation_id: 1,
-                        operations: vec![WriteOperation::Create, WriteOperation::Update],
+                        operations: vec![WriteOperation::Update],
                         scope: scope(),
                     },
                     review_before_applying: review,
@@ -774,12 +858,27 @@ mod tests {
             )
             .unwrap()
     }
-    fn create(title: &str) -> Mutation {
-        Mutation::Create {
-            folder: ".".into(),
-            title: title.into(),
+    fn update(
+        vault: &TestVault,
+        store: &AuthorityStore,
+        authority_id: &str,
+        title: &str,
+    ) -> Mutation {
+        let note = save_and_finalize(&vault.state, title.into(), "Original".into(), None)
+            .unwrap()
+            .unwrap();
+        let note_id = note.note_id.unwrap();
+        let source = notes::read_note(&vault.state, store, authority_id, &note_id).unwrap();
+        Mutation::Update {
+            note_id,
+            expected_read_source_id: source.source.source_id,
             markdown: "Synthetic authored content".into(),
         }
+    }
+    fn original(target: &PublicationTarget) {
+        assert!(std::fs::read_to_string(&target.path)
+            .unwrap()
+            .ends_with("Original"));
     }
     fn admit(
         editors: &EditorAdmissions,
@@ -811,8 +910,388 @@ mod tests {
         )
         .unwrap()
     }
+    fn creation(title: &str) -> Mutation {
+        serde_json::from_value(serde_json::json!({"operation":"create","folder":".","title":title,"markdown":"Created body\n"})).unwrap()
+    }
+    fn creation_authority(
+        store: &AuthorityStore,
+        snapshot: &AuthoritySnapshot,
+        review: bool,
+    ) -> AuthoritySnapshot {
+        store
+            .set_write(
+                &snapshot.authority_id,
+                snapshot.revision,
+                WritePolicy {
+                    grant: WriteGrant::Temporary {
+                        conversation_id: 1,
+                        operations: vec![
+                            serde_json::from_value(serde_json::json!("create")).unwrap()
+                        ],
+                        scope: scope(),
+                    },
+                    review_before_applying: review,
+                },
+            )
+            .unwrap()
+    }
     #[test]
-    fn real_create_requires_write_review_exact_payload_and_live_editor_owner() {
+    fn create_requires_explicit_operation_exact_review_and_never_replaces_a_collision() {
+        let vault = TestVault::new("pi-create-permission");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let update_only = temporary(&store, &snapshot, true);
+        assert_eq!(
+            prepare(
+                &vault.state,
+                &store,
+                &snapshot.authority_id,
+                "update-only",
+                creation("Created")
+            )
+            .unwrap_err()
+            .code,
+            "operation_denied"
+        );
+        let authority = creation_authority(&store, &update_only, true);
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "create",
+            creation("Created"),
+        )
+        .unwrap();
+        assert!(!Path::new(&intent.target.path).exists());
+        admit(&editors, &store, &owner, &intent);
+        assert!(
+            matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(), PublicationResult::Blocked { code,.. } if code=="review_required")
+        );
+        assert!(approve(
+            &store,
+            &authority.authority_id,
+            &intent.intent_id,
+            "wrong hash"
+        )
+        .is_err());
+        approve(
+            &store,
+            &authority.authority_id,
+            &intent.intent_id,
+            &intent.payload_hash,
+        )
+        .unwrap();
+        // An external creator can win after exact review. Never select a new path or replace it.
+        std::fs::write(&intent.target.path, "Human file").unwrap();
+        assert!(
+            matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(), PublicationResult::Blocked { code,.. } if code=="target_exists")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&intent.target.path).unwrap(),
+            "Human file"
+        );
+        assert_eq!(
+            prepare(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                "collision",
+                creation("Created")
+            )
+            .unwrap_err()
+            .code,
+            "target_exists"
+        );
+    }
+    #[test]
+    fn create_lost_ack_reopens_one_identity_and_receipt_without_a_second_file() {
+        let vault = TestVault::new("pi-create-restart");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = creation_authority(&store, &snapshot, false);
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "stable-create",
+            creation("Created once"),
+        )
+        .unwrap();
+        admit(&editors, &store, &owner, &intent);
+        FAULT.with(|f| f.set(Some("lostAck")));
+        assert!(publish(
+            &vault.state,
+            &store,
+            &editors,
+            &authority.authority_id,
+            &intent.intent_id
+        )
+        .is_err());
+        let bytes = std::fs::read_to_string(&intent.target.path).unwrap();
+        let reopened = AuthorityStore::new(vault.state.running_vault().data_dir()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("create reopen"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        let result = reconcile(&state, &reopened, &intent.intent_id).unwrap();
+        let id = committed_id(&result);
+        assert!(bytes.ends_with("Created body\n"));
+        assert_eq!(revision_count(&id), 1);
+        let replay = prepare(
+            &state,
+            &reopened,
+            &authority.authority_id,
+            "stable-create",
+            creation("Created once"),
+        )
+        .unwrap();
+        assert_eq!(replay.intent_id, intent.intent_id);
+        assert_eq!(replay.target, intent.target);
+        assert_eq!(
+            encode(&reconcile(&state, &reopened, &replay.intent_id).unwrap()).unwrap(),
+            encode(&result).unwrap()
+        );
+        assert_eq!(std::fs::read_to_string(&intent.target.path).unwrap(), bytes);
+        assert!(!Path::new(&intent.target.path)
+            .with_file_name("Created once 2.md")
+            .exists());
+        assert_eq!(
+            prepare(
+                &state,
+                &reopened,
+                &authority.authority_id,
+                "stable-create",
+                creation("Different")
+            )
+            .unwrap_err()
+            .code,
+            "request_mismatch"
+        );
+    }
+
+    #[test]
+    fn create_retries_a_pre_effect_interruption_with_the_original_identity_and_canonical_bytes() {
+        let vault = TestVault::new("pi-create-before");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = creation_authority(&store, &snapshot, false);
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "before",
+            creation("Before"),
+        )
+        .unwrap();
+        admit(&editors, &store, &owner, &intent);
+        FAULT.with(|f| f.set(Some("afterProof")));
+        assert!(publish(
+            &vault.state,
+            &store,
+            &editors,
+            &authority.authority_id,
+            &intent.intent_id
+        )
+        .is_err());
+        assert!(!Path::new(&intent.target.path).exists());
+        editors.close(&owner).unwrap();
+        let reopened = AuthorityStore::new(vault.state.running_vault().data_dir()).unwrap();
+        let state = AppState::new(
+            crate::semantic::SemanticState::new_disabled("create before reopen"),
+            crate::app::EventBus::disabled(),
+        )
+        .unwrap();
+        assert!(matches!(
+            reconcile(&state, &reopened, &intent.intent_id).unwrap(),
+            PublicationResult::Unpublished
+        ));
+        let replay = prepare(
+            &state,
+            &reopened,
+            &authority.authority_id,
+            "before",
+            creation("Before"),
+        )
+        .unwrap();
+        assert_eq!(replay.target, intent.target);
+        assert_eq!(replay.payload_hash, intent.payload_hash);
+        let owner = editors.bind().unwrap();
+        admit(&editors, &reopened, &owner, &replay);
+        let result = publish(
+            &state,
+            &reopened,
+            &editors,
+            &authority.authority_id,
+            &replay.intent_id,
+        )
+        .unwrap();
+        assert_eq!(Some(committed_id(&result)), intent.target.note_id);
+        assert_eq!(revision_count(&committed_id(&result)), 1);
+    }
+    #[test]
+    fn create_atomic_publication_preserves_a_file_arriving_after_proof() {
+        let vault = TestVault::new("pi-create-late-collision");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let authority = creation_authority(&store, &snapshot, false);
+        let intent = prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "late",
+            creation("Late"),
+        )
+        .unwrap();
+        admit(&editors, &store, &owner, &intent);
+        let path = intent.target.path.clone();
+        BEFORE_PROOF.with(|hook| {
+            *hook.borrow_mut() = Some(Box::new(move || {
+                std::fs::write(path, "Late human file").unwrap()
+            }))
+        });
+        assert!(
+            matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="target_exists")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&intent.target.path).unwrap(),
+            "Late human file"
+        );
+        assert_eq!(revision_count(intent.target.note_id.as_ref().unwrap()), 0);
+    }
+    #[test]
+    fn create_enforces_folder_scope_live_revocation_and_native_identity() {
+        let vault = TestVault::new("pi-create-scope");
+        let (store, snapshot, editors, owner) = setup(&vault);
+        let root = vault.state.running_vault().root().to_path_buf();
+        std::fs::create_dir(root.join("Projects")).unwrap();
+        std::fs::create_dir(root.join(".private")).unwrap();
+        let authority = store
+            .set_write(
+                &snapshot.authority_id,
+                snapshot.revision,
+                WritePolicy {
+                    grant: WriteGrant::Temporary {
+                        conversation_id: 1,
+                        operations: vec![WriteOperation::Create],
+                        scope: NoteScope {
+                            note_ids: vec![],
+                            folders: vec!["Projects".into()],
+                        },
+                    },
+                    review_before_applying: true,
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            prepare(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                "outside",
+                creation("Outside")
+            )
+            .unwrap_err()
+            .code,
+            "scope_denied"
+        );
+        for (index, folder) in [
+            "../outside",
+            "/tmp",
+            ".private",
+            "missing",
+            "Projects/../../outside",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mutation = Mutation::Create {
+                folder: folder.to_string(),
+                title: "Bad".into(),
+                markdown: "Body".into(),
+            };
+            assert_eq!(
+                prepare(
+                    &vault.state,
+                    &store,
+                    &authority.authority_id,
+                    &format!("bad-{index}"),
+                    mutation
+                )
+                .unwrap_err()
+                .code,
+                "invalid_mutation"
+            );
+        }
+        let intent=prepare(&vault.state,&store,&authority.authority_id,"scoped",Mutation::Create{
+            folder:"Projects".into(),title:"Plan".into(),markdown:"---\nproject: atlas\ngneauxghts:\n  id: model-forged\n  created_at: 1900-01-01T00:00:00Z\n  trashed_at: yesterday\n---\n\n# Plan\n".into()
+        }).unwrap();
+        let preview = intent.creation.as_ref().unwrap();
+        assert_eq!(preview.destination, "Projects/Plan.md");
+        assert!(preview.markdown.contains("project: atlas"));
+        assert!(!preview.markdown.contains("model-forged"));
+        assert_ne!(intent.target.note_id.as_deref(), Some("model-forged"));
+        admit(&editors, &store, &owner, &intent);
+        approve(
+            &store,
+            &authority.authority_id,
+            &intent.intent_id,
+            &intent.payload_hash,
+        )
+        .unwrap();
+        store
+            .set_write(
+                &authority.authority_id,
+                authority.revision,
+                WritePolicy {
+                    grant: WriteGrant::Off,
+                    review_before_applying: true,
+                },
+            )
+            .unwrap();
+        assert!(
+            matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="stale_authority")
+        );
+        assert!(!Path::new(&intent.target.path).exists());
+    }
+    #[cfg(unix)]
+    #[test]
+    fn create_rejects_symlink_destinations_and_folders_outside_the_vault() {
+        let vault = TestVault::new("pi-create-links");
+        let (store, snapshot, _editors, _owner) = setup(&vault);
+        let authority = creation_authority(&store, &snapshot, false);
+        let root = vault.state.running_vault().root().to_path_buf();
+        std::os::unix::fs::symlink("/tmp", root.join("External")).unwrap();
+        std::os::unix::fs::symlink(root.join("absent"), root.join("Dangling.md")).unwrap();
+        let mutation = Mutation::Create {
+            folder: "External".into(),
+            title: "No".into(),
+            markdown: "Body".into(),
+        };
+        assert_eq!(
+            prepare(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                "external",
+                mutation
+            )
+            .unwrap_err()
+            .code,
+            "invalid_mutation"
+        );
+        assert!(prepare(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            "dangling",
+            creation("Dangling")
+        )
+        .is_err());
+        assert!(std::fs::symlink_metadata(root.join("Dangling.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+    }
+    #[test]
+    fn real_update_requires_write_review_exact_payload_and_live_editor_owner() {
+        assert!(serde_json::from_value::<Mutation>(serde_json::json!({"operation":"create","folder":".","title":"Bad","markdown":"Body","path":"/arbitrary"})).is_err());
         let vault = TestVault::new("pi-publication-review");
         let (store, snapshot, editors, owner) = setup(&vault);
         assert!(matches!(snapshot.write.grant, WriteGrant::Off));
@@ -823,7 +1302,7 @@ mod tests {
                 &store,
                 &snapshot.authority_id,
                 "off",
-                create("Off")
+                update(&vault, &store, &snapshot.authority_id, "Off")
             )
             .unwrap_err()
             .code,
@@ -835,7 +1314,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "review",
-            create("Exact Review"),
+            update(&vault, &store, &snapshot.authority_id, "Exact Review"),
         )
         .unwrap();
         assert!(intent.review_required);
@@ -856,7 +1335,7 @@ mod tests {
                 &store,
                 &authority.authority_id,
                 "review",
-                create("Changed")
+                update(&vault, &store, &snapshot.authority_id, "Changed")
             )
             .unwrap_err()
             .code,
@@ -878,7 +1357,7 @@ mod tests {
         assert!(
             matches!(publish(&vault.state,&store,&editors,&authority.authority_id,&intent.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="review_required")
         );
-        assert!(!Path::new(&intent.target.path).exists());
+        original(&intent.target);
         approve(
             &store,
             &authority.authority_id,
@@ -905,7 +1384,7 @@ mod tests {
             id
         );
         assert!(raw.contains("Synthetic authored content"));
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         // Duplicate tasks return the original receipt without another filesystem/history effect.
         assert_eq!(
             encode(
@@ -922,13 +1401,13 @@ mod tests {
             encode(&result).unwrap()
         );
         editors.release(&owner, &admission).unwrap();
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         let rejected = prepare(
             &vault.state,
             &store,
             &authority.authority_id,
             "rejected",
-            create("Rejected"),
+            update(&vault, &store, &snapshot.authority_id, "Rejected"),
         )
         .unwrap();
         reject(&store, &authority.authority_id, &rejected.intent_id).unwrap();
@@ -942,7 +1421,7 @@ mod tests {
         assert!(
             matches!(reconcile(&vault.state,&store,&rejected.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="rejected")
         );
-        assert!(!Path::new(&rejected.target.path).exists());
+        original(&rejected.target);
     }
     #[test]
     fn grants_survive_reopen_are_conversation_or_vault_scoped_and_revoke_atomically() {
@@ -966,7 +1445,7 @@ mod tests {
                     WritePolicy {
                         grant: WriteGrant::Temporary {
                             conversation_id: 2,
-                            operations: vec![WriteOperation::Create],
+                            operations: vec![WriteOperation::Update],
                             scope: scope()
                         },
                         review_before_applying: false
@@ -981,7 +1460,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "pending",
-            create("Revoked"),
+            update(&vault, &store, &snapshot.authority_id, "Revoked"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &pending);
@@ -1006,14 +1485,14 @@ mod tests {
             .unwrap(),
             PublicationResult::Blocked { .. }
         ));
-        assert!(!Path::new(&pending.target.path).exists());
+        original(&pending.target);
         let always = store
             .set_write(
                 &authority.authority_id,
                 off.revision,
                 WritePolicy {
                     grant: WriteGrant::Always {
-                        operations: vec![WriteOperation::Create],
+                        operations: vec![WriteOperation::Update],
                         scope: scope(),
                     },
                     review_before_applying: false,
@@ -1062,8 +1541,7 @@ mod tests {
         );
     }
     #[test]
-    fn update_uses_native_raw_blake3_receipt_and_rejects_changed_base_identity_scope_or_operation()
-    {
+    fn update_uses_native_raw_blake3_receipt_and_rejects_changed_base_identity_or_scope() {
         let vault = TestVault::new("pi-publication-update");
         let (store, snapshot, editors, owner) = setup(&vault);
         let authority = temporary(&store, &snapshot, false);
@@ -1145,33 +1623,7 @@ mod tests {
                 WritePolicy {
                     grant: WriteGrant::Temporary {
                         conversation_id: 1,
-                        operations: vec![WriteOperation::Create],
-                        scope: scope(),
-                    },
-                    review_before_applying: false,
-                },
-            )
-            .unwrap();
-        assert_eq!(
-            prepare(
-                &vault.state,
-                &store,
-                &narrow.authority_id,
-                "wrong-operation",
-                new
-            )
-            .unwrap_err()
-            .code,
-            "operation_denied"
-        );
-        let narrow = store
-            .set_write(
-                &authority.authority_id,
-                narrow.revision,
-                WritePolicy {
-                    grant: WriteGrant::Temporary {
-                        conversation_id: 1,
-                        operations: vec![WriteOperation::Create],
+                        operations: vec![WriteOperation::Update],
                         scope: NoteScope {
                             note_ids: vec![id],
                             folders: vec![],
@@ -1187,7 +1639,7 @@ mod tests {
                 &store,
                 &narrow.authority_id,
                 "wrong-scope",
-                create("Outside")
+                update(&vault, &store, &snapshot.authority_id, "Outside")
             )
             .unwrap_err()
             .code,
@@ -1204,7 +1656,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "before",
-            create("Before Effect"),
+            update(&vault, &store, &snapshot.authority_id, "Before Effect"),
         )
         .unwrap();
         let admission = admit(&editors, &store, &owner, &before);
@@ -1217,7 +1669,7 @@ mod tests {
             &before.intent_id
         )
         .is_err());
-        assert!(!Path::new(&before.target.path).exists());
+        original(&before.target);
         assert!(matches!(
             reconcile(&vault.state, &store, &before.intent_id).unwrap(),
             PublicationResult::Unpublished
@@ -1231,14 +1683,14 @@ mod tests {
         )
         .unwrap();
         let first_id = committed_id(&first);
-        assert_eq!(revision_count(&first_id), 1);
+        assert_eq!(revision_count(&first_id), 2);
         editors.release(&owner, &admission).unwrap();
         let lost = prepare(
             &vault.state,
             &store,
             &authority.authority_id,
             "lost",
-            create("Lost Ack"),
+            update(&vault, &store, &snapshot.authority_id, "Lost Ack"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &lost);
@@ -1257,7 +1709,7 @@ mod tests {
             .managed
             .unwrap()
             .id;
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         // Reopen loses ephemeral admissions, preserves native intent + exact Timeline token.
         editors.close(&owner).unwrap();
         let reopened = AuthorityStore::new(&crate::state::vault_data_dir().unwrap()).unwrap();
@@ -1268,7 +1720,7 @@ mod tests {
         .unwrap();
         let result = reconcile(&state, &reopened, &lost.intent_id).unwrap();
         assert_eq!(committed_id(&result), id);
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         let current = reopened.snapshot(&authority.authority_id).unwrap();
         reopened
             .set_write(
@@ -1295,7 +1747,7 @@ mod tests {
             encode(&result).unwrap()
         );
         assert_eq!(std::fs::read_to_string(&lost.target.path).unwrap(), raw);
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         state.stop_rebuildable_projection_work().unwrap();
     }
     #[test]
@@ -1308,7 +1760,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "editor",
-            create("Protected"),
+            update(&vault, &store, &snapshot.authority_id, "Protected"),
         )
         .unwrap();
         let mut wrong = intent.target.clone();
@@ -1334,7 +1786,7 @@ mod tests {
             .code,
             "editor_conflict"
         );
-        assert!(!Path::new(&intent.target.path).exists());
+        original(&intent.target);
     }
     #[test]
     fn native_page_replacement_revokes_only_stale_editor_admissions() {
@@ -1346,7 +1798,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "page-rebind",
-            create("Page Rebind"),
+            update(&vault, &store, &snapshot.authority_id, "Page Rebind"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &intent);
@@ -1364,7 +1816,7 @@ mod tests {
             .code,
             "editor_conflict"
         );
-        assert!(!Path::new(&intent.target.path).exists());
+        original(&intent.target);
         let replacement = editors.bind().unwrap();
         assert_ne!(owner, replacement);
         assert!(editors
@@ -1382,7 +1834,7 @@ mod tests {
             &intent.intent_id,
         )
         .unwrap();
-        assert_eq!(revision_count(&committed_id(&result)), 1);
+        assert_eq!(revision_count(&committed_id(&result)), 2);
     }
 
     #[test]
@@ -1399,7 +1851,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "page-join",
-            create("Page Join"),
+            update(&vault, &store, &snapshot.authority_id, "Page Join"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &intent);
@@ -1467,7 +1919,7 @@ mod tests {
             .is_err());
         let reconciled = reconcile(&vault.state, &store, &intent.intent_id).unwrap();
         assert_eq!(committed_id(&reconciled), committed_id(&result));
-        assert_eq!(revision_count(&committed_id(&result)), 1);
+        assert_eq!(revision_count(&committed_id(&result)), 2);
         assert!(editors.bind().is_err());
     }
 
@@ -1494,7 +1946,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "concurrent",
-            create("Concurrent"),
+            update(&vault, &store, &snapshot.authority_id, "Concurrent"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &intent);
@@ -1579,6 +2031,64 @@ mod tests {
         ));
     }
     #[test]
+    fn choosing_temporary_replaces_always_without_hidden_vault_permission() {
+        let vault = TestVault::new("pi-exclusive-write-selection");
+        let (store, snapshot, _, _) = setup(&vault);
+        let first = temporary(&store, &snapshot, true);
+        let second = bind(&store, 2);
+        let always = store
+            .set_write(
+                &second.authority_id,
+                second.revision,
+                WritePolicy {
+                    grant: WriteGrant::Always {
+                        operations: vec![WriteOperation::Update],
+                        scope: scope(),
+                    },
+                    review_before_applying: true,
+                },
+            )
+            .unwrap();
+        // An earlier Temporary grant must not hide the current Always mode.
+        assert!(matches!(
+            store.snapshot(&first.authority_id).unwrap().write.grant,
+            WriteGrant::Always { .. }
+        ));
+        let chosen = store
+            .set_write(
+                &always.authority_id,
+                always.revision,
+                WritePolicy {
+                    grant: WriteGrant::Temporary {
+                        conversation_id: 2,
+                        operations: vec![WriteOperation::Update],
+                        scope: scope(),
+                    },
+                    review_before_applying: true,
+                },
+            )
+            .unwrap();
+        assert!(matches!(
+            chosen.write.grant,
+            WriteGrant::Temporary {
+                conversation_id: 2,
+                ..
+            }
+        ));
+        assert!(matches!(bind(&store, 3).write.grant, WriteGrant::Off));
+        // Independently granted conversations keep their own Temporary grant.
+        assert!(matches!(
+            store.snapshot(&first.authority_id).unwrap().write.grant,
+            WriteGrant::Temporary {
+                conversation_id: 1,
+                ..
+            }
+        ));
+        let reopened = AuthorityStore::new(vault.state.running_vault().data_dir()).unwrap();
+        assert!(matches!(bind(&reopened, 4).write.grant, WriteGrant::Off));
+    }
+
+    #[test]
     fn vault_review_projects_to_every_context_and_reopen_and_invalidates_direct_intents() {
         let vault = TestVault::new("pi-publication-vault-review");
         let (store, snapshot, editors, owner) = setup(&vault);
@@ -1588,7 +2098,7 @@ mod tests {
                 snapshot.revision,
                 WritePolicy {
                     grant: WriteGrant::Always {
-                        operations: vec![WriteOperation::Create],
+                        operations: vec![WriteOperation::Update],
                         scope: scope(),
                     },
                     review_before_applying: false,
@@ -1603,22 +2113,23 @@ mod tests {
             &store,
             &always.authority_id,
             "direct-before-review",
-            create("Direct Before Review"),
+            update(
+                &vault,
+                &store,
+                &snapshot.authority_id,
+                "Direct Before Review",
+            ),
         )
         .unwrap();
         assert!(!direct.review_required);
         admit(&editors, &store, &owner, &direct);
         let reviewed = store
-            .set_write(
-                &second.authority_id,
-                second.revision,
-                WritePolicy {
-                    grant: second.write.grant,
-                    review_before_applying: true,
-                },
-            )
+            .set_vault_write(WritePolicy {
+                grant: second.write.grant,
+                review_before_applying: true,
+            })
             .unwrap();
-        assert!(reviewed.write.review_before_applying);
+        assert!(reviewed.review_before_applying);
         let current = store.snapshot(&always.authority_id).unwrap();
         assert!(current.write.review_before_applying);
         assert!(current.revision > always.revision);
@@ -1628,13 +2139,13 @@ mod tests {
         assert!(
             matches!(publish(&vault.state,&store,&editors,&always.authority_id,&direct.intent_id).unwrap(),PublicationResult::Blocked{code,..} if code=="stale_authority")
         );
-        assert!(!Path::new(&direct.target.path).exists());
+        original(&direct.target);
         let fresh = prepare(
             &vault.state,
             &store,
             &always.authority_id,
             "review-now-required",
-            create("Review Now"),
+            update(&vault, &store, &snapshot.authority_id, "Review Now"),
         )
         .unwrap();
         assert!(fresh.review_required);
@@ -1679,10 +2190,13 @@ mod tests {
             tasks.execute_batch("CREATE TRIGGER fail_publication_task BEFORE INSERT ON app_state_note_tasks BEGIN SELECT RAISE(ABORT,'synthetic task projection failure'); END;").unwrap()
         };
         fail();
-        let mutation = |title: &str| Mutation::Create {
-            folder: ".".into(),
-            title: title.into(),
-            markdown: "- [ ] Required projected task".into(),
+        let mutation = |title: &str| {
+            let mut mutation = update(&vault, &store, &snapshot.authority_id, title);
+            let Mutation::Update { markdown, .. } = &mut mutation else {
+                unreachable!()
+            };
+            *markdown = "- [ ] Required projected task".into();
+            mutation
         };
         let lost = prepare(
             &vault.state,
@@ -1754,7 +2268,7 @@ mod tests {
         ));
         let count:u64=tasks.query_row("SELECT COUNT(*) FROM app_state_note_tasks WHERE note_id=?1 AND deleted_at_millis IS NULL",[&id],|r|r.get(0)).unwrap();
         assert_eq!(count, 1);
-        assert_eq!(revision_count(&id), 1);
+        assert_eq!(revision_count(&id), 2);
         assert_eq!(
             std::fs::read_to_string(&repaired.target.path).unwrap(),
             original
@@ -1772,7 +2286,7 @@ mod tests {
             &store,
             &authority.authority_id,
             "restart",
-            create("Restart Admission"),
+            update(&vault, &store, &snapshot.authority_id, "Restart Admission"),
         )
         .unwrap();
         admit(&editors, &store, &owner, &intent);
@@ -1791,7 +2305,7 @@ mod tests {
             .code,
             "closed"
         );
-        assert!(!Path::new(&intent.target.path).exists());
+        original(&intent.target);
         editors.resume_after_failed_restart().unwrap();
         assert_eq!(
             publish(

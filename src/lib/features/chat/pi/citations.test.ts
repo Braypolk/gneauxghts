@@ -19,8 +19,8 @@ describe('reserved citation selection', () => {
     expect(parseCitationSegments(text)).toEqual({ segments: [{ text, sources: [] }] });
     expect(parseCitationSegments('')).toEqual({ segments: [{ text: '', sources: [] }] });
   });
-  it('keeps adjacent/repeated exact tokens distinct and validates copied native links', () => {
-    const parsed = parseCitationSegments(`One [[cite:${id}]][[cite:${other}]] then [Historical note source](gneauxghts-source:${id}).`);
+  it('keeps repeated Markdown citations distinct and discards model labels', () => {
+    const parsed = parseCitationSegments(`One [spoofed title](gneauxghts-source:${id})[Note: Other](gneauxghts-source:${other}) then [Note: Same](gneauxghts-source:${id}).`);
     expect(refs(parsed)).toEqual([id, other, id]);
     expect(literal(parsed)).toBe('One  then .');
   });
@@ -30,14 +30,13 @@ describe('reserved citation selection', () => {
     expect(refs(parseCitationSegments(markdown))).toEqual([id]);
     expect(literal(parseCitationSegments(markdown))).toBe('');
   });
-  it.each(['[[cite:]]', '[[cite:invented]]', `[[cite: ${id}]]`, `[[cite:${id}\n]]`, '[[cite missing colon]]', '[[cite:unterminated', `[[cite:${id.toUpperCase()}]]`, '[spoof](gneauxghts-source:foreign)', 'gneauxghts-source:%61', `[[cite:${'a'.repeat(5000)}]]`])('leaves malformed reserved selection inert: %s', text => {
+  it.each(['[x](gneauxghts-source:)', '[x](gneauxghts-source:invented)', `gneauxghts-source:${id}`, `[x](gneauxghts-source: ${id})`, '[x](gneauxghts-source:%61)', '[x](gneauxghts-source:unterminated'])('leaves malformed or bare source targets inert: %s', text => {
     expect(refs(parseCitationSegments(text))).toEqual([]);
     expect(literal(parseCitationSegments(text))).toContain('[citation unavailable]');
     expect(literal(parseCitationSegments(text))).not.toContain('gneauxghts-source:');
-    expect(literal(parseCitationSegments(text))).not.toContain('[[cite');
   });
-  it('conservatively validates even a source token inside a code block', () => {
-    expect(refs(parseCitationSegments(`\`[[cite:${id}]]\``))).toEqual([id]);
+  it('validates source links inside code without granting a different syntax', () => {
+    expect(refs(parseCitationSegments(`\`[Note: Plan](gneauxghts-source:${id})\``))).toEqual([id]);
   });
   it('recognizes only exact canonical source navigation targets', () => {
     expect(sourceIdFromHref(`gneauxghts-source:${id}`)).toBe(id);
@@ -49,7 +48,7 @@ describe('reserved citation selection', () => {
       `[x](GNEAUXGHTS-SOURCE:${other})`, `[x](gneauxghts-source\\:${other})`,
       `[x](gneauxghts-source:${other})`
     ];
-    const markdown = `[Revision source](gneauxghts-source:${id}) ${forged.join(' ')}`;
+    const markdown = `[Note: Plan](gneauxghts-source:${id}) ${forged.join(' ')}`;
     expect([...admittedSourceIds(markdown)]).toEqual([id]);
     expect(sourceIdFromHref(`gneauxghts-source:${other}`)).toBe(other);
     expect(admittedSourceIds(markdown).has(other)).toBe(false);
@@ -58,18 +57,18 @@ describe('reserved citation selection', () => {
 
 describe('mandatory terminal provider adapter', () => {
   it('atomically admits interleaved text while preserving signatures, reasoning, usage and tool calls', async () => {
-    native.invoke.mockResolvedValue([{ markdown: 'Admitted one', sources: [] }, { markdown: 'Admitted two', sources: [] }]);
-    const original = message([{ type: 'text', text: `One [[cite:${id}]]`, textSignature: 'provider-signature' },
+    native.invoke.mockResolvedValue(['Admitted one', 'Admitted two']);
+    const original = message([{ type: 'text', text: `One [Note: Plan](gneauxghts-source:${id})`, textSignature: 'provider-signature' },
       { type: 'thinking', thinking: 'Reasoning', thinkingSignature: 'opaque-thinking' },
       { type: 'toolCall', id: 'call', name: 'read_note', arguments: { noteId: 'note' } }, { type: 'text', text: 'Two' }]);
     const admitted = await admitProviderMessage(binding, original);
     expect(native.invoke).toHaveBeenCalledTimes(1);
-    expect(native.invoke).toHaveBeenCalledWith('pi_chat_admit_answer', { ...binding, answers: [parseCitationSegments(`One [[cite:${id}]]`), parseCitationSegments('Two')] });
+    expect(native.invoke).toHaveBeenCalledWith('pi_chat_admit_answer', { ...binding, answers: [parseCitationSegments(`One [Note: Plan](gneauxghts-source:${id})`), parseCitationSegments('Two')] });
     expect(admitted).toMatchObject({ ...original, content: [{ ...original.content[0], text: 'Admitted one' }, original.content[1], original.content[2], { ...original.content[3], text: 'Admitted two' }] });
-    expect(original.content[0]).toMatchObject({ text: `One [[cite:${id}]]` });
+    expect(original.content[0]).toMatchObject({ text: `One [Note: Plan](gneauxghts-source:${id})` });
   });
   it('validates empty/tool-only responses and source-free summaries natively', async () => {
-    native.invoke.mockResolvedValueOnce([]).mockResolvedValueOnce([{ markdown: '## Goal\nSummary', sources: [] }]);
+    native.invoke.mockResolvedValueOnce([]).mockResolvedValueOnce(['## Goal\nSummary']);
     await admitProviderMessage(binding, message([{ type: 'toolCall', id: 'call', name: 'search_notes', arguments: { query: 'words' } }]));
     expect(native.invoke).toHaveBeenLastCalledWith('pi_chat_admit_answer', { ...binding, answers: [] });
     expect((await admitProviderMessage(binding, message([{ type: 'text', text: '## Goal\nSummary' }]))).content[0]).toMatchObject({ text: '## Goal\nSummary' });
@@ -78,6 +77,8 @@ describe('mandatory terminal provider adapter', () => {
     native.invoke.mockRejectedValueOnce({ code: 'retired_authority', message: 'Retired' });
     await expect(admitProviderMessage(binding, message([{ type: 'text', text: 'Provisional' }]))).rejects.toMatchObject({ code: 'retired_authority' });
     native.invoke.mockResolvedValueOnce([]);
+    await expect(admitProviderMessage(binding, message([{ type: 'text', text: 'Provisional' }]))).rejects.toThrow('invalid response');
+    native.invoke.mockResolvedValueOnce([{}]);
     await expect(admitProviderMessage(binding, message([{ type: 'text', text: 'Provisional' }]))).rejects.toThrow('invalid response');
   });
   it('opens only through native current source admission', async () => {

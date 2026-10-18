@@ -1,4 +1,5 @@
 import { invoke } from './nativeInvoke';
+import type { VaultWritePolicy } from './authority';
 import type { ChatSettings, ChatProvider, ChatKeyStatus, LocalModel, ChatModelCapabilities, LocalModelCapabilitySelection, ChatNotePolicy, ChatNoteCandidate } from '../types';
 type ChatDefaults = ChatSettings;
 type NativeSettings = Omit<ChatSettings, 'defaultVaultAccess'> & { defaultAccess: ChatSettings['defaultVaultAccess'] };
@@ -8,6 +9,8 @@ const normalize = (settings: NativeSettings): ChatSettings => {
 };
 /** Settings and credential status only; no ordinary chat lifecycle compatibility interface. */
 export const chatSettings = {
+  getWriteDefaults: () => invoke<VaultWritePolicy>('pi_chat_get_write_defaults'),
+  setWriteDefaults: (write: VaultWritePolicy) => invoke<VaultWritePolicy>('pi_chat_set_write_defaults', { write }),
   async getSettings() { return normalize(await invoke<NativeSettings>('chat_get_settings')); },
   async setDefaults(settings: ChatDefaults) {
     const { defaultVaultAccess, ...rest } = settings;

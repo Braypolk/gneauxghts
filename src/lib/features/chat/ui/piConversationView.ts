@@ -1,11 +1,14 @@
 import { get, writable } from 'svelte/store';
 import { listen } from '@tauri-apps/api/event';
+import { invoke } from '@tauri-apps/api/core';
 import { withCancel } from '@earendil-works/chord/context';
+import type { Op } from '@earendil-works/chord/delta';
 import { AgentDoc, InboxDoc, LiveDoc, UsageDoc, UserEntry, type AgentState, type CommitPublication, type Conversation, type ConversationId, type ConversationView, type Cursor, type EntryRecord, type InboxState, type LiveState, type SubmissionId, type SubmissionRecord, type UsageState, type WatchEnd } from '@earendil-works/pi-durable';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
 import { ChatDoc, PI_CONTEXT, defaultReadPolicy, openPiChat, readPiChatSettings, type PiChat, type PiChatSettings, type PiConversationSummary } from '../pi/runtime';
 import type { PiDiagnostics, PiDiagnosticSnapshot } from '../pi/diagnostics';
-import { setReadPolicy, type AuthoritySnapshot, type ReadPolicy } from '../pi/authority';
+import { setReadPolicy, type AuthoritySnapshot, type ReadPolicy, type WritePolicy } from '../pi/authority';
+import { EditReviewDoc, PublicationTask, committedPublicationResult, decideEditReview, setWritePolicy, type CommittedEdit, type EditReview } from '../pi/publication';
 
 export function chatErrorMessage(error: unknown): string {
   if (error && typeof error === 'object' && 'message' in error) return String(error.message);
@@ -36,14 +39,16 @@ export type PiViewSnapshot = {
   diagnostics?: PiDiagnostics; runtimeState?: PiDiagnosticSnapshot['state'];
   stopping: boolean; runStartedAt?: number; latestInput?: SubmissionRecord;
   recentlyForgotten?: ConversationId; forgetting?: boolean;
+  editReviews?: EditReview[];
+  editOutcomes?: Readonly<Record<string, CommittedEdit>>;
 };
 export function canForgetConversation(value: PiViewSnapshot): boolean {
   const live = viewLive(value.view);
   return Boolean(value.conversation && value.initialized && value.runtimeState === 'open' && !value.loading && !value.forgetting
     && !live.run && !live.compactions?.length && !viewInbox(value.view).items.length);
 }
-type AuthorityChange = { retiredAuthorityIds: string[]; noteId?: string; excluded?: boolean };
-type Dependencies = { open?: () => Promise<PiChat>; settings?: () => Promise<PiChatSettings>; changeRead?: typeof setReadPolicy; observeAuthority?: (receive: (change: AuthorityChange) => void) => Promise<() => void> };
+type AuthorityChange = { retiredAuthorityIds: string[]; noteId?: string; excluded?: boolean; writePolicyChanged?: boolean };
+type Dependencies = { open?: () => Promise<PiChat>; settings?: () => Promise<PiChatSettings>; lastConversation?: () => Promise<string | null>; changeRead?: typeof setReadPolicy; observeAuthority?: (receive: (change: AuthorityChange) => void) => Promise<() => void> };
 
 /** Disposable selection and loaded pages. Every execution/queue outcome stays in Pi. */
 export function createPiConversationView(deps: Dependencies = {}) {
@@ -75,10 +80,16 @@ export function createPiConversationView(deps: Dependencies = {}) {
     state.update(value => ({ ...value, error: value.runtimeState && value.runtimeState !== 'open' ? unavailable : observationUnavailable }));
   };
   const requireOpen = () => { if (snapshot().runtimeState !== 'open') throw new Error(unavailable); };
+  const adoptAuthority = (id: ConversationId, authority: AuthoritySnapshot) => {
+    if (disposed) return;
+    state.update(value => value.conversation?.id !== id || (value.authority && value.authority.revision > authority.revision)
+      ? value : { ...value, authority, read: authority.read });
+  };
   async function initialize(id?: string | null) {
     if (disposed) return;
     if (!opening) opening = (async () => {
-      state.update(value => ({ ...value, loading: Boolean(id) }));
+      const selection = lifetime;
+      state.update(value => ({ ...value, loading: true }));
       const [runtime, settings] = await Promise.all([(deps.open ?? openPiChat)(), (deps.settings ?? readPiChatSettings)()]);
       if (disposed) return;
       chat = runtime;
@@ -91,17 +102,38 @@ export function createPiConversationView(deps: Dependencies = {}) {
           state.update(value => input.conversationId === value.conversation?.id && (!value.latestInput || input.id >= value.latestInput.id) ? { ...value, latestInput: input } : value);
         }
         updateList(publication);
+        for (const change of publication.changes) if (change.type === 'task' && change.value.conversationId === snapshot().conversation?.id && change.value.owner) {
+          const result = committedPublicationResult(change.value);
+          if (result) state.update(value => ({ ...value, editOutcomes: { ...value.editOutcomes, [change.value.owner!]: result } }));
+        }
       });
       const observe = deps.observeAuthority ?? (receive => listen<AuthorityChange>('pi-chat-authority-changed', event => receive(event.payload)));
       // Native retirement has already happened. This listener only replaces the visible context.
       void observe(change => {
         const current = snapshot();
+        if (change.writePolicyChanged && current.conversation && chat) {
+          const id = current.conversation.id;
+          void chat.authorityForConversation(id).then(authority => {
+            if (authority) adoptAuthority(id, authority);
+          }).catch(report);
+        }
         if (!change.excluded || !change.noteId || !current.authority || !change.retiredAuthorityIds.includes(current.authority.authorityId)) return;
         const read = { ...current.read, attachedNoteIds: change.excluded && change.noteId ? current.read.attachedNoteIds.filter(id => id !== change.noteId) : [...current.read.attachedNoteIds] };
         void replaceRetired(current, read).catch(report);
       }).then(stop => { if (disposed) stop(); else stopAuthority = stop; }).catch(report);
       // List reads report their own safe failure; initialization must not attach duplicate subscriptions on retry.
-      await refreshList().catch(() => { if (!disposed) state.update(value => ({ ...value, loading: false })); });
+      await refreshList().catch(() => {});
+      if (!id) {
+        // The workspace already persists the last viewed conversation in vault state.
+        // Restore only on first open; New chat and later initialize() calls stay fresh.
+        const remembered = await (deps.lastConversation ?? (async () =>
+          (await invoke<{ conversationId: string } | null>('get_last_chat_location'))?.conversationId ?? null))().catch(() => null);
+        if (remembered && /^\d+$/.test(remembered) && !disposed && selection === lifetime) {
+          const doc = await runtime.harness.snapshot(ChatDoc, Number(remembered) as ConversationId, listObservation.context).catch(reportObservationError);
+          if (doc && !doc.forgotten && !disposed && selection === lifetime) await select(remembered);
+        }
+      }
+      if (!id && !disposed && selection === lifetime) state.update(value => ({ ...value, loading: false }));
     })().catch(() => { opening = undefined; if (disposed) return; state.update(value => ({ ...value, loading: false, error: observationUnavailable })); });
     await opening;
     if (id && !disposed && String(snapshot().conversation?.id) !== id) await select(id);
@@ -197,7 +229,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
     observation?.cancel();
     const scope = observation = withCancel(PI_CONTEXT);
     const context = scope.context;
-    state.update(value => ({ ...value, loading: Boolean(id), conversation: null, view: null, entries: [], historyNext: undefined, authority: undefined, title: '', error: null, runStartedAt: undefined, stopping: false, latestInput: undefined }));
+    state.update(value => ({ ...value, loading: Boolean(id), conversation: null, view: null, entries: [], editReviews: [], editOutcomes: {}, historyNext: undefined, authority: undefined, title: '', error: null, runStartedAt: undefined, stopping: false, latestInput: undefined }));
     if (!id || !chat) {
       try {
         const settings = chat ? await (deps.settings ?? readPiChatSettings)() : snapshot().settings;
@@ -211,21 +243,38 @@ export function createPiConversationView(deps: Dependencies = {}) {
       const conversation = await chat.harness.conversation(Number(id) as ConversationId, context);
       if (context.abortSignal?.aborted) return;
       if (!conversation) throw new Error('This conversation is unavailable.');
-      const doc = await chat.harness.snapshot(ChatDoc, conversation.id, context);
+      const titleWatch = await chat.harness.watchDoc(ChatDoc, conversation.id, context);
       if (context.abortSignal?.aborted) return;
-      if (doc?.forgotten) throw new Error('This conversation was forgotten.');
+      const doc = titleWatch?.value;
+      if (!doc) throw new Error('This conversation is unavailable.');
+      if (doc.forgotten) throw new Error('This conversation was forgotten.');
       let authority = await chat.authorityForConversation(conversation.id);
       if (context.abortSignal?.aborted) return;
-      if (!authority && doc && !doc.retired) { requireOpen(); authority = await chat.bindConversation(conversation); }
+      if (!authority && !doc.retired) { requireOpen(); authority = await chat.bindConversation(conversation); }
       if (context.abortSignal?.aborted) return;
-      const [watch, titleWatch, page, agent] = await Promise.all([
-        conversation.watch(context), chat.harness.watchDoc(ChatDoc, conversation.id, context),
-        conversation.entries({}, 50, undefined, context), conversation.agent(context)
+      const [watch, reviewWatch, page] = await Promise.all([
+        conversation.watch(context),
+        chat.harness.watchDoc(EditReviewDoc, conversation.id, context),
+        conversation.entries({}, 50, undefined, context)
       ]);
       if (context.abortSignal?.aborted) return;
-      state.update(value => ({ ...value, loading: false, conversation, authority, title: doc?.title ?? 'Conversation',
-        read: authority?.read ?? value.read, provider: agent.model?.provider === 'openai' ? 'openai' : 'local', model: agent.model?.modelId ?? value.model,
+      state.update(value => ({ ...value, loading: false, conversation, authority, title: doc.title,
+        read: authority?.read ?? value.read,
         entries: mergeEntries(page.items, watch.value.entries), historyNext: page.next }));
+      // Task-scoped working documents retire at settlement. Terminal tasks retain
+      // their owner/result, so reopening reads proof directly rather than keeping a second ledger.
+      let taskCursor: Cursor | undefined;
+      do {
+        const tasks = await chat.storage.scanTasks({ conversationId: conversation.id, kind: PublicationTask.definition.name, status: 'terminal' }, 128, taskCursor, context);
+        if (context.abortSignal?.aborted || disposed || token !== lifetime) return;
+        const outcomes: Record<string, CommittedEdit> = {};
+        for (const task of tasks.items) {
+          const result = committedPublicationResult(task);
+          if (task.owner && result) outcomes[task.owner] = result;
+        }
+        state.update(value => ({ ...value, editOutcomes: { ...outcomes, ...value.editOutcomes } }));
+        taskCursor = tasks.next;
+      } while (taskCursor);
       // Terminal input can lack an assistant entry (for example a task fault).
       // Read the latest input once; later immutable submission commits keep it current.
       void (async () => {
@@ -240,10 +289,15 @@ export function createPiConversationView(deps: Dependencies = {}) {
           cursor = page.next;
         } while (cursor && !disposed && token === lifetime);
       })().catch(error => { if (!context.abortSignal?.aborted && token === lifetime) reportObservationError(error); });
-      const apply = async (view: ConversationView) => {
+      const apply = async (view: ConversationView, ops: readonly Op[]) => {
         if (context.abortSignal?.aborted || disposed || token !== lifetime) return;
         const run = viewLive(view).run;
-        state.update(value => ({ ...value, view, entries: mergeEntries(value.entries, view.entries), runStartedAt: run ? value.runStartedAt : undefined }));
+        const agent = view.docs[AgentDoc.definition.kind] as AgentState | undefined;
+        // Pi coalesces a slow observer's backlog into a full replacement frame.
+        const entriesChanged = ops.some(op => op[0] === 'r' || op[1][0] === 'entries');
+        state.update(value => ({ ...value, view, entries: entriesChanged ? mergeEntries(value.entries, view.entries) : value.entries,
+          provider: agent?.model?.provider === 'openai' ? 'openai' : 'local', model: agent?.model?.modelId ?? value.model,
+          runStartedAt: run ? value.runStartedAt : undefined }));
         if (run && !snapshot().runStartedAt) {
           try {
             const task = await chat!.harness.getTask(run.taskId, context);
@@ -252,7 +306,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
           } catch (error) { if (!context.abortSignal?.aborted) throw error; }
         }
       };
-      await apply(watch.value);
+      await apply(watch.value, []);
       if (disposed || token !== lifetime) return;
       watch.start(apply);
       const watchEnded = (end: WatchEnd) => {
@@ -262,6 +316,15 @@ export function createPiConversationView(deps: Dependencies = {}) {
         scope.cancel();
       };
       void watch.closed.then(watchEnded);
+      if (reviewWatch) {
+        const applyReviews = (value: Readonly<{ items: Record<string, EditReview> }> | null) => {
+          if (!context.abortSignal?.aborted && token === lifetime && !disposed)
+            state.update(current => ({ ...current, editReviews: Object.values(value?.items ?? {}) }));
+        };
+        applyReviews(reviewWatch.value);
+        reviewWatch.start(async value => applyReviews(value));
+        void reviewWatch.closed.then(watchEnded);
+      }
       if (titleWatch) {
         void titleWatch.closed.then(watchEnded);
         titleWatch.start(async value => {
@@ -324,7 +387,34 @@ export function createPiConversationView(deps: Dependencies = {}) {
     const authority = await (deps.changeRead ?? setReadPolicy)(current.authority.authorityId, current.authority.revision, read);
     if (authority.retired) {
       await replaceRetired(current, read);
-    } else if (snapshot().conversation?.id === current.conversation.id) state.update(value => ({ ...value, authority, read: authority.read }));
+    } else adoptAuthority(current.conversation.id, authority);
+  }
+  async function changeWrite(write: WritePolicy) {
+    requireOpen();
+    let current = snapshot();
+    if (!current.conversation) {
+      if (!chat) throw new Error('Chat is unavailable.');
+      const changed = 'The chat changed before editing permission could be updated. Choose permission again in the current chat.';
+      const origin = lifetime;
+      const conversation = await chat.createConversation({ provider: current.provider, model: current.model, read: current.read });
+      if (disposed || origin !== lifetime) throw new Error(changed);
+      const selecting = select(String(conversation.id));
+      const selection = lifetime;
+      await selecting;
+      if (disposed || selection !== lifetime || snapshot().conversation?.id !== conversation.id) throw new Error(changed);
+      current = snapshot();
+    }
+    if (!current.authority || !current.conversation) throw new Error('Conversation access is unavailable.');
+    // Temporary grants bind to the actual Pi conversation, including first use.
+    if (write.grant.duration === 'temporary') write = { ...write, grant: { ...write.grant, conversationId: current.conversation.id } };
+    const authority = await setWritePolicy(current.authority.authorityId, current.authority.revision, write);
+    adoptAuthority(current.conversation.id, authority);
+  }
+  async function reviewEdit(taskId: number, decision: 'approved' | 'rejected') {
+    requireOpen();
+    const conversation = snapshot().conversation;
+    if (!chat || !conversation) throw new Error('Conversation is unavailable.');
+    await decideEditReview(chat.harness, conversation.id, taskId, decision);
   }
   async function replaceRetired(current: PiViewSnapshot, read: ReadPolicy) {
     if (!current.conversation || !chat) return;
@@ -351,7 +441,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
     if (snapshot().conversation?.id === current.conversation?.id) state.update(value => ({ ...value, provider, model }));
   }
   return {
-    subscribe: state.subscribe, getSnapshot: snapshot, initialize, select, refreshList, send, stop, changeRead, configure,
+    subscribe: state.subscribe, getSnapshot: snapshot, initialize, select, refreshList, send, stop, changeRead, changeWrite, reviewEdit, configure,
     async startNew() { state.update(value => ({ ...value, recentlyForgotten: undefined })); await select(null); },
     async forget() {
       requireOpen();

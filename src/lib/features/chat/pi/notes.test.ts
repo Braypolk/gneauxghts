@@ -5,13 +5,16 @@ import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-work
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import { notesExtension, type NoteRead } from './notes';
 import type { ReadPolicy } from './authority';
+import { render } from 'svelte/server';
+import { activityTranscript, toolFailed, toolStatus, type ToolActivity } from '../ui/piActivity';
+import PiActivityGroup from '../ui/PiActivityGroup.svelte';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke }));
 const harnesses: Harness[] = [];
 beforeEach(() => { native.invoke.mockReset(); });
 afterEach(async () => { await Promise.all(harnesses.splice(0).map(harness => harness.close(context))); });
-const read: NoteRead = { markdown: 'Canonical saved text', source: {
+const read: NoteRead = { markdown: 'Canonical saved text', citation: '[Note: Saved note](gneauxghts-source:native-source-id)', source: {
   sourceId: 'native-source-id', noteId: 'note-1', title: 'Saved note',
   readState: { kind: 'observed', contentHash: 'authored-content-hash', observedAtMillis: 123 }
 } };
@@ -35,11 +38,16 @@ describe('Pi canonical note tools', () => {
     native.invoke.mockResolvedValue({ ...read, source: { ...read.source, location: { quote: 'Canonical saved text' } } });
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall('read_note', { noteId: 'note-1', quote: 'Canonical saved text' }, { id: 'passage' }), { stopReason: 'toolUse' }),
-      request => { expect(JSON.stringify(request)).toContain('[[cite:native-source-id]]'); return fauxAssistantMessage('A passage citation'); }
+      request => { expect(JSON.stringify(request)).toContain('[Note: Saved note](gneauxghts-source:native-source-id)'); return fauxAssistantMessage('A passage citation'); }
     ]);
     expect((await (await conversation.submit({ type: 'input', content: 'Cite the passage' }, context)).wait(context)).status).toBe('done');
     expect(native.invoke).toHaveBeenCalledWith('pi_chat_read_note', { authorityId: 'host-native-authority', noteId: 'note-1', quote: 'Canonical saved text' });
     expect(JSON.stringify((await conversation.context(context)).entries)).toContain('"location":{"quote":"Canonical saved text"}');
+    const tool = (await conversation.context(context)).entries.flatMap(entry => entry.model ?? []).find(message => message.role === 'toolResult');
+    if (tool?.role !== 'toolResult') throw new Error('Expected a read result.');
+    const value = JSON.parse(tool.content.filter(block => block.type === 'text').map(block => block.text).join(''));
+    expect(value).toEqual({ markdown: read.markdown, source: { sourceId: read.source.sourceId, noteId: read.source.noteId, title: read.source.title, location: { quote: read.markdown } }, citation: '[Note: Saved note](gneauxghts-source:native-source-id)' });
+    expect(tool.details).toEqual({ kind: 'noteRead', source: { ...read.source, location: { quote: read.markdown } } });
   });
   it('offers explicit attachment identities without injecting saved or unsaved note content', async () => {
     const { conversation, faux } = await setup({ mode: 'attachedNotesOnly', attachedNoteIds: ['note-1'] });
@@ -52,7 +60,7 @@ describe('Pi canonical note tools', () => {
         expect(prompt).not.toContain('Canonical saved text');
         return fauxAssistantMessage(fauxToolCall('read_note', { noteId: 'note-1' }, { id: 'attached' }), { stopReason: 'toolUse' });
       },
-      fauxAssistantMessage('Attached note summary [[cite:native-source-id]]')
+      fauxAssistantMessage('Attached note summary [Note: Saved note](gneauxghts-source:native-source-id)')
     ]);
     expect((await (await conversation.submit({ type: 'input', content: 'Summarize the attached note' }, context)).wait(context)).status).toBe('done');
     expect(native.invoke).toHaveBeenCalledWith('pi_chat_read_note', { authorityId: 'host-native-authority', noteId: 'note-1' });
@@ -66,7 +74,7 @@ describe('Pi canonical note tools', () => {
     faux.setResponses([
       fauxAssistantMessage(fauxToolCall('search_notes', { query: 'saved' }, { id: 'search' }), { stopReason: 'toolUse' }),
       request => { searchHistory = JSON.stringify(request); return fauxAssistantMessage(fauxToolCall('read_note', { noteId: 'note-1' }, { id: 'read' }), { stopReason: 'toolUse' }); },
-      request => { readHistory = JSON.stringify(request); return fauxAssistantMessage('Answer [[cite:native-source-id]]'); }
+      request => { readHistory = JSON.stringify(request); return fauxAssistantMessage('Answer [Note: Saved note](gneauxghts-source:native-source-id)'); }
     ]);
     expect((await (await conversation.submit({ type: 'input', content: 'Find the saved note' }, context)).wait(context)).status).toBe('done');
     expect(extension.tools?.map(tool => tool.name)).toEqual(['search_notes', 'read_note']);
@@ -78,7 +86,7 @@ describe('Pi canonical note tools', () => {
     expect(searchHistory).toContain('discovery preview');
     expect(searchHistory).not.toContain('native-source-id');
     expect(readHistory).toContain('Canonical saved text');
-    expect(readHistory).toContain('[[cite:native-source-id]]');
+    expect(readHistory).toContain('[Note: Saved note](gneauxghts-source:native-source-id)');
     const view = await conversation.context(context);
     expect(JSON.stringify(view.entries)).toContain('native-source-id');
     expect((await harness.inspect(context)).tasks).toHaveLength(0);
@@ -92,18 +100,41 @@ describe('Pi canonical note tools', () => {
     ]);
     await (await conversation.submit({ type: 'input', content: 'Try invalid arguments' }, context)).wait(context);
     expect(native.invoke).not.toHaveBeenCalled();
+    const activity = activityTranscript((await conversation.context(context)).entries, {}).find(item => item.kind === 'activity')!;
+    if (activity.kind !== 'activity') throw new Error('Expected tool activity.');
+    const tool = activity.items.find((item): item is ToolActivity => item.kind === 'tool')!;
+    expect(toolStatus(tool)).toBe('Needs correction');
+    expect(toolFailed(tool)).toBe(false);
   });
 
-  it('native denial is an ordinary Pi tool error and never supplies a citation token', async () => {
+  it.each([
+    ['read_note', 'retired_authority', 'Access ended'],
+    ['search_notes', 'stale_authority', 'Access changed'],
+    ['read_note', 'unavailable_note', 'Note unavailable'],
+    ['read_note', 'stale_read', 'Note changed'],
+    ['read_note', 'invalid_citation_location', 'Needs correction'],
+    ['search_notes', 'invalid_cursor', 'Needs correction'],
+    ['search_notes', 'storage', 'Failed']
+  ])('preserves native %s outcome %s for the model and retained activity', async (name, code, status) => {
     const { conversation, faux } = await setup();
-    native.invoke.mockRejectedValue({ code: 'retired_authority', message: 'This conversation was retired. Start a new conversation.' });
+    native.invoke.mockRejectedValue({ code, message: 'Native note access outcome.' });
     let afterFailure = '';
     faux.setResponses([
-      fauxAssistantMessage(fauxToolCall('read_note', { noteId: 'note-1' }, { id: 'denied' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall(name, name === 'read_note' ? { noteId: 'note-1' } : { query: 'saved' }, { id: 'denied' }), { stopReason: 'toolUse' }),
       request => { afterFailure = JSON.stringify(request); return fauxAssistantMessage('Access is unavailable'); }
     ]);
     await (await conversation.submit({ type: 'input', content: 'Read after restriction' }, context)).wait(context);
-    expect(afterFailure).not.toContain('[[cite:native-source-id]]');
-    expect(afterFailure).toContain('retired');
+    expect(afterFailure).not.toContain('[Note: Saved note](gneauxghts-source:native-source-id)');
+    expect(afterFailure).toContain(code);
+    const entries = (await conversation.context(context)).entries;
+    const activity = activityTranscript(entries, {}).find(item => item.kind === 'activity')!;
+    if (activity.kind !== 'activity') throw new Error('Expected tool activity.');
+    const tool = activity.items.find((item): item is ToolActivity => item.kind === 'tool')!;
+    expect(tool.result?.isError).toBe(true); // The model must still handle the unsuccessful request.
+    expect(toolStatus(tool)).toBe(status);
+    expect(toolFailed(tool)).toBe(status === 'Failed');
+    const body = render(PiActivityGroup, { props: { group: activity } }).body;
+    expect(body).toContain(status);
+    if (status !== 'Failed') { expect(body).not.toContain('failed'); expect(body).not.toContain('data-status="error"'); }
   });
 });

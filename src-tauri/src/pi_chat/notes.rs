@@ -48,10 +48,47 @@ pub(crate) struct ReadSource {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub location: Option<SourceLocation>,
 }
+impl ReadSource {
+    /// One citation representation, issued by reads and restored by answer admission.
+    pub(crate) fn citation(&self) -> String {
+        let source = self;
+        fn single_line(value: &str) -> String {
+            value.split_whitespace().collect::<Vec<_>>().join(" ")
+        }
+        let title = single_line(&source.title);
+        let mut label = if title.is_empty() {
+            "Untitled note".into()
+        } else {
+            title
+        };
+        if let Some(location) = &source.location {
+            let quote = single_line(&location.quote);
+            let excerpt: String = quote.chars().take(80).collect();
+            label.push_str(&format!(
+                " · “{excerpt}{}”",
+                if quote.chars().count() > 80 {
+                    "…"
+                } else {
+                    ""
+                }
+            ));
+        }
+        let mut escaped = String::new();
+        for character in label.chars() {
+            if character.is_ascii_punctuation() {
+                escaped.push('\\');
+            }
+            escaped.push(character);
+        }
+        format!("[Note: {escaped}](gneauxghts-source:{})", source.source_id)
+    }
+}
+
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NoteRead {
     pub markdown: String,
+    pub citation: String,
     pub source: ReadSource,
 }
 /// Private exact file proof for publication; never serialized into model output.
@@ -206,6 +243,61 @@ pub(crate) fn source_navigation_content(
     Ok(read)
 }
 
+/// Recover only the exact bytes previously delivered to this conversation.
+/// This is not a fresh read receipt: an old edit must never silently rebase.
+pub(crate) fn mutation_base(
+    state: &AppState,
+    store: &AuthorityStore,
+    authority_id: &str,
+    note_id: &str,
+    expected_read_source_id: &str,
+) -> DomainResult<NoteRead> {
+    validate_selector(note_id)?;
+    store.with_authority(authority_id, None, |connection, snapshot| {
+        let receipt = receipt_in(connection, snapshot, expected_read_source_id)?;
+        if receipt.source.note_id != note_id {
+            return Err(DomainError::new(
+                "wrong_source",
+                "Read this note before editing it.",
+            ));
+        }
+        let canonical = source_navigation_content(state, snapshot, connection, note_id)?;
+        if canonical.path != receipt.canonical_path
+            || crate::semantic::db::content_hash(&canonical.markdown) != receipt.raw_base_hash
+        {
+            return Err(DomainError::new(
+                "changed_base",
+                "The note changed. Read it again before editing.",
+            ));
+        }
+        Ok(NoteRead {
+            markdown: canonical.markdown,
+            citation: receipt.source.citation(),
+            source: receipt.source,
+        })
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn pi_chat_read_mutation_base(
+    app: tauri::AppHandle,
+    authority_id: String,
+    note_id: String,
+    expected_read_source_id: String,
+) -> DomainResult<NoteRead> {
+    tauri::async_runtime::spawn_blocking(move || {
+        mutation_base(
+            &app.state::<AppState>(),
+            &app.state::<AuthorityStore>(),
+            &authority_id,
+            &note_id,
+            &expected_read_source_id,
+        )
+    })
+    .await
+    .map_err(|_| DomainError::new("unavailable", "Edit base read was interrupted."))?
+}
+
 #[cfg(test)]
 pub(crate) fn read_note(
     state: &AppState,
@@ -280,6 +372,7 @@ pub(crate) fn read_note_at(
     })?;
     Ok(NoteRead {
         markdown: canonical.markdown,
+        citation: source.citation(),
         source,
     })
 }
@@ -774,6 +867,98 @@ mod tests {
     }
 
     #[test]
+    fn edit_base_requires_the_exact_issued_note_and_bytes() {
+        let vault = TestVault::new("pi-edit-base");
+        let note = saved(&vault, "Edit base", "Alpha");
+        let other = saved(&vault, "Other note", "Other");
+        let id = note.note_id.as_ref().unwrap();
+        let (store, authority) = authority(&vault, ReadMode::FullVault, vec![], 1);
+        let read = read_note(&vault.state, &store, &authority.authority_id, id).unwrap();
+        let base = mutation_base(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            id,
+            &read.source.source_id,
+        )
+        .unwrap();
+        assert_eq!(base.markdown, read.markdown);
+        assert_eq!(base.source.source_id, read.source.source_id);
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                other.note_id.as_ref().unwrap(),
+                &read.source.source_id
+            )
+            .unwrap_err()
+            .code,
+            "wrong_source"
+        );
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                id,
+                "invented-source"
+            )
+            .unwrap_err()
+            .code,
+            "unknown_source"
+        );
+        let foreign = store
+            .bind(
+                ConversationBinding {
+                    conversation_id: 2,
+                    provider_session_id: "other-provider".into(),
+                },
+                ReadPolicy {
+                    mode: ReadMode::FullVault,
+                    attached_note_ids: vec![],
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &foreign.authority_id,
+                id,
+                &read.source.source_id
+            )
+            .unwrap_err()
+            .code,
+            "unknown_source"
+        );
+        // Even an unrelated change must not silently rebase a targeted edit.
+        let path = PathBuf::from(note.path.as_ref().unwrap());
+        std::fs::write(&path, format!("{}\nNew human text", read.markdown)).unwrap();
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                id,
+                &read.source.source_id
+            )
+            .unwrap_err()
+            .code,
+            "changed_base"
+        );
+        store.set_exclusion(id, true).unwrap();
+        assert!(mutation_base(
+            &vault.state,
+            &store,
+            &authority.authority_id,
+            id,
+            &read.source.source_id
+        )
+        .is_err());
+    }
+
+    #[test]
     fn raw_replacement_proof_detects_metadata_only_changes_and_missing_identity() {
         let vault = TestVault::new("pi-read-raw-proof");
         let note = saved(&vault, "Raw", "Same authored text");
@@ -790,6 +975,30 @@ mod tests {
         assert_ne!(raw, changed);
         std::fs::write(&path, &changed).unwrap();
         let second = read_note(&vault.state, &store, &authority.authority_id, id).unwrap();
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                id,
+                &first.source.source_id
+            )
+            .unwrap_err()
+            .code,
+            "changed_base"
+        );
+        assert_eq!(
+            mutation_base(
+                &vault.state,
+                &store,
+                &authority.authority_id,
+                id,
+                &second.source.source_id
+            )
+            .unwrap()
+            .markdown,
+            changed
+        );
         let hash = |source: &ReadSource| match &source.read_state {
             ReadState::Revision { content_hash, .. } | ReadState::Observed { content_hash, .. } => {
                 content_hash.clone()
@@ -876,8 +1085,8 @@ mod tests {
         )
         .unwrap();
         assert!(admitted[0]
-            .markdown
             .contains(r"[Note: Lantern \[draft\] · “The lantern is \*\*turquoise\*\*\.”]"));
+        assert!(admitted[0].contains(&read.citation));
         let destination = || {
             open_source(
                 &vault.state,
@@ -958,9 +1167,7 @@ mod tests {
             }],
         )
         .unwrap();
-        assert!(admitted[0]
-            .markdown
-            .contains("[Note: Lantern note](gneauxghts-source:"));
+        assert!(admitted[0].contains("[Note: Lantern note](gneauxghts-source:"));
         assert!(
             matches!(open_source(&vault.state, &store, &authority.authority_id, &read.source.source_id).unwrap(), SourceDestination::Note { note_id, .. } if note_id == *id)
         );
@@ -1031,13 +1238,17 @@ mod tests {
                 &ConversationBinding { conversation_id: 1, provider_session_id: "provider-1".into() },
                 vec![AnswerSegments { segments: vec![AnswerSegment { text: "Earlier read ".into(), sources: vec![original.source.source_id.clone()] }] }],
             ).unwrap();
-            assert_eq!(admitted[0].sources.len(), 1);
+            assert!(admitted[0].contains(&original.source.source_id));
             let SourceDestination::Note { note_id, limitation, .. } = open_source(&vault.state, &store, &authority.authority_id, &original.source.source_id).unwrap() else {
                 panic!("metadata damage must not remove note navigation");
             };
             assert_eq!(note_id, *id);
             assert!(limitation.unwrap().contains("changed since"));
-            assert!(matches!(&admitted[0].sources[0].read_state, ReadState::Revision { revision, .. } if revision.revision_id == original_revision_id));
+            store.with_authority(&authority.authority_id, None, |connection, snapshot| {
+                let receipt = receipt_in(connection, snapshot, &original.source.source_id)?;
+                assert!(matches!(&receipt.source.read_state, ReadState::Revision { revision, .. } if revision.revision_id == original_revision_id));
+                Ok(())
+            }).unwrap();
         }
 
         // An external endpoint not yet captured is a read state, not a newly

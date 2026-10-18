@@ -5,7 +5,6 @@ use super::{
 };
 use crate::{index::AppState, services::content_hash::canonical_content_hash};
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
 use tauri::Manager;
 
 #[derive(Debug, Deserialize)]
@@ -18,12 +17,6 @@ pub(crate) struct AnswerSegment {
 #[serde(deny_unknown_fields)]
 pub(crate) struct AnswerSegments {
     pub segments: Vec<AnswerSegment>,
-}
-#[derive(Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(crate) struct AdmittedAnswer {
-    pub markdown: String,
-    pub sources: Vec<ReadSource>,
 }
 #[derive(Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -56,49 +49,14 @@ fn valid_id(id: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-// Labels are native note metadata, escaped as literal Markdown, never model labels.
-fn citation_label(source: &ReadSource) -> String {
-    fn single_line(value: &str) -> String {
-        value.split_whitespace().collect::<Vec<_>>().join(" ")
-    }
-    let title = single_line(&source.title);
-    let mut label = if title.is_empty() {
-        "Untitled note".into()
-    } else {
-        title
-    };
-    if let Some(location) = &source.location {
-        let quote = single_line(&location.quote);
-        let excerpt: String = quote.chars().take(80).collect();
-        label.push_str(&format!(
-            " · “{excerpt}{}”",
-            if quote.chars().count() > 80 {
-                "…"
-            } else {
-                ""
-            }
-        ));
-    }
-    let mut escaped = String::new();
-    for character in label.chars() {
-        if character.is_ascii_punctuation() {
-            escaped.push('\\');
-        }
-        escaped.push(character);
-    }
-    format!("Note: {escaped}")
-}
-
 fn admit_segments(
     answer: AnswerSegments,
     mut source: impl FnMut(&str) -> DomainResult<ReadSource>,
-) -> DomainResult<AdmittedAnswer> {
+) -> DomainResult<String> {
     let mut markdown = String::new();
-    let mut sources = Vec::new();
-    let mut seen = HashSet::new();
     for segment in answer.segments {
         // Do not trust a WebView parser to hide source targets in literal text.
-        if segment.text.contains("[[cite") || segment.text.contains("gneauxghts-source:") {
+        if segment.text.contains("gneauxghts-source:") {
             return Err(DomainError::new(
                 "invalid_answer",
                 "Citation markup was not admitted.",
@@ -126,14 +84,10 @@ fn admit_segments(
                     "Read source metadata is unavailable.",
                 ));
             }
-            let label = citation_label(&issued);
-            markdown.push_str(&format!("[{label}](gneauxghts-source:{id})"));
-            if seen.insert(id) {
-                sources.push(issued);
-            }
+            markdown.push_str(&issued.citation());
         }
     }
-    Ok(AdmittedAnswer { markdown, sources })
+    Ok(markdown)
 }
 
 pub(crate) fn admit_answers(
@@ -142,7 +96,7 @@ pub(crate) fn admit_answers(
     authority_id: &str,
     binding: &ConversationBinding,
     answers: Vec<AnswerSegments>,
-) -> DomainResult<Vec<AdmittedAnswer>> {
+) -> DomainResult<Vec<String>> {
     let lease = store.validate_binding(authority_id, binding)?;
     // Atomic across all text blocks, including an empty tool-only response.
     store.with_authority(
@@ -206,7 +160,7 @@ pub(crate) async fn pi_chat_admit_answer(
     conversation_id: u64,
     provider_session_id: String,
     answers: Vec<AnswerSegments>,
-) -> DomainResult<Vec<AdmittedAnswer>> {
+) -> DomainResult<Vec<String>> {
     tauri::async_runtime::spawn_blocking(move || {
         admit_answers(
             &app.state::<AppState>(),
@@ -278,26 +232,21 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(admitted.sources.len(), 1);
-        assert!(admitted
-            .markdown
-            .contains("[Note: Native title](gneauxghts-source:"));
-        assert_eq!(admitted.markdown.matches("gneauxghts-source:").count(), 2);
-        assert_eq!(
-            admitted.markdown.matches("[citation unavailable]").count(),
-            2
-        );
+        assert!(admitted.contains("[Note: Native title](gneauxghts-source:"));
+        assert_eq!(admitted.matches("gneauxghts-source:").count(), 2);
+        assert_eq!(admitted.matches("[citation unavailable]").count(), 2);
     }
     #[test]
     fn source_free_markdown_passes_and_unparsed_reserved_text_fails() {
         let markdown = "## Summary\nOrdinary **Markdown**.";
         assert_eq!(
-            admit_segments(answer(markdown, &[]), |_| panic!("no lookup"))
-                .unwrap()
-                .markdown,
+            admit_segments(answer(markdown, &[]), |_| panic!("no lookup")).unwrap(),
             markdown
         );
-        for text in ["[[cite:invented]]", "[spoof](gneauxghts-source:invented)"] {
+        for text in [
+            "gneauxghts-source:invented",
+            "[spoof](gneauxghts-source:invented)",
+        ] {
             assert_eq!(
                 admit_segments(answer(text, &[]), |_| panic!("no lookup"))
                     .unwrap_err()
@@ -311,10 +260,7 @@ mod tests {
         let id = "a".repeat(48);
         let admitted =
             admit_segments(answer("Earlier read ", &[&id]), |value| Ok(source(value))).unwrap();
-        assert!(matches!(
-            admitted.sources[0].read_state,
-            ReadState::Observed { .. }
-        ));
+        assert!(admitted.contains(&format!("gneauxghts-source:{id}")));
         let failed = admit_segments(answer("Claim ", &[&id]), |_| {
             Err(DomainError::new("storage", "Unavailable"))
         })

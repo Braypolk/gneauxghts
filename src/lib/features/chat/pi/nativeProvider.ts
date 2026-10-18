@@ -92,17 +92,8 @@ function safeFailure(error: unknown, original?: AssistantMessage): string {
   return safeFailures.has(value) ? value : 'The model request could not complete. Start a new attempt.';
 }
 
-/** Until citation capability installation, source-free Markdown is admitted and reserved IDs fail closed. */
-async function sourceFreeAdmission(binding: NativeBinding, message: AssistantMessage): Promise<AssistantMessage> {
-  await invoke('pi_chat_validate_authority', binding);
-  if (message.content.some(block => block.type === 'text' && block.text.includes('[[cite:'))) {
-    throw new Error('Citation admission is unavailable');
-  }
-  return message;
-}
-
 /** One catalog and parser path for generation and Pi's built-in compaction. No history replacement. */
-export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>, admitMessage: AdmitProviderMessage = sourceFreeAdmission) {
+export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>, admitMessage: AdmitProviderMessage) {
   const models = createModels();
   const hostedCatalog = openaiProvider().getModels();
   const refreshes = new Map<string, Promise<void>>();

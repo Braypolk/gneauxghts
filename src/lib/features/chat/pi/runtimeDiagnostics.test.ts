@@ -1,8 +1,9 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
-import { MemoryStorage, GenerationTask, createRegistry, defineExtension, hook } from '@earendil-works/pi-durable';
+import { MemoryStorage, GenerationTask, createRegistry, defineExtension, hook, type CommitPublication } from '@earendil-works/pi-durable';
 import { fauxAssistantMessage } from '@earendil-works/pi-ai/providers/faux';
-import { PI_CONTEXT, openPiChat, type PiChat } from './runtime';
+import { ChatDoc, PI_CONTEXT, openPiChat, type PiChat } from './runtime';
+import { EditReviewDoc } from './publication';
 import { piViewFixture } from '../ui/piViewTestSupport';
 
 const native = vi.hoisted(() => ({ invoke: vi.fn(), listen: vi.fn(async () => () => {}), storage: undefined as unknown }));
@@ -12,6 +13,30 @@ vi.mock('./nativeSqlite', () => ({ openNativeSqlite: async () => ({}) }));
 vi.mock('@earendil-works/pi-durable/storage/sqlite', () => ({ SqliteStorage: { open: async () => native.storage } }));
 let chat: PiChat | undefined;
 afterEach(async () => { await chat?.close(); chat = undefined; vi.restoreAllMocks(); });
+
+it('creates app documents atomically for raw conversation creation and resets review state on fork', async () => {
+  native.storage = new MemoryStorage(); native.invoke.mockReset();
+  chat = await openPiChat();
+  const commits: CommitPublication[] = [];
+  const stop = chat.harness.subscribeCommits(commit => commits.push(commit));
+  try {
+    const parent = await chat.harness.commit(tx => tx.createConversation({ ownership: { kind: 'ownerless' } }), PI_CONTEXT);
+    expect(commits).toHaveLength(1);
+    expect(commits[0].changes.filter(change => change.type === 'document').map(change => change.record.kind))
+      .toEqual(expect.arrayContaining([ChatDoc.definition.kind, EditReviewDoc.definition.kind]));
+    expect(await chat.harness.snapshot(EditReviewDoc, parent.id, PI_CONTEXT)).toEqual({ items: {} });
+    const entry = await chat.harness.commit(async tx => {
+      (await tx.doc(ChatDoc, parent.id)).title = 'Parent title';
+      (await tx.doc(EditReviewDoc, parent.id)).items['7'] = { taskId: 7, title: 'Note', kind: 'edit', patch: 'Exact pending diff', decision: 'pending' };
+      return tx.appendEntry(parent.id, { kind: 'fixture', model: [{ role: 'user', content: 'Fork here', timestamp: 1 }] });
+    }, PI_CONTEXT);
+    const fork = await chat.harness.commit(tx => tx.forkConversation(parent.id, entry.id, { ownership: { kind: 'ownerless' } }), PI_CONTEXT);
+    expect(await chat.harness.snapshot(ChatDoc, fork.id, PI_CONTEXT)).toMatchObject({ title: '', authorityId: '', forgotten: false });
+    expect(await chat.harness.snapshot(EditReviewDoc, fork.id, PI_CONTEXT)).toEqual({ items: {} });
+    expect((await chat.harness.snapshot(EditReviewDoc, parent.id, PI_CONTEXT))?.items['7'].decision).toBe('pending');
+    expect(native.invoke).not.toHaveBeenCalled();
+  } finally { stop(); }
+});
 
 it('wires real Harness reports separately from terminal storage failure without inference or effects', async () => {
   const canary = 'SECRET_PROMPT_NOTE_CREDENTIAL_HEADER_ENDPOINT_PATH';

@@ -54,8 +54,8 @@ pub(crate) struct ConversationBinding {
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) enum WriteOperation {
-    Create,
     Update,
+    Create,
 }
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -146,9 +146,12 @@ pub(super) fn load(connection: &Connection, id: &str) -> DomainResult<AuthorityS
         })?;
     let mut grant: WriteGrant = serde_json::from_str(&write)
         .map_err(|_| DomainError::new("storage", "Conversation write grant is invalid."))?;
-    if matches!(grant, WriteGrant::Off) {
-        grant = serde_json::from_str(&vault_grant)
-            .map_err(|_| DomainError::new("storage", "Vault write policy is invalid."))?;
+    let vault: WriteGrant = serde_json::from_str(&vault_grant)
+        .map_err(|_| DomainError::new("storage", "Vault write policy is invalid."))?;
+    // Always is visible in every chat. A retained Temporary grant cannot hide
+    // vault-wide permission from the policy selector.
+    if !matches!(vault, WriteGrant::Off) {
+        grant = vault;
     }
     let write = WritePolicy {
         grant,
@@ -238,50 +241,13 @@ impl AuthorityStore {
             CREATE TABLE IF NOT EXISTS pi_chat_authorities (
               authority_id TEXT PRIMARY KEY, conversation_id INTEGER NOT NULL UNIQUE,
               provider_session_id TEXT NOT NULL UNIQUE, revision INTEGER NOT NULL,
-              read_json TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0);",
+              read_json TEXT NOT NULL, retired INTEGER NOT NULL DEFAULT 0,
+              write_json TEXT NOT NULL DEFAULT '{\"duration\":\"off\"}');
+            CREATE TABLE IF NOT EXISTS pi_chat_vault_write (
+              singleton INTEGER PRIMARY KEY CHECK(singleton=1), grant_json TEXT NOT NULL,
+              review_before_applying INTEGER NOT NULL DEFAULT 1);
+            INSERT OR IGNORE INTO pi_chat_vault_write(singleton,grant_json) VALUES(1,'{\"duration\":\"off\"}');",
         )?;
-        // Compatible migration of the read-only foundation; default remains Off/review-on.
-        let connection = store.connection()?;
-        let exists: bool = connection
-            .prepare("PRAGMA table_info(pi_chat_authorities)")?
-            .query_map([], |row| row.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?
-            .iter()
-            .any(|name| name == "write_json");
-        if !exists {
-            connection.execute_batch("ALTER TABLE pi_chat_authorities ADD COLUMN write_json TEXT NOT NULL DEFAULT '{\"duration\":\"off\"}';")?;
-        }
-        connection.execute_batch("CREATE TABLE IF NOT EXISTS pi_chat_vault_write(singleton INTEGER PRIMARY KEY CHECK(singleton=1),grant_json TEXT NOT NULL,review_before_applying INTEGER NOT NULL DEFAULT 1);
-            INSERT OR IGNORE INTO pi_chat_vault_write(singleton,grant_json) VALUES(1,'{\"duration\":\"off\"}');")?;
-        let has_review = connection
-            .prepare("PRAGMA table_info(pi_chat_vault_write)")?
-            .query_map([], |r| r.get::<_, String>(1))?
-            .collect::<Result<Vec<_>, _>>()?
-            .iter()
-            .any(|name| name == "review_before_applying");
-        if !has_review {
-            connection.execute_batch("ALTER TABLE pi_chat_vault_write ADD COLUMN review_before_applying INTEGER NOT NULL DEFAULT 1;")?;
-        }
-        // Earlier read-only foundations had no grant. Normalize the development
-        // policy wrapper to the sole conversation grant; review is always vault-owned.
-        let rows = connection
-            .prepare("SELECT authority_id,write_json FROM pi_chat_authorities")?
-            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?)))?
-            .collect::<Result<Vec<_>, _>>()?;
-        for (id, json) in rows {
-            if let Ok(policy) = serde_json::from_str::<WritePolicy>(&json) {
-                connection.execute(
-                    "UPDATE pi_chat_authorities SET write_json=?2 WHERE authority_id=?1",
-                    params![
-                        id,
-                        serde_json::to_string(&policy.grant).map_err(|_| DomainError::new(
-                            "storage",
-                            "Invalid conversation grant."
-                        ))?
-                    ],
-                )?;
-            }
-        }
         Ok(store)
     }
     /// Policy changes and actual effects share this owner. No SQLite transaction spans filesystem IO.
@@ -391,6 +357,59 @@ impl AuthorityStore {
     pub(crate) fn is_excluded(&self, note_id: &str) -> DomainResult<bool> {
         Self::excluded_in(&self.connection()?, note_id)
     }
+    fn vault_write_in(connection: &Connection) -> DomainResult<WritePolicy> {
+        let (grant, review_before_applying): (String, bool) = connection.query_row(
+            "SELECT grant_json,review_before_applying FROM pi_chat_vault_write WHERE singleton=1",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )?;
+        let grant = serde_json::from_str(&grant)
+            .map_err(|_| DomainError::new("storage", "Vault write policy is invalid."))?;
+        Ok(WritePolicy {
+            grant,
+            review_before_applying,
+        })
+    }
+    fn replace_vault_write(connection: &Connection, write: &WritePolicy) -> DomainResult<bool> {
+        let old = Self::vault_write_in(connection)?;
+        if old.grant == write.grant && old.review_before_applying == write.review_before_applying {
+            return Ok(false);
+        }
+        let grant = serde_json::to_string(&write.grant)
+            .map_err(|_| DomainError::new("invalid_policy", "Invalid write policy."))?;
+        connection.execute(
+            "UPDATE pi_chat_vault_write SET grant_json=?1,review_before_applying=?2 WHERE singleton=1",
+            params![grant, write.review_before_applying],
+        )?;
+        Ok(true)
+    }
+    pub(crate) fn vault_write(&self) -> DomainResult<WritePolicy> {
+        Self::vault_write_in(&self.connection()?)
+    }
+    /// Settings edits the same vault grant as chat, without creating a conversation.
+    pub(crate) fn set_vault_write(&self, write: WritePolicy) -> DomainResult<WritePolicy> {
+        match &write.grant {
+            WriteGrant::Off => {}
+            WriteGrant::Always { operations, scope } => validate_write_scope(operations, scope)?,
+            WriteGrant::Temporary { .. } => {
+                return Err(DomainError::new(
+                    "invalid_policy",
+                    "Temporary write permission must be granted in a chat.",
+                ))
+            }
+        }
+        self.with_effect(|| {
+            let mut connection = self.connection()?;
+            let transaction =
+                connection.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            if Self::replace_vault_write(&transaction, &write)? {
+                transaction.execute("UPDATE pi_chat_authorities SET revision=revision+1", [])?;
+            }
+            // Explicit per-chat Temporary grants remain owned by their conversations.
+            transaction.commit()?;
+            Ok(write)
+        })
+    }
     pub(crate) fn excluded_in(connection: &Connection, note_id: &str) -> DomainResult<bool> {
         Ok(connection.query_row("SELECT EXISTS(SELECT 1 FROM chat_note_policies WHERE note_id=?1 AND disposition='excluded')", [note_id], |row| row.get(0))?)
     }
@@ -421,11 +440,13 @@ impl AuthorityStore {
                 },
                 WriteGrant::Always{operations,scope}=>validate_write_scope(operations,scope)?,
             }
-            let (old_vault,old_review):(String,bool)=tx.query_row("SELECT grant_json,review_before_applying FROM pi_chat_vault_write WHERE singleton=1",[],|r|Ok((r.get(0)?,r.get(1)?)))?;
-            let vault = match &write.grant { WriteGrant::Always{..}=>serde_json::to_string(&write.grant), WriteGrant::Off=>serde_json::to_string(&WriteGrant::Off), _=>Ok(old_vault.clone()) }
-                .map_err(|_|DomainError::new("invalid_policy","Invalid write policy."))?;
-            if vault != old_vault || old_review != write.review_before_applying {
-                tx.execute("UPDATE pi_chat_vault_write SET grant_json=?1,review_before_applying=?2 WHERE singleton=1",params![vault,write.review_before_applying])?;
+            // Choosing Off or Temporary replaces Always atomically. There is no
+            // hidden grant stack behind the mutually exclusive user modes.
+            let vault_write = WritePolicy {
+                grant: match &write.grant { WriteGrant::Always { .. } => write.grant.clone(), _ => WriteGrant::Off },
+                review_before_applying: write.review_before_applying,
+            };
+            if Self::replace_vault_write(tx, &vault_write)? {
                 // One vault grant, no copied rows. All pending intents revalidate revisions.
                 tx.execute("UPDATE pi_chat_authorities SET revision=revision+1 WHERE authority_id<>?1",[id])?;
             }
@@ -593,6 +614,119 @@ mod tests {
             mode,
             attached_note_ids: ids.iter().map(|id| id.to_string()).collect(),
         }
+    }
+    fn always(review_before_applying: bool) -> WritePolicy {
+        WritePolicy {
+            grant: WriteGrant::Always {
+                operations: vec![WriteOperation::Update],
+                scope: NoteScope {
+                    note_ids: vec![],
+                    folders: vec![".".into()],
+                },
+            },
+            review_before_applying,
+        }
+    }
+    #[test]
+    fn vault_write_defaults_work_without_a_conversation_and_survive_reopen() {
+        let (dir, store) = store();
+        let initial = store.vault_write().unwrap();
+        assert!(matches!(initial.grant, WriteGrant::Off));
+        assert!(initial.review_before_applying);
+        store.set_vault_write(always(false)).unwrap();
+        let count: u64 = store
+            .connection()
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM pi_chat_authorities", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 0);
+        let reopened = AuthorityStore::new(dir.path()).unwrap();
+        assert!(matches!(
+            reopened.vault_write().unwrap().grant,
+            WriteGrant::Always { .. }
+        ));
+        assert!(!reopened.vault_write().unwrap().review_before_applying);
+        let new_chat = reopened
+            .bind(binding(1), policy(ReadMode::FullVault, &[]))
+            .unwrap();
+        assert!(matches!(new_chat.write.grant, WriteGrant::Always { .. }));
+        assert!(!new_chat.write.review_before_applying);
+    }
+    #[test]
+    fn vault_defaults_invalidate_leases_but_preserve_individual_temporary_permissions() {
+        let (_dir, store) = store();
+        let first = store
+            .bind(binding(1), policy(ReadMode::FullVault, &[]))
+            .unwrap();
+        let temporary = WritePolicy {
+            grant: WriteGrant::Temporary {
+                conversation_id: 1,
+                operations: vec![WriteOperation::Update],
+                scope: NoteScope {
+                    note_ids: vec![],
+                    folders: vec![".".into()],
+                },
+            },
+            review_before_applying: true,
+        };
+        store
+            .set_write(&first.authority_id, first.revision, temporary.clone())
+            .unwrap();
+        let second = store
+            .bind(binding(2), policy(ReadMode::FullVault, &[]))
+            .unwrap();
+        let lease = store.lease(&second.authority_id).unwrap();
+        store.set_vault_write(always(false)).unwrap();
+        assert_eq!(
+            store.validate_lease(&lease).unwrap_err().code,
+            "stale_authority"
+        );
+        assert!(matches!(
+            store.snapshot(&first.authority_id).unwrap().write.grant,
+            WriteGrant::Always { .. }
+        ));
+        let off = WritePolicy {
+            grant: WriteGrant::Off,
+            review_before_applying: true,
+        };
+        store.set_vault_write(off.clone()).unwrap();
+        assert!(matches!(
+            store.snapshot(&first.authority_id).unwrap().write.grant,
+            WriteGrant::Temporary {
+                conversation_id: 1,
+                ..
+            }
+        ));
+        let current = store.snapshot(&second.authority_id).unwrap();
+        assert!(matches!(current.write.grant, WriteGrant::Off));
+        assert!(current.write.review_before_applying);
+        store.set_vault_write(off).unwrap();
+        assert_eq!(
+            store.snapshot(&second.authority_id).unwrap().revision,
+            current.revision
+        );
+        assert_eq!(
+            store.set_vault_write(temporary).unwrap_err().code,
+            "invalid_policy"
+        );
+        let mut invalid = always(false);
+        if let WriteGrant::Always { scope, .. } = &mut invalid.grant {
+            scope.folders = vec!["../outside".into()];
+        }
+        assert_eq!(
+            store.set_vault_write(invalid).unwrap_err().code,
+            "invalid_policy"
+        );
+        assert!(matches!(
+            store.vault_write().unwrap().grant,
+            WriteGrant::Off
+        ));
+        assert_eq!(
+            store.snapshot(&second.authority_id).unwrap().revision,
+            current.revision
+        );
     }
     #[test]
     fn restart_reacquires_binding_without_resurrecting_retired_authority() {

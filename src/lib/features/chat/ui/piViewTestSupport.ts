@@ -1,7 +1,7 @@
 import { Harness, MemoryStorage, createRegistry, type ConversationId, type Registry, type Conversation } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
-import { ChatDoc, PI_CONTEXT, type PiChat, type PiChatSettings } from '../pi/runtime';
+import { ChatDoc, PI_CONTEXT, initializeChatDocuments, type PiChat, type PiChatSettings } from '../pi/runtime';
 import type { AuthoritySnapshot } from '../pi/authority';
 import { createPiConversationView } from './piConversationView';
 import { createPiDiagnostics } from '../pi/diagnostics';
@@ -14,7 +14,7 @@ export async function piViewFixture(options: { registry?: Registry; tokensPerSec
   const storage = new MemoryStorage(); storage.close = async () => {};
   const diagnostics = createPiDiagnostics();
   const open = async () => {
-    const harness = await Harness.open(storage, { registry: options.registry ?? createRegistry(), models, onReport: diagnostics.report, settings: { retry: { enabled: false }, compaction: { enabled: false }, progress: { partialIntervalMs: 0, outputIntervalMs: 0 } } }, PI_CONTEXT);
+    const harness = await Harness.open(storage, { registry: options.registry ?? createRegistry(), models, conversationCreated: initializeChatDocuments, onReport: diagnostics.report, settings: { retry: { enabled: false }, compaction: { enabled: false }, progress: { partialIntervalMs: 0, outputIntervalMs: 0 } } }, PI_CONTEXT);
     void harness.closed.then(diagnostics.end);
     return harness;
   };

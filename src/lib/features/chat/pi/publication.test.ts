@@ -1,10 +1,10 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { Harness, MemoryStorage, createRegistry } from '@earendil-works/pi-durable';
+import { Harness, MemoryStorage, createRegistry, defineDoc } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
 import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { invoke } from '@tauri-apps/api/core';
-import { bindPublicationDocumentOwner, mountPublicationDocumentOwner, publishPreparedMutation, publicationExtension, PublicationTask, type PublicationResult } from './publication';
+import { bindPublicationDocumentOwner, mountPublicationDocumentOwner, publishPreparedMutation, publicationExtension, PublicationTask, EditReviewDoc, type PublicationResult } from './publication';
 import { createDocumentEditingService } from '$lib/features/notepad/document/documentEditingService';
 import { adoptCommittedDocument, createNoteDraftState, createNotepadState } from '$lib/features/notepad/state/noteStore';
 import { getDocumentMarkdown, updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
@@ -50,6 +50,32 @@ afterEach(async () => {
 });
 
 describe('publication task execution seam', () => {
+  it('upgrades retained reviews on reopen without losing their content or decisions', async () => {
+    const PreviousReviewDoc = defineDoc({ kind: 'gneauxghts.editReviews', version: 1, scope: 'conversation', history: 'latest', fork: 'initial', initial: () => ({ items: {
+      '7': { taskId: 7, title: 'Existing note', patch: '-old\n+new\n', decision: 'pending' },
+      '8': { taskId: 8, title: 'New note', patch: '', creation: { destination: 'Projects/New note.md', markdown: '# Exact content\n' }, decision: 'approved' }
+    } }) });
+    const storage = new MemoryStorage(); storage.close = async () => {};
+    const registry = createRegistry(), models = createModels();
+    const open = async () => {
+      const harness = await Harness.open(storage, { registry, models }, context); harnesses.push(harness); return harness;
+    };
+    const before = await open();
+    const conversation = await before.createConversation({ ownership: { kind: 'ownerless' }, init: async (tx, id) => { await tx.doc(PreviousReviewDoc, id); } }, context);
+    await before.close(context);
+    const after = await open();
+    const expected = { items: {
+      '7': { taskId: 7, title: 'Existing note', kind: 'edit', patch: '-old\n+new\n', decision: 'pending' },
+      '8': { taskId: 8, title: 'New note', kind: 'create', destination: 'Projects/New note.md', markdown: '# Exact content\n', decision: 'approved' }
+    } };
+    expect(await after.snapshot(EditReviewDoc, conversation.id, context)).toEqual(expected);
+    await after.commit(async tx => { (await tx.doc(EditReviewDoc, conversation.id)).items['7'].decision = 'rejected'; }, context);
+    await after.close(context);
+    const reopened = await open();
+    expected.items['7'].decision = 'rejected';
+    expect(await reopened.snapshot(EditReviewDoc, conversation.id, context)).toEqual(expected);
+  });
+
   it('registers only a durable task and exposes no mutation model tool', () => {
     const extension = publicationExtension();
     expect(extension.tools).toBeUndefined();
@@ -159,9 +185,9 @@ describe('publication task execution seam', () => {
     expect(f.native.mock.calls.map(([command]) => command)).toEqual(['pi_chat_bind_editor_owner', 'pi_chat_reconcile_mutation']);
     expect(getDocumentMarkdown(f.document)).toBe('Original');
   });
-  it('rejects a dirty owner before native effect admission', async () => {
+  it('returns an editor-busy block for a dirty owner before native effect admission', async () => {
     const f = fixture(); await f.bind(); updateDocumentMarkdown(f.document, 'Human draft');
-    await expect(publishPreparedMutation(intent)).rejects.toThrow();
+    await expect(publishPreparedMutation(intent)).resolves.toMatchObject({ status: 'blocked', code: 'editor_busy' });
     expect(f.native.mock.calls.some(([command]) => command === 'pi_chat_admit_editor_publication')).toBe(false);
     expect(getDocumentMarkdown(f.document)).toBe('Human draft');
   });
@@ -249,7 +275,7 @@ describe('publication task execution seam', () => {
     const conversation = await harness.createConversation({ ownership: { kind: 'ownerless' } }, context);
     const taskId = await harness.commit(tx => tx.createTask(PublicationTask, intent, { ownership: { kind: 'conversation' }, conversationId: conversation.id }), context);
     const result = await harness.waitForTask(taskId, context);
-    expect(result.state).toEqual({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId } } });
+    expect(result.state).toEqual({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId, noteId: committed.noteId } } });
     expect(getDocumentMarkdown(f.document)).toBe('Published');
     expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
   });
@@ -269,7 +295,7 @@ describe('publication task execution seam', () => {
     f.publishCanonical(); f.setOutcome(committed); pending.resolve(committed);
     await aborting;
     const result = await terminal;
-    expect(result.state).toEqual({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId } } });
+    expect(result.state).toEqual({ status: 'terminal', outcome: { status: 'completed', result: { status: 'committed', receiptId: committed.receiptId, noteId: committed.noteId } } });
     expect(f.service.isAgentPublicationActive()).toBe(false);
     expect(f.native.mock.calls.filter(([command]) => command === 'pi_chat_publish_mutation')).toHaveLength(1);
   });

@@ -511,6 +511,7 @@ function historicalDiff(
   const listeners = new Map<number, { event: string; handler: number }>();
   let pendingRestore: { promise: Promise<void>; release: () => void } | null = null;
   let activeNote = notes.get('note-alpha')!;
+  let lastChatLocation: { conversationId: string; contextNoteId: string | null; contextNotePath: string | null } | null = null;
   const pinnedNoteIds = new Set<string>();
   let nextHistoryPageDelayMillis = 0;
   let pendingSave: { release: () => void; promise: Promise<void>; fail: boolean } | null = null;
@@ -622,7 +623,11 @@ function historicalDiff(
         backgroundComplete: !pendingSave, backgroundUnavailable: false };
     }
     if (command === 'finalize_note_editing_window') { findNote(args); return null; }
-    if (command === 'get_last_chat_location') return null;
+    if (command === 'get_last_chat_location') return lastChatLocation;
+    if (command === 'set_last_chat_location') {
+      lastChatLocation = { conversationId: String(args.conversationId), contextNoteId: args.contextNoteId as string | null, contextNotePath: args.contextNotePath as string | null };
+      return null;
+    }
     if (command === 'plugin:window|theme') return 'light';
     if (command === 'load_note_session') return session(activeNote);
     if (command === 'open_note' || command === 'read_note') {
@@ -911,8 +916,19 @@ function historicalDiff(
       return { kind: 'note', noteId: 'note-beta', path: '/e2e/beta.md', title: 'Beta note', location: { quote: 'Beta body is independent from Alpha.' } };
     }
     if (command === 'pi_chat_set_read_policy') return (await import('./piBrowserFixture')).changeBrowserPiRead(String(args.authorityId), Number(args.expectedRevision), args.read as import('$lib/features/chat/pi/authority').ReadPolicy);
+    if (command === 'pi_chat_set_write_policy') {
+      const result = (await import('./piBrowserFixture')).changeBrowserPiWrite(String(args.authorityId), Number(args.expectedRevision), args.write as import('$lib/features/chat/pi/authority').WritePolicy);
+      bridge.emit('pi-chat-authority-changed', { retiredAuthorityIds: [], writePolicyChanged: true });
+      return result;
+    }
+    if (command === 'pi_chat_get_write_defaults') return (await import('./piBrowserFixture')).browserPiWriteDefaults();
+    if (command === 'pi_chat_set_write_defaults') {
+      const result = (await import('./piBrowserFixture')).changeBrowserPiWriteDefaults(args.write as import('$lib/features/chat/pi/authority').VaultWritePolicy);
+      bridge.emit('pi-chat-authority-changed', { retiredAuthorityIds: [], writePolicyChanged: true });
+      return result;
+    }
     if (command === 'pi_chat_set_exclusion') return { retiredAuthorityIds: [] };
-    if (['remember_note', 'set_last_chat_location'].includes(command)) return null;
+    if (command === 'remember_note') return null;
     throw new Error(`Browser fixture does not implement command: ${command}`);
   };
 
@@ -945,9 +961,10 @@ function historicalDiff(
       window.__TAURI_INTERNALS__ = internals;
     },
     setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
-    async seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean }) { return (await import('./piBrowserFixture')).seedBrowserPiChat(options); },
+    async seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean; toolCalls?: number }) { return (await import('./piBrowserFixture')).seedBrowserPiChat(options); },
     async readPiChat() { return (await import('./piBrowserFixture')).readBrowserPiChat(); },
     async holdNextPiResponse() { (await import('./piBrowserFixture')).holdNextBrowserPiResponse(); },
+    async setNextPiResponse(text: string, reasoning?: string) { (await import('./piBrowserFixture')).setNextBrowserPiResponse(text, reasoning); },
     emit(event: string, payload: unknown) {
       for (const [id, listener] of [...listeners]) {
         if (listener.event === event) callbacks.get(listener.handler)?.({ event, id, payload });

@@ -6,6 +6,48 @@ const native = vi.hoisted(() => ({ invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: native.invoke, Channel: class { onmessage = (_frame: unknown) => {}; } }));
 beforeEach(() => { native.invoke.mockReset(); });
 
+it('forwards live reasoning and answer text while the native stream and terminal admission are still pending', async () => {
+  const releaseText = Promise.withResolvers<void>();
+  const releaseDone = Promise.withResolvers<void>();
+  const received: string[] = [];
+  native.invoke.mockImplementation(async (command, args) => {
+    if (command === 'pi_chat_model_configuration') return { contextWindow: 8192, maxTokens: 2048, images: false, tools: true, reasoningEffort: 'on', reasoningWireEffort: null };
+    if (command === 'pi_chat_validate_authority') return;
+    if (command === 'pi_chat_fetch') {
+      const chunk = (delta: Record<string, string>, finish: string | null = null) => args.frames.onmessage({ type: 'chunk', bytes: [...new TextEncoder().encode(`data: ${JSON.stringify({ id: 'local', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`)] });
+      args.frames.onmessage({ type: 'headers', status: 200, content_type: 'text/event-stream' });
+      chunk({ role: 'assistant', reasoning_content: 'Compare the note themes.' });
+      await releaseText.promise;
+      chunk({ content: 'Your notes explore creative projects.' });
+      await releaseDone.promise;
+      chunk({}, 'stop');
+      args.frames.onmessage({ type: 'chunk', bytes: [...new TextEncoder().encode('data: [DONE]\n\n')] });
+      args.frames.onmessage({ type: 'done' });
+      return;
+    }
+    throw new Error(`Unexpected command ${command}`);
+  });
+  const binding: NativeBinding = { authorityId: 'authority', conversationId: 1, providerSessionId: 'session' };
+  const admit = vi.fn(async (_binding: NativeBinding, message: AssistantMessage) => message);
+  const models = createNativeModels(new Map([['session', binding]]), admit);
+  const model = await models.registerModel('local', 'fixture');
+  const stream = models.streamSimple(model, { messages: [{ role: 'user', content: 'Find themes', timestamp: 1 }] }, { sessionId: 'session' });
+  const consume = (async () => { for await (const event of stream) received.push(event.type); })();
+  try {
+    await vi.waitFor(() => expect(received).toContain('thinking_delta'));
+    expect(admit).not.toHaveBeenCalled();
+    expect(received).not.toContain('text_delta');
+    releaseText.resolve();
+    await vi.waitFor(() => expect(received).toContain('text_delta'));
+    expect(received).not.toContain('done');
+    expect(admit).not.toHaveBeenCalled();
+  } finally {
+    releaseText.resolve(); releaseDone.resolve(); await consume;
+  }
+  expect((await stream.result()).stopReason).toBe('stop');
+  expect(admit).toHaveBeenCalledTimes(1);
+});
+
 it('never forwards caller URLs or headers to native routing or credentials', async () => {
   native.invoke.mockImplementation(async (command, args) => {
     expect(command).toBe('pi_chat_fetch');
@@ -106,7 +148,7 @@ it('merges concurrent selected-model registrations and explicitly reloads change
     }
     throw new Error(`Unexpected command ${command}`);
   });
-  const models = createNativeModels(new Map());
+  const models = createNativeModels(new Map(), async (_binding, message) => message);
   const pendingFirst = models.registerModel('local', 'first');
   const second = await models.registerModel('local', 'second');
   firstConfiguration.resolve();
@@ -222,7 +264,7 @@ it.each([
     throw new Error('Unexpected native command');
   });
   const binding: NativeBinding = { authorityId: 'authority', conversationId: 1, providerSessionId: 'session' };
-  const models = createNativeModels(new Map([['session', binding]]));
+  const models = createNativeModels(new Map([['session', binding]]), async (_binding, message) => message);
   const model = await models.registerModel(provider, 'model-with-no-inferred-capabilities');
   const transcript = { messages: [{ role: 'user' as const, content: 'Hello', timestamp: 1 }] };
   expect((await models.complete(model, transcript, { sessionId: 'session', reasoningEffort: 'max' })).stopReason).toBe('stop');

@@ -18,18 +18,13 @@ describe('Pi Markdown source admission', () => {
     expect(rendered).not.toContain('<strong>');
   });
   it('keeps pending and model app-like targets inert while rendering ordinary Markdown', () => {
-    const markdown = `**Answer** [Revision source](gneauxghts-source:${source}) [web](https://example.com) <script>alert(1)</script>`;
+    const markdown = `**Answer** [Note: Plan](gneauxghts-source:${source}) [web](https://example.com) <script>alert(1)</script>`;
     expect(renderPiMarkdown(markdown)).not.toContain('data-pi-source');
     expect(renderPiMarkdown(markdown)).toContain('<strong>Answer</strong>');
     expect(renderPiMarkdown(markdown)).not.toContain('<script>');
     expect(renderPiMarkdown(markdown, true)).toContain(`data-pi-source="${source}"`);
   });
   it.each([`gneauxghts-source&#58;${source}`, `gneauxghts-source%3A${source}`, `GNEAUXGHTS-SOURCE:${source}`, `gneauxghts-source\\:${source}`])('does not activate decoded forged target %s', target => {
-    expect(renderPiMarkdown(`[Revision source](${target})`, true)).not.toContain('data-pi-source');
-  });
-  it.each(['Historical note source', 'Historical read (opens current note; content may differ)'])('renders older generic source labels as note links: %s', label => {
-    const rendered = renderPiMarkdown(`[${label}](gneauxghts-source:${source})`, true);
-    expect(rendered).toContain(`data-pi-source="${source}"`);
-    expect(rendered).toContain('>Note</a>');
+    expect(renderPiMarkdown(`[Note: Plan](${target})`, true)).not.toContain('data-pi-source');
   });
 });

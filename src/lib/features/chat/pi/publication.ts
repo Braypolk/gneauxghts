@@ -1,22 +1,52 @@
 import { invoke } from './nativeInvoke';
-import { defineExtension, defineTask } from '@earendil-works/pi-durable';
+import { defineDoc, defineExtension, defineTask, type Harness, type ConversationId, type TaskId, type TaskRecord } from '@earendil-works/pi-durable';
+import type { JsonValue } from '@earendil-works/chord';
+import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 import type { AgentPublicationTarget, DocumentEditingService } from '$lib/features/notepad/document/documentEditingService';
+import { DocumentPublicationBlocked } from '$lib/features/notepad/document/documentPublicationAdmission';
 import type { AuthoritySnapshot, WritePolicy } from './authority';
 
-export type Mutation =
-  | { operation: 'create'; folder: string; title: string; markdown: string }
-  | { operation: 'update'; noteId: string; expectedReadSourceId: string; markdown: string };
-export type PreparedMutation = { intentId: string; payloadHash: string; reviewRequired: boolean; target: AgentPublicationTarget };
+export type Mutation = { operation: 'create'; folder: string; title: string; markdown: string } | { operation: 'update'; noteId: string; expectedReadSourceId: string; markdown: string };
+export type PreparedMutation = { intentId: string; payloadHash: string; reviewRequired: boolean; target: AgentPublicationTarget; creation?: { destination: string; markdown: string } };
 export type PublicationResult =
   | { status: 'committed'; receiptId: string; noteId: string; path: string; markdown: string; commitWarning?: CommittedMutationWarning }
   | { status: 'blocked'; code: string; message: string };
 export type ReconciliationResult = PublicationResult | { status: 'unpublished' };
-/** Pi checkpoints retain references; canonical content and warnings stay native-owned. */
+/** Pi retains receipt/note references and warning presentation; canonical content/proof stay native-owned. */
 export type PublicationTaskResult =
-  | { status: 'committed'; receiptId: string }
+  | { status: 'committed'; receiptId: string; noteId: string; commitWarning?: Pick<CommittedMutationWarning, keyof CommittedMutationWarning> }
   | { status: 'blocked'; code: string; message: string };
-export type PublicationIntent = { authorityId: string; intentId: string; target: AgentPublicationTarget };
+export type CommittedEdit = Extract<PublicationTaskResult, { status: 'committed' }>;
+export type PublicationIntent = { authorityId: string; intentId: string; target: AgentPublicationTarget;
+  review?: { payloadHash: string } };
+export type EditReview = { taskId: number; title: string; decision: 'pending' | 'approved' | 'rejected' } & (
+  | { kind: 'edit'; patch: string }
+  | { kind: 'create'; destination: string; markdown: string }
+);
+export const EditReviewDoc = defineDoc({ kind: 'gneauxghts.editReviews', version: 2, scope: 'conversation', history: 'latest', fork: 'initial',
+  initial: (): { items: Record<string, EditReview> } => ({ items: {} }),
+  migrate(value, fromVersion) {
+    if (fromVersion !== 1) throw new Error('Unsupported note review version.');
+    // Preserve pending decisions across this shape change; rendering and task
+    // progression consume only the current discriminated representation.
+    const items = value.items as Record<string, { taskId: number; title: string; decision: EditReview['decision']; patch: string; creation?: { destination: string; markdown: string } }>;
+    return { items: Object.fromEntries(Object.entries(items).map(([key, { taskId, title, decision, patch, creation }]) => [key,
+      { taskId, title, decision, ...(creation ? { kind: 'create' as const, ...creation } : { kind: 'edit' as const, patch }) }
+    ])) };
+  } });
+
+/** User decisions change Pi working state; native approval still binds the exact payload. */
+export async function decideEditReview(harness: Harness, conversationId: ConversationId, taskId: number, decision: 'approved' | 'rejected') {
+  await harness.commit(async tx => {
+    const task = await tx.task(taskId as TaskId);
+    if (!task || task.conversationId !== conversationId || task.state.status === 'terminal' || task.abortRequested) throw new Error('This edit is no longer awaiting review.');
+    const doc = await tx.doc(EditReviewDoc, conversationId);
+    const review = doc.items[String(taskId)];
+    if (!review || review.decision !== 'pending') throw new Error('This edit was already reviewed.');
+    review.decision = decision;
+  }, BACKGROUND_CONTEXT);
+}
 type DocumentOwner = Pick<DocumentEditingService<string>, 'withAgentPublication' | 'releaseSettledAgentPublication'>;
 type NativeCall = typeof invoke;
 type BoundOwner = { ownerId: string; document: DocumentOwner; native: NativeCall; closed: boolean; closing?: Promise<void>; operations: Set<Promise<unknown>> };
@@ -36,7 +66,7 @@ export const rejectMutation = (authorityId: string, intentId: string) =>
 export const setWritePolicy = (authorityId: string, expectedRevision: number, write: WritePolicy) =>
   invoke<AuthoritySnapshot>('pi_chat_set_write_policy', { authorityId, expectedRevision, write });
 
-/** Install the actual workspace owner. The synthetic task and future writer share this path. */
+/** Install the actual workspace owner for canonical agent publication. */
 export async function bindPublicationDocumentOwner(document: DocumentOwner, native: NativeCall = invoke) {
   if (bound?.closed) {
     // A route may remount while the retired workspace still joins its effect and
@@ -127,52 +157,137 @@ async function executePreparedMutation(owner: BoundOwner, intent: PublicationInt
   const prior = await native<ReconciliationResult>('pi_chat_reconcile_mutation', { intentId: intent.intentId });
   if (prior.status !== 'unpublished') return prior;
   signal?.throwIfAborted();
-  return document.withAgentPublication(intent.target, async lease => {
-    signal?.throwIfAborted();
-    if (owner.closed) throw new Error('The publication document owner is closing.');
-    const admissionId = await native<string>('pi_chat_admit_editor_publication', { ownerId, intentId: intent.intentId, target: intent.target });
-    let result: PublicationResult | undefined;
-    let failure: unknown;
-    try {
+  let effectStarted = false;
+  try {
+    return await document.withAgentPublication(intent.target, async lease => {
+      effectStarted = true;
       signal?.throwIfAborted();
-      result = await native<PublicationResult>('pi_chat_publish_mutation', { authorityId: intent.authorityId, intentId: intent.intentId });
-    } catch (error) { failure = error; }
-    try {
-      await native('pi_chat_release_editor_publication', { ownerId, admissionId });
-    } catch (error) {
-      lease.retainUntilSettled();
-      throw error;
-    }
-    if (!result) {
-      let recovered: ReconciliationResult;
-      try { recovered = await native<ReconciliationResult>('pi_chat_reconcile_mutation', { intentId: intent.intentId }); }
-      catch (error) { await lease.captureCanonical(); throw error; }
-      if (recovered.status !== 'unpublished') result = recovered;
-    }
-    if (!result) { await lease.captureCanonical(); throw failure ?? new Error('The mutation has no confirmed publication outcome.'); }
-    if (result.status === 'committed') {
-      try { await lease.adopt(result); } catch (error) { await lease.captureCanonical(); throw error; }
-    }
-    return result;
-  });
+      if (owner.closed) throw new Error('The publication document owner is closing.');
+      const admissionId = await native<string>('pi_chat_admit_editor_publication', { ownerId, intentId: intent.intentId, target: intent.target });
+      let result: PublicationResult | undefined;
+      let failure: unknown;
+      try {
+        signal?.throwIfAborted();
+        result = await native<PublicationResult>('pi_chat_publish_mutation', { authorityId: intent.authorityId, intentId: intent.intentId });
+      } catch (error) { failure = error; }
+      try {
+        await native('pi_chat_release_editor_publication', { ownerId, admissionId });
+      } catch (error) {
+        lease.retainUntilSettled();
+        throw error;
+      }
+      if (!result) {
+        let recovered: ReconciliationResult;
+        try { recovered = await native<ReconciliationResult>('pi_chat_reconcile_mutation', { intentId: intent.intentId }); }
+        catch (error) { await lease.captureCanonical(); throw error; }
+        if (recovered.status !== 'unpublished') result = recovered;
+      }
+      if (!result) { await lease.captureCanonical(); throw failure ?? new Error('The mutation has no confirmed publication outcome.'); }
+      if (result.status === 'committed') {
+        try { await lease.adopt(result); } catch (error) { await lease.captureCanonical(); throw error; }
+      }
+      return result;
+    });
+  } catch (error) {
+    // Only a refusal before entering the effect proves that the editor blocked
+    // this attempt. The same exception during receipt adoption is a real error.
+    if (!effectStarted && error instanceof DocumentPublicationBlocked) return { status: 'blocked', code: 'editor_busy', message: error.message };
+    throw error;
+  }
 }
 
-/** Registered as a task only: the initial model tool registry remains read-only. */
 function taskResult(result: PublicationResult): PublicationTaskResult {
-  return result.status === 'committed' ? { status: 'committed', receiptId: result.receiptId } : result;
+  return result.status === 'committed' ? { status: 'committed', receiptId: result.receiptId, noteId: result.noteId, ...(result.commitWarning ? { commitWarning: result.commitWarning } : {}) } : result;
 }
 
-export const PublicationTask = defineTask<PublicationIntent, { phase: 'publish' }, PublicationTaskResult>({
-  name: 'gneauxghts.chat.publication', version: 1, initial: () => ({ phase: 'publish' }),
-  phases: { publish: async (task, runtime, context) => {
-    const result = await publishPreparedMutation(task.input, runtime.signal);
-    await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: taskResult(result) } }), context);
-  } },
+function publicationError(error: unknown, fallback: string) {
+  const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : fallback;
+  const code = error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : undefined;
+  return { message, ...(code ? { detail: { code } } : {}) };
+}
+
+type PublicationCheckpoint = { phase: 'review' } | { phase: 'publish' };
+export const PublicationTask = defineTask<PublicationIntent, PublicationCheckpoint, PublicationTaskResult>({
+  name: 'gneauxghts.chat.publication', version: 3, initial: input => ({ phase: input.review ? 'review' : 'publish' }),
+  phases: {
+    review: async (task, runtime, context) => {
+      const details = task.input.review!;
+      const key = String(runtime.taskId);
+      const watch = await runtime.watchDoc(EditReviewDoc, runtime.conversationId, context);
+      if (!watch) throw new Error('Edit review is unavailable.');
+      const decision = await new Promise<EditReview['decision']>((resolve, reject) => {
+        const changed = (doc: { items: Record<string, EditReview> }) => {
+          const value = doc.items[key]?.decision;
+          if (value && value !== 'pending') resolve(value);
+        };
+        if (watch.value) changed(watch.value);
+        watch.start(async value => { if (value) changed(value); });
+        void watch.closed.then(() => reject(new Error('Edit review observation ended.')));
+      });
+      try {
+        if (decision === 'rejected') await rejectMutation(task.input.authorityId, task.input.intentId);
+        else await approveMutation(task.input.authorityId, task.input.intentId, details.payloadHash);
+      } catch (error) {
+        if (runtime.signal.aborted) throw error;
+        await runtime.commit(async tx => {
+          delete (await tx.doc(EditReviewDoc, runtime.conversationId)).items[key];
+          return { status: 'terminal', outcome: { status: 'failed', error: publicationError(error, 'Native edit review is unavailable.') } };
+        }, context);
+        return;
+      }
+      if (decision === 'rejected') {
+        await runtime.commit(async tx => {
+          delete (await tx.doc(EditReviewDoc, runtime.conversationId)).items[key];
+          return { status: 'terminal', outcome: { status: 'completed', result: { status: 'blocked', code: 'review_rejected', message: 'The user discarded this edit.' } } };
+        }, context);
+      } else {
+        await runtime.commit(async tx => {
+          delete (await tx.doc(EditReviewDoc, runtime.conversationId)).items[key];
+          return { status: 'running', checkpoint: { phase: 'publish' } };
+        }, context);
+      }
+    },
+    publish: async (task, runtime, context) => {
+      let result: PublicationResult;
+      try { result = await publishPreparedMutation(task.input, runtime.signal); }
+      catch (error) {
+        if (runtime.signal.aborted) throw error;
+        const failure = publicationError(error, 'Native edit publication is unavailable.');
+        if (!failure.detail) throw error;
+        await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'failed', error: failure } }), context);
+        return;
+      }
+      await runtime.commit(() => ({ status: 'terminal', outcome: { status: 'completed', result: taskResult(result) } }), context);
+    }
+  },
   abort: async (task, runtime, context) => {
-    const result = await invoke<ReconciliationResult>('pi_chat_reconcile_mutation', { intentId: task.input.intentId });
+    let result: ReconciliationResult;
+    try {
+      result = await invoke<ReconciliationResult>('pi_chat_reconcile_mutation', { intentId: task.input.intentId });
+      if (result.status === 'unpublished' && task.input.review) {
+        try { await rejectMutation(task.input.authorityId, task.input.intentId); }
+        catch (error) {
+          // Retirement already forbids new effects. A rejection failure must not
+          // prevent cancellation or leave a review card after the Pi task ends.
+          if (!(error && typeof error === 'object' && 'code' in error && error.code === 'retired_authority')) runtime.report(error);
+        }
+      }
+    } finally {
+      await runtime.commit(async tx => {
+        delete (await tx.doc(EditReviewDoc, runtime.conversationId)).items[String(runtime.taskId)];
+        return undefined;
+      }, context);
+    }
     await runtime.commit(() => ({ status: 'terminal', outcome: result.status === 'committed'
       ? { status: 'completed', result: taskResult(result) }
       : { status: 'aborted', reason: 'Publication cancelled; no new effect is authorized.' } }), context);
   }
 });
 export const publicationExtension = () => defineExtension({ name: 'gneauxghts.publication', tasks: [PublicationTask] });
+
+/** Presentation reads the settled Pi result; an aborted caller cannot undo a proven effect. */
+export function committedPublicationResult(task: TaskRecord<JsonValue, JsonValue, JsonValue>): CommittedEdit | undefined {
+  if (task.kind !== PublicationTask.definition.name || task.state.status !== 'terminal' || task.state.outcome.status !== 'completed') return;
+  const result = task.state.outcome.result as PublicationTaskResult;
+  return result.status === 'committed' ? result : undefined;
+}

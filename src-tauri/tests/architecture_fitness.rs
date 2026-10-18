@@ -627,15 +627,15 @@ fn pi_native_publication_and_reads_use_retained_domain_owners() {
     let notes = repository_file("src-tauri/src/pi_chat/notes.rs");
     assert_contains_all(
         &publication,
-        &[
-            ".create_note_with_proof(",
-            ".update_note_with_proof(",
-            ".reconcile_publication(",
-        ],
+        &[".update_note_with_proof(", ".create_note_with_proof(", ".reconcile_publication("],
     );
     assert_contains_none(
         &publication,
-        &["atomic_write_note", "atomic_create_note", "fs::write("],
+        &[
+            "atomic_write_note",
+            "atomic_create_note",
+            "fs::write(",
+        ],
     );
     assert_contains_all(&notes, &[".current_content(", ".read_note("]);
     for source in [&publication, &notes] {

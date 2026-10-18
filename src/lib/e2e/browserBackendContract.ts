@@ -23,9 +23,10 @@ declare global {
       releaseSave(): void;
       seedImageAsset(name: string): void;
       configureImageSave(failures?: number, delayMillis?: number): void;
-      seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean }): Promise<string>;
+      seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean; toolCalls?: number }): Promise<string>;
       readPiChat(): Promise<Array<{ id: string; title: string; messages: Array<{ role: string; content: string }> }>>;
       holdNextPiResponse(): Promise<void>;
+      setNextPiResponse(text: string, reasoning?: string): Promise<void>;
       emit(event: string, payload: unknown): void;
       holdHistoryRestore(): void;
       releaseHistoryRestore(): void;

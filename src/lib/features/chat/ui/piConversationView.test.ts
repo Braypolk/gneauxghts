@@ -1,16 +1,264 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createRegistry, defineExtension, defineTool, defineTask, LiveDoc, InboxDoc } from '@earendil-works/pi-durable';
+import { createRegistry, defineExtension, defineTool, defineTask, AgentDoc, LiveDoc, InboxDoc } from '@earendil-works/pi-durable';
 import { Type } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
 import { ChatDoc, PI_CONTEXT, type PiChat } from '../pi/runtime';
 import { piViewFixture } from './piViewTestSupport';
 import { createPiConversationView, latestFailure, viewInbox, viewLive } from './piConversationView';
 import { fixtureSettings } from './piViewTestSupport';
+import * as publication from '../pi/publication';
 
 const gate = () => { let resolve!: () => void; const promise = new Promise<void>(done => resolve = done); return { promise, resolve }; };
 const untilAborted = (signal: AbortSignal | undefined) => signal?.aborted ? Promise.resolve() : new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }));
 
 describe('Pi conversation presentation binding', () => {
+  it.each(['creation', 'selection', 'disposal'] as const)('does not change editing permission after the originating draft is superseded during %s', async phase => {
+    const f = await piViewFixture(), started = gate(), release = gate();
+    const write = vi.spyOn(publication, 'setWritePolicy').mockImplementation(async (id, _revision, value) => ({ ...[...f.authorities.values()].find(a => a.authorityId === id)!, write: value }));
+    try {
+      await f.binding.initialize();
+      const other = await f.runtime.createConversation({ title: 'Other chat' });
+      if (phase === 'selection') {
+        const read = f.runtime.authorityForConversation.bind(f.runtime);
+        vi.spyOn(f.runtime, 'authorityForConversation').mockImplementation(async id => {
+          if (id !== other.id) { started.resolve(); await release.promise; }
+          return read(id);
+        });
+      } else {
+        const create = f.runtime.createConversation.bind(f.runtime);
+        vi.spyOn(f.runtime, 'createConversation').mockImplementationOnce(async options => {
+          const result = await create(options); started.resolve(); await release.promise; return result;
+        });
+      }
+      const changing = f.binding.changeWrite({ grant: { duration: 'temporary', conversationId: 0, operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying: true });
+      const rejected = expect(changing).rejects.toThrow('chat changed');
+      await started.promise;
+      if (phase === 'disposal') f.binding.dispose(); else await f.binding.select(String(other.id));
+      release.resolve(); await rejected;
+      expect(write).not.toHaveBeenCalled();
+      if (phase !== 'disposal') expect(f.binding.getSnapshot().conversation?.id).toBe(other.id);
+    } finally { release.resolve(); write.mockRestore(); await f.close(); }
+  });
+
+  it('grants editing permission to the new chat when its selection stays current', async () => {
+    const f = await piViewFixture();
+    const write = vi.spyOn(publication, 'setWritePolicy').mockImplementation(async (id, revision, value) => ({ ...[...f.authorities.values()].find(a => a.authorityId === id)!, revision: revision + 1, write: value }));
+    try {
+      await f.binding.initialize();
+      await f.binding.changeWrite({ grant: { duration: 'temporary', conversationId: 0, operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying: true });
+      const current = f.binding.getSnapshot();
+      expect(current.authority?.write.grant).toMatchObject({ duration: 'temporary', conversationId: current.conversation!.id });
+      expect(write.mock.calls[0][0]).toBe(current.authority!.authorityId);
+    } finally { write.mockRestore(); await f.close(); }
+  });
+
+  it('opens without writing or resolving an agent, observes model changes and receives the first review', async () => {
+    const fixture = await piViewFixture();
+    try {
+      await fixture.binding.initialize();
+      const conversation = await fixture.runtime.createConversation({ title: 'Watch-backed selection' });
+      await fixture.binding.refreshList();
+      vi.spyOn(fixture.harness, 'conversation').mockResolvedValueOnce(conversation);
+      const agent = vi.spyOn(conversation, 'agent'), commit = vi.spyOn(fixture.harness, 'commit');
+      await fixture.binding.select(String(conversation.id));
+      expect(commit).not.toHaveBeenCalled(); expect(agent).not.toHaveBeenCalled();
+      expect(fixture.binding.getSnapshot()).toMatchObject({ title: 'Watch-backed selection', provider: 'local', model: 'fixture', editReviews: [] });
+      const review = { taskId: 7, title: 'First edit', kind: 'edit' as const, patch: 'Exact diff', decision: 'pending' as const };
+      await fixture.harness.commit(async tx => {
+        (await tx.doc(AgentDoc, conversation.id)).model = { provider: 'openai', modelId: 'watch-model' };
+        (await tx.doc(publication.EditReviewDoc, conversation.id)).items['7'] = review;
+      }, PI_CONTEXT);
+      await vi.waitFor(() => expect(fixture.binding.getSnapshot()).toMatchObject({ provider: 'openai', model: 'watch-model', editReviews: [review] }));
+      expect(fixture.faux.state.callCount).toBe(0);
+    } finally { await fixture.close(); }
+  });
+
+  it.each(['title', 'forgotten'] as const)('uses initial watch metadata when %s changes just before attachment', async field => {
+    const fixture = await piViewFixture();
+    try {
+      await fixture.binding.initialize();
+      const conversation = await fixture.runtime.createConversation({ title: 'Before attachment' });
+      const watchDoc = fixture.harness.watchDoc.bind(fixture.harness);
+      vi.spyOn(fixture.harness, 'watchDoc').mockImplementationOnce(async (...args) => {
+        await fixture.harness.commit(async tx => {
+          const doc = await tx.doc(ChatDoc, conversation.id);
+          if (field === 'title') doc.title = 'At attachment'; else doc.forgotten = true;
+        }, PI_CONTEXT);
+        return watchDoc(...args);
+      });
+      await fixture.binding.select(String(conversation.id));
+      if (field === 'title') expect(fixture.binding.getSnapshot().title).toBe('At attachment');
+      else expect(fixture.binding.getSnapshot().conversation).toBeNull();
+      expect(fixture.faux.state.callCount).toBe(0);
+    } finally { await fixture.close(); }
+  });
+
+  it('retains loaded history during streaming without rebuilding it for progress-only frames', async () => {
+    const fixture = await piViewFixture({ tokensPerSecond: 500 });
+    let stop = () => {};
+    try {
+      await fixture.binding.initialize();
+      const conversation = await fixture.runtime.createConversation();
+      for (let index = 0; index < 61; index++) await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [{ role: 'user', content: `Past ${index}`, timestamp: index }] } }, PI_CONTEXT);
+      const history = (await conversation.entries({ order: 'ascending' }, 100, undefined, PI_CONTEXT)).items;
+      await conversation.submit({ type: 'write', entry: { kind: 'pi.compaction', head: history[55].id, model: [{ role: 'user', content: '<summary>Earlier history</summary>', timestamp: 100 }] } }, PI_CONTEXT);
+      await fixture.binding.select(String(conversation.id)); await fixture.binding.loadOlder();
+      let previous = fixture.binding.getSnapshot(), progressFrames = 0;
+      stop = fixture.binding.subscribe(value => {
+        if (value.view && value.view !== previous.view && value.view.entries === previous.view?.entries && viewLive(value.view).generation?.message) {
+          expect(value.entries).toBe(previous.entries);
+          progressFrames++;
+        }
+        previous = value;
+      });
+      const answer = 'A streamed answer that keeps the entire loaded conversation history.';
+      fixture.faux.setResponses([fauxAssistantMessage(answer)]);
+      await (await fixture.binding.send('Continue after compaction'))!.wait(PI_CONTEXT);
+      await vi.waitFor(() => expect(JSON.stringify(fixture.binding.getSnapshot().entries)).toContain(answer));
+      expect(progressFrames).toBeGreaterThan(1);
+      expect(fixture.binding.getSnapshot().entries.some(entry => entry.id === history[0].id)).toBe(true);
+    } finally { stop(); await fixture.close(); }
+  });
+
+  it('merges a full replacement frame after Pi coalesces a slow history observer', async () => {
+    const fixture = await piViewFixture(), started = gate(), release = gate();
+    let replacements = 0;
+    try {
+      await fixture.binding.initialize();
+      const conversation = await fixture.runtime.createConversation();
+      const watch = conversation.watch.bind(conversation);
+      vi.spyOn(fixture.harness, 'conversation').mockResolvedValueOnce(conversation);
+      vi.spyOn(conversation, 'watch').mockImplementationOnce(async context => {
+        const handle = await watch(context), start = handle.start.bind(handle);
+        let hold = true;
+        vi.spyOn(handle, 'start').mockImplementation(listener => start(async (view, ops, context) => {
+          if (hold) { hold = false; started.resolve(); await release.promise; }
+          await listener(view, ops, context);
+          if (ops.some(op => op[0] === 'r')) {
+            replacements++;
+            expect(fixture.binding.getSnapshot().entries).toEqual(expect.arrayContaining([...view.entries]));
+          }
+        }));
+        return handle;
+      });
+      await fixture.binding.select(String(conversation.id));
+      await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [] } }, PI_CONTEXT);
+      await started.promise;
+      for (let index = 0; index < 150; index++) await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [] } }, PI_CONTEXT);
+      release.resolve();
+      await vi.waitFor(() => expect(fixture.binding.getSnapshot().entries).toHaveLength(151));
+      expect(replacements).toBeGreaterThan(0);
+    } finally { release.resolve(); await fixture.close(); }
+  });
+
+  it('reopens the last viewed chat with its history, even when a newer chat exists, and keeps New chat fresh', async () => {
+    const fixture = await piViewFixture();
+    const conversation = await fixture.runtime.createConversation({ title: 'Last viewed' });
+    await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [{ role: 'user', content: 'Remember this history', timestamp: 1 }] } }, PI_CONTEXT);
+    await fixture.runtime.createConversation({ title: 'Created later' });
+    const remembered = vi.fn(async () => String(conversation.id));
+    const binding = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      lastConversation: remembered, observeAuthority: async () => () => {} });
+    try {
+      await binding.initialize(null);
+      expect(binding.getSnapshot().conversation?.id).toBe(conversation.id);
+      expect(binding.getSnapshot().entries[0].model).toMatchObject([{ role: 'user', content: 'Remember this history' }]);
+      await binding.startNew();
+      await binding.initialize();
+      expect(binding.getSnapshot().conversation).toBeNull();
+      expect(remembered).toHaveBeenCalledTimes(1);
+      expect(fixture.faux.state.callCount).toBe(0);
+    } finally { binding.dispose(); await fixture.close(); }
+  });
+
+  it('honors an explicit conversation instead of restoring the remembered chat', async () => {
+    const fixture = await piViewFixture();
+    const conversation = await fixture.runtime.createConversation();
+    const remembered = vi.fn(async () => '999');
+    const binding = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      lastConversation: remembered, observeAuthority: async () => () => {} });
+    try {
+      await binding.initialize(String(conversation.id));
+      expect(binding.getSnapshot().conversation?.id).toBe(conversation.id);
+      expect(remembered).not.toHaveBeenCalled();
+    } finally { binding.dispose(); await fixture.close(); }
+  });
+
+  it.each(['missing', 'forgotten', 'invalid', 'unavailable'] as const)('opens a fresh composer when the remembered chat is %s', async kind => {
+    const fixture = await piViewFixture();
+    const conversation = await fixture.runtime.createConversation();
+    if (kind === 'forgotten') await fixture.harness.commit(async tx => { (await tx.doc(ChatDoc, conversation.id)).forgotten = true; }, PI_CONTEXT);
+    const binding = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      lastConversation: async () => {
+        if (kind === 'unavailable') throw new Error('Preference unavailable');
+        return kind === 'forgotten' ? String(conversation.id) : kind === 'invalid' ? 'legacy-chat' : '999';
+      }, observeAuthority: async () => () => {} });
+    try {
+      await binding.initialize();
+      expect(binding.getSnapshot()).toMatchObject({ initialized: true, loading: false, conversation: null, error: null });
+      expect(fixture.faux.state.callCount).toBe(0);
+    } finally { binding.dispose(); await fixture.close(); }
+  });
+
+  it('lets New chat supersede a delayed remembered selection', async () => {
+    const fixture = await piViewFixture();
+    const conversation = await fixture.runtime.createConversation();
+    const started = gate(), release = gate();
+    const binding = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      lastConversation: async () => { started.resolve(); await release.promise; return String(conversation.id); }, observeAuthority: async () => () => {} });
+    try {
+      const opening = binding.initialize();
+      await started.promise;
+      await binding.startNew();
+      release.resolve(); await opening;
+      expect(binding.getSnapshot()).toMatchObject({ loading: false, conversation: null, error: null });
+    } finally { release.resolve(); binding.dispose(); await fixture.close(); }
+  });
+
+  it('refreshes native write policy and revisions across mounted chat bindings', async () => {
+    const fixture = await piViewFixture();
+    const receive: Array<(change: { retiredAuthorityIds: string[]; writePolicyChanged?: boolean }) => void> = [];
+    const bindings = [0, 1].map(() => createPiConversationView({
+      open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      observeAuthority: async callback => { receive.push(callback); return () => {}; }
+    }));
+    try {
+      const first = await fixture.runtime.createConversation(), second = await fixture.runtime.createConversation();
+      await bindings[0].initialize(String(first.id)); await bindings[1].initialize(String(second.id));
+      for (const id of [first.id, second.id]) {
+        const authority = fixture.authorities.get(id)!;
+        fixture.authorities.set(id, { ...authority, revision: authority.revision + 1,
+          write: { grant: { duration: 'always', operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying: false } });
+      }
+      for (const callback of receive) callback({ retiredAuthorityIds: [], writePolicyChanged: true });
+      await vi.waitFor(() => {
+        for (const binding of bindings) {
+          expect(binding.getSnapshot().authority?.revision).toBe(2);
+          expect(binding.getSnapshot().authority?.write.grant.duration).toBe('always');
+          expect(binding.getSnapshot().authority?.write.reviewBeforeApplying).toBe(false);
+        }
+      });
+    } finally { for (const binding of bindings) binding.dispose(); await fixture.close(); }
+  });
+  it('does not replace a newer native policy event with a delayed command response', async () => {
+    const fixture = await piViewFixture();
+    let receive!: (change: { retiredAuthorityIds: string[]; writePolicyChanged?: boolean }) => void;
+    const binding = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings,
+      observeAuthority: async callback => { receive = callback; return () => {}; } });
+    const response = Promise.withResolvers<Awaited<ReturnType<typeof publication.setWritePolicy>>>();
+    const write = vi.spyOn(publication, 'setWritePolicy').mockReturnValue(response.promise);
+    try {
+      const conversation = await fixture.runtime.createConversation(); await binding.initialize(String(conversation.id));
+      const old = fixture.authorities.get(conversation.id)!;
+      const pending = binding.changeWrite({ grant: { duration: 'off' }, reviewBeforeApplying: true });
+      const newer = { ...old, revision: 3, write: { ...old.write, reviewBeforeApplying: false } };
+      fixture.authorities.set(conversation.id, newer);
+      receive({ retiredAuthorityIds: [], writePolicyChanged: true });
+      await vi.waitFor(() => expect(binding.getSnapshot().authority?.revision).toBe(3));
+      response.resolve({ ...old, revision: 2 }); await pending;
+      expect(binding.getSnapshot().authority).toEqual(newer);
+    } finally { write.mockRestore(); binding.dispose(); await fixture.close(); }
+  });
   it('forgets an idle chat durably, updates other panes, and restores its exact Pi history without inference', async () => {
     const fixture = await piViewFixture();
     const other = createPiConversationView({ open: async () => fixture.runtime as unknown as PiChat, settings: async () => fixtureSettings, observeAuthority: async () => () => {} });
@@ -289,8 +537,8 @@ describe('Pi conversation presentation binding', () => {
       await binding.initialize(); const conversation = await runtime.createConversation();
       vi.spyOn(harness, 'conversation').mockResolvedValueOnce(conversation);
       const watch = conversation.watch.bind(conversation), watchDoc = harness.watchDoc.bind(harness);
-      vi.spyOn(conversation, 'watch').mockImplementationOnce(async context => { liveWatch = await watch(context); return liveWatch; });
-      vi.spyOn(harness, 'watchDoc').mockImplementationOnce(async (...args) => { titleWatch = await watchDoc(...args); acquired.resolve(); return titleWatch; });
+      vi.spyOn(conversation, 'watch').mockImplementationOnce(async context => { liveWatch = await watch(context); acquired.resolve(); return liveWatch; });
+      vi.spyOn(harness, 'watchDoc').mockImplementationOnce(async (...args) => { titleWatch = await watchDoc(...args); return titleWatch; });
       vi.spyOn(conversation, 'entries').mockImplementationOnce(async () => { await acquired.promise; throw new Error('Page unavailable'); });
       await binding.select(String(conversation.id));
       expect((await liveWatch!.closed).reason).toBe('cancelled');

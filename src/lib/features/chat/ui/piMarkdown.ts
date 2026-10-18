@@ -15,8 +15,6 @@ export function renderPiMarkdown(source: string, admitted = false): string {
       token.attrSet('href', '#');
       if (tokens[index + 1]?.type === 'text' && tokens[index + 1].content.startsWith('Note: '))
         tokens[index + 1].content = tokens[index + 1].content.slice(6);
-      if (tokens[index + 1]?.type === 'text' && ['Revision source', 'Historical note source', 'Historical read (opens current note; content may differ)'].includes(tokens[index + 1].content))
-        tokens[index + 1].content = 'Note';
     } else { token.attrSet('target', '_blank'); token.attrSet('rel', 'noopener noreferrer'); }
     return linkOpen ? linkOpen(tokens, index, options, env, self) : self.renderToken(tokens, index, options);
   };

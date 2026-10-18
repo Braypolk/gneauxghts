@@ -10,14 +10,14 @@ const id = 'a'.repeat(48), invented = 'b'.repeat(48);
 const harnesses: Harness[] = [];
 let output: string, denyTerminal: boolean;
 beforeEach(() => {
-  output = `## Goal\nRead [[cite:${id}]], copied [Revision source](gneauxghts-source:${id}), invented [[cite:${invented}]].`;
+  output = `## Goal\nRead [Note: Plan](gneauxghts-source:${id}), copied [Untrusted label](gneauxghts-source:${id}), invented [Note: Invented](gneauxghts-source:${invented}).`;
   denyTerminal = false;
   native.invoke.mockReset().mockImplementation(async (command, args) => {
     if (command === 'pi_chat_validate_authority') return;
     if (command === 'pi_chat_model_configuration') return { contextWindow: 129280, maxTokens: 4096, images: false, tools: true, reasoningEffort: 'off' };
     if (command === 'pi_chat_admit_answer') {
       if (denyTerminal) throw { code: 'retired_authority', message: 'Retired' };
-      return args.answers.map((answer: AnswerSegments) => ({ markdown: answer.segments.map(segment => segment.text + segment.sources.map(source => source === id ? `[Revision source](gneauxghts-source:${id})` : '[citation unavailable]').join('')).join(''), sources: [] }));
+      return args.answers.map((answer: AnswerSegments) => answer.segments.map(segment => segment.text + segment.sources.map(source => source === id ? `[Note: Plan](gneauxghts-source:${id})` : '[citation unavailable]').join('')).join(''));
     }
     if (command === 'pi_chat_fetch') {
       const chunk = (value: unknown) => args.frames.onmessage({ type: 'chunk', bytes: [...new TextEncoder().encode(`data: ${typeof value === 'string' ? value : JSON.stringify(value)}\n\n`)] });
@@ -49,15 +49,15 @@ it('uses Pi AI real streaming parser but withholds authoritative completion unti
   const stream = models.streamSimple(model, { messages: [{ role: 'user', content: 'Read', timestamp: 1 }] }, { sessionId: binding.providerSessionId });
   const events = [];
   for await (const event of stream) events.push(event);
-  expect(events.some(event => event.type === 'text_delta' && event.delta.includes('[[cite:'))).toBe(true);
+  expect(events.some(event => event.type === 'text_delta' && event.delta.includes('gneauxghts-source:'))).toBe(true);
   const final = await stream.result();
   expect(final.stopReason).toBe('stop');
-  expect(JSON.stringify(final.content)).not.toContain('[[cite:');
+  expect(JSON.stringify(final.content)).not.toContain('Untrusted label');
   expect(JSON.stringify(final.content)).toContain('[citation unavailable]');
   expect(JSON.stringify(final.content)).toContain(`gneauxghts-source:${id}`);
   expect(native.invoke.mock.calls.find(([name]) => name === 'pi_chat_admit_answer')?.[1]).toMatchObject(binding);
 });
-it('standard Pi compaction revalidates both original tokens and copied application links without a custom summary hook', async () => {
+it('standard Pi compaction revalidates both issued Markdown citations and copied source links without a custom summary hook', async () => {
   const { harness, conversation, binding } = await setup();
   for (let i = 0; i < 4; i++) await conversation.submit({ type: 'write', entry: { kind: 'dialogue', model: [{ role: 'user', content: `Question ${i} ${'detail '.repeat(100)}`, timestamp: 1 }] } }, context);
   const task = await conversation.compact(undefined, context);
@@ -69,7 +69,7 @@ it('standard Pi compaction revalidates both original tokens and copied applicati
   expect(head).toContain('## Goal');
   expect(head).toContain(`gneauxghts-source:${id}`);
   expect(head).toContain('[citation unavailable]');
-  expect(head).not.toContain('[[cite:');
+  expect(head).not.toContain('Untrusted label');
 });
 it('native terminal rejection becomes Pi provider failure with no successful done event', async () => {
   const { models, model, binding } = await setup(); denyTerminal = true;

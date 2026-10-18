@@ -36,18 +36,11 @@ fn require_raw_publication_base(
     Ok(())
 }
 
-#[derive(Clone, Copy)]
-pub(super) enum PublicationPathScope {
-    Destination,
-    Parent,
-}
-
 pub(super) enum PublicationMode<'a> {
     Replace,
-    CreateNew,
     Proven {
         record: ProofRecorder<'a>,
-        create_new: bool,
+        create_only: bool,
     },
     Restore {
         selected: &'a RevisionIdentity,
@@ -122,7 +115,6 @@ impl<'a> NoteTimeline<'a> {
     /// exactly once, only after that target has been admitted.
     pub(super) fn with_admitted_publication<T>(
         &self,
-        path_scope: PublicationPathScope,
         continuity_path: Option<&Path>,
         retained_identity: Option<&NoteIdentity>,
         resolve: impl Fn(&NoteIdentity) -> Result<(PathBuf, String), HistoryError>,
@@ -136,10 +128,7 @@ impl<'a> NoteTimeline<'a> {
                 self.recover_retained_observations()?;
                 self.ensure_history_recovered()?;
                 let (path, raw) = resolve(&candidate)?;
-                self.runtime.store.require_path(match path_scope {
-                    PublicationPathScope::Destination => &path,
-                    PublicationPathScope::Parent => path.parent().ok_or("Missing note parent")?,
-                })?;
+                self.runtime.store.require_path(&path)?;
                 candidate = self.publication_identity(
                     continuity_path,
                     retained_identity,
@@ -163,12 +152,7 @@ impl<'a> NoteTimeline<'a> {
                         return Ok(None);
                     }
                     let (path, raw) = resolve(&candidate)?;
-                    self.runtime.store.require_path(match path_scope {
-                        PublicationPathScope::Destination => &path,
-                        PublicationPathScope::Parent => {
-                            path.parent().ok_or("Missing note parent")?
-                        }
-                    })?;
+                    self.runtime.store.require_path(&path)?;
                     let identity = self.publication_identity(
                         continuity_path,
                         retained_identity,
@@ -239,7 +223,6 @@ impl<'a> NoteTimeline<'a> {
             return Ok(None);
         }
         self.with_admitted_publication(
-            PublicationPathScope::Destination,
             current_path.as_deref(),
             None,
             |candidate| {
@@ -262,7 +245,7 @@ impl<'a> NoteTimeline<'a> {
                     canonical,
                     PublicationMode::Replace,
                 )
-                .map(|outcome| outcome.map(|outcome| outcome.mutation))
+                .map(|outcome| Some(outcome.mutation))
             },
         )
     }
@@ -282,7 +265,6 @@ impl<'a> NoteTimeline<'a> {
         )?
         .ok_or("Missing note path")?;
         self.with_admitted_publication(
-            PublicationPathScope::Destination,
             Some(&path),
             retained_identity,
             |_| Ok((path.clone(), fs::read_to_string(&path)?)),
@@ -300,21 +282,9 @@ impl<'a> NoteTimeline<'a> {
                         canonical,
                         PublicationMode::Replace,
                     )?
-                    .expect("replacement never returns occupied")
                     .mutation)
             },
         )
-    }
-
-    /// Publish at the exact path, returning None when it is occupied. Adjacent
-    /// temporary-file publication never exposes a partially written new note.
-    pub(crate) fn create_note_at(
-        &self,
-        source: MutationSource,
-        path: &Path,
-        markdown: &str,
-    ) -> Result<Option<NoteMutationResult>, HistoryError> {
-        self.create_note_at_with_identity(source, path, markdown, None, None)
     }
 
     /// Complete same-location update with an exact raw-file base and durable proof.
@@ -331,7 +301,6 @@ impl<'a> NoteTimeline<'a> {
             crate::state::validate_current_path(Some(path.to_string_lossy().into_owned()), root)?
                 .ok_or("Missing note path")?;
         self.with_admitted_publication(
-            PublicationPathScope::Destination,
             Some(&current),
             Some(identity),
             |_| {
@@ -366,31 +335,58 @@ impl<'a> NoteTimeline<'a> {
                         canonical,
                         PublicationMode::Proven {
                             record,
-                            create_new: false,
+                            create_only: false,
                         },
                     )?
-                    .expect("replacement never returns occupied")
                     .mutation)
             },
         )
     }
 
-    // A native publication intent may reserve the Note Identity before writing
-    // Markdown, so a crash cannot mistake unrelated equal text for its receipt.
-
+    /// Create at the exact prepared destination. Identity and canonical bytes are
+    /// stable across retries; the atomic publication can never replace a late arrival.
     pub(crate) fn create_note_with_proof(
         &self,
         path: &Path,
-        markdown: &str,
         identity: &NoteIdentity,
+        canonical: &str,
         record: ProofRecorder<'_>,
-    ) -> Result<Option<NoteMutationResult>, HistoryError> {
-        self.create_note_at_with_identity(
-            MutationSource::AgentPublication,
-            path,
-            markdown,
+    ) -> Result<NoteMutationResult, HistoryError> {
+        self.runtime.store.require_path(path)?;
+        if crate::note::parse_note(canonical)
+            .frontmatter
+            .managed
+            .as_ref()
+            .map(|m| m.id.as_str())
+            != Some(identity.as_str())
+        {
+            return Err("Prepared creation identity does not match".into());
+        }
+        self.with_admitted_publication(
+            None,
             Some(identity),
-            Some(record),
+            |_| match fs::symlink_metadata(path) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    Ok((path.to_path_buf(), canonical.to_string()))
+                }
+                Ok(_) => Err(HistoryError::Stale(
+                    "Creation destination is occupied".into(),
+                )),
+                Err(error) => Err(error.into()),
+            },
+            |path, canonical, _| {
+                self.publish_authored(
+                    MutationSource::AgentPublication,
+                    path,
+                    None,
+                    canonical,
+                    PublicationMode::Proven {
+                        record,
+                        create_only: true,
+                    },
+                )
+                .map(|outcome| outcome.mutation)
+            },
         )
     }
 
@@ -456,47 +452,6 @@ impl<'a> NoteTimeline<'a> {
         }))
     }
 
-    fn create_note_at_with_identity(
-        &self,
-        source: MutationSource,
-        path: &Path,
-        markdown: &str,
-        retained_identity: Option<&NoteIdentity>,
-        record: Option<ProofRecorder<'_>>,
-    ) -> Result<Option<NoteMutationResult>, HistoryError> {
-        let path = crate::state::validate_current_path(
-            Some(path.to_string_lossy().into_owned()),
-            self.runtime.store.vault_root(),
-        )?
-        .ok_or("Missing note path")?;
-
-        self.with_admitted_publication(
-            PublicationPathScope::Parent,
-            None,
-            retained_identity,
-            |_| Ok((path.clone(), markdown.to_string())),
-            |path, raw, identity| {
-                // An occupied leaf, including an outward or dangling symlink,
-                // is a conflict. Only its parent determines creation scope.
-                match fs::symlink_metadata(&path) {
-                    Ok(_) => return Ok(None),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Err(error) => return Err(error.into()),
-                }
-                let repaired = crate::note::repair_managed_note_identity(&raw, identity.as_str())?;
-                let canonical = crate::note::prepare_note_markdown(&repaired, None, Some(None))?.0;
-                let mode = record
-                    .map(|record| PublicationMode::Proven {
-                        record,
-                        create_new: true,
-                    })
-                    .unwrap_or(PublicationMode::CreateNew);
-                self.publish_authored(source, path, None, canonical, mode)
-                    .map(|outcome| outcome.map(|outcome| outcome.mutation))
-            },
-        )
-    }
-
     pub(super) fn publish_authored(
         &self,
         source: MutationSource,
@@ -504,7 +459,7 @@ impl<'a> NoteTimeline<'a> {
         previous_path: Option<PathBuf>,
         canonical: String,
         mode: PublicationMode<'_>,
-    ) -> Result<Option<AuthoredPublication>, HistoryError> {
+    ) -> Result<AuthoredPublication, HistoryError> {
         let _mutation = self.begin_current_content_mutation()?;
         let (canonical, history_intent) = self
             .prepare_canonical_revision_publication(
@@ -580,24 +535,20 @@ impl<'a> NoteTimeline<'a> {
             }
         }
         let expected_write = crate::vault_watcher::record_expected_write(&path, &canonical);
-        let mut create_new = matches!(mode, PublicationMode::CreateNew);
-        {
-            create_new |= matches!(
-                mode,
-                PublicationMode::Proven {
-                    create_new: true,
-                    ..
-                }
-            );
-        }
-        let write = if create_new {
-            match crate::state::atomic_create_note(&path, canonical.as_bytes()) {
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    history_intent.abandon()?;
-                    return Ok(None);
-                }
-                result => result.map_err(HistoryError::from),
+        let write = if matches!(
+            mode,
+            PublicationMode::Proven {
+                create_only: true,
+                ..
             }
+        ) {
+            crate::state::atomic_create_note(&path, canonical.as_bytes()).map_err(|error| {
+                if error.kind() == std::io::ErrorKind::AlreadyExists {
+                    HistoryError::Stale("Creation destination is occupied".into())
+                } else {
+                    error.into()
+                }
+            })
         } else {
             crate::state::atomic_write_note(&path, canonical.as_bytes()).map_err(HistoryError::from)
         };
@@ -625,7 +576,7 @@ impl<'a> NoteTimeline<'a> {
             expected.commit();
         }
         expected_write.commit();
-        Ok(Some(AuthoredPublication {
+        Ok(AuthoredPublication {
             revision_id,
             mutation: self.mutate(NoteMutation {
                 source,
@@ -634,7 +585,7 @@ impl<'a> NoteTimeline<'a> {
                 previous_path,
                 fallback_markdown: canonical,
             }),
-        }))
+        })
     }
     /// Durably prepare one app-owned authored-state mutation before its
     /// canonical Markdown is published. The returned bytes include the
