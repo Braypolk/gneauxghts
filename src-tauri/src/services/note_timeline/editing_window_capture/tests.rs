@@ -5,10 +5,7 @@ use std::sync::{
     Arc,
 };
 
-mod prose_tasks;
 mod refreshable_preparation;
-mod retained_changes;
-mod weekly_tasks;
 
 struct Fixture {
     state: AppState,
@@ -20,34 +17,6 @@ struct Fixture {
 }
 
 impl Fixture {
-    /// Exercise native provenance directly, independent of any model tool protocol.
-    fn activity_ranges(&self, after: u64, before: u64) -> Vec<serde_json::Value> {
-        let timeline = self.state.note_timeline();
-        let access = timeline.current_content(AllowedScope::vault());
-        let mut offset = 0;
-        let mut ranges = Vec::new();
-        loop {
-            let page = access.activity(after, before, offset, 8).unwrap();
-            for note in page.items {
-                for range in note.surviving_ranges {
-                    ranges.push(serde_json::json!({
-                        "start": range.start, "end": range.end,
-                        "excerpt": range.text, "supportingContext": range.supporting_context,
-                        "provenance": range.provenance, "task": range.task,
-                    }));
-                }
-            }
-            match page.next_offset {
-                Some(next) => {
-                    assert!(next > offset);
-                    offset = next;
-                }
-                None => break,
-            }
-        }
-        ranges
-    }
-
     fn new() -> Self {
         let app_data = crate::test_support::TestDir::new("window-capture-data");
         crate::state::initialize_app_data_dir(app_data.path().to_path_buf()).unwrap();
@@ -589,6 +558,9 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
         let f = &f;
         let writer = scope.spawn(move || {
             crate::state::with_note_file_mutation(|| -> Result<(), String> {
+                // Match publish_authored's mutation lifetime while pausing after
+                // the write and before capture.
+                let _mutation = f.state.note_timeline().begin_current_content_mutation()?;
                 let publication = f.state.note_timeline().prepare_revision_publication(
                     MutationSource::Editor,
                     &f.path,
@@ -629,7 +601,7 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
                     f.state
                         .note_timeline()
                         .current_content(AllowedScope::vault())
-                        .provenance(&f.note),
+                        .read_note(&f.note),
                 )
                 .unwrap();
         });
@@ -645,16 +617,16 @@ fn concurrent_current_content_read_cannot_recover_live_writer_or_report_anchor_a
         let current = result
             .recv_timeout(std::time::Duration::from_secs(5))
             .unwrap()
-            .unwrap()
             .unwrap();
-        assert_eq!(current.body[0].text, "B");
+        assert_eq!(crate::note::parse_note(&current.markdown).body, "B");
+        assert!(
+            current.revision.is_none(),
+            "a pending window is not a finalized revision"
+        );
     });
     assert_eq!(
         f.retained(),
-        vec![
-            (MutationSource::NoteCreation, "A".into()),
-            (MutationSource::Editor, "B".into())
-        ]
+        vec![(MutationSource::NoteCreation, "A".into())]
     );
 }
 
@@ -1557,7 +1529,7 @@ fn startup_note_clear_finalizes_unrelated_surviving_windows() {
 }
 
 #[test]
-fn editing_window_time_contract_preserves_action_points_and_half_open_overlap() {
+fn editing_window_time_contract_preserves_action_points_and_raw_clock_intervals() {
     let fixture: serde_json::Value = serde_json::from_str(include_str!(
         "../../../../test-fixtures/contracts/timeline-time-evidence.json"
     ))
@@ -1568,332 +1540,6 @@ fn editing_window_time_contract_preserves_action_points_and_half_open_overlap() 
         serde_json::to_value(&evidence).unwrap(),
         fixture["evidence"]
     );
-    for query in fixture["queries"].as_array().unwrap() {
-        let start = query["start"].as_u64().unwrap();
-        let end = query["end"].as_u64().unwrap();
-        let matches: Vec<_> = evidence.iter().map(|e| e.overlaps(start, end)).collect();
-        assert_eq!(serde_json::to_value(matches).unwrap(), query["matches"]);
-    }
-}
-
-#[test]
-fn editing_window_explicit_provenance_seals_only_target_and_keeps_net_lineage() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let baseline = access.provenance(&f.note).unwrap().unwrap();
-    let original = baseline.body[0].ranges[0].provenance.clone();
-    f.save("A discarded secret");
-    f.clock.fetch_add(100, Ordering::SeqCst);
-    f.save("A endpoint");
-    let pending_id = f.pending().window_id;
-    let current = access.provenance(&f.note).unwrap().unwrap();
-    let citations: Vec<_> = access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .into_iter()
-        .flat_map(|item| item.citations)
-        .collect();
-    assert_eq!(current.body[0].text, "A endpoint");
-    assert_eq!(current.body[0].ranges[0].provenance, original);
-    let interval = RevisionTimeEvidence::EditingWindow {
-        version: 1,
-        first_wall_millis: 1_000_000,
-        last_wall_millis: 1_000_100,
-        min_wall_millis: 1_000_000,
-        max_wall_millis: 1_000_100,
-        clock_discontinuity: false,
-    };
-    assert!(current.body[0].ranges.iter().any(|r| r
-        .provenance
-        .introduced_at
-        .as_ref()
-        .is_some_and(|e| e.time_evidence == Some(interval))));
-    assert!(
-        history_store::pending_window(&history_store::Store::for_test(), &f.note)
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(f.retained().len(), 2);
-    let json = serde_json::to_string(&(current, &citations)).unwrap();
-    assert!(!json.contains("discarded secret"));
-    assert!(!json.contains(&pending_id));
-    assert!(citations.iter().any(|c| c.time_evidence == Some(interval)));
-    // Existing citation identity, text, and interval remain immutable while a
-    // later window is pending; delivery must not seal that newer work.
-    let durable = serde_json::to_string(&citations).unwrap();
-    f.clock.fetch_add(100, Ordering::SeqCst);
-    f.save("A endpoint later");
-    let later = f.pending().window_id;
-    let delivered = access.current_citations(&citations).unwrap();
-    assert_eq!(serde_json::to_string(&delivered).unwrap(), durable);
-    assert_eq!(f.pending().window_id, later);
-    let mut tampered = citations.clone();
-    for c in &mut tampered {
-        c.time_evidence = Some(RevisionTimeEvidence::Committed {
-            committed_at_millis: c.at_millis,
-        });
-    }
-    let delivered = access.current_citations(&tampered).unwrap();
-    assert!(delivered
-        .iter()
-        .all(|c| c.time_evidence.unwrap().window().is_none()));
-    assert!(delivered.len() < citations.len());
-    // Restart seals only the later window; the earlier citation still resolves.
-    drop(access);
-    drop(timeline);
-    let restarted = Fixture::state();
-    restarted
-        .reconcile_full_vault_scan_observing(f._notes.path(), |_, _| Ok(()))
-        .unwrap();
-    let restart_timeline = restarted.note_timeline();
-    let delivered = restart_timeline
-        .current_content(AllowedScope::vault())
-        .current_citations(&citations)
-        .unwrap();
-    assert_eq!(serde_json::to_string(&delivered).unwrap(), durable);
-    assert_eq!(f.retained().len(), 3);
-}
-
-#[test]
-fn editing_window_noop_does_not_invent_retyping_or_replace_citations() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let before = access.provenance(&f.note).unwrap().unwrap();
-    let citations: Vec<_> = access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .into_iter()
-        .flat_map(|item| item.citations)
-        .collect();
-    f.save("deleted and retyped");
-    f.clock.fetch_add(10, Ordering::SeqCst);
-    f.save("A");
-    let after = access.provenance(&f.note).unwrap().unwrap();
-    let after_citations: Vec<_> = access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .into_iter()
-        .flat_map(|item| item.citations)
-        .collect();
-    assert_eq!(before, after);
-    assert_eq!(
-        serde_json::to_value(citations).unwrap(),
-        serde_json::to_value(after_citations).unwrap()
-    );
-    assert_eq!(f.retained().len(), 1);
-    assert!(
-        history_store::pending_window(&history_store::Store::for_test(), &f.note)
-            .unwrap()
-            .is_none()
-    );
-}
-
-#[test]
-fn editing_window_excluded_and_uncaptured_targets_never_seal_on_evidence_reads() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("pending private");
-    let window = f.pending().window_id;
-    let timeline = f.state.note_timeline();
-    let excluded = HashSet::from([f.note.0.clone()]);
-    let access = timeline.current_content(AllowedScope::policy(Some(&excluded), &excluded));
-    assert!(access.provenance(&f.note).unwrap().is_none());
-    assert!(access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .is_empty());
-    assert_eq!(f.pending().window_id, window);
-    let canonical = fs::read_to_string(&f.path).unwrap();
-    fs::write(
-        &f.path,
-        crate::note::replace_authored_content(&canonical, None, "uncaptured").unwrap(),
-    )
-    .unwrap();
-    assert!(matches!(
-        timeline
-            .current_content(AllowedScope::vault())
-            .provenance(&f.note),
-        Err(HistoryError::Stale(_))
-    ));
-    assert_eq!(f.pending().window_id, window);
-    fs::remove_file(&f.path).unwrap();
-    assert!(timeline
-        .current_content(AllowedScope::vault())
-        .provenance(&f.note)
-        .unwrap()
-        .is_none());
-    assert_eq!(f.pending().window_id, window);
-}
-
-#[test]
-fn editing_window_activity_only_seals_bounded_overlapping_candidates_and_retries_noops() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    // Establish three notes before opening windows, so creation does not affect
-    // the queried publication period. The raw note cursor survives a net no-op.
-    let mut notes = vec![(f.note.clone(), f.path.clone())];
-    for title in ["Second", "Third"] {
-        let saved = note_persistence::persist_note_session_with_outcome(
-            &f.state,
-            title.into(),
-            "A".into(),
-            None,
-        )
-        .unwrap()
-        .unwrap();
-        notes.push((
-            NoteIdentity::new(saved.note_id.unwrap()),
-            PathBuf::from(saved.path.unwrap()),
-        ));
-    }
-    notes.sort_by(|a, b| a.0.as_str().cmp(b.0.as_str()));
-    for (id, path) in &notes {
-        let title = path.file_stem().unwrap().to_str().unwrap();
-        note_persistence::persist_note_session_with_outcome(
-            &f.state,
-            title.into(),
-            "pending".into(),
-            Some(path.to_string_lossy().into()),
-        )
-        .unwrap();
-        assert!(
-            history_store::pending_window(&history_store::Store::for_test(), id)
-                .unwrap()
-                .is_some()
-        );
-    }
-    let (id, path) = &notes[0];
-    note_persistence::persist_note_session_with_outcome(
-        &f.state,
-        path.file_stem().unwrap().to_str().unwrap().into(),
-        "A".into(),
-        Some(path.to_string_lossy().into()),
-    )
-    .unwrap();
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    // End is exclusive: a window beginning exactly at end is not selected.
-    assert!(access
-        .activity(999_999, 1_000_000, 0, 1)
-        .unwrap()
-        .items
-        .is_empty());
-    assert_eq!(
-        history_store::pending_windows(&history_store::Store::for_test())
-            .unwrap()
-            .len(),
-        3
-    );
-    let first = access.activity(1_000_000, 1_000_001, 0, 1).unwrap();
-    assert!(first.items.is_empty());
-    assert_eq!(first.next_offset, Some(1));
-    assert!(
-        history_store::pending_window(&history_store::Store::for_test(), id)
-            .unwrap()
-            .is_none()
-    );
-    assert_eq!(
-        history_store::pending_windows(&history_store::Store::for_test())
-            .unwrap()
-            .len(),
-        2
-    );
-    // Repeating the same page after the no-op does not skip the next note.
-    let retry = access.activity(1_000_000, 1_000_001, 0, 1).unwrap();
-    assert_eq!(retry.items[0].note_id, notes[1].0.as_str());
-    assert_eq!(retry.next_offset, Some(2));
-    assert_eq!(
-        history_store::pending_windows(&history_store::Store::for_test())
-            .unwrap()
-            .len(),
-        1
-    );
-    let second = access
-        .activity(1_000_000, 1_000_001, first.next_offset.unwrap(), 1)
-        .unwrap();
-    assert_eq!(second.items[0].note_id, notes[1].0.as_str());
-    assert_eq!(
-        history_store::pending_windows(&history_store::Store::for_test())
-            .unwrap()
-            .len(),
-        1
-    );
-    let third = access
-        .activity(1_000_000, 1_000_001, second.next_offset.unwrap(), 1)
-        .unwrap();
-    assert_eq!(third.items[0].note_id, notes[2].0.as_str());
-    assert_eq!(third.next_offset, None);
-    assert!(
-        history_store::pending_windows(&history_store::Store::for_test())
-            .unwrap()
-            .is_empty()
-    );
-    assert!(access
-        .activity(1_000_001, 1_000_002, 0, 20)
-        .unwrap()
-        .items
-        .is_empty());
-    assert!(access.activity(1_000_000, 1_000_000, 0, 20).is_err());
-}
-
-#[test]
-fn editing_window_uncertain_clock_activity_is_conservative_and_explicit() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    let clock = f.continuous();
-    f.save("first");
-    clock.elapsed.store(100, Ordering::SeqCst);
-    clock.wall.store(900_000, Ordering::SeqCst);
-    f.save("endpoint");
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let page = access.activity(10, 11, 0, 20).unwrap();
-    assert_eq!(page.items.len(), 1);
-    assert_eq!(page.items[0].revision_count, 1);
-    assert!(page.items[0].uncertain_time);
-    assert_eq!(page.items[0].first_at_millis, 900_000);
-    assert_eq!(page.items[0].last_at_millis, 1_000_000);
-    assert!(matches!(
-        page.items[0].citations[0].time_evidence,
-        Some(RevisionTimeEvidence::EditingWindow {
-            first_wall_millis: 1_000_000,
-            last_wall_millis: 900_000,
-            clock_discontinuity: true,
-            ..
-        })
-    ));
-}
-
-#[test]
-fn editing_window_activity_stale_selected_bytes_fail_without_advancing_cursor() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("endpoint");
-    let original = fs::read_to_string(&f.path).unwrap();
-    let path = f.path.clone();
-    let external =
-        crate::note::replace_authored_content(&original, None, "uncaptured race").unwrap();
-    activity::after_selection_once(move || fs::write(path, external).unwrap());
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    assert!(matches!(
-        access.activity(1_000_000, 1_000_001, 0, 1),
-        Err(HistoryError::Stale(_))
-    ));
-    assert_eq!(f.retained().len(), 2);
-    fs::write(&f.path, original).unwrap();
-    let retried = access.activity(1_000_000, 1_000_001, 0, 1).unwrap();
-    assert_eq!(retried.items[0].current_excerpt, "endpoint");
-    assert_eq!(retried.items[0].revision_count, 1);
-    assert_eq!(f.retained().len(), 2);
 }
 
 #[test]
@@ -2014,109 +1660,6 @@ fn editing_window_startup_clear_discards_queued_target_observation_atomically_wi
             .finalize_editing_window(&f.note)
             .unwrap();
     }
-}
-
-#[test]
-fn editing_window_restore_preserves_selected_interval_origin_and_exact_return_point() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("A returned");
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let selected = access.provenance(&f.note).unwrap().unwrap();
-    let origin = history_store::revisions(&history_store::Store::for_test(), &f.note)
-        .unwrap()
-        .last()
-        .unwrap()
-        .identity
-        .clone();
-    f.save("A");
-    let history = timeline.open_history_mode(f.note.clone());
-    let preview = history.restore_preview(origin.as_str()).unwrap();
-    let restored = history
-        .confirm_restore(origin.as_str(), &preview.current_authored_content_hash)
-        .unwrap();
-    assert!(restored.mutation.warning().is_none());
-    let current = access.provenance(&f.note).unwrap().unwrap();
-    let returned = current.body[0]
-        .ranges
-        .iter()
-        .find(|r| r.provenance.restored_at.is_some())
-        .unwrap();
-    assert!(matches!(
-        returned
-            .provenance
-            .restored_at
-            .as_ref()
-            .unwrap()
-            .time_evidence,
-        Some(RevisionTimeEvidence::Committed { .. })
-    ));
-    assert_eq!(
-        returned.provenance.introduced_at,
-        selected.body[0]
-            .ranges
-            .iter()
-            .find(|r| r.provenance.known_since.record_id == origin.as_str())
-            .unwrap()
-            .provenance
-            .introduced_at
-    );
-    assert_eq!(
-        history_store::revisions(&history_store::Store::for_test(), &f.note)
-            .unwrap()
-            .last()
-            .unwrap()
-            .restored_from
-            .as_ref(),
-        Some(&origin)
-    );
-}
-
-#[test]
-fn citations_without_required_time_evidence_are_no_longer_current() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let citations: Vec<_> = access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .into_iter()
-        .flat_map(|item| item.citations)
-        .collect();
-    let mut json = serde_json::to_value(&citations).unwrap();
-    for citation in json.as_array_mut().unwrap() {
-        citation.as_object_mut().unwrap().remove("timeEvidence");
-    }
-    let missing_evidence: Vec<RevisionCitation> = serde_json::from_value(json).unwrap();
-    f.save("A updated");
-    assert_eq!(
-        access.current_citations(&missing_evidence).unwrap().len(),
-        0
-    );
-    assert!(
-        history_store::pending_window(&history_store::Store::for_test(), &f.note)
-            .unwrap()
-            .is_some()
-    );
-    let current: Vec<_> = access
-        .activity(0, u64::MAX, 0, 20)
-        .unwrap()
-        .items
-        .into_iter()
-        .flat_map(|item| item.citations)
-        .collect();
-    let mut intervals: Vec<_> = current
-        .into_iter()
-        .filter(|c| c.time_evidence.is_some_and(|e| e.window().is_some()))
-        .collect();
-    assert!(!intervals.is_empty());
-    for citation in &mut intervals {
-        citation.time_evidence = None;
-    }
-    assert!(access.current_citations(&intervals).unwrap().is_empty());
 }
 
 #[test]
@@ -2243,7 +1786,7 @@ fn editing_window_missing_interval_is_corrupt_after_attestation_and_restart() {
     );
     assert!(timeline
         .current_content(AllowedScope::vault())
-        .provenance(&f.note)
+        .read_note(&f.note)
         .is_err());
     let restarted = Fixture::state();
     assert!(matches!(
@@ -2308,42 +1851,6 @@ fn editing_window_missing_purge_preserves_other_identity_observed_at_reused_path
     assert!(fs::read_to_string(&f.path)
         .unwrap()
         .contains("B newer disk"));
-}
-
-#[test]
-fn editing_window_activity_queued_behind_close_does_not_hold_operation_lease() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("B");
-    let (started_tx, started_rx) = std::sync::mpsc::channel();
-    let (done_tx, done_rx) = std::sync::mpsc::channel();
-    std::thread::scope(|scope| {
-        // Activity waits for the canonical owner before operation admission.
-        // Close on that owner must finish without waiting for the queued read.
-        crate::state::with_note_file_mutation(|| {
-            scope.spawn(|| {
-                started_tx.send(()).unwrap();
-                let result = f
-                    .state
-                    .note_timeline()
-                    .current_content(AllowedScope::vault())
-                    .activity(0, u64::MAX, 0, 20);
-                done_tx.send(result.is_err()).unwrap();
-            });
-            started_rx
-                .recv_timeout(std::time::Duration::from_secs(2))
-                .unwrap();
-            f.state
-                .note_timeline()
-                .runtime
-                .close_operations(|| Ok(()))?;
-            Ok::<_, String>(())
-        })
-        .unwrap();
-        assert!(done_rx
-            .recv_timeout(std::time::Duration::from_secs(5))
-            .unwrap());
-    });
 }
 
 #[test]
@@ -2562,71 +2069,6 @@ fn deadline_history_corruption_keeps_its_type_and_latches_after_other_due_notes_
 mod selected_context;
 
 mod readiness;
-
-#[test]
-fn native_activity_keeps_surviving_period_ranges_and_clear_removes_proofs() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save("A kept launch decision.\nRemovedSecret");
-    f.seal();
-    f.clock.store(2_000_000, Ordering::SeqCst);
-    f.save("A kept launch decision.\nLater unrelated followup");
-    f.seal();
-    let timeline = f.state.note_timeline();
-    let access = timeline.current_content(AllowedScope::vault());
-    let page = access.activity(1_000_000, 1_500_000, 0, 20).unwrap();
-    let ranges = f.activity_ranges(1_000_000, 1_500_000);
-    let text = ranges
-        .iter()
-        .map(|r| r["excerpt"].as_str().unwrap())
-        .collect::<String>();
-    assert!(text.contains("launch decision"), "{text}");
-    assert!(!text.contains("RemovedSecret"));
-    // A rewritten line can retain its earlier introduction while carrying a
-    // later last-change date. Activity must preserve both facts, not redate it.
-    for range in ranges.iter().filter(|r| {
-        r["supportingContext"]
-            .as_str()
-            .is_some_and(|s| s.contains("Later unrelated"))
-    }) {
-        assert_eq!(range["provenance"]["lastChangedAt"]["atMillis"], 2_000_000);
-    }
-    let citations: Vec<_> = page.items.into_iter().flat_map(|n| n.citations).collect();
-    assert!(!citations.is_empty());
-    assert_eq!(
-        access.current_citations(&citations).unwrap().len(),
-        citations.len()
-    );
-    timeline.clear_note_history(&f.note).unwrap();
-    assert!(access.current_citations(&citations).unwrap().is_empty());
-    assert!(f.activity_ranges(1_000_000, 1_500_000).is_empty());
-}
-
-#[test]
-fn native_activity_ranges_preserve_duplicate_words_and_long_tails() {
-    let _guard = crate::test_support::lock_test_env();
-    let f = Fixture::new();
-    f.save(&format!(
-        "A repeated word\n{} final-tail-marker\nrepeated word",
-        "longsegment ".repeat(260)
-    ));
-    f.seal();
-    let raw = fs::read_to_string(&f.path).unwrap();
-    let body = crate::note::parse_note(&raw).body;
-    let ranges = f.activity_ranges(1_000_000, 1_500_000);
-    let text = ranges
-        .iter()
-        .map(|r| {
-            let start = r["start"].as_u64().unwrap() as usize;
-            let end = r["end"].as_u64().unwrap() as usize;
-            assert_eq!(&body[start..end], r["excerpt"].as_str().unwrap());
-            r["excerpt"].as_str().unwrap()
-        })
-        .collect::<String>();
-    assert!(text.contains("final-tail-marker"));
-    assert_eq!(text.matches("repeated").count(), 2);
-    assert_eq!(text.matches("word").count(), 2);
-}
 
 #[test]
 fn frontmatter_tags_share_editor_save_capture_and_preserve_other_properties() {

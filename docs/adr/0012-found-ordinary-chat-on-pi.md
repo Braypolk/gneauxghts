@@ -83,9 +83,10 @@ formatter cannot be imposed on standard compaction. The current module homes and
   granted. Future Version Restore needs its own typed authority and decision.
 - Supersedes ADR 0009's omission of note-based answers/tool data from later model
   replay/compaction and mandatory current-byte/exact-passage live citation rules.
-  Its scoped historical-read capability remains reusable, not required for the
-  initial search/read tool surface. Historical activity still cannot prove current
-  task status, and earlier assistant prose is not primary note evidence.
+  Its unused scoped historical-read, activity and Current-Content Provenance
+  capabilities are removed, along with their dedicated tests. Historical activity
+  still cannot prove current task status, and earlier assistant prose is not
+  primary note evidence.
 - ADR 0011 still describes ordinary links if explicit chat-to-note promotion is
   reintroduced. Promotion/transcript publication are dropped here; its assertion
   about unchanged live-chat exact-passage rules is superseded by this decision.
@@ -99,3 +100,12 @@ editor context, non-note attachments, old ChatApi compatibility or permanent
 fallback runtime is required. Desktop establishes behavior first; iOS acceptance
 for this rebuild is simulator-only, with physical-device work deferred. Resource
 measurements are diagnostics, not permanent numerical architectural budgets.
+
+Amended 2026-10-17: remove the unused activity/provenance APIs and their supporting
+implementation instead of retaining speculative capabilities behind dead-code
+exceptions. Pi's current search/read tools have no consumer for them. Current
+canonical reads, their revision/hash evidence, History Mode and Version Restore
+remain supported. This narrows the capability surface described in ADRs 0002,
+0007 and 0008; it does not change retained revisions, Editing Window capture,
+restore lineage or mandatory history verification. A future historical-read or
+provenance feature needs a concrete caller and its own scoped contract and tests.

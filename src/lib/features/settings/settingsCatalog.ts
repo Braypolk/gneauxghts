@@ -28,7 +28,7 @@ export const settingsSearchEntries: SettingsSearchEntry[] = [
   { id: 'text-size', category: 'appearance', title: 'Editor text size', description: 'Adjust text size, custom body text, and heading scale with a live preview.', keywords: 'font typography zoom large small medium reading', anchor: 'text-size' },
   { id: 'shortcuts', category: 'shortcuts', title: 'Customize keyboard shortcuts', description: 'Change key bindings, resolve conflicts, or reset all to default.', keywords: 'hotkeys keybindings keys', anchor: 'shortcuts' },
   { id: 'forget-duration', category: 'forgetting', title: 'Forget button duration', description: 'Forget instantly or hold the button for a chosen duration.', keywords: 'timing delay seconds press', anchor: 'forget-duration' },
-  { id: 'retention', category: 'forgetting', title: 'Forgotten note retention', description: 'Choose how long forgotten notes and chats remain recoverable.', keywords: 'trash delete purge days forever expiry', anchor: 'retention' },
+  { id: 'retention', category: 'forgetting', title: 'Forgotten note retention', description: 'Choose how long forgotten notes remain recoverable.', keywords: 'trash delete purge days forever expiry', anchor: 'retention' },
   { id: 'api-keys', category: 'ai', title: 'Provider API keys', description: 'Save, replace, or remove the OpenAI or compatible-server credential.', keywords: 'token secret password authentication security lm studio', anchor: 'api-keys' },
   { id: 'provider', category: 'ai', title: 'Provider and defaults', description: 'Choose OpenAI or a local OpenAI-compatible provider.', keywords: 'ai chat hosted offline lm studio', anchor: 'chat-provider' },
   { id: 'model', category: 'ai', title: 'Chat model', description: 'Choose an OpenAI model or discover and select a local model.', keywords: 'llm gpt download load unload server', anchor: 'chat-model' },
@@ -53,7 +53,7 @@ export const settingsSearchEntries: SettingsSearchEntry[] = [
   { id: 'health', category: 'history', title: 'History health and recovery', description: 'Check Note Timeline integrity and retry or reset when recovery is needed.', keywords: 'repair corrupt unavailable revisions', anchor: 'history-health' },
   { id: 'storage', category: 'history', title: 'History storage', description: 'Review allocated and reclaimable Note Timeline storage.', keywords: 'disk space bytes size compaction', anchor: 'history-health' },
   { id: 'clear-history', category: 'history', title: 'Clear vault history', description: 'Remove retained history for active notes after confirmation.', keywords: 'delete revisions baseline timeline', anchor: 'clear-history' },
-  { id: 'forgotten', category: 'forgotten', title: 'Restore or delete forgotten items', description: 'Select forgotten notes and chats to restore or permanently delete.', keywords: 'trash recycle bin recover undo forgetting', anchor: 'forgotten-items' },
+  { id: 'forgotten', category: 'forgotten', title: 'Restore or delete forgotten items', description: 'Select forgotten notes to restore or permanently delete.', keywords: 'trash recycle bin recover undo forgetting', anchor: 'forgotten-items' },
   { id: 'missing', category: 'forgotten', title: 'Missing Notes', description: 'Inspect retained revisions and recover files deleted outside the app.', keywords: 'restore recover external deletion timeline', anchor: 'missing-notes' }
 ];
 

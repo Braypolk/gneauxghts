@@ -297,7 +297,7 @@
                     <div>
                       <p class="text-sm font-medium">Forgotten note retention</p>
                       <p class="mt-0.5 text-xs text-muted-foreground">
-                        Time to recover forgotten notes and chats before permanent deletion.
+                        Time to recover forgotten notes before permanent deletion.
                       </p>
                     </div>
 

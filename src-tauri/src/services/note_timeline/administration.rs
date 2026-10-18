@@ -326,7 +326,6 @@ impl<'a> NoteTimeline<'a> {
             crate::state::read_state(&vault_root)?
                 .forgotten_notes
                 .into_iter()
-                .filter(|forgotten| forgotten.kind == crate::state::ForgottenItemKind::Note)
                 .map(|forgotten| ExistingBaselineCandidate::Forgotten {
                     path: PathBuf::from(forgotten.forgotten_path),
                     note_id: forgotten.note_id.map(NoteIdentity::new),

@@ -77,7 +77,7 @@ describe('SettingsStore actions', () => {
   it('keeps component-passed actions bound to the settings store', async () => {
     const { createSettingsStore } = await import('./store.svelte');
     const store = createSettingsStore(appStoreMock);
-    const forgottenPath = '/vault/.forgotten/2026-07-28-chat';
+    const forgottenPath = '/vault/.forgotten/2026-07-28-note';
     store.selectedForgottenPaths = [forgottenPath];
 
     const runForgottenAction = store.runForgottenAction;
@@ -176,7 +176,6 @@ describe('SettingsStore actions', () => {
         forgottenPath: '/vault/.forgotten/Note.md',
         restoredPath: '/vault/Note.md',
         title: 'Note',
-        kind: 'note',
         commitWarning: {
           message: 'Timeline recovery is pending.',
           issues: [{ stage: 'historyFinalization', message: 'store unavailable' }]
@@ -656,7 +655,7 @@ describe('SettingsStore mutation/read conflicts', () => {
     responses.list_forgotten_notes = [];
     await store.runForgottenAction('delete_forgotten_notes', ['/old']);
     expect(invokeMock.mock.calls.filter(([command]) => command === 'list_forgotten_notes')).toHaveLength(2);
-    prior.resolve([{ kind: 'note', forgottenPath: '/old', originalPath: '/vault/old.md', title: 'Old', fileName: 'old.md', forgottenAtMillis: 1, purgeAfterDays: 7, purgeAtMillis: 2 }]);
+    prior.resolve([{ forgottenPath: '/old', originalPath: '/vault/old.md', title: 'Old', fileName: 'old.md', forgottenAtMillis: 1, purgeAfterDays: 7, purgeAtMillis: 2 }]);
     await reading; expect(store.forgottenNotes).toEqual([]); store.dispose();
   });
 });

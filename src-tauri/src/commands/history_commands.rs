@@ -1229,52 +1229,33 @@ mod tests {
     }
 
     #[test]
-    fn current_content_history_reads_latch_corruption_before_chat_can_flatten_errors() {
-        use crate::services::note_timeline::{
-            history_scan_counts_for_test, AllowedScope, RevisionCitation,
-        };
+    fn current_note_reads_latch_corruption_before_chat_can_flatten_errors() {
+        use crate::services::note_timeline::{history_scan_counts_for_test, AllowedScope};
         let _guard = lock_test_env();
-        for reader in ["provenance", "activity", "citations"] {
-            let f = ErrorFixture::new();
-            let before = history_scan_counts_for_test();
-            damage_retained_revision_for_test(&f.revision_id, HistoryTestDamage::Source);
-            let state = f.app.state::<AppState>();
-            let timeline = state.note_timeline();
-            let access = timeline.current_content(AllowedScope::vault());
-            let error = match reader {
-                "provenance" => access.provenance(&NoteIdentity::new(&f.note_id)).err(),
-                "activity" => access.activity(0, u64::MAX, 0, 30).err(),
-                "citations" => access
-                    .current_citations(&[RevisionCitation {
-                        note_id: f.note_id.clone(),
-                        revision_id: f.revision_id.clone(),
-                        at_millis: 0,
-                        time_evidence: None,
-                        source: MutationSource::Editor,
-                        current_excerpt: "After".into(),
-                    }])
-                    .err(),
-                _ => unreachable!(),
-            }
+        let f = ErrorFixture::new();
+        let before = history_scan_counts_for_test();
+        damage_retained_revision_for_test(&f.revision_id, HistoryTestDamage::Source);
+        let state = f.app.state::<AppState>();
+        let timeline = state.note_timeline();
+        let access = timeline.current_content(AllowedScope::vault());
+        let error = access
+            .read_note(&NoteIdentity::new(&f.note_id))
+            .err()
             .expect("damaged retained header must fail current-content delivery");
-            assert!(
-                matches!(error, HistoryError::Corrupt(_)),
-                "{reader}: {error}"
-            );
-            let bytes = fs::read(&f.path).unwrap();
-            assert!(
-                crate::commands::note_persistence::persist_note_session_with_outcome(
-                    &state,
-                    "Typed errors".into(),
-                    "Must not publish".into(),
-                    Some(f.path.clone()),
-                )
-                .is_err()
-            );
-            assert_eq!(fs::read(&f.path).unwrap(), bytes);
-            assert_eq!(history_scan_counts_for_test(), before);
-            set_notes_root_override(None).unwrap();
-        }
+        assert!(matches!(error, HistoryError::Corrupt(_)), "{error}");
+        let bytes = fs::read(&f.path).unwrap();
+        assert!(
+            crate::commands::note_persistence::persist_note_session_with_outcome(
+                &state,
+                "Typed errors".into(),
+                "Must not publish".into(),
+                Some(f.path.clone()),
+            )
+            .is_err()
+        );
+        assert_eq!(fs::read(&f.path).unwrap(), bytes);
+        assert_eq!(history_scan_counts_for_test(), before);
+        set_notes_root_override(None).unwrap();
     }
 
     #[test]

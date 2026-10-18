@@ -47,7 +47,7 @@
 <div class="settings-section mb-7" data-settings-anchor="forgotten-items">
   <div class="flex items-start justify-between gap-4">
     <div>
-      <p class="text-sm font-medium">Notes &amp; chats</p>
+      <p class="text-sm font-medium">Notes</p>
       {#if forgottenNotes.length > 0}
       <p class="mt-0.5 text-xs text-muted-foreground">
         Restore items before their deletion date.
@@ -130,9 +130,6 @@
                 <div class="min-w-0">
                   <div class="flex flex-wrap items-center gap-2">
                     <p class="min-w-0 wrap-anywhere text-sm font-medium">{note.title}</p>
-                    <span class="rounded-full border border-border/70 px-2 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
-                      {note.kind}
-                    </span>
                   </div>
                   <p class="mt-1 wrap-anywhere text-xs text-muted-foreground">
                     {note.fileName} · forgotten {formatTimestamp(note.forgottenAtMillis)}

@@ -411,42 +411,6 @@ impl RevisionTimeEvidence {
     pub(super) fn window(self) -> Option<Self> {
         matches!(self, Self::EditingWindow { .. }).then_some(self)
     }
-
-    pub(crate) fn bounds(self) -> (u64, u64) {
-        match self {
-            Self::EditingWindow {
-                min_wall_millis,
-                max_wall_millis,
-                ..
-            } => (min_wall_millis, max_wall_millis),
-            _ => (self.occurred_at_millis(), self.occurred_at_millis()),
-        }
-    }
-
-    pub(crate) fn uncertain(self) -> bool {
-        matches!(
-            self,
-            Self::EditingWindow {
-                clock_discontinuity: true,
-                ..
-            }
-        )
-    }
-
-    pub(crate) fn overlaps(self, start: u64, end: u64) -> bool {
-        if start >= end {
-            return false;
-        }
-        match self {
-            Self::EditingWindow {
-                first_wall_millis,
-                last_wall_millis,
-                clock_discontinuity,
-                ..
-            } => clock_discontinuity || (last_wall_millis >= start && first_wall_millis < end),
-            _ => self.occurred_at_millis() >= start && self.occurred_at_millis() < end,
-        }
-    }
 }
 
 impl NoteRevisionHeader {

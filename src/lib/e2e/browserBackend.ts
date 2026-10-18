@@ -64,7 +64,6 @@ const historyRestores = new Map<
 const clearedHistoryNoteIds = new Set<string>();
 let forgottenNotes = [
   {
-    kind: 'note',
     title: 'Forgotten draft',
     fileName: 'Forgotten draft.md',
     originalPath: '/e2e/Forgotten draft.md',

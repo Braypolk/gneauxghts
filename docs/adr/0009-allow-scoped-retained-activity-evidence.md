@@ -1,5 +1,5 @@
 ---
-status: superseded in part by ADR-0012
+status: superseded by ADR-0012
 ---
 
 # Allow scoped retained activity evidence
@@ -7,6 +7,8 @@ status: superseded in part by ADR-0012
 [ADR 0012](0012-found-ordinary-chat-on-pi.md) records the accepted new-user Pi
 rebuild and its scoped supersessions. The implementation described below is
 historical and retired from ordinary chat; it is not a current runtime requirement.
+The 2026-10-17 amendment removes its unused native activity-history capability
+and supporting activity/provenance implementation and tests.
 
 
 Activity questions need the specific changes recorded during an interval, including content that was subsequently removed or superseded. Ordinary chat may now request read-only retained authored changes through NoteTimeline using an explicit activity range and the existing current-note access policy. This supersedes ADR 0003's prohibition on historical prose for this bounded activity use case; it does not grant History Mode administration, Version Restore, or direct write authority.

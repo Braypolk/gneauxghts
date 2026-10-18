@@ -8,7 +8,7 @@ use crate::{
     note,
     state::{
         forgotten_notes_root, read_state, read_unpruned_state, validate_current_path,
-        ForgottenItemKind, PersistedForgottenNote,
+        PersistedForgottenNote,
     },
 };
 use std::{
@@ -128,30 +128,18 @@ fn restore_forgotten_notes_impl(
         .into_iter()
         .filter(|item| selected_paths.contains(&item.forgotten_path))
     {
-        let (restored_path, commit_warning) = match forgotten_note.kind {
-            ForgottenItemKind::Note => {
-                let Some(restored) = state
-                    .note_timeline()
-                    .recover_forgotten_note(&forgotten_note)
-                    .map_err(|error| error.to_string())?
-                else {
-                    continue;
-                };
-                restored
-            }
-            ForgottenItemKind::Chat => {
-                return Err(
-                    "Legacy chat restoration is unsupported by the current chat store".into(),
-                );
-            }
+        let Some((restored_path, commit_warning)) = state
+            .note_timeline()
+            .recover_forgotten_note(&forgotten_note)
+            .map_err(|error| error.to_string())?
+        else {
+            continue;
         };
 
         let restored_note = RestoredForgottenNote {
             forgotten_path: forgotten_note.forgotten_path,
             restored_path: restored_path.to_string_lossy().into_owned(),
             title: forgotten_note.title,
-            kind: forgotten_item_kind_name(&forgotten_note.kind).to_string(),
-            conversation_id: forgotten_note.conversation_id,
             commit_warning,
         };
         restored_notes.push(restored_note);
@@ -215,8 +203,6 @@ pub(super) fn build_forgotten_note_summary(
         forgotten_at_millis: forgotten_note.forgotten_at_millis,
         purge_after_days: forgotten_note.purge_after_days,
         purge_at_millis: forgotten_note.purge_at_millis,
-        kind: forgotten_item_kind_name(&forgotten_note.kind).to_string(),
-        conversation_id: forgotten_note.conversation_id.clone(),
         commit_warning: None,
     }
 }
@@ -250,14 +236,10 @@ pub(super) fn cleanup_expired_forgotten_notes(
     let now = current_time_millis()?;
     state.note_timeline().purge_expired_missing_notes(now)?;
     for forgotten_note in read_unpruned_state(notes_dir)?.forgotten_notes {
-        if forgotten_note.kind == ForgottenItemKind::Chat {
-            continue;
-        }
         let forgotten_path = Path::new(&forgotten_note.forgotten_path);
         let active_path = Path::new(&forgotten_note.original_path);
         let recovered = crate::state::with_note_file_mutation(|| {
-            if forgotten_note.kind == ForgottenItemKind::Note
-                && !forgotten_path.exists()
+            if !forgotten_path.exists()
                 && active_path.is_file()
                 && path_has_note_identity(state, active_path, forgotten_note.note_id.as_deref())
             {
@@ -303,9 +285,6 @@ fn purge_forgotten_item(
     forgotten_note: &PersistedForgottenNote,
     occurred_at_millis: u64,
 ) -> Result<(), String> {
-    if forgotten_note.kind == ForgottenItemKind::Chat {
-        return Err("Legacy chat deletion is unsupported by the current chat store".into());
-    }
     #[cfg(test)]
     {
         let hook = BEFORE_FORGOTTEN_PURGE.lock().unwrap().take();
@@ -317,13 +296,6 @@ fn purge_forgotten_item(
         .note_timeline()
         .purge_selected_forgotten_note(forgotten_note, occurred_at_millis)
         .map_err(|error| error.to_string())
-}
-
-fn forgotten_item_kind_name(kind: &ForgottenItemKind) -> &'static str {
-    match kind {
-        ForgottenItemKind::Note => "note",
-        ForgottenItemKind::Chat => "chat",
-    }
 }
 
 #[cfg(test)]
@@ -638,8 +610,6 @@ mod tests {
             forgotten_at_millis: 1,
             purge_after_days: 7,
             purge_at_millis: 100,
-            kind: ForgottenItemKind::Note,
-            conversation_id: None,
         };
         db_insert_forgotten_note(&entry).unwrap();
         db_set_forgotten_original_path(&entry, "replacement.md").unwrap();
@@ -1109,53 +1079,6 @@ mod tests {
     }
 
     #[test]
-    fn unsupported_legacy_chat_recovery_and_deletion_preserve_files_and_metadata() {
-        let fixture = crate::test_support::TestVault::new("unsupported-forgotten-chat");
-        let forgotten_path = fixture.notes.path().join(".forgotten/legacy-chat");
-        fs::create_dir_all(&forgotten_path).unwrap();
-        let authored_path = forgotten_path.join("Conversation.md");
-        fs::write(&authored_path, "Retained authored transcript").unwrap();
-        let item = PersistedForgottenNote {
-            forgotten_path: forgotten_path.to_string_lossy().into_owned(),
-            original_path: fixture
-                .notes
-                .path()
-                .join("Chats/legacy-chat")
-                .to_string_lossy()
-                .into_owned(),
-            title: "Legacy chat".into(),
-            forgotten_at_millis: 0,
-            purge_after_days: 1,
-            purge_at_millis: 1,
-            kind: ForgottenItemKind::Chat,
-            conversation_id: Some("legacy-chat".into()),
-            note_id: None,
-        };
-        fixture
-            .state
-            .app_state_storage()
-            .insert_forgotten_note(&item)
-            .unwrap();
-        let paths = vec![item.forgotten_path.clone()];
-        assert!(restore_forgotten_notes_impl(&fixture.state, paths.clone())
-            .unwrap_err()
-            .contains("unsupported"));
-        assert!(delete_forgotten_notes_impl(&fixture.state, paths)
-            .unwrap_err()
-            .contains("unsupported"));
-        cleanup_expired_forgotten_notes(fixture.notes.path(), &fixture.state).unwrap();
-        assert_eq!(
-            fs::read_to_string(authored_path).unwrap(),
-            "Retained authored transcript"
-        );
-        assert!(fixture
-            .state
-            .app_state_storage()
-            .forgotten_note_matches(&item)
-            .unwrap());
-    }
-
-    #[test]
     fn persisted_identity_survives_an_unreadable_forgotten_note() {
         let forgotten_note = PersistedForgottenNote {
             forgotten_path: "/vault/.forgotten/Missing.md".to_string(),
@@ -1164,8 +1087,6 @@ mod tests {
             forgotten_at_millis: 10,
             purge_after_days: 7,
             purge_at_millis: 20,
-            kind: ForgottenItemKind::Note,
-            conversation_id: None,
             note_id: Some("forgotten-note-1".to_string()),
         };
 

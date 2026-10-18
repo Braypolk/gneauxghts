@@ -1,8 +1,6 @@
 // Canonical ordinary-note mutation, observation, lifecycle, and role-limited
 // history boundary. Storage and post-publication coordination remain private
 // implementation details so callers depend only on the closed domain contract.
-mod activity;
-mod activity_history;
 mod editing_window_capture;
 mod editing_window_policy;
 mod forgotten;
@@ -13,8 +11,6 @@ pub(crate) use forgotten::{
 };
 mod history_store;
 mod post_publication;
-mod provenance;
-pub(crate) use activity::RevisionCitation;
 #[cfg(test)]
 mod release_validation;
 mod runtime;
@@ -54,7 +50,7 @@ use test_support::{
 // - administration: recovery, initialization, health, deletion, compaction, and close
 // - publication: preparation, save, and mutation publication
 // - observation/lifecycle: external evidence and lifecycle or missing-note transitions
-// Storage, runtime, provenance, editing-window, and post-publication policy remain in
+// Storage, runtime, editing-window, and post-publication policy remain in
 // their existing private modules.
 
 use self::post_publication::PublicationOutcome;

@@ -1,5 +1,19 @@
 use super::*;
 
+/// Evidence carries current text only; revision payloads and labels stay private.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct RevisionCitation {
+    pub(crate) note_id: String,
+    pub(crate) revision_id: String,
+    pub(crate) at_millis: u64,
+    // Absent in durable citations written before interval evidence existed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) time_evidence: Option<RevisionTimeEvidence>,
+    pub(crate) source: MutationSource,
+    pub(crate) current_excerpt: String,
+}
+
 pub(crate) struct CurrentContentAccess<'a> {
     pub(super) state: &'a AppState,
     pub(super) runtime: &'a NoteTimelineRuntime,
@@ -97,6 +111,10 @@ impl CurrentContentAccess<'_> {
         &self,
         note_id: &NoteIdentity,
     ) -> Result<CanonicalNoteRead, HistoryError> {
+        self.with_integrity_tracking(|| self.read_note_inner(note_id))
+    }
+
+    fn read_note_inner(&self, note_id: &NoteIdentity) -> Result<CanonicalNoteRead, HistoryError> {
         for _ in 0..3 {
             let (operation, version) = self.prepare_refreshable_read()?;
             let eligibility = self.eligibility()?;
@@ -172,88 +190,6 @@ impl CurrentContentAccess<'_> {
         operation: impl FnOnce() -> Result<T, HistoryError>,
     ) -> Result<T, HistoryError> {
         self.runtime.with_history_result(operation)
-    }
-
-    pub(crate) fn current_citations(
-        &self,
-        citations: &[RevisionCitation],
-    ) -> Result<Vec<RevisionCitation>, HistoryError> {
-        self.with_integrity_tracking(|| activity::current_citations(self, citations))
-    }
-
-    pub(crate) fn activity(
-        &self,
-        after: u64,
-        before: u64,
-        offset: usize,
-        limit: usize,
-    ) -> Result<activity::ActivityPage, HistoryError> {
-        self.with_integrity_tracking(|| activity::read(self, after, before, offset, limit))
-    }
-
-    pub(crate) fn provenance(
-        &self,
-        note_id: &NoteIdentity,
-    ) -> Result<Option<provenance::CurrentContentProvenance>, HistoryError> {
-        self.with_integrity_tracking(|| {
-            self.finalize_evidence_target(note_id)?;
-            Ok(provenance::read_with_version(self, note_id)?.map(|read| read.current))
-        })
-    }
-
-    /// An explicit evidence boundary owns eligibility and canonical checks through
-    /// finalization. A stale disk observation cannot seal an unrelated endpoint.
-    pub(super) fn finalize_evidence_target(
-        &self,
-        note_id: &NoteIdentity,
-    ) -> Result<(), HistoryError> {
-        if !self
-            .eligibility()?
-            .allows_note(Some(note_id.as_str()), None)
-        {
-            return Ok(());
-        }
-        self.state
-            .note_timeline()
-            .await_history_readiness(note_id)?;
-        crate::state::with_note_file_mutation(|| self.finalize_evidence_target_owned(note_id))
-    }
-
-    // Caller holds the note-file mutation owner, including activity selection.
-    pub(super) fn finalize_evidence_target_owned(
-        &self,
-        note_id: &NoteIdentity,
-    ) -> Result<(), HistoryError> {
-        let timeline = self.state.note_timeline();
-        let _operation = self.runtime.begin_operation()?;
-        timeline
-            .with_settled_history_mutation(|| {
-                let eligibility = self.eligibility()?;
-                if !eligibility.allows_note(Some(note_id.as_str()), None)
-                    || recovered_note_ineligibility(&self.runtime.store, note_id)?.is_some()
-                {
-                    return Ok(());
-                }
-                let path = &eligibility.active_notes[note_id.as_str()];
-                let canonical = fs::read_to_string(path).map_err(|e| e.to_string())?;
-                let parsed = crate::note::parse_note(&canonical);
-                if parsed
-                    .frontmatter
-                    .managed
-                    .as_ref()
-                    .is_some_and(|m| m.id != note_id.as_str())
-                    || history_store::current_content_hash(&self.runtime.store, note_id)?.as_deref()
-                        != Some(history_store::authored_content_hash(&canonical).as_str())
-                {
-                    return Ok(());
-                }
-                if history_store::pending_window(&self.runtime.store, note_id)?.is_some() {
-                    let _mutation = timeline.begin_current_content_mutation()?;
-                    timeline.finalize_editor_capture(note_id)?;
-                }
-                Ok(())
-            })
-            .map_err(history_failure)
     }
 
     pub(super) fn prepare_read(

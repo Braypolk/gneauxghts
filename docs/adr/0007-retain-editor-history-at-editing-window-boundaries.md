@@ -8,9 +8,9 @@ Keep debounced canonical autosave and durable preparation, but accumulate ordina
 
 ## Consequences
 
-- A pending window is not a public Note Revision. Named Revisions and Revision Citations refer only to finalized immutable states. History inspection or citation production may finalize a window early; naming a selected immutable revision is metadata-only.
+- A pending window is not a public Note Revision. Named Revisions and Revision Citations refer only to finalized immutable states. History inspection may finalize a window early; naming a selected immutable revision is metadata-only. Under ADR 0012, Pi reads do not finalize windows for citations and can use observed hash/time evidence instead.
 - Important actions and lifecycle boundaries remain distinct. Granular Editor history compatibility is deliberately dropped. Compatible current-schema stores reopen; incompatible schemas or incomplete metadata require confirmed recovery/reset. The current schema belongs to `services/note_timeline/history_store.rs`. No migration or trust-old-store path remains.
-- Current-Content Provenance reports window intervals and retained transitions instead of claiming exact timing or retyping evidence for discarded intermediate states.
+- Retained time evidence reports window intervals instead of claiming exact timing or retyping evidence for discarded intermediate states. ADR 0012 removes the unused Current-Content Provenance and activity-query capabilities.
 - This revises ADR 0002's immediate-per-commit finalization model and the granularity assumed by ADR 0006. Mandatory durable preparation, committed-result warnings, truthful recovery, and the no-bypass availability decision remain. ADR 0004's finalized identity and portability guarantees remain.
 - Adopted 2026-09-05. The [capture contract](../architecture/editing-window-contract.md) defines fixed deadlines, time evidence, receipt retirement, and boundary ordering. The integrated default provides capture, read, lifecycle, and evidence behavior.
 

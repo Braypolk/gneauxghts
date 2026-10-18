@@ -1,7 +1,7 @@
 use super::*;
 use crate::{
     note,
-    state::{self, ForgottenItemKind, PersistedForgottenNote},
+    state::{self, PersistedForgottenNote},
 };
 use std::ffi::OsStr;
 
@@ -44,8 +44,6 @@ impl NoteTimeline<'_> {
             purge_after_days: retention_days,
             purge_at_millis: now
                 .saturating_add(u64::from(retention_days).saturating_mul(RECOVERY_DAY_MILLIS)),
-            kind: ForgottenItemKind::Note,
-            conversation_id: None,
         };
         #[cfg(test)]
         {
@@ -332,9 +330,6 @@ pub(crate) fn forgotten_note_identity(
     forgotten_note: &PersistedForgottenNote,
     forgotten_path: &Path,
 ) -> Option<NoteIdentity> {
-    if forgotten_note.kind != ForgottenItemKind::Note {
-        return None;
-    }
     if let Some(note_id) = forgotten_note
         .note_id
         .as_deref()

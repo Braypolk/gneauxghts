@@ -81,7 +81,6 @@ polling must not repeat successful startup recovery or close live windows.
 | Last editor pane leaves a note | Flush that shared document, then finalize it before departure. Leaving one of several editor panes does not finalize; chat references are not editing panes. |
 | Enter History Mode | Flush workspace saves, then finalize the inspected note’s eligible pending window before delivering history. A failed save/finalization refuses entry. |
 | Name a selected revision | Label the selected immutable revision without finalizing unrelated work. History Mode entry has already settled the inspected note. Naming current saved content requires obtaining a finalized revision first; there is no standalone name-current command. |
-| Explicit provenance/citation or temporal activity request | Finalize only eligible notes selected for immutable evidence, after pending publication recovery. Cite canonical saved content; this does not silently save unsaved editor buffers. Temporal activity requests first select bounded candidate notes and finalize only windows required for their evidence; revalidate ordering, cursors, overlap, bytes, eligibility, and generations afterward. Ordinary chat initialization and background conversation loading do not finalize. |
 | Task Action, Agent Publication, Version Restore, external observation | Finalize preceding editor work before the distinct action/observation. Preserve source even when a task action passes through a dirty document's save route. Unchanged action bytes do not invent a revision. |
 | Rename/move, forget/recovery, Missing/reattachment | Finalize prior editor work before the separate Lifecycle Event or eligibility change; preserve existing missing/external observation evidence ordering. |
 | Quit/restart releases the Running Vault | Stop admission, settle live publications, finalize windows, complete deletion/recovery and the existing WAL/portability barrier. Failure never reports a portable close. Staging a Next-launch Vault Selection does not release the Running Vault. |
@@ -107,24 +106,12 @@ window uncertain. For ordinary windows, current changed ranges have interval
 evidence from first through last successful publication, inclusive. This may be
 a point for one publication but does not imply knowledge of keystroke timing.
 
-For activity query [start, end), an ordinary window overlaps iff its last time
-is >= start and first time is < end; point revisions match start <= time < end.
-Reject empty/reversed queries. Count each matching finalized revision once,
-regardless of how many intervals/ranges match. Counts mean retained transitions,
-not saves, keystrokes, or all edits. Pending windows are not revisions. For a
-clock-discontinuous window, include it conservatively in time-filtered activity
-with an explicit uncertain-time indication rather than assert exclusion using
-misleading wall bounds; consumers cannot treat it as proven to occur in the
-query interval. The min/max timestamps support display, not false certainty.
-
-Provenance compares retained anchor and endpoint. Unchanged ranges retain earlier
-evidence; changed ranges carry the window interval. A deletion and retyping
-wholly within one window is unobservable when the endpoint is unchanged. Only
-transitions supported by retained states can establish a new introduction;
-discarded granular history is not imported. Restores keep their
-selected finalized identity and point return evidence. Citations contain only
-finalized immutable identities and versioned point/interval evidence, revalidated
-against current eligibility, canonical bytes, and mutation generation at delivery.
+The min/max timestamps support display, not exact within-window introduction or
+retyping claims. A deletion and retyping wholly within one window is unobservable
+when the endpoint is unchanged. Version Restore keeps its selected finalized
+identity and point return evidence. Under ADR 0012, scoped activity queries and
+Current-Content Provenance are removed; canonical Pi reads preserve pending
+windows and use revision or observed hash/time evidence for the actual read.
 
 ## Bounded publication receipts
 

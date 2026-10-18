@@ -8,8 +8,6 @@ export interface ForgottenNoteSummary {
   forgottenAtMillis: number;
   purgeAfterDays: 1 | 7 | 30;
   purgeAtMillis: number;
-  kind: 'note' | 'chat';
-  conversationId?: string | null;
   commitWarning?: CommittedMutationWarning | null;
 }
 
@@ -17,7 +15,5 @@ export interface RestoredForgottenNote {
   forgottenPath: string;
   restoredPath: string;
   title: string;
-  kind: 'note' | 'chat';
-  conversationId?: string | null;
   commitWarning?: CommittedMutationWarning | null;
 }

@@ -78,47 +78,11 @@ type PersistedLastChat = {
   contextNotePath: string | null;
 };
 
-/** Legacy browser key from the temporary localStorage prototype. */
-const LEGACY_CHAT_STORAGE_KEY = 'gneauxghts:last-chat-location:v1';
-
-function loadLegacyLocalStorageChat(): ChatNavLocation | null {
-  if (typeof window === 'undefined' || typeof window.localStorage === 'undefined') {
-    return null;
-  }
-  try {
-    const raw = window.localStorage.getItem(LEGACY_CHAT_STORAGE_KEY);
-    if (!raw) {
-      return null;
-    }
-    const parsed = JSON.parse(raw) as Partial<ChatNavLocation>;
-    if (parsed.kind !== 'chat' || typeof parsed.conversationId !== 'string' || !parsed.conversationId) {
-      return null;
-    }
-    return {
-      kind: 'chat',
-      conversationId: parsed.conversationId,
-      contextNoteId: typeof parsed.contextNoteId === 'string' ? parsed.contextNoteId : null,
-      contextNotePath: typeof parsed.contextNotePath === 'string' ? parsed.contextNotePath : null
-    };
-  } catch {
-    return null;
-  }
-}
-
-function clearLegacyLocalStorageChat(): void {
-  try {
-    window.localStorage?.removeItem(LEGACY_CHAT_STORAGE_KEY);
-  } catch {
-    // ignore
-  }
-}
-
 /** Load the last thought-partner pointer from app SQLite state (same store as recent notes). */
 export async function loadPersistedChatLocation(): Promise<ChatNavLocation | null> {
   try {
     const row = await invoke<PersistedLastChat | null>('get_last_chat_location');
     if (row?.conversationId) {
-      clearLegacyLocalStorageChat();
       return {
         kind: 'chat',
         conversationId: row.conversationId,
@@ -127,21 +91,16 @@ export async function loadPersistedChatLocation(): Promise<ChatNavLocation | nul
       };
     }
   } catch {
-    // Fall through to legacy migration.
+    // The saved location is optional; navigation can open a fresh chat.
   }
 
-  const legacy = loadLegacyLocalStorageChat();
-  if (legacy) {
-    if (await persistChatLocation(legacy)) clearLegacyLocalStorageChat();
-    return legacy;
-  }
   return null;
 }
 
 /** Persist the thought-partner pointer into app SQLite state. */
-export async function persistChatLocation(location: ChatNavLocation): Promise<boolean> {
+export async function persistChatLocation(location: ChatNavLocation): Promise<void> {
   if (!location.conversationId) {
-    return false;
+    return;
   }
   try {
     await invoke('set_last_chat_location', {
@@ -149,10 +108,8 @@ export async function persistChatLocation(location: ChatNavLocation): Promise<bo
       contextNoteId: location.contextNoteId,
       contextNotePath: location.contextNotePath
     });
-    return true;
   } catch {
-    // Keep legacy data available for a later successful migration.
-    return false;
+    // Navigation can continue even when its optional saved pointer is unavailable.
   }
 }
 

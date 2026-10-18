@@ -30,24 +30,6 @@ fn repository_file(relative_path: &str) -> String {
     source
 }
 
-fn repository_module_tree(path: &str) -> String {
-    let source = repository_file(path);
-    let parsed = syn::parse_file(&source).expect("parse module root");
-    let base = std::path::Path::new(path).with_extension("");
-    let mut combined = source.clone();
-    for item in parsed.items {
-        if let syn::Item::Mod(module) = item {
-            if module.content.is_none() {
-                let relative = base.join(format!("{}.rs", module.ident));
-                let relative = relative.to_string_lossy();
-                combined.push_str("\n");
-                combined.push_str(&repository_module_tree(&relative));
-            }
-        }
-    }
-    combined
-}
-
 fn assert_contains_all(source: &str, expected: &[&str]) {
     let code = support::without_string_literals(source);
     for value in expected {

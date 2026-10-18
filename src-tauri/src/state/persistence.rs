@@ -110,30 +110,6 @@ fn take_note_publication_failure() -> bool {
     FAIL_NEXT_NOTE_PUBLICATION.swap(false, std::sync::atomic::Ordering::AcqRel)
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
-pub(crate) enum ForgottenItemKind {
-    #[default]
-    Note,
-    Chat,
-}
-
-impl ForgottenItemKind {
-    fn as_str(&self) -> &'static str {
-        match self {
-            Self::Note => "note",
-            Self::Chat => "chat",
-        }
-    }
-
-    fn parse(value: &str) -> Self {
-        match value {
-            "chat" => Self::Chat,
-            _ => Self::Note,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PersistedForgottenNote {
@@ -145,10 +121,6 @@ pub(crate) struct PersistedForgottenNote {
     pub(crate) forgotten_at_millis: u64,
     pub(crate) purge_after_days: u32,
     pub(crate) purge_at_millis: u64,
-    #[serde(default)]
-    pub(crate) kind: ForgottenItemKind,
-    #[serde(default)]
-    pub(crate) conversation_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -616,20 +588,10 @@ fn prune_forgotten_notes(state: &mut PersistedState, notes_dir: &Path) {
     state.forgotten_notes.retain(|forgotten_note| {
         let forgotten_path = PathBuf::from(&forgotten_note.forgotten_path);
         let original_path = PathBuf::from(&forgotten_note.original_path);
-        let valid_stored_item = match forgotten_note.kind {
-            ForgottenItemKind::Note => forgotten_path.is_file(),
-            ForgottenItemKind::Chat => {
-                forgotten_path.is_dir()
-                    && forgotten_note
-                        .conversation_id
-                        .as_deref()
-                        .is_some_and(|id| !id.trim().is_empty())
-            }
-        };
         !forgotten_note.title.trim().is_empty()
             && forgotten_note.purge_after_days > 0
             && forgotten_note.purge_at_millis >= forgotten_note.forgotten_at_millis
-            && valid_stored_item
+            && forgotten_path.is_file()
             && is_forgotten_note_path(&forgotten_path, notes_dir)
             && is_path_in_notes_dir(&original_path, notes_dir)
             && !is_forgotten_note_path(&original_path, notes_dir)
@@ -916,9 +878,7 @@ fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
                 title TEXT NOT NULL,
                 forgotten_at_millis INTEGER NOT NULL,
                 purge_after_days INTEGER NOT NULL,
-                purge_at_millis INTEGER NOT NULL,
-                kind TEXT NOT NULL DEFAULT 'note',
-                conversation_id TEXT
+                purge_at_millis INTEGER NOT NULL
             );
             CREATE TABLE IF NOT EXISTS app_state_note_activity (
                 note_id TEXT PRIMARY KEY,
@@ -930,7 +890,7 @@ fn ensure_state_schema(connection: &mut Connection) -> Result<(), String> {
         .map_err(|err| err.to_string())?;
     migrate_note_activity_columns(connection)?;
     migrate_last_chat_columns(connection)?;
-    migrate_forgotten_item_columns(connection)?;
+    migrate_forgotten_note_identity_column(connection)?;
     migrate_forgotten_retention_column(connection)?;
     super::task_projection::ensure_task_projection_schema(connection)?;
     transaction.commit().map_err(|err| err.to_string())
@@ -981,28 +941,11 @@ pub(crate) fn set_forgotten_note_retention_days(retention_days: u32) -> Result<(
     })
 }
 
-fn migrate_forgotten_item_columns(connection: &Connection) -> Result<(), String> {
+fn migrate_forgotten_note_identity_column(connection: &Connection) -> Result<(), String> {
     if !has_column(connection, "app_state_forgotten_notes", "note_id")? {
         connection
             .execute(
                 "ALTER TABLE app_state_forgotten_notes ADD COLUMN note_id TEXT",
-                [],
-            )
-            .map_err(|err| err.to_string())?;
-    }
-    if !has_column(connection, "app_state_forgotten_notes", "kind")? {
-        connection
-            .execute(
-                "ALTER TABLE app_state_forgotten_notes
-                 ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'",
-                [],
-            )
-            .map_err(|err| err.to_string())?;
-    }
-    if !has_column(connection, "app_state_forgotten_notes", "conversation_id")? {
-        connection
-            .execute(
-                "ALTER TABLE app_state_forgotten_notes ADD COLUMN conversation_id TEXT",
                 [],
             )
             .map_err(|err| err.to_string())?;
@@ -1193,7 +1136,7 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
     let mut statement = connection
         .prepare(
             "SELECT forgotten_path, note_id, original_path, title, forgotten_at_millis,
-                    purge_after_days, purge_at_millis, kind, conversation_id
+                    purge_after_days, purge_at_millis
              FROM app_state_forgotten_notes",
         )
         .map_err(|err| err.to_string())?;
@@ -1207,8 +1150,6 @@ fn read_state_from_database(connection: &Connection) -> Result<PersistedState, S
                 forgotten_at_millis: read_u64_column(row, 4)?,
                 purge_after_days: read_u32_column(row, 5)?,
                 purge_at_millis: read_u64_column(row, 6)?,
-                kind: ForgottenItemKind::parse(&row.get::<_, String>(7)?),
-                conversation_id: row.get(8)?,
             })
         })
         .map_err(|err| err.to_string())?;
@@ -1353,10 +1294,8 @@ fn write_state_to_connection(
                     title,
                     forgotten_at_millis,
                     purge_after_days,
-                    purge_at_millis,
-                    kind,
-                    conversation_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    purge_at_millis
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
                 params![
                     forgotten_note.forgotten_path.as_str(),
                     forgotten_note.note_id.as_deref(),
@@ -1364,9 +1303,7 @@ fn write_state_to_connection(
                     forgotten_note.title.as_str(),
                     to_i64(forgotten_note.forgotten_at_millis)?,
                     i64::from(forgotten_note.purge_after_days),
-                    to_i64(forgotten_note.purge_at_millis)?,
-                    forgotten_note.kind.as_str(),
-                    forgotten_note.conversation_id.as_deref()
+                    to_i64(forgotten_note.purge_at_millis)?
                 ],
             )
             .map_err(|err| err.to_string())?;
@@ -1389,16 +1326,11 @@ fn forgotten_row_values(
         Value::Integer(to_i64(note.forgotten_at_millis)?),
         Value::Integer(i64::from(note.purge_after_days)),
         Value::Integer(to_i64(note.purge_at_millis)?),
-        Value::Text(note.kind.as_str().to_owned()),
-        note.conversation_id
-            .clone()
-            .map_or(Value::Null, Value::Text),
     ])
 }
 
 const FORGOTTEN_ROW_MATCH: &str = "forgotten_path = ?1 AND note_id IS ?2 AND original_path = ?3
-    AND title = ?4 AND forgotten_at_millis = ?5 AND purge_after_days = ?6 AND purge_at_millis = ?7
-    AND kind = ?8 AND conversation_id IS ?9";
+    AND title = ?4 AND forgotten_at_millis = ?5 AND purge_after_days = ?6 AND purge_at_millis = ?7";
 
 #[cfg(test)]
 pub(crate) fn db_insert_forgotten_note(note: &PersistedForgottenNote) -> Result<(), String> {
@@ -1411,8 +1343,8 @@ fn insert_forgotten_note(
 ) -> Result<(), String> {
     let values = forgotten_row_values(note)?;
     connection.execute("INSERT INTO app_state_forgotten_notes
-            (forgotten_path, note_id, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis, kind, conversation_id)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)", rusqlite::params_from_iter(values))
+            (forgotten_path, note_id, original_path, title, forgotten_at_millis, purge_after_days, purge_at_millis)
+            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)", rusqlite::params_from_iter(values))
         .map(|_| ()).map_err(|error| error.to_string())
 }
 
@@ -1462,7 +1394,7 @@ fn set_forgotten_original_path(
 ) -> Result<(), String> {
     let mut values = forgotten_row_values(expected)?;
     values.push(rusqlite::types::Value::Text(path.to_owned()));
-    let changed = connection.execute(&format!("UPDATE app_state_forgotten_notes SET original_path = ?10 WHERE {FORGOTTEN_ROW_MATCH}"), rusqlite::params_from_iter(values))
+    let changed = connection.execute(&format!("UPDATE app_state_forgotten_notes SET original_path = ?8 WHERE {FORGOTTEN_ROW_MATCH}"), rusqlite::params_from_iter(values))
             .map_err(|error| error.to_string())?;
     if changed != 1 {
         return Err("The forgotten item changed before recovery finished".to_string());
@@ -1512,11 +1444,6 @@ impl AppStateStorage {
                     "DELETE FROM app_state_recent_note_ids WHERE note_id = ?1",
                     [note_id],
                 ).map_err(|error| error.to_string())?;
-            }
-            if let Some(conversation_id) = &note.conversation_id {
-                transaction.execute("UPDATE app_state SET last_chat_conversation_id = NULL, last_chat_context_note_id = NULL, last_chat_context_note_path = NULL
-                    WHERE id = ?1 AND last_chat_conversation_id = ?2", params![APP_STATE_SINGLETON_ID, conversation_id])
-                    .map_err(|error| error.to_string())?;
             }
             transaction.commit().map_err(|error| error.to_string())
         })

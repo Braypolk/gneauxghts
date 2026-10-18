@@ -102,7 +102,7 @@ been adopted by the current editor lifetime.
 ### Notes
 
 `NoteTimeline` is the canonical owner for ordinary-note mutation coordination,
-external observations, History Mode reads, current-content provenance, and
+external observations, History Mode reads, scoped current-content reads, and
 the future explicitly granted agent-restore path. Editor, task, typed agent-publication,
 lifecycle, watcher, and reconciliation callers enter its closed typed contract. Post-publication
 catalog, task, lexical, semantic, warning, and recovery coordination is a
@@ -170,8 +170,8 @@ its snapshot.
 History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability remains absent; future Version Restore
 authority requires its own typed operation and decision. Native current-content
-and scoped activity-history capabilities remain role-limited domain facilities,
-while the initial Pi tool surface exposes search/read only. Revision and Lifecycle Event identities
+reads remain role-limited; unused activity-history and provenance capabilities
+are removed under ADR 0012. The initial Pi tool surface exposes search/read only. Revision and Lifecycle Event identities
 likewise cannot be minted by callers; their durable issuer belongs inside
 `NoteTimeline`.
 
@@ -189,14 +189,11 @@ owned by another path, the original mapping wins and the copy receives a new
 globally unique identity before any catalog, lexical, or task projection sees
 it.
 
-Current-Content Provenance rebuilds on demand in the private `provenance`
-module from retained revisions and Lifecycle Events. Only
-`current_content(AllowedScope).provenance` exposes its line groupings and UTF-8
-ranges. Reads check current eligibility, canonical authored bytes, and the
-runtime mutation generation before delivery. Restore selection is durable
+Current-content reads check current eligibility, canonical authored bytes, and
+the runtime mutation generation before delivery. Restore selection is durable
 domain evidence attached to the prepared publication before Markdown is
 written; its reference survives finalization recovery and is removed with the
-retained timeline. The projection itself has no durable cache.
+retained timeline.
 
 An ordinary editor save (including a dirty editor task edit) crosses `note_persistence`
 into the complete `NoteTimeline.save_note` operation. Clean task commands instead submit
@@ -398,11 +395,11 @@ path cannot make the purged identity readable or appendable again.
 Complete forgotten-note forget, recovery and selected purge operations also belong
 to `NoteTimeline`. Commands select items and map results; the owner stages only the
 selected metadata row, compares current source bytes, guards destination collisions,
-rolls back known failures and retains indeterminate recovery evidence. Legacy
-forgotten chat items are unsupported explicitly; they never fall through ordinary
-note deletion or migrate into Pi. Forgotten metadata uses the `AppState`-bound
-app-state database, so a staged next-launch selection cannot redirect lifecycle
-records away from the running vault.
+rolls back known failures and retains indeterminate recovery evidence. Forgotten
+metadata contains notes only; Pi chat forgetting is presentation metadata in its
+own store. Forgotten metadata uses the `AppState`-bound app-state database, so a
+staged next-launch selection cannot redirect lifecycle records away from the
+running vault.
 Allocated-byte reporting covers the live SQLite main file, WAL, and ephemeral
 SHM sidecar. A compaction pass only checkpoints a WAL that fits wholly inside
 its remaining byte budget, then bounds incremental vacuum work with that

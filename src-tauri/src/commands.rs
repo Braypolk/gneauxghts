@@ -197,9 +197,6 @@ pub(crate) struct ForgottenNoteSummary {
     forgotten_at_millis: u64,
     purge_after_days: u32,
     purge_at_millis: u64,
-    kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
 }
@@ -210,9 +207,6 @@ pub(crate) struct RestoredForgottenNote {
     forgotten_path: String,
     restored_path: String,
     title: String,
-    kind: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    conversation_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     commit_warning: Option<crate::services::note_timeline::NoteMutationWarning>,
 }
