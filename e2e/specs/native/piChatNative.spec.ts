@@ -35,6 +35,10 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     const read = messages(pane).find(message => message.role === 'toolResult' && message.toolName === 'read_note');
     assert(read?.role === 'toolResult' && !read.isError);
     assert(read.details && typeof read.details === 'object' && 'source' in read.details, 'Native read identity must survive in Pi tool details');
+    const result = JSON.parse(read.content.filter(block => block.type === 'text').map(block => block.text).join(''));
+    assert.equal(result.source.readState, undefined, 'Native proof does not belong in model tool content');
+    const source = read.details.source as { readState: { contentHash: string } };
+    assert(source.readState.contentHash, 'Native proof remains available to the app');
     assert(await $('[data-pi-source]').isExisting());
     const diagnostics = (await piDiagnostics()).progress;
     const observed = diagnostics.conversations[id];

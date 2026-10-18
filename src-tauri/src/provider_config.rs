@@ -21,7 +21,7 @@ pub(crate) fn openai_api_base_url() -> Result<String, String> {
     Ok("https://api.openai.com/v1".to_string())
 }
 
-#[cfg(any(test, all(debug_assertions, feature = "e2e-chat-fixture")))]
+#[cfg(all(debug_assertions, feature = "e2e-chat-fixture"))]
 pub(crate) fn validate_openai_fixture_url(value: &str) -> Result<(), String> {
     validate_local_base_url(value)?;
     let parsed = Url::parse(value).map_err(|_| "Invalid fixture URL".to_string())?;

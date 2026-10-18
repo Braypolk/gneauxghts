@@ -3,6 +3,7 @@
   import SettingsField from './SettingsField.svelte';
   import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
   import LocalModelSettings from './LocalModelSettings.svelte';
+  import ChatWriteDefaultsPanel from './ChatWriteDefaultsPanel.svelte';
   import { onMount } from 'svelte';
   import { chatSettings } from '$lib/features/chat/pi/settings';
   import type { ChatProvider, ChatSettings } from '$lib/features/chat/types';
@@ -292,6 +293,7 @@
       </section>
     {/if}
 
+    <ChatWriteDefaultsPanel />
     <ExcludedNotesSettings />
 
     {#if error}

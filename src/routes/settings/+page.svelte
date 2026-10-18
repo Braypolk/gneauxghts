@@ -7,6 +7,7 @@
   import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
   import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
   import EditorTextSizePanel from '$lib/features/settings/EditorTextSizePanel.svelte';
+  import EditDiffLayoutPanel from '$lib/features/settings/EditDiffLayoutPanel.svelte';
   import HistorySettingsPanel from '$lib/features/settings/HistorySettingsPanel.svelte';
   import SettingsCard from '$lib/features/settings/SettingsCard.svelte';
   import SettingsLabel from '$lib/features/settings/SettingsLabel.svelte';
@@ -92,7 +93,7 @@
     const reveal = () => {
       const element = content.querySelector<HTMLElement>(`[data-settings-anchor="${anchor}"]`)
         // Provider-specific fields may not apply to the current provider/model.
-        ?? (anchor.startsWith('chat-') ? content.querySelector<HTMLElement>('[data-settings-anchor="chat-defaults"]') : null);
+        ?? (anchor.startsWith('chat-') && !anchor.startsWith('chat-write-') ? content.querySelector<HTMLElement>('[data-settings-anchor="chat-defaults"]') : null);
       if (!element) return false;
       for (const details of content.querySelectorAll('details')) {
         if (details.contains(element) || details === element) details.open = true;
@@ -247,6 +248,7 @@
                 </div>
 
                 <EditorTextSizePanel />
+                <EditDiffLayoutPanel />
               </div>
             {:else if settings.activeGeneralSection === 'shortcuts'}
               <KeyboardShortcutsPanel targetAnchor={destination} />

@@ -64,8 +64,8 @@ describe('composed notepad commands', () => {
 
   it('forgets and durably recovers a note without retaining its disposed runtime', async () => {
     const f = setup(); documentRegistry.ensure(f.initialDocument.handle);
-    vi.mocked(forgetNoteSession).mockResolvedValue({ forgottenPath: '/forgotten/a.md', originalPath: '/vault/a.md', title: 'a', fileName: 'a.md', forgottenAtMillis: 1, purgeAfterDays: 7, purgeAtMillis: 2, kind: 'note' });
-    vi.mocked(restoreForgottenNotes).mockResolvedValue([{ forgottenPath: '/forgotten/a.md', restoredPath: '/vault/a.md', title: 'a', kind: 'note' }]);
+    vi.mocked(forgetNoteSession).mockResolvedValue({ forgottenPath: '/forgotten/a.md', originalPath: '/vault/a.md', title: 'a', fileName: 'a.md', forgottenAtMillis: 1, purgeAfterDays: 7, purgeAtMillis: 2 });
+    vi.mocked(restoreForgottenNotes).mockResolvedValue([{ forgottenPath: '/forgotten/a.md', restoredPath: '/vault/a.md', title: 'a' }]);
     await f.commands.clearNotepad();
     expect(documentRegistry.get(f.initialDocument.handle)).toBeNull();
     expect(forgetNoteSession).toHaveBeenCalledWith('/vault/a.md', 7);

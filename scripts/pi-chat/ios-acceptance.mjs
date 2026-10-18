@@ -50,7 +50,7 @@ export function validateIosCommand(value) {
     case 'read-mode': oneOf(args.mode, ['fullVault', 'attachedNotesOnly'], 'read mode'); break;
     case 'save-fixture': oneOf(args.key, ['lantern', 'other', 'update', 'excluded'], 'fixture key'); if (args.version !== undefined) oneOf(args.version, [1, 2], 'fixture version'); break;
     case 'grant': oneOf(args.duration, ['off', 'temporary', 'always'], 'grant duration'); boolean(args.review, 'review'); break;
-    case 'prepare': oneOf(args.operation, ['create', 'update'], 'operation'); if (args.operation === 'update') { opaque(args.noteId, 'noteId'); opaque(args.sourceId, 'sourceId'); } break;
+    case 'prepare': oneOf(args.operation, ['update'], 'operation'); opaque(args.noteId, 'noteId'); opaque(args.sourceId, 'sourceId'); break;
     case 'select-conversation': positive(args.conversationId, 'conversationId'); break;
     case 'attach': case 'read-fixture': case 'history-fixture': case 'exclude': opaque(args.noteId, 'noteId'); if (value.action === 'exclude') boolean(args.excluded, 'excluded'); break;
     case 'approve': case 'publish': case 'reconcile': opaque(args.intentId, 'intentId'); break;

@@ -5,6 +5,7 @@ import { createServer } from 'node:http';
 export async function startPiProviderFixture({ readQuery = 'Pi acceptance lantern' } = {}) {
   assert(typeof readQuery === 'string' && readQuery.length > 0 && readQuery.length <= 160);
   let fail = false, requests = 0, holdSummaries = false, pendingSummaries = 0;
+  let edit, creation;
   const summaryGates = new Set();
   const server = createServer(async (req, res) => {
     if (req.method === 'GET') {
@@ -32,6 +33,12 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
       pendingSummaries--;
     }
     if (summary) { chunk({ content: '## Goal\nWelcome a fictional observatory visitor.\n## Constraints & Preferences\n- Use no notes or tools.\n## Progress\n### Done\n- Reviewed generated fictional history.\n### In Progress\n- Continue with a welcome.\n### Blocked\n- (none)\n## Key Decisions\n- Keep the visitor welcome brief.\n## Next Steps\n1. Answer the current prompt.\n## Critical Context\n- Source-free synthetic observatory scenario.' }); chunk({}, 'stop'); }
+    else if (prompt.includes('fixture-create') && creation && tools.length === 0) call('create_note', creation);
+    else if (prompt.includes('fixture-edit') && edit && tools.length === 0) call('read_note', { noteId: edit.noteId });
+    else if (prompt.includes('fixture-edit') && edit && tools.length === 1) {
+      const read = JSON.parse(tools[0].content ?? '{}');
+      call('edit_note', { noteId: edit.noteId, expectedReadSourceId: read.source?.sourceId ?? 'missing', edits: [{ oldText: edit.oldText, newText: edit.newText }] });
+    }
     else if (prompt.includes('fixture-read') && tools.length === 0) call('search_notes', { query: readQuery });
     else if (prompt.includes('fixture-read') && tools.length === 1) {
       const result = JSON.parse(tools[0].content ?? '{}'); call('read_note', { noteId: result.items?.[0]?.noteId ?? 'missing-fixture-note' });
@@ -39,12 +46,13 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
     else {
       chunk({ reasoning_content: 'Fixture reasoning begins. ' }); await pause(500); chunk({ reasoning_content: 'Fixture reasoning ends.' });
       const read = tools.at(-1)?.content ? JSON.parse(tools.at(-1).content) : undefined;
-      const text = prompt.includes('fixture-read') && read?.citation ? `The lantern is amber. ${read.citation}` : 'Fixture ordinary answer.';
+      const editedSource = prompt.includes('fixture-edit-historical') && tools[0]?.content ? JSON.parse(tools[0].content).citation : read?.read?.citation;
+      const text = prompt.includes('fixture-create') ? `Fixture creation outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${read?.read?.citation ?? ''}` : prompt.includes('fixture-edit') ? `Fixture edit outcome: ${JSON.stringify({ status: read?.status, receiptId: read?.receiptId, code: read?.code })} ${editedSource ?? ''}` : prompt.includes('fixture-read') && read?.citation ? `The lantern is amber. ${read.citation}` : 'Fixture ordinary answer.';
       chunk({ content: text }); await pause(prompt.includes('fixture-hold') ? 8000 : 500); chunk({ content: ' Finished.' }); chunk({}, 'stop');
     }
     if (!res.destroyed) res.end('data: [DONE]\n\n');
   });
   await new Promise((ok, failStart) => { server.once('error', failStart); server.listen(0, '127.0.0.1', ok); });
   const address = server.address(); assert(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
+  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setEdit(value) { edit = value; }, setCreate(value) { creation = value; }, setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
 }

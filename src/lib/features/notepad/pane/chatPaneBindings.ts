@@ -9,5 +9,6 @@ export interface ChatPaneBindings {
     onConversationChange: (id: string | null) => void;
     onSurfaceHandleChange: (handle: ChatSurfaceHandle | null) => void;
   };
-  context: { onOpenSource: (authorityId: string, sourceId: string) => Promise<void> };
+  // Successful navigation may return informational feedback; failures reject.
+  context: { onOpenSource: (authorityId: string, sourceId: string) => Promise<string | void> };
 }

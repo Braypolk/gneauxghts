@@ -25,7 +25,7 @@ accepted('ordinary Pi chat with the actual local model', function () {
   it('performs native search/read, admits a source and opens its destination', async () => {
     const note = await savePiFixtureNote('Pi acceptance lantern', 'The expedition lantern is amber. Its inventory code is LANTERN-742.');
     await newPiConversation();
-    const id = await sendPiMessage('Find the saved note titled Pi acceptance lantern using search_notes, read its full content with read_note, and tell me the lantern color and inventory code. Cite the exact citation token returned by read_note.');
+    const id = await sendPiMessage('Find the saved note titled Pi acceptance lantern using search_notes, read its full content with read_note, and tell me the lantern color and inventory code. Cite the exact Markdown citation returned by read_note.');
     const pane = await waitPiIdle(300_000);
     const tools = messages(pane).filter(message => message.role === 'toolResult');
     assert(tools.some(message => message.toolName === 'search_notes' && !message.isError));

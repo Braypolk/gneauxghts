@@ -84,14 +84,29 @@ its own fixture processes and does not test clean-exit persistence.
 
 ## Ordinary Pi acceptance
 
-`piChatNative.spec.ts`, `piChatPublication.spec.ts`, `piChatCompaction.spec.ts` and
-`piChatAdapters.spec.ts`
+`piChatNative.spec.ts`, `piChatPublication.spec.ts`, `piChatEditing.spec.ts`,
+`piChatCreation.spec.ts`, `piChatCompaction.spec.ts` and `piChatAdapters.spec.ts`
 exercise ordinary chat against the deterministic provider in
 `support/piProviderFixture.mjs`. They use actual Pi Harness, native storage,
 authority, transport, citations and NoteTimeline publication. The provider is a
 fixture; these checks make no live-model claim. `piChatLocal.spec.ts` is the
 separate live local-model lane. Every native suite writes only its generated
 fixture vault and starts on the ordinary `/` route.
+
+The editing journey uses model-issued `read_note`/`edit_note` calls, the public Pi
+edit factory, visible approve/discard review and native publication. It covers
+stale bases, cancellation, independent write permission, explicitly disabled
+review and Always-to-Temporary policy changes. Add `GNEAUX_PI_PROCESS_RESTART=1`
+when running `piChatEditing.spec.ts` to include a real process relaunch while an
+edit awaits review, followed by exactly one committed tool result.
+
+The creation journey uses model-issued `create_note`, explicit creation permission,
+a full-content review with the exact destination, and create-only native publication.
+It covers independent operation grants, fresh citations, discard/Stop, late
+destination collisions and no suffixed copies. `GNEAUX_PI_PROCESS_RESTART=1` adds
+restart before approval and after publication, preserving one identity and receipt.
+Native Rust publication tests also fault before the effect and after commit but
+before acknowledgement.
 
 The deterministic Pi specs run by default in the native smoke lane without extra
 acceptance flags. Only live-model checks require opt-in; use

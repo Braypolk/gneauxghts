@@ -31,6 +31,18 @@ describe('searchable settings workspace', () => {
     await category('appearance').click();
   });
 
+  it('finds the diff layout setting and retains both choices after reload', async () => {
+    await search().setValue('inline diff');
+    await $('[data-settings-result="diff-layout"]').click();
+    await expectDestination('diff-layout');
+    for (const layout of ['side-by-side', 'inline']) {
+      await $(`label:has(input[name="edit-diff-layout"][value="${layout}"])`).click();
+      await browser.url('/settings');
+      await category('appearance').click();
+      expect(await $(`input[name="edit-diff-layout"][value="${layout}"]`).isSelected()).toBe(true);
+    }
+  });
+
   it('explains manual iOS reopening while keeping desktop restart available', async () => {
     const selection = {
       runningPath: '/e2e', selectedPath: '/next', defaultPath: '/e2e',

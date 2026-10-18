@@ -5,7 +5,7 @@ import { foregroundNativeSpecs, requireNativeForeground } from './nativePresenta
 
 // Keep deterministic UI contracts separate from provider and measurement opt-ins.
 export const nativeSuites = {
-  smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'piChatNative', 'piChatPublication', 'piChatCompaction', 'piChatAdapters'],
+  smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'piChatNative', 'piChatPublication', 'piChatEditing', 'piChatCreation', 'piChatCompaction', 'piChatAdapters'],
   foreground: [...foregroundNativeSpecs],
   measurement: ['editing-windows'],
   live: ['piChatLocal']

@@ -158,7 +158,7 @@ export async function observePi() {
         const record = progress(pane.conversationId);
         const article = document.querySelector('[data-testid="pi-assistant-message"][data-streaming="true"]');
         if (article?.querySelector('.gn-markdown-surface')?.textContent?.trim()) record.uiTextWhileBusy = true;
-        if (article?.querySelector('[data-testid="pi-reasoning"] pre')?.textContent?.trim()) record.uiReasoningWhileBusy = true;
+        if (document.querySelector('[data-testid="pi-reasoning"][data-streaming="true"] pre')?.textContent?.trim()) record.uiReasoningWhileBusy = true;
       } });
       observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-streaming'] });
       stats.stop = () => { disposed = true; unsubscribe(); observer.disconnect(); for (const watch of watches.values()) void watch.stop(); native.stop(); };

@@ -24,6 +24,7 @@ export interface SettingsSearchEntry {
 }
 
 export const settingsSearchEntries: SettingsSearchEntry[] = [
+  { id: 'diff-layout', category: 'appearance', title: 'Chat edit diffs', description: 'Review edits inline or compare Before and After side by side.', keywords: 'diff layout comparison changes review inline side by side', anchor: 'diff-layout' },
   { id: 'theme', category: 'appearance', title: 'Theme', description: 'Choose Light, Dark, or Auto to follow your system.', keywords: 'color colour mode display night', anchor: 'theme' },
   { id: 'text-size', category: 'appearance', title: 'Editor text size', description: 'Adjust text size, custom body text, and heading scale with a live preview.', keywords: 'font typography zoom large small medium reading', anchor: 'text-size' },
   { id: 'shortcuts', category: 'shortcuts', title: 'Customize keyboard shortcuts', description: 'Change key bindings, resolve conflicts, or reset all to default.', keywords: 'hotkeys keybindings keys', anchor: 'shortcuts' },
@@ -36,6 +37,9 @@ export const settingsSearchEntries: SettingsSearchEntry[] = [
   { id: 'reasoning', category: 'ai', title: 'Reasoning', description: 'Choose the reasoning effort for supported OpenAI models.', keywords: 'thinking effort intelligence', anchor: 'chat-reasoning' },
   { id: 'processing', category: 'ai', title: 'Processing', description: 'Choose Standard or lower-cost Flex processing with OpenAI.', keywords: 'price pricing cost speed service tier', anchor: 'chat-processing' },
   { id: 'access', category: 'ai', title: 'Default vault access', description: 'Choose Full vault or No notes as the default for new chats.', keywords: 'privacy permissions scope notes', anchor: 'chat-access' },
+  { id: 'write-access', category: 'ai', title: 'Default note editing', description: 'Turn vault editing permission Off or Always allow edits.', keywords: 'write permissions defaults tools saved notes temporary', anchor: 'chat-write-access' },
+  { id: 'write-create', category: 'ai', title: 'Allow creating new notes', description: 'Grant chat separate permission to create Markdown notes.', keywords: 'write permissions defaults create creation files notes', anchor: 'chat-write-create' },
+  { id: 'write-review', category: 'ai', title: 'Review before applying edits', description: 'Choose whether chat edits need your approval before they are applied.', keywords: 'write permissions defaults diff changes review approval confirm', anchor: 'chat-write-review' },
   { id: 'excluded', category: 'ai', title: 'Excluded notes', description: 'Find notes to exclude from AI, or allow previously excluded notes.', keywords: 'privacy private security hide block permissions', anchor: 'excluded-notes' },
   { id: 'semantic', category: 'search', title: 'Semantic search', description: 'Blend local semantic matches into keyword search.', keywords: 'enable disable toggle embeddings related', anchor: 'semantic-search' },
   { id: 'image-detail', category: 'search', title: 'Image search detail', description: 'Choose 70 or 140 image tokens for local search.', keywords: 'gemma litert vision gpu memory higher standard', anchor: 'semantic-image-detail' },

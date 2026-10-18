@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./lib/components/ui/shimmer.css";
 @import "./lib/features/notepad/markdown/markdownSurface.css";
 
 @theme inline {

@@ -40,7 +40,7 @@ describe('ordinary Pi chat mounted controls', () => {
     expect(conversations).toHaveLength(1);
     expect(conversations[0].messages.filter(message => message.role === 'user')).toEqual([{ role: 'user', content: 'Explain this note' }]);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations.filter(item => item.command === 'chat_get_model_capabilities').length)).toBe(capabilityReads);
-    await $('[data-testid="pi-reasoning"] summary').click();
+    await $('[data-testid="pi-reasoning"] [data-slot="trace-collapsible-trigger"]').click();
     await expect($('[data-testid="pi-reasoning"] pre')).toHaveText('Fixture reasoning.');
     await $('button[aria-label="Conversations"]').click();
     await $('button[role="menuitem"]').click();

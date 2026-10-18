@@ -14,7 +14,7 @@ export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {
   getPaneConversationId: (paneId: TPaneId) => string | null;
   setPaneConversationId: (paneId: TPaneId, id: string | null) => void;
   touchPaneLocation: (paneId: TPaneId) => void;
-  openSource: (paneId: TPaneId, authorityId: string, sourceId: string) => Promise<void>;
+  openSource: (paneId: TPaneId, authorityId: string, sourceId: string) => Promise<string | void>;
 }
 
 /** Retained note route and source navigation; no editor content enters model input. */

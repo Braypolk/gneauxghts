@@ -164,7 +164,7 @@ export async function runPiSimulatorAcceptance() {
     const progress = stats.conversations[selected.conversationId]; if (!progress) return;
     const article = document.querySelector('[data-testid="pi-assistant-message"][data-streaming="true"]');
     progress.uiTextWhileBusy ||= Boolean(article?.querySelector('.gn-markdown-surface')?.textContent?.trim());
-    progress.uiReasoningWhileBusy ||= Boolean(article?.querySelector('[data-testid="pi-reasoning"] pre')?.textContent?.trim());
+    progress.uiReasoningWhileBusy ||= Boolean(document.querySelector('[data-testid="pi-reasoning"][data-streaming="true"] pre')?.textContent?.trim());
   });
   let unsubscribe = () => {};
   const publicationEvidence = async (result: ReconciliationResult) => result.status === 'committed'
@@ -212,7 +212,7 @@ export async function runPiSimulatorAcceptance() {
           ...(message.role === 'toolResult' ? { toolName: message.toolName, isError: message.isError, source: message.details && typeof message.details === 'object' && 'source' in message.details ? sourceEvidence((message.details as { source: unknown }).source) : undefined } : {}) };
       })) }))),
       dom: { users: document.querySelectorAll('[data-testid="pi-user-message"]').length, assistants: document.querySelectorAll('[data-testid="pi-assistant-message"]').length,
-        sources: document.querySelectorAll('[data-pi-source]').length, reasoning: Array.from(document.querySelectorAll<HTMLDetailsElement>('[data-testid="pi-reasoning"]')).map(element => ({ open: element.open })),
+        sources: document.querySelectorAll('[data-pi-source]').length, reasoning: Array.from(document.querySelectorAll('[data-testid="pi-reasoning"]')).map(element => ({ open: element.querySelector(':scope > [data-slot="trace-collapsible-trigger"]')?.getAttribute('aria-expanded') === 'true' })),
         queue: document.querySelectorAll('[aria-label="Withdraw queued message"]').length, historyMode: Boolean(document.querySelector('[data-testid="history-mode"]')),
         keyboardFocused: document.activeElement?.getAttribute('aria-label') === 'Message' }, editorNoteId: editor.noteId,
       editor: editor.editor ? { characters: editor.editor.markdown.length, markdownSha256: await hash(editor.editor.markdown) } : null,
@@ -371,7 +371,7 @@ export async function runPiSimulatorAcceptance() {
         };
         let text = prompts[kind];
         if (kind === 'read') { const title = stringArg(args, 'fixtureTitle', 160); requireValue(title.startsWith('Pi simulator '), 'generated_fixture_required');
-          text = `Find the saved note titled ${title} using search_notes, read it with read_note, and report its inventory code and color. Cite the exact citation token returned by read_note.`; }
+          text = `Find the saved note titled ${title} using search_notes, read it with read_note, and report its inventory code and color. Copy the exact Markdown citation returned by read_note.`; }
         requireValue(text, 'invalid_prompt_kind');
         const before = pane().entries.flatMap(entry => entry.model ?? []).filter(message => message.role === 'user').length;
         const composer = await until(() => document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]'));
@@ -399,7 +399,15 @@ export async function runPiSimulatorAcceptance() {
       case 'remove-attachment': { const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('[aria-label="Remove attached note"]')).filter(visible), index = Number(args.index ?? 0); requireValue(Number.isSafeInteger(index) && buttons[index], 'attachment_unavailable'); buttons[index].click(); await pause(); return snapshot(); }
       case 'reasoning': case 'tool-details': {
         const selector = command.action === 'reasoning' ? '[data-testid="pi-reasoning"]' : '[data-testid="pi-tool-result"]';
-        const details = await until(() => document.querySelector<HTMLDetailsElement>(selector)); details.querySelector('summary')?.click(); await pause(); return { open: details.open, snapshot: await snapshot() };
+        const group = document.querySelector('[data-testid="pi-tool-activity"]');
+        const groupTrigger = group?.querySelector<HTMLButtonElement>(':scope > [data-slot="trace-collapsible-trigger"]');
+        if (groupTrigger?.getAttribute('aria-expanded') === 'false') { groupTrigger.click(); await pause(); }
+        const details = await until(() => document.querySelector(selector));
+        const trigger = details.querySelector<HTMLButtonElement>(':scope > [data-slot="trace-collapsible-trigger"]');
+        requireValue(trigger, 'disclosure_trigger_unavailable');
+        const wasOpen = trigger.getAttribute('aria-expanded') === 'true';
+        trigger.click(); await until(() => (trigger.getAttribute('aria-expanded') === 'true') !== wasOpen, deadline);
+        return { open: trigger.getAttribute('aria-expanded') === 'true', snapshot: await snapshot() };
       }
       case 'source': { const source = await until(() => document.querySelector<HTMLElement>('[data-pi-source]')); source.click(); await pause(); return snapshot(); }
       case 'earlier': await click('Load earlier messages'); return snapshot();
@@ -436,15 +444,14 @@ export async function runPiSimulatorAcceptance() {
         const current = await authority(); requireValue(typeof args.review === 'boolean', 'invalid_review_policy');
         const duration = stringArg(args, 'duration'); requireValue(['off', 'temporary', 'always'].includes(duration), 'invalid_grant_duration');
         const write: WritePolicy = { grant: duration === 'off' ? { duration: 'off' } : duration === 'temporary'
-          ? { duration: 'temporary', conversationId: pane().conversationId!, operations: ['create', 'update'], scope: { noteIds: [], folders: ['.'] } }
-          : { duration: 'always', operations: ['create', 'update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying: args.review };
+          ? { duration: 'temporary', conversationId: pane().conversationId!, operations: ['update'], scope: { noteIds: [], folders: ['.'] } }
+          : { duration: 'always', operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying: args.review };
         return invoke('pi_chat_set_write_policy', { authorityId: current.authorityId, expectedRevision: current.revision, write });
       }
       case 'prepare': {
-        const current = await authority(), operation = stringArg(args, 'operation'); requireValue(operation === 'create' || operation === 'update', 'invalid_mutation_operation');
-        const note = operation === 'update' ? await readFixture(args) : undefined;
-        const mutation = note ? { operation: 'update', noteId: note.noteId, expectedReadSourceId: stringArg(args, 'sourceId'), markdown: 'Fresh authorized synthetic simulator update.' }
-          : { operation: 'create', folder: '.', title: `Pi simulator ${command.runId.slice(0, 8)} publication ${command.sequence}`, markdown: 'Approved synthetic simulator creation.' };
+        const current = await authority(), operation = stringArg(args, 'operation'); requireValue(operation === 'update', 'invalid_mutation_operation');
+        const note = await readFixture(args);
+        const mutation = { operation: 'update', noteId: note.noteId, expectedReadSourceId: stringArg(args, 'sourceId'), markdown: 'Fresh authorized synthetic simulator update.' };
         const result = await invoke<PreparedMutation>('pi_chat_prepare_mutation', { authorityId: current.authorityId, requestId: `simulator-${command.runId}-${command.sequence}`, mutation });
         assertPath(result.target.path); prepared.set(result.intentId, result); return { intentId: result.intentId, payloadHash: result.payloadHash, reviewRequired: result.reviewRequired, noteId: result.target.noteId };
       }

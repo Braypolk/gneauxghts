@@ -171,7 +171,7 @@ History Mode requires a grant whose constructor remains private to the timeline
 module. The agent-restore capability remains absent; future Version Restore
 authority requires its own typed operation and decision. Native current-content
 reads remain role-limited; unused activity-history and provenance capabilities
-are removed under ADR 0012. The initial Pi tool surface exposes search/read only. Revision and Lifecycle Event identities
+are removed under ADR 0012. Pi tools expose search/read, targeted saved-note updates and explicit note creation. Revision and Lifecycle Event identities
 likewise cannot be minted by callers; their durable issuer belongs inside
 `NoteTimeline`.
 
@@ -474,9 +474,16 @@ Markdown text, with a local-calendar clock for midnight and resume refresh.
 
 ### Agent publication foundation
 
-Ordinary chat exposes native search/read tools only. Synthetic host-driven create/update
-operations use `pi_chat/publication.rs` and the Pi publication task; future write
-settings and editable mutation review are outside the initial product surface.
+Ordinary chat exposes native search/read, targeted `edit_note` and `create_note` tools. The public
+Pi edit factory stages replacements against the exact issued read in memory;
+Pi memo retains the computed edit candidate; creation reuses Pi's checkpointed
+tool arguments. Pi task and document state own exact review and replay.
+Write grants are independent of read access, with review enabled by default.
+The Pi publication task carries review and publication phases through
+`pi_chat/publication.rs`. Agent mutation admission uses strict update and create payloads. Updates require
+the exact issued read and raw base hash. Creation binds one existing visible folder,
+a native-derived filename, fresh native identity and canonical bytes before review.
+The separate create operation is never inferred from an update grant.
 Native admission binds operation, scoped grant, authority revision, exact payload,
 review acceptance when required, and the expected native read state. The retained
 `DocumentEditingService.withAgentPublication` operation supplies a short editor
@@ -688,6 +695,11 @@ models. Pi owns immutable history, conversation documents, submissions/inbox,
 generation/tool/compaction tasks, scheduling, queueing, cancellation, recovery,
 usage and progress. `ChatDoc` stores title, opaque native authority reference and
 presentation metadata; provider/agent/usage/inbox state uses Pi's built-in documents.
+Pi's `conversationCreated` hook initializes `ChatDoc` and `EditReviewDoc` in every
+creation/fork transaction, including raw transaction creation. Opening a selection
+does not initialize documents or resolve an agent: metadata comes from the initial
+custom-document watch value and model configuration from the built-in view's
+`AgentDoc`. Subsequent updates use those same watches.
 Titles derive from the first message without inference. Svelte selection and live
 views are disposable, while composer drafts use their existing presentation owner.
 Forget is a reversible presentation archive in `ChatDoc`: idle chats leave the
@@ -704,8 +716,17 @@ active post-compaction `ConversationView.entries` contains the full transcript.
 
 Mounted selections use cancellable Chord observation contexts for watches and
 history reads. Cancelling a selection releases observation only; submissions,
-Stop, withdrawal and native retirement retain their separate operations. Pi
-reports and watch failures feed the bounded ephemeral `pi/diagnostics.ts` sink.
+Stop, withdrawal and native retirement retain their separate operations. Pi's
+view operations trigger transcript merging only for entry changes or full
+replacement frames; progress-only updates retain the loaded history array.
+Older-page loads still merge complete human-visible history independently.
+Committed-edit feedback comes from retained terminal publication tasks and public
+task commit notifications, joined by task ownership to Pi tool-result entries.
+The selection keeps only a disposable result projection, so Stop can report an
+already applied edit and its repair warning after reopen without resuming
+generation or changing native publication. Task working documents are not treated
+as retained outcome records.
+Pi reports and watch failures feed the bounded ephemeral `pi/diagnostics.ts` sink.
 It publishes curated codes/messages rather than exception or provider payloads;
 reports do not settle work. Actual Harness termination makes the runtime
 unavailable, while normal shutdown clears its diagnostic presentation.
@@ -771,25 +792,37 @@ Native `pi_chat_*` records in vault data own only domain authority/source/effect
 Pi stores opaque references and task progression. Temporary write grants belong to
 one conversation across reopen; Always grants belong to the Running Vault; explicit
 revocation/deletion ends the relevant authority. Review is independent and default-on.
-The initial model tool registry has no mutation capability.
+The model registry exposes `edit_note` and `create_note` under separate explicit
+update/create authority. Chat and Settings expose creation as an unchecked permission
+option; duration changes preserve already granted operations and folder scope.
+Choosing Temporary or Off replaces vault Always permission atomically;
+Always remains visible in every chat, including those with retained Temporary
+grants. Native policy changes invalidate mounted authority views.
 
 ### Notes and citations
 
 `pi_chat/notes.rs` supplies native lexical search and authorized canonical reads.
 Search previews issue no citation authority. Reads create immutable native source
-receipts bound to Note Identity and actual read state, with Pi tool details retaining
-structured display metadata and normal tool output retaining delivered text. An
-existing finalized revision may identify the read; an unfinished Editing Window
-uses an observed hash/time receipt without inventing a Note Revision. Native reads
+receipts bound to Note Identity and actual read state. Pi tool details retain the
+full structured read metadata; model-facing output contains canonical Markdown,
+note/source identities, title, optional passage and a complete native-issued Markdown
+citation. `ReadSource::citation` owns its escaped note-title/passage label and
+opaque source destination; read tools and terminal admission use that same form.
+Revision/hash proof is not repeated in model-facing output, including
+post-publication reads. An existing finalized revision may identify the read; an unfinished
+Editing Window uses an observed hash/time receipt without inventing a Note Revision. Native reads
 use canonical metadata identity checks rather than treating a path as authority.
 
-`pi/citations.ts` parses only reserved issued-ID tokens and admitted source links;
+`pi/citations.ts` parses only reserved Markdown source links;
 `pi_chat/citations.rs` validates every terminal text block against the native binding,
 current authority and issued receipts before Pi receives successful terminal output.
+Admission returns only the admitted Markdown blocks; issued receipt metadata stays
+with the native read owner and Pi tool details, not a second answer-source array.
 Malformed/unissued IDs become inert unavailable markers; excluded or retired authority
 cannot deliver fresh answers. Reasoning, usage, signatures and tool handoffs retain
 their Pi protocol shape. This uniform seam also admits standard compaction output
-without imposing an answer formatter or custom summary schema.
+without imposing an answer formatter or custom summary schema. There is no token
+encoder/decoder, legacy label renderer or source-free admission fallback.
 
 Source links display escaped native note titles and open the current note through
 ordinary workspace navigation. Revision/hash receipts remain internal evidence of
@@ -799,25 +832,61 @@ passage locations. Navigation rechecks current exclusions, eligibility and quote
 uniqueness, then the live editor verifies and selects the exact quote. Changed or
 ambiguous passages open the note with a limitation instead of a stale selection.
 Citation admission establishes identity and location, not semantic entailment.
-History Mode, current-content provenance
-and retained activity capabilities remain native NoteTimeline facilities; ordinary
-Pi tools initially expose search/read only. Interactive query search uses `services/retrieval.rs` and its private `search` module
+
+History Mode remains a native NoteTimeline facility; unused current-content
+provenance and retained activity capabilities are removed. Ordinary Pi tools expose
+search/read, targeted updates and note creation; no general filesystem or history administration is available. Interactive query search uses `services/retrieval.rs` and its private `search` module
 under the native current-content delivery boundary. Lexical and semantic indexes
 rank candidates; canonical snapshots supply bounded previews. Pending lexical
 projections use catalog paragraphs, and external-byte changes invalidate delivery.
 `services/content_hash.rs` preserves the authored-content identity shared by search
 and Pi read receipts. The retired evidence session, worker budgets, inventory/read
-protocol and passage-citation coordinator are removed; native NoteTimeline history
-and provenance capabilities remain independently testable.
+protocol and passage-citation coordinator are removed. Native NoteTimeline reads,
+History Mode and publication remain independently testable.
 
 ### External effects and lifetime
 
-The task-only publication foundation uses native prepare/approve/publish/reconcile
-and NoteTimeline proof for real synthetic create/update. It owns exact payload and
-publication receipts, not a generic chat run coordinator. The document publication
-lease blocks dirty/conflicted targets and adopts committed canonical results through
+`pi/edit.ts` exposes targeted `edit_note` updates using Pi's public `createEditTool`
+against a one-note staging environment. The adapter uses its public
+`prepareArguments` hook for edit-shape repair before Pi validates the note/source
+schema; identifiers remain exact strings and arbitrary path arguments are rejected. Native `pi_chat_read_mutation_base` recovers
+only bytes matching the exact issued source; it cannot silently rebase an old edit.
+Pi persists the computed edit candidate before native preparation, then atomically records its
+publication child task and review document in one commit. `PublicationTask` owns
+durable review and publication phases; new task inputs retain intent/target
+references and the approval hash, without a duplicate title or patch.
+`EditReviewDoc` holds an explicit edit (patch) or create (destination and Markdown)
+review plus the user decision, starts empty on fork, and is cleared on terminal
+review/cancellation. Its Pi document upgrade preserves pending reviews from the
+previous shape; consumers use only the current representation. No older task-input migration
+is retained. Pi's generic tool task delegates to this task because its abort
+protocol reconciles an already committed native effect.
+No separate proposal scheduler, mutable native draft or hunk engine is retained.
+
+The same Pi tool adapter, publication task, review document and native
+prepare/approve/publish/reconcile flow serve both tools. Creation uses Pi's saved,
+validated tool arguments without a second candidate memo. Creation review shows the
+exact relative destination and complete authored Markdown, without managed metadata.
+Native creation owns its identity and metadata; it uses NoteTimeline and the
+existing atomic create-only primitive. An existing or late-arriving file blocks
+publication, with no overwrite or automatic filename suffix. One stable Pi request
+reopens the same native intent, identity and bytes; proof reconciliation establishes
+a committed creation before any replay.
+The document publication lease blocks dirty/conflicted targets and adopts committed canonical results through
 the established editor owner. Lost acknowledgements reconcile before another effect;
 Pi recovery alone cannot guarantee exactly-once external publication.
+Native initialization declares the current authority and grant schema directly;
+there are no older authority/grant upgrades. Retained publication payloads use the
+same strict mutation type as new requests. Updates retain a raw base hash;
+creations retain their exact native-prepared canonical content. No retired-create
+decoder or old-chat migration is retained.
+
+After a committed result, both mutation tools use the same authorized native canonical
+read as `read_note` and return the saved content and a fresh citation to the
+model. Final confirmations use that post-publication read. Creation permission
+does not implicitly widen independent note-read access. A read failure preserves
+the committed receipt and explicitly withholds current-content evidence; it
+cannot turn a proven commit into a blocked write or trigger another publication.
 
 WebView page generations bind editor-owner registrations so an actual refresh can
 replace a stale page without admitting concurrent owners. Restart requests the

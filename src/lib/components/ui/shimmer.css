@@ -1,0 +1,40 @@
+/* Adapted from shadcn-svelte, commit 7e463da6dbf4b9cf086ce3e7d845650bc2a1163b.
+   Source and MIT notice: ./trace/README.md and ./trace/LICENSE. */
+@theme inline {
+  @keyframes tw-shimmer {
+    from { background-position: 100% 0; }
+    to { background-position: 0 0; }
+  }
+}
+
+@utility shimmer {
+  /* Unsupported WebViews keep ordinary, readable text. Apply reduced motion
+     inside the utility so it also covers Trace's status-based variants. */
+  @supports (color: oklch(from white l c h)) and (color: color-mix(in oklch, white, black)) {
+    @media (prefers-reduced-motion: no-preference) {
+      --_spread: calc(3ch + 40px);
+      --_base: currentColor;
+      --_highlight: oklch(from currentColor l c h / calc(alpha * 0.2));
+      background-image: linear-gradient(
+        110deg,
+        var(--_base) calc(50% - var(--_spread)),
+        color-mix(in oklch, var(--_highlight), var(--_base) 50%) calc(50% - var(--_spread) * 0.5),
+        var(--_highlight) 50%,
+        color-mix(in oklch, var(--_highlight), var(--_base) 50%) calc(50% + var(--_spread) * 0.5),
+        var(--_base) calc(50% + var(--_spread))
+      );
+      background-repeat: no-repeat;
+      background-size: calc(200% + var(--_spread) * 2) 100%;
+      background-position: 0 0;
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      animation: tw-shimmer 2s linear infinite;
+
+      &:where(.dark, .dark *) {
+        --_highlight: oklch(from currentColor max(0.8, calc(l + 0.4)) c h / calc(alpha + 0.4));
+      }
+      &:where([dir='rtl'], [dir='rtl'] *) { animation-direction: reverse; }
+    }
+  }
+}

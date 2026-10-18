@@ -17,6 +17,14 @@ describe('settings discovery', () => {
     expect(searchSettings('browsing')).toEqual([]);
   });
 
+  it.each(['inline diff', 'side by side', 'edit review'])('finds the edit diff preference from %s', query => {
+    expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id: 'diff-layout', category: 'appearance', anchor: 'diff-layout' }));
+  });
+
+  it.each(['write permissions', 'default note editing'])('finds editing defaults from %s', query => {
+    expect(searchSettings(query)).toContainEqual(expect.objectContaining({ id: 'write-access', category: 'ai', anchor: 'chat-write-access' }));
+  });
+
   it.each(['', '  ', '!!!', 'unfindablesetting'])('returns no results for %j', (query) => {
     expect(searchSettings(query)).toEqual([]);
   });

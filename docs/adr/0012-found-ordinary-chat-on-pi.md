@@ -24,8 +24,8 @@ One native domain owner persists scoped authority and exact accepted-effect
 proof. Pi stores opaque authority/intent/receipt references and owns task
 progression. Native commands derive current policy from those records; model
 arguments, remembered context and caller-supplied grant flags cannot authorize
-execution. Pi documents are suitable for title/presentation and future editable
-review working state. Native security must not interpret WebView document
+execution. Pi documents own title/presentation and exact edit review working
+state. Native security must not interpret WebView document
 snapshots as trusted policy or maintain a second grant copy.
 
 Read mode is Full vault or Attached notes only, with exclusions winning. A
@@ -34,8 +34,12 @@ a fresh conversation instead of redacting history. Old history may remain human
 visible. Write authority is independent: Off, conversation-scoped Temporary
 (durable across reopen, never inherited, revoked/deleted expires), or scoped
 Running Vault Always. Review is independent and default-on; direct writes require
-explicit valid authority and disabled review. Initial model tools are read-only;
-synthetic create/update prove the native path without shipping mutation UI.
+explicit valid authority and disabled review. The initial read-only registry is
+extended by the targeted saved-note editing slice: public Pi edit matching/diffs,
+Pi candidate/review working state and publication task progression, native exact
+approval and NoteTimeline proof. Agent mutation admission supports saved-note updates and, through the concrete
+creation slice below, create-only publication under a separate operation grant.
+Both preserve the native NoteTimeline owner.
 
 NoteTimeline still owns canonical note bytes/identity/history coordination, required
 preparation, committed-warning outcomes and publication recovery. Pi does not
@@ -69,7 +73,7 @@ Pi 1.3.0's generation hooks can report/drop exceptions, and its built-in compact
 calls Models directly using the same ProviderDoc session identity. Mandatory
 native provider checks therefore apply to every dispatch, including recovery and
 compaction, without one-shot generation admission or custom summary machinery.
-Minimal structured citation-token validation applies uniformly; an answer-only
+Minimal reserved Markdown source-link validation applies uniformly; an answer-only
 formatter cannot be imposed on standard compaction. The current module homes and ownership boundaries are in
 [ARCHITECTURE.md](../../ARCHITECTURE.md#agent-runtime).
 
@@ -95,12 +99,6 @@ formatter cannot be imposed on standard compaction. The current module homes and
   Agent writes cannot bypass them. ADR 0007's pending-window/public-revision
   distinction expressly applies to citation read bindings.
 
-No migration, exact Retry, managed transcript/import, research/plans, implicit
-editor context, non-note attachments, old ChatApi compatibility or permanent
-fallback runtime is required. Desktop establishes behavior first; iOS acceptance
-for this rebuild is simulator-only, with physical-device work deferred. Resource
-measurements are diagnostics, not permanent numerical architectural budgets.
-
 Amended 2026-10-17: remove the unused activity/provenance APIs and their supporting
 implementation instead of retaining speculative capabilities behind dead-code
 exceptions. Pi's current search/read tools have no consumer for them. Current
@@ -109,3 +107,79 @@ remain supported. This narrows the capability surface described in ADRs 0002,
 0007 and 0008; it does not change retained revisions, Editing Window capture,
 restore lineage or mandatory history verification. A future historical-read or
 provenance feature needs a concrete caller and its own scoped contract and tests.
+
+No migration, exact Retry, managed transcript/import, research/plans, implicit
+editor context, non-note attachments, old ChatApi compatibility or permanent
+fallback runtime is required. Desktop establishes behavior first; iOS acceptance
+for this rebuild is simulator-only, with physical-device work deferred. Resource
+measurements are diagnostics, not permanent numerical architectural budgets.
+
+
+Amended 2026-10-17 for the Pi note editing slice: native effect proof and the short
+editor publication lease remain domain boundaries. Pi owns staged content, exact
+diff review and resumable task progression. The existing publication task gains a
+review phase rather than introducing a second review scheduler; its native
+reconciliation on abort preserves committed facts that a generic tool abort alone
+cannot establish. The public edit tool runs against a one-note memory environment,
+so it supplies replacement matching and diff generation without a general vault
+filesystem capability. Review is approve/discard for the exact candidate; changing
+its content requires a new tool call and approval.
+
+The write-mode selector replaces hidden grant stacking: Temporary and Off remove
+vault Always atomically, and Always projects into every chat while active. Existing
+independent Temporary grants remain scoped to their conversations after Always
+ends. Policy revision checks and native invalidation events prevent mounted panes
+from treating a stale policy projection as current authority.
+
+Amended 2026-10-17 after the editing slice: remove the test-only agent-create
+capability and its unused Timeline proof entry point. The adapter delegates edit
+argument repair to the public Pi hook, retaining the note/source schema and exact
+string identities. Exact review display data is seeded in the Pi review document
+in the same commit that creates the publication child; new task inputs contain
+references and the approval hash only. This cleanup preserves the existing
+publication phases, editor lease/lifetime and
+native reconciliation flow; no broader publication-boundary change is justified
+by the slice.
+
+Amended 2026-10-17 for link-only citations: the user explicitly dropped backward
+compatibility with prior citation formats. Canonical native reads now issue the
+same complete Markdown citation used in final answers and standard summaries.
+Native admission validates each issued ID under current authority and restores
+the native escaped label. Remove token encoding/decoding, legacy label handling
+and the unused source-free provider fallback; retain native read receipts, exact
+passage checks and mandatory terminal binding admission.
+
+The user subsequently deleted all older chats and removed the need for a cutover.
+Support only the current citation representation. There is no per-chat citation
+format marker, format-based retirement, old-chat read-only presentation or history
+migration. Ordinary authority retirement for permission restrictions and native
+publication reconciliation retain their existing responsibilities.
+
+Amended 2026-10-17 after the user deleted all older chats: remove the authority
+column/grant upgrades, v2 publication task migration/checkpoint, and decode-only
+retired-create payloads. Initialize the current native schema directly and decode
+retained payloads with the same strict update-only type and required raw base hash
+as current requests. Current pending reviews, exact approval and update proof
+reconciliation survive reopening and lost acknowledgements through their existing
+owners. Remove the retired forgotten-chat variant and conversation fields from
+Forgotten Notes, including storage adapters, command guards and the UI type badge.
+Pi chat forgetting remains presentation metadata in its own store; note lifecycle,
+settings and note identity upgrades retain their existing owners. Remove the
+temporary localStorage last-chat pointer importer; current navigation loads only
+the app-state SQLite pointer and opens a fresh chat when none is available.
+
+
+Amended 2026-10-17 for the concrete `create_note` slice: the earlier removal of
+unused agent-create capability remains a historical cleanup, not a prohibition on
+a working consumer. Creation now shares the mutation tool adapter, Pi publication
+task, review document and native prepare/approve/publish/reconcile protocol.
+Creation permission is explicit and independent from updates, with review on by
+default. Native preparation fixes one safe filename in an existing visible vault
+folder, fresh Note Identity, managed metadata and exact canonical bytes. Review
+shows the destination and full authored Markdown. Atomic create-only publication
+rejects existing destinations, including late arrivals, without selecting a suffix.
+A stable tool request reuses that preparation after restart, and retained native
+proof reconciles a lost acknowledgement before another effect. There is no
+general filesystem executor, parent-folder creation, overwrite capability or
+second creation scheduler. A successful creation attempts a fresh authorized read
+for citation evidence without implicitly widening read access.

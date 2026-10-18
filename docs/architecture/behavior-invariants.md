@@ -153,11 +153,26 @@ Changing an editor pane to chat retains its document as the workspace return
 target. Changing it back restores that document. Any pane may close
 while another remains, including in a chat-only workspace.
 
+Opening chat without an explicit conversation restores the last viewed conversation
+from the Running Vault's persisted chat location. Missing or forgotten conversations
+leave a fresh composer. Explicit conversation navigation takes precedence, and New
+chat stays empty until the user starts a conversation.
+
 Each chat pane retains a reading position per conversation for its open lifetime,
 including while the pane displays a note. Returning restores that position after
 history rendering settles. Explicit message links take precedence; unseen chats
 and chats that were following the latest message open at the bottom. Loading and
 partial history rendering cannot overwrite a retained reading position.
+
+Streaming chat follows rendered content growth smoothly while the viewport is
+following the latest message. Scrolling upward cancels following immediately,
+and returning to the bottom resumes it. Reading above the bottom retains the
+scroll offset through streamed markdown replacement and delayed content layout.
+An intermediate scroll clamp while replacing markdown or admitting a completed
+message cannot reset the viewport or count as user input; the pre-render offset
+is restored before paint, with conversation changes invalidating that repair.
+Reduced motion uses immediate following. `chatMessageScroll.ts` owns this viewport
+behavior, including restoration and earlier-history prepend correction.
 
 Retiring an editor closes its pane-owned transient menus before disconnecting
 its view bridges, so its formatting popup cannot remain over chat content.
@@ -761,7 +776,8 @@ No existing-user migration, transcript import/publication, exact Retry, research
 plans, implicit editor context, selected excerpts or non-note attachments are
 required. Existing authored files, Note Timelines, settings and credentials survive.
 
-Initial tools are read-only native search/read. New titles derive from the first
+Tools expose native search/read and targeted saved-note editing with independent
+write authority and optional exact review. New titles derive from the first
 message without inference. Local and hosted providers use the same composition;
 live hosted credentials and physical-device acceptance are outside this rebuild's
 gates. Desktop acceptance precedes simulator validation, and previous evaluation
@@ -775,6 +791,13 @@ answers and provider-emitted reasoning may remain working memory and compaction
 input. Reasoning uses normal Pi retention and is collapsed by default in the UI.
 Observable generation/tool/compaction state, safe tool failures and elapsed time
 are displayed without inventing thinking or stuck diagnoses.
+
+Pi's creation hook establishes app chat and empty review documents in the same
+transaction as conversation creation, including raw creation and forks. Selection
+loads their watch values without initialization writes or full agent resolution.
+Metadata changes during attachment remain observable. Progress-only view frames
+retain loaded transcript entries; entry operations and full replacement frames
+merge active entries while preserving previously loaded history pages.
 
 Runtime reports and observation failures use bounded ephemeral diagnostics with
 curated messages. Unknown exceptions use a fixed fallback; raw exception strings,
@@ -798,6 +821,22 @@ Stopped work stays stopped; terminal failure offers a new attempt under current
 settings rather than exact Retry. Human-visible history does not itself authorize
 inference or fetching excluded content.
 
+Tool activity distinguishes expected domain outcomes from execution failures using
+structured native codes and Pi diagnostics. Rejected reviews, stopped/unstarted
+calls, permission limits, unavailable or changed notes, invalid requests and editor
+admission blocks have neutral labels and do not increase the failure count. The
+model still receives unsuccessful tool results so it can respond appropriately.
+Native codes survive publication/review task settlement into retained tool details;
+terminal results supersede stale live progress. Storage errors, unknown failures,
+and interrupted or unconfirmed effects remain failures. An editor block is neutral
+only before the publication effect begins; adoption errors cannot imply no write.
+If Stop interrupts the edit tool after its publication child confirms a commit,
+the activity shows that the edit was applied while generation remains stopped.
+Selection reads retained terminal publication-task results and observes subsequent
+task commits, joining their owner IDs to immutable tool-result entries. This is a
+disposable presentation projection, not another outcome ledger or write authority.
+An aborted tool result alone cannot establish either a write or its absence.
+
 ### Read restrictions end the old context
 
 Full vault and Attached notes only both obey exclusions and current eligibility.
@@ -813,7 +852,12 @@ authority is denied across reopen, and widening reads never widens a write grant
 
 ### Citations represent actual native reads
 
-Issued source IDs bind Note Identity and actual canonical read state. Mandatory
+Issued source IDs bind Note Identity and actual canonical read state. Full read
+proof stays native and in Pi tool details; model-facing read output supplies
+content and complete native-issued Markdown citation links without revision/hash
+proof. Reads, answers and summaries use this single representation; no legacy
+token decoding or label conversion is retained. Admission returns
+verified Markdown only and does not duplicate structured read receipts. Mandatory
 native admission validates all terminal provider text blocks and the conversation
 binding, including empty tool-only responses and standard compaction. Foreign or
 invented source IDs never become clickable references. Admission checks identity
@@ -825,12 +869,20 @@ Source links display the native note title, optionally with a quoted passage, an
 open the current note rather than History Mode. Finalized revision and observed
 hash/time receipts remain internal read evidence; an unfinished Editing Window
 cannot mint a Note Revision. Later edits do not invalidate an honestly historical
-read. Navigation rechecks current exclusions, eligibility and identity, and warns
-if the current content differs. A passage selects only an exact unique quote in
-the current note and live editor; changed or ambiguous passages open the note
-with a limitation and no substituted selection. Saved history grants no permission
+read. Navigation rechecks current exclusions, eligibility and identity, and gives
+informational feedback if the current content differs, including after the
+agent's own edit. Successful navigation limitations stay local to the mounted
+chat surface and do not become retained chat errors. A passage selects only an
+exact unique quote in the current note and live editor; changed or ambiguous
+passages open the note with a limitation and no substituted selection. Saved history grants no permission
 to fetch excluded current content. Ordinary workspace/departure and focus
 supersession behavior applies to source navigation.
+
+After a committed edit, the edit tool performs an authorized canonical read and
+returns its content and fresh citation for the final confirmation. The pre-edit
+read remains historical. If that new read fails, the committed receipt remains
+successful, no new source evidence is supplied, and current-content claims
+require another authorized read. The read cannot cause a second publication.
 
 ### Conversation configuration and composer remain explicit
 
@@ -930,16 +982,61 @@ latest message visible when the chat is following without pulling a user away
 from older messages. Editor/chat morphs hold maximum reading clearance until
 settling instead of moving the scrollbar every frame.
 
-## Agent publication foundation
+## Agent publication
 
-Initial chat provides no mutation tool, write settings or editable review UI.
-The foundation nevertheless exercises real typed create/update through native
-authority, the document owner and NoteTimeline. A read grant cannot authorize a
-write. Off/Temporary/Always grants specify operations and explicit note/folder
-scope; Temporary belongs to one conversation across reopen and ends on revocation
-or deletion, while Always belongs to the Running Vault. Review is independent and
-default-on. Direct publication requires a current scoped grant and explicitly
-disabled review; approval binds one exact payload and cannot widen its scope.
+Chat exposes targeted saved-note updates and new Markdown note creation with
+independent write settings and exact review. Pi's public edit tool prepares edit arguments and computes staged
+replacements; domain identifiers remain exact strings and arbitrary path arguments
+are rejected. Only native
+authority, the document owner and NoteTimeline can publish them. The original
+issued read source must match the note, canonical path and exact bytes before
+staging; publication checks that same base again. The computed edit candidate is durable before
+native preparation. Tool replay reuses its publication task instead of rerunning
+replacements against new canonical content. Pending review survives reopen in the
+same conversation and starts empty on fork. Discard/stop removes the review and
+permits no new effect; authority retirement cannot strand an actionable review.
+Both review layouts show changed text with a short preceding section excerpt when
+available in Pi's patch. Whitespace-only edits expose changed spaces, tabs and line
+breaks with a legend. These are presentation transforms; exact candidate bytes and
+the full technical diff remain unchanged.
+The review document is seeded atomically with its publication task. New task inputs
+retain references and the approval hash, without a duplicate review title/patch.
+Review data is explicitly either an edit patch or a creation destination and
+authored Markdown; creations carry no empty patch. Pi's document upgrade preserves
+pending review content and decisions across this representation change.
+There is no older review-input migration. Update admission requires the exact raw
+base hash. Create admission requires its own explicit operation grant and an
+existing visible vault folder. Native code fixes the safe destination, fresh
+identity, metadata and canonical bytes at preparation. Creation review shows that
+destination and complete authored Markdown. Atomic create-only publication rejects
+all existing destinations, including late arrivals; it never overwrites or chooses
+a suffix. Creation reuses Pi's checkpointed validated tool arguments without a
+duplicate candidate memo. The same stable Pi request reopens its original intent, and native
+proof/result reconciliation survives restart and lost acknowledgements without
+creating a second note. Both operations retain the same publication task and
+document-owner lease; creation introduces no separate scheduler.
+
+A read grant cannot authorize a write. Off/Temporary/Always grants specify
+operations and explicit note/folder scope; Temporary belongs to one conversation
+across reopen and ends on revocation or deletion, while Always belongs to the
+Running Vault. Update permission never implies create permission. Review is independent and
+default-on. Always is projected into every chat rather than hidden by an earlier
+Temporary grant. Choosing Temporary or Off atomically removes Always; other
+independently granted Temporary conversations retain their grants. Mounted views
+refresh from native policy changes. Direct publication requires a current scoped
+grant and explicitly disabled review; approval binds one exact payload and cannot
+widen its scope.
+First-use permission creation and selection stay bound to the originating draft.
+If selection changes or the view is disposed before the target chat is ready, no
+permission command is sent. A delayed response never adopts authority into a
+different selected chat; native revision and scope validation remain mandatory.
+
+Chat and Settings expose creation as a separate, default-unchecked permission.
+Changing duration preserves already explicit operations and scope.
+Settings exposes that same vault-owned Off/Always grant and review policy without
+requiring or creating a conversation. Saving applies to existing and new chats,
+invalidates affected authority revisions, and preserves individually granted
+Temporary permissions. Chat and Settings never retain independent write defaults.
 
 Changed canonical content, dirty editor body/title/tags/identity, unresolved
 conflict or a pending operation blocks conflicting publication. A short
@@ -953,6 +1050,8 @@ proof establish external effects. An uncertain acknowledgement reconciles before
 another write, and repeated recovery never blindly reapplies content. Revocation
 blocks new effects without pretending a published effect was undone. Committed
 warnings remain successful canonical outcomes and cannot authorize replay.
+Their repair messages survive Pi task settlement and tool output, and remain
+visible outside collapsed activity, including after Stop and reopening.
 Legacy editable proposal workflows and chat-to-note promotion are retired; the native
 publication/conflict/proof requirements continue independently of that UI.
 

@@ -1120,13 +1120,12 @@
       const destination = await openPiSource(authorityId, sourceId);
       assertWorkspaceMutationAdmitted(notepadState);
       if (destination.kind === "unavailable") throw new Error(destination.message);
-      const chat = chatCoordinator.getBinding(paneId);
-      if (destination.limitation) chat.report(new Error(destination.limitation));
       const target = getNearestEditorPaneId(paneOrder, getPaneKind, paneId) ?? paneId;
       workspaceStore.setActivePaneId(target);
       const revealed = await openNoteCitation({ ...getOpenContext(), openNotePath: (noteId, path, options) => commands.openNotePath(path, { ...options, noteId, revealEditorAfterOpen: true }) },
         () => getNavigationContext(target), destination);
-      if (destination.location && !revealed) chat.report(new Error("The cited passage is unavailable in the current editor. Opened the note without selecting a passage."));
+      if (destination.location && !revealed) return "The cited passage is unavailable in the current editor. Opened the note without selecting a passage.";
+      return destination.limitation;
     },
   });
 

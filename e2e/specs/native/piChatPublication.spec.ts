@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { $, browser } from '@wdio/globals';
-import { existsSync, readFileSync } from 'node:fs';
+import { readFileSync } from 'node:fs';
 import { invokeNative } from '../../support/liveNative';
 import { navigateAppTab } from '../../support/appNavigation';
 import type { AuthoritySnapshot, WritePolicy } from '../../../src/lib/features/chat/pi/authority';
@@ -38,10 +38,15 @@ describe('synthetic actual Pi publication tasks through the real document owner'
   };
   const policy = async (reviewBeforeApplying: boolean, off = false) => {
     const current = await authority();
-    const write: WritePolicy = { grant: off ? { duration: 'off' } : { duration: 'temporary', conversationId: (await paneState()).conversationId!, operations: ['create', 'update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying };
+    const write: WritePolicy = { grant: off ? { duration: 'off' } : { duration: 'temporary', conversationId: (await paneState()).conversationId!, operations: ['update'], scope: { noteIds: [], folders: ['.'] } }, reviewBeforeApplying };
     return invokeNative<AuthoritySnapshot>('pi_chat_set_write_policy', { authorityId: current.authorityId, expectedRevision: current.revision, write });
   };
   const prepare = async (mutation: Mutation) => invokeNative<PreparedMutation>('pi_chat_prepare_mutation', { authorityId: (await authority()).authorityId, requestId: `acceptance-${crypto.randomUUID()}`, mutation });
+  const update = async (title: string, markdown: string): Promise<Mutation> => {
+    const note = await savePiFixtureNote(title, 'Original synthetic update base.');
+    const read = await invokeNative<{ source: { sourceId: string } }>('pi_chat_read_note', { authorityId: (await authority()).authorityId, noteId: note.noteId });
+    return { operation: 'update', noteId: note.noteId, expectedReadSourceId: read.source.sourceId, markdown };
+  };
   const run = async (prepared: PreparedMutation) => {
     const settled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target });
     evidence.push(settled);
@@ -54,29 +59,29 @@ describe('synthetic actual Pi publication tasks through the real document owner'
   it('defaults to review, publishes only the exact approval and replays its native receipt', async () => {
     const original = await authority(); assert.equal(original.write.reviewBeforeApplying, true); assert.equal(original.write.grant.duration, 'off');
     await policy(true);
-    const prepared = await prepare({ operation: 'create', folder: '.', title: 'Pi approved synthetic creation', markdown: 'Approved synthetic creation body.' });
+    const prepared = await prepare(await update('Pi approved synthetic update', 'Approved synthetic update body.'));
     assert.equal(prepared.reviewRequired, true);
     const blocked = await run(prepared); assert.equal(blocked.status, 'blocked');
     if (blocked.status === 'blocked') assert.equal(blocked.code, 'review_required');
-    assert.equal(existsSync(prepared.target.path), false);
+    assert(readFileSync(prepared.target.path, 'utf8').includes('Original synthetic update base.'));
     await invokeNative('pi_chat_approve_mutation', { authorityId: original.authorityId, intentId: prepared.intentId, payloadHash: prepared.payloadHash });
     const committed = await run(prepared); assert.equal(committed.status, 'committed');
-    assert(readFileSync(prepared.target.path, 'utf8').includes('Approved synthetic creation body.'));
+    assert(readFileSync(prepared.target.path, 'utf8').includes('Approved synthetic update body.'));
     // Ignore the completed task result, then reacquire native proof and replay.
     // This proves receipt recovery; process interruption/lost transport ack is a separate native fault test.
     const recovered = await invokeNative<PublicationResult>('pi_chat_reconcile_mutation', { intentId: prepared.intentId });
     assert.equal(recovered.status, 'committed');
     assert(committed.status === 'committed' && recovered.status === 'committed');
     assert.equal(recovered.receiptId, committed.receiptId);
-    assert.equal(recovered.markdown, 'Approved synthetic creation body.');
-    assert.deepEqual(Object.keys(committed).sort(), ['receiptId', 'status'], 'Pi task results must expose only the opaque committed identity');
+    assert.equal(recovered.markdown, 'Approved synthetic update body.');
+    assert.deepEqual(Object.keys(committed).sort(), ['noteId', 'receiptId', 'status'], 'Pi task results must expose only the opaque committed identity');
     assert.deepEqual(await run(prepared), committed);
   });
 
   it('honors explicit direct authority and blocks changed canonical bases', async () => {
     await policy(false);
-    const created = await run(await prepare({ operation: 'create', folder: '.', title: 'Pi direct synthetic creation', markdown: 'Direct synthetic creation body.' }));
-    assert.equal(created.status, 'committed');
+    const direct = await run(await prepare(await update('Pi direct synthetic update', 'Direct synthetic update body.')));
+    assert.equal(direct.status, 'committed');
     const note = await savePiFixtureNote('Pi stale synthetic update', 'Original update base.');
     const read = await invokeNative<{ source: { sourceId: string } }>('pi_chat_read_note', { authorityId: (await authority()).authorityId, noteId: note.noteId });
     const stale = await prepare({ operation: 'update', noteId: note.noteId, expectedReadSourceId: read.source.sourceId, markdown: 'Agent must not replace newer canonical bytes.' });
@@ -92,10 +97,10 @@ describe('synthetic actual Pi publication tasks through the real document owner'
 
   it('blocks an admitted but unpublished mutation after grant revocation', async () => {
     await policy(false);
-    const prepared = await prepare({ operation: 'create', folder: '.', title: 'Pi revoked creation', markdown: 'Revoked mutation must not publish.' });
+    const prepared = await prepare(await update('Pi revoked update', 'Revoked mutation must not publish.'));
     await policy(false, true);
     const result = await run(prepared); assert.equal(result.status, 'blocked');
-    assert.equal(existsSync(prepared.target.path), false);
+    assert(readFileSync(prepared.target.path, 'utf8').includes('Original synthetic update base.'));
   });
   (process.env.GNEAUX_PI_PROCESS_RESTART === '1' ? it : it.skip)('retains Temporary authority in the same reopened chat and never inherits it in a new chat', async () => {
     await policy(false);
@@ -103,7 +108,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     await $('[aria-label="Conversation title"]').setValue('Pi temporary grant reopen proof');
     await $('textarea[aria-label="Message"]').click();
     await browser.waitUntil(async () => (await paneState()).title === 'Pi temporary grant reopen proof');
-    const prepared = await prepare({ operation: 'create', folder: '.', title: 'Pi temporary reopened creation', markdown: 'Temporary authority survives only its original conversation.' });
+    const prepared = await prepare(await update('Pi temporary reopened update', 'Temporary authority survives only its original conversation.'));
     const restart = await restartPiFixture();
     if ((await paneState()).conversationId !== conversationId) {
       await $('[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=Pi temporary grant reopen proof').click();
@@ -113,7 +118,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     const committed = await run(prepared); assert.equal(committed.status, 'committed');
     await newPiConversation(); await sendPiMessage('Fresh chat receives no previous Temporary grant.'); await waitPiIdle();
     const fresh = await authority(); assert.equal(fresh.write.grant.duration, 'off');
-    await assert.rejects(prepare({ operation: 'create', folder: '.', title: 'Pi inherited grant must fail', markdown: 'No inherited temporary authority.' }));
+    await assert.rejects(prepare(await update('Pi inherited grant must fail', 'No inherited temporary authority.')));
     evidence.push({ kind: 'temporary-grant-real-process-reopen', restart, original, reopened, fresh });
   });
 
@@ -209,7 +214,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
       assert.equal(settled.state.outcome.result?.status, 'committed');
       assert.equal(settled.publicationInvokes, 1, 'SPA remount must retain the original task and one native publication');
       const receipt = await browser.execute(() => (window as RemountHost).__PI_PUBLICATION_REMOUNT__!.receipt!);
-      assert.deepEqual(settled.state.outcome.result, { status: 'committed', receiptId: receipt.receiptId });
+      assert.deepEqual(settled.state.outcome.result, { status: 'committed', receiptId: receipt.receiptId, noteId: receipt.noteId });
       await $('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content').waitForExist({ timeout: 30_000 });
       await activatePiEditor();
       await browser.waitUntil(async () => await browser.execute((expected: string) => (window as RemountHost).__GNEAUXGHTS_NATIVE_E2E__!.readEditorState().editor?.markdown === expected, markdown), { timeout: 30_000, timeoutMsg: 'Replacement editor did not adopt the committed canonical body' });
