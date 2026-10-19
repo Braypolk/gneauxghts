@@ -40,6 +40,7 @@
   const stopped = $derived(unanswered?.reason === 'aborted');
   const hasWork = $derived(Boolean(live.run || live.compactions?.length || inbox.items.length));
   const runtimeUnavailable = $derived(snapshot.runtimeState !== 'open');
+  const chatPending = $derived(snapshot.loading || (!snapshot.initialized && !snapshot.error));
   let draft = $state(''), titleDraft = $state(''), titleFocused = $state(false), submitting = $state(false);
   let menu = $state<'history' | 'access' | 'model' | 'reasoning' | null>(null), input = $state<HTMLTextAreaElement | null>(null), scrollRoot = $state<HTMLDivElement | null>(null);
   let composerSelection = 0, reported: string | null | undefined;
@@ -112,9 +113,16 @@
     {#snippet secondaryActions()}{#if showConversationPicker}<button type="button" class="pane-header-action" aria-label="Conversations" aria-expanded={menu === 'history'} onclick={() => menu = menu === 'history' ? null : 'history'}><History size={18} /></button>{/if}{/snippet}
   </PaneHeader>
   {#if menu === 'history'}<PiConversationPicker {binding} onSelect={switchConversation} />{/if}
-  <div role="log" aria-label="Conversation messages" data-pane-content class="min-h-0 flex-1 overflow-y-auto" bind:this={scrollRoot} use:trackScroll={{ conversationId: visibleId, ready: snapshot.initialized && !snapshot.loading, positions }}><div class="chat-content-lane">
-    {#if snapshot.loading}<p role="status">Loading conversation…</p>
-    {:else if !snapshot.initialized}<p role="status">{snapshot.error ? 'Chat could not open.' : 'Opening chat…'}</p>
+  <div role="log" aria-label="Conversation messages" aria-busy={chatPending} data-pane-content class="min-h-0 flex-1 overflow-y-auto" bind:this={scrollRoot} use:trackScroll={{ conversationId: visibleId, ready: snapshot.initialized && !snapshot.loading, positions }}><div class="chat-content-lane">
+    {#if chatPending}
+      <div class="chat-loading" role="status" data-testid="pi-chat-loading">
+        <span class="sr-only">Loading conversation</span>
+        <div class="chat-loading-shapes" aria-hidden="true">
+          <div class="chat-loading-prompt"></div>
+          <div class="chat-loading-response"><span></span><span></span><span></span></div>
+        </div>
+      </div>
+    {:else if !snapshot.initialized}<p role="status">Chat could not open.</p>
     {:else}
       {#if snapshot.historyNext}<button class="pi-subtle" type="button" onclick={older}>Load earlier messages</button>{/if}
       {#if snapshot.entries.length === 0 && !live.run}<p class="pi-empty">What are you thinking about?</p>{/if}

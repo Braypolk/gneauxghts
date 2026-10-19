@@ -1,5 +1,42 @@
 /* `.chat-content-lane` width lives in `src/app.css` next to the token. */
 
+/* Quick opens stay quiet; slower reads reveal a static transcript placeholder.
+   CSS owns only its appearance, so ready content never waits for a timer. */
+.chat-loading-shapes {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  padding-block: 0.5rem;
+  opacity: 0;
+  animation: chat-loading-reveal 160ms ease-out 200ms forwards;
+}
+.chat-loading-prompt,
+.chat-loading-response > span {
+  background: color-mix(in oklab, var(--muted-foreground) 10%, transparent);
+}
+.chat-loading-prompt {
+  align-self: flex-end;
+  width: 38%;
+  height: 2.5rem;
+  border-radius: 1rem;
+}
+.chat-loading-response {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.chat-loading-response > span {
+  width: 86%;
+  height: 0.625rem;
+  border-radius: 999px;
+}
+.chat-loading-response > span:nth-child(2) { width: 94%; }
+.chat-loading-response > span:last-child { width: 62%; }
+@keyframes chat-loading-reveal { to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) {
+  .chat-loading-shapes { animation-duration: 0s; }
+}
+
 .chat-panel > .pane-header {
   position: absolute;
   inset: 0 0 auto;

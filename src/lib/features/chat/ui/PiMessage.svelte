@@ -57,7 +57,7 @@
 
 <style>
   article { margin-block: 1.4rem; overflow-wrap: anywhere; }
-  .pi-user { max-width: 85%; margin-left: auto; }
+  .pi-user { width: fit-content; max-width: 85%; margin-left: auto; }
   .pi-user-body { border-radius: 1rem; padding: .65rem 1rem; background: var(--muted); white-space: pre-wrap; }
   .message-actions { display: flex; align-items: center; gap: .35rem; min-height: 1.75rem; margin-top: .25rem; color: var(--muted-foreground); font-size: .7rem; opacity: 0; pointer-events: none; }
   .pi-user .message-actions { justify-content: flex-end; }
