@@ -123,6 +123,7 @@
   $effect(() => {
     actionPresentation = { running, progress };
     const row = node?.parentElement;
+    row?.style.setProperty('--dock-layout-body-height', `${geometry.bodyHeight}px`);
     if (!coordinatedLayout) {
       row?.style.removeProperty('--dock-layout-reserved');
       row?.style.removeProperty('--dock-layout-balance');
@@ -273,7 +274,7 @@
       size.disconnect(); content.disconnect(); paneLayout.disconnect(); media?.removeEventListener('change', finish);
       window.removeEventListener('resize', finish); readLayout = undefined;
       workspace?.removeEventListener('workspace-pane-layout-ready', layoutReady);
-      for (const property of ['--dock-layout-reserved', '--dock-layout-balance', '--dock-action-0-shift', '--dock-action-1-shift']) {
+      for (const property of ['--dock-layout-body-height', '--dock-layout-reserved', '--dock-layout-balance', '--dock-action-0-shift', '--dock-action-1-shift']) {
         element.parentElement?.style.removeProperty(property);
       }
     } };

@@ -235,8 +235,6 @@ export function createPaneLayoutMotion(deps: {
           bottom: `${row.bottomEdge - box.bottomEdge}px`, maxWidth: 'none', marginLeft: '0px', marginRight: '0px'
         });
         add(inputDock, dockFrame(from, rowFrom), dockFrame(to, rowTo));
-        add(dockRow, { height: `${rowFrom.height}px`, minHeight: `${rowFrom.height}px` },
-          { height: `${rowTo.height}px`, minHeight: `${rowTo.height}px` });
       }
       for (const element of [outer, area]) {
         add(element, { maxWidth: `${before.get(element)!.width}px` }, {

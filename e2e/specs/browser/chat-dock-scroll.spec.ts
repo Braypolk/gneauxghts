@@ -46,15 +46,17 @@ describe('chat reading position across input modes', () => {
           await browser.pause(100);
           for (const label of ['Expand search', 'Expand chat input', 'Expand search', 'Expand chat input']) {
             const positions = await browser.executeAsync((buttonLabel: string, duration: number,
-              done: (result: { scroll: number[]; message: number[]; heights: number[] }) => void) => {
+              done: (result: { scroll: number[]; message: number[]; heights: number[]; frameHeights: number[] }) => void) => {
               const log = document.querySelector<HTMLElement>('[role="log"]')!;
               const message = log.querySelector<HTMLElement>('[data-testid="pi-assistant-message"]:last-child')!;
               const dock = document.querySelector('[data-input-dock-mode] > .dock-body')!;
-              const scroll: number[] = [], messagePositions: number[] = [], heights: number[] = [];
+              const dockFrame = document.querySelector('[data-notepad-command-bar]')!.parentElement!;
+              const scroll: number[] = [], messagePositions: number[] = [], heights: number[] = [], frameHeights: number[] = [];
               const read = () => {
                 scroll.push(log.scrollTop);
                 messagePositions.push(message.getBoundingClientRect().top);
                 heights.push(dock.getBoundingClientRect().height);
+                frameHeights.push(dockFrame.getBoundingClientRect().height);
               };
               read();
               document.querySelector<HTMLElement>(`button[aria-label="${buttonLabel}"]`)!.click();
@@ -62,11 +64,12 @@ describe('chat reading position across input modes', () => {
               const frame = () => {
                 read();
                 if (performance.now() - started < duration) requestAnimationFrame(frame);
-                else done({ scroll, message: messagePositions, heights });
+                else done({ scroll, message: messagePositions, heights, frameHeights });
               };
               requestAnimationFrame(frame);
             }, label, dockMorphDuration + 350);
             expect(Math.max(...positions.heights) - Math.min(...positions.heights)).toBeGreaterThan(20);
+            expect(Math.max(...positions.frameHeights) - Math.min(...positions.frameHeights)).toBeLessThanOrEqual(1);
             expect(Math.max(...positions.scroll) - Math.min(...positions.scroll)).toBeLessThanOrEqual(1);
             expect(Math.max(...positions.message) - Math.min(...positions.message)).toBeLessThanOrEqual(1);
           }
@@ -74,4 +77,48 @@ describe('chat reading position across input modes', () => {
       }
     });
   }
+
+  it('lets pointer input reach chat through unused space above the collapsed bar', async () => {
+    await $('button[aria-label="Expand search"]').click();
+    await waitForWorkspaceAnimationSettled();
+    await browser.execute(() => (document.activeElement as HTMLElement)?.blur());
+    await waitForWorkspaceAnimationSettled();
+    const hit = await browser.execute(() => {
+      const bar = document.querySelector('[data-notepad-command-bar]')!;
+      const frame = bar.parentElement!.getBoundingClientRect();
+      const log = document.querySelector<HTMLElement>('[role="log"]')!;
+      const unusedHeight = bar.getBoundingClientRect().top - frame.top;
+      const target = document.elementFromPoint(log.getBoundingClientRect().left + 20, frame.top + unusedHeight / 2);
+      return { unusedHeight, reachesChat: target !== null && log.contains(target) };
+    });
+    expect(hit.unusedHeight).toBeGreaterThan(20);
+    expect(hit.reachesChat).toBe(true);
+  });
+
+  it('keeps the latest message at the bottom while Related changes the available width', async () => {
+    // Solo chat at this width crosses a Markdown wrapping boundary when Related opens.
+    await $('[data-pane-kind="editor"] button[aria-label="Close pane"]').click();
+    await waitForWorkspaceAnimationSettled();
+    await browser.waitUntil(() => browser.execute(() => {
+      const log = document.querySelector<HTMLElement>('[role="log"]')!;
+      return log.scrollHeight - log.clientHeight - log.scrollTop <= 1;
+    }));
+    for (const label of ['Expand related notes', 'Collapse related notes']) {
+      const result = await browser.executeAsync((label: string, done: (value: { gaps: number[]; heights: number[] }) => void) => {
+        const log = document.querySelector<HTMLElement>('[role="log"]')!;
+        const gaps: number[] = [], heights: number[] = [];
+        document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
+        const started = performance.now();
+        const sample = () => setTimeout(() => {
+          gaps.push(log.scrollHeight - log.clientHeight - log.scrollTop);
+          heights.push(log.scrollHeight);
+          if (performance.now() - started < 1000) requestAnimationFrame(sample);
+          else done({ gaps, heights });
+        }, 0);
+        requestAnimationFrame(sample);
+      }, label);
+      expect(Math.max(...result.heights) - Math.min(...result.heights)).toBeGreaterThan(20);
+      expect(Math.max(...result.gaps)).toBeLessThanOrEqual(2);
+    }
+  });
 });

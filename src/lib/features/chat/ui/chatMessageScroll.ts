@@ -79,6 +79,8 @@ export function createChatMessageScroll(root: HTMLElement, initial: ChatScrollOp
   let previousTime: number | undefined;
   let renderRevision = 0;
   let rendering = false;
+  let viewportWidth = root.clientWidth, viewportHeight = root.clientHeight;
+  let viewportPadding = getComputedStyle(root).paddingBottom;
   const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
   const bottom = () => Math.max(0, root.scrollHeight - root.clientHeight);
 
@@ -159,9 +161,16 @@ export function createChatMessageScroll(root: HTMLElement, initial: ChatScrollOp
     };
   }
   const observer = new ResizeObserver(() => {
+    const width = root.clientWidth, height = root.clientHeight;
+    const padding = getComputedStyle(root).paddingBottom;
+    const viewportChanged = width !== viewportWidth || height !== viewportHeight || padding !== viewportPadding;
+    viewportWidth = width; viewportHeight = height; viewportPadding = padding;
     if (!active) return;
     scroll();
-    if (position.followingLatest) schedule();
+    // Layout changes (dock clearance, pane width, Related) must be reconciled
+    // before paint. Only growing message content uses smooth following.
+    if (position.followingLatest && viewportChanged) { cancel(); write(bottom()); }
+    else if (position.followingLatest) schedule();
     else write(position.scrollTop);
   });
   observer.observe(root);

@@ -188,7 +188,9 @@ scroll offset through streamed markdown replacement and delayed content layout.
 An intermediate scroll clamp while replacing markdown or admitting a completed
 message cannot reset the viewport or count as user input; the pre-render offset
 is restored before paint, with conversation changes invalidating that repair.
-Reduced motion uses immediate following. `chatMessageScroll.ts` owns this viewport
+Viewport width, height and dock-clearance changes reconcile following before
+paint so layout reflow cannot start a second scrolling animation. Reduced motion
+uses immediate following. `chatMessageScroll.ts` owns this viewport
 behavior, including restoration and earlier-history prepend correction.
 
 Retiring an editor closes its pane-owned transient menus before disconnecting
@@ -1022,6 +1024,8 @@ between endpoints even when its input mode stays unchanged. Input switching reta
 pacing, and the selected curve follows the remaining clock when interrupted.
 Content scrolls beneath the shared dock fade. With a chat open, end padding
 reserves the measured expanded composer height in both chat input and search.
+The outer dock frame reserves the larger input height while its bottom-aligned
+bar animates inside it; unused frame space lets pointer input reach the content.
 Switching between those modes preserves message positions throughout the morph
 and after settling, including at the bottom and when reading older messages.
 Draft growth and shrinkage update that clearance; a growing draft keeps the

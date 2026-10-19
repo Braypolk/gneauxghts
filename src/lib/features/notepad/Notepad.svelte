@@ -1619,7 +1619,7 @@
       </div>
 
       <div
-        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height)"
+        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) pointer-events-none grid items-end"
         use:workspaceDockInset
       >
         <NotepadCommandBar

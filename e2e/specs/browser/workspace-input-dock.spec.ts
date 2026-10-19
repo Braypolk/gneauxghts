@@ -28,6 +28,50 @@ describe('shared workspace input dock', () => {
     await resetBrowserWorkspace();
   });
 
+  for (const split of [false, true]) it(`keeps the bottom blur fitted to the animated input height during ${split ? 'compact pane exchanges' : 'note/chat replacement'}`, async () => {
+    if (split) {
+      await openChat();
+      await browser.setWindowSize(390, 950);
+      await waitForWorkspaceAnimationSettled();
+    }
+    for (const mode of (split ? ['search', 'chat'] : ['chat', 'search']) as Array<'search' | 'chat'>) {
+      const selector = split ? '.pane-rail' : mode === 'chat'
+        ? '[data-pane-kind="editor"] button[aria-label="Open thought partner"]'
+        : '[data-pane-kind="chat"] button[aria-label="Open previous location"]';
+      const frames = await browser.executeAsync((selector: string, duration: number, done: (frames: number[][]) => void) => {
+        const bar = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!;
+        const backdrop = bar.firstElementChild!;
+        const dock = bar.querySelector<HTMLElement>('.workspace-input-dock')!;
+        const row = dock.parentElement!;
+        const frames: number[][] = [];
+        const read = () => {
+          const style = getComputedStyle(row);
+          const contentHeight = Math.max(...[...row.children].map(child => child.getBoundingClientRect().height));
+          const actionHeight = parseFloat(style.getPropertyValue('--workspace-dock-action-height')) *
+            parseFloat(getComputedStyle(document.documentElement).fontSize);
+          const expectedHeight = Math.max(actionHeight, contentHeight) +
+            parseFloat(style.paddingTop) + parseFloat(style.paddingBottom);
+          const rect = backdrop.getBoundingClientRect();
+          frames.push([rect.height, expectedHeight, rect.bottom]);
+        };
+        read();
+        const started = performance.now();
+        document.querySelector<HTMLButtonElement>(selector)!.click();
+        const sample = () => setTimeout(() => {
+          read();
+          if (performance.now() - started < duration) requestAnimationFrame(sample);
+          else done(frames);
+        }, 0);
+        requestAnimationFrame(sample);
+      }, selector, motionCaptureDuration);
+      const heights = frames.map(frame => frame[0]);
+      expect(Math.max(...frames.map(frame => Math.abs(frame[0] - frame[1])))).toBeLessThanOrEqual(1);
+      expect(heights.some(height => height > Math.min(...heights) + 2 && height < Math.max(...heights) - 2)).toBe(true);
+      expect(Math.max(...frames.map(frame => frame[2])) - Math.min(...frames.map(frame => frame[2]))).toBeLessThanOrEqual(1);
+      await expectMode(mode);
+    }
+  });
+
   it('keeps settled shells separate and send controls circular at desktop and narrow widths', async () => {
     await openChat();
     for (const width of [638, 1440, 390]) {

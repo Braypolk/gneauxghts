@@ -483,31 +483,31 @@
 
 <div
   data-notepad-command-bar
-  class="relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg"
+  class="pointer-events-auto relative min-w-0 overflow-visible rounded-none shadow-none sm:rounded-2xl sm:shadow-lg"
 >
   <div
-    class="absolute inset-0 rounded-none bg-card/70 backdrop-blur-md sm:rounded-2xl"
+    class="absolute inset-0 rounded-none bg-card/58 backdrop-blur-sm sm:rounded-2xl"
     style="mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 40%, black 100%); mask-size: 100% 100%; -webkit-mask-size: 100% 100%;"
   ></div>
   <div class="search-dock-row notepad-command-bar-content relative z-10 flex min-w-0 items-center justify-between gap-1.5 px-2.5 sm:gap-4 sm:px-6"
     class:notepad-command-bar-content--chat={chatAvailable}>
-    {#if canUnforget}
-      <button
-        type="button"
-        class="notepad-command-action notepad-command-action--restore mobile-touch-target inline-flex h-10 w-[54px] shrink-0 items-center justify-center rounded-full border border-border bg-secondary p-0 text-secondary-foreground shadow-sm transition-colors hover:bg-accent sm:h-11 sm:w-[136px] sm:px-6"
-        onclick={() => onUnforget()}
-        aria-label={`Restore the last forgotten ${forgetItemLabel}`}
-        title={`Restore forgotten ${forgetItemLabel}`}
-      >
-        <span class="notepad-command-action-label hidden sm:inline">unForget</span>
-        <Undo2 class="h-5 w-5 sm:hidden" />
-      </button>
-    {:else}
-      <div
-        class={`relative inline-flex shrink-0 items-center rounded-full border bg-background p-1 text-muted-foreground shadow-sm ${
-          commandBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'
-        }`}
-      >
+    <div
+      class={`relative inline-flex shrink-0 items-center rounded-full border p-1 shadow-sm ${
+        canUnforget ? 'bg-secondary text-secondary-foreground' : 'bg-background text-muted-foreground'
+      } ${commandBarState.isHoldingForget ? 'border-destructive/70' : 'border-border'}`}
+    >
+      {#if canUnforget}
+        <button
+          type="button"
+          class="notepad-command-action mobile-touch-target inline-flex h-8 w-8 items-center justify-center rounded-full p-0 font-medium transition-colors hover:bg-accent sm:h-11 sm:w-auto sm:min-w-[126px] sm:px-5"
+          onclick={() => onUnforget()}
+          aria-label={`Restore the last forgotten ${forgetItemLabel}`}
+          title={`Restore forgotten ${forgetItemLabel}`}
+        >
+          <span class="notepad-command-action-label hidden sm:inline">unForget</span>
+          <Undo2 class="h-5 w-5 sm:hidden" />
+        </button>
+      {:else}
         {#if commandBarState.isForgetConfirmOpen}
           <div
             id="forget-confirm-popover"
@@ -587,8 +587,8 @@
             }`}
           />
         </button>
-      </div>
-    {/if}
+      {/if}
+    </div>
 
     {#snippet searchPanel()}
       {#key isSearching}
@@ -852,14 +852,16 @@
   }
   .notepad-command-bar-content > :global(:first-child) { transform: translateX(var(--dock-action-0-shift, 0px)); }
   .notepad-command-bar-content > :global(:last-child) { transform: translateX(var(--dock-action-1-shift, 0px)); }
+  :global([data-pane-motion]) .notepad-command-bar-content {
+    /* Pane motion positions the input absolutely. Keep its row and backdrop
+       fitted to the live dock height rather than a captured layout endpoint. */
+    height: calc(var(--dock-layout-body-height, var(--search-bar-height)) + var(--workspace-dock-circle-inset) + 2 * var(--search-dock-padding) + var(--search-dock-safe-area));
+  }
   .remember-action-label { position: relative; }
   .remember-action-name { position: relative; display: inline-grid; }
   .remember-action-current, .remember-action-size { grid-area: 1 / 1; }
   .remember-action-size { visibility: hidden; }
   .remember-action-outgoing { position: absolute; inset: 0; white-space: nowrap; }
-  .notepad-command-bar-content .notepad-command-action--restore {
-    margin-bottom: calc((var(--workspace-dock-action-height) - 2.75rem) / 2);
-  }
 
   @container note-toolbar (max-width: 56rem) {
     .notepad-command-action {
@@ -870,10 +872,6 @@
       width: calc(2.75rem + var(--command-action-extra));
       min-width: 2.75rem;
       padding-inline: 0;
-    }
-
-    .notepad-command-action--restore {
-      width: calc(3.375rem + var(--command-action-extra));
     }
 
     .notepad-command-action-label {
@@ -964,6 +962,7 @@
   @media (any-pointer: coarse) and (orientation: landscape) {
     :global(.app-shell[data-keyboard-open='true']) .notepad-command-bar-content {
       --workspace-dock-action-height: 2.875rem;
+      --workspace-dock-circle-inset: 0px;
       --search-dock-padding: 0px;
       min-height: 2.875rem;
       padding-block: 0;
