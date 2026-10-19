@@ -5,6 +5,40 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 describe('search scope label animation', () => {
   beforeEach(resetBrowserWorkspace);
 
+  it('keeps scope hit areas on their visible buttons when labels collapse', async () => {
+    for (const expanded of [false, true, false]) {
+      await browser.execute((expanded: boolean) => {
+        const input = document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!;
+        if (expanded) input.focus({ preventScroll: true });
+        else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }, expanded);
+      await waitForWorkspaceAnimationSettled();
+      const misses = await browser.execute(() => {
+        const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('.notepad-search-bar .shared-search-mode-button'));
+        const misses: string[] = [];
+        for (const button of buttons) {
+          const rect = button.getBoundingClientRect();
+          for (const x of [rect.left + 4, rect.left + rect.width / 2, rect.right - 4]) {
+            const target = document.elementFromPoint(x, rect.top + rect.height / 2)?.closest('button');
+            if (target !== button) misses.push(`${button.ariaLabel} hit ${target?.ariaLabel ?? 'no button'}`);
+          }
+        }
+        const last = buttons.at(-1)!.getBoundingClientRect();
+        for (const offset of [4, 12, 24, 48]) {
+          const target = document.elementFromPoint(last.right + offset, last.top + last.height / 2)?.closest('button');
+          if (target && buttons.includes(target)) misses.push(`Scope hit ${offset}px beyond its button`);
+        }
+        return misses;
+      });
+      expect(misses).toEqual([]);
+    }
+
+    await $('button[aria-label="Search all notes"]').click();
+    await expect($('button[aria-label="Search all notes"]')).toHaveAttribute('aria-pressed', 'true');
+    await $('button[aria-label="Search this note only"]').click();
+    await expect($('button[aria-label="Search this note only"]')).toHaveAttribute('aria-pressed', 'true');
+  });
+
   it('keeps a phone query readable without an image-upload control', async () => {
     await browser.setWindowSize(393, 852);
     const input = $('[data-testid="note-search-input"]');

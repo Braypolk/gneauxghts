@@ -61,6 +61,9 @@
 
 .shared-search-mode-label {
   grid-template-columns: 0fr;
+  /* Fading text can overflow the animated width. Only the button's own box
+     should receive pointer hits, including when its label is invisible. */
+  pointer-events: none;
   /* Animate the actual text width, without a max-width cap or clipped letters. */
   overflow: visible;
   /* Keep closing width changes on the bar's curve so scope icons do not reverse direction. */
