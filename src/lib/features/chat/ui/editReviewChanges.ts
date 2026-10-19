@@ -1,25 +1,21 @@
+import { diffArrays } from 'diff';
+
 type TextPart = { text: string; changed: boolean };
 type InlinePart = { text: string; kind: 'context' | 'removed' | 'added' };
 export type ReviewChange = { before: TextPart[]; after: TextPart[]; inline: InlinePart[]; spacingChanged: boolean; context?: string };
 
-function highlight(before: string, after: string): ReviewChange {
+function highlight(before: string, after: string): ReviewChange | null {
   const words = (text: string) => text.match(/\s+|[\p{L}\p{M}\p{N}_]+|[^\s\p{L}\p{M}\p{N}_]+/gu) ?? [];
-  const old = words(before), next = words(after);
-  let start = 0, end = 0;
-  while (start < old.length && start < next.length && old[start] === next[start]) start++;
-  while (end < old.length - start && end < next.length - start && old[old.length - 1 - end] === next[next.length - 1 - end]) end++;
-  const parts = (tokens: string[]): TextPart[] => [
-    { text: tokens.slice(0, start).join(''), changed: false },
-    { text: tokens.slice(start, tokens.length - end).join(''), changed: true },
-    { text: end ? tokens.slice(-end).join('') : '', changed: false }
-  ].filter(part => part.text.length > 0);
-  const inline: InlinePart[] = [
-    { text: old.slice(0, start).join(''), kind: 'context' },
-    { text: old.slice(start, old.length - end).join(''), kind: 'removed' },
-    { text: next.slice(start, next.length - end).join(''), kind: 'added' },
-    { text: end ? old.slice(-end).join('') : '', kind: 'context' }
-  ];
-  return { before: parts(old), after: parts(next), inline: inline.filter(part => part.text.length > 0), spacingChanged: before !== after && before.replace(/\s/gu, '') === after.replace(/\s/gu, '') };
+  // Keep shared words and line breaks between edits. Bound expensive comparisons;
+  // the caller falls back to the exact technical patch if highlighting aborts.
+  const edits = diffArrays(words(before), words(after), { maxEditLength: 1000 });
+  if (!edits) return null;
+  const inline: InlinePart[] = edits.map(part => ({
+    text: part.value.join(''), kind: part.removed ? 'removed' : part.added ? 'added' : 'context'
+  }));
+  const parts = (excluded: InlinePart['kind']): TextPart[] => inline.filter(part => part.kind !== excluded)
+    .map(part => ({ text: part.text, changed: part.kind !== 'context' }));
+  return { before: parts('added'), after: parts('removed'), inline, spacingChanged: before !== after && before.replace(/\s/gu, '') === after.replace(/\s/gu, '') };
 }
 
 /** Presentation of Pi's unified patch. Never changes the candidate or approval. */
@@ -27,6 +23,7 @@ export function editReviewChanges(patch: string): ReviewChange[] | null {
   const lines = patch.split('\n');
   if (!lines[0]?.startsWith('--- ') || !lines[1]?.startsWith('+++ ')) return null;
   const changes: ReviewChange[] = [];
+  let complete = true;
   let before: string[] = [], after: string[] = [];
   let oldRemaining = 0, newRemaining = 0, inHunk = false;
   let lastLine = '';
@@ -34,7 +31,9 @@ export function editReviewChanges(patch: string): ReviewChange[] | null {
   const flush = () => {
     if (before.length || after.length) {
       const context = preceding.findLast(line => /^\s{0,3}#{1,6}\s/.test(line)) ?? preceding.join('\n');
-      changes.push({ ...highlight(before.join(''), after.join('')), ...(context ? { context } : {}) });
+      const highlighted = highlight(before.join(''), after.join(''));
+      if (highlighted) changes.push({ ...highlighted, ...(context ? { context } : {}) });
+      else complete = false;
       preceding = [];
     }
     before = []; after = [];
@@ -69,5 +68,5 @@ export function editReviewChanges(patch: string): ReviewChange[] | null {
     if (oldRemaining < 0 || newRemaining < 0) return null;
   }
   flush();
-  return inHunk && !oldRemaining && !newRemaining && changes.length ? changes : null;
+  return complete && inHunk && !oldRemaining && !newRemaining && changes.length ? changes : null;
 }

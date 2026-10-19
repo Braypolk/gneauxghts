@@ -78,6 +78,30 @@ describe('readable edit reviews', () => {
     expect(text(change.inline.filter(part => part.kind !== 'added'))).toBe(text(change.before));
     expect(text(change.inline.filter(part => part.kind !== 'removed'))).toBe(text(change.after));
   });
+  it.each([
+    ['inline', ''], ['inline', '\n'], ['side-by-side', ''], ['side-by-side', '\n']
+  ] as const)('highlights separate replacements without joining the old and new lines in %s (final newline %j)', async (layout, ending) => {
+    editDiffLayout.setPreference(layout);
+    const before = `chuck went to bed\nhe woke up at 6am${ending}`;
+    const after = `Tim went to bed\nhe woke up at 8am${ending}`;
+    const staged = await stageNoteEdit(before, [
+      { oldText: 'chuck', newText: 'Tim' },
+      { oldText: '6am', newText: '8am' }
+    ], { taskId: 1 } as ToolExecutionApi, PI_CONTEXT);
+    const change = editReviewChanges(staged.patch)![0];
+    expect(staged.markdown).toBe(after);
+    expect(change.before.filter(part => part.changed).map(part => part.text)).toEqual(['chuck', '6am']);
+    expect(change.after.filter(part => part.changed).map(part => part.text)).toEqual(['Tim', '8am']);
+    expect(text(change.inline.filter(part => part.kind !== 'added'))).toBe(before);
+    expect(text(change.inline.filter(part => part.kind !== 'removed'))).toBe(after);
+    const main = show(staged.patch).split('<details')[0].replace(/<!--[\s\S]*?-->/g, '');
+    if (layout === 'inline') {
+      expect(main).toMatch(/<del[^>]*>chuck<\/del><ins[^>]*>Tim<\/ins> went to bed\nhe woke up at <del[^>]*>6am<\/del><ins[^>]*>8am<\/ins>/);
+    } else {
+      expect(main).toMatch(/<mark[^>]*>chuck<\/mark> went to bed\nhe woke up at <mark[^>]*>6am<\/mark>/);
+      expect(main).toMatch(/<mark[^>]*>Tim<\/mark> went to bed\nhe woke up at <mark[^>]*>8am<\/mark>/);
+    }
+  });
   it('shows the exact changed sentence with just the changed words highlighted', () => {
     editDiffLayout.setPreference('side-by-side');
     const changes = editReviewChanges(patch)!;
@@ -120,6 +144,13 @@ describe('readable edit reviews', () => {
   });
   it('keeps both decision controls disabled when publication is unavailable', () => {
     expect(show(patch, true).match(/disabled/g)).toHaveLength(2);
+  });
+  it('falls back to the complete technical patch when word comparison exceeds its work limit', () => {
+    const value = `--- a\n+++ b\n@@ -1 +1 @@\n-old\n+${'new '.repeat(600)}\n`;
+    expect(editReviewChanges(value)).toBeNull();
+    const body = show(value);
+    expect(body).toContain('Review the detailed changes below.');
+    expect(body).toContain('new '.repeat(600));
   });
   it('makes an otherwise invisible final line break change explicit', () => {
     const value = '--- a\n+++ b\n@@ -1 +1 @@\n-Same text\n\\ No newline at end of file\n+Same text\n';

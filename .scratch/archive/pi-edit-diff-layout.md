@@ -32,3 +32,26 @@ unchanged. Side by side retains the existing responsive comparison.
 All acceptance notes and provider responses are disposable fixtures. No native
 code changed. Physical-device testing is not claimed. Existing native restart
 cleanup warnings did not prevent the embedded driver from completing.
+
+## Separate replacement highlighting correction — 2026-10-18
+
+A two-line edit (`chuck` → `Tim`, `6am` → `8am`) exposed that the readable
+highlighter only retained a shared prefix and suffix. It marked the whole middle
+as replaced, joining the added first line onto the removed second line in inline
+view. Side by side preserved the layout but also highlighted unchanged words.
+
+The presentation helper now compares exact word/whitespace tokens with `diff`
+8.0.4 (already used by Pi, now a direct dependency). Shared text and line breaks
+between replacements appear once in inline view, and both layouts highlight only
+changed words. A bounded comparison falls back to the complete technical patch
+when its edit-distance limit is exceeded. Candidate bytes and approval behavior
+are unchanged.
+
+Regression coverage stages and renders the reported two replacements in both
+layouts with and without a final newline, verifies exact before/after
+reconstruction, and checks the large-comparison fallback. A temporary mounted
+browser harness passed text and geometry assertions and produced visually
+inspected screenshots of both corrected layouts; the harness was removed.
+All 349 affected chat/settings tests, frontend/E2E type checks and the production
+build passed. Native process acceptance was not rerun for this presentation-only
+correction.
