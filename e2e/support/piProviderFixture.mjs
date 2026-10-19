@@ -5,12 +5,13 @@ import { createServer } from 'node:http';
 export async function startPiProviderFixture({ readQuery = 'Pi acceptance lantern' } = {}) {
   assert(typeof readQuery === 'string' && readQuery.length > 0 && readQuery.length <= 160);
   let fail = false, requests = 0, holdSummaries = false, pendingSummaries = 0;
+  let contextWindow = 129280;
   let edit, creation;
   const summaryGates = new Set();
   const server = createServer(async (req, res) => {
     if (req.method === 'GET') {
       res.setHeader('content-type', 'application/json');
-      res.end(JSON.stringify({ data: [{ id: 'pi-acceptance-fixture' }], models: [{ key: 'pi-acceptance-fixture', capabilities: { tools: true, reasoning: { allowed_options: ['on', 'off'], default: 'on' } }, loaded_instances: [{ id: 'pi-acceptance-fixture', config: { context_length: 129280 } }] }] })); return;
+      res.end(JSON.stringify({ data: [{ id: 'pi-acceptance-fixture' }], models: [{ key: 'pi-acceptance-fixture', max_context_length: 262144, capabilities: { tools: true, reasoning: { allowed_options: ['on', 'off'], default: 'on' } }, loaded_instances: contextWindow === null ? [] : [{ id: 'pi-acceptance-fixture', config: { context_length: contextWindow } }] }] })); return;
     }
     if (req.url !== '/v1/chat/completions') { res.writeHead(404).end(); return; }
     requests++;
@@ -54,5 +55,5 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
   });
   await new Promise((ok, failStart) => { server.once('error', failStart); server.listen(0, '127.0.0.1', ok); });
   const address = server.address(); assert(address && typeof address !== 'string');
-  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setEdit(value) { edit = value; }, setCreate(value) { creation = value; }, setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
+  return { endpoint: `http://127.0.0.1:${address.port}/v1`, model: 'pi-acceptance-fixture', setContextWindow(value) { assert(value === null || Number.isSafeInteger(value) && value > 0); contextWindow = value; }, setEdit(value) { edit = value; }, setCreate(value) { creation = value; }, setFailure(value) { fail = value; }, setHoldSummaries(value) { holdSummaries = value; if (!value) for (const release of summaryGates) release(); }, get pendingSummaries() { return pendingSummaries; }, get requests() { return requests; }, interruptConnections() { server.closeAllConnections(); }, async close() { server.closeAllConnections(); await new Promise((ok, error) => server.close(e => e ? error(e) : ok())); } };
 }

@@ -19,6 +19,7 @@
   import { generationProgress, fallbackProgress } from './ui/piProgress';
   import PiRuntimeDiagnostics from './ui/PiRuntimeDiagnostics.svelte';
   import PiModelSelector from './ui/PiModelSelector.svelte';
+  import PiContextUsage from './ui/PiContextUsage.svelte';
   import { writeGrantForDuration, withCreationPermission } from './pi/authority';
   import PiEditReview from './ui/PiEditReview.svelte';
   import type { ChatSurfaceHandle } from './types';
@@ -169,6 +170,7 @@
           </div>{/if}
         </div>
         <div class="chat-composer-primary">
+          <PiContextUsage usage={snapshot.contextUsage} message={live.generation?.message} compacting={Boolean(live.compactions?.length)} />
           <PiModelSelector {binding} disabled={runtimeUnavailable || !snapshot.initialized || hasWork || snapshot.authority?.retired} modelOpen={menu === 'model'} reasoningOpen={menu === 'reasoning'} onModelOpenChange={open => menu = open ? 'model' : null} onReasoningOpenChange={open => menu = open ? 'reasoning' : null} />
           {#if hasWork && draft.trim()}<button type="button" class="chat-icon-button" aria-label="Queue message" title="Queue message" data-testid="pi-send" disabled={runtimeUnavailable || submitting || !snapshot.initialized || snapshot.loading || snapshot.authority?.retired} onclick={submit}><ArrowUp class="h-4 w-4" /></button>{/if}
           <button type="button" class="chat-send-button" aria-label={hasWork ? 'Stop' : 'Send message'} data-chat-action={hasWork ? 'stop' : 'send'} data-testid={hasWork ? 'pi-stop' : 'pi-send'} disabled={runtimeUnavailable || (hasWork ? snapshot.stopping : submitting || !draft.trim() || !snapshot.initialized || snapshot.loading || snapshot.authority?.retired)} onclick={() => hasWork ? binding.stop() : submit()}>

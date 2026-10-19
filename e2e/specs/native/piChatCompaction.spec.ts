@@ -16,6 +16,26 @@ describe('ordinary Pi automatic compaction', function () {
   });
   after(async () => { await fixture?.close(); });
 
+  (fixtureEnabled ? it : it.skip)('retains unloaded model capacity and refreshes the mounted context indicator after reload', async () => {
+    const capacity = () => invokeNative<{ contextWindow: number | null }>('pi_chat_model_configuration', { provider: 'local', model });
+    try {
+      fixture!.setContextWindow(32768);
+      await newPiConversation();
+      await sendPiMessage('Short synthetic context capacity setup. Use no tools.'); await waitPiIdle();
+      assert.equal((await capacity()).contextWindow, 32768);
+      await browser.waitUntil(async () => (await $('[data-testid="pi-context-usage"]').getAttribute('aria-label'))?.includes('32.8K') ?? false);
+      fixture!.setContextWindow(null);
+      assert.equal((await capacity()).contextWindow, 32768, 'Unloading preserves the last observed configured capacity');
+      fixture!.setContextWindow(65536);
+      await sendPiMessage('Short synthetic continuation after a model reload. Use no tools.'); await waitPiIdle();
+      // Read the mounted UI before requesting configuration again: inference
+      // must refresh it without a Settings visit or a second discovery caller.
+      await browser.waitUntil(async () => (await $('[data-testid="pi-context-usage"]').getAttribute('aria-label'))?.includes('65.5K') ?? false);
+      fixture!.setContextWindow(null);
+      assert.equal((await capacity()).contextWindow, 65536, 'The latest loaded capacity replaces the previous value');
+    } finally { fixture!.setContextWindow(129280); }
+  });
+
   it('installs a standard threshold/overflow summary, continues and retains human history', async () => {
     await newPiConversation(); await sendPiMessage('Give one sentence welcoming a fictional observatory visitor. Use no notes or tools.'); await waitPiIdle(300_000);
     const short = await piDiagnostics();

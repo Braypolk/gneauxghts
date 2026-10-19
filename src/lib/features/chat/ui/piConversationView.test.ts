@@ -12,6 +12,33 @@ const gate = () => { let resolve!: () => void; const promise = new Promise<void>
 const untilAborted = (signal: AbortSignal | undefined) => signal?.aborted ? Promise.resolve() : new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }));
 
 describe('Pi conversation presentation binding', () => {
+  it('measures the active context across compaction, history paging, reopen and model changes', async () => {
+    const f = await piViewFixture();
+    try {
+      await f.binding.initialize();
+      const conversation = await f.runtime.createConversation();
+      await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [{ role: 'user', content: 'Long earlier conversation. '.repeat(100), timestamp: 1 }] } }, PI_CONTEXT);
+      const tail = await conversation.submit({ type: 'write', entry: { kind: 'fixture', model: [{ role: 'user', content: 'Recent message', timestamp: 2 }] } }, PI_CONTEXT);
+      await f.binding.select(String(conversation.id));
+      const original = f.binding.getSnapshot().contextUsage!;
+      expect(original.tokens).toBeGreaterThan(700);
+      expect(original.capacity).toBe(f.faux.getModel().contextWindow);
+      const tailRecord = await tail.status(PI_CONTEXT);
+      await conversation.submit({ type: 'write', entry: { kind: 'pi.compaction', head: tailRecord.entry!, model: [{ role: 'user', content: 'Summary', timestamp: 3 }] } }, PI_CONTEXT);
+      await vi.waitFor(() => expect(f.binding.getSnapshot().contextUsage!.tokens).toBeLessThan(20));
+      const compacted = f.binding.getSnapshot().contextUsage;
+      await f.binding.loadOlder();
+      expect(f.binding.getSnapshot().contextUsage).toEqual(compacted);
+      expect(f.binding.getSnapshot().entries.length).toBeGreaterThan(f.binding.getSnapshot().view!.entries.length);
+      await f.binding.select(null);
+      expect(f.binding.getSnapshot().contextUsage).toBeUndefined();
+      await f.binding.select(String(conversation.id));
+      expect(f.binding.getSnapshot().contextUsage).toEqual(compacted);
+      await f.harness.commit(async tx => { (await tx.doc(AgentDoc, conversation.id)).model = { provider: 'openai', modelId: 'unknown-capacity' }; }, PI_CONTEXT);
+      await vi.waitFor(() => expect(f.binding.getSnapshot().contextUsage).toEqual({ tokens: compacted!.tokens, capacity: 0 }));
+    } finally { await f.close(); }
+  });
+
   it.each(['creation', 'selection', 'disposal'] as const)('does not change editing permission after the originating draft is superseded during %s', async phase => {
     const f = await piViewFixture(), started = gate(), release = gate();
     const write = vi.spyOn(publication, 'setWritePolicy').mockImplementation(async (id, _revision, value) => ({ ...[...f.authorities.values()].find(a => a.authorityId === id)!, write: value }));

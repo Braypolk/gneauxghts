@@ -39,17 +39,19 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
-- [Pi search cursor correction](archive/pi-search-cursor.md): empty first-page cursors no longer fail argument validation. Actual GPT-6 Luna passes the original search/read/review/edit/citation journey and four-page native pagination in a disposable vault.
+- [ChatGPT registration reuse](archive/chatgpt-registration-reuse.md): reconnect and disconnect retain the issued app client ID on the same host; a pinned Pi patch reauthorizes it instead of registering another app. Connected Settings hides sign-in; confirmed terminal refresh failures restore it while temporary failures preserve the connection. Source/bundled helper and Settings browser regressions pass. Existing ChatGPT-side entries require separate cleanup.
 
-- [Pi tool schema audit](archive/pi-tool-schema-audit.md): search/read/edit/create prefer Pi's supported strict sampling, with nullable optional-field handling, inherited built-in provider definitions and shared hosted/local native acceptance flows.
-
-- [ChatGPT subscription sign-in](archive/pi-chatgpt-subscription.md): Pi built-in OAuth, native credential/refresh ownership and retained API-key selection. All three shared note journeys pass with GPT-6 Luna subscription/API-key use and the local Qwen model; the reserved namespace and missing stream-header integration defects are corrected.
-
-- [Pi OpenAI model suggestions](archive/pi-openai-model-catalog.md): Settings and composer menus use the installed Pi catalog and supported reasoning levels, preserving saved/custom selections and native account availability filtering.
+- [Chat context visibility](archive/chat-context-usage.md): composer ring and percentage with accessible token details, using Bits UI and Pi's active-context estimate. Last-known local capacity persists per server/model through unload and restart, with loaded-response refresh; SQLite retention and native unload/reload/compaction journeys pass.
 
 - [ChatGPT sign-in experience and development signing](archive/chatgpt-sign-in-experience.md): native credential caching, navigation-safe sign-in progress, browser/callback recovery and explicit connection checks. Xcode Apple Development signing is configured for normal development and native tests; two different signed builds each pass all three live GPT-6 Luna subscription note flows.
 
-- [ChatGPT registration reuse](archive/chatgpt-registration-reuse.md): reconnect and disconnect retain the issued app client ID on the same host; a pinned Pi patch reauthorizes it instead of registering another app. Connected Settings hides sign-in; confirmed terminal refresh failures restore it while temporary failures preserve the connection. Source/bundled helper and Settings browser regressions pass. Existing ChatGPT-side entries require separate cleanup.
+- [Pi OpenAI model suggestions](archive/pi-openai-model-catalog.md): Settings and composer menus use the installed Pi catalog and supported reasoning levels, preserving saved/custom selections and native account availability filtering.
+
+- [ChatGPT subscription sign-in](archive/pi-chatgpt-subscription.md): Pi built-in OAuth, native credential/refresh ownership and retained API-key selection. All three shared note journeys pass with GPT-6 Luna subscription/API-key use and the local Qwen model; the reserved namespace and missing stream-header integration defects are corrected.
+
+- [Pi tool schema audit](archive/pi-tool-schema-audit.md): search/read/edit/create prefer Pi's supported strict sampling, with nullable optional-field handling, inherited built-in provider definitions and shared hosted/local native acceptance flows.
+
+- [Pi search cursor correction](archive/pi-search-cursor.md): empty first-page cursors no longer fail argument validation. Actual GPT-6 Luna passes the original search/read/review/edit/citation journey and four-page native pagination in a disposable vault.
 
 - [Full Pi uncommitted-change review](archive/pi-uncommitted-review.md): independent Standards/Spec review, repaired acceptance tooling and portable research fixtures, and fresh full unit, native and browser verification. Commits separate retired code, core adapters, chat UI and retained research.
 

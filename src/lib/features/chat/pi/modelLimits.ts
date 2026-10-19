@@ -1,4 +1,4 @@
-/** Zero is Pi's unknown-capacity metadata; overflow recovery remains available. */
+/** Native metadata includes last-known local capacity. Zero stays unknown to Pi. */
 export function modelLimits(metadata: {
   contextWindow: number | null;
   maxTokens: number | null;

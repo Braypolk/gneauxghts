@@ -786,10 +786,14 @@ use native discovery and existing compatibility settings. Startup deduplicates
 selected-model discovery within that pass while restoring every native binding
 before scheduling. The factory catalog holds selected models only. A narrow
 compatibility adapter updates an already-resolved model record after successful
-native discovery, including a first-inference observation of previously unknown
-local capacity, before terminal admission permits the next compaction decision.
-Explicit configuration refresh invalidates that observation; no persisted model
-catalog or whole-server discovery cache is added.
+native discovery before terminal admission permits the next compaction decision.
+`ChatDomain` retains the last observed positive loaded context window in its
+configuration database, keyed by normalized local base URL and exact model ID.
+Native model configuration uses that value when loaded metadata is unavailable;
+an advertised maximum never establishes configured capacity. Each successful
+local response performs one bounded metadata refresh, shared by concurrent
+responses for the same model, so a model reload can replace the retained value.
+No full model catalog or whole-server discovery cache is persisted.
 
 Desktop ChatGPT sign-in uses Pi's public built-in OAuth login and refresh flows in
 `scripts/chatgptAuth.mjs`. The desktop build bundles this helper and a licensed

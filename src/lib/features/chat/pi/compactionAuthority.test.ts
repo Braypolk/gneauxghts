@@ -143,7 +143,7 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(DEFAULT_GENERATION_MAX_TOKENS).toBeGreaterThan(1);
   });
 
-  it('refreshes an initially unknown loaded capacity once after success and preserves catalog object identity', async () => {
+  it('refreshes local capacity after successful responses and preserves catalog object identity', async () => {
     capacities = [null, 129280];
     let release!: () => void;
     configurationDelay = new Promise<void>(done => { release = done; });
@@ -165,22 +165,22 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(original.maxTokens).toBe(0);
     expect((await (await conversation.submit({ type: 'input', content: 'Use the observed model capacity' }, context)).wait(context)).status).toBe('done');
     expect(requestedBodies).toHaveLength(2);
-    expect((await (await conversation.submit({ type: 'input', content: 'Continue without metadata polling' }, context)).wait(context)).status).toBe('done');
-    expect(configurationReads).toBe(2);
+    expect((await (await conversation.submit({ type: 'input', content: 'Continue with refreshed metadata' }, context)).wait(context)).status).toBe('done');
+    expect(configurationReads).toBe(4);
   });
 
-  it('uses first-inference capacity on an already-resolved handle in the next standard compaction decision', async () => {
-    capacities = [null, 1200];
+  it.each([null, 129280])('refreshes capacity from %s on an already-resolved handle before the next standard compaction decision', async initial => {
+    capacities = [initial, 1200];
     const { harness, conversation, models, binding } = await setup();
     const resolved = models.getModel('local', 'loaded-model')!;
-    expect(resolved.contextWindow).toBe(0);
+    expect(resolved.contextWindow).toBe(initial ?? 0);
     expect((await models.completeSimple(resolved, { messages: [{ role: 'user', content: 'Load', timestamp: 1 }] }, { sessionId: binding.providerSessionId })).stopReason).toBe('stop');
     expect(resolved.contextWindow).toBe(1200);
     expect((await (await conversation.submit({ type: 'input', content: 'Continue with observed capacity' }, context)).wait(context)).status).toBe('done');
     expect(requestedBodies).toHaveLength(3); // Bootstrap inference, threshold summary, continuation.
     expect(JSON.stringify(requestedBodies[1])).toContain('context summarization assistant');
     expect((await conversation.context(context)).head?.data).toMatchObject({ reason: 'threshold' });
-    expect(configurationReads).toBe(2);
+    expect(configurationReads).toBe(4);
     expect(models.getModel('local', 'loaded-model')).toBe(resolved);
     await harness.waitForIdle(context);
   });
@@ -207,13 +207,13 @@ describe('standard compaction through the mandatory native provider', () => {
     expect(native.invoke.mock.calls.filter(([command]) => command === 'pi_chat_admit_answer')).toHaveLength(1);
   });
 
-  it('keeps unavailable post-inference capacity unknown without repeated metadata polling', async () => {
+  it('keeps unavailable capacity unknown and checks again after the next successful inference', async () => {
     capacities = [null, null];
     const { conversation, models } = await setup();
     expect((await (await conversation.submit({ type: 'input', content: 'First request' }, context)).wait(context)).status).toBe('done');
     expect((await (await conversation.submit({ type: 'input', content: 'Second request' }, context)).wait(context)).status).toBe('done');
     expect(models.getModel('local', 'loaded-model')?.contextWindow).toBe(0);
-    expect(configurationReads).toBe(2);
+    expect(configurationReads).toBe(3);
     expect(requestedBodies).toHaveLength(2);
   });
 
@@ -224,7 +224,7 @@ describe('standard compaction through the mandatory native provider', () => {
     expect((await (await conversation.submit({ type: 'input', content: 'Answer despite unavailable discovery' }, context)).wait(context)).status).toBe('done');
     expect(models.getModel('local', 'loaded-model')?.contextWindow).toBe(0);
     expect((await (await conversation.submit({ type: 'input', content: 'Continue with honest unknown capacity' }, context)).wait(context)).status).toBe('done');
-    expect(configurationReads).toBe(2);
+    expect(configurationReads).toBe(3);
     expect(requestedBodies).toHaveLength(2);
   });
 

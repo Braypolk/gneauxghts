@@ -18,7 +18,7 @@ pub(crate) struct NativeTransport {
     requests: Mutex<Requests>,
     settled: Condvar,
     // Observed capabilities only, never credentials or permission. Refreshed at model
-    // registration/reopen and the one unknown-capacity bootstrap observation.
+    // registration/reopen and bounded post-inference observations.
     model_reasoning: Mutex<
         HashMap<(String, String), Option<crate::provider_config::local_reasoning::ModelReasoning>>,
     >,
@@ -255,6 +255,21 @@ fn loaded_capacity(value: &Value, model: &str) -> Option<u64> {
     }
 }
 
+fn local_context_window(
+    domain: &crate::chat_domain::ChatDomain,
+    base_url: &str,
+    model: &str,
+    metadata: Option<&Value>,
+) -> DomainResult<Option<u64>> {
+    domain
+        .local_model_context_window(
+            base_url,
+            model,
+            metadata.and_then(|value| loaded_capacity(value, model)),
+        )
+        .map_err(|_| transport_error("settings", "Local model capacity is unavailable."))
+}
+
 #[tauri::command]
 pub(crate) async fn pi_chat_model_configuration(
     app: tauri::AppHandle,
@@ -294,15 +309,15 @@ pub(crate) async fn pi_chat_model_configuration(
             Some(&caps.reasoning_effort),
         )
         .map(str::to_owned);
+        let context_window =
+            local_context_window(&domain, &settings.local_base_url, &model, observed.as_ref())?;
         app.state::<NativeTransport>()
             .model_reasoning
             .lock()
             .map_err(|_| transport_error("transport", "Native model metadata is unavailable."))?
             .insert((settings.local_base_url, model.clone()), metadata);
         Ok(ModelConfiguration {
-            context_window: observed
-                .as_ref()
-                .and_then(|value| loaded_capacity(value, &model)),
+            context_window,
             provider,
             model,
             max_tokens: None,
@@ -1033,6 +1048,87 @@ mod tests {
         assert_eq!(rejected.code, "credential");
         assert!(!rejected.message.contains("secret"));
     }
+    #[test]
+    fn last_known_capacity_survives_unload_restart_and_refresh() {
+        let root = crate::test_support::TestDir::new("local-model-context-window");
+        let path = root.path().join("data");
+        let domain = crate::chat_domain::ChatDomain::new(path.clone()).unwrap();
+        let endpoint = "http://localhost:1234/v1";
+        let unloaded =
+            json!({"models":[{"key":"m","max_context_length":262144,"loaded_instances":[]}]});
+        let loaded = |capacity| json!({"models":[{"key":"m","loaded_instances":[{"id":"m","config":{"context_length":capacity}}]}]});
+        // An advertised maximum is not evidence of a configured context window.
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", Some(&unloaded)).unwrap(),
+            None
+        );
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", Some(&loaded(8192_u64))).unwrap(),
+            Some(8192)
+        );
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", Some(&unloaded)).unwrap(),
+            Some(8192)
+        );
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", None).unwrap(),
+            Some(8192)
+        );
+        for invalid in [0, u64::MAX] {
+            assert_eq!(
+                local_context_window(&domain, endpoint, "m", Some(&loaded(invalid))).unwrap(),
+                Some(8192)
+            );
+        }
+        drop(domain);
+        let domain = crate::chat_domain::ChatDomain::new(path.clone()).unwrap();
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", Some(&unloaded)).unwrap(),
+            Some(8192)
+        );
+        // A reload can reduce capacity; retain the latest value, not the maximum.
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", Some(&loaded(4096))).unwrap(),
+            Some(4096)
+        );
+        drop(domain);
+        let domain = crate::chat_domain::ChatDomain::new(path).unwrap();
+        assert_eq!(
+            local_context_window(&domain, endpoint, "m", None).unwrap(),
+            Some(4096)
+        );
+    }
+
+    #[test]
+    fn last_known_capacity_is_scoped_to_server_and_model() {
+        let root = crate::test_support::TestDir::new("local-model-context-scope");
+        let domain = crate::chat_domain::ChatDomain::new(root.path().join("data")).unwrap();
+        let metadata = json!({"models":[{"key":"m","loaded_instances":[{"id":"m","config":{"context_length":8192}}]}]});
+        assert_eq!(
+            local_context_window(&domain, "http://localhost:1234/v1/", "m", Some(&metadata))
+                .unwrap(),
+            Some(8192)
+        );
+        assert_eq!(
+            local_context_window(&domain, "http://localhost:1234/v1", "m", None).unwrap(),
+            Some(8192)
+        );
+        assert_eq!(
+            local_context_window(&domain, "http://localhost:1235/v1", "m", None).unwrap(),
+            None
+        );
+        assert_eq!(
+            local_context_window(&domain, "http://localhost:1234/v1", "other", None).unwrap(),
+            None
+        );
+        let ambiguous = json!({"models":[{"key":"m","loaded_instances":[{"id":"a","config":{"context_length":1000}},{"id":"b","config":{"context_length":2000}}]}]});
+        assert_eq!(
+            local_context_window(&domain, "http://localhost:1234/v1", "m", Some(&ambiguous))
+                .unwrap(),
+            Some(8192)
+        );
+    }
+
     #[test]
     fn capacity_requires_exact_unambiguous_loaded_instance() {
         let metadata = json!({"models":[{"key":"m","max_context_length":262144,"loaded_instances":[{"id":"instance","config":{"context_length":129280}}]}]});

@@ -120,6 +120,16 @@ the existing document. Starting from an empty draft reuses it.
 
 ### Chat context and note navigation agree with visible content
 
+The composer context indicator estimates Pi's derived active model context,
+including current streaming output, against the selected model's reported
+capacity. Loading older transcript pages does not increase context usage;
+compaction and reset follow Pi's context. For local models, native configuration
+retains the last observed loaded capacity per server and model across restart.
+Unloading or missing metadata preserves it; a fresh loaded observation replaces
+it, including a smaller configured window. Successful local inference refreshes
+metadata before terminal admission. An advertised maximum is never used as a
+configured window, and a model without any observed capacity has no percentage.
+
 A chat never receives implicit editor content or selection. The model discovers and reads canonical notes through the conversation's native
 read mode and current exclusions. A pane retains its ordinary document return
 target independently of chat authority and context. Search previews do not count

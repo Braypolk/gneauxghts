@@ -193,6 +193,7 @@ impl ChatDomain {
           CREATE TABLE IF NOT EXISTS chat_note_policies (note_id TEXT PRIMARY KEY, disposition TEXT NOT NULL CHECK(disposition = 'excluded'), title TEXT NOT NULL DEFAULT '', updated_at_millis INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS chat_composer_drafts (slot TEXT PRIMARY KEY,body TEXT NOT NULL,updated_at_millis INTEGER NOT NULL);
           CREATE TABLE IF NOT EXISTS chat_local_model_capabilities (model TEXT PRIMARY KEY, images INTEGER NOT NULL DEFAULT 0,tools INTEGER NOT NULL DEFAULT 1,audio INTEGER NOT NULL DEFAULT 0,video INTEGER NOT NULL DEFAULT 0,reasoning_effort TEXT NOT NULL DEFAULT 'medium',updated_at_millis INTEGER NOT NULL);
+          CREATE TABLE IF NOT EXISTS chat_local_model_context_windows (base_url TEXT NOT NULL, model TEXT NOT NULL, context_window INTEGER NOT NULL CHECK(context_window > 0 AND context_window <= 9007199254740991), PRIMARY KEY(base_url, model));
         ").map_err(|e|e.to_string())?;
         connection.execute("INSERT OR IGNORE INTO chat_settings(id,provider,model,default_access) VALUES(1,'openai',?1,'full')",[DEFAULT_MODEL]).map_err(|e|e.to_string())?;
         Ok(())
@@ -250,6 +251,39 @@ impl ChatDomain {
             )
             .map_err(|error| error.to_string())?;
         self.get_settings()
+    }
+
+    /// Preserve only observed loaded capacity. Missing metadata never erases it.
+    pub(crate) fn local_model_context_window(
+        &self,
+        base_url: &str,
+        model: &str,
+        observed: Option<u64>,
+    ) -> Result<Option<u64>, String> {
+        crate::provider_config::validate_local_base_url(base_url)?;
+        let base_url = url::Url::parse(base_url.trim()).map_err(|error| error.to_string())?;
+        let base_url = base_url.as_str().trim_end_matches('/');
+        let connection = self.connection()?;
+        // The value crosses IPC into JavaScript; reject capacities it cannot
+        // represent exactly, in addition to the database's positive-value check.
+        if let Some(capacity) =
+            observed.filter(|value| *value > 0 && *value <= 9_007_199_254_740_991)
+        {
+            connection
+                .execute(
+                    "INSERT INTO chat_local_model_context_windows (base_url, model, context_window)
+                 VALUES (?1, ?2, ?3)
+                 ON CONFLICT(base_url, model) DO UPDATE SET context_window = excluded.context_window
+                 WHERE context_window != excluded.context_window",
+                    params![base_url, model, capacity],
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        connection.query_row(
+            "SELECT context_window FROM chat_local_model_context_windows WHERE base_url = ?1 AND model = ?2",
+            params![base_url, model],
+            |row| row.get(0),
+        ).optional().map_err(|error| error.to_string())
     }
 
     pub(crate) fn local_model_capabilities(
@@ -454,6 +488,7 @@ mod tests {
             vec![
                 "chat_composer_drafts",
                 "chat_local_model_capabilities",
+                "chat_local_model_context_windows",
                 "chat_note_policies",
                 "chat_settings"
             ]

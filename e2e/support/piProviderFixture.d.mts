@@ -1,4 +1,5 @@
 export interface PiProviderFixture {
+  setContextWindow(value: number | null): void;
   endpoint: string;
   model: string;
   setFailure(value: boolean): void;

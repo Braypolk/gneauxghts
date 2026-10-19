@@ -5,6 +5,7 @@ import { withCancel } from '@earendil-works/chord/context';
 import type { Op } from '@earendil-works/chord/delta';
 import { AgentDoc, InboxDoc, LiveDoc, UsageDoc, UserEntry, type AgentState, type CommitPublication, type Conversation, type ConversationId, type ConversationView, type Cursor, type EntryRecord, type InboxState, type LiveState, type SubmissionId, type SubmissionRecord, type UsageState, type WatchEnd } from '@earendil-works/pi-durable';
 import type { AssistantMessage, Message } from '@earendil-works/pi-ai';
+import { estimateContextTokens } from '@earendil-works/pi-ai/utils/estimate';
 import { ChatDoc, PI_CONTEXT, defaultReadPolicy, openPiChat, readPiChatSettings, type PiChat, type PiChatSettings, type PiConversationSummary } from '../pi/runtime';
 import type { PiDiagnostics, PiDiagnosticSnapshot } from '../pi/diagnostics';
 import { setReadPolicy, type AuthoritySnapshot, type ReadPolicy, type WritePolicy } from '../pi/authority';
@@ -41,6 +42,7 @@ export type PiViewSnapshot = {
   recentlyForgotten?: ConversationId; forgetting?: boolean;
   editReviews?: EditReview[];
   editOutcomes?: Readonly<Record<string, CommittedEdit>>;
+  contextUsage?: { tokens: number; capacity: number };
 };
 export function canForgetConversation(value: PiViewSnapshot): boolean {
   const live = viewLive(value.view);
@@ -229,7 +231,7 @@ export function createPiConversationView(deps: Dependencies = {}) {
     observation?.cancel();
     const scope = observation = withCancel(PI_CONTEXT);
     const context = scope.context;
-    state.update(value => ({ ...value, loading: Boolean(id), conversation: null, view: null, entries: [], editReviews: [], editOutcomes: {}, historyNext: undefined, authority: undefined, title: '', error: null, runStartedAt: undefined, stopping: false, latestInput: undefined }));
+    state.update(value => ({ ...value, loading: Boolean(id), conversation: null, view: null, entries: [], editReviews: [], editOutcomes: {}, contextUsage: undefined, historyNext: undefined, authority: undefined, title: '', error: null, runStartedAt: undefined, stopping: false, latestInput: undefined }));
     if (!id || !chat) {
       try {
         const settings = chat ? await (deps.settings ?? readPiChatSettings)() : snapshot().settings;
@@ -295,9 +297,20 @@ export function createPiConversationView(deps: Dependencies = {}) {
         const agent = view.docs[AgentDoc.definition.kind] as AgentState | undefined;
         // Pi coalesces a slow observer's backlog into a full replacement frame.
         const entriesChanged = ops.some(op => op[0] === 'r' || op[1][0] === 'entries');
+        const model = agent?.model;
+        const capacity = model ? chat!.models.getModels(model.provider).find(item => item.id === model.modelId)?.contextWindow ?? 0 : 0;
         state.update(value => ({ ...value, view, entries: entriesChanged ? mergeEntries(value.entries, view.entries) : value.entries,
           provider: agent?.model?.provider === 'openai' ? 'openai' : 'local', model: agent?.model?.modelId ?? value.model,
+          contextUsage: value.contextUsage ? { ...value.contextUsage, capacity } : undefined,
           runStartedAt: run ? value.runStartedAt : undefined }));
+        if (entriesChanged || !snapshot().contextUsage) {
+          // Read Pi's derived active context, including compaction and edits. The
+          // paginated transcript and cumulative spend do not measure window use.
+          const active = await conversation.context(context);
+          if (context.abortSignal?.aborted || disposed || token !== lifetime) return;
+          const tokens = estimateContextTokens(active.messages).tokens;
+          state.update(value => ({ ...value, contextUsage: { tokens, capacity } }));
+        }
         if (run && !snapshot().runStartedAt) {
           try {
             const task = await chat!.harness.getTask(run.taskId, context);

@@ -108,7 +108,6 @@ export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>,
       models: catalog, api: streams[provider],
     }));
   };
-  const observedAfterInference = new Set<string>();
   const modelKey = (provider: ChatProvider, id: string) => `${provider}:${id}`;
   for (const provider of ['local', 'openai'] as const) {
     const api = provider === 'local' ? 'openai-completions' : 'openai-responses';
@@ -139,15 +138,17 @@ export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>,
           else if ('error' in event) last = event.error;
           if (event.type === 'done') {
             // Keep the protocol's usage, reasoning, tool calls and stop reason.
-            // A server may load a local model on first inference. Observe once after
-            // text deltas, before terminal completion permits
-            // Pi to calculate its next context threshold. Native discovery is bounded
-            // to two seconds and failure leaves honest unknown capacity.
+            // A server can unload/reload a model with a different capacity at any
+            // time. Refresh after successful local inference, including when the
+            // current value came from native persisted metadata. Discovery is
+            // bounded to two seconds; failure preserves the resolved model.
             const key = modelKey(provider, model.id);
-            if (provider === 'local' && model.contextWindow <= 0 && !observedAfterInference.has(key)) {
-              observedAfterInference.add(key);
-              const refresh = loadModel(provider, model.id).then(() => {}).catch(() => {});
-              refreshes.set(key, refresh);
+            if (provider === 'local') {
+              let refresh = refreshes.get(key);
+              if (!refresh) {
+                refresh = loadModel(provider, model.id).then(() => {}).catch(() => {});
+                refreshes.set(key, refresh);
+              }
               await refresh;
               if (refreshes.get(key) === refresh) refreshes.delete(key);
             }
@@ -207,7 +208,6 @@ export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>,
     return model;
   };
   const registerModel = async (provider: ChatProvider, id: string) => {
-    observedAfterInference.delete(modelKey(provider, id));
     return loadModel(provider, id);
   };
   return Object.assign(models, { registerModel });
