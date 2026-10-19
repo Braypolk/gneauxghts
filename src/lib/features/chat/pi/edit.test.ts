@@ -457,9 +457,9 @@ describe('Pi model note editing', () => {
 
 
 describe('create_note through the shared Pi publication flow', () => {
-  it('reviews the full destination and content, creates once, then returns a read-backed citation', async () => {
+  it.each([{}, { folder: null }, { folder: '.' }, { folder: 'Projects' }])('reviews creation once and returns a read-backed citation with optional folder %j', async optional => {
     const f = await fixture({ create: true, original: '' });
-    const run = await f.submitArguments({ title: 'A note', markdown: '# Plan\n' });
+    const run = await f.submitArguments({ title: 'A note', markdown: '# Plan\n', ...optional });
     const review = await f.pending();
     expect(review).toMatchObject({ kind: 'create', destination: 'Note.md', markdown: '# Plan\n' });
     expect(review).not.toHaveProperty('patch');
@@ -472,7 +472,7 @@ describe('create_note through the shared Pi publication flow', () => {
     expect(f.modelResult()).toContain('gneauxghts-source:post-edit-source');
     expect(native.invoke.mock.calls.filter(([cmd]) => cmd === 'pi_chat_publish_mutation')).toHaveLength(1);
     const prepare = native.invoke.mock.calls.find(([cmd]) => cmd === 'pi_chat_prepare_mutation')!;
-    expect(prepare[1].mutation).toEqual({ operation: 'create', title: 'A note', markdown: '# Plan\n', folder: '.' });
+    expect(prepare[1].mutation).toEqual({ operation: 'create', title: 'A note', markdown: '# Plan\n', folder: optional.folder ?? '.' });
     expect(prepare[1].requestId).toMatch(/^pi-create:/);
   });
   it.each(['rejected', 'stopped'] as const)('does not create when the review is %s', async decision => {

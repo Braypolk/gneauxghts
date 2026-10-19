@@ -76,7 +76,7 @@ async function publishCandidate(api: ToolExecutionApi, context: Context, resolve
 export function editExtension(resolveAuthority: ResolveNoteAuthority) {
   return defineExtension({ name: 'gneauxghts.edit', tools: [defineTool({
     name: 'edit_note', description: 'Apply targeted replacements to a saved note you have read, under explicit user write permission. When review is enabled, waits for the user to approve the exact diff. After commit, returns a fresh canonical read and citation for the final confirmation. No shell, arbitrary files, rename or deletion.',
-    parameters, replay: 'safe', executionMode: 'sequential',
+    parameters, constrainedSampling: { type: 'json_schema', strict: 'prefer' }, replay: 'safe', executionMode: 'sequential',
     prepareArguments(input) {
       if (!input || typeof input !== 'object' || Array.isArray(input)) throw new Error('Supply a note identity, read source and edits.');
       // Pi repairs edit shapes; its normal validation still checks the domain
@@ -102,9 +102,9 @@ export function editExtension(resolveAuthority: ResolveNoteAuthority) {
     parameters: Type.Object({
       title: Type.String({ minLength: 1, maxLength: 512, description: 'Human-readable note title. Native code derives the filename.' }),
       markdown: Type.String({ maxLength: 8 * 1024 * 1024, description: 'Complete Markdown content. Native code owns managed metadata and identity.' }),
-      folder: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: 'Existing visible folder relative to the vault, or "." for its root. Does not create folders.' }))
+      folder: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: 'Existing visible folder relative to the vault, or "." for its root. Omit or use null for the vault root. Does not create folders.' }))
     }, { additionalProperties: false }),
-    replay: 'safe', executionMode: 'sequential',
+    constrainedSampling: { type: 'json_schema', strict: 'prefer' }, replay: 'safe', executionMode: 'sequential',
     async execute({ title, markdown, folder = '.' }, api, context) {
       return publishCandidate(api, context, resolveAuthority, 'create', async () => ({
         // Pi checkpoints these validated arguments before executing the tool.

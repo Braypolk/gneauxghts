@@ -33,6 +33,60 @@ async function setup(policy?: ReadPolicy) {
 }
 
 describe('Pi canonical note tools', () => {
+  it('normalizes nullable optional search limits and whole-note quotes before native admission', async () => {
+    const { conversation, faux } = await setup();
+    native.invoke.mockImplementation(async command => command === 'pi_chat_search_notes' ? { items: [], nextCursor: null } : read);
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('search_notes', { query: 'saved', limit: null, cursor: null }, { id: 'search' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage(fauxToolCall('read_note', { noteId: 'note-1', quote: null }, { id: 'read' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('Whole-note result')
+    ]);
+    expect((await (await conversation.submit({ type: 'input', content: 'Read the saved note' }, context)).wait(context)).status).toBe('done');
+    expect(native.invoke.mock.calls).toEqual([
+      ['pi_chat_search_notes', { authorityId: 'host-native-authority', query: 'saved' }],
+      ['pi_chat_read_note', { authorityId: 'host-native-authority', noteId: 'note-1' }]
+    ]);
+    expect((await conversation.context(context)).entries.flatMap(entry => entry.model ?? []).filter(message => message.role === 'toolResult').every(message => !message.isError)).toBe(true);
+  });
+
+  it.each(['', null])('treats a model-supplied %j cursor as a first-page search through Pi validation', async cursor => {
+    const { conversation, faux } = await setup();
+    native.invoke.mockResolvedValue({ items: [{ noteId: 'note-1', title: 'Edit check', preview: 'Walk for 30 minutes.' }], nextCursor: null });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('search_notes', { query: 'edit check walk', limit: 10, cursor }, { id: 'search' }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('Found the saved note')
+    ]);
+    expect((await (await conversation.submit({ type: 'input', content: 'In edit check change the walk to 45 minutes' }, context)).wait(context)).status).toBe('done');
+    expect(native.invoke.mock.calls).toEqual([['pi_chat_search_notes', { authorityId: 'host-native-authority', query: 'edit check walk', limit: 10 }]]);
+    const tool = (await conversation.context(context)).entries.flatMap(entry => entry.model ?? []).find(message => message.role === 'toolResult');
+    expect(tool).toMatchObject({ toolName: 'search_notes', isError: false });
+  });
+
+  it('passes returned continuation tokens unchanged and recovers from a rejected token with a first-page search', async () => {
+    const { conversation, faux } = await setup();
+    const token = 'native-search-fingerprint:1';
+    native.invoke.mockImplementation(async (_command, args) => {
+      if (args.cursor === '.') throw { code: 'invalid_cursor', message: 'Repeat search without a cursor.' };
+      return { items: [], nextCursor: args.cursor === token ? null : token };
+    });
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('search_notes', { query: 'walk', limit: 1 }, { id: 'first' }), { stopReason: 'toolUse' }),
+      request => { expect(JSON.stringify(request)).toContain(token); return fauxAssistantMessage(fauxToolCall('search_notes', { query: 'walk', limit: 1, cursor: token }, { id: 'next' }), { stopReason: 'toolUse' }); },
+      fauxAssistantMessage(fauxToolCall('search_notes', { query: 'walk', cursor: '.' }, { id: 'invalid' }), { stopReason: 'toolUse' }),
+      request => { expect(JSON.stringify(request)).toContain('Repeat search without a cursor.'); return fauxAssistantMessage(fauxToolCall('search_notes', { query: 'walk', cursor: '' }, { id: 'recovered' }), { stopReason: 'toolUse' }); },
+      fauxAssistantMessage('Search recovered')
+    ]);
+    expect((await (await conversation.submit({ type: 'input', content: 'Find walks' }, context)).wait(context)).status).toBe('done');
+    expect(native.invoke.mock.calls.map(([, args]) => args)).toEqual([
+      { authorityId: 'host-native-authority', query: 'walk', limit: 1 },
+      { authorityId: 'host-native-authority', query: 'walk', limit: 1, cursor: token },
+      { authorityId: 'host-native-authority', query: 'walk', cursor: '.' },
+      { authorityId: 'host-native-authority', query: 'walk' }
+    ]);
+    const tools = (await conversation.context(context)).entries.flatMap(entry => entry.model ?? []).filter(message => message.role === 'toolResult');
+    expect(tools.map(tool => tool.isError)).toEqual([false, false, true, false]);
+  });
+
   it('passes an optional exact quote to native admission and preserves the issued location in Pi history', async () => {
     const { conversation, faux } = await setup();
     native.invoke.mockResolvedValue({ ...read, source: { ...read.source, location: { quote: 'Canonical saved text' } } });

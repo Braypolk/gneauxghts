@@ -901,6 +901,16 @@ and Pi read receipts. The retired evidence session, worker budgets, inventory/re
 protocol and passage-citation coordinator are removed. Native NoteTimeline reads,
 History Mode and publication remain independently testable.
 
+All four note tools declare JSON Schema and prefer Pi's constrained JSON Schema
+sampling. Catalogued OpenAI Responses models inherit strict-mode support from Pi;
+Pi generates closed object schemas and represents optional fields as required,
+nullable wire properties. Unknown local OpenAI-compatible servers do not advertise
+strict support and keep the ordinary schema path. Pi validates arguments and
+normalizes optional nulls to omission for either provider. Search additionally
+accepts an empty first-page cursor; nonempty tokens pass unchanged to native
+query/authority validation. Sampling constraints do not replace native note,
+source, permission, folder or publication checks.
+
 ### External effects and lifetime
 
 `pi/edit.ts` exposes targeted `edit_note` updates using Pi's public `createEditTool`

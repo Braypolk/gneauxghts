@@ -18,12 +18,12 @@ export type ResolveNotePolicy = (input: PromptInput, context: Context) => Promis
 
 const searchParameters = Type.Object({
   query: Type.String({ minLength: 1, maxLength: 4096 }),
-  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
-  cursor: Type.Optional(Type.String({ minLength: 1 }))
+  limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50, description: 'Maximum results per page. Omit or use null for the default.' })),
+  cursor: Type.Optional(Type.String({ description: 'Pagination only: copy nextCursor exactly from a previous search_notes result for the same query. Omit, use null or an empty string for the first page. Never invent a cursor. If a cursor is rejected, repeat the search without it.' }))
 }, { additionalProperties: false });
 const readParameters = Type.Object({
   noteId: Type.String({ minLength: 1, maxLength: 512, description: 'Exact Note Identity from search or explicit attachments. Never a file path.' }),
-  quote: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: 'For a passage citation, copy an exact, unique quote from this note’s Markdown. Read the whole note first if needed. Omit for a whole-note citation.' }))
+  quote: Type.Optional(Type.String({ minLength: 1, maxLength: 4096, description: 'For a passage citation, copy an exact, unique quote from this note’s Markdown. Read the whole note first if needed. Omit or use null for a whole-note citation.' }))
 }, { additionalProperties: false });
 const output = (value: unknown) => [{ type: 'text' as const, text: JSON.stringify(value) }];
 /** Issue citation evidence only from an authorized native canonical read. */
@@ -62,18 +62,18 @@ export function notesExtension(resolveAuthority: ResolveNoteAuthority, resolvePo
     }
   }], tools: [
     defineTool({ name: 'search_notes', description: 'Search permitted saved notes by lexical text. Returns Note Identities and discovery previews, never citation authority.',
-      parameters: searchParameters, replay: 'safe',
+      parameters: searchParameters, constrainedSampling: { type: 'json_schema', strict: 'prefer' }, replay: 'safe',
       async execute({ query, limit, cursor }, api, context) {
         try {
           const result = await invoke<SearchPage>('pi_chat_search_notes', {
-            authorityId: await authority(api, context), query, ...(limit === undefined ? {} : { limit }), ...(cursor === undefined ? {} : { cursor })
+            authorityId: await authority(api, context), query, ...(limit === undefined ? {} : { limit }), ...(cursor === undefined || cursor === '' ? {} : { cursor })
           });
           return { output: output(result), details: { kind: 'noteSearch', count: result.items.length } };
         } catch (error) { return failed(error); }
       }
     }),
     defineTool({ name: 'read_note', description: 'Read a permitted saved note using its exact Note Identity. Returns canonical Markdown, note identity and an issued Markdown citation.',
-      parameters: readParameters, replay: 'safe',
+      parameters: readParameters, constrainedSampling: { type: 'json_schema', strict: 'prefer' }, replay: 'safe',
       async execute({ noteId, quote }, api, context) {
         try {
           const result = await readNote(await authority(api, context), noteId, quote);

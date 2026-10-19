@@ -39,6 +39,10 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Pi search cursor correction](archive/pi-search-cursor.md): empty first-page cursors no longer fail argument validation. Actual GPT-6 Luna passes the original search/read/review/edit/citation journey and four-page native pagination in a disposable vault.
+
+- [Pi tool schema audit](archive/pi-tool-schema-audit.md): search/read/edit/create prefer Pi's supported strict sampling, with nullable optional-field handling, inherited built-in provider definitions and shared hosted/local native acceptance flows.
+
 - [ChatGPT subscription sign-in](archive/pi-chatgpt-subscription.md): Pi built-in OAuth, native credential/refresh ownership and retained API-key selection. All three shared note journeys pass with GPT-6 Luna subscription/API-key use and the local Qwen model; the reserved namespace and missing stream-header integration defects are corrected.
 
 - [Pi OpenAI model suggestions](archive/pi-openai-model-catalog.md): Settings and composer menus use the installed Pi catalog and supported reasoning levels, preserving saved/custom selections and native account availability filtering.
