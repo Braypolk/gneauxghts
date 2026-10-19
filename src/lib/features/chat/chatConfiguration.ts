@@ -1,4 +1,5 @@
-import catalog from '$lib/contracts/chat-model-catalog.json';
+import { getSupportedThinkingLevels } from '@earendil-works/pi-ai/models';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import type {
   ChatProvider,
   ChatReasoningEffort,
@@ -14,7 +15,7 @@ export interface ChatModelChoice {
   description: string;
 }
 
-export interface CuratedChatModel {
+export interface ChatCatalogModel {
   id: string;
   label: string;
   description: string;
@@ -26,17 +27,17 @@ export interface ChatReasoningChoice {
   label: string;
 }
 
-const STANDARD_REASONING: ChatReasoningEffort[] = ['low', 'medium', 'high', 'xhigh'];
-// JSON is shared with the native catalog. Reject invalid reasoning values at this boundary.
-export const OPENAI_CHAT_MODELS: CuratedChatModel[] = catalog.map((model) => ({
-  ...model,
-  reasoningEfforts: model.reasoningEfforts.map((effort): ChatReasoningEffort => {
-    if (effort === 'low' || effort === 'medium' || effort === 'high' || effort === 'xhigh' || effort === 'max') return effort;
-    throw new Error(`Invalid catalog reasoning effort: ${effort}`);
-  })
+// Pi's installed provider owns the model IDs, names, ordering and supported levels.
+export const OPENAI_CHAT_MODELS: ChatCatalogModel[] = openaiProvider().getModels().map((model) => ({
+  id: model.id,
+  label: model.name,
+  description: '',
+  // Retain the existing UI's positive reasoning levels; nonreasoning models have no control.
+  reasoningEfforts: getSupportedThinkingLevels(model).filter((level) => level !== 'off')
 }));
 
 const REASONING_LABELS: Record<ChatReasoningEffort, string> = {
+  minimal: 'Minimal',
   low: 'Light',
   medium: 'Medium',
   high: 'High',
@@ -58,8 +59,7 @@ export function chatReasoningChoices(
     }));
   }
   const catalogModel = OPENAI_CHAT_MODELS.find((candidate) => candidate.id === model.trim());
-  const efforts = catalogModel?.reasoningEfforts ??
-    (model.trim().toLowerCase().startsWith('gpt-5') ? STANDARD_REASONING : []);
+  const efforts = catalogModel?.reasoningEfforts ?? [];
   return efforts.map((value) => ({ value, label: REASONING_LABELS[value] }));
 }
 
@@ -153,9 +153,14 @@ export function chatModelChoices(input: {
   for (const model of input.localModels ?? []) {
     add('local', model.id, 'available');
   }
+  for (const model of input.openaiModels ?? []) {
+    add('openai', model.id, 'available');
+  }
 
   return [...candidates.values()].map((candidate) => {
-    const catalogModel = OPENAI_CHAT_MODELS.find((model) => model.id === candidate.model);
+    const catalogModel = candidate.provider === 'openai'
+      ? OPENAI_CHAT_MODELS.find((model) => model.id === candidate.model)
+      : undefined;
     const qualifiers = [
       candidate.current ? 'Current' : null,
       candidate.default ? 'Default' : null,

@@ -904,6 +904,8 @@ function historicalDiff(
     if (['chat_list_note_policies', 'chat_list_openai_models'].includes(command)) return [];
     if (command === 'chat_list_local_models') return [{ id: 'fixture-local', ownedBy: 'local' }];
     if (command === 'chat_get_settings') return { ...chatSettings };
+    if (command === 'chat_chatgpt_status') return { method: 'apiKey', connected: false, supported: true, login: { phase: 'idle', browserUrl: null, manualInput: false, error: null } };
+    if (command === 'chat_openai_auth_method') return 'apiKey';
     if (command === 'chat_set_defaults') { Object.assign(chatSettings, args.defaults); return { ...chatSettings }; }
     if (command === 'chat_get_key_status' || command === 'chat_set_api_key') return { provider: args.provider, configured: command === 'chat_set_api_key' };
     if (command === 'chat_get_composer_draft') return composerDrafts.get(String(args.slot)) ?? '';

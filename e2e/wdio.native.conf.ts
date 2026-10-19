@@ -85,7 +85,7 @@ export const config: TestrunnerConfig = {
   logLevel: 'warn',
   bail: 0,
   waitforTimeout: 20_000,
-  connectionRetryTimeout: 120_000,
+  connectionRetryTimeout: process.env.GNEAUX_PI_SUBSCRIPTION_ACCEPTANCE === '1' ? 86_460_000 : 120_000,
   connectionRetryCount: 1,
   mochaOpts: {
     ui: 'bdd', timeout: scaleRun ? 900_000 : 90_000,

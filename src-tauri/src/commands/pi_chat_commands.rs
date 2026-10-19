@@ -33,29 +33,15 @@ struct OpenAiModel {
     owned_by: Option<String>,
 }
 
-#[derive(Deserialize)]
-struct CuratedChatModel {
-    id: String,
-}
-
-fn curated_chat_models() -> &'static [CuratedChatModel] {
-    static CATALOG: std::sync::OnceLock<Vec<CuratedChatModel>> = std::sync::OnceLock::new();
-    CATALOG.get_or_init(|| {
-        serde_json::from_str(include_str!(
-            "../../../src/lib/contracts/chat-model-catalog.json"
-        ))
-        .expect("bundled chat model catalog must be valid")
-    })
-}
-
-fn curated_openai_models(models: Vec<OpenAiModel>) -> Vec<LocalModel> {
+// Catalog order and IDs come from Pi in the frontend; native discovery owns credentials.
+fn available_openai_models(models: Vec<OpenAiModel>, model_ids: &[String]) -> Vec<LocalModel> {
     let by_id = models
         .into_iter()
         .map(|model| (model.id.clone(), model))
         .collect::<std::collections::HashMap<_, _>>();
-    curated_chat_models()
+    model_ids
         .iter()
-        .filter_map(|entry| by_id.get(&entry.id))
+        .filter_map(|id| by_id.get(id))
         .map(|model| LocalModel {
             id: model.id.clone(),
             owned_by: model.owned_by.clone(),
@@ -280,9 +266,13 @@ pub(crate) async fn chat_list_local_models(
 }
 
 #[tauri::command]
-pub(crate) async fn chat_list_openai_models(app: AppHandle) -> Result<Vec<LocalModel>, String> {
-    let api_key = crate::secrets::read_provider_api_key(&app, "openai")?
-        .ok_or_else(|| "Add an OpenAI API key in Settings".to_string())?;
+pub(crate) async fn chat_list_openai_models(
+    app: AppHandle,
+    model_ids: Vec<String>,
+) -> Result<Vec<LocalModel>, String> {
+    let (credential, method) = crate::chatgpt_auth::resolve(&app).await?;
+    let api_key = credential
+        .ok_or_else(|| "Add an OpenAI API key or sign in with ChatGPT in Settings".to_string())?;
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
@@ -292,21 +282,88 @@ pub(crate) async fn chat_list_openai_models(app: AppHandle) -> Result<Vec<LocalM
             "{}/models",
             crate::provider_config::openai_api_base_url()?.trim_end_matches('/')
         ))
-        .bearer_auth(api_key)
+        .bearer_auth(&api_key)
         .send()
         .await
         .map_err(|error| format!("Unable to check available OpenAI models: {error}"))?;
     if !response.status().is_success() {
+        if response.status() == reqwest::StatusCode::UNAUTHORIZED
+            && method == crate::chatgpt_auth::AuthMethod::Chatgpt
+        {
+            crate::chatgpt_auth::recover_rejected_access(&app, &api_key).await?;
+        }
         return Err(format!(
             "OpenAI model availability returned {}",
             response.status()
         ));
     }
     let models = response
-        .json::<OpenAiModelsResponse>()
+        .json::<serde_json::Value>()
         .await
         .map_err(|error| format!("Unable to read available OpenAI models: {error}"))?;
-    Ok(curated_openai_models(models.data))
+    if method == crate::chatgpt_auth::AuthMethod::Chatgpt {
+        subscription_models(&models)
+    } else {
+        let models: OpenAiModelsResponse =
+            serde_json::from_value(models).map_err(|_| "Unable to read available OpenAI models")?;
+        Ok(available_openai_models(models.data, &model_ids))
+    }
+}
+
+fn subscription_models(value: &serde_json::Value) -> Result<Vec<LocalModel>, String> {
+    let models = value["models"]
+        .as_array()
+        .ok_or("Unable to read your ChatGPT model catalog")?;
+    Ok(models
+        .iter()
+        .filter(|model| model["visibility"] == "list")
+        .filter_map(|model| {
+            let id = model["slug"].as_str()?.trim();
+            (!id.is_empty()).then(|| LocalModel {
+                id: id.into(),
+                owned_by: Some("openai".into()),
+            })
+        })
+        .collect())
+}
+
+#[cfg(test)]
+mod model_discovery_tests {
+    use super::*;
+
+    #[test]
+    fn account_availability_intersects_the_supplied_pi_catalog_in_catalog_order() {
+        let response: OpenAiModelsResponse = serde_json::from_value(serde_json::json!({
+            "data": [
+                { "id": "gpt-6-luna", "owned_by": "openai" },
+                { "id": "text-embedding-3-small", "owned_by": "openai" },
+                { "id": "gpt-6.1-sol", "owned_by": "system" }
+            ]
+        }))
+        .unwrap();
+        let catalog = ["gpt-6.1-sol", "unavailable-model", "gpt-6-luna"].map(String::from);
+        let available = available_openai_models(response.data, &catalog);
+        assert_eq!(
+            available
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["gpt-6.1-sol", "gpt-6-luna"]
+        );
+        assert_eq!(available[0].owned_by.as_deref(), Some("system"));
+    }
+
+    #[test]
+    fn subscription_discovery_keeps_visible_account_models_outside_the_pi_catalog() {
+        let models = subscription_models(&serde_json::json!({ "models": [
+            { "slug": "account-model", "visibility": "list" },
+            { "slug": "hidden-model", "visibility": "hide" },
+            { "slug": " ", "visibility": "list" }
+        ] }))
+        .unwrap();
+        assert_eq!(models.len(), 1);
+        assert_eq!(models[0].id, "account-model");
+    }
 }
 
 #[tauri::command]

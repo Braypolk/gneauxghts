@@ -183,6 +183,10 @@ Start the desktop app in development:
 pnpm tauri dev
 ```
 
+Desktop builds bundle the current Node runtime for ChatGPT sign-in, including
+its license notices. If a custom Node installation stores those notices elsewhere,
+set `GNEAUXGHTS_NODE_LICENSE` to that distribution's license file.
+
 Run the frontend/type checks:
 
 ```bash

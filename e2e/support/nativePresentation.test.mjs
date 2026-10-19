@@ -5,7 +5,7 @@ import { nativeSuites } from './nativeSuite.mjs';
 import { spawnSync } from 'node:child_process';
 
 test('ordinary native smoke and live lanes do not require desktop activation', () => {
-  for (const lane of ['smoke', 'live']) {
+  for (const lane of ['smoke', 'live', 'hosted', 'subscription']) {
     assert.doesNotThrow(() => admitNativePresentation(nativeSuites[lane].map(name => `${name}.spec.ts`), {}));
   }
 });

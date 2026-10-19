@@ -8,7 +8,9 @@ export const nativeSuites = {
   smoke: ['app-lifecycle', 'command-events', 'image-interactions', 'piChatNative', 'piChatPublication', 'piChatEditing', 'piChatCreation', 'piChatCompaction', 'piChatAdapters'],
   foreground: [...foregroundNativeSpecs],
   measurement: ['editing-windows'],
-  live: ['piChatLocal']
+  live: ['piChatLocal', 'piChatLocalTools'],
+  hosted: ['piChatHosted'],
+  subscription: ['piChatSubscription']
 };
 
 export async function runNativeSpecs(files, {

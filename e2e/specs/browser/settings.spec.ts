@@ -1,5 +1,6 @@
 import { browser, expect, $ } from '@wdio/globals';
 import { readFileSync } from 'node:fs';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import type { SemanticStatus } from '../../../src/lib/types/semantic';
 
 const search = () => $('input[aria-label="Search settings"]');
@@ -29,6 +30,193 @@ describe('searchable settings workspace', () => {
     await browser.url('/settings');
     await search().waitForDisplayed({ timeout: 30_000 });
     await category('appearance').click();
+  });
+
+  it('lists Pi OpenAI defaults with their names while preserving the saved model and custom entry', async () => {
+    await installChatFixture();
+    await category('ai').click();
+    const model = await $('input[list="openai-chat-models"]');
+    await model.waitForDisplayed();
+    expect(await model.getValue()).toBe('gpt-5.4');
+    const options = await browser.execute(() => Array.from(document.querySelectorAll<HTMLDataListElement>('#openai-chat-models option'), option => ({
+      id: option.getAttribute('value'), label: option.textContent
+    })));
+    expect(options).toEqual(openaiProvider().getModels().map(model => ({ id: model.id, label: model.name })));
+    await model.setValue('gpt-6-luna');
+    expect(await $('[data-settings-anchor="chat-reasoning"] option[value="max"]').isExisting()).toBe(true);
+    await model.setValue('custom-openai-model');
+    expect(await model.getValue()).toBe('custom-openai-model');
+  });
+
+  it('connects ChatGPT, switches billing methods and disconnects while retaining the API key controls', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      let method = 'apiKey', connected = false;
+      native.invoke = async (command, args) => {
+        if (command === 'chat_get_settings') return { ...await original(command, args) as Record<string, unknown>, provider: 'openai' };
+        if (command === 'chat_chatgpt_login') { connected = true; method = 'chatgpt'; }
+        if (command === 'chat_set_openai_auth') method = (args as { method: string }).method;
+        if (command === 'chat_chatgpt_disconnect') { connected = false; method = 'apiKey'; }
+        if (['chat_chatgpt_status', 'chat_chatgpt_login', 'chat_set_openai_auth', 'chat_chatgpt_disconnect'].includes(command)) return { method, connected, supported: true, login: { phase: 'idle', browserUrl: null, manualInput: false, error: null } };
+        if (command === 'chat_list_openai_models') return [{ id: 'subscription-test-model', ownedBy: 'openai' }];
+        return original(command, args);
+      };
+    });
+    await search().setValue('ChatGPT subscription');
+    await $('[data-settings-result="chatgpt-sign-in"]').click();
+    await $('button=Continue with ChatGPT').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-status"]').getText()).includes('Using ChatGPT subscription'));
+    expect(await $('input#provider-api-key').isExisting()).toBe(true);
+    expect(await $('[data-settings-anchor="chat-processing"]').isExisting()).toBe(false);
+    expect(await $('option[value="subscription-test-model"]').isExisting()).toBe(true);
+    await $('button=Use API key').click();
+    await $('[data-settings-anchor="chat-processing"]').waitForExist();
+    expect(await $('[data-testid="chatgpt-status"]').getText()).toContain('ChatGPT connected');
+    expect(await $('button=Continue with ChatGPT').isExisting()).toBe(false);
+    expect(await $('button=Reconnect ChatGPT').isExisting()).toBe(false);
+    await $('button=Use ChatGPT subscription').click();
+    await $('button=Disconnect ChatGPT').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-status"]').getText()).includes('ChatGPT not connected'));
+    expect(await $('input#provider-api-key').isExisting()).toBe(true);
+  });
+
+  it('opens saved ChatGPT settings without unlocking credentials or refreshing models', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      let checks = 0;
+      native.invoke = async (command, args) => {
+        if (command === 'chat_chatgpt_status') return { method: 'chatgpt', connected: true, supported: true, login: { phase: 'idle', browserUrl: null, manualInput: false, error: null } };
+        if (command === 'chat_list_openai_models') { checks++; return [{ id: 'gpt-6-luna' }]; }
+        return original(command, args);
+      };
+      (window as unknown as { __connectionChecks: () => number }).__connectionChecks = () => checks;
+    });
+    await category('ai').click();
+    await $('button=Check connection').waitForDisplayed();
+    expect(await $('button=Reconnect ChatGPT').isExisting()).toBe(false);
+    expect(await $('button=Continue with ChatGPT').isExisting()).toBe(false);
+    await category('appearance').click();
+    await category('ai').click();
+    await $('button=Check connection').waitForDisplayed();
+    expect(await browser.execute(() => (window as unknown as { __connectionChecks: () => number }).__connectionChecks())).toBe(0);
+    await $('button=Check connection').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-sign-in"]').getText()).includes('Connection checked.'));
+    expect(await browser.execute(() => (window as unknown as { __connectionChecks: () => number }).__connectionChecks())).toBe(1);
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      native.invoke = async (command, args) => {
+        if (command === 'chat_list_openai_models') throw new Error('OpenAI is temporarily unavailable');
+        return original(command, args);
+      };
+    });
+    await $('button=Check connection').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-sign-in"]').getText()).includes('OpenAI is temporarily unavailable'));
+    expect(await $('button=Continue with ChatGPT').isExisting()).toBe(false);
+    expect(await $('button=Reconnect ChatGPT').isExisting()).toBe(false);
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      native.invoke = async (command, args) => {
+        if (command === 'chat_list_openai_models') throw new Error('Reconnect ChatGPT to continue');
+        if (command === 'chat_chatgpt_status') return { method: 'chatgpt', connected: false, supported: true, login: { phase: 'idle', browserUrl: null, manualInput: false, error: null } };
+        return original(command, args);
+      };
+    });
+    await $('button=Check connection').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-sign-in"]').getText()).includes('Reconnect ChatGPT to continue'));
+    expect(await $('[data-testid="chatgpt-sign-in"]').getText()).not.toContain('Connection checked.');
+    await $('button=Continue with ChatGPT').waitForDisplayed();
+    await category('appearance').click();
+    await category('ai').click();
+    await $('button=Continue with ChatGPT').waitForDisplayed();
+  });
+
+  it('opens saved local-provider settings without credential-backed discovery until Refresh', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      const calls: string[] = [];
+      native.invoke = async (command, args) => {
+        if (command === 'chat_get_settings') return { ...await original(command, args) as Record<string, unknown>, provider: 'local', localModel: 'saved-local-model' };
+        if (command === 'chat_get_key_status') return { provider: args.provider, configured: args.provider === 'local' };
+        if (['chat_list_local_models', 'chat_get_model_capabilities', 'chat_list_openai_models'].includes(command)) calls.push(command);
+        if (command === 'chat_list_local_models') return [{ id: 'saved-local-model' }, { id: 'discovered-local-model' }];
+        return original(command, args);
+      };
+      (window as unknown as { __localDiscoveryCalls: string[] }).__localDiscoveryCalls = calls;
+    });
+    for (let visit = 0; visit < 2; visit++) {
+      await category('ai').click();
+      await $('button[aria-label="Configure saved-local-model"]').waitForDisplayed();
+      expect(await $('[data-settings-anchor="api-keys"]').getText()).toContain('Key configured');
+      expect(await browser.execute(() => (window as unknown as { __localDiscoveryCalls: string[] }).__localDiscoveryCalls)).toEqual([]);
+      if (visit === 0) await category('appearance').click();
+    }
+    await $('button[aria-label="Refresh server models"]').click();
+    await $('button[aria-label="Configure discovered-local-model"]').waitForDisplayed();
+    await browser.waitUntil(async () => await $('button[aria-label="Refresh server models"]').isEnabled());
+    const calls = await browser.execute(() => (window as unknown as { __localDiscoveryCalls: string[] }).__localDiscoveryCalls);
+    expect(calls.filter(command => command === 'chat_list_local_models')).toHaveLength(1);
+    expect(calls.filter(command => command === 'chat_get_model_capabilities')).toHaveLength(2);
+    expect(calls).not.toContain('chat_list_openai_models');
+  });
+
+  it('retains native sign-in across Settings navigation and supports reopen, cancel and pasted callbacks', async () => {
+    await browser.execute(() => {
+      const native = window.__TAURI_INTERNALS__! as { invoke: (command: string, args: Record<string, unknown>) => Promise<unknown> };
+      const original = native.invoke;
+      let method = 'apiKey', connected = false;
+      let login = { phase: 'idle', browserUrl: null as string | null, manualInput: false, error: null as string | null };
+      let finish: ((value: unknown) => void) | null = null;
+      let rejectLogin: ((reason: string) => void) | null = null;
+      const calls = { starts: 0, cancels: 0, opens: 0, checks: 0, callbacks: 0 };
+      const snapshot = () => ({ method, connected, supported: true, login: { ...login } });
+      native.invoke = async (command, args) => {
+        if (command === 'chat_chatgpt_status') return snapshot();
+        if (command === 'chat_chatgpt_login') {
+          calls.starts++;
+          login = { phase: 'waitingForBrowser', browserUrl: 'https://auth.openai.com/api/accounts/authorize?state=test', manualInput: true, error: null };
+          return new Promise((resolve, reject) => { finish = resolve; rejectLogin = reject; });
+        }
+        if (command === 'chat_chatgpt_cancel') {
+          calls.cancels++;
+          login = { phase: 'idle', browserUrl: null, manualInput: false, error: null };
+          rejectLogin?.('ChatGPT sign-in cancelled'); return;
+        }
+        if (command === 'chat_chatgpt_open_browser') { calls.opens++; return; }
+        if (command === 'chat_chatgpt_manual_input') {
+          if ((args as { value: string }).value !== 'http://127.0.0.1:1455/auth/callback?test') throw new Error('callback was not passed');
+          calls.callbacks++; method = 'chatgpt'; connected = true;
+          login = { phase: 'idle', browserUrl: null, manualInput: false, error: null };
+          finish?.(snapshot()); return;
+        }
+        if (command === 'chat_list_openai_models') { calls.checks++; return [{ id: 'gpt-6-luna' }]; }
+        return original(command, args);
+      };
+      (window as unknown as { __signInCalls: typeof calls }).__signInCalls = calls;
+    });
+    await category('ai').click();
+    await $('button=Continue with ChatGPT').click();
+    await $('button=Open sign-in page').waitForDisplayed();
+    await category('appearance').click();
+    await category('ai').click();
+    await $('button=Open sign-in page').waitForDisplayed();
+    expect(await browser.execute(() => (window as unknown as { __signInCalls: { cancels: number; starts: number } }).__signInCalls)).toEqual({ starts: 1, cancels: 0, opens: 0, checks: 0, callbacks: 0 });
+    await $('button=Open sign-in page').click();
+    await $('button=Cancel sign-in').click();
+    await $('button=Continue with ChatGPT').waitForDisplayed();
+    await $('button=Continue with ChatGPT').click();
+    await $('button=Having trouble returning to the app?').waitForDisplayed();
+    await $('button=Having trouble returning to the app?').click();
+    await $('#chatgpt-callback').setValue('http://127.0.0.1:1455/auth/callback?test');
+    await $('button=Complete sign-in').click();
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-status"]').getText()).includes('Using ChatGPT subscription'));
+    await browser.waitUntil(async () => (await $('[data-testid="chatgpt-sign-in"]').getText()).includes('Connection checked.'));
+    expect(await $('#chatgpt-callback').isExisting()).toBe(false);
+    expect(await browser.execute(() => (window as unknown as { __signInCalls: unknown }).__signInCalls)).toEqual({ starts: 2, cancels: 1, opens: 1, checks: 1, callbacks: 1 });
   });
 
   it('finds the diff layout setting and retains both choices after reload', async () => {

@@ -58,6 +58,15 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     assert.equal(provider.requests, count, 'Idle title/list updates must not trigger inference');
   });
 
+  it('parses a valid SSE stream with a missing Content-Type header through Pi', async () => {
+    await newPiConversation();
+    await sendPiMessage('fixture-missing-content-type');
+    const pane = await waitPiIdle();
+    assert.equal(messages(pane).filter(message => message.role === 'assistant').at(-1)?.stopReason, 'stop');
+    assert(assistantText(pane).includes('Fixture ordinary answer. Finished.'));
+    assert.equal(pane.error, null);
+  });
+
   it('retrieves ordinary query search through the native current-content boundary', async () => {
     const response = await invokeNative<{ status: string; items: { noteId: string; excerpt: string; documentKind: string }[] }>('retrieve_note_context', {
       scope: 'query', query: 'lantern', currentPath: null, currentTitle: '', currentMarkdown: null, currentBodyHash: null, selectedText: null, limit: 20,

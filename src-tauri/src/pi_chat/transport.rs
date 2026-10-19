@@ -58,6 +58,7 @@ struct RequestConfiguration {
     reasoning: Option<String>,
     service_tier: String,
     tools: bool,
+    subscription: bool,
 }
 fn transport_error(code: &str, message: &str) -> DomainError {
     DomainError::new(code, message)
@@ -133,12 +134,28 @@ async fn configuration(
         .state::<crate::chat_domain::ChatDomain>()
         .get_settings()
         .map_err(|_| transport_error("settings", "Chat settings are unavailable."))?;
-    let credential = crate::secrets::read_provider_api_key(app, provider).map_err(|_| {
-        transport_error(
-            "credential",
-            "Unable to read the configured native credential.",
+    let (credential, subscription) = if provider == "openai" {
+        let (credential, method) = crate::chatgpt_auth::resolve(app).await.map_err(|_| {
+            transport_error(
+                "credential",
+                "The selected OpenAI credential is unavailable. Check Settings.",
+            )
+        })?;
+        (
+            credential,
+            method == crate::chatgpt_auth::AuthMethod::Chatgpt,
         )
-    })?;
+    } else {
+        (
+            crate::secrets::read_provider_api_key(app, provider).map_err(|_| {
+                transport_error(
+                    "credential",
+                    "Unable to read the configured native credential.",
+                )
+            })?,
+            false,
+        )
+    };
     if provider == "openai" && credential.is_none() {
         return Err(transport_error(
             "credential",
@@ -213,6 +230,7 @@ async fn configuration(
         reasoning,
         service_tier: settings.service_tier.as_str().into(),
         tools,
+        subscription,
     })
 }
 
@@ -236,6 +254,7 @@ fn loaded_capacity(value: &Value, model: &str) -> Option<u64> {
         None
     }
 }
+
 #[tauri::command]
 pub(crate) async fn pi_chat_model_configuration(
     app: tauri::AppHandle,
@@ -402,6 +421,91 @@ fn configure_body(
             ));
         }
     }
+    if configuration.subscription {
+        configure_subscription_body(object)?;
+    } else if provider == "openai" {
+        // A conversation can continue after an explicit billing-method switch.
+        // Pi retains call namespaces; match our static declarations on this route.
+        for item in object
+            .get_mut("input")
+            .and_then(Value::as_array_mut)
+            .into_iter()
+            .flatten()
+        {
+            if item["type"] == "function_call" && item["namespace"] == "gneauxghts_notes" {
+                if let Some(item) = item.as_object_mut() {
+                    item.remove("namespace");
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn configure_subscription_body(object: &mut serde_json::Map<String, Value>) -> DomainResult<()> {
+    // Pi's subscription mode already omits these. Recheck at the native boundary
+    // because callers can be stale/untrusted and billing mode can change mid-turn.
+    for key in [
+        "background",
+        "conversation",
+        "max_output_tokens",
+        "max_tool_calls",
+        "metadata",
+        "moderation",
+        "multi_agent",
+        "prompt",
+        "prompt_cache_retention",
+        "prompt_cache_options",
+        "safety_identifier",
+        "temperature",
+        "top_logprobs",
+        "top_p",
+        "truncation",
+        "user",
+        "previous_response_id",
+        "service_tier",
+    ] {
+        object.remove(key);
+    }
+    object.insert("store".into(), false.into());
+    let input = object
+        .get_mut("input")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| {
+            transport_error(
+                "invalid_request",
+                "Subscription requests require complete conversation input.",
+            )
+        })?;
+    for item in input.iter_mut() {
+        if item["type"] == "configuration_update" {
+            return Err(transport_error(
+                "invalid_request",
+                "The selected subscription request needs a new attempt.",
+            ));
+        }
+        if item["role"] == "system" {
+            item["role"] = "developer".into();
+        }
+        if item["type"] == "function_call"
+            && matches!(
+                item["name"].as_str(),
+                Some("search_notes" | "read_note" | "edit_note" | "create_note")
+            )
+        {
+            item["namespace"] = "gneauxghts_notes".into();
+        }
+    }
+    // Subscription inference accepts function tools grouped in a namespace.
+    // Pi still owns each schema, parsing and the returned call's namespace.
+    if let Some(tools) = object.remove("tools") {
+        if tools.as_array().is_some_and(|tools| !tools.is_empty()) {
+            object.insert("tools".into(), serde_json::json!([{"type":"namespace", "name":"gneauxghts_notes", "description":"Read and update authorized vault notes", "tools":tools}]));
+        }
+    }
+    if let Some(choice) = object.get_mut("tool_choice").and_then(Value::as_object_mut) {
+        choice.insert("namespace".into(), "gneauxghts_notes".into());
+    }
     Ok(())
 }
 #[tauri::command]
@@ -540,7 +644,10 @@ fn provider_http_failure(status: u16, bytes: &[u8]) -> DomainError {
     }
     if matches!(
         code.as_str(),
-        "insufficient_quota" | "billing_hard_limit_reached" | "usage_limit_reached"
+        "insufficient_quota"
+            | "billing_hard_limit_reached"
+            | "usage_limit_reached"
+            | "subscription_sharing_usage_limit_exceeded"
     ) {
         return transport_error(
             "provider_limit",
@@ -551,6 +658,12 @@ fn provider_http_failure(status: u16, bytes: &[u8]) -> DomainError {
         return transport_error(
             "provider_rate_limit",
             "The model server asked to retry later.",
+        );
+    }
+    if status == 401 {
+        return transport_error(
+            "credential",
+            "The selected OpenAI credential needs attention in Settings.",
         );
     }
     if status == 408 || status >= 500 {
@@ -605,6 +718,13 @@ async fn dispatch(
         };
         let _ = tokio::time::timeout(Duration::from_secs(5), read).await;
         let failure = provider_http_failure(status, &error_bytes);
+        if status == 401 && configuration.subscription {
+            if let Some(rejected) = &configuration.credential {
+                // Confirm terminal revocation before making sign-in available;
+                // transient refresh errors leave the saved connection intact.
+                let _ = crate::chatgpt_auth::recover_rejected_access(app, rejected).await;
+            }
+        }
         app.state::<AuthorityStore>().validate_lease(lease)?;
         let message = match failure.code.as_str() {
             "provider_context_overflow" => "prompt is too long",
@@ -637,12 +757,9 @@ async fn dispatch(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_string();
-    if !content_type.starts_with("text/event-stream") {
-        return Err(transport_error(
-            "protocol",
-            "Native provider did not return SSE",
-        ));
-    }
+    // The request already requires streaming. Some subscription responses omit
+    // Content-Type despite carrying valid SSE. Forward the actual header and
+    // bytes; Pi's provider parser validates events and terminal completion.
     let authority = app.state::<AuthorityStore>();
     authority.validate_lease(lease)?;
     frames
@@ -684,6 +801,7 @@ mod tests {
             reasoning: reasoning.map(str::to_owned),
             service_tier: tier.into(),
             tools,
+            subscription: false,
         }
     }
     #[test]
@@ -738,6 +856,33 @@ mod tests {
                 assert!(body.get(key).is_none());
             }
         }
+    }
+    #[test]
+    fn subscription_requests_keep_history_and_strict_schemas_in_supported_namespaces() {
+        let mut configuration = request_configuration(Some("high"), "flex", true);
+        configuration.subscription = true;
+        let schema = json!({"type":"object","additionalProperties":false,"required":["noteId","quote"],"properties":{"noteId":{"type":"string"},"quote":{"anyOf":[{"type":"string"},{"type":"null"}]}}});
+        let tool = json!({"type":"function","name":"read_note","strict":true,"parameters":schema});
+        let mut body = json!({"model":"m","stream":true,"store":true,"max_output_tokens":100,"temperature":0.3,"previous_response_id":"old","metadata":{"secret":"caller"},"tools":[tool.clone()],"tool_choice":{"type":"function","name":"read_note"},"input":[{"type":"message","role":"system","content":"rules"},{"type":"function_call","name":"read_note","namespace":"gneauxghts_notes","call_id":"call-1","arguments":"{}"},{"type":"function_call_output","call_id":"call-1","output":"note text"}]});
+        configure_body(&mut body, "openai", "m", &configuration).unwrap();
+        for key in [
+            "max_output_tokens",
+            "temperature",
+            "previous_response_id",
+            "metadata",
+            "service_tier",
+        ] {
+            assert!(body.get(key).is_none(), "{key}");
+        }
+        assert_eq!(body["store"], false);
+        assert_eq!(body["tools"][0]["type"], "namespace");
+        assert_eq!(body["tools"][0]["name"], "gneauxghts_notes");
+        assert_eq!(body["tools"][0]["tools"][0], tool);
+        assert_eq!(body["tool_choice"]["namespace"], "gneauxghts_notes");
+        assert_eq!(body["input"][0]["role"], "developer");
+        assert_eq!(body["input"][1]["namespace"], "gneauxghts_notes");
+        assert_eq!(body["input"][2]["output"], "note text");
+        assert_eq!(body["reasoning"]["effort"], "high");
     }
     #[test]
     fn hosted_outgoing_reasoning_and_tier_use_current_native_settings() {
@@ -885,7 +1030,7 @@ mod tests {
             "provider_transient"
         );
         let rejected = provider_http_failure(401, br#"{"error":{"message":"secret credential"}}"#);
-        assert_eq!(rejected.code, "provider_http");
+        assert_eq!(rejected.code, "credential");
         assert!(!rejected.message.contains("secret"));
     }
     #[test]
@@ -916,6 +1061,7 @@ mod tests {
             reasoning: None,
             service_tier: "standard".into(),
             tools: true,
+            subscription: false,
         };
         let mut body = json!({"model":"m","stream":true,"messages":[{"role":"user","content":"hello"}],"reasoning_effort":"medium"});
         configure_body(&mut body, "local", "m", &configuration).unwrap();

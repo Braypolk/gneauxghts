@@ -1,7 +1,6 @@
 import { Channel } from '@tauri-apps/api/core';
 import { invoke } from './nativeInvoke';
 import { createModels, createProvider, createAssistantMessageEventStream, isContextOverflow, isRetryableAssistantError, type AssistantMessage, type Model, type ProviderStreams, type SimpleStreamOptions, type StreamOptions, type TranscriptContext } from '@earendil-works/pi-ai';
-import * as responses from '@earendil-works/pi-ai/api/openai-responses';
 import * as completions from '@earendil-works/pi-ai/api/openai-completions';
 import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import { modelLimits } from './modelLimits';
@@ -85,21 +84,26 @@ function safeFailure(error: unknown, original?: AssistantMessage): string {
   if (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string') {
     return nativeFailures[error.code] ?? 'The model request could not complete. Start a new attempt.';
   }
+  const value = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
+  // A plan limit is terminal even if it arrives in a 429/streamed error that
+  // would otherwise match Pi's generic transient-error classifier.
+  if (value.includes('subscription_sharing_usage_limit_exceeded')) return 'insufficient_quota: ChatGPT usage limit reached. Check your ChatGPT plan usage.';
+  if (value.includes('subscription_sharing_user_not_eligible')) return 'This ChatGPT account cannot use its subscription here. Check Settings.';
+  if (value.includes('insufficient_quota')) return nativeFailures.provider_limit;
+  if (/"code"\s*:\s*"credential"/.test(value)) return nativeFailures.credential;
   if (original && isContextOverflow(original)) return nativeFailures.provider_context_overflow;
   if (original && isRetryableAssistantError(original)) return nativeFailures.provider_transient;
-  const value = error && typeof error === 'object' && 'message' in error ? String(error.message) : String(error);
-  if (value.includes('insufficient_quota')) return nativeFailures.provider_limit;
   return safeFailures.has(value) ? value : 'The model request could not complete. Start a new attempt.';
 }
 
 /** One catalog and parser path for generation and Pi's built-in compaction. No history replacement. */
 export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>, admitMessage: AdmitProviderMessage) {
   const models = createModels();
-  const hostedCatalog = openaiProvider().getModels();
+  const hosted = openaiProvider();
   const refreshes = new Map<string, Promise<void>>();
   const streams = {} as Record<ChatProvider, ProviderStreams>;
   const installProvider = (provider: ChatProvider, catalog: readonly Model<string>[]) => {
-    models.setProvider(createProvider({ id: provider, name: provider === 'local' ? 'Local model' : 'OpenAI',
+    models.setProvider(createProvider({ id: provider, name: provider === 'local' ? 'Local model' : hosted.name,
       auth: { apiKey: { name: 'Native credential', resolve: async () => ({ auth: {} }) } },
       models: catalog, api: streams[provider],
     }));
@@ -122,10 +126,13 @@ export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>,
         // to the advertised wire value (which may be server-specific). Rust
         // rechecks current settings against untrusted/stale serialized requests.
         const reasoning = model.thinkingLevelMap?.medium ? 'medium' as const : undefined;
-        const native = { ...options, reasoning, reasoningEffort: reasoning, apiKey: 'native-credential-placeholder', fetch: nativeFetch(binding, provider, model.id, failure => { transportFailure = failure; }), maxTokens: options?.maxTokens ?? Math.min(DEFAULT_GENERATION_MAX_TOKENS, model.maxTokens > 0 ? model.maxTokens : DEFAULT_GENERATION_MAX_TOKENS), transport: 'sse' as const };
+        // Represent native API-key auth to Pi without exposing the real key.
+        // Its OpenAI provider distinguishes API keys from subscription tokens.
+        const authMethod = provider === 'openai' ? await invoke<'apiKey' | 'chatgpt'>('chat_openai_auth_method') : 'apiKey';
+        const native = { ...options, reasoning, reasoningEffort: reasoning, apiKey: authMethod === 'chatgpt' ? 'native-subscription-placeholder' : 'sk-native-credential-placeholder', fetch: nativeFetch(binding, provider, model.id, failure => { transportFailure = failure; }), maxTokens: options?.maxTokens ?? Math.min(DEFAULT_GENERATION_MAX_TOKENS, model.maxTokens > 0 ? model.maxTokens : DEFAULT_GENERATION_MAX_TOKENS), transport: 'sse' as const };
         const underlying = provider === 'local'
           ? (simple ? completions.streamSimple : completions.stream)(model as Model<'openai-completions'>, transcript, native)
-          : (simple ? responses.streamSimple : responses.stream)(model as Model<'openai-responses'>, transcript, native);
+          : (simple ? hosted.streamSimple : hosted.stream)(model as Model<'openai-responses'>, transcript, native);
         for await (const event of underlying) {
           if ('partial' in event) last = event.partial;
           else if ('message' in event) last = event.message;
@@ -172,15 +179,20 @@ export function createNativeModels(bindings: ReadonlyMap<string, NativeBinding>,
   const loadModel = async (provider: ChatProvider, id: string) => {
     const configuration = await invoke<NativeModelConfiguration>('pi_chat_model_configuration', { provider, model: id });
     const api = provider === 'local' ? 'openai-completions' : 'openai-responses';
-    const published = provider === 'openai' ? hostedCatalog.find(model => model.id === id) : undefined;
+    const published = provider === 'openai' ? hosted.getModels().find(model => model.id === id) : undefined;
     const wireEffort = configuration.reasoningWireEffort ?? null;
     const model: Model<typeof api> = { id, name: id, provider, api, baseUrl: 'https://native.invalid/v1',
       input: configuration.images ? ['text', 'image'] : ['text'], reasoning: wireEffort !== null || configuration.reasoningEffort === 'on',
-      // `on` and unavailable metadata omit an override; explicit local off is
-      // advertised as `none`. Never guess capabilities from model names.
-      thinkingLevelMap: { off: wireEffort === 'none' ? 'none' : null, minimal: null, low: null,
-        medium: wireEffort === 'none' ? null : wireEffort, high: null, xhigh: null, max: null },
-      cost: published?.cost ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, ...modelLimits(published ?? configuration),
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, ...modelLimits(configuration),
+      // Pi owns all catalogued capabilities, limits, names and protocol metadata.
+      // Clone so refreshing a selected handle cannot mutate its shared catalog.
+      ...(published ? structuredClone(published) : {}),
+      // Native settings select the effective effort for every dispatch, including
+      // compaction. This neutral slot binds that setting, not model capabilities.
+      // `on`/unknown omit an override; explicit local off is advertised as `none`.
+      thinkingLevelMap: { minimal: null, low: null, high: null, xhigh: null, max: null,
+        ...published?.thinkingLevelMap, off: wireEffort === 'none' ? 'none' : null,
+        medium: wireEffort === 'none' ? null : wireEffort },
       ...(provider === 'local' ? { compat: { supportsDeveloperRole: false, supportsMidConvoSystemMessages: false,
         supportsReasoningEffort: wireEffort !== null } } : {}) };
     // Native config observes one selected model, not a provider-wide dynamic catalog.

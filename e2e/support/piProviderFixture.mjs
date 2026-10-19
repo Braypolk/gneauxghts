@@ -22,7 +22,7 @@ export async function startPiProviderFixture({ readQuery = 'Pi acceptance lanter
     const prompt = input.messages[userIndex]?.content ?? '';
     const summary = input.messages.some(message => message.role === 'system' && message.content?.includes('context summarization assistant'));
     const tools = input.messages.slice(userIndex + 1).filter(message => message.role === 'tool');
-    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.writeHead(200, prompt.includes('fixture-missing-content-type') ? {} : { 'content-type': 'text/event-stream' });
     const chunk = (delta, finish = null) => { if (!res.destroyed) res.write(`data: ${JSON.stringify({ id: 'fixture', object: 'chat.completion.chunk', model: 'pi-acceptance-fixture', choices: [{ index: 0, delta, finish_reason: finish }] })}\n\n`); };
     const pause = (ms) => new Promise(ok => setTimeout(ok, ms));
     const call = (name, args) => { chunk({ tool_calls: [{ index: 0, id: `fixture-${name}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }); chunk({}, 'tool_calls'); };

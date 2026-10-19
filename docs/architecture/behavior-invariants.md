@@ -783,6 +783,36 @@ live hosted credentials and physical-device acceptance are outside this rebuild'
 gates. Desktop acceptance precedes simulator validation, and previous evaluation
 results do not stand in for either post-retirement or current-platform checks.
 
+### Provider sign-in remains native and device-local
+
+The OS credential store remains the persistent owner of API keys and ChatGPT
+OAuth credentials. Desktop access is lazy and coalesced once per credential per
+process; successful rotation/replacement is persisted before cached reuse.
+Removal/replacement evicts stale cache entries, and failed reads are retryable.
+A restart restores the OS-store access boundary; mobile protected-storage reads
+retain their existing policy. No credential value is readable over WebView IPC.
+Settings metadata inspection does not decrypt credentials or call model discovery.
+
+Native owns the active ChatGPT sign-in, safe progress and cancellation. Closing
+Settings releases its view without cancelling the attempt. Reopening Settings
+reattaches to the active progress. Only explicit Cancel, timeout or process exit
+ends that attempt. Pi validates browser/pasted callback state and owns token
+exchange; native persists the completed credential before selecting subscription
+billing. Subscription failures never fall back to API-key billing. Reconnect and
+disconnect retain the issued app registration and stable host ID; later sign-in
+reuses that client rather than creating another ChatGPT app entry.
+Disconnect removes tokens, while registration metadata remains device-local.
+An existing connection offers no sign-in action, including while API-key billing
+is selected. Native also suppresses redundant login attempts. A subscription
+request or connection check rejected with HTTP 401 confirms session usability by
+serialized refresh before removing credentials. Only a terminal refresh error
+exposes sign-in again; network failures, service errors, and usage limits do not
+discard tokens or switch billing. A late rejection for a replaced access token
+cannot invalidate the newer connection. Settings reads safe status after explicit
+model checks; opening Settings remains metadata-only.
+Development rebuilds can still require OS access approval until a stable signing
+identity is configured; the app does not weaken Keychain access rules to suppress prompts.
+
 ### History, progress and compaction use Pi semantics
 
 The complete human-visible transcript is paged from immutable Pi entries; the

@@ -3,18 +3,24 @@ import { spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, readdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { developmentSigningIdentity, withMacDevelopmentSigning } from './signMacExecutable.mjs';
 
 const args = process.argv.slice(2);
 const tauriBin = resolveTauriBinary();
-const finalArgs = withBundleConfig(args);
+const developmentIdentity = process.platform === 'darwin' && args[0] === 'dev'
+  ? developmentSigningIdentity() : undefined;
+const finalArgs = withMacDevelopmentSigning(withBundleConfig(args), developmentIdentity);
 
 syncIosAppIcons(finalArgs);
 prepareIosRuntime(finalArgs);
 validateMacReleaseEnvironment(finalArgs);
+if (['dev', 'build'].includes(args[0]) && !args.includes('--help') && !args.includes('-h')) {
+  runVerification(process.execPath, ['scripts/buildChatgptAuth.mjs']);
+}
 
 const child = spawn(tauriBin, finalArgs, {
   stdio: "inherit",
-  env: process.env
+  env: developmentIdentity ? { ...process.env, APPLE_SIGNING_IDENTITY: developmentIdentity } : process.env
 });
 
 child.on("exit", (code, signal) => {

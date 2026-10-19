@@ -7,6 +7,7 @@ node_modules
 .env
 .env.*
 !.env.example
+.gneauxghts-signing.local.json
 vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
@@ -38,6 +39,7 @@ __pycache__/
 target/
 **/target/
 **/Cargo.lock
+/src-tauri/resources/chatgpt-auth/
 
 # Responsive captures are regenerated locally.
 .scratch/responsive-screens/evidence/

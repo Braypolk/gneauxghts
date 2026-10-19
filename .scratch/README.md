@@ -7,6 +7,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [T3 Code provider authentication research](t3-provider-auth/research.md): completed source comparison of managed ChatGPT OAuth, existing CLI accounts and sensitive API-key storage, with a proposed Pi-backed connection experience. Research only; no authentication changes are implemented by this record.
+
 - [Historical Pi vault editing assessment](pi-vault-editing-assessment/assessment.md): public API comparison and six-case staging probe. Its recommendation is now implemented and verified by the [Pi note editing slice](archive/pi-note-editing.md).
 
 - [Historical Pi Durable prototype plan](pi-durable-prototype/spec.md): preserved experiment instructions, superseded by the [completed native prototype](archive/pi-durable-native-prototype.md) and [accepted ordinary-chat rebuild](archive/pi-chat-rebuild.md). These are not executable tickets; desktop and iOS simulator results and their limits live in those outcomes.
@@ -36,6 +38,14 @@ and reproducible fixtures belong in Git.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools
+
+- [ChatGPT subscription sign-in](archive/pi-chatgpt-subscription.md): Pi built-in OAuth, native credential/refresh ownership and retained API-key selection. All three shared note journeys pass with GPT-6 Luna subscription/API-key use and the local Qwen model; the reserved namespace and missing stream-header integration defects are corrected.
+
+- [Pi OpenAI model suggestions](archive/pi-openai-model-catalog.md): Settings and composer menus use the installed Pi catalog and supported reasoning levels, preserving saved/custom selections and native account availability filtering.
+
+- [ChatGPT sign-in experience and development signing](archive/chatgpt-sign-in-experience.md): native credential caching, navigation-safe sign-in progress, browser/callback recovery and explicit connection checks. Xcode Apple Development signing is configured for normal development and native tests; two different signed builds each pass all three live GPT-6 Luna subscription note flows.
+
+- [ChatGPT registration reuse](archive/chatgpt-registration-reuse.md): reconnect and disconnect retain the issued app client ID on the same host; a pinned Pi patch reauthorizes it instead of registering another app. Connected Settings hides sign-in; confirmed terminal refresh failures restore it while temporary failures preserve the connection. Source/bundled helper and Settings browser regressions pass. Existing ChatGPT-side entries require separate cleanup.
 
 - [Full Pi uncommitted-change review](archive/pi-uncommitted-review.md): independent Standards/Spec review, repaired acceptance tooling and portable research fixtures, and fresh full unit, native and browser verification. Commits separate retired code, core adapters, chat UI and retained research.
 

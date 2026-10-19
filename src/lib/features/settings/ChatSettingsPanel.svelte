@@ -4,6 +4,7 @@
   import ExcludedNotesSettings from './ExcludedNotesSettings.svelte';
   import LocalModelSettings from './LocalModelSettings.svelte';
   import ChatWriteDefaultsPanel from './ChatWriteDefaultsPanel.svelte';
+  import ChatGptSettings from './ChatGptSettings.svelte';
   import { onMount } from 'svelte';
   import { chatSettings } from '$lib/features/chat/pi/settings';
   import type { ChatProvider, ChatSettings } from '$lib/features/chat/types';
@@ -26,6 +27,8 @@
   let isSavingSettings = $state(false);
   let error = $state<string | null>(null);
   let message = $state<string | null>(null);
+  let openAiAuth = $state<'apiKey' | 'chatgpt'>('apiKey');
+  let subscriptionModels = $state<string[]>([]);
   const defaultReasoningOptions = $derived(
     settings ? chatReasoningChoices('openai', settings.openaiModel) : []
   );
@@ -124,6 +127,7 @@
   </div>
 {:else}
   <div class="space-y-5">
+    <ChatGptSettings onMethod={(method) => { openAiAuth = method; }} onModels={(models) => { subscriptionModels = models; }} />
     <section class="settings-section" data-settings-anchor="api-keys">
       <div class="flex items-start gap-3">
         <div class="rounded-xl bg-muted p-2 text-muted-foreground"><KeyRound class="h-4 w-4" /></div>
@@ -224,7 +228,7 @@
             <SettingsField label="OpenAI model" anchor="chat-model">
               <input class="settings-control" bind:value={settings.openaiModel} list="openai-chat-models" spellcheck="false" />
               <datalist id="openai-chat-models">
-                {#each OPENAI_CHAT_MODELS as model (model.id)}
+                {#each (openAiAuth === 'chatgpt' ? subscriptionModels.map(id => ({ id, label: OPENAI_CHAT_MODELS.find(model => model.id === id)?.label ?? id })) : OPENAI_CHAT_MODELS) as model (model.id)}
                   <option value={model.id}>{model.label}</option>
                 {/each}
               </datalist>
@@ -238,12 +242,14 @@
                 </select>
               </SettingsField>
             {/if}
+            {#if openAiAuth === 'apiKey'}
             <SettingsField label="Processing" anchor="chat-processing">
               <select class="settings-control" bind:value={settings.serviceTier}>
                 <option value="standard">Standard</option>
                 <option value="flex">Flex — lower cost, slower</option>
               </select>
             </SettingsField>
+            {/if}
           {:else}
             <SettingsField label="Server endpoint" anchor="chat-endpoint">
               <input class="settings-control" bind:value={settings.localBaseUrl} spellcheck="false" placeholder="https://models.example.com/v1" />
@@ -276,7 +282,7 @@
           <p class="mt-3 text-xs leading-relaxed text-muted-foreground">Vault search and note reads require a model with tool calling.</p>
         {/if}
 
-        {#if settings.provider === 'openai' && settings.serviceTier === 'flex'}
+        {#if settings.provider === 'openai' && openAiAuth === 'apiKey' && settings.serviceTier === 'flex'}
           <p class="mt-4 rounded-xl border border-border/70 bg-muted/30 px-3 py-2.5 text-xs leading-relaxed text-muted-foreground">
             Flex may be slower or temporarily unavailable. Requests never fall back to Standard pricing.
           </p>

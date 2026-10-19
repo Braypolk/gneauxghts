@@ -93,6 +93,61 @@ fixture; these checks make no live-model claim. `piChatLocal.spec.ts` is the
 separate live local-model lane. Every native suite writes only its generated
 fixture vault and starts on the ordinary `/` route.
 
+`piChatHosted.spec.ts` is the opt-in live OpenAI lane, pinned to `gpt-6-luna`.
+With `OPENAI_API_KEY` supplied to the debug native process, run
+`GNEAUX_PI_HOSTED_ACCEPTANCE=1 node e2e/support/nativeSuite.mjs hosted`.
+It exercises the original Edit check / 45-minute walk request through native
+search, read, review, publication and citation navigation, plus an explicitly empty
+first-page cursor followed by real native pagination tokens. It uses a generated
+vault, leaves the user's Settings/Keychain untouched and makes billable OpenAI
+requests. Credentials must stay in the process environment, never reports or files.
+
+`piChatHosted.spec.ts` and `piChatLocalTools.spec.ts` register the same shared
+`piToolAcceptance.ts` journeys: search/read/edit with review and fresh citation
+navigation, four-page search with exact continuation tokens, and root-note creation
+with full-content review and a fresh canonical citation. Run the local equivalents
+with `GNEAUX_PI_LOCAL_ACCEPTANCE=1 node e2e/support/nativeSuite.mjs live` (also
+includes the existing local streaming/read check). Reports distinguish provider
+and flow. Hosted uses Pi's preferred strict JSON Schema sampling; the local
+OpenAI-compatible server retains normal schema validation without claiming strict
+sampling support.
+
+`piChatSubscription.spec.ts` runs those same three journeys with a ChatGPT
+subscription and asserts that the selected method stays `chatgpt` throughout.
+After `node e2e/support/buildNative.mjs`, run
+`GNEAUX_PI_SUBSCRIPTION_ACCEPTANCE=1 node e2e/support/nativeSuite.mjs subscription`.
+The first run opens Pi's browser consent flow; finish Continue with ChatGPT in
+that browser within five minutes. The harness starts login once and polls only
+its nonsecret completion status. Later runs reuse the separate E2E Keychain
+account. A rebuilt development executable can trigger a fresh macOS Keychain
+access dialog. The opt-in harness keeps that app and dialog alive for up to a
+day so a later human approval remains usable; inference deadlines stay bounded.
+For development rebuilds on macOS, set `APPLE_SIGNING_IDENTITY` to an installed
+certificate, or save its public selector locally as
+`{"identity":"<certificate SHA-1 fingerprint>"}` in the gitignored
+`.gneauxghts-signing.local.json` at the repository root. Apple Development and
+stable local development certificates are supported; private keys stay in Keychain.
+`buildNative.mjs` signs and verifies the executable before pinning its hash,
+with a stable test-app identifier. Without a certificate, changed executables
+can request Keychain access again; the native session cache removes redundant
+reads within the same process but cannot grant trust to a different executable.
+Release bundles use Tauri's normal signing/notarization configuration. No Keychain
+ACLs are broadened, and ad-hoc signing is not accepted as a stable identity.
+
+`pnpm tauri dev` uses the same development certificate selector and signs each
+rebuilt executable before launch through Cargo's target runner. The runner execs
+the app, preserving Tauri's stop/rebuild process lifecycle. A custom Tauri
+`--runner` is rejected when development signing is enabled. The local selector
+applies only to development and native tests; release signing still requires
+the normal explicit release credentials.
+
+The model defaults to `gpt-6-luna`; `GNEAUX_PI_SUBSCRIPTION_MODEL` can
+select another model offered by the account. Requests consume ChatGPT plan usage
+and never fall back to an API key. Set `GNEAUX_PI_ACCEPTANCE_OUTPUT` to an existing
+directory to retain sanitized journey reports. The support suite also runs Pi's
+actual refresh implementation against an isolated token-response fixture to
+verify rotation and required subscription permission without live tokens.
+
 The editing journey uses model-issued `read_note`/`edit_note` calls, the public Pi
 edit factory, visible approve/discard review and native publication. It covers
 stale bases, cancellation, independent write permission, explicitly disabled

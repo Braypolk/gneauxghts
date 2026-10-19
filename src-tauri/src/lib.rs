@@ -1,6 +1,7 @@
 mod app;
 mod asset_paths;
 mod chat_domain;
+mod chatgpt_auth;
 mod commands;
 #[cfg(feature = "e2e-wdio")]
 mod e2e_process_fault;
@@ -262,6 +263,8 @@ pub fn run() {
             app.manage(pi_chat::authority::AuthorityStore::new(&vault_data_dir)?);
             app.manage(pi_chat::storage::NativeDatabase::default());
             app.manage(pi_chat::transport::NativeTransport::default());
+            app.manage(chatgpt_auth::ChatGptAuth::default());
+            app.manage(secrets::CredentialStore::default());
             app.manage(pi_chat::publication::EditorAdmissions::default());
             app.state::<AppState>().semantic.finish_startup_reconciliation()?;
             // Vault watcher registration walks the notes directory tree
@@ -415,6 +418,14 @@ pub fn run() {
             commands::pi_chat_commands::chat_get_composer_draft,
             commands::pi_chat_commands::chat_set_composer_draft,
             commands::pi_chat_commands::chat_get_key_status,
+            chatgpt_auth::chat_chatgpt_status,
+            chatgpt_auth::chat_openai_auth_method,
+            chatgpt_auth::chat_chatgpt_login,
+            chatgpt_auth::chat_chatgpt_cancel,
+            chatgpt_auth::chat_chatgpt_open_browser,
+            chatgpt_auth::chat_chatgpt_manual_input,
+            chatgpt_auth::chat_chatgpt_disconnect,
+            chatgpt_auth::chat_set_openai_auth,
             commands::pi_chat_commands::chat_set_api_key,
             commands::pi_chat_commands::chat_list_local_models,
             commands::pi_chat_commands::chat_list_openai_models,

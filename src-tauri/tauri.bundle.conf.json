@@ -2,7 +2,8 @@
   "bundle": {
     "resources": {
       "resources/bin": "bin",
-      "resources/lib": "lib"
+      "resources/lib": "lib",
+      "resources/chatgpt-auth": "chatgpt-auth"
     }
   }
 }

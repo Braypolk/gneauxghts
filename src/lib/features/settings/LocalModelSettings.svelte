@@ -13,7 +13,6 @@
     Wrench,
     X
   } from '@lucide/svelte';
-  import { onMount } from 'svelte';
   import { chatSettings } from '$lib/features/chat/pi/settings';
   import type {
     ChatReasoningEffort,
@@ -90,7 +89,9 @@
     return capabilities;
   }
 
-  async function refreshModels(announce = true) {
+  // Discovery can unlock a saved server credential. Keep Settings inspection
+  // passive; refresh and model configuration are explicit user actions.
+  async function refreshModels() {
     if (!baseUrl.trim()) {
       discoveryError = 'Enter a local endpoint before refreshing models.';
       return;
@@ -111,13 +112,11 @@
           }
         })
       );
-      if (announce) {
-        onStatus?.(
-          discovered.length
-            ? `Found ${discovered.length} local model${discovered.length === 1 ? '' : 's'}.`
-            : 'The local endpoint is reachable, but it returned no models.'
-        );
-      }
+      onStatus?.(
+        discovered.length
+          ? `Found ${discovered.length} local model${discovered.length === 1 ? '' : 's'}.`
+          : 'The local endpoint is reachable, but it returned no models.'
+      );
     } catch (refreshError) {
       discoveryError = errorText(refreshError, 'Unable to reach the local model endpoint.');
     } finally {
@@ -193,9 +192,6 @@
     if (event.key === 'Escape' && editingModel) closeEditor();
   }
 
-  onMount(() => {
-    void refreshModels(false);
-  });
 </script>
 
 <svelte:window onkeydown={handleWindowKeydown} />

@@ -768,7 +768,21 @@ tool continuations, recovery and standard compaction. Generation-hook exceptions
 are not a security boundary. Provider response parsing/streaming remains Pi AI owned.
 
 Public Pi AI `createProvider` composes the native transport/admission wrapper with
-the upstream `stream` and `streamSimple` implementations. Startup deduplicates
+the built-in OpenAI provider's `stream`/`streamSimple` methods and the local
+Completions implementation. Catalogued hosted models inherit Pi's complete model
+definitions, including compatibility flags, input limits, pricing and model limits;
+the wrapper clones them before applying native-selected reasoning settings.
+Settings and composer model suggestions use Pi's built-in OpenAI catalog IDs,
+names and ordering; reasoning controls derive their supported positive levels
+from Pi's public helper. API-key discovery intersects that supplied catalog with
+native account availability. Subscription discovery retains the account's visible
+models, including IDs absent from the installed Pi catalog. Saved defaults,
+current/recent choices and custom model entry remain available.
+Native auth is represented to Pi with a nonsecret placeholder whose shape selects
+its API-key or ChatGPT subscription serializer. Real credentials remain native,
+and caller URLs/headers never choose native routing or credentials.
+Uncatalogued models retain conservative custom metadata, and arbitrary local servers
+use native discovery and existing compatibility settings. Startup deduplicates
 selected-model discovery within that pass while restoring every native binding
 before scheduling. The factory catalog holds selected models only. A narrow
 compatibility adapter updates an already-resolved model record after successful
@@ -776,6 +790,49 @@ native discovery, including a first-inference observation of previously unknown
 local capacity, before terminal admission permits the next compaction decision.
 Explicit configuration refresh invalidates that observation; no persisted model
 catalog or whole-server discovery cache is added.
+
+Desktop ChatGPT sign-in uses Pi's public built-in OAuth login and refresh flows in
+`scripts/chatgptAuth.mjs`. The desktop build bundles this helper and a licensed
+Node runtime; installed users do not need a separate JavaScript runtime. Native
+`chatgpt_auth.rs` owns the helper's private stdio, OS-keyring credentials, serialized
+refresh/rotation, cancellation and device-scoped auth-method preferences. Native
+retains the issued app client ID with the host ID across reconnect and disconnect,
+adopting existing keyring registration metadata before removing tokens. A pinned
+Pi patch adds returning-client login and callback support; sign-in without a saved
+registration uses dynamic registration. The issued ID is saved before token storage
+so a failed keyring write can retry without registering another app. Native also
+owns the active login and its curated progress, so leaving Settings only
+releases its polling view. Browser reopening and Pi's optional pasted callback
+share the same attempt and cancellation lifetime; callback input travels over
+private helper stdio and is never logged. Safe progress, the temporary browser
+sign-in URL, connection status and the selected method cross WebView IPC. OAuth credentials
+and API keys occupy separate keyring accounts; switching methods is explicit,
+and subscription failures never fall back to billable API-key requests. Neither
+credential type belongs to a vault or Pi history. `secrets.rs::CredentialStore`
+lazily retains successfully read desktop credentials for the process lifetime,
+coalescing concurrent cold reads and updating memory only after durable store
+writes. Removal/replacement evicts stale cached values even on store failure;
+errors are retryable and a fresh process reads the OS store again. External OS
+credential changes become visible after restart. Opening Settings reads metadata
+only; model discovery runs after sign-in, explicit method selection or Check
+connection. This avoids repeated decryption prompts during ordinary desktop use.
+Settings offers sign-in only when no subscription credential remains; native
+login is idempotent for an existing connection. On subscription HTTP 401, native
+checks the rejected token against the current credential under the auth gate and
+attempts Pi refresh. Confirmed terminal refresh errors retain the registration and
+remove unusable tokens, exposing sign-in again without changing billing methods.
+Transient refresh failures keep credentials. Pi's patched token errors carry a
+machine-readable OAuth code privately; only a curated recovery code crosses
+helper stdio. Model checks refresh the safe status after completion or failure.
+Mobile retains per-read protected-storage policy and API-key support;
+the subscription helper is desktop-only.
+
+Subscription inference uses the public Responses endpoint and the signed-in
+account's visible model catalog. Pi serializes full conversation input; native
+transport rechecks unsupported request fields and groups the four note functions
+under the supported `gneauxghts_notes` namespace, preserving Pi's schemas and call parser.
+Call namespaces follow the selected billing method when continuing existing
+history. Native note authority, review, publication and citations are unchanged.
 
 `pi_chat/authority.rs` owns durable native read/write scope and authority revisions.
 Full-vault and note-scoped authority both honor exclusions and current eligibility.

@@ -2,6 +2,10 @@ import { readFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { resolve } from 'node:path';
 import { nativeE2EPath, nativeE2EPorts, pinNativeE2EBinary } from './nativeE2EBinary.mjs';
+import { buildChatgptAuth } from '../../scripts/buildChatgptAuth.mjs';
+import { signMacExecutable } from '../../scripts/signMacExecutable.mjs';
+
+await buildChatgptAuth();
 
 const optimized = process.argv.includes('--release');
 if (optimized) {
@@ -61,4 +65,8 @@ if (result.error) throw result.error;
 if (result.status !== 0) process.exit(result.status ?? 1);
 const profile = optimized ? 'release' : 'debug';
 const binaryName = process.platform === 'win32' ? 'gneauxghts.exe' : 'gneauxghts';
-console.log(JSON.stringify(pinNativeE2EBinary(resolve('src-tauri', 'target', profile, binaryName), nativeE2EPath(profile), profile)));
+const executable = resolve('src-tauri', 'target', profile, binaryName);
+if (!signMacExecutable(executable) && process.platform === 'darwin') {
+  console.log('Native test build has no certificate signing identity. Keychain may request access after a rebuild; APPLE_SIGNING_IDENTITY enables stable signing.');
+}
+console.log(JSON.stringify(pinNativeE2EBinary(executable, nativeE2EPath(profile), profile)));

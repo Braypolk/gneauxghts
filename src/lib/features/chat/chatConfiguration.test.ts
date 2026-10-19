@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { openaiProvider } from '@earendil-works/pi-ai/providers/openai';
 import type { ChatSettings } from './types';
 import {
   chatModelChoices,
@@ -46,12 +47,7 @@ describe('chat configuration', () => {
 
     expect(choices.map((choice) => `${choice.provider}:${choice.model}`)).toEqual([
       'openai:hosted-model',
-      'openai:gpt-5.6-sol',
-      'openai:gpt-5.6-terra',
-      'openai:gpt-5.6-luna',
-      'openai:gpt-5.5',
-      'openai:gpt-5.4',
-      'openai:gpt-5.4-mini',
+      ...openaiProvider().getModels().map(model => `openai:${model.id}`),
       'local:local-model',
       'openai:other-model',
       'local:qwen3-8b'
@@ -61,15 +57,22 @@ describe('chat configuration', () => {
     expect(choices.at(-1)?.description).toContain('Available');
   });
 
-  it('filters the curated catalog by account availability without hiding the current model', () => {
+  it('lists Pi model names and retains custom local names', () => {
+    const choices = chatModelChoices({ settings: null, current: { provider: 'local', model: 'gpt-6-luna' } });
+    expect(choices.find(choice => choice.provider === 'openai' && choice.model === 'gpt-6-luna')?.displayName).toBe('GPT-6 Luna');
+    expect(choices.find(choice => choice.model === 'gpt-6.1-sol')?.displayName).toBe('GPT-6.1 Sol');
+    expect(choices[0].displayName).toBe('gpt-6-luna');
+  });
+
+  it('filters the Pi catalog by account availability without hiding saved or new account models', () => {
     const choices = chatModelChoices({
       settings,
       current: { provider: 'openai', model: 'gpt-5.6-sol' },
-      openaiModels: [{ id: 'gpt-5.6-terra', ownedBy: 'openai' }]
+      openaiModels: [{ id: 'gpt-6-luna', ownedBy: 'openai' }, { id: 'account-model', ownedBy: 'openai' }]
     });
 
     expect(choices.filter((choice) => choice.provider === 'openai').map((choice) => choice.model))
-      .toEqual(['gpt-5.6-sol', 'gpt-5.6-terra', 'hosted-model']);
+      .toEqual(['gpt-5.6-sol', 'gpt-6-luna', 'hosted-model', 'account-model']);
   });
 
   it('keeps reasoning independent while constraining it to the selected model', () => {
@@ -77,6 +80,14 @@ describe('chat configuration', () => {
       .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
     expect(chatReasoningChoices('openai', 'gpt-5.4').map((choice) => choice.value))
       .toEqual(['low', 'medium', 'high', 'xhigh']);
+    expect(chatReasoningChoices('openai', 'gpt-6.1-sol').map((choice) => choice.value))
+      .toEqual(['low', 'medium', 'high', 'xhigh', 'max']);
+    expect(chatReasoningChoices('openai', 'gpt-5-mini').map((choice) => choice.value))
+      .toEqual(['minimal', 'low', 'medium', 'high']);
+    expect(chatReasoningChoices('openai', 'gpt-5.4-pro').map((choice) => choice.value))
+      .toEqual(['medium', 'high', 'xhigh']);
+    expect(chatReasoningChoices('openai', 'gpt-4.1')).toEqual([]);
+    expect(chatReasoningChoices('openai', 'gpt-5-custom')).toEqual([]);
     expect(chatReasoningChoices('local', 'qwen3-8b')).toEqual([]);
     expect(chatReasoningChoices('local', 'qwen/Qwen3.8-27B')).toEqual([]);
     expect(normalizeChatReasoningEffort('openai', 'gpt-5.4', 'max')).toBe('medium');
