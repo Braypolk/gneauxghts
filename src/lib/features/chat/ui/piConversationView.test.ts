@@ -312,6 +312,50 @@ describe('Pi conversation presentation binding', () => {
     } finally { other.dispose(); await fixture.close(); }
   });
 
+  it('forgets multiple list targets without selecting them and undoes without leaving the current chat', async () => {
+    const fixture = await piViewFixture();
+    try {
+      await fixture.binding.initialize();
+      const selected = await fixture.runtime.createConversation({ title: 'Keep reading' });
+      const first = await fixture.runtime.createConversation({ title: 'Forget first' });
+      const second = await fixture.runtime.createConversation({ title: 'Forget second' });
+      await second.submit({ type: 'write', entry: { kind: 'fixture', model: [{ role: 'user', content: 'Retained transcript', timestamp: 1 }] } }, PI_CONTEXT);
+      await fixture.binding.select(String(selected.id));
+      await fixture.binding.refreshList();
+      const select = vi.spyOn(fixture.harness, 'conversation');
+      const entries = fixture.binding.getSnapshot().entries;
+      await fixture.binding.forget(first.id);
+      await fixture.binding.forget(second.id);
+      expect(fixture.binding.getSnapshot().conversation?.id).toBe(selected.id);
+      expect(fixture.binding.getSnapshot().entries).toBe(entries);
+      expect(select).not.toHaveBeenCalled();
+      expect(fixture.binding.getSnapshot().conversations.map(row => row.id)).toEqual([selected.id]);
+      expect(fixture.binding.getSnapshot().recentlyForgotten).toBe(second.id);
+      await fixture.binding.unforget({ select: false });
+      expect(fixture.binding.getSnapshot().conversation?.id).toBe(selected.id);
+      await vi.waitFor(() => expect(fixture.binding.getSnapshot().conversations.map(row => row.id)).toContain(second.id));
+      expect((await fixture.harness.snapshot(ChatDoc, first.id, PI_CONTEXT))?.forgotten).toBe(true);
+      expect((await second.entries({}, 50, undefined, PI_CONTEXT)).items[0].model?.[0]).toMatchObject({ content: 'Retained transcript' });
+      expect(fixture.faux.state.callCount).toBe(0);
+    } finally { await fixture.close(); }
+  });
+
+  it('refuses to forget a background chat with active Pi work', async () => {
+    const fixture = await piViewFixture();
+    try {
+      await fixture.binding.initialize();
+      fixture.faux.setResponses([async (_request, options) => { await untilAborted(options?.signal); return fauxAssistantMessage('Stopped', { stopReason: 'aborted' }); }]);
+      const active = (await fixture.binding.send('Still working'))!;
+      const running = fixture.binding.getSnapshot().conversation!;
+      await vi.waitFor(() => expect(fixture.faux.state.callCount).toBe(1));
+      await fixture.binding.startNew();
+      await expect(fixture.binding.forget(running.id)).rejects.toThrow('Stop');
+      expect(fixture.binding.getSnapshot().conversation).toBeNull();
+      expect((await fixture.harness.snapshot(ChatDoc, running.id, PI_CONTEXT))?.forgotten).not.toBe(true);
+      await running.abort(PI_CONTEXT); await active.wait(PI_CONTEXT);
+    } finally { await fixture.close(); }
+  });
+
   it('refuses to forget active Pi work even if the selected view is stale', async () => {
     const fixture = await piViewFixture();
     try {

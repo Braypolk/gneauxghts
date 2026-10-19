@@ -456,12 +456,12 @@ export function createPiConversationView(deps: Dependencies = {}) {
   return {
     subscribe: state.subscribe, getSnapshot: snapshot, initialize, select, refreshList, send, stop, changeRead, changeWrite, reviewEdit, configure,
     async startNew() { state.update(value => ({ ...value, recentlyForgotten: undefined })); await select(null); },
-    async forget() {
+    async forget(id = snapshot().conversation?.id) {
       requireOpen();
       const current = snapshot();
-      if (!current.conversation || !chat) return;
-      if (!canForgetConversation(current)) throw new Error('Stop the response before forgetting this chat.');
-      const id = current.conversation.id;
+      if (!id || !chat) return;
+      if (current.forgetting) throw new Error('Wait for this chat to finish being forgotten.');
+      if (current.conversation?.id === id && !canForgetConversation(current)) throw new Error('Stop the response before forgetting this chat.');
       state.update(value => ({ ...value, forgetting: true }));
       try {
         // Reversible presentation metadata only. Pi history and native authority keep their owners.
@@ -476,14 +476,14 @@ export function createPiConversationView(deps: Dependencies = {}) {
         }
       } finally { if (!disposed) state.update(value => ({ ...value, forgetting: false })); }
     },
-    async unforget() {
+    async unforget(options: { select?: boolean } = {}) {
       requireOpen();
       const id = snapshot().recentlyForgotten;
       if (!id || !chat) return;
       await chat.harness.commit(async tx => { (await tx.doc(ChatDoc, id)).forgotten = false; }, PI_CONTEXT);
       if (!disposed) {
         state.update(value => ({ ...value, recentlyForgotten: undefined }));
-        await select(String(id));
+        if (options.select !== false) await select(String(id));
       }
     },
     clearError: () => state.update(value => ({ ...value, error: null })), report,

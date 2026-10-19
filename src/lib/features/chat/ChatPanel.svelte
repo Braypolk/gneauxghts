@@ -20,6 +20,7 @@
   import PiRuntimeDiagnostics from './ui/PiRuntimeDiagnostics.svelte';
   import PiModelSelector from './ui/PiModelSelector.svelte';
   import PiContextUsage from './ui/PiContextUsage.svelte';
+  import PiConversationPicker from './ui/PiConversationPicker.svelte';
   import { writeGrantForDuration, withCreationPermission } from './pi/authority';
   import PiEditReview from './ui/PiEditReview.svelte';
   import type { ChatSurfaceHandle } from './types';
@@ -110,11 +111,7 @@
     {#snippet title()}<input class="pane-header-title-input" aria-label="Conversation title" placeholder="New chat" disabled={runtimeUnavailable || !snapshot.conversation} bind:value={titleDraft} onfocus={() => titleFocused = true} onblur={() => { titleFocused = false; void action(() => binding.rename(titleDraft)); }} onkeydown={event => { if (event.key === 'Enter') input?.focus(); }} />{/snippet}
     {#snippet secondaryActions()}{#if showConversationPicker}<button type="button" class="pane-header-action" aria-label="Conversations" aria-expanded={menu === 'history'} onclick={() => menu = menu === 'history' ? null : 'history'}><History size={18} /></button>{/if}{/snippet}
   </PaneHeader>
-  {#if menu === 'history'}<div class="pi-menu" role="menu" aria-label="Conversations">
-    <button type="button" role="menuitem" onclick={() => switchConversation(null)}>New conversation</button>
-    {#each snapshot.conversations as item (item.id)}<button type="button" role="menuitem" data-conversation-id={item.id} aria-current={String(item.id) === visibleId ? 'true' : undefined} onclick={() => switchConversation(String(item.id))}>{item.title || 'Conversation'}{item.retired ? ' · Previous access' : ''}</button>{/each}
-    {#if snapshot.listNext}<button type="button" onclick={() => action(() => binding.refreshList(true))}>More conversations</button>{/if}
-  </div>{/if}
+  {#if menu === 'history'}<PiConversationPicker {binding} onSelect={switchConversation} />{/if}
   <div role="log" aria-label="Conversation messages" data-pane-content class="min-h-0 flex-1 overflow-y-auto" bind:this={scrollRoot} use:trackScroll={{ conversationId: visibleId, ready: snapshot.initialized && !snapshot.loading, positions }}><div class="chat-content-lane">
     {#if snapshot.loading}<p role="status">Loading conversation…</p>
     {:else if !snapshot.initialized}<p role="status">{snapshot.error ? 'Chat could not open.' : 'Opening chat…'}</p>
@@ -182,8 +179,6 @@
   </div>
 </section>
 <style>
-  .pi-menu { position: absolute; top: 4rem; left: 1rem; z-index: 30; max-height: 60%; overflow: auto; padding: .5rem; border: 1px solid var(--border); border-radius: .7rem; background: var(--card); box-shadow: 0 8px 30px #0002; }
-  .pi-menu button { display: block; text-align: left; width: 100%; padding: .5rem .75rem; }
   .pi-empty { margin-top: 3rem; text-align: center; color: var(--muted-foreground); }
   .pi-activity { margin-block: 1rem; color: var(--muted-foreground); font-size: .8rem; }
   button:disabled { opacity: .4; }

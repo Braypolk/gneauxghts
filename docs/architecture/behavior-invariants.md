@@ -168,6 +168,13 @@ from the Running Vault's persisted chat location. Missing or forgotten conversat
 leave a fresh composer. Explicit conversation navigation takes precedence, and New
 chat stays empty until the user starts a conversation.
 
+The conversation picker can forget a chat without opening it. Confirmed row
+actions retain the open picker and its scroll position; forgetting another chat
+does not replace the selected conversation or its composer draft. Forgetting the
+selected chat leaves a fresh composer. Picker Undo restores the last forgotten
+chat to the list without navigating. Pi's transaction checks reject forgetting
+while that target has active response, compaction or queued work.
+
 Each chat pane retains a reading position per conversation for its open lifetime,
 including while the pane displays a note. Returning restores that position after
 history rendering settles. Explicit message links take precedence; unseen chats
