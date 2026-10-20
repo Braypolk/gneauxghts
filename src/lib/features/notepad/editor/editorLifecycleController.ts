@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import { tick } from 'svelte';
 import type {
   CursorPosition,
@@ -58,10 +59,10 @@ interface EditorLifecycleControllerDeps {
   getDocumentSession: () => NoteDraftState;
   setIsEditorReady: (value: boolean) => void;
   setIsApplyingProgrammaticUpdate: (value: boolean) => void;
-  handleEditorMarkdownChange: (
+  handleEditorBodyChange: (
     paneId: string,
     document: NoteDraftState,
-    nextMarkdown: string
+    body: DocumentBody
   ) => void;
   getSharedEditorResources: (document: NoteDraftState) => SharedEditorResources;
   getViewCallbacks: () => EditorViewCallbacks;
@@ -77,7 +78,7 @@ export function createEditorLifecycleController({
   getDocumentSession,
   setIsEditorReady,
   setIsApplyingProgrammaticUpdate,
-  handleEditorMarkdownChange,
+  handleEditorBodyChange,
   getSharedEditorResources,
   getViewCallbacks,
   closeTransientUi
@@ -107,12 +108,12 @@ export function createEditorLifecycleController({
       initialState: null,
       sharedResources: getSharedEditorResources(document),
       viewCallbacks: getViewCallbacks(),
-      onMarkdownChange: (nextMarkdown) => {
+      onBodyChange: (nextMarkdown) => {
         // Resolve the pane's note at event time: a save can rekey/replace the
         // note object after the editor is created, and a stale capture would
         // route body edits to an orphaned note (splitting one note into two).
         const liveDocument = getDocumentSession();
-        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown);
+        handleEditorBodyChange(getPaneId(), liveDocument, nextMarkdown);
       }
     });
     bindSlashMenuViewToPane(controller.view, getPaneId());
@@ -140,12 +141,12 @@ export function createEditorLifecycleController({
 
     const ok = swapEditorRuntime(controller, {
       sharedResources: getSharedEditorResources(nextDocument),
-      initialValue: nextDocument.working.markdown,
+      initialValue: nextDocument.working.body.toMarkdown(),
       initialState: null,
       viewCallbacks: getViewCallbacks(),
-      onMarkdownChange: (nextMarkdown) => {
+      onBodyChange: (nextMarkdown) => {
         const liveDocument = getDocumentSession();
-        handleEditorMarkdownChange(getPaneId(), liveDocument, nextMarkdown);
+        handleEditorBodyChange(getPaneId(), liveDocument, nextMarkdown);
       }
     });
     if (!ok) {

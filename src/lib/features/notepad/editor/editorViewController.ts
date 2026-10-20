@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import { tick } from 'svelte';
 import { Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
@@ -75,13 +76,13 @@ function bindController(
   runtime: EditorDocumentRuntime,
   sharedResources: SharedEditorResources | null,
   viewCallbacks: EditorViewCallbacks,
-  onMarkdownChange: (markdown: string) => void,
+  onBodyChange: (body: DocumentBody) => void,
   paneKey: symbol
 ) {
   controller.runtime = runtime;
   controller.sharedResources = sharedResources;
   controller.paneKey = paneKey;
-  controller.onMarkdownChange = onMarkdownChange;
+  controller.onBodyChange = onBodyChange;
   sharedResources?.registerViewCallbacks(controller.view, viewCallbacks);
   runtime.attachController(controller);
 }
@@ -95,7 +96,7 @@ export async function prepareEditor(editorRoot: HTMLDivElement | null) {
 export async function createEditor({
   editorRoot,
   initialValue,
-  onMarkdownChange,
+  onBodyChange,
   initialState = null,
   sharedResources = null,
   viewCallbacks = defaultViewCallbacks
@@ -132,14 +133,14 @@ export async function createEditor({
     runtime,
     sharedResources,
     paneKey: Symbol('editor-pane'),
-    onMarkdownChange
+    onBodyChange
   };
   bindController(
     controller,
     runtime,
     sharedResources,
     viewCallbacks,
-    onMarkdownChange,
+    onBodyChange,
     controller.paneKey
   );
   binding.slashMenuApi.register(view);
@@ -168,7 +169,7 @@ export function swapEditorRuntime(
     initialValue,
     initialState = null,
     viewCallbacks,
-    onMarkdownChange
+    onBodyChange
   }: SwapEditorRuntimeOptions
 ): boolean {
   if (!controller) {
@@ -201,7 +202,7 @@ export function swapEditorRuntime(
     nextRuntime,
     sharedResources,
     viewCallbacks,
-    onMarkdownChange,
+    onBodyChange,
     paneKey
   );
   binding.slashMenuApi.register(view);

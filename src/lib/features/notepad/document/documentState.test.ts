@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { describe, expect, it } from 'vitest';
 import {
   createDocumentState,
@@ -129,14 +130,14 @@ describe('external synchronization transitions', () => {
         source
       );
 
-      expect(document.working.markdown).toBe('local body');
+      expect(document.working.body.toMarkdown()).toBe('local body');
       expect(document.externalSync).toMatchObject({
         kind: 'conflict',
         external: {
           kind: 'snapshot',
           source,
           document: {
-            content: { markdown: 'external body' }
+            content: { body: DocumentBody.fromMarkdown('external body') }
           }
         }
       });

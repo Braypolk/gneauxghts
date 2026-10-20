@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import type { EditorView } from '@codemirror/view';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
 import type {
@@ -9,18 +10,20 @@ import { invoke } from '@tauri-apps/api/core';
 import { createImageAssetLoader } from '../images/imageAssetLoader';
 
 export interface CreateSharedEditorResourcesOptions {
+  initialBody?: DocumentBody;
   assetRootPath: string | null;
   onStorePastedImage: (file: File) => Promise<StoredImageAsset>;
   onReadImageAsset?: (name: string) => Promise<string>;
 }
 
 export function createSharedEditorResources({
+  initialBody,
   assetRootPath,
   onStorePastedImage,
   onReadImageAsset = (fileName) => invoke<string>('read_image_asset_data_url', { fileName })
 }: CreateSharedEditorResourcesOptions): SharedEditorResources {
   const viewCallbacks = new WeakMap<EditorView, EditorViewCallbacks>();
-  const runtime = new EditorDocumentRuntime('');
+  const runtime = new EditorDocumentRuntime(initialBody ?? '');
   const imagesConfig = { assetRootPath, storePastedImage: onStorePastedImage, loadImage: loaderLoad };
   const loader = createImageAssetLoader(onReadImageAsset, () => imagesConfig.assetRootPath,
     (fileName) => invoke<string>('read_image_asset_fingerprint', { fileName }));

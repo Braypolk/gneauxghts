@@ -163,7 +163,7 @@ describe('documentPaneCoordinator', () => {
 
     await coordinator.replaceDocumentContentInPlace(
       target,
-      target.working.markdown
+      target.working.body.toMarkdown()
     );
 
     expect(replaceContentInPlace).toHaveBeenCalledWith(

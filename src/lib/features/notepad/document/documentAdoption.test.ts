@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { describe, expect, it } from 'vitest';
 import { createNoteDraftState } from '../state/noteStore';
 import { createEmptySessionSnapshot } from '../session/session';
@@ -23,7 +24,7 @@ for (const [name, adopt] of Object.entries(adapters)) describe(`${name} snapshot
     const document = createNoteDraftState(initial);
     const revision = document.operation.revision;
     expect(adopt(document, next)).toEqual({ titleChanged: true, markdownChanged: true });
-    expect(document.working).toMatchObject({ title: 'After', markdown: 'new body', tags: ['new'] });
+    expect(document.working).toMatchObject({ title: 'After', body: DocumentBody.fromMarkdown('new body'), tags: ['new'] });
     expect(document.operation.revision).toBe(revision + 1);
     expect(document.working.tags).not.toBe(next.tags);
   });
@@ -32,8 +33,8 @@ for (const [name, adopt] of Object.entries(adapters)) describe(`${name} snapshot
     updateDocumentMarkdown(document, 'later body'); updateDocumentTitle(document, 'Later'); updateDocumentTags(document, ['local']);
     const revision = document.operation.revision;
     expect(adopt(document, next, { preserveWorking: true, preserveTags })).toEqual({ titleChanged: false, markdownChanged: false });
-    expect(document.working).toMatchObject({ title: 'Later', markdown: 'later body', tags: preserveTags ? ['local'] : ['new'] });
-    expect(document.savedBaseline?.content).toMatchObject({ title: 'After', markdown: 'new body', tags: ['new'] });
+    expect(document.working).toMatchObject({ title: 'Later', body: DocumentBody.fromMarkdown('later body'), tags: preserveTags ? ['local'] : ['new'] });
+    expect(document.savedBaseline?.content).toMatchObject({ title: 'After', body: DocumentBody.fromMarkdown('new body'), tags: ['new'] });
     expect(document.operation.revision).toBe(revision + (preserveTags ? 0 : 1));
   });
   it('preserves dirty tags by default while adopting a clean tags diagnostic', () => {

@@ -107,6 +107,15 @@ describe("persistenceController", () => {
     }
   });
 
+  it("does not serialize an unchanged body when a save is requested", async () => {
+    const note = createNoteDraftState(snapshot());
+    const serialize = vi.spyOn(note.working.body, 'toMarkdown');
+    const saveNoteSession = vi.fn();
+    await controllerFor(note, { saveNoteSession }).enqueueSave(note);
+    expect(serialize).not.toHaveBeenCalled();
+    expect(saveNoteSession).not.toHaveBeenCalled();
+  });
+
   it("saves tags and body in one existing note operation", async () => {
     const note = createNoteDraftState(snapshot({ tags: ['old'], lastSavedTags: ['old'] }));
     const editing = editingServiceFor(note);
@@ -224,7 +233,7 @@ describe("persistenceController", () => {
     await save;
 
     expect(note.operation.kind).toBe("idle");
-    expect(note.savedBaseline?.content.markdown).toBe("saved body");
+    expect(note.savedBaseline?.content.body.toMarkdown()).toBe("saved body");
   });
 
   it("adopts the persisted path while keeping a newer draft typed during the save", async () => {
@@ -272,7 +281,7 @@ describe("persistenceController", () => {
       path: "/vault/first line.md",
     });
     // The newer draft body the user typed is preserved.
-    expect(note.working.markdown).toBe("first line\nsecond line");
+    expect(note.working.body.toMarkdown()).toBe("first line\nsecond line");
     expect(markNoteOpened).toHaveBeenCalledWith("note-id");
     expect(note.operation.kind).toBe("idle");
   });
@@ -421,11 +430,11 @@ describe("persistenceController", () => {
     await save;
 
     expect(saveNoteSession).toHaveBeenCalledTimes(1);
-    expect(savingDraft.savedBaseline?.content.markdown).toBe(
+    expect(savingDraft.savedBaseline?.content.body.toMarkdown()).toBe(
       "captured independent draft"
     );
-    expect(savingDraft.working.markdown).toBe("newer independent draft");
-    expect(established.working.markdown).toBe("established dirty draft");
+    expect(savingDraft.working.body.toMarkdown()).toBe("newer independent draft");
+    expect(established.working.body.toMarkdown()).toBe("established dirty draft");
     expect(savingDraft.canonicalCollision?.otherHandle).toBe(
       established.handle
     );
@@ -433,7 +442,7 @@ describe("persistenceController", () => {
 
     await controller.enqueueSave(savingDraft);
     expect(saveNoteSession).toHaveBeenCalledTimes(1);
-    expect(savingDraft.working.markdown).toBe("newer independent draft");
+    expect(savingDraft.working.body.toMarkdown()).toBe("newer independent draft");
   });
 
   it("preserves dirty editor content when durable history preparation fails", async () => {

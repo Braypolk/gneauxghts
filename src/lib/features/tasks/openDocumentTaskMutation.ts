@@ -2,7 +2,6 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   documentHasCleanBuffer,
   documentHasUnresolvedConflict,
-  getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
   type NoteDraftState
@@ -103,7 +102,8 @@ export function createOpenDocumentTaskMutationHandler(
       const expectedDocument = document;
       const expectedKey = document.handle;
       const expectedRevision = document.operation.revision;
-      const workingMarkdown = getDocumentMarkdown(document);
+      const body = document.working.body;
+      const workingMarkdown = body.toMarkdown();
       const bodyHash = await hashMarkdown(workingMarkdown);
       const prepared = await prepare({
         taskId,
@@ -117,7 +117,7 @@ export function createOpenDocumentTaskMutationHandler(
         document === expectedDocument &&
         document.handle === expectedKey &&
         document.operation.revision === expectedRevision &&
-        getDocumentMarkdown(document) === workingMarkdown &&
+        document.working.body.equals(body) &&
         !documentHasUnresolvedConflict(document);
 
       if (!targetIsCurrent) {

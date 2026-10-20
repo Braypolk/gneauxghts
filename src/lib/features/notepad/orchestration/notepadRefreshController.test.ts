@@ -116,7 +116,7 @@ describe('notepad refresh controller', () => {
     ).toHaveBeenCalledWith(harness.note, {
       source: 'taskMutation'
     });
-    expect(harness.note.working.markdown).toBe('local edit');
+    expect(harness.note.working.body.toMarkdown()).toBe('local edit');
   });
 
   it('records external deletion as a recoverable conflict for a dirty shared document', async () => {

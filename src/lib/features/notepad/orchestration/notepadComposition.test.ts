@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadComposition, deferred, persistedSession } from './notepadCompositionTestSupport';
 import { createEmptySessionSnapshot, createSessionSnapshot, openNoteSession, readNoteSession, forgetNoteSession, restoreForgottenNotes } from '../session/session';
@@ -54,11 +55,11 @@ describe('composed notepad commands', () => {
     await f.commands.clearNotepad();
     const fresh = f.getNavigationDocument();
     expect(fresh.handle).not.toBe(f.initialDocument.handle);
-    expect(fresh.working.markdown).toBe('');
+    expect(fresh.working.body.toMarkdown()).toBe('');
     expect(forgetNoteSession).not.toHaveBeenCalled();
     await f.commands.unforgetNotepad();
     expect(f.getNavigationDocument()).toBe(fresh);
-    expect(fresh.working).toMatchObject({ title: 'Draft', markdown: 'unsaved text' });
+    expect(fresh.working).toMatchObject({ title: 'Draft', body: DocumentBody.fromMarkdown('unsaved text') });
     expect(f.state.recentlyForgotten).toBeNull();
   });
 
@@ -101,8 +102,8 @@ describe('composed notepad commands', () => {
     await f.persistence.enqueueSave(f.initialDocument);
     oldRead.resolve(persistedSession('a', 'obsolete disk body'));
     expect(await refreshing).toBe('stale');
-    expect(f.initialDocument.working.markdown).toBe('newer committed body');
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('newer committed body');
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('newer committed body');
+    expect(f.initialDocument.savedBaseline?.content.body.toMarkdown()).toBe('newer committed body');
     expect(f.initialDocument.externalSync.kind).toBe('noConflict');
   });
   it('retains local edits made during an external read and offers the changed disk snapshot as a conflict', async () => {
@@ -112,8 +113,8 @@ describe('composed notepad commands', () => {
     updateDocumentMarkdown(f.initialDocument, 'local edit during read');
     read.resolve(persistedSession('a', 'changed disk body'));
     expect(await refreshing).toBe('conflict');
-    expect(f.initialDocument.working.markdown).toBe('local edit during read');
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('a');
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('local edit during read');
+    expect(f.initialDocument.savedBaseline?.content.body.toMarkdown()).toBe('a');
     expect(f.initialDocument.externalSync).toMatchObject({ kind: 'conflict', phase: 'awaitingChoice' });
   });
 
@@ -128,10 +129,10 @@ describe('composed notepad commands', () => {
     expect(readNoteSession).toHaveBeenCalledTimes(2);
     right.resolve(persistedSession('b', 'right changed'));
     expect(await b).toBe('refreshed');
-    expect(f.initialDocument.working.markdown).toBe('a');
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('a');
     left.resolve(persistedSession('a', 'left changed'));
     expect(await a).toBe('refreshed');
-    expect(other.working.markdown).toBe('right changed');
+    expect(other.working.body.toMarkdown()).toBe('right changed');
   });
 
   it('coalesces duplicate refreshes into exactly one trailing reread', async () => {
@@ -144,7 +145,7 @@ describe('composed notepad commands', () => {
     trailing.resolve(persistedSession('a', 'trailing content'));
     expect(await refreshing).toBe('refreshed'); expect(await duplicate).toBe('refreshed');
     expect(readNoteSession).toHaveBeenCalledTimes(2);
-    expect(f.initialDocument.savedBaseline?.content.markdown).toBe('trailing content');
+    expect(f.initialDocument.savedBaseline?.content.body.toMarkdown()).toBe('trailing content');
   });
 
   it('does not load or mutate a target when the preceding real save fails', async () => {
@@ -152,7 +153,7 @@ describe('composed notepad commands', () => {
     f.save.mockRejectedValue(new Error('save failed'));
     await expect(f.commands.openNotePath('/vault/b.md', { noteId: 'b' })).rejects.toThrow('save failed');
     expect(openNoteSession).not.toHaveBeenCalled(); expect(f.getNavigationDocument()).toBe(f.initialDocument);
-    expect(f.initialDocument.working.markdown).toBe('dirty');
+    expect(f.initialDocument.working.body.toMarkdown()).toBe('dirty');
   });
 
   it('allows two panes sharing a document to complete independent opens', async () => {

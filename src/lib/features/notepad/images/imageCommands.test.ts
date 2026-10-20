@@ -18,7 +18,7 @@ describe('authored image edits through shared undo', () => {
     expect(b.view.state.doc.toString()).toBe(runtime.markdown);
     expect(b.view.state.selection.main.anchor).toBe(0);
     expect(b.view.scrollDOM.scrollTop).toBe(123);
-    expect(a.onMarkdownChange).toHaveBeenCalledTimes(1);
+    expect(a.onBodyChange).toHaveBeenCalledTimes(1);
     expect(runtime.undo(b.controller.paneKey)).toBe(true);
     expect(a.view.state.doc.toString()).toBe(original);
     expect(runtime.undo(b.controller.paneKey)).toBe(false);
@@ -49,7 +49,7 @@ it('does not dispatch an unchanged resize', () => {
   const original = '![[a.png|200]]';
   const runtime = new EditorDocumentRuntime(original), a = pane(runtime, original, 0);
   resizeRenderedImage(a.view, a.view.state.field(imageState).images[0], 200);
-  expect(a.onMarkdownChange).not.toHaveBeenCalled();
+  expect(a.onBodyChange).not.toHaveBeenCalled();
   expect(runtime.undo(a.controller.paneKey)).toBe(false);
 });
 it('groups a keyboard sizing burst separately from adjacent typing and gestures', () => {

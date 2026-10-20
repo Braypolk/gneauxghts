@@ -212,7 +212,7 @@ describe('notepad task mutation adapter', () => {
       expect(saveNoteSession).not.toHaveBeenCalled();
       expect(scheduleAutosave).not.toHaveBeenCalled();
       expect(documentHasCleanBuffer(note)).toBe(true);
-      expect(note.savedBaseline?.content.markdown).toBe(
+      expect(note.savedBaseline?.content.body.toMarkdown()).toBe(
         '- [x] Trace me\n\nUnsaved local context'
       );
       expect(note.operation.kind).toBe('idle');

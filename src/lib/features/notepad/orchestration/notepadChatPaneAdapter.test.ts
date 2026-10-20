@@ -12,7 +12,7 @@ describe('Pi chat pane integration', () => {
       getPaneOrder: () => ['chat', 'editor'], getPaneKind: id => id === 'chat' ? 'chat' : 'editor', getPaneDocument: id => documents[id],
       setPaneDocument: (id, document) => documents[id] = document, getPaneConversationId: () => null, setPaneConversationId: setConversation, touchPaneLocation: touch, openSource });
     try {
-      adapter.syncRetainedContexts(); expect(documents.chat).toBe(documents.editor); expect(documents.editor.working.markdown).toBe('Unsaved text');
+      adapter.syncRetainedContexts(); expect(documents.chat).toBe(documents.editor); expect(documents.editor.working.body.toMarkdown()).toBe('Unsaved text');
       const exposed = adapter.getBindings('chat'); expect(Object.keys(exposed.context)).toEqual(['onOpenSource']);
       exposed.session.onConversationChange('42'); expect(setConversation).toHaveBeenCalledWith('chat', '42'); expect(touch).toHaveBeenCalledWith('chat');
       await exposed.context.onOpenSource('native-authority', 'native-source'); expect(openSource).toHaveBeenCalledWith('chat', 'native-authority', 'native-source');

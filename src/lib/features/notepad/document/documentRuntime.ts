@@ -1,3 +1,4 @@
+import type { DocumentBody } from './documentBody';
 import { createSharedEditorResources } from '$lib/features/notepad/editor/editorDocumentResources';
 import type { SharedEditorResources } from '$lib/features/notepad/editor/types';
 import type { StoredImageAsset } from '$lib/features/notepad/model/types';
@@ -21,11 +22,13 @@ export class DocumentRuntime {
   }
 
   ensureResources(initial: {
+    body?: DocumentBody;
     assetRootPath: string | null;
     storePastedImage: (file: File) => Promise<StoredImageAsset>;
   }): SharedEditorResources {
     if (!this._resources) {
       this._resources = createSharedEditorResources({
+        initialBody: initial.body,
         assetRootPath: initial.assetRootPath,
         onStorePastedImage: initial.storePastedImage
       });

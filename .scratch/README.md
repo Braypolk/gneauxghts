@@ -41,6 +41,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Immutable draft bodies](archive/immutable-draft-bodies.md): synchronous body adoption removes full-string edit callbacks and Related JSON keys; saves pin exact versions, dirty/undo semantics and headless ownership remain intact. Isolated measurements and the remaining consumer audit are recorded. [Native app comparison](archive/draft-body-app-benchmark/README.md) runs before/after/after/before: long split-pane prose improves about 3 ms, smaller notes/fences stay similar, and giant-quote typing still accumulates backlog.
+
 - [Visible-range Markdown formatting](archive/visible-range-markdown/README.md): bounded presentation traversal/emission, pane-local formatting and atomic ranges, pure/mounted/full-app before-and-after measurements, browser and native WebKit verification, and giant-quote parser profiling. The [marker-merge follow-up](archive/visible-range-markdown/marker-merge-integration.md) records parser regression coverage, focused native timing and approximately halved giant-quote edit dispatch. The [history-root follow-up](archive/visible-range-markdown/root-parser-removal.md) removes the unused root parser, with a fresh 50%/32% dispatch improvement for one/two panes and 22 native checks passing; paragraph parsing and the split-pane frame tail remain expensive.
 
 - [Paragraph and inline Markdown parsing](archive/visible-range-markdown/paragraph-inline-optimization.md): skip impossible builtin recognizers and buffered-node tree-identity lookups. Giant-quote dispatch improves another 30%; syntax/work regressions, profiles, 24 browser checks and 22 native checks pass. Repeated background paragraph passes remain.

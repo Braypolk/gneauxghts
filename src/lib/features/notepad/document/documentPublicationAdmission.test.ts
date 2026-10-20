@@ -42,7 +42,7 @@ describe('document publication admission', () => {
     if (kind === 'titleDraft') f.editTitle();
     if (kind === 'conflict') f.document.externalSync = { kind: 'conflict', sequence: 1, conflictId: 1, phase: 'awaitingChoice', external: { kind: 'deletion', source: 'watcher', path: base.path! } };
     if (kind === 'collision') f.document.canonicalCollision = { otherHandle: 'document:other', noteId: base.noteId, path: base.path! };
-    if (kind === 'runtime') f.root.replaceMarkdown('Unrecorded human input', { notifyMarkdownChange: false });
+    if (kind === 'runtime') f.root.replaceMarkdown('Unrecorded human input', { notifyBodyChange: false });
     const effect = vi.fn();
     await expect(f.service.withAgentPublication(target, effect)).rejects.toThrow();
     expect(effect).not.toHaveBeenCalled();
@@ -95,7 +95,7 @@ describe('document publication admission', () => {
     await f.service.withAgentPublication(target, async lease => {
       expect(await lease.adopt({ ...target, markdown: committed.markdown, commitWarning: committed.commitWarning })).toBe('adopted');
     });
-    expect(f.document.savedBaseline?.content.markdown).toBe('After');
+    expect(f.document.savedBaseline?.content.body.toMarkdown()).toBe('After');
     expect(f.document.publication.warning).toEqual(committed.commitWarning);
     expect(first.readState().doc.toString()).toBe('After');
     expect(documentRegistry.get(f.document.handle)?.resources()?.runtime).toBe(f.root);
@@ -107,8 +107,8 @@ describe('document publication admission', () => {
     await f.service.withAgentPublication(target, async lease => {
       expect(await lease.adopt({ ...target, markdown: 'Historical publication' })).toBe('conflict');
     });
-    expect(f.document.working.markdown).toBe('Before');
-    expect(f.document.savedBaseline?.content.markdown).toBe('Before');
+    expect(f.document.working.body.toMarkdown()).toBe('Before');
+    expect(f.document.savedBaseline?.content.body.toMarkdown()).toBe('Before');
     expect(f.document.externalSync.kind).toBe('conflict');
   });
 

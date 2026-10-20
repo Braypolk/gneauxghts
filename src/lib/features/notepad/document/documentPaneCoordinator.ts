@@ -191,7 +191,7 @@ export function createDocumentPaneCoordinator<
       if (paneId) {
         await deps.paneLifecycle.replaceContentInPlace(
           paneId,
-          nextNote.working.markdown,
+          nextNote.working.body.toMarkdown(),
           nextNote,
           true
         );
@@ -234,7 +234,7 @@ export function createDocumentPaneCoordinator<
     if (previousNote.handle === nextNote.handle) {
       await deps.paneLifecycle.replaceContentInPlace(
         paneId,
-        nextNote.working.markdown,
+        nextNote.working.body.toMarkdown(),
         nextNote,
         true
       );

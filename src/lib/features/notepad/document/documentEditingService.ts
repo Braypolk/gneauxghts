@@ -1,5 +1,5 @@
+import { DocumentBody } from './documentBody';
 import {
-  getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
   getDocumentTitle,
@@ -7,6 +7,7 @@ import {
   resolveConflictUsingExternal,
   restoreTransientDraftToDocument,
   updateDocumentMarkdown,
+  updateDocumentBody,
   updateDocumentTitle,
   updateDocumentTags,
   tagsEqual,
@@ -51,7 +52,7 @@ export interface DocumentSaveCapture {
   readonly operationToken: number;
   readonly revision: number;
   readonly title: string;
-  readonly markdown: string;
+  readonly body: DocumentBody;
   readonly tags: string[];
   readonly tagEdit?: TagEdit;
   readonly noteId: string | null;
@@ -68,7 +69,7 @@ export interface DocumentEditingServiceDeps<TPaneId extends string> {
   isTitleEditing: (document: NoteDraftState) => boolean;
   resetPaneCommandAfterBodyInput: (
     paneId: TPaneId,
-    nextMarkdown: string
+    body: DocumentBody
   ) => void;
   clearRecentlyForgotten: () => void;
   scheduleAutosave: (document: NoteDraftState) => void;
@@ -110,7 +111,7 @@ export function createDocumentEditingService<TPaneId extends string>(
           throw new DocumentPublicationBlocked('Save or resolve the existing editor changes before applying this mutation.');
         }
         const root = documentRegistry.get(document.handle)?.resources()?.runtime;
-        if (root && root.markdown !== getDocumentMarkdown(document)) throw new DocumentPublicationBlocked('The live editor and saved document differ.');
+        if (root && !root.body.equals(document.working.body)) throw new DocumentPublicationBlocked('The live editor and saved document differ.');
       }
     };
     requireReady();
@@ -170,7 +171,7 @@ export function createDocumentEditingService<TPaneId extends string>(
           requireReady();
           for (const document of targets) admission.adopt(document, () => {
             adoptCommittedDocument(deps.state, document, { ...current, commitWarning: receipt.commitWarning });
-            resetCommittedRuntime(document, current.markdown);
+            resetCommittedRuntime(document, document.working.body);
           });
           refreshDerivedViews();
           return 'adopted';
@@ -189,12 +190,12 @@ export function createDocumentEditingService<TPaneId extends string>(
 
   function resetCommittedRuntime(
     document: NoteDraftState,
-    markdown: string
+    body: DocumentBody
   ) {
     documentRegistry
       .get(document.handle)
       ?.resources()
-      ?.runtime.adoptCommittedMarkdown(markdown);
+      ?.runtime.adoptCommittedBody(body);
   }
 
   function restoreTransientRuntime(
@@ -208,12 +209,13 @@ export function createDocumentEditingService<TPaneId extends string>(
   }
 
   function captureSave(document: NoteDraftState): DocumentSaveCapture {
+    const body = document.working.body;
     return {
       document,
       operationToken: document.operation.token,
       revision: document.operation.revision,
       title: getDocumentTitle(document),
-      markdown: getDocumentMarkdown(document),
+      body,
       tags: [...(document.working.tags ?? [])],
       ...(!tagsEqual(document.working.tags, document.savedBaseline?.content.tags) ? {
         tagEdit: { previous: [...(document.savedBaseline?.content.tags ?? [])], tags: [...(document.working.tags ?? [])] }
@@ -240,19 +242,22 @@ export function createDocumentEditingService<TPaneId extends string>(
       document.operation.revision !== capture.revision ||
       getDocumentTitle(document) !== capture.title ||
       !tagsEqual(document.working.tags, capture.tags) ||
-      getDocumentMarkdown(document) !== capture.markdown ||
+      !document.working.body.equals(capture.body) ||
       getDocumentNoteId(document) !== capture.noteId ||
       getDocumentPath(document) !== capture.path ||
       deps.isTitleEditing(document);
-    const previousMarkdown = getDocumentMarkdown(document);
+    const previousBody = document.working.body;
     adoptCommittedDocument(deps.state, document, committed, {
       preserveWorking,
       preserveTags: preserveWorking && !tagsEqual(document.working.tags, capture.tags)
     });
-    if (getDocumentMarkdown(document) !== previousMarkdown) {
+    if (document.savedBaseline?.content.body.equals(capture.body)) {
+      document.savedBaseline.content.body = capture.body;
+    }
+    if (!document.working.body.equals(previousBody)) {
       resetCommittedRuntime(
         document,
-        document.working.markdown
+        document.working.body
       );
     }
     return document;
@@ -278,7 +283,7 @@ export function createDocumentEditingService<TPaneId extends string>(
     adoptCommittedDocument(deps.state, document, committed);
     // A Version Restore is an authored boundary even when only unmanaged
     // properties changed and the rendered body is byte-identical.
-    resetCommittedRuntime(document, committed.markdown);
+    resetCommittedRuntime(document, document.working.body);
     deps.clearRecentlyForgotten();
     refreshDerivedViews();
     return { kind: 'adopted', document };
@@ -289,12 +294,12 @@ export function createDocumentEditingService<TPaneId extends string>(
     committed: NoteSession
   ) {
     assertDocumentMutationAdmitted(document);
-    const previousMarkdown = getDocumentMarkdown(document);
+    const previousBody = document.working.body;
     adoptCommittedDocument(deps.state, document, committed);
-    if (getDocumentMarkdown(document) !== previousMarkdown) {
+    if (!document.working.body.equals(previousBody)) {
       resetCommittedRuntime(
         document,
-        document.working.markdown
+        document.working.body
       );
     }
     deps.clearRecentlyForgotten();
@@ -311,13 +316,13 @@ export function createDocumentEditingService<TPaneId extends string>(
       title: forgotten.title,
       ...(forgotten.tags ? { tags: [...forgotten.tags] } : {}),
       ...(forgotten.tagsError ? { tagsError: forgotten.tagsError } : {}),
-      markdown: forgotten.bodyMarkdown
+      body: DocumentBody.fromMarkdown(forgotten.bodyMarkdown)
     }, {
       noteId: forgotten.currentNoteId,
       path: forgotten.currentNotePath
     });
     synchronizeDocumentCanonicalLookup(deps.state, document);
-    restoreTransientRuntime(document, document.working.markdown);
+    restoreTransientRuntime(document, document.working.body.toMarkdown());
     deps.scheduleAutosave(document);
     deps.clearRecentlyForgotten();
     refreshDerivedViews();
@@ -341,12 +346,12 @@ export function createDocumentEditingService<TPaneId extends string>(
     applyToRuntime: (markdown: string) => Promise<void>
   ) {
     const appliedRevision = document.operation.revision;
-    await applyToRuntime(document.working.markdown);
+    await applyToRuntime(document.working.body.toMarkdown());
     if (document.operation.revision !== appliedRevision) {
       // The first effect waited behind a pane operation while a newer edit
       // became canonical. Reconcile the runtime to that newer model instead
       // of allowing the queued replacement to win afterward.
-      await applyToRuntime(document.working.markdown);
+      await applyToRuntime(document.working.body.toMarkdown());
     }
   }
 
@@ -360,7 +365,7 @@ export function createDocumentEditingService<TPaneId extends string>(
   function recordUserEdit(
     paneId: TPaneId,
     document: NoteDraftState,
-    markdown: string
+    body: DocumentBody
   ): boolean {
     // Programmatic editor replacements update the model at their orchestration
     // boundary. Their CodeMirror callback is only an acknowledgement and must
@@ -369,12 +374,12 @@ export function createDocumentEditingService<TPaneId extends string>(
       return false;
     }
 
-    const changed = applyMarkdownProjection(document, markdown);
+    const changed = updateDocumentBody(document, body);
     if (changed) {
-      deps.resetPaneCommandAfterBodyInput(paneId, markdown);
+      deps.resetPaneCommandAfterBodyInput(paneId, body);
     }
 
-    if (markdown.trim() !== '') {
+    if (body.hasContent()) {
       deps.clearRecentlyForgotten();
     }
     deps.scheduleAutosave(document);

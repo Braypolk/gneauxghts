@@ -13,7 +13,7 @@ export function requireNativeForeground(reason, env = process.env) {
 
 export function admitNativePresentation(specs, env = process.env) {
   const focused = specs.flat(Infinity).find(spec =>
-    [...foregroundNativeSpecs, 'editing-window-native-scale', 'markdown-marker-merge', 'markdown-synchronous-paragraph'].includes(basename(spec).replace(/\.spec\.ts$/, '')) ||
+    [...foregroundNativeSpecs, 'editing-window-native-scale', 'markdown-marker-merge', 'markdown-synchronous-paragraph', 'draft-body-latency'].includes(basename(spec).replace(/\.spec\.ts$/, '')) ||
     spec.includes('*'));
   if (focused || env.GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT === '1' || env.GNEAUXGHTS_RELEASE_SCALE_RUN) {
     requireNativeForeground(focused ? basename(focused) : 'Focused native paint measurement', env);

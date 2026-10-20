@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
 import type { ImageViewerSession } from '../images/imageViewerModel';
 import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
@@ -24,10 +25,10 @@ export interface PaneControllerSetupDeps<TPaneId extends string> {
   activatePaneSession: (paneId: TPaneId) => unknown;
   cancelPendingAutosave: (note?: NoteDraftState) => void;
   closeEditorTransientUi: (paneId: TPaneId) => void;
-  handleEditorMarkdownChange: (
+  handleEditorBodyChange: (
     paneId: string,
     document: NoteDraftState,
-    nextMarkdown: string
+    body: DocumentBody
   ) => void;
   getNavigationContext: (paneId?: TPaneId) => NavigationContext;
   openNotePath: (
@@ -68,7 +69,7 @@ export function createPaneControllers<TPaneId extends string>(
     setIsEditorReady: (value) => deps.getPaneRuntime(paneId).setIsEditorReady(value),
     setIsApplyingProgrammaticUpdate: (value) =>
       deps.getPaneRuntime(paneId).setIsApplyingProgrammaticUpdate(value),
-    handleEditorMarkdownChange: deps.handleEditorMarkdownChange,
+    handleEditorBodyChange: deps.handleEditorBodyChange,
     getSharedEditorResources: (document: NoteDraftState): SharedEditorResources =>
       getSharedEditorResources(document),
     getViewCallbacks: () => ({
@@ -101,7 +102,7 @@ export function createPaneControllers<TPaneId extends string>(
     getCurrentTitle: () =>
       deps.getPaneDocument(paneId).working.title,
     getCurrentMarkdown: () =>
-      deps.getPaneDocument(paneId).working.markdown,
+      deps.getPaneDocument(paneId).working.body.toMarkdown(),
     getEditorController: () => deps.getPaneRuntime(paneId).controller,
     cancelPendingAutosave: deps.cancelPendingAutosave,
     openNotePath: async (noteId, notePath, options) => {

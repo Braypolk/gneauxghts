@@ -1,9 +1,10 @@
+import { DocumentBody } from '../document/documentBody';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRelatedNotesStore, type RelatedContext } from './store.svelte';
 import type { RelatedNotesResponse } from '$lib/types/semantic';
 const { retrieve } = vi.hoisted(() => ({ retrieve: vi.fn() }));
 vi.mock('../search/search', () => ({ getRelatedNotes: retrieve }));
-const context: RelatedContext = { documentHandle: 'draft-a', currentPath: null, currentTitle: 'Draft', currentMarkdown: 'A note about connected ideas.' };
+const context: RelatedContext = { documentHandle: 'draft-a', currentPath: null, currentTitle: 'Draft', body: DocumentBody.fromMarkdown('A note about connected ideas.') };
 function response(title: string): RelatedNotesResponse {
   return { status: 'ready', reason: null, scope: 'note', items: [{ noteId: title, notePath: `/vault/${title}.md`, noteTitle: title, sectionLabel: 'Context', excerpt: 'A useful passage', matchText: 'A useful passage', score: 1, startLine: 2, endLine: 2 }] };
 }
@@ -38,7 +39,7 @@ describe('related retrieval lifetime', () => {
     const store = createRelatedNotesStore(), old = deferred();
     retrieve.mockReturnValueOnce(old.promise);
     const sub = store.acquire(context), pending = store.refresh(sub.result);
-    store.update({ ...context, currentMarkdown: 'Replacement draft' });
+    store.update({ ...context, body: DocumentBody.fromMarkdown('Replacement draft') });
     if (outcome === 'success') old.resolve(response('Obsolete')); else old.reject(new Error('Obsolete'));
     await pending;
     expect(sub.result.items).toEqual([]); expect(sub.result.isStale).toBe(true);
@@ -68,5 +69,28 @@ describe('related retrieval lifetime', () => {
     const store = createRelatedNotesStore(), sub = store.acquire(context); await store.refresh(sub.result);
     store.invalidateTarget('/vault/Match.md');
     expect(sub.result.items).toEqual([]); expect(sub.result.isStale).toBe(true); expect(retrieve).toHaveBeenCalledTimes(1);
+  });
+  it('invalidates by immutable body and metadata without requesting a string until refresh', async () => {
+    const store = createRelatedNotesStore(), sub = store.acquire(context);
+    await store.refresh(sub.result);
+    const body = DocumentBody.fromText(context.body.text.replace(0, 1, DocumentBody.fromMarkdown('B').text));
+    const snapshot = vi.spyOn(body, 'toMarkdown');
+    const next = { ...context, body };
+    store.update(next);
+    const epoch = sub.result.epoch;
+    store.update({ ...next }); // Another pane of the same document.
+    expect(sub.result.epoch).toBe(epoch);
+    expect(sub.result.isStale).toBe(true);
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(retrieve).toHaveBeenCalledTimes(1);
+    store.update({ ...next, currentTitle: 'Renamed', currentPath: '/vault/new.md' });
+    expect(sub.result.epoch).toBeGreaterThan(epoch);
+    expect(snapshot).not.toHaveBeenCalled();
+    await store.refresh(sub.result);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+    expect(retrieve).toHaveBeenLastCalledWith(expect.objectContaining({
+      currentTitle: 'Renamed', currentPath: '/vault/new.md', currentMarkdown: 'B note about connected ideas.'
+    }), null, 4);
+    sub.release();
   });
 });

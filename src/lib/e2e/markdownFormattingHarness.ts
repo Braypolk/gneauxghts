@@ -42,7 +42,7 @@ function mount(doc: string, panes: number, parse = true, styled = false) {
     const view = new EditorView({ state, parent, dispatchTransactions(transactions) {
       runtime.dispatchFromPane(controller, transactions);
     } });
-    controller = { view, runtime, sharedResources: null, paneKey: Symbol(), onMarkdownChange() {} };
+    controller = { view, runtime, sharedResources: null, paneKey: Symbol(), onBodyChange() {} };
     controllers.push(controller);
     runtime.attachController(controller);
   }

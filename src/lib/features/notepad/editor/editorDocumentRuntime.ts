@@ -1,6 +1,8 @@
+import { DocumentBody } from '../document/documentBody';
 import {
   Annotation,
   EditorState,
+  Text,
   Transaction,
   type EditorSelection as CmEditorSelection,
 } from '@codemirror/state';
@@ -15,11 +17,21 @@ import { imageResizeHistory } from '../images/imageResizeHistory';
 
 // The headless root owns text and shared undo, not syntax or input handling.
 // Pane states install their own Markdown language and presentation extensions.
-function documentRoot(markdown: string) {
+function documentRoot(text: Text) {
   return EditorState.create({
-    doc: markdown,
+    doc: text,
     extensions: [history(), imageResizeHistory]
   });
+}
+
+function editorText(body: DocumentBody): Text {
+  // Pane string construction uses CodeMirror's default CRLF/CR normalization.
+  // Keep exact boundary bytes in the body until an edit, as before, but root
+  // and pane change offsets must refer to the same normalized editor text.
+  for (const chunk of body.text) {
+    if (chunk.includes('\r')) return Text.of(body.toMarkdown().split(/\r\n?|\n/));
+  }
+  return body.text;
 }
 
 // CodeMirror annotations are nominal values. Keep the synchronization marker
@@ -28,7 +40,7 @@ const paneSyncAnnotation = Annotation.define<boolean>();
 
 interface RuntimeReplaceOptions {
   flushHistory?: boolean;
-  notifyMarkdownChange?: boolean;
+  notifyBodyChange?: boolean;
   selectionByPaneKey?: Map<symbol, EditorSelection>;
   preferredPaneKey?: symbol | null;
 }
@@ -103,17 +115,21 @@ export class EditorDocumentRuntime {
     EditorController
   >();
   #rootState: EditorState;
-  #markdownCache: string | null = null;
+  #body: DocumentBody;
   #publicationLease: symbol | null = null;
   #adoptingPublication = false;
 
-  constructor(initialMarkdown = '') {
-    this.#rootState = documentRoot(initialMarkdown);
-    this.#markdownCache = initialMarkdown;
+  constructor(initial: string | DocumentBody = '') {
+    this.#body = typeof initial === 'string' ? DocumentBody.fromMarkdown(initial) : initial;
+    this.#rootState = documentRoot(editorText(this.#body));
   }
 
   get markdown() {
-    return (this.#markdownCache ??= this.#rootState.doc.toString());
+    return this.body.toMarkdown();
+  }
+
+  get body() {
+    return this.#body;
   }
 
   get attachedPaneCount() {
@@ -147,7 +163,7 @@ export class EditorDocumentRuntime {
   ensureMarkdown(markdown: string) {
     if (
       this.#paneControllers.size > 0 ||
-      this.markdown === markdown
+      this.body.equals(DocumentBody.fromMarkdown(markdown))
     ) {
       return;
     }
@@ -177,10 +193,10 @@ export class EditorDocumentRuntime {
     }
 
     controller.view.update(transactions);
-    this.#markdownCache = null;
+    this.#body = DocumentBody.fromText(this.#rootState.doc);
     this.revision += 1;
     this.#broadcastTransactions(docChangedTransactions, controller.paneKey);
-    this.#notifyMarkdownChange(controller.paneKey);
+    this.#notifyBodyChange(controller.paneKey);
   }
 
   applyRootTransactions(
@@ -198,31 +214,36 @@ export class EditorDocumentRuntime {
       return;
     }
 
-    this.#markdownCache = null;
+    this.#body = DocumentBody.fromText(this.#rootState.doc);
     this.revision += 1;
     this.#broadcastTransactions(docChangedTransactions, null, {
       paneKey: preferredPaneKey,
       selection: this.#rootState.selection
     });
-    this.#notifyMarkdownChange(preferredPaneKey);
+    this.#notifyBodyChange(preferredPaneKey);
   }
 
   replaceMarkdown(markdown: string, options: RuntimeReplaceOptions = {}) {
+    return this.replaceBody(DocumentBody.fromMarkdown(markdown), options);
+  }
+
+  replaceBody(body: DocumentBody, options: RuntimeReplaceOptions = {}) {
     this.#assertMutationAdmitted();
-    if (!options.flushHistory && this.markdown === markdown) {
+    if (!options.flushHistory && this.body.equals(body)) {
       return false;
     }
 
     const selectionByPaneKey =
       options.selectionByPaneKey ?? new Map<symbol, EditorSelection>();
+    const text = editorText(body);
     if (options.flushHistory) {
-      this.#rootState = documentRoot(markdown);
+      this.#rootState = documentRoot(text);
     } else {
       this.#rootState = this.#rootState.update({
         changes: {
           from: 0,
           to: this.#rootState.doc.length,
-          insert: markdown
+          insert: text
         },
         annotations: [
           Transaction.addToHistory.of(false),
@@ -230,9 +251,9 @@ export class EditorDocumentRuntime {
         ]
       }).state;
     }
-    this.#markdownCache = markdown;
+    this.#body = body;
 
-    const nextDocLength = markdown.length;
+    const nextDocLength = text.length;
     for (const [paneKey, controller] of this.#paneControllers) {
       const rawSelection =
         selectionByPaneKey.get(paneKey) ?? readSelection(controller.view);
@@ -243,7 +264,7 @@ export class EditorDocumentRuntime {
             changes: {
               from: 0,
               to: controller.view.state.doc.length,
-              insert: markdown
+              insert: text
             },
             selection,
             annotations: [
@@ -258,8 +279,8 @@ export class EditorDocumentRuntime {
     }
 
     this.revision += 1;
-    if (options.notifyMarkdownChange !== false) {
-      this.#notifyMarkdownChange(options.preferredPaneKey ?? null);
+    if (options.notifyBodyChange !== false) {
+      this.#notifyBodyChange(options.preferredPaneKey ?? null);
     }
     return true;
   }
@@ -270,11 +291,15 @@ export class EditorDocumentRuntime {
    * fresh shared undo root while pane selections and viewports remain local.
    */
   adoptCommittedMarkdown(markdown: string) {
+    return this.adoptCommittedBody(DocumentBody.fromMarkdown(markdown));
+  }
+
+  adoptCommittedBody(body: DocumentBody) {
     this.#adoptingPublication = true;
     try {
-      return this.replaceMarkdown(markdown, {
+      return this.replaceBody(body, {
         flushHistory: true,
-        notifyMarkdownChange: false
+        notifyBodyChange: false
       });
     } finally { this.#adoptingPublication = false; }
   }
@@ -282,7 +307,7 @@ export class EditorDocumentRuntime {
   /** Restore a transient draft without presenting it as another pane edit. */
   restoreTransientMarkdown(markdown: string) {
     return this.replaceMarkdown(markdown, {
-      notifyMarkdownChange: false
+      notifyBodyChange: false
     });
   }
 
@@ -372,7 +397,7 @@ export class EditorDocumentRuntime {
     }
   }
 
-  #notifyMarkdownChange(preferredPaneKey: symbol | null) {
+  #notifyBodyChange(preferredPaneKey: symbol | null) {
     const preferredController = preferredPaneKey
       ? this.#paneControllers.get(preferredPaneKey)
       : null;
@@ -380,6 +405,6 @@ export class EditorDocumentRuntime {
       preferredController ??
       this.#paneControllers.values().next().value ??
       null;
-    controller?.onMarkdownChange(this.markdown);
+    controller?.onBodyChange(this.body);
   }
 }

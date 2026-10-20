@@ -73,7 +73,7 @@ export function createDocumentConflictController(
     const originalRevision = document.operation.revision;
     const targetMarkdown =
       conflict.external.kind === 'snapshot'
-        ? conflict.external.document.content.markdown
+        ? conflict.external.document.content.body.toMarkdown()
         : originalMarkdown;
     if (
       !dispatchDocumentExternalSync(document, {

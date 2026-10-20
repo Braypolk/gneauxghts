@@ -135,7 +135,7 @@ class PaneEditorSession<TPaneId extends string> {
       const lifecycle =
         this.deps.getEditorLifecycleController(this.paneId);
       try {
-        await lifecycle.createEditor(document.working.markdown);
+        await lifecycle.createEditor(document.working.body.toMarkdown());
       } catch (error) {
         this.#dispatch({ type: 'mountFailed' });
         throw error;
@@ -359,7 +359,7 @@ class PaneEditorSession<TPaneId extends string> {
       }
       if (!swapped) {
         await lifecycle.replaceEditorContent(
-          document.working.markdown,
+          document.working.body.toMarkdown(),
           {
             restoreCursor,
             expectedDocument: document,

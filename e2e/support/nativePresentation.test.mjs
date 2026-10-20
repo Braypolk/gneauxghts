@@ -17,7 +17,8 @@ test('foreground CLI entry points reject before fixture preparation or app launc
     ['e2e/support/nativeSuite.mjs', 'foreground'],
     ['e2e/support/nativeSuite.mjs', 'measurement'],
     ['e2e/support/windowRestore.mjs'],
-    ['e2e/support/currentScaleNative.mjs', '/missing-fixture']
+    ['e2e/support/currentScaleNative.mjs', '/missing-fixture'],
+    ['scripts/benchmarkDraftBodies.mjs']
   ]) {
     const result = spawnSync(process.execPath, args, {env, encoding: 'utf8', timeout: 5000});
     assert.ifError(result.error);
@@ -34,7 +35,7 @@ test('focus-dependent specs and measurements fail before launch without explicit
   for (const key of ['GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT', 'GNEAUXGHTS_RELEASE_SCALE_RUN']) {
     assert.throws(() => admitNativePresentation([], {[key]: '1'}), /requires actual OS focus/);
   }
-  for (const spec of ['./specs/native/**/*.spec.ts', 'editing-window-native-scale.spec.ts', 'markdown-marker-merge.spec.ts']) {
+  for (const spec of ['./specs/native/**/*.spec.ts', 'editing-window-native-scale.spec.ts', 'markdown-marker-merge.spec.ts', 'draft-body-latency.spec.ts']) {
     assert.throws(() => admitNativePresentation([spec], {}), /requires actual OS focus/);
   }
 });

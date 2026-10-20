@@ -1,0 +1,547 @@
+{
+  "baseline": "fd9c0ad1",
+  "date": "2026-10-20",
+  "warmups": 4,
+  "timedSamples": 21,
+  "environment": "macOS arm64 / Node 24.2.0 / Vitest 3.2.6; state-backed views, no rendering/reactive effects or real save/search timers",
+  "before": [
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 50000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.0313,
+          "p95": 0.058
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 0.228
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0315,
+          "p95": 0.0411
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 0.226
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0014,
+          "p95": 0.002
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 50000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.0328,
+          "p95": 0.0392
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 0.257
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0339,
+          "p95": 0.0396
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 0.247
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0011,
+          "p95": 0.0012
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 500000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.2115,
+          "p95": 0.2413
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 2.683
+      },
+      "replace": {
+        "timing": {
+          "median": 0.2147,
+          "p95": 0.2339
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 2.297
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0008,
+          "p95": 0.0008
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 500000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.2468,
+          "p95": 1.2746
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 5.048
+      },
+      "replace": {
+        "timing": {
+          "median": 0.2291,
+          "p95": 0.2435
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 2.465
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0005,
+          "p95": 0.0013
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 2000000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.8015,
+          "p95": 0.9775
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 14.15
+      },
+      "replace": {
+        "timing": {
+          "median": 0.7817,
+          "p95": 1.6249
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 13.397
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0007,
+          "p95": 0.0008
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_RUNTIME",
+      "size": 2000000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.814,
+          "p95": 1.1803
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 14.407
+      },
+      "replace": {
+        "timing": {
+          "median": 0.76,
+          "p95": 0.8892
+        },
+        "toStringCalls": 25,
+        "notifications": 25,
+        "toStringTotalMs": 11.972
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0005,
+          "p95": 0.0006
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 50000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.034,
+        "p95": 0.056
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 50000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.0226,
+        "p95": 0.0331
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 500000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.1903,
+        "p95": 0.2429
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 500000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.2088,
+        "p95": 0.239
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 2000000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.6841,
+        "p95": 0.7551
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_SNAPSHOT_IMAGE_INVENTORY",
+      "size": 2000000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.6839,
+        "p95": 0.7911
+      },
+      "toStringCalls": 25,
+      "notifications": 25
+    }
+  ],
+  "after": [
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 50000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.0203,
+          "p95": 0.0597
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0311,
+          "p95": 0.0591
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0018,
+          "p95": 0.0046
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 50000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.0209,
+          "p95": 0.0298
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0258,
+          "p95": 0.034
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0012,
+          "p95": 0.0014
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 500000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.0285,
+          "p95": 0.033
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.031,
+          "p95": 0.0394
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0008,
+          "p95": 0.0028
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 500000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.0185,
+          "p95": 0.0285
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0303,
+          "p95": 0.0414
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0007,
+          "p95": 0.0011
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 2000000,
+      "paneCount": 1,
+      "insert": {
+        "timing": {
+          "median": 0.0128,
+          "p95": 0.022
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0187,
+          "p95": 0.0247
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0006,
+          "p95": 0.0015
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_RUNTIME",
+      "size": 2000000,
+      "paneCount": 2,
+      "insert": {
+        "timing": {
+          "median": 0.0169,
+          "p95": 0.024
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "replace": {
+        "timing": {
+          "median": 0.0221,
+          "p95": 0.0277
+        },
+        "toStringCalls": 0,
+        "notifications": 25,
+        "toStringTotalMs": 0
+      },
+      "selection": {
+        "timing": {
+          "median": 0.0006,
+          "p95": 0.0016
+        },
+        "toStringCalls": 0,
+        "notifications": 0,
+        "toStringTotalMs": 0
+      }
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 50000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.0097,
+        "p95": 0.0149
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 50000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.0101,
+        "p95": 0.0165
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 500000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.0125,
+        "p95": 0.021
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 500000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.0167,
+        "p95": 0.0202
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 2000000,
+      "paneCount": 1,
+      "timing": {
+        "median": 0.0115,
+        "p95": 0.0256
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_IMAGE_INVENTORY",
+      "size": 2000000,
+      "paneCount": 2,
+      "timing": {
+        "median": 0.0159,
+        "p95": 0.0254
+      },
+      "toStringCalls": 0,
+      "notifications": 25
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_SHAPE",
+      "shape": "singleLine",
+      "size": 2000000,
+      "timing": {
+        "median": 0.6007,
+        "p95": 5.1875
+      },
+      "toStringCalls": 0
+    },
+    {
+      "series": "GNEAUXGHTS_BODY_SHAPE",
+      "shape": "whitespace",
+      "size": 2000000,
+      "timing": {
+        "median": 1.4872,
+        "p95": 3.4163
+      },
+      "toStringCalls": 0
+    }
+  ]
+}

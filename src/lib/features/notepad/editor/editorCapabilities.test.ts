@@ -17,7 +17,7 @@ function createController(markdown: string, anchor: number, head = anchor) {
     runtime: null as unknown as EditorController['runtime'],
     sharedResources: null,
     paneKey: Symbol('test-pane'),
-    onMarkdownChange: () => {}
+    onBodyChange: () => {}
   } satisfies EditorController;
   return { controller, transactions, focus, readState: () => view.state };
 }

@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDocumentState,
@@ -91,7 +92,7 @@ describe('document conflict controller', () => {
       harness.controller.keepMyEdits(document)
     ).resolves.toBe(true);
 
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(document.externalSync.kind).toBe('noConflict');
     expect(harness.enqueueSave).toHaveBeenCalledWith(document);
     expect(
@@ -109,7 +110,7 @@ describe('document conflict controller', () => {
 
     expect(document.working).toEqual({
       title: 'Disk title',
-      markdown: 'disk version'
+      body: DocumentBody.fromMarkdown('disk version')
     });
     expect(document.externalSync.kind).toBe('noConflict');
     expect(
@@ -132,7 +133,7 @@ describe('document conflict controller', () => {
 
     expect(document.identity).toEqual({ kind: 'draft' });
     expect(document.savedBaseline).toBeNull();
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(document.externalSync.kind).toBe('noConflict');
     expect(
       harness.replaceDocumentContentInPlace
@@ -220,7 +221,7 @@ describe('document conflict controller', () => {
         ([, markdown]) => markdown
       )
     ).toEqual(['disk version', 'my edits']);
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(document.externalSync.kind).toBe('conflict');
     expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
   });
@@ -237,13 +238,13 @@ describe('document conflict controller', () => {
     await expect(harness.controller.loadDiskVersion(document)).rejects.toBe(failure);
 
     expect(document.externalSync).toEqual(conflict);
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(document.savedBaseline).toBe(baseline);
     expect(document.identity).toBe(identity);
     expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
     expect(harness.enqueueSave).not.toHaveBeenCalled();
     await expect(harness.controller.loadDiskVersion(document)).resolves.toBe(true);
-    expect(document.working.markdown).toBe('disk version');
+    expect(document.working.body.toMarkdown()).toBe('disk version');
   });
 
   it.each(['stale', 'concurrentEdit'] as const)(
@@ -271,12 +272,12 @@ describe('document conflict controller', () => {
         ([, markdown]) => markdown
       )).toEqual(['disk version', localMarkdown]);
       expect(document.externalSync).toEqual(conflict);
-      expect(document.working.markdown).toBe(localMarkdown);
+      expect(document.working.body.toMarkdown()).toBe(localMarkdown);
       expect(document.savedBaseline).toBe(baseline);
       expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
       await expect(harness.controller.keepMyEdits(document)).resolves.toBe(true);
       expect(harness.enqueueSave).toHaveBeenCalledWith(document);
-      expect(document.working.markdown).toBe(localMarkdown);
+      expect(document.working.body.toMarkdown()).toBe(localMarkdown);
     }
   );
 
@@ -309,10 +310,10 @@ describe('document conflict controller', () => {
       conflictId: 2,
       phase: 'awaitingChoice'
     });
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(harness.refreshDerivedViews).not.toHaveBeenCalled();
     await expect(harness.controller.loadDiskVersion(document)).resolves.toBe(true);
-    expect(document.working.markdown).toBe('newer disk version');
+    expect(document.working.body.toMarkdown()).toBe('newer disk version');
   });
 
   it('rolls the editor back when a concurrent model edit prevents commit', async () => {
@@ -340,7 +341,7 @@ describe('document conflict controller', () => {
     ).toEqual(['disk version', 'my edits']);
     expect(document.working).toEqual({
       title: 'new local title',
-      markdown: 'my edits'
+      body: DocumentBody.fromMarkdown('my edits')
     });
     expect(document.externalSync.kind).toBe('conflict');
     expect(document.externalSync).toMatchObject({
@@ -382,7 +383,7 @@ describe('document conflict controller', () => {
     replacement.resolve('applied');
 
     await expect(loading).resolves.toBe(false);
-    expect(document.working.markdown).toBe('my edits');
+    expect(document.working.body.toMarkdown()).toBe('my edits');
     expect(document.externalSync).toMatchObject({
       kind: 'conflict',
       conflictId: 2,
@@ -390,7 +391,7 @@ describe('document conflict controller', () => {
       external: {
         kind: 'snapshot',
         document: {
-          content: { markdown: 'newer disk version' }
+          content: { body: DocumentBody.fromMarkdown('newer disk version') }
         }
       }
     });

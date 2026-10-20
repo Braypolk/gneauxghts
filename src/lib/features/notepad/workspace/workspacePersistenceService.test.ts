@@ -18,7 +18,7 @@ describe('workspacePersistenceService', () => {
     const enqueueSave = vi.fn(async (note) => {
       if (note === failed) throw new Error('disk unavailable');
       applySessionSnapshotToDocument(note, {
-        ...createEmptySessionSnapshot(), bodyMarkdown: note.working.markdown, lastSavedMarkdown: note.working.markdown
+        ...createEmptySessionSnapshot(), bodyMarkdown: note.working.body.toMarkdown(), lastSavedMarkdown: note.working.body.toMarkdown()
       });
     });
     const service = createWorkspacePersistenceService({
@@ -29,10 +29,10 @@ describe('workspacePersistenceService', () => {
     await expect(service.flushAllForBackground()).rejects.toThrow();
 
     expect(enqueueSave.mock.calls.map(([note]) => note)).toEqual([failed, healthy]);
-    expect(healthy.savedBaseline?.content.markdown).toBe('keep these edits');
-    expect(failed.working.markdown).toBe('keep these edits');
+    expect(healthy.savedBaseline?.content.body.toMarkdown()).toBe('keep these edits');
+    expect(failed.working.body.toMarkdown()).toBe('keep these edits');
     expect(failed.savedBaseline).toBeNull();
-    expect(conflict.working.markdown).toBe('keep these edits');
+    expect(conflict.working.body.toMarkdown()).toBe('keep these edits');
   });
 
 
@@ -46,8 +46,8 @@ describe('workspacePersistenceService', () => {
     const enqueueSave = vi.fn(async (document) => {
       applySessionSnapshotToDocument(document, {
         ...createEmptySessionSnapshot(),
-        bodyMarkdown: document.working.markdown,
-        lastSavedMarkdown: document.working.markdown
+        bodyMarkdown: document.working.body.toMarkdown(),
+        lastSavedMarkdown: document.working.body.toMarkdown()
       });
     });
     const service = createWorkspacePersistenceService({

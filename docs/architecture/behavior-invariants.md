@@ -356,6 +356,14 @@ bytes happen to be on disk later.
 
 ### Committed adoption belongs to the document boundary
 
+Editor changes update the authoritative draft synchronously using an immutable
+body value. A captured save retains that exact body and metadata even if editing
+continues or every pane unmounts. Undo back to saved content is clean; revisions
+and body identity alone do not establish different authored content. Canonical
+files and native payloads remain Markdown strings. Exact boundary line endings
+remain intact until editing; root and pane offsets use the same CodeMirror
+line-ending normalization.
+
 Ordinary save, Version Restore, admitted agent publication, clean external refresh, and
 transient Forgotten-Note Recovery enter fixed-purpose document adoption methods.
 Callers do not choose identity, baseline, warning, rekey, runtime-reset, or

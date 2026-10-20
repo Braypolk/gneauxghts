@@ -64,7 +64,7 @@ describe('shared note identity', () => {
     updateDocumentMarkdown(initialNote, 'edited content');
 
     expect(
-      getPaneNote(state, workspace, secondary).working.markdown
+      getPaneNote(state, workspace, secondary).working.body.toMarkdown()
     ).toBe('edited content');
   });
 

@@ -358,7 +358,7 @@ describe('document-state generated transition sequences', () => {
       expect(documentHasUnresolvedConflict(note)).toBe(
         false
       );
-      expect(note.working.markdown).toBe(markdown);
+      expect(note.working.body.toMarkdown()).toBe(markdown);
       expect(note.externalSync.kind).toBe(sync);
       expect(resolve(note, conflictId!)).toBe(false);
     }

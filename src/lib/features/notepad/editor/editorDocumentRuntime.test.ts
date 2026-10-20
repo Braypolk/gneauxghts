@@ -16,7 +16,7 @@ import {
   createNoteDraftState,
   createNotepadState
 } from '../state/noteStore';
-import { updateDocumentMarkdown } from '../document/documentState';
+import { updateDocumentBody, updateDocumentMarkdown } from '../document/documentState';
 
 describe('EditorDocumentRuntime', () => {
   it.each([
@@ -85,8 +85,8 @@ describe('EditorDocumentRuntime', () => {
     expect(second.readState().selection.main.head).toBe(siblingHead);
     expect(second.readViewport()).toEqual({ scrollTop: 240, scrollLeft: 12 });
     expect(runtime.revision).toBe(1);
-    expect(first.onMarkdownChange).toHaveBeenCalledExactlyOnceWith(expected);
-    expect(second.onMarkdownChange).not.toHaveBeenCalled();
+    expect(first.onBodyChange).toHaveBeenCalledExactlyOnceWith(runtime.body);
+    expect(second.onBodyChange).not.toHaveBeenCalled();
 
     for (const [index, markdown] of [intermediate, 'abcd'].entries()) {
       expect(runtime.undo(second.controller.paneKey)).toBe(true);
@@ -97,14 +97,14 @@ describe('EditorDocumentRuntime', () => {
       expect(second.readViewport()).toEqual({ scrollTop: 240, scrollLeft: 12 });
     }
     expect(runtime.undo(second.controller.paneKey)).toBe(false);
-    expect(second.onMarkdownChange).toHaveBeenCalledTimes(2);
-    expect(first.onMarkdownChange).toHaveBeenCalledOnce();
+    expect(second.onBodyChange).toHaveBeenCalledTimes(2);
+    expect(first.onBodyChange).toHaveBeenCalledOnce();
     expect(runtime.redo(first.controller.paneKey)).toBe(true);
     expect(runtime.redo(first.controller.paneKey)).toBe(true);
     expect(runtime.markdown).toBe(expected);
     expect(first.readState().doc.toString()).toBe(expected);
     expect(second.readState().doc.toString()).toBe(expected);
-    expect(first.onMarkdownChange).toHaveBeenCalledTimes(3);
+    expect(first.onBodyChange).toHaveBeenCalledTimes(3);
   });
 
 
@@ -121,10 +121,10 @@ describe('EditorDocumentRuntime', () => {
     runtime.ensureMarkdown('abcd');
     updateDocumentMarkdown(document, 'abcd');
     const first = pane(runtime, 'abcd', 1, (markdown) => {
-      updateDocumentMarkdown(document, markdown);
+      updateDocumentBody(document, markdown);
     });
     const second = pane(runtime, 'abcd', 4, (markdown) => {
-      updateDocumentMarkdown(document, markdown);
+      updateDocumentBody(document, markdown);
     });
     second.setViewport(240, 12);
     runtime.dispatchFromPane(first.controller, [
@@ -212,7 +212,7 @@ describe('EditorDocumentRuntime', () => {
     expect(fixture.readState().doc.toString()).toBe(
       'recovered draft'
     );
-    expect(fixture.onMarkdownChange).not.toHaveBeenCalled();
+    expect(fixture.onBodyChange).not.toHaveBeenCalled();
   });
 
   it('restores a reversed selection with a bounded fallback without changing the document', () => {
@@ -258,8 +258,8 @@ describe('EditorDocumentRuntime', () => {
     expect(second.readState().selection.main.head).toBe(4);
     expect(first.readViewport().scrollTop).toBe(80);
     expect(second.readViewport().scrollTop).toBe(320);
-    expect(first.onMarkdownChange).toHaveBeenCalledTimes(1);
-    expect(second.onMarkdownChange).not.toHaveBeenCalled();
+    expect(first.onBodyChange).toHaveBeenCalledTimes(1);
+    expect(second.onBodyChange).not.toHaveBeenCalled();
   });
 
   it('keeps different note runtimes isolated', () => {
@@ -288,6 +288,6 @@ describe('EditorDocumentRuntime', () => {
       })
     ).toBe(true);
     expect(fixture.readState().selection.main.anchor).toBe(4);
-    expect(fixture.onMarkdownChange).not.toHaveBeenCalled();
+    expect(fixture.onBodyChange).not.toHaveBeenCalled();
   });
 });

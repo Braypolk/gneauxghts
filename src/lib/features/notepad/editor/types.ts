@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import type { EditorView } from '@codemirror/view';
 import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
 import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
@@ -21,7 +22,7 @@ export interface EditorController {
   runtime: EditorDocumentRuntime;
   sharedResources: SharedEditorResources | null;
   paneKey: symbol;
-  onMarkdownChange: (markdown: string) => void;
+  onBodyChange: (body: DocumentBody) => void;
 }
 
 export interface EditorViewCallbacks {
@@ -50,7 +51,7 @@ export interface SharedEditorResources {
 export interface CreateEditorOptions {
   editorRoot: HTMLDivElement;
   initialValue: string;
-  onMarkdownChange: (markdown: string) => void;
+  onBodyChange: (body: DocumentBody) => void;
   initialState?: EditorSnapshot | null;
   sharedResources?: SharedEditorResources | null;
   viewCallbacks?: EditorViewCallbacks;
@@ -72,7 +73,7 @@ export interface SwapEditorRuntimeOptions {
   initialValue: string;
   initialState?: EditorSnapshot | null;
   viewCallbacks: EditorViewCallbacks;
-  onMarkdownChange: (markdown: string) => void;
+  onBodyChange: (body: DocumentBody) => void;
 }
 
 export interface RestoreCursorPositionOptions {

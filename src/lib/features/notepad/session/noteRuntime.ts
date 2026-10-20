@@ -12,6 +12,7 @@ export function getSharedEditorResources(
   document: NoteDraftState
 ): SharedEditorResources {
   return documentRegistry.ensure(document.handle).ensureResources({
+    body: document.working.body,
     assetRootPath: notepadRuntimeState.assetRootPath,
     storePastedImage: storePastedImageAsset
   });

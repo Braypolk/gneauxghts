@@ -1,3 +1,4 @@
+import { DocumentBody } from './documentBody';
 import type { SessionSnapshot } from '$lib/features/notepad/session/session';
 import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
 import type { NoteSession } from '$lib/features/notepad/model/types';
@@ -35,7 +36,7 @@ export interface DocumentWorkingContent {
   tags?: string[];
   tagsError?: string;
   title: string;
-  markdown: string;
+  body: DocumentBody;
 }
 
 export type DocumentIdentity =
@@ -126,7 +127,7 @@ function contentEquals(
 ) {
   return (
     left.title === right.title &&
-    left.markdown === right.markdown &&
+    left.body.equals(right.body) &&
     tagsEqual(left.tags, right.tags)
   );
 }
@@ -143,12 +144,13 @@ export function externalDocumentSnapshotFromSession(
     snapshot.lastSavedNoteId !== null ||
     snapshot.lastSavedTitle !== '' ||
     snapshot.lastSavedMarkdown !== '';
+  const body = DocumentBody.fromMarkdown(snapshot.bodyMarkdown);
   return {
     content: {
       title: snapshot.title,
       ...(snapshot.tags ? { tags: [...snapshot.tags] } : {}),
       ...(snapshot.tagsError ? { tagsError: snapshot.tagsError } : {}),
-      markdown: snapshot.bodyMarkdown
+      body
     },
     identity: identityFromBoundary(
       snapshot.currentNoteId,
@@ -159,7 +161,8 @@ export function externalDocumentSnapshotFromSession(
           content: {
             title: snapshot.lastSavedTitle,
             ...(snapshot.lastSavedTags ? { tags: [...snapshot.lastSavedTags] } : {}),
-            markdown: snapshot.lastSavedMarkdown
+            body: snapshot.lastSavedMarkdown === snapshot.bodyMarkdown
+              ? body : DocumentBody.fromMarkdown(snapshot.lastSavedMarkdown)
           },
           identity: baselineIdentity
         }
@@ -178,7 +181,7 @@ export function externalDocumentSnapshotFromCommittedNote(
     title: committed.title,
     ...(committed.tags ? { tags: [...committed.tags] } : {}),
     ...(committed.tagsError ? { tagsError: committed.tagsError } : {}),
-    markdown: committed.markdown
+    body: DocumentBody.fromMarkdown(committed.markdown)
   };
   return {
     content,
@@ -214,7 +217,7 @@ export function getDocumentTitle(document: NoteDraftState) {
 }
 
 export function getDocumentMarkdown(document: NoteDraftState) {
-  return document.working.markdown;
+  return document.working.body.toMarkdown();
 }
 
 export function getDocumentNoteId(
@@ -242,11 +245,11 @@ export function documentToSessionSnapshot(
     ...(document.working.tagsError ? { tagsError: document.working.tagsError } : {}),
     ...(baseline?.content.tags ? { lastSavedTags: [...baseline.content.tags] } : {}),
     title: document.working.title,
-    bodyMarkdown: document.working.markdown,
+    bodyMarkdown: document.working.body.toMarkdown(),
     currentNoteId: getDocumentNoteId(document),
     currentNotePath: getDocumentPath(document),
     lastSavedTitle: baseline?.content.title ?? '',
-    lastSavedMarkdown: baseline?.content.markdown ?? '',
+    lastSavedMarkdown: baseline?.content.body.toMarkdown() ?? '',
     lastSavedNoteId:
       baseline?.identity.kind === 'persisted'
         ? baseline.identity.noteId
@@ -269,7 +272,7 @@ export function documentHasCleanBuffer(
     return (
       document.identity.kind === 'draft' &&
       document.working.title === '' &&
-      document.working.markdown === '' &&
+      document.working.body.length === 0 &&
       (document.working.tags?.length ?? 0) === 0
     );
   }
@@ -328,9 +331,13 @@ export function updateDocumentMarkdown(
   document: NoteDraftState,
   markdown: string
 ) {
+  return updateDocumentBody(document, DocumentBody.fromMarkdown(markdown));
+}
+
+export function updateDocumentBody(document: NoteDraftState, body: DocumentBody) {
   assertDocumentMutationAdmitted(document);
-  if (document.working.markdown === markdown) return false;
-  document.working.markdown = markdown;
+  if (document.working.body.equals(body)) return false;
+  document.working.body = body;
   advanceRevision(document);
   return true;
 }
@@ -404,8 +411,16 @@ function applyExternalSnapshot(
     document.working.title !== external.content.title;
   const markdownChanged =
     !preserveWorking &&
-    document.working.markdown !== external.content.markdown;
+    !document.working.body.equals(external.content.body);
 
+  // Retain the shared editor text when canonical bytes are unchanged.
+  if (document.working.body.equals(external.content.body)) {
+    const externalBody = external.content.body;
+    external.content.body = document.working.body;
+    if (external.savedBaseline?.content.body === externalBody) {
+      external.savedBaseline.content.body = document.working.body;
+    }
+  }
   document.identity = external.identity;
   document.savedBaseline = external.savedBaseline;
   document.publication.warning = warning;
@@ -449,7 +464,7 @@ export function restoreTransientDraftToDocument(
   const tagsChanged = !tagsEqual(document.working.tags, content.tags);
   const titleChanged = document.working.title !== content.title;
   const markdownChanged =
-    document.working.markdown !== content.markdown;
+    !document.working.body.equals(content.body);
   document.working = { ...content };
   document.identity = identityFromBoundary(
     identity.noteId,

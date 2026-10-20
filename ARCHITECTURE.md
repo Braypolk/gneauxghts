@@ -87,6 +87,16 @@ and syntax consumers use each pane's independently configured state; forwarding
 an already authored change to the root records history without parsing it again.
 Selections, viewports, syntax publication and decorations remain pane-owned.
 
+`NoteDraftState.working.body` retains an immutable `DocumentBody` backed by
+CodeMirror `Text`. The runtime reports the current body synchronously through
+`DocumentEditingService`; the model never waits for a serialization timer or a
+mounted editor getter. Loaded bodies, saved baselines and the history root share
+unchanged text where possible. Exact content equality owns dirty/no-op decisions;
+body identity is only an invalidation signal. Saves capture a body and metadata
+before awaiting, then serialize that captured version at the Markdown boundary.
+Other explicit snapshots use the body's cached string. Related invalidation uses
+body identity and metadata and requests Markdown only on retrieval.
+
 `NotepadWorkspaceSession` exposes named user operations and consumes the real
 WorkspaceStore and document owners. It privately owns per-pane supersession,
 serialized departure, destination application, and location bookkeeping. A

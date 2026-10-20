@@ -7,10 +7,8 @@ import {
   dispatchDocumentOperation,
   documentHasCleanBuffer,
   documentHasUnresolvedConflict,
-  getDocumentMarkdown,
   getDocumentNoteId,
   getDocumentPath,
-  getDocumentTitle,
   isDocumentOperationCurrent,
   type NoteDraftState,
   type DocumentHandle,
@@ -89,8 +87,13 @@ export function createNotepadPersistenceController(
     ) {
       return;
     }
-    const title = getDocumentTitle(note);
-    const markdown = getDocumentMarkdown(note);
+    if (documentHasCleanBuffer(note)) return;
+    dispatchDocumentOperation(note, {
+      type: "start",
+      operation: "saving",
+    });
+    const capture = params.documentEditing.captureSave(note);
+    const markdown = capture.body.toMarkdown();
     const taskAttribution = taskActionAttributions.get(note);
     const isAttributedTaskAction = Boolean(
       taskAttribution &&
@@ -105,15 +108,6 @@ export function createNotepadPersistenceController(
       taskActionAttributions.delete(note);
     }
 
-    if (documentHasCleanBuffer(note)) {
-      return;
-    }
-
-    dispatchDocumentOperation(note, {
-      type: "start",
-      operation: "saving",
-    });
-    const capture = params.documentEditing.captureSave(note);
     const save = isAttributedTaskAction
       ? params.saveTaskNoteSession
       : params.saveNoteSession;
@@ -123,8 +117,8 @@ export function createNotepadPersistenceController(
     // Start the authoritative IPC immediately. Observation never gates or
     // retries publication and must not change its result (including warnings).
     const saving = capture.tagEdit
-      ? save(title, markdown, capture.path, capture.tagEdit)
-      : save(title, markdown, capture.path);
+      ? save(capture.title, markdown, capture.path, capture.tagEdit)
+      : save(capture.title, markdown, capture.path);
     const stopObserving = observePendingSave(
       note,
       capture.operationToken,

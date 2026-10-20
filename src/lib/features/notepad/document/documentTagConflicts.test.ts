@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
 import { createDocumentConflictController } from './documentConflictController';
@@ -55,7 +56,7 @@ describe('tag conflict save coordination', () => {
   it('saves local tags against the reviewed external version through the normal save queue', async () => {
     const h = setup();
     h.editing.updateTags(h.note, ['local']);
-    h.editing.recordUserEdit('left', h.note, 'local body');
+    h.editing.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('local body'));
     h.observe(['external']);
     await expect(h.conflicts.keepMyEdits(h.note)).resolves.toBe(true);
     expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md', { previous: ['external'], tags: ['local'] });
@@ -78,7 +79,7 @@ describe('tag conflict save coordination', () => {
 
   it('preserves externally changed tags when keeping body-only edits', async () => {
     const h = setup();
-    h.editing.recordUserEdit('left', h.note, 'local body');
+    h.editing.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('local body'));
     h.observe(['external']);
     await h.conflicts.keepMyEdits(h.note);
     expect(h.save).toHaveBeenCalledWith('Note', 'local body', '/vault/Note.md');

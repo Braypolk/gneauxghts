@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { DocumentBody } from "./document/documentBody";
   import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
   import { assertWorkspaceMutationAdmitted } from './document/documentPublicationAdmission';
   import { nextEditorFrame } from './editor/editorPresentation';
@@ -310,7 +311,7 @@
   function getRelatedContext(paneId: PaneId = activePaneId) {
     const document = getPaneDocumentSession(paneId);
     return { documentHandle: document.handle, currentPath: getDocumentPath(document),
-      currentTitle: document.working.title, currentMarkdown: document.working.markdown };
+      currentTitle: document.working.title, body: document.working.body };
   }
   $effect(() => {
     for (const paneId of paneOrder) {
@@ -541,13 +542,13 @@
   // ---------------------------------------------------------------------------
   // Editor markdown change handler — used by the per-pane lifecycle controller.
   // ---------------------------------------------------------------------------
-  function handleEditorMarkdownChange(
+  function handleEditorBodyChange(
     paneId: string,
     document: NoteDraftState,
-    nextMarkdown: string,
+    body: DocumentBody,
   ) {
     const resolvedPaneId = paneId as PaneId;
-    documentEditing.recordUserEdit(resolvedPaneId, document, nextMarkdown);
+    documentEditing.recordUserEdit(resolvedPaneId, document, body);
   }
 
   // ---------------------------------------------------------------------------
@@ -574,7 +575,7 @@
       closeSelectionMenu(paneId);
       closeWikilinkAutocomplete(paneId);
     },
-    handleEditorMarkdownChange,
+    handleEditorBodyChange,
     getNavigationContext,
     openNotePath: (notePath, options) =>
       commands.openNotePath(notePath, options),
@@ -653,11 +654,11 @@
     isTitleEditing: isTitleInputFocusedForNote,
     publicationAdmissionChanged: (active) => { agentPublicationActive = active; },
     isWorkspaceOperationPending: () => commands.isOperationPending() || historyMode.state.phase !== 'inactive',
-    resetPaneCommandAfterBodyInput: (paneId, nextMarkdown) => {
+    resetPaneCommandAfterBodyInput: (paneId, body) => {
       if (
         paneCommandPaneId === paneId &&
         paneCommandMode !== null &&
-        nextMarkdown.trim() !== ""
+        body.hasContent()
       ) {
         workspaceStore.resetPaneCommand();
       }

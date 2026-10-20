@@ -1,11 +1,17 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { getRelatedNotes, type SearchContext } from '../search/search';
+import { getRelatedNotes } from '../search/search';
+import type { DocumentBody } from '../document/documentBody';
 import type { RelatedNoteItem, RelatedNotesResponse } from '$lib/types/semantic';
 
-export interface RelatedContext extends SearchContext { documentHandle: string }
-const inputKey = (context: RelatedContext) => JSON.stringify([
-  context.currentPath, context.currentTitle, context.currentMarkdown
-]);
+export interface RelatedContext {
+  documentHandle: string;
+  currentPath: string | null;
+  currentTitle: string;
+  body: DocumentBody;
+}
+const sameInput = (left: RelatedContext, right: RelatedContext) =>
+  left.currentPath === right.currentPath && left.currentTitle === right.currentTitle &&
+  left.body === right.body;
 
 export class RelatedResult {
   items = $state<RelatedNoteItem[]>([]);
@@ -28,7 +34,7 @@ export class RelatedNotesStore {
 
   update(context: RelatedContext) {
     const entry = this.#entries.get(context.documentHandle);
-    if (!entry || inputKey(entry.context) === inputKey(context)) return;
+    if (!entry || sameInput(entry.context, context)) return;
     entry.context = { ...context };
     this.#invalidate(entry);
   }
@@ -83,7 +89,8 @@ export class RelatedNotesStore {
     const current = () => !this.#disposed && entry.consumers > 0 && entry.epoch === epoch;
     const request = (async () => {
       try {
-        const response = await getRelatedNotes(context, null, 4);
+        const response = await getRelatedNotes({ currentPath: context.currentPath, currentTitle: context.currentTitle,
+          currentMarkdown: context.body.toMarkdown() }, null, 4);
         if (!current()) return;
         if (response.status !== 'unavailable') entry.items = response.items;
         entry.status = response.status;

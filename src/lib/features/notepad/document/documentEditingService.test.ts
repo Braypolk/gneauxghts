@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
 import {
@@ -56,9 +57,9 @@ describe('documentEditingService', () => {
     const harness = createHarness();
     const revision = harness.note.operation.revision;
 
-    expect(harness.service.recordUserEdit('left', harness.note, 'hello')).toBe(true);
+    expect(harness.service.recordUserEdit('left', harness.note, DocumentBody.fromMarkdown('hello'))).toBe(true);
     expect(harness.note.operation.revision).toBe(revision + 1);
-    expect(harness.service.recordUserEdit('left', harness.note, 'hello')).toBe(false);
+    expect(harness.service.recordUserEdit('left', harness.note, DocumentBody.fromMarkdown('hello'))).toBe(false);
     expect(harness.note.operation.revision).toBe(revision + 1);
   });
 
@@ -66,10 +67,10 @@ describe('documentEditingService', () => {
   it('does not treat a programmatic editor callback as another edit', () => {
     const harness = createHarness({ external: true });
     expect(
-      harness.service.recordUserEdit('left', harness.note, 'replacement')
+      harness.service.recordUserEdit('left', harness.note, DocumentBody.fromMarkdown('replacement'))
     ).toBe(false);
 
-    expect(harness.note.working.markdown).toBe('');
+    expect(harness.note.working.body.toMarkdown()).toBe('');
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
     expect(harness.scheduleSearch).not.toHaveBeenCalled();
   });
@@ -100,11 +101,11 @@ describe('documentEditingService', () => {
 
     expect(adopted?.working).toEqual({
       title: 'later title',
-      markdown: 'later body'
+      body: DocumentBody.fromMarkdown('later body')
     });
     expect(adopted?.savedBaseline?.content).toEqual({
       title: 'captured title',
-      markdown: 'captured body'
+      body: DocumentBody.fromMarkdown('captured body')
     });
     expect(adopted?.publication.warning).toEqual(warning);
     expect(adopted?.identity).toEqual({
@@ -236,7 +237,7 @@ describe('documentEditingService', () => {
     expect(outcome).toMatchObject({ kind: 'adopted' });
     expect(harness.note.savedBaseline?.content).toEqual({
       title: 'Restored',
-      markdown: 'after'
+      body: DocumentBody.fromMarkdown('after')
     });
     expect(runtime.markdown).toBe('after');
     expect(runtime.attachedPaneCount).toBe(0);
@@ -297,7 +298,7 @@ describe('documentEditingService', () => {
       markdown: 'external body',
       path: '/vault/note.md'
     });
-    expect(harness.note.working.markdown).toBe('external body');
+    expect(harness.note.working.body.toMarkdown()).toBe('external body');
     expect(harness.scheduleAutosave).not.toHaveBeenCalled();
 
     harness.service.restoreTransientForgotten(harness.note, {
@@ -309,7 +310,7 @@ describe('documentEditingService', () => {
     });
     expect(harness.note.identity).toEqual({ kind: 'draft' });
     expect(harness.note.savedBaseline).toBeNull();
-    expect(harness.note.working.markdown).toBe('recovered body');
+    expect(harness.note.working.body.toMarkdown()).toBe('recovered body');
     expect(harness.scheduleAutosave).toHaveBeenCalledOnce();
   });
 
@@ -332,7 +333,7 @@ describe('documentEditingService', () => {
     expect(harness.note.savedBaseline).toBeNull();
     expect(harness.note.working).toEqual({
       title: 'Recovered note',
-      markdown: 'recovered body'
+      body: DocumentBody.fromMarkdown('recovered body')
     });
     expect(harness.scheduleAutosave).toHaveBeenCalledOnce();
   });
@@ -357,22 +358,22 @@ describe('documentEditingService', () => {
     await vi.waitFor(() => {
       expect(applyRuntime).toHaveBeenCalledOnce();
     });
-    harness.service.recordUserEdit('left', harness.note, 'newer user edit');
+    harness.service.recordUserEdit('left', harness.note, DocumentBody.fromMarkdown('newer user edit'));
     releaseFirstApply();
     await replacement;
 
     expect(appliedMarkdown).toEqual(['programmatic', 'newer user edit']);
-    expect(harness.note.working.markdown).toBe('newer user edit');
+    expect(harness.note.working.body.toMarkdown()).toBe('newer user edit');
   });
 });
 
 describe('authored note tags', () => {
   it('uses the shared draft and ordinary autosave without replacing the body', () => {
     const h = createHarness();
-    h.service.recordUserEdit('left', h.note, 'Body stays intact');
+    h.service.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('Body stays intact'));
     h.scheduleAutosave.mockClear();
     expect(h.service.updateTags(h.note, ['renovation'])).toBe(true);
-    expect(h.note.working.markdown).toBe('Body stays intact');
+    expect(h.note.working.body.toMarkdown()).toBe('Body stays intact');
     expect(h.scheduleAutosave).toHaveBeenCalledExactlyOnceWith(h.note);
     expect(documentHasCleanBuffer(h.note)).toBe(false);
     expect(h.service.captureSave(h.note).tagEdit).toEqual({ previous: [], tags: ['renovation'] });
@@ -394,12 +395,12 @@ describe('authored note tags', () => {
   it('adopts externally changed tags while preserving newer body typing', async () => {
     const h = createHarness();
     await h.service.adoptCleanExternalRefresh(h.note, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: 'before', tags: ['old'] });
-    h.service.recordUserEdit('left', h.note, 'captured body');
+    h.service.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('captured body'));
     dispatchDocumentOperation(h.note, { type: 'start', operation: 'saving' });
     const capture = h.service.captureSave(h.note);
-    h.service.recordUserEdit('left', h.note, 'newer body');
+    h.service.recordUserEdit('left', h.note, DocumentBody.fromMarkdown('newer body'));
     await h.service.adoptSavedResult(capture, { noteId: 'tag-note', path: '/vault/Tag.md', title: '', markdown: 'captured body', tags: ['external'] });
-    expect(h.note.working.markdown).toBe('newer body');
+    expect(h.note.working.body.toMarkdown()).toBe('newer body');
     expect(h.note.working.tags).toEqual(['external']);
     expect(h.service.captureSave(h.note).tagEdit).toBeUndefined();
   });

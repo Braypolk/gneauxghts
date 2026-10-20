@@ -1,5 +1,4 @@
 import {
-  getDocumentMarkdown,
   type NoteDraftState
 } from '$lib/features/notepad/document/documentState';
 import { formatNoteTitle } from '$lib/features/notepad/model/document';
@@ -43,7 +42,7 @@ export function createTitleInteractionController<
     deps.updateTitle(document, title);
     if (
       title !== '' ||
-      getDocumentMarkdown(document).trim() !== ''
+      document.working.body.hasContent()
     ) {
       deps.clearRecentlyForgotten();
     }

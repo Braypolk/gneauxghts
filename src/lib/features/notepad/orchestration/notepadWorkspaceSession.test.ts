@@ -331,7 +331,7 @@ it('retires a pending open and disk refresh when the workspace is disposed', asy
   await opening;
   expect(await refresh).toBe('stale');
   expect(f.getPaneDocument(f.first)).toBe(f.initialDocument);
-  expect(f.initialDocument.working.markdown).toBe('a');
+  expect(f.initialDocument.working.body.toMarkdown()).toBe('a');
   expect(f.paneLifecycle.bindDocument).not.toHaveBeenCalled();
 });
 

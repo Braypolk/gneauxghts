@@ -701,7 +701,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     await operation.depart();
     if (!capturePaneLocation(paneId) && paneHasCapability(getPaneKind(paneId), 'edit-document')) {
       const document = getPaneDocument(paneId);
-      if (document.working.title.trim() || document.working.markdown.trim()) {
+      if (document.working.title.trim() || document.working.body.hasContent()) {
         await prepareDocument(paneId, false);
       }
       operation.check();

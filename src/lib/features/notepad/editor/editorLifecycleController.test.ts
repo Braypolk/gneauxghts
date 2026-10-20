@@ -1,9 +1,10 @@
+import { DocumentBody } from '../document/documentBody';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-// Capture the onMarkdownChange callback the controller installs, and stub the
+// Capture the onBodyChange callback the controller installs, and stub the
 // rest of the heavy CodeMirror editor stack so the lifecycle controller can run
 // without a real DOM/editor.
-let capturedOnMarkdownChange: ((markdown: string) => void) | null = null;
+let capturedOnBodyChange: ((body: DocumentBody) => void) | null = null;
 
 vi.mock('./editorPresentation', async (importOriginal) => ({
   ...await importOriginal<typeof import('./editorPresentation')>(),
@@ -11,8 +12,8 @@ vi.mock('./editorPresentation', async (importOriginal) => ({
 }));
 
 vi.mock('$lib/features/notepad/editor/editor', () => ({
-  createEditor: vi.fn(async ({ onMarkdownChange }) => {
-    capturedOnMarkdownChange = onMarkdownChange;
+  createEditor: vi.fn(async ({ onBodyChange }) => {
+    capturedOnBodyChange = onBodyChange;
     return { view: {} };
   }),
   destroyEditor: vi.fn(async () => null),
@@ -55,9 +56,9 @@ import {
   type NoteDraftState
 } from '$lib/features/notepad/state/noteStore';
 
-describe('editorLifecycleController onMarkdownChange routing', () => {
+describe('editorLifecycleController onBodyChange routing', () => {
   beforeEach(() => {
-    capturedOnMarkdownChange = null;
+    capturedOnBodyChange = null;
     vi.clearAllMocks();
   });
 
@@ -87,8 +88,8 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       getDocumentSession: () => liveDocument,
       setIsEditorReady: () => {},
       setIsApplyingProgrammaticUpdate: () => {},
-      handleEditorMarkdownChange: (_paneId, document, nextMarkdown) => {
-        received.push({ key: document.handle, markdown: nextMarkdown });
+      handleEditorBodyChange: (_paneId, document, nextMarkdown) => {
+        received.push({ key: document.handle, markdown: nextMarkdown.toMarkdown() });
       },
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
@@ -96,7 +97,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     });
 
     await controller.createEditor('');
-    expect(capturedOnMarkdownChange).toBeTypeOf('function');
+    expect(capturedOnBodyChange).toBeTypeOf('function');
 
     // Navigation selects another live document. Save identity adoption retains
     // the original handle and is covered by EditorDocumentRuntime tests.
@@ -112,7 +113,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
     });
 
     // The user types after navigation.
-    capturedOnMarkdownChange!('body text');
+    capturedOnBodyChange!(DocumentBody.fromMarkdown('body text'));
 
     // The callback resolves the current pane document at invocation.
     expect(received).toEqual([{ key: liveDocument.handle, markdown: 'body text' }]);
@@ -144,7 +145,7 @@ describe('editorLifecycleController onMarkdownChange routing', () => {
       getDocumentSession: () => liveDocument,
       setIsEditorReady: () => {},
       setIsApplyingProgrammaticUpdate: () => {},
-      handleEditorMarkdownChange: () => {},
+      handleEditorBodyChange: () => {},
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
       closeTransientUi
@@ -179,7 +180,7 @@ describe('editor presentation readiness', () => {
       getDocumentSession: () => document,
       setIsEditorReady: value => { ready = value; },
       setIsApplyingProgrammaticUpdate: () => {},
-      handleEditorMarkdownChange: () => {},
+      handleEditorBodyChange: () => {},
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
       closeTransientUi: () => {}
@@ -293,7 +294,7 @@ describe('editorLifecycleController reading-position persistence', () => {
       getDocumentSession: () => document,
       setIsEditorReady: () => {},
       setIsApplyingProgrammaticUpdate: () => {},
-      handleEditorMarkdownChange: () => {},
+      handleEditorBodyChange: () => {},
       getSharedEditorResources: () => ({}) as never,
       getViewCallbacks: () => ({}) as never,
       closeTransientUi: () => {}

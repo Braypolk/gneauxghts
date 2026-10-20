@@ -1,3 +1,4 @@
+import { DocumentBody } from '$lib/features/notepad/document/documentBody';
 import { describe, expect, it } from 'vitest';
 import { createNotepadFeatureHost, snapshotDocument } from './host';
 import {
@@ -20,7 +21,7 @@ describe('snapshotDocument', () => {
 
     const snapshot = snapshotDocument(document);
     document.working.title = 'Mutated';
-    document.working.markdown = 'Changed';
+    document.working.body = DocumentBody.fromMarkdown('Changed');
 
     expect(snapshot).toEqual({
       documentHandle: document.handle,
@@ -58,7 +59,7 @@ describe('createNotepadFeatureHost', () => {
         focus: () => true,
         focusAtEnd: () => true,
         readSnapshot: () => ({
-          markdown: document.working.markdown,
+          markdown: document.working.body.toMarkdown(),
           selection: { anchor: 0, head: 5 },
           revision: 1
         }),

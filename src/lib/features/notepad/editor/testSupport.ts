@@ -1,3 +1,4 @@
+import type { DocumentBody } from '../document/documentBody';
 import { EditorState, Transaction, type TransactionSpec, type Extension } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { vi } from 'vitest';
@@ -8,7 +9,7 @@ export function createRuntimePane(
   runtime: EditorDocumentRuntime,
   markdown: string,
   anchor: number,
-  onMarkdownChange: (markdown: string) => void = vi.fn(),
+  onBodyChange: (body: DocumentBody) => void = vi.fn(),
   extensions: Extension[] = []
 ) {
   let state = EditorState.create({
@@ -52,13 +53,13 @@ export function createRuntimePane(
     runtime,
     sharedResources: null,
     paneKey: Symbol('pane'),
-    onMarkdownChange
+    onBodyChange
   };
   runtime.attachController(controller);
   return {
     controller,
     view,
-    onMarkdownChange,
+    onBodyChange,
     readState: () => state,
     setViewport: (scrollTop: number, scrollLeft = 0) => {
       scrollDOM.scrollTop = scrollTop;
