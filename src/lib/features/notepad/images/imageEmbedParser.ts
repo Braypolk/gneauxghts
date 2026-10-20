@@ -1,5 +1,5 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
-import type { SyntaxNode } from '@lezer/common';
+import { type SyntaxNode, type TreeFragment } from '@lezer/common';
 import { obsidianMarkdownExtensions } from '../markdown/obsidianMarkdownExtensions';
 
 const parser = markdown({ base: markdownLanguage, extensions: [obsidianMarkdownExtensions] }).language.parser;
@@ -36,7 +36,14 @@ function children(node: SyntaxNode, name: string) {
 }
 function unbracket(value: string) { return value.replace(/^<|>$/g, ''); }
 export function parseImageEmbeds(text: string): ImageEmbedMatch[] {
-  const tree = parser.parse(text);
+  return parseImageEmbedDocument(text).images;
+}
+/** Always finishes the complete parse; fragments are from this same parser. */
+export function parseImageEmbedDocument(text: string, fragments: readonly TreeFragment[] = []) {
+  // Every supported image form starts with '!'. This is deliberately conservative:
+  // escaped bangs and bangs in literals still take the ordinary parser path.
+  if (!text.includes('!')) return { images: [] as ImageEmbedMatch[], tree: null };
+  const tree = parser.parse(text, fragments);
   // Inline parsers stop at paragraph boundaries; Obsidian comments may cross them.
   const literal: { from: number; to: number }[] = [];
   tree.iterate({ enter(node) {
@@ -108,7 +115,7 @@ export function parseImageEmbeds(text: string): ImageEmbedMatch[] {
       widgetKey: `image:${node.from}:${fileName}` });
     return false;
   }});
-  return results;
+  return { images: results, tree };
 }
 export function forEachImageEmbed(text: string, callback: (image: ImageEmbedMatch) => void) {
   parseImageEmbeds(text).forEach(callback);

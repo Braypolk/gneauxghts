@@ -1,16 +1,15 @@
-import { StateEffect, StateField, type EditorState, type Text } from '@codemirror/state';
-import { parseImageEmbeds, type ImageEmbedMatch } from './imageEmbedParser';
-const inventories = new WeakMap<Text, ImageEmbedMatch[]>();
-function inventory(doc: Text) {
-  let images = inventories.get(doc);
-  if (!images) { images = parseImageEmbeds(doc.toString()); inventories.set(doc, images); }
-  return images;
-}
+import { StateEffect, StateField, type EditorState } from '@codemirror/state';
+import { type ImageEmbedMatch } from './imageEmbedParser';
+import { createImageInventory, updateImageInventory } from './imageInventory';
 export const imageSourceEffect = StateEffect.define<number | null>();
 export const imageState = StateField.define({
-  create(state) { return { images: inventory(state.doc), sourceFrom: null as number | null, sourcePreview: null as ImageEmbedMatch | null, lifetime: Symbol('image view') }; },
+  create(state) {
+    const inventory = createImageInventory(state.doc);
+    return { inventory, images: inventory.images, sourceFrom: null as number | null, sourcePreview: null as ImageEmbedMatch | null, lifetime: Symbol('image view') };
+  },
   update(value, tr) {
-    const images = tr.docChanged ? inventory(tr.newDoc) : value.images;
+    const inventory = tr.docChanged ? updateImageInventory(value.inventory, tr) : value.inventory;
+    const images = inventory.images;
     let sourceFrom = value.sourceFrom == null ? null : tr.changes.mapPos(value.sourceFrom, -1);
     for (const effect of tr.effects) if (effect.is(imageSourceEffect)) sourceFrom = effect.value;
     const selection = tr.newSelection.main;
@@ -29,7 +28,7 @@ export const imageState = StateField.define({
     if (!source || (selection.empty && (selection.head <= source.from || selection.head >= source.to)) || selection.to < source.from || selection.from > source.to ||
       (selection.from === source.from && selection.to === source.to)) sourceFrom = null;
     if (tr.isUserEvent('input.external-reset')) sourceFrom = null;
-    return { images, sourceFrom, sourcePreview: sourceFrom == null ? null : sourcePreview, lifetime: value.lifetime };
+    return { inventory, images, sourceFrom, sourcePreview: sourceFrom == null ? null : sourcePreview, lifetime: value.lifetime };
   }
 });
 export function selectedImage(state: EditorState) {
