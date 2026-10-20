@@ -43,6 +43,8 @@ and reproducible fixtures belong in Git.
 
 - [Paragraph and inline Markdown parsing](archive/visible-range-markdown/paragraph-inline-optimization.md): skip impossible builtin recognizers and buffered-node tree-identity lookups. Giant-quote dispatch improves another 30%; syntax/work regressions, profiles, 24 browser checks and 22 native checks pass. Repeated background paragraph passes remain.
 
+- [Bounded paragraph reuse prototype](archive/visible-range-markdown/paragraph-reuse-prototype.md): correctness passes in Chrome/WebKit; some Chrome giant-quote/typing gains, added dispatch cost and about 9.8 MiB retained per giant paragraph per pane. Native latency gains are inconsistent. Prototype preserved at `cfd81dc7` on `codex/paragraph-reuse-prototype`; kept off main.
+
 - [Markdown image inventory](archive/markdown-image-inventory.md): conservative syntax-absence gating, complete incremental parsing and shared split-pane computation remove ordinary-edit cold reparses. Matched benchmarks, correctness coverage and the unrelated search-preview browser failure are recorded with the outcome.
 
 - [Related notes redesign](archive/related-notes-redesign.md): a floating button and shared popup replace the drawer/sheet. Search, Related and Chat use the reusable container renderer with ordered items, explicit presentation states and the original pinch animation. Results are demand-driven and saved-source shortcuts respect drafts. Validation and backend scope limits are recorded with the outcome.

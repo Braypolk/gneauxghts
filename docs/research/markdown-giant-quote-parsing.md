@@ -4,6 +4,8 @@ Initially investigated 2026-10-20 on main `9aad697f`, with production code, inst
 
 The [paragraph/inline follow-up](../../.scratch/archive/visible-range-markdown/paragraph-inline-optimization.md) now skips impossible builtin recognizers and buffered-tree identity searches. Fresh giant-quote dispatch improves another 30% with one or two panes. A retained probe identifies repeated same-revision background paragraph passes as remaining work.
 
+The later [bounded reuse prototype](../../.scratch/archive/visible-range-markdown/paragraph-reuse-prototype.md) safely reuses selected same-revision inline results. Chrome gains do not establish a consistent native WebKit improvement, and the prototype adds cold cost and retained memory. It is preserved on `codex/paragraph-reuse-prototype` and was not integrated.
+
 ## Diagnosis
 
 The previous full-app profiles attribute 92–93% of sampled CPU to live language parsing, including 50–57% self time in `injectMarks`. Viewport decoration building accounts for under 0.1%; main's image inventory fix has removed the former image reparses from this fixture. See [the main integration measurements](../../.scratch/archive/visible-range-markdown/main-integration.md).

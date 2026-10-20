@@ -16,7 +16,10 @@ removes unused root parsing and records a fresh before/after comparison, native
 verification and the remaining paragraph cost. The [paragraph/inline follow-up](paragraph-inline-optimization.md)
 skips impossible inline recognizers and mixed-tree identity searches, records
 further giant-quote gains, and identifies repeated background paragraph passes.
-Generated raw samples/profiles stay local.
+The bounded [paragraph-reuse prototype](paragraph-reuse-prototype.md) preserves
+correctness and shows Chrome gains, but its native A/B/A does not establish a
+consistent latency benefit. It remains on a separate branch, with no production
+cache integrated. Generated raw samples/profiles stay local.
 
 ## Implementation
 
