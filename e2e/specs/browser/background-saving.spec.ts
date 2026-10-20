@@ -40,7 +40,7 @@ describe('background saving through mounted owners', () => {
         }, 100);
       }, signal);
       expect(saved).toEqual({ markdown: 'Latest text before background', calls: 1 });
-      expect(await $('[data-testid="note-editor"] .cm-content').getText()).toBe('Latest text before background');
+      expect(await $('[data-testid="note-editor"] .cm-line').getText()).toBe('Latest text before background');
     });
   }
 

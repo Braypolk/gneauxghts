@@ -116,9 +116,35 @@ impl ActiveSemanticState {
             .map(|runtime| runtime.edges_stale)
             .unwrap_or(true);
 
+        // Saved-note edges/vectors describe indexed bytes, not the live draft.
+        // Only reuse them when both the editor projection and indexed file agree.
+        let indexed_path = if let Some(path) = current_path {
+            let stored = load_note_record(&connection, path)?;
+            let title = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or_default();
+            match (stored, fs::read_to_string(path)) {
+                (Some(stored), Ok(disk))
+                    if indexed_source_matches_draft(
+                        &disk,
+                        &stored.content_hash,
+                        title,
+                        current_title,
+                        current_markdown,
+                    ) =>
+                {
+                    Some(path)
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
         let (response, strategy) = if normalized_selection.is_none() {
             if let Some(items) =
-                self.related_from_edges(&connection, current_path, edges_stale, effective_limit)?
+                self.related_from_edges(&connection, indexed_path, edges_stale, effective_limit)?
             {
                 (
                     RelatedNotesResponse {
@@ -130,7 +156,7 @@ impl ActiveSemanticState {
                     "edges",
                 )
             } else if let Some(items) =
-                self.related_from_note_ann(&connection, current_path, effective_limit)?
+                self.related_from_note_ann(&connection, indexed_path, effective_limit)?
             {
                 (
                     RelatedNotesResponse {
@@ -434,6 +460,17 @@ fn build_note_query_text(current_title: &str, current_markdown: &str) -> String 
     truncate_related_query(&query)
 }
 
+fn indexed_source_matches_draft(
+    disk: &str,
+    indexed_hash: &str,
+    saved_title: &str,
+    title: &str,
+    markdown: &str,
+) -> bool {
+    let (_, body) = crate::note::extract_file_name_title_and_body(disk, saved_title);
+    content_hash(disk) == indexed_hash && title == saved_title && markdown == body
+}
+
 fn indexed_note_matches_disk(note_path: &str, stored_content_hash: &str) -> bool {
     fs::read_to_string(note_path)
         .ok()
@@ -442,6 +479,7 @@ fn indexed_note_matches_disk(note_path: &str, stored_content_hash: &str) -> bool
 
 fn related_match_from_preview(preview: super::db::StoredRelatedNotePreview) -> RelatedNoteMatch {
     RelatedNoteMatch {
+        note_id: None,
         note_path: preview.note_path,
         note_title: preview.note_title,
         section_label: preview.section_label,
@@ -504,6 +542,7 @@ fn collapse_related_matches(
         {
             if candidate.score > existing.score {
                 *existing = RelatedNoteMatch {
+                    note_id: None,
                     note_path: candidate.note_path,
                     note_title: candidate.note_title,
                     section_label: candidate.section_label,
@@ -520,6 +559,7 @@ fn collapse_related_matches(
         }
 
         collapsed.push(RelatedNoteMatch {
+            note_id: None,
             note_path: candidate.note_path,
             note_title: candidate.note_title,
             section_label: candidate.section_label,
@@ -547,8 +587,8 @@ fn collapse_related_matches(
 #[cfg(test)]
 mod tests {
     use super::{
-        build_note_query_text, indexed_note_matches_disk, truncate_related_query,
-        MAX_RELATED_QUERY_CHARS,
+        build_note_query_text, indexed_note_matches_disk, indexed_source_matches_draft,
+        truncate_related_query, MAX_RELATED_QUERY_CHARS,
     };
     use crate::semantic::db::content_hash;
     use std::{
@@ -575,6 +615,40 @@ mod tests {
         let query = build_note_query_text("Ceremony", &body);
         assert!(query.starts_with("Ceremony"));
         assert!(query.chars().count() <= MAX_RELATED_QUERY_CHARS + 1);
+    }
+
+    #[test]
+    fn saved_shortcuts_require_the_current_draft_and_indexed_bytes() {
+        let disk = "---\nid: abc\n---\n\n# Title\n\nBody text here.\n";
+        let hash = content_hash(disk);
+        assert!(indexed_source_matches_draft(
+            disk,
+            &hash,
+            "Title",
+            "Title",
+            "Body text here."
+        ));
+        assert!(!indexed_source_matches_draft(
+            disk,
+            &hash,
+            "Title",
+            "Title",
+            "New unsaved idea"
+        ));
+        assert!(!indexed_source_matches_draft(
+            disk,
+            &hash,
+            "Title",
+            "Renamed draft",
+            "Body text here."
+        ));
+        assert!(!indexed_source_matches_draft(
+            disk,
+            "stale-index",
+            "Title",
+            "Title",
+            "Body text here."
+        ));
     }
 
     #[test]

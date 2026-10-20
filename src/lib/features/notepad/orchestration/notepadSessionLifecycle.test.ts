@@ -17,8 +17,8 @@ function deps(hasLoadedInitialSession = false): NotepadSessionLifecycleDeps {
   return {
     hasLoadedInitialSession: () => hasLoadedInitialSession, markInitialSessionLoaded: vi.fn(), isInitialEditorRootReady: () => true,
     applySession: vi.fn(), bindVaultScope: vi.fn(), applyAssetRoot: vi.fn(), registerWindowCloseHandler: () => vi.fn(), registerPendingSaveHandler: () => vi.fn(),
-    registerTransientMenuListeners: () => vi.fn(), getWorkspaceShell: () => null, ensurePaneEditors: vi.fn().mockResolvedValue(undefined),
-    refreshCurrentNote: vi.fn().mockResolvedValue(undefined), updateRelatedLayout: vi.fn(), scheduleRelated: vi.fn(),
+    registerTransientMenuListeners: () => vi.fn(), ensurePaneEditors: vi.fn().mockResolvedValue(undefined),
+    refreshCurrentNote: vi.fn().mockResolvedValue(undefined), scheduleRelated: vi.fn(),
     openNote: vi.fn().mockResolvedValue(undefined), navigateToTaskTarget: vi.fn().mockResolvedValue(undefined),
     focusNavigationPane: vi.fn(), onVaultNoteChanged: vi.fn(), dispose: vi.fn()
   };

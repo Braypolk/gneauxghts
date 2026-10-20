@@ -370,7 +370,7 @@ impl CurrentContentItem for RelatedNoteMatch {
     fn current_note_identity(&self) -> CurrentContentIdentity<'_> {
         if self.document_kind == crate::note::DocumentKind::Note {
             CurrentContentIdentity::Note {
-                note_id: None,
+                note_id: self.note_id.as_deref(),
                 note_path: Some(&self.note_path),
             }
         } else {
@@ -881,7 +881,7 @@ async fn get_related_notes_unchecked(
         .map(|path| path.to_string_lossy().into_owned());
     let semantic = state.semantic.clone();
 
-    let response = tauri::async_runtime::spawn_blocking(move || {
+    let mut response = tauri::async_runtime::spawn_blocking(move || {
         semantic.related_notes(
             current_path_raw.as_deref(),
             &current_title,
@@ -892,7 +892,21 @@ async fn get_related_notes_unchecked(
     })
     .await
     .map_err(|err| err.to_string())??;
-    related_cache_put(fingerprint, cache_generation, response.clone());
+    {
+        let index = state
+            .notes_index
+            .lock()
+            .map_err(|_| "Notes index unavailable")?;
+        for item in &mut response.items {
+            item.note_id = index
+                .entries
+                .get(std::path::Path::new(&item.note_path))
+                .map(|note| note.note_id.clone());
+        }
+    }
+    if response.status == "ready" {
+        related_cache_put(fingerprint, cache_generation, response.clone());
+    }
     Ok(response)
 }
 

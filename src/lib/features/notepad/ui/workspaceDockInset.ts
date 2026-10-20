@@ -9,7 +9,7 @@ export function workspaceDockInset(node: HTMLElement) {
     const clearance = Math.max(Number(dock?.dataset.dockClearance ?? 0),
       Number(dock?.dataset.dockReadingClearance ?? 0));
     let height = bar?.getBoundingClientRect().height ?? 0;
-    const row = dock?.parentElement;
+    const row = dock?.closest<HTMLElement>('.search-dock-row');
     if (dock && row && clearance > 0) {
       const bodyHeight = parseFloat(getComputedStyle(dock).getPropertyValue('--dock-body-height'));
       const inset = dock.getBoundingClientRect().height - bodyHeight;

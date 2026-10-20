@@ -22,7 +22,7 @@ function setup(tagsError?: string, tags = tagsError ? [] : ['old']) {
   const editing = createDocumentEditingService({
     state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => false, resetPaneCommandAfterBodyInput: vi.fn(),
-    clearRecentlyForgotten: vi.fn(), clearSelectedRelatedText: vi.fn(),
+    clearRecentlyForgotten: vi.fn(),
     scheduleAutosave: vi.fn(), scheduleSearch: vi.fn(), scheduleRelated: vi.fn()
   });
   const save = vi.fn(async (title: string, markdown: string, _path: string | null, edit?: TagEdit) => {

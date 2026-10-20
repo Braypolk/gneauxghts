@@ -44,7 +44,6 @@ function setup() {
   const controller = createNotepadRefreshController({
     getDocumentSession: () => note,
     refreshDerivedViews,
-    updateRelatedDrawerLayout: vi.fn(),
     refreshDocumentFromDisk,
     findOpenDocumentByPath: vi.fn(() => note),
     getPaneIdsForDocument,

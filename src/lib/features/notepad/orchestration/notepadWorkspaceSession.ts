@@ -83,7 +83,6 @@ export interface WorkspacePresentation {
   createPane: () => NotepadPaneId;
   disposePaneRuntime: (paneId: NotepadPaneId, document: NoteDraftState | null) => Promise<void>;
   closeTransientUiExcept: (paneId: NotepadPaneId) => void;
-  updateSelectedRelatedText: (paneId?: NotepadPaneId) => void;
   closeWikilinkAutocomplete: (paneId?: NotepadPaneId) => void;
   waitForPaneMotion: () => Promise<void>;
 }
@@ -93,7 +92,6 @@ export interface WorkspaceDerivedViews {
   scheduleRelatedIfNeeded: (options?: {
     immediate?: boolean;
   }) => void;
-  clearSelectedRelatedText: () => void;
   loadRecentNotes: () => Promise<SearchItem[] | null> | SearchItem[] | null;
 }
 export interface NotepadWorkspaceSessionOptions {
@@ -217,7 +215,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
 
   function activatePane(paneId: NotepadPaneId) {
     activatePaneSession(paneId);
-    presentation.updateSelectedRelatedText(paneId);
     derivedViews.scheduleSearchIfNeeded();
     derivedViews.scheduleRelatedIfNeeded({ immediate: true });
   }
@@ -243,7 +240,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   }
 
   function refreshDerivedViews() {
-    derivedViews.clearSelectedRelatedText();
     derivedViews.scheduleSearchIfNeeded();
     derivedViews.scheduleRelatedIfNeeded({ immediate: true });
   }
@@ -546,7 +542,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
       operation.check();
       bindChatContextToNote(operation.paneId, getDocumentNoteId(next), getDocumentPath(next));
     }
-    presentation.updateSelectedRelatedText();
     releaseDocument(previous.handle);
     derivedViews.scheduleRelatedIfNeeded({ immediate: true });
     if (!operation.restoring) {
@@ -593,7 +588,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     const next = adoptSnapshotForPane(state, workspace, paneId, snapshot);
     state.recentlyForgotten = null;
     presentation.closeWikilinkAutocomplete(paneId);
-    derivedViews.clearSelectedRelatedText();
+
     if (kind !== getPaneKind(paneId) && !workspace.setPaneKind(paneId, kind)) {
       throw new Error('Workspace rejected the note destination.');
     }
@@ -652,7 +647,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     if (kind === 'chat' && recordLocation) {
       touchCurrentLocation(paneId);
     }
-    presentation.updateSelectedRelatedText();
+
     bumpEpoch();
     await focusAfterPresentation(operation);
   }
@@ -696,7 +691,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     }
     locationMru.rememberChat(paneId, location);
     workspace.setPaneConversationId(paneId, location.conversationId);
-    presentation.updateSelectedRelatedText();
+
     await focusAfterPresentation(operation);
   }
 
@@ -802,7 +797,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
           }
           await paneLifecycle.ensurePaneEditors();
           operation.check();
-          presentation.updateSelectedRelatedText(paneId);
         }
         if (workspace.activePaneId !== paneId) {
           return;
@@ -881,7 +875,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
         }
         adoptClosedLocation(paneId, remaining, location);
         activatePaneSession(remaining);
-        presentation.updateSelectedRelatedText();
         await tick();
         operation.check();
         if (workspace.activePaneId === remaining) {
@@ -928,7 +921,6 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     operation.release();
     await paneLifecycle.ensurePaneEditors();
     operation.check();
-    presentation.updateSelectedRelatedText(operation.paneId);
     if (workspace.activePaneId === operation.paneId) {
       presentation.focusPaneEditorAtEnd(operation.paneId);
     }
@@ -1041,7 +1033,7 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
     operation.release();
     if (paneHasCapability(getPaneKind(paneId), 'edit-document')) await paneLifecycle.ensurePaneEditors();
     operation.check();
-    presentation.updateSelectedRelatedText(paneId);
+
     derivedViews.scheduleSearchIfNeeded();
     derivedViews.scheduleRelatedIfNeeded({ immediate: true });
     if (choice !== 'previous') {

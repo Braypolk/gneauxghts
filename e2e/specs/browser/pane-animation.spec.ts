@@ -93,16 +93,14 @@ describe('coordinated pane layout motion', () => {
     }
   }
 
-  it('coordinates an expanded Related panel and a chat pane', async () => {
+  it('dismisses the Related popup during chat pane transitions', async () => {
     await ready();
-    await $('button[aria-label="Expand related notes"]').click();
+    await $('button[aria-label="Related notes"]').click();
     await waitForWorkspaceAnimationSettled();
     expectContinuousMotion(await samplePaneMotion('open-chat'));
     await $('[data-pane-kind="chat"]').waitForExist();
     expectContinuousMotion(await samplePaneMotion('close-right'));
-    await $('button[aria-label="Collapse related notes"]').click();
-    await waitForWorkspaceAnimationSettled();
-    await expect($('button[aria-label="Expand related notes"]')).toBeDisplayed();
+    await expect($('button[aria-label="Related notes"]')).toHaveAttribute('aria-expanded', 'false');
   });
 
   it('skips motion and animation waiting with reduced motion', async () => {

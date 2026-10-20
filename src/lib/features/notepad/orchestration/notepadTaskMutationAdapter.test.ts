@@ -107,7 +107,6 @@ describe('notepad task mutation adapter', () => {
       isTitleEditing: () => false,
       resetPaneCommandAfterBodyInput: vi.fn(),
       clearRecentlyForgotten: vi.fn(),
-      clearSelectedRelatedText: vi.fn(),
       scheduleAutosave,
       scheduleSearch: vi.fn(),
       scheduleRelated: vi.fn()

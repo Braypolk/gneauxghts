@@ -5,7 +5,6 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
-    "related:lab": "node scripts/relatedPrototype.mjs",
     "atlas:lab": "VITE_E2E_BROWSER=true node scripts/atlasPrototype.mjs",
     "build": "vite build",
     "preview": "vite preview",

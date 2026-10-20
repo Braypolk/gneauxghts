@@ -24,14 +24,16 @@ describe('mobile control sizing', () => {
 
   it('preserves editor and Related icon proportions while retaining explicit touch targets', async () => {
     await viewport(1280);
-    await $('button[aria-label="Expand related notes"]').click();
-    const close = 'button[aria-label="Close related panel"]';
+    await $('button[aria-label="Related notes"]').click();
+    const close = 'button[aria-label="Search notes"]';
     await $(close).waitForDisplayed();
-    const desktop = await dimensions(close);
+    expect((await dimensions(close)).width).toBeGreaterThanOrEqual(40);
     for (const width of [639, 390, 320, 640, 1280]) {
       await viewport(width);
       await waitForWorkspaceAnimationSettled();
-      expect(await dimensions(close)).toEqual(desktop);
+      const current = await dimensions(close);
+      expect(current.width).toBe(current.height);
+      expect(current.width).toBeGreaterThanOrEqual(40);
     }
     await $(close).click();
     await viewport(390);

@@ -183,6 +183,7 @@ pub(crate) struct SemanticChunkMatch {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct RelatedNoteMatch {
+    pub(crate) note_id: Option<String>,
     pub(crate) note_path: String,
     pub(crate) note_title: String,
     pub(crate) section_label: String,

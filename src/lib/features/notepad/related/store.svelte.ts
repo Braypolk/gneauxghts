@@ -1,265 +1,110 @@
+import { SvelteMap } from 'svelte/reactivity';
+import { getRelatedNotes, type SearchContext } from '../search/search';
 import type { RelatedNoteItem, RelatedNotesResponse } from '$lib/types/semantic';
-import { getRelatedNotes } from '$lib/features/notepad/search/search';
-import {
-  buildRelatedRequestKey,
-  computeRelatedDrawerLayout,
-  EMPTY_RELATED_REASON,
-  getEditorSelectionText,
-  getRelatedAssessmentDelay,
-  normalizeRelatedText,
-  type RelatedScope
-} from '$lib/features/notepad/related/layout';
 
-export interface RelatedNotesState {
-  items: RelatedNoteItem[];
-  status: RelatedNotesResponse['status'];
-  reason: string | null;
-  scope: RelatedScope;
-  panelPlacement: 'side' | 'bottom';
-  isLoading: boolean;
-  selectedText: string | null;
-  isPanelCollapsed: boolean;
-  reservedWidth: number;
-}
+export interface RelatedContext extends SearchContext { documentHandle: string }
+const inputKey = (context: RelatedContext) => JSON.stringify([
+  context.currentPath, context.currentTitle, context.currentMarkdown
+]);
 
-interface RelatedStoreDeps {
-  getCurrentTitle: () => string;
-  getCurrentMarkdown: () => string;
-  getCurrentPath: () => string | null;
-}
-
-export class RelatedNotesStore {
+export class RelatedResult {
   items = $state<RelatedNoteItem[]>([]);
   status = $state<RelatedNotesResponse['status']>('insufficientContent');
-  reason = $state<string | null>(EMPTY_RELATED_REASON);
-  scope = $state<RelatedScope>('note');
-  panelPlacement = $state<'side' | 'bottom'>('side');
+  reason = $state<string | null>(null);
   isLoading = $state(false);
-  selectedText = $state<string | null>(null);
-  isPanelCollapsed = $state(true);
-  reservedWidth = $state(0);
+  isStale = $state(false);
+  consumers = 0;
+  epoch = 0;
+  context: RelatedContext;
+  pending: Promise<void> | null = null;
+  constructor(context: RelatedContext) { this.context = { ...context }; }
+}
 
-  #deps: RelatedStoreDeps;
-  #relatedTimer: number | null = null;
-  #activeRelatedRequest = 0;
-  #lastRelatedRequestKey = '';
+/** Related data only. Popup presentation stays local to the command bar; subscribers
+ * share retrieval by the open document's immutable lifetime handle. */
+export class RelatedNotesStore {
+  #entries = new SvelteMap<string, RelatedResult>();
+  #disposed = false;
 
-  constructor(deps: RelatedStoreDeps) {
-    this.#deps = deps;
+  update(context: RelatedContext) {
+    const entry = this.#entries.get(context.documentHandle);
+    if (!entry || inputKey(entry.context) === inputKey(context)) return;
+    entry.context = { ...context };
+    this.#invalidate(entry);
   }
 
-  updateDrawerLayout = (shellEl: HTMLDivElement | null) => {
-    if (!shellEl || typeof window === 'undefined') {
-      return;
-    }
-
-    const layout = computeRelatedDrawerLayout(shellEl, this.isPanelCollapsed);
-    this.panelPlacement = layout.placement;
-    this.reservedWidth = layout.reservedWidth;
-  };
-
-  resetRelatedResults = (
-    status: RelatedNotesResponse['status'] = 'insufficientContent',
-    reason: string | null = EMPTY_RELATED_REASON
-  ) => {
-    this.cancelRelatedAssessment();
-    this.items = [];
-    this.status = status;
-    this.reason = reason;
-    this.#lastRelatedRequestKey = '';
-  };
-
-  cancelRelatedAssessment = () => {
-    if (this.#relatedTimer) {
-      window.clearTimeout(this.#relatedTimer);
-      this.#relatedTimer = null;
-    }
-
-    this.#activeRelatedRequest += 1;
-    this.isLoading = false;
-  };
-
-  #getActiveRelatedSelectionText = () => {
-    return this.scope === 'selection' ? this.selectedText : null;
-  };
-
-  #isSelectionInsideEditorRoot = (editorRoot: HTMLDivElement | null) => {
-    const selection = window.getSelection();
-    if (!selection || !editorRoot) {
-      return false;
-    }
-
-    const anchorNode =
-      selection.anchorNode instanceof Element
-        ? selection.anchorNode
-        : (selection.anchorNode?.parentElement ?? null);
-    const focusNode =
-      selection.focusNode instanceof Element
-        ? selection.focusNode
-        : (selection.focusNode?.parentElement ?? null);
-
-    return (
-      !!anchorNode &&
-      !!focusNode &&
-      editorRoot.contains(anchorNode) &&
-      editorRoot.contains(focusNode)
-    );
-  };
-
-  updateSelectedRelatedText = (editorRoot: HTMLDivElement | null) => {
-    if (!this.#isSelectionInsideEditorRoot(editorRoot)) {
-      return;
-    }
-
-    const nextSelection = getEditorSelectionText(editorRoot);
-    const previousSelection = this.selectedText;
-    if (nextSelection === previousSelection) {
-      return;
-    }
-
-    const hadSelection = !!previousSelection;
-    this.selectedText = nextSelection;
-    this.scope =
-      nextSelection && !hadSelection ? 'selection' : !nextSelection ? 'note' : this.scope;
-    this.scheduleRelated({ immediate: true });
-  };
-
-  clearSelectedRelatedText = () => {
-    this.cancelRelatedAssessment();
-    this.selectedText = null;
-    this.scope = 'note';
-  };
-
-  scheduleRelated = ({ immediate = false }: { immediate?: boolean } = {}) => {
-    // Scheduling changes the admitted target before deferred Markdown reads.
-    this.cancelRelatedAssessment();
-
-    if (this.isPanelCollapsed) {
-      return;
-    }
-
-    const activeSelection = this.#getActiveRelatedSelectionText();
-
-    if (this.scope === 'selection' && !activeSelection) {
-      this.resetRelatedResults();
-      return;
-    }
-
-    const delay = activeSelection
-      ? getRelatedAssessmentDelay(normalizeRelatedText(activeSelection).length, immediate, true)
-      : getRelatedAssessmentDelay(0, immediate, false);
-    this.#relatedTimer = window.setTimeout(() => {
-      this.#relatedTimer = null;
-      void this.runRelatedNotes();
-    }, delay);
-  };
-
-  runRelatedNotes = async () => {
-    if (this.isPanelCollapsed) {
-      this.cancelRelatedAssessment();
-      return;
-    }
-
-    const selectedText = this.#getActiveRelatedSelectionText();
-    if (this.scope === 'selection' && !selectedText) {
-      this.resetRelatedResults();
-      return;
-    }
-
-    const markdown = this.#deps.getCurrentMarkdown();
-    const normalizedContent = normalizeRelatedText(selectedText ?? markdown);
-    if (normalizedContent === '') {
-      this.resetRelatedResults();
-      return;
-    }
-
-    const requestKey = buildRelatedRequestKey(
-      this.#deps.getCurrentPath(),
-      this.scope,
-      this.#deps.getCurrentTitle(),
-      markdown,
-      selectedText
-    );
-
-    if (requestKey === this.#lastRelatedRequestKey) {
-      return;
-    }
-
-    const requestId = ++this.#activeRelatedRequest;
-    this.isLoading = true;
-
-    try {
-      const response = await getRelatedNotes(
-        {
-          currentPath: this.#deps.getCurrentPath(),
-          currentTitle: this.#deps.getCurrentTitle(),
-          currentMarkdown: markdown
-        },
-        selectedText,
-        4
-      );
-
-      if (requestId !== this.#activeRelatedRequest) {
-        return;
+  acquire(context: RelatedContext) {
+    let entry = this.#entries.get(context.documentHandle);
+    if (!entry) {
+      entry = new RelatedResult(context);
+      this.#entries.set(context.documentHandle, entry);
+    } else this.update(context);
+    const first = entry.consumers++ === 0;
+    if (first) void this.refresh(entry);
+    let released = false;
+    return { result: entry, release: () => {
+      if (released) return;
+      released = true;
+      if (--entry.consumers === 0) {
+        entry.epoch++;
+        entry.isLoading = false;
+        entry.pending = null;
+        // No hidden cache can keep retired document lifetimes alive.
+        this.#entries.delete(context.documentHandle);
       }
+    } };
+  }
 
-      this.items = response.items;
-      this.status = response.status;
-      this.reason = response.reason;
-      this.#lastRelatedRequestKey = requestKey;
-    } catch (error) {
-      if (requestId !== this.#activeRelatedRequest) {
-        return;
+  #invalidate(entry: RelatedResult) {
+    entry.epoch++;
+    entry.isStale = true;
+    entry.isLoading = false;
+    entry.pending = null;
+  }
+
+  /** Existing document/vault notifications invalidate, never reorder an open list. */
+  scheduleRelated = (_options?: { immediate?: boolean }) => {
+    for (const entry of this.#entries.values()) this.#invalidate(entry);
+  };
+
+  invalidateTarget = (notePath: string) => {
+    for (const entry of this.#entries.values()) {
+      entry.items = entry.items.filter(item => item.notePath !== notePath);
+      this.#invalidate(entry);
+    }
+  };
+
+  refresh = (entry: RelatedResult): Promise<void> => {
+    if (entry.pending) return entry.pending;
+    if (this.#disposed || entry.consumers === 0) return Promise.resolve();
+    const context = { ...entry.context };
+    const epoch = ++entry.epoch;
+    entry.isLoading = true;
+    const current = () => !this.#disposed && entry.consumers > 0 && entry.epoch === epoch;
+    const request = (async () => {
+      try {
+        const response = await getRelatedNotes(context, null, 4);
+        if (!current()) return;
+        if (response.status !== 'unavailable') entry.items = response.items;
+        entry.status = response.status;
+        entry.reason = response.reason;
+        if (response.status !== 'unavailable') entry.isStale = false;
+      } catch {
+        if (!current()) return;
+        entry.status = 'unavailable';
+        entry.reason = 'Related notes are unavailable right now.';
+      } finally {
+        if (current()) { entry.isLoading = false; entry.pending = null; }
       }
-
-      console.error('Failed to load related notes:', error);
-      this.items = [];
-      this.status = 'unavailable';
-      this.reason = 'Related notes are unavailable right now.';
-      this.#lastRelatedRequestKey = '';
-    } finally {
-      if (requestId === this.#activeRelatedRequest) {
-        this.isLoading = false;
-      }
-    }
-  };
-
-  handleRelatedScopeChange = (scope: RelatedScope) => {
-    if (scope === 'selection' && !this.selectedText) {
-      return;
-    }
-
-    this.scope = scope;
-    this.scheduleRelated({ immediate: true });
-  };
-
-  toggleRelatedPanel = (shellEl: HTMLDivElement | null) => {
-    this.isPanelCollapsed = !this.isPanelCollapsed;
-    this.updateDrawerLayout(shellEl);
-
-    if (this.isPanelCollapsed) {
-      this.cancelRelatedAssessment();
-      return;
-    }
-
-    this.scheduleRelated({ immediate: true });
-  };
-
-  collapseRelatedPanel = (shellEl: HTMLDivElement | null) => {
-    if (this.isPanelCollapsed) {
-      return;
-    }
-
-    this.isPanelCollapsed = true;
-    this.updateDrawerLayout(shellEl);
-    this.cancelRelatedAssessment();
+    })();
+    entry.pending = request;
+    return request;
   };
 
   dispose = () => {
-    this.cancelRelatedAssessment();
+    this.#disposed = true;
+    for (const entry of this.#entries.values()) this.#invalidate(entry);
+    this.#entries.clear();
   };
 }
-
-export function createRelatedNotesStore(deps: RelatedStoreDeps) {
-  return new RelatedNotesStore(deps);
-}
+export function createRelatedNotesStore() { return new RelatedNotesStore(); }

@@ -30,7 +30,7 @@ function fixture() {
   const read = vi.fn(async () => canonical);
   const service = createDocumentEditingService({ state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => false,
-    resetPaneCommandAfterBodyInput: vi.fn(), clearRecentlyForgotten: vi.fn(), clearSelectedRelatedText: vi.fn(),
+    resetPaneCommandAfterBodyInput: vi.fn(), clearRecentlyForgotten: vi.fn(),
     scheduleAutosave: vi.fn(), scheduleSearch: vi.fn(), scheduleRelated: vi.fn(),
     readPublicationSession: read });
   let outcome: PublicationResult | undefined;

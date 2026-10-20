@@ -630,36 +630,74 @@ note attachments contain Note Identities, resolved through current native author
 Pane return targets remain workspace navigation state and never become implicit
 model context.
 
+Related discovery is note-only. `related/store.svelte.ts` owns demand-driven
+results by ephemeral DocumentHandle; it shares an in-flight request across
+consumers of one document and retires the entry on final release. Named draft
+inputs and request epochs reject obsolete completions. Draft/vault changes mark
+a displayed snapshot stale; explicit Refresh replaces it without clearing rows.
+Vault target changes remove affected rows before another assessment.
+
+`NotepadCommandBar` presents results through the shared results
+popup and a floating button beside search. Its local Related mode preserves
+search scope and the selected search/chat mode. Changing the active
+pane/document or entering History closes the popup. Only the open popup drives
+retrieval. Related reserves no workspace width and adds no editor content.
+`ui/morphing-containers/MorphingContainers.svelte` owns the shared presentation
+for Search, Related and Chat. Its caller supplies an ordered list of keyed items,
+icons, mounted content and activation callbacks. The renderer has no knowledge of
+notes, queries, retrieval or chat. Items explicitly request `icon`, `compact`
+(inactive content), or `expanded` (active content); one content surface is
+presented at a time. Width is configurable and clamped to the space left by the
+other icons; height can be configured or measured from mounted content. Shared
+radius, circle, spacing, background and border defaults keep chrome consistent.
+
+`ui/morphing-containers/motion.ts` owns all container exchanges. Every pair uses
+the original Chat/Search 380ms pinch clock and the same compress/exchange/unfold
+choreography, regardless of item count or order. Pane layout changes can supply
+their coordinated editor clock and measured destination bounds. Retargeting
+starts at the painted geometry, and obsolete frames are ignored. One SVG material
+layer joins the bar and item shells; its filter never applies to input content.
+`WorkspaceInputDock` adapts mounted Search/composer measurements and feature mode
+to those generic items, without maintaining a second pair-specific animation
+machine. Related retains one Network glyph throughout its exchange.
+
+`SearchResultsPanel` owns the common popup reveal and styling; Recent, Pinned
+and Related share `SearchResultsHeading` and `SearchNoteResult`, with optional
+detail for Related rows. The shared popup is rendered in the container group's
+overlay, outside fading or inert input surfaces. Search/Related content changes
+retain the open panel. Related reveals alongside the pinch, with no wait for
+settling; only entry from the chat composer delays the popup. Outgoing Search
+scope controls retain their captured layout through the fade. The popup keeps its
+expanded layout width through reveal and dismissal. The measured dock frame
+constrains its grid row, keeping the toolbar bottom anchored while content grows.
+During ordinary Search width changes, its scope and match-option widths follow
+the shared body's painted width instead of starting a second CSS geometry clock.
+Populated Search keeps its label layout while inactive in Chat.
+The floating Search control stays inside the group's shared focus boundary;
+returning to Search restores the retained query and scope. Popup focus and
+retrieval remain in `NotepadCommandBar` and their existing feature owners.
+Closing panes stop exposing Related immediately. When the incoming pane is a
+note, its disabled icon slot is measured during the close animation, so final
+retirement cannot shift the settled bar.
+Native `get_related_notes` retains the draft
+reference and current-content admission boundaries; saved graph/ANN shortcuts
+require both indexed bytes and the editor title/body to match disk, and delivered
+matches include catalog Note IDs when available.
+
 The notepad's shared input dock owns only the expanded search/chat mode and
 which pane supplies its chat slot. Search stays mounted in its existing owner;
 `mountInSlot` places the selected pane's mounted composer in the dock without
 copying its text, attachments, configuration, or draft persistence into workspace
-state. `workspaceDockMachine` owns the presentation transition between editor
-search, chat search, and chat input. One correlated frame clock drives the bar,
-circles, joining material, and controls; input contents reveal near settling and
-finish fading after motion completes. The dock adapter measures mounted
-inputs and blends coordinate spaces, including the adjacent actions, when
-Related layout changes during a morph. `paneLayoutMotion` coordinates every split
-entry and departure on the dock's existing editor transition clock, regardless
-of pane kind or viewport width. It interpolates the measured dock flex bounds
-alongside the panes, keeping width caps from reversing the bar during expansion.
-When a dock morph accompanies the layout change, both sample the same remaining
-clock and easing; the coordinator publishes the dock's final flex bounds in a
-correlated presentation event after installing their effects.
-The dock interpolates its displayed origin to that endpoint directly, avoiding
-temporary destination measurements and width-cap discontinuities, and balances
-Related against the displayed margins. Search/chat exchange anchors full-size
-opaque background circles while the foreground send control morphs independently.
-One SVG group draws the joined background and outline, avoiding separate filtered
-HTML backing layers. Ordinary editor expansion moves the absorbed circles with
-that rectangle on the same duration.
-Pane kind changes participate alongside membership changes. Interrupted requests start from the
-current pose. Mounted input contents fade out as a morph starts; the selected
-surface begins revealing near settling and finishes after the bar settles.
-Timing and easing belong to `workspaceDockMachine.ts` and
-`ui/workspaceDockMotion.css`. Another morph fades
-from the currently displayed opacity; reduced motion skips the fades. Glyphs
-hand off sequentially; editor transitions skip the chat-search glyph.
+state. `MorphingContainers` owns presentation geometry and the correlated frame
+clock. The workspace adapter publishes that clock to `paneLayoutMotion`, which
+coordinates split entry and departure regardless of pane kind or viewport width.
+The coordinator supplies the dock's final world-space bounds after installing
+pane effects, avoiding double interpolation against a moving flex width.
+Mounted input contents fade out over 100ms; the selected surface starts its
+280ms reveal at 90% geometry progress and finishes after settling. Interruptions
+continue from the displayed geometry and opacity. Reduced motion settles the
+requested state immediately. Feature-owned icon snippets can hand off glyphs
+without changing the shared material or clock.
 The dock reserves the measured expanded composer height in both chat input and
 chat search, so switching modes preserves the reading surface's scroll extent.
 Draft growth and shrinkage update that clearance; editor/chat morphs reserve

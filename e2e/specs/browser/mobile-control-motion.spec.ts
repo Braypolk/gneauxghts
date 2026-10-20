@@ -30,7 +30,7 @@ describe('mobile control presentation during transitions', () => {
       await waitForWorkspaceAnimationSettled();
       await browser.execute(() => {
         const shell = document.querySelector<HTMLElement>('.notepad-search-bar')!;
-        const layer = shell.querySelector<HTMLElement>('.shared-search-input-layer')!;
+        const layer = shell.closest<HTMLElement>('[data-container-surface="search"]')!;
         const input = shell.querySelector('input')!;
         const controls = shell.querySelector('.shared-search-controls')!;
         const read = () => [Number(getComputedStyle(layer).opacity),
@@ -63,17 +63,16 @@ describe('mobile control presentation during transitions', () => {
     });
   }
 
-  it('restores the expanded Related panel after visiting chat without resetting its scope', async () => {
-    await $('button[aria-label="Expand related notes"]').click();
-    await expect($('button[aria-label="Collapse related notes"]')).toHaveAttribute('aria-expanded', 'true');
+  it('dismisses Related when visiting chat and returns with the popup closed', async () => {
+    await $('button[aria-label="Related notes"]').click();
+    await expect($('button[aria-label="Related notes"]')).toHaveAttribute('aria-expanded', 'true');
     await $('[data-pane-kind="editor"] button[aria-label="Open thought partner"]').click();
     await waitForWorkspaceAnimationSettled();
     await expect($('.related-bottom-sheet')).not.toExist();
     await $('[data-pane-kind="chat"] button[aria-label="Open previous location"]').click();
     await waitForWorkspaceAnimationSettled();
-    await expect($('button[aria-label="Collapse related notes"]')).toHaveAttribute('aria-expanded', 'true');
-    await expect($('#related-drawer-panel')).toHaveAttribute('aria-hidden', 'false');
-    await expect($('button[aria-label="Show related notes for this note"]')).toHaveElementClass('bg-foreground');
+    await expect($('button[aria-label="Related notes"]')).toHaveAttribute('aria-expanded', 'false');
+    await expect($('[role="dialog"][aria-label="Related notes"]')).not.toExist();
   });
 
 });

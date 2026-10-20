@@ -33,7 +33,7 @@ describe('editor geometry and Markdown fidelity', () => {
     await settle();
     const baseline = await geometry();
     expect(baseline.gap).toBeGreaterThanOrEqual(4);
-    for (const label of ['Expand related notes', 'Collapse related notes', 'Expand related notes']) {
+    for (const label of ['Related notes', 'Search notes', 'Related notes']) {
       await $(`button[aria-label="${label}"]`).click();
       await settle();
       const current = await geometry();

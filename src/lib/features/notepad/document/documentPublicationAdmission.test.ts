@@ -22,7 +22,7 @@ function fixture() {
   const service = createDocumentEditingService({
     state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => titleEditing, resetPaneCommandAfterBodyInput: vi.fn(),
-    clearRecentlyForgotten: vi.fn(), clearSelectedRelatedText: vi.fn(),
+    clearRecentlyForgotten: vi.fn(),
     scheduleAutosave: vi.fn(), scheduleSearch: vi.fn(), scheduleRelated: vi.fn(),
     readPublicationSession: read, publicationAdmissionChanged: changed
   });

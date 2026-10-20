@@ -42,12 +42,7 @@
   import SlashMenu from "$lib/features/notepad/editor/SlashMenu.svelte";
   import SelectionMenu from "$lib/features/notepad/editor/SelectionMenu.svelte";
   import WikilinkAutocomplete from "$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte";
-  import RelatedPanelHost from "$lib/features/notepad/related/RelatedPanelHost.svelte";
   import { captureFocusIntent } from "$lib/features/notepad/navigation/focusIntent";
-  import {
-    getCardStyle,
-    getRelatedGroupStyle,
-  } from "$lib/features/notepad/related/layout";
   import { createNotepadRefreshController } from "$lib/features/notepad/orchestration/notepadRefreshController";
   import { createNotepadSessionLifecycle } from "$lib/features/notepad/orchestration/notepadSessionLifecycle";
   import { mountPublicationDocumentOwner } from "$lib/features/chat/pi/publication";
@@ -61,7 +56,6 @@
   import { createRelatedNotesStore } from "$lib/features/notepad/related/store.svelte";
   import { createNotepadSearchStore } from "$lib/features/notepad/search/store.svelte";
   import { createSearchReturnFocus } from "$lib/features/notepad/search/searchReturnFocus";
-  import { attachPaneSelectionTracking } from "$lib/features/notepad/editor/paneSelectionTracking";
   import {
     createPaneControllers as createPaneControllersFn,
     type PaneControllerSetupDeps,
@@ -176,12 +170,12 @@
   let collapsingPaneId = $derived(workspaceStore.collapsingPaneId);
   let paneSpaceWidth = $state(0);
   const retainedPaneIds = $derived(paneOrder.filter(id => id !== collapsingPaneId));
-  // Presentation follows the actual card space (including Related's reservation).
+  // Presentation follows the actual workspace card space.
   // Pane membership, editor mounts and the active pane remain workspace-owned.
   const compactPanes = $derived(retainedPaneIds.length > 1 && paneSpaceWidth > 0 &&
     paneSpaceWidth / retainedPaneIds.length < 360);
   // Keep compact frames/rails mounted until the workspace retires a closing
-  // pane. The destination layout above still determines dock/Related space.
+  // pane. The destination layout above still determines dock space.
   const compactPaneFrames = $derived(paneOrder.length > 1 && paneSpaceWidth > 0 &&
     paneSpaceWidth / paneOrder.length < 360);
   const paneRailWidth = 48;
@@ -310,12 +304,19 @@
     } catch (error) { searchState.mediaError = String(error); }
   }
 
-  const relatedState = createRelatedNotesStore({
-    getCurrentTitle: () => featureHost.getActiveDocumentSnapshot().title,
-    getCurrentMarkdown: () =>
-      featureHost.getActiveDocumentSnapshot().bodyMarkdown,
-    getCurrentPath: () =>
-      featureHost.getActiveDocumentSnapshot().currentNotePath,
+  const relatedState = createRelatedNotesStore();
+  let relatedSubscription = $state.raw<ReturnType<typeof relatedState.acquire> | null>(null);
+  let commandBar = $state<NotepadCommandBar | null>(null);
+  function getRelatedContext(paneId: PaneId = activePaneId) {
+    const document = getPaneDocumentSession(paneId);
+    return { documentHandle: document.handle, currentPath: getDocumentPath(document),
+      currentTitle: document.working.title, currentMarkdown: document.working.markdown };
+  }
+  $effect(() => {
+    for (const paneId of paneOrder) {
+      const context = getRelatedContext(paneId);
+      untrack(() => relatedState.update(context));
+    }
   });
 
   let paneCommandPaneId = $derived(workspaceStore.paneCommand.paneId);
@@ -662,7 +663,6 @@
       }
     },
     clearRecentlyForgotten: () => setRecentlyForgotten(null),
-    clearSelectedRelatedText,
     scheduleAutosave: (document) => persistence.scheduleAutosave(document),
     scheduleSearch: searchState.scheduleSearch,
     scheduleRelated: relatedState.scheduleRelated,
@@ -837,15 +837,7 @@
     handleSearchOpen,
   } = searchState;
 
-  const {
-    updateDrawerLayout: updateRelatedDrawerLayoutController,
-    clearSelectedRelatedText: clearSelectedRelatedTextController,
-    scheduleRelated,
-    handleRelatedScopeChange,
-    toggleRelatedPanel: toggleRelatedPanelController,
-    collapseRelatedPanel: collapseRelatedPanelController,
-    updateSelectedRelatedText: updateSelectedRelatedTextController,
-  } = relatedState;
+  const scheduleRelated = relatedState.scheduleRelated;
 
   function syncCurrentFileSearchHighlights(
     query: string = currentSearchHighlightQuery,
@@ -885,7 +877,6 @@
 
   const paneLayoutMotion = createPaneLayoutMotion({
     getShell: () => workspaceShell,
-    updateRelatedLayout: () => updateRelatedDrawerLayoutController(workspaceShell),
   });
 
   $effect.pre(() => {
@@ -929,36 +920,8 @@
     if (compact) untrack(() => closeTransientUiExcept(paneId));
   });
 
-  function updateRelatedDrawerLayout() {
-    if (!paneLayoutMotion.running) {
-      updateRelatedDrawerLayoutController(workspaceShell);
-    }
-  }
-
-  function clearSelectedRelatedText() {
-    clearSelectedRelatedTextController();
-  }
-
-  function updateSelectedRelatedText(paneId: PaneId = getNavigationPaneId()) {
-    if (paneCommandPaneId === paneId) {
-      clearSelectedRelatedText();
-      return;
-    }
-    if (!paneHasCapability(getPaneKind(paneId), "edit-document")) {
-      clearSelectedRelatedText();
-      return;
-    }
-    updateSelectedRelatedTextController(getPaneEditorRoot(paneId));
-  }
-
   function toggleRelatedPanel() {
-    toggleRelatedPanelController(workspaceShell);
-    paneLayoutMotion.retarget();
-  }
-
-  function closeRelatedPanel() {
-    collapseRelatedPanelController(workspaceShell);
-    paneLayoutMotion.retarget();
+    if (relatedContextKey) commandBar?.toggleRelated();
   }
 
   async function disposePaneRuntime(
@@ -999,7 +962,6 @@
       createPane: createPaneRuntime,
       disposePaneRuntime,
       closeTransientUiExcept,
-      updateSelectedRelatedText,
       closeWikilinkAutocomplete,
       waitForPaneMotion,
     },
@@ -1007,7 +969,6 @@
       clearSearch,
       scheduleSearchIfNeeded: scheduleSearch,
       scheduleRelatedIfNeeded: scheduleRelated,
-      clearSelectedRelatedText,
       loadRecentNotes,
     },
     forgottenNoteRetentionPreference: () =>
@@ -1154,7 +1115,6 @@
   const refreshController = createNotepadRefreshController({
     getDocumentSession: () => getDocumentSession(),
     refreshDerivedViews,
-    updateRelatedDrawerLayout,
     refreshDocumentFromDisk: commands.refreshDocumentFromDisk,
     findOpenDocumentByPath: (notePath) =>
       findOpenDocument(notepadState, {
@@ -1177,7 +1137,6 @@
 
   const {
     handleWindowFocus,
-    handleWindowResize,
     handleVisibilityChange,
     handleVaultNoteChanged,
   } = refreshController;
@@ -1289,6 +1248,9 @@
   }
 
   // ---------------------------------------------------------------------------
+  const relatedContextKey = $derived(!historyMode.isActive && !isActivePaneChat && !paneCommandPaneId && activePaneId !== collapsingPaneId
+    ? `${activePaneId}:${getPaneDocumentSession(activePaneId).handle}` : null);
+
   // Pane view-model + actions wired into NotepadPane.svelte.
   // ---------------------------------------------------------------------------
   const getPaneViewModel = createPaneViewModelFactory({
@@ -1407,12 +1369,10 @@
       transientUi.registerBridgeListeners((paneKey) =>
         paneKey in paneRuntimes ? (paneKey as PaneId) : null,
       ),
-    getWorkspaceShell: () => workspaceShell,
     ensurePaneEditors: paneLifecycle.ensurePaneEditors,
     refreshCurrentNote: async () => {
       await commands.refreshCurrentNoteFromTaskMutation();
     },
-    updateRelatedLayout: updateRelatedDrawerLayout,
     scheduleRelated,
     openNote: commands.openNotePath,
     navigateToTaskTarget: async (target) => {
@@ -1424,6 +1384,7 @@
       commands.focusPaneAfterShortcut(getNavigationPaneId()),
     onVaultNoteChanged: (payload) => {
       void (async () => {
+        relatedState.invalidateTarget(payload.notePath);
         await handleVaultNoteChanged(payload);
         if (historyMode.isActive) {
           await historyMode.synchronizeAfterLifecycleChange();
@@ -1533,23 +1494,11 @@
     };
   });
 
-  // Selection tracking per pane (cursor save scheduling + related text update).
-  function trackPaneSelection(paneId: PaneId) {
-    return attachPaneSelectionTracking({
-      paneId,
-      isEditorReady: getPaneRuntime(paneId).ui.isEditorReady,
-      editorRoot: getPaneRuntime(paneId).refs.editorRoot,
-      isActivePaneInEditorMode: () =>
-        activePaneId === paneId &&
-        paneHasCapability(getPaneKind(paneId), "edit-document"),
-      updateSelectedRelatedText: () => updateSelectedRelatedText(paneId),
-      flushPendingCursorSave: () => documents.flushPaneCursorSave(paneId),
-    });
-  }
-
+  // Persist each ready view's cursor before that view leaves the workspace.
   $effect(() => {
     const cleanups = getVisiblePaneIds()
-      .map((paneId) => trackPaneSelection(paneId))
+      .map((paneId) => getPaneRuntime(paneId).ui.isEditorReady
+        ? () => documents.flushPaneCursorSave(paneId) : undefined)
       .filter(
         (cleanup): cleanup is () => void => typeof cleanup === "function",
       );
@@ -1565,7 +1514,6 @@
 <svelte:window
   onkeydowncapture={handleHistoryAwareGlobalKeydown}
   onfocus={handleHistoryAwareWindowFocus}
-  onresize={handleWindowResize}
 />
 <svelte:document onvisibilitychange={handleHistoryAwareVisibilityChange} />
 
@@ -1580,15 +1528,10 @@
     aria-hidden={historyMode.isActive}
   >
   <div
-    class="relative h-full min-h-0 w-full [--related-reserved-width:0px] [--related-balance-width:0px]"
-    style={getRelatedGroupStyle(
-      relatedState.panelPlacement,
-      relatedState.reservedWidth,
-    )}
+    class="relative h-full min-h-0 w-full"
   >
     <div
-      class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-b border-border text-card-foreground shadow-sm workspace-card-motion sm:rounded-4xl sm:border"
-      style={getCardStyle(relatedState.panelPlacement)}
+      class="notepad-workspace-card relative flex h-full min-h-0 min-w-0 flex-col overflow-hidden border-b border-border text-card-foreground shadow-sm sm:rounded-4xl sm:border"
       data-testid="workspace-card"
     >
       <div
@@ -1619,10 +1562,21 @@
       </div>
 
       <div
-        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) pointer-events-none grid items-end"
+        class="absolute right-0 left-0 z-30 bottom-(--keyboard-inset-height) pointer-events-none grid grid-rows-[minmax(0,1fr)] items-end"
         use:workspaceDockInset
       >
         <NotepadCommandBar
+          bind:this={commandBar}
+          related={{
+            contextKey: relatedContextKey,
+            pendingNoteReturn: collapsingPaneId === activePaneId && retainedPaneIds.some(paneId => getPaneKind(paneId) !== 'chat'),
+            title: getPaneDocumentSession(activePaneId).working.title,
+            result: relatedSubscription?.result ?? null,
+            onOpen: () => { relatedSubscription?.release(); relatedSubscription = relatedState.acquire(getRelatedContext()); },
+            onClose: () => { relatedSubscription?.release(); relatedSubscription = null; },
+            onRefresh: () => { if (relatedSubscription) void relatedState.refresh(relatedSubscription.result); },
+            onSelect: (item) => { void handleRelatedItemSelect(item).catch(error => console.error('Failed to open related note:', error)); }
+          }}
           chatAvailable={dockChatPaneId !== null}
           {dockMode}
           bind:chatSlot={chatDockSlot}
@@ -1713,50 +1667,7 @@
       </div>
     </div>
 
-    {#if !historyMode.isActive && relatedState.panelPlacement === "side"}
-      <RelatedPanelHost
-        placement={relatedState.panelPlacement}
-        reservedWidth={relatedState.reservedWidth}
-        collapsed={relatedState.isPanelCollapsed}
-        items={relatedState.items}
-        scope={relatedState.scope}
-        status={relatedState.status}
-        reason={relatedState.reason}
-        loading={relatedState.isLoading}
-        hasSelection={!!relatedState.selectedText}
-        onToggle={toggleRelatedPanel}
-        onClose={closeRelatedPanel}
-        onScopeChange={handleRelatedScopeChange}
-        onSelect={(item) =>
-          void handleRelatedItemSelect(item).catch((error) => {
-            console.error("Failed to open related note:", error);
-          })}
-      />
-    {/if}
   </div>
-
-  {#if !historyMode.isActive && !isActivePaneChat && relatedState.panelPlacement !== "side"}
-    <RelatedPanelHost
-      rightInset={trailingRailWidth}
-      leftInset={leadingRailWidth}
-      placement={relatedState.panelPlacement}
-      reservedWidth={relatedState.reservedWidth}
-      collapsed={relatedState.isPanelCollapsed}
-      items={relatedState.items}
-      scope={relatedState.scope}
-      status={relatedState.status}
-      reason={relatedState.reason}
-      loading={relatedState.isLoading}
-      hasSelection={!!relatedState.selectedText}
-      onToggle={toggleRelatedPanel}
-      onClose={closeRelatedPanel}
-      onScopeChange={handleRelatedScopeChange}
-      onSelect={(item) =>
-        void handleRelatedItemSelect(item).catch((error) => {
-          console.error("Failed to open related note:", error);
-        })}
-    />
-  {/if}
 
   {#if activeTransientUi.kind === "slash-menu"}
     {@const slashMenuPaneId = activeTransientUi.paneId}
@@ -1796,10 +1707,9 @@
   {/if}
 
   {#if historyMode.state.phase !== "inactive" && historyMode.state.phase !== "restoring"}
-    <!-- Match the editor card's bounds, including the space reserved for Related. -->
+    <!-- History shares the ordinary workspace card bounds. -->
     <div
-      class="history-workspace-overlay absolute inset-y-0 left-0 z-50 workspace-card-motion"
-      style={`${getRelatedGroupStyle(relatedState.panelPlacement, relatedState.reservedWidth)} ${getCardStyle(relatedState.panelPlacement)}`}
+      class="history-workspace-overlay absolute inset-y-0 right-0 left-0 z-50"
     >
       <HistoryMode
         state={historyMode.state}
@@ -1858,11 +1768,6 @@
      * on the pane's width, which is what the old `padding-bottom: 100%` did.
      */
     --editor-scroll-past-end: 55svh;
-    --related-drawer-gap: 0.5rem;
-    --related-drawer-peek-width: 1.75rem;
-    --related-bottom-offset: calc(
-      var(--command-bar-clearance) + 1.1rem
-    );
     --crepe-color-background: var(--card);
     --crepe-color-on-background: var(--foreground);
     --crepe-color-surface: color-mix(
@@ -1902,23 +1807,19 @@
     );
   }
 
-  /* Pane changes share one geometry animation; ordinary Related toggles keep
-     their own transition when this temporary marker is absent. */
-  .notepad-shell:global([data-pane-motion]) .notepad-workspace-card,
-  .notepad-shell:global([data-pane-motion]) :global(.related-drawer) {
+  /* Pane changes share one geometry animation. */
+  .notepad-shell:global([data-pane-motion]) .notepad-workspace-card {
     transition: none;
   }
 
   /* Window geometry must settle immediately, including the History overlay. */
-  .notepad-shell:global([data-window-resizing]) :global(.workspace-card-motion),
-  .notepad-shell:global([data-window-resizing]) :global(.related-drawer-motion) {
+  .notepad-shell:global([data-window-resizing]) :global(.workspace-card-motion) {
     transition: none;
   }
 
   @media (max-width: 639px), (any-pointer: coarse) and (max-height: 559px) {
     .notepad-shell {
       --editor-overlay-inset: calc(4rem + var(--app-shell-top-inset, 0px));
-      --related-sheet-top: var(--editor-overlay-inset);
     }
     .history-workspace-overlay { top: var(--app-shell-top-inset, 0px); }
   }
@@ -1945,14 +1846,9 @@
     :global(.app-shell[data-keyboard-open='true']) .notepad-shell {
       --editor-top-breathing-room: 0.25rem;
       --editor-chrome-clearance: var(--command-bar-clearance);
-      --related-sheet-top: 0px;
-      --related-bottom-offset: calc(100% - 2.75rem);
     }
   }
 
-  @media (any-pointer: coarse) and (orientation: landscape) {
-    :global(.app-shell[data-keyboard-open='true']) :global(.related-bottom-sheet > div > button) { right: 4rem; }
-  }
 
   @media (min-width: 1280px) {
     .notepad-shell {

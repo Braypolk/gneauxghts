@@ -57,3 +57,15 @@ export interface NotepadCommandBarSearchProps {
   onSearchCommit?: () => void;
   onCommand?: (command: string) => boolean | Promise<boolean>;
 }
+
+export interface NotepadCommandBarRelatedProps {
+  contextKey: string | null;
+  /** Measure the incoming note's icon slot before a closing chat retires. */
+  pendingNoteReturn?: boolean;
+  title: string;
+  result: import('../related/store.svelte').RelatedResult | null;
+  onOpen: () => void;
+  onClose: () => void;
+  onRefresh: () => void;
+  onSelect: (item: import('$lib/types/semantic').RelatedNoteItem) => void;
+}

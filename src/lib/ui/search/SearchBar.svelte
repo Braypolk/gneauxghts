@@ -15,12 +15,14 @@
   export interface SearchBarHandle {
     focusSearch: (options?: { select?: boolean }) => void;
     closeSearch: () => void;
+    openPanel: () => void;
   }
 </script>
 
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import './searchControls.css';
+  import { searchExpansionStyles } from './searchMotion';
   import {
     BookOpen,
     CaseSensitive,
@@ -65,7 +67,13 @@
     class?: string;
     onValueChange: (value: string) => void;
     onOpen?: () => void | Promise<void>;
+    onOpenChange?: (open: boolean) => void;
     onClear?: () => void;
+    onClose?: () => void;
+    onSearchIntent?: () => void;
+    presentationInputOpacity?: number;
+    /** Include shared dock controls in the popup's focus boundary. */
+    focusBoundary?: HTMLElement | null;
     onScopeChange?: (scopeId: string) => void | Promise<void>;
     onSearchTypeChange?: (searchTypeId: string) => void | Promise<void>;
     onMatchCaseChange?: (enabled: boolean) => void | Promise<void>;
@@ -102,7 +110,12 @@
     class: className = '',
     onValueChange,
     onOpen,
+    onOpenChange,
     onClear,
+    onClose,
+    onSearchIntent,
+    presentationInputOpacity,
+    focusBoundary,
     onScopeChange,
     onSearchTypeChange,
     onMatchCaseChange,
@@ -118,6 +131,7 @@
   let inputEl = $state<HTMLInputElement | null>(null);
   let shellEl = $state<HTMLDivElement | null>(null);
   let isOpen = $state(false);
+  let changingInput = false;
 
   const isExpanded = $derived(expanded ?? (isOpen || value.trim() !== '' || hasQuery));
   const visuallyOpen = $derived(presentationActive ?? isOpen);
@@ -128,23 +142,35 @@
   function openSearch() {
     if (isOpen) return;
     isOpen = true;
+    onOpenChange?.(true);
     void onOpen?.();
   }
 
   export function focusSearch({ select = false }: { select?: boolean } = {}) {
+    changingInput = true;
+    onSearchIntent?.();
     openSearch();
     requestAnimationFrame(() => {
       inputEl?.focus({ preventScroll: true });
       if (select) {
         inputEl?.select();
       }
+      changingInput = false;
     });
+  }
+
+  export function openPanel() {
+    changingInput = true;
+    openSearch();
+    requestAnimationFrame(() => { changingInput = false; });
   }
 
   export function closeSearch() {
     if (!isOpen) return;
     isOpen = false;
+    onOpenChange?.(false);
     inputEl?.blur();
+    onClose?.();
   }
 
   function handleFocusIn(event: FocusEvent) {
@@ -163,7 +189,10 @@
 
   function handleFocusOut(event: FocusEvent) {
     const nextTarget = event.relatedTarget;
-    if (nextTarget instanceof Node && shellEl?.contains(nextTarget)) {
+    // Replacing the focused input presentation emits a transient null blur.
+    // The caller focuses its alternate header during the same render handoff.
+    if (changingInput && nextTarget === null) return;
+    if (nextTarget instanceof Node && (focusBoundary ?? shellEl)?.contains(nextTarget)) {
       return;
     }
     closeSearch();
@@ -246,7 +275,7 @@
 <div
   bind:this={shellEl}
   class={`shared-search-bar-shell pointer-events-auto relative flex max-w-2xl flex-1 min-w-0 items-center gap-2 overflow-visible rounded-full border pl-3 pr-1 shadow-sm backdrop-blur-md sm:gap-3 sm:pl-5 ${className}`}
-  style={`--search-mode-count:${searchTypeOptions.length + scopeOptions.length}`}
+  style={`${searchExpansionStyles};--search-mode-count:${searchTypeOptions.length + scopeOptions.length}`}
   data-search-tone={activeTone}
   data-search-expanded={(presentationExpanded ?? isExpanded) ? 'true' : 'false'}
   data-search-layout-expanded={(presentationExpanded ?? isExpanded) ? 'true' : 'false'}
@@ -265,7 +294,7 @@
     if (file && onImageFile) { event.preventDefault(); openSearch(); void onImageFile(file); }
   }}
 >
-  <div class="shared-search-input-layer flex min-w-0 flex-1 items-center gap-[inherit]">
+  <div style:opacity={presentationInputOpacity} class="shared-search-input-layer flex min-w-0 flex-1 items-center gap-[inherit]">
     <Search class={`${queryPreview ? '' : 'hidden min-[420px]:block'} h-4 w-4 shrink-0 text-muted-foreground`} />
     {#if queryPreview}
       {@render queryPreview()}

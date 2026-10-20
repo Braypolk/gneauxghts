@@ -2,7 +2,7 @@ import { readPiFixture } from '../../support/browserPi';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
+import { containerMorphDuration as dockMorphDuration } from '../../../src/lib/ui/morphing-containers/motion';
 
 const composerSelector = '[data-notepad-command-bar] textarea';
 const motionCaptureDuration = Math.max(800, dockMorphDuration + 200);
@@ -42,11 +42,15 @@ describe('shared workspace input dock', () => {
         const bar = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!;
         const backdrop = bar.firstElementChild!;
         const dock = bar.querySelector<HTMLElement>('.workspace-input-dock')!;
-        const row = dock.parentElement!;
+        const row = dock.closest<HTMLElement>('.search-dock-row')!;
         const frames: number[][] = [];
         const read = () => {
           const style = getComputedStyle(row);
-          const contentHeight = Math.max(...[...row.children].map(child => child.getBoundingClientRect().height));
+          // Pane motion positions the dock absolutely inside its discovery
+          // group. Include its painted height even when that group has no
+          // intrinsic height in the row during the handoff.
+          const contentHeight = Math.max(dock.getBoundingClientRect().height,
+            ...[...row.children].map(child => child.getBoundingClientRect().height));
           const actionHeight = parseFloat(style.getPropertyValue('--workspace-dock-action-height')) *
             parseFloat(getComputedStyle(document.documentElement).fontSize);
           const expectedHeight = Math.max(actionHeight, contentHeight) +
@@ -342,16 +346,17 @@ describe('shared workspace input dock', () => {
         document.querySelector<HTMLElement>('[data-pane-kind="chat"] button[aria-label="Close pane"]')!.click();
         const sample = () => setTimeout(() => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
-          const icon = dock.querySelector('.dock-chat-toggle')!.getBoundingClientRect();
+          const icon = dock.querySelector('.dock-chat-toggle, .dock-related-toggle')!.getBoundingClientRect();
           const search = dock.querySelector('.dock-search-toggle')!.getBoundingClientRect();
-          const leftAction = dock.previousElementSibling!.getBoundingClientRect();
-          const rightAction = dock.nextElementSibling!.getBoundingClientRect();
+          const discovery = dock.closest('.notepad-discovery-dock')!;
+          const leftAction = discovery.previousElementSibling!.getBoundingClientRect();
+          const rightAction = discovery.nextElementSibling!.getBoundingClientRect();
           const card = dock.closest('.notepad-workspace-card')!.getBoundingClientRect();
-          const iconVisible = Number(getComputedStyle(dock.querySelector('.dock-chat-toggle')!).opacity) > 0.05;
+          const iconVisible = Number(getComputedStyle(dock.querySelector('.dock-chat-toggle, .dock-related-toggle')!).opacity) > 0.05;
           frames.push([body.left, body.width, body.bottom, icon.left + icon.width / 2 - body.right,
             Math.min(body.left, search.left) - leftAction.right,
             rightAction.left - Math.max(body.right, iconVisible ? icon.right : body.right),
-            Number(getComputedStyle(dock.querySelector('.dock-chat-icon')!).opacity),
+            Number(getComputedStyle(dock.querySelector('.dock-related-icon, .dock-chat-icon')!).opacity),
             leftAction.left - card.left, card.right - rightAction.right]);
           states.push(dock.dataset.dockPhase!);
           if (performance.now() - started < captureDuration) requestAnimationFrame(sample);
@@ -362,15 +367,17 @@ describe('shared workspace input dock', () => {
       expect(closing.states).toContain('exchange');
       expect(closing.states.at(-1)).toBe('settled');
       expect(Math.max(...closing.frames.map(frame => Math.abs(frame[2] - closing.frames[0][2])))).toBeLessThanOrEqual(1);
-      expect(closing.frames.at(-1)![3]).toBeLessThan(0);
+      // Closing chat now returns to the Search/Related pair: the incoming
+      // Related circle stays beside Search instead of being absorbed.
+      expect(closing.frames.at(-1)![3]).toBeGreaterThan(20);
       expect(Math.min(...closing.frames.map(frame => frame[4]))).toBeGreaterThanOrEqual(4);
       expect(Math.min(...closing.frames.map(frame => frame[5]))).toBeGreaterThanOrEqual(4);
       expect(Math.min(...closing.frames.map(frame => frame[7]))).toBeGreaterThanOrEqual(1);
       expect(Math.min(...closing.frames.map(frame => frame[8]))).toBeGreaterThanOrEqual(1);
-      if (mode === 'chat') expect(Math.max(...closing.frames.map(frame => frame[6]))).toBe(0);
+      expect(closing.frames.at(-1)![6]).toBe(1);
       if (mode === 'search') expect(closing.frames[0][3]).toBeGreaterThan(0);
       await expectMode('search');
-      await expect($('[data-input-dock-mode]')).toHaveAttribute('data-dock-state', 'editor-search');
+      await expect($('[data-input-dock-mode]')).toHaveAttribute('data-dock-state', 'related-search');
       await expect($('[data-testid="note-search-input"]')).toHaveValue('Alpha');
       await expect($$(composerSelector)).toBeElementsArrayOfSize(0);
     });
@@ -457,9 +464,9 @@ describe('shared workspace input dock', () => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
         const read = () => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
-          const left = dock.querySelector('.dock-material-search')!, right = dock.querySelector('.dock-material-chat')!;
+          const left = dock.querySelector('[data-container-shell="search"]')!, right = dock.querySelector('[data-container-shell="chat"], [data-container-shell="related"]')!;
           const leftRect = left.getBoundingClientRect(), rightRect = right.getBoundingClientRect();
-          const glyph = dock.querySelector('.dock-chat-toggle')!.getBoundingClientRect();
+          const glyph = dock.querySelector('.dock-chat-toggle, .dock-related-toggle')!.getBoundingClientRect();
           return [body.left, body.width, leftRect.left, rightRect.right, glyph.left + glyph.width / 2,
             leftRect.height, rightRect.height, Number(getComputedStyle(left).opacity), Number(getComputedStyle(right).opacity), performance.now()];
         };
@@ -491,7 +498,8 @@ describe('shared workspace input dock', () => {
         steps.forEach((step, i) => {
           const elapsed = capture[i + 1][9] - capture[i][9];
           const maximumSpeed = selector.includes('Close pane') ? 3 : 2;
-          expect(Math.abs(step)).toBeLessThanOrEqual(1 + travel * maximumSpeed * elapsed / dockMorphDuration);
+          const limit = 1 + travel * maximumSpeed * elapsed / dockMorphDuration;
+          expect(Math.abs(step)).toBeLessThanOrEqual(limit);
         });
         // Smoothstep starts quadratically. A first-paint width/position flash
         // remains a failure even when the normal-speed first frame moves.
@@ -506,7 +514,7 @@ describe('shared workspace input dock', () => {
       }
       await waitForWorkspaceAnimationSettled();
     }
-    await expect($('[data-input-dock-mode]')).toHaveAttribute('data-dock-state', 'editor-search');
+    await expect($('[data-input-dock-mode]')).toHaveAttribute('data-dock-state', 'related-search');
   });
 
   it('keeps the dock and window anchored when opening chat and focusing either input', async () => {
@@ -556,7 +564,7 @@ describe('shared workspace input dock', () => {
         const material = dock.querySelector<HTMLElement>('.dock-material')!;
         // The right material stays full size while its send glyph shrinks.
         // Only the body and search shell should match their foreground bounds.
-        const shapes = [material.querySelector('.dock-body')!, material.querySelector('.dock-material-search')!];
+        const shapes = [material.querySelector('.dock-body')!, material.querySelector('[data-container-shell="search"]')!];
         const surfaces = [dock.querySelector(':scope > .dock-body')!, dock.querySelector('.dock-search-toggle')!];
         const textFilters: string[] = [];
         for (let node = dock.querySelector<HTMLTextAreaElement>('textarea') as HTMLElement | null; node && node !== dock.parentElement; node = node.parentElement) textFilters.push(getComputedStyle(node).filter);
@@ -565,7 +573,7 @@ describe('shared workspace input dock', () => {
           return [shell.left - shape.left, shell.width - shape.width, shell.height - shape.height, shell.bottom - shape.bottom];
         });
         done({ filter: getComputedStyle(material.querySelector('[data-dock-joined-shapes]')!).filter, textFilters,
-          neckHeight: material.querySelector('.dock-neck--left')!.getBoundingClientRect().height, offsets });
+          neckHeight: material.querySelector('[data-container-neck="search"]')!.getBoundingClientRect().height, offsets });
       }, delay);
     }, dockMorphDuration / 2);
     expect(result.filter).toContain('url(');
@@ -575,7 +583,7 @@ describe('shared workspace input dock', () => {
     await expectMode('search');
   });
 
-  it('keeps absorbed circle outlines inside the editor bar throughout ordinary search expansion', async () => {
+  it('keeps the search outline absorbed and Related adjacent throughout ordinary search expansion', async () => {
     for (const expand of [true, false]) {
       const offsets = await browser.executeAsync((expand: boolean, duration: number, done: (errors: number[]) => void) => {
         const dock = document.querySelector('.workspace-input-dock')!, input = dock.querySelector<HTMLInputElement>('input')!;
@@ -585,12 +593,12 @@ describe('shared workspace input dock', () => {
         const sample = () => setTimeout(() => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
           const material = dock.querySelector('.dock-material-body')!.getBoundingClientRect();
-          const left = dock.querySelector('.dock-material-search')!.getBoundingClientRect();
-          const right = dock.querySelector('.dock-material-chat')!.getBoundingClientRect();
+          const left = dock.querySelector('[data-container-shell="search"]')!.getBoundingClientRect();
+          const right = dock.querySelector('[data-container-shell="chat"], [data-container-shell="related"]')!.getBoundingClientRect();
           const glyph = dock.querySelector('.dock-search-toggle > svg')!.getBoundingClientRect();
           const inputGlyph = dock.querySelector('.shared-search-input-layer > svg')!.getBoundingClientRect();
           errors.push(Math.abs(body.left - material.left), Math.abs(body.width - material.width),
-            Math.max(0, body.left - left.left), Math.max(0, right.right - body.right),
+            Math.max(0, body.left - left.left), Math.abs(right.left - body.right - parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap'))),
             Math.abs(glyph.left + glyph.width / 2 - inputGlyph.left - inputGlyph.width / 2));
           if (performance.now() - started < duration) requestAnimationFrame(sample);
           else done(errors);
@@ -615,9 +623,9 @@ describe('shared workspace input dock', () => {
         dock.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
         const sample = () => setTimeout(() => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
-          const selected = dock.querySelector(label === 'Expand search' ? '.shared-search-input-layer' : '.dock-chat-layer')!;
+          const selected = dock.querySelector(label === 'Expand search' ? '[data-container-surface="search"]' : '.dock-chat-layer')!;
           frames.push([dock.hasAttribute('data-dock-motion') ? 1 : 0,
-            Number(getComputedStyle(dock.querySelector('.shared-search-input-layer')!).opacity),
+            Number(getComputedStyle(dock.querySelector('[data-container-surface="search"]')!).opacity),
             Number(getComputedStyle(dock.querySelector('.dock-chat-layer')!).opacity),
             body.left, body.top, body.width, body.height,
             dock.hasAttribute('data-dock-text-reveal') ? 1 : 0,
@@ -687,12 +695,12 @@ describe('shared workspace input dock', () => {
     }
   });
 
-  it('keeps disabled send brightness and reading clearance steady while closing an empty composer', async () => {
+  it('returns from disabled Send to enabled Related while keeping reading clearance steady', async () => {
     await openChat();
     const result = await browser.executeAsync((duration: number, done: (result: { opacity: number[]; clearance: number[]; glyph: number[] }) => void) => {
       const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
       const workspace = dock.closest<HTMLElement>('.notepad-shell')!;
-      const opacity: number[] = [], clearance: number[] = [], glyph: number[] = [];
+      const opacity: number[] = [Number(getComputedStyle(dock).getPropertyValue('--dock-send-opacity'))], clearance: number[] = [], glyph: number[] = [];
       const started = performance.now();
       document.querySelector<HTMLElement>('[data-pane-kind="chat"] button[aria-label="Close pane"]')!.click();
       const sample = () => {
@@ -705,8 +713,10 @@ describe('shared workspace input dock', () => {
       };
       requestAnimationFrame(sample);
     }, motionCaptureDuration);
-    expect(Math.max(...result.opacity)).toBe(0.4);
-    expect(Math.max(...result.glyph)).toBe(0);
+    expect(result.opacity[0]).toBe(0.4);
+    expect(result.opacity.at(-1)).toBe(1);
+    expect(result.opacity.every(value => value >= 0.4 && value <= 1)).toBe(true);
+    expect(result.glyph.at(-1)).toBe(1);
     expect(Math.max(...result.clearance) - Math.min(...result.clearance)).toBeLessThanOrEqual(1);
   });
 
@@ -748,10 +758,11 @@ describe('shared workspace input dock', () => {
       document.querySelector<HTMLElement>(button)!.click();
       const sample = () => {
         const card = dock.closest('.notepad-workspace-card')!.getBoundingClientRect();
-        const left = dock.previousElementSibling!.getBoundingClientRect();
-        const right = dock.nextElementSibling!.getBoundingClientRect();
+        const discovery = dock.closest('.notepad-discovery-dock')!;
+        const left = discovery.previousElementSibling!.getBoundingClientRect();
+        const right = discovery.nextElementSibling!.getBoundingClientRect();
         const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
-        const label = dock.nextElementSibling!.querySelector('.remember-action-label')!;
+        const label = discovery.nextElementSibling!.querySelector('.remember-action-label')!;
         const words = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
         let newOpacity = 0;
         while (words.nextNode()) {
@@ -774,7 +785,8 @@ describe('shared workspace input dock', () => {
       '[data-pane-kind="chat"] button[aria-label="Open previous location"]']) {
       const frames = await capture(selector);
       expect(Math.min(...frames.flatMap(frame => frame.slice(0, 4)))).toBeGreaterThanOrEqual(1);
-      expect(Math.max(...frames.map(frame => frame[4]))).toBe(0);
+      // The secondary glyph belongs to Related in notes and to Send in chat.
+      expect(frames.at(-1)![4]).toBe(selector.includes('Open previous') ? 1 : 0);
       expect(frames.every(frame => frame[5] === 1)).toBe(true);
       await waitForWorkspaceAnimationSettled();
       expect(await browser.execute(() => {

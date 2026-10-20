@@ -1,4 +1,5 @@
 import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
+import type { RelatedNotesResponse } from '$lib/types/semantic';
 import type { VaultAtlasResponse } from '$lib/types/atlas';
 
 import type { NoteFixture, InvokeRecord, TauriCallback, BrowserCommandOverrides } from './browserBackendContract';
@@ -9,6 +10,8 @@ const alphaMarkdown = Array.from(
   (_, index) => `Alpha line ${index + 1}: browser regression fixture`
 ).join('\n\n');
 
+let relatedResponse: RelatedNotesResponse | null = null;
+let relatedDelayMillis = 0;
 const notes = new Map<string, NoteFixture>([
   [
     'note-alpha',
@@ -884,7 +887,9 @@ function historicalDiff(
       return null;
     }
     if (command === 'get_related_notes') {
-      return { status: 'ready', scope: 'note', reason: null, items: [] };
+      if (relatedDelayMillis) await new Promise(resolve => setTimeout(resolve, relatedDelayMillis));
+      if (relatedResponse) return relatedResponse;
+      return { status: 'ready', scope: 'note', reason: null, items: [...notes.values()].filter(note => note.path !== args.currentPath).map(note => ({ noteId: note.noteId, notePath: note.path, noteTitle: note.title, sectionLabel: 'Note', excerpt: note.markdown.split('\n')[0], matchText: note.markdown.split('\n')[0], score: .85, startLine: 1, endLine: 1, documentKind: 'note', blockAnchor: null })) };
     }
     if (command === 'retrieve_note_context') {
       return { status: 'ready', scope: args.scope ?? 'note', reason: null, items: [] };
@@ -962,6 +967,7 @@ function historicalDiff(
       internals.invoke = invoke;
       window.__TAURI_INTERNALS__ = internals;
     },
+    setRelatedResponse(response: RelatedNotesResponse | null, delayMillis = 0) { relatedResponse = response; relatedDelayMillis = delayMillis; },
     setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
     async seedPiChat(options?: { title?: string; count?: number; revisionSource?: boolean; toolCalls?: number }) { return (await import('./piBrowserFixture')).seedBrowserPiChat(options); },
     async readPiChat() { return (await import('./piBrowserFixture')).readBrowserPiChat(); },

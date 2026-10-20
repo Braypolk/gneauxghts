@@ -86,9 +86,9 @@ describe('secondary touch controls and image gestures', () => {
   });
 
   it('keeps Related, History and Settings secondary targets usable with unchanged icon sizes', async () => {
-    await $('button[aria-label="Expand related notes"]').click();
-    await targetSize('button[aria-label="Close related panel"]');
-    await $('button[aria-label="Close related panel"]').click();
+    await $('button[aria-label="Related notes"]').click();
+    await targetSize('button[aria-label="Search notes"]');
+    await $('button[aria-label="Search notes"]').click();
     await openHistoryShortcut();
     await targetSize('button[aria-label="Rename revision"]');
     expect((await $('button[aria-label="Rename revision"] svg').getSize()).width).toBe(12);

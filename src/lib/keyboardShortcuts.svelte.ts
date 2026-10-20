@@ -194,8 +194,8 @@ const shortcutDefinitionsBase = [
   },
   {
     id: 'toggleRelatedPanel',
-    label: 'Toggle Related Panel',
-    description: 'Show or hide related notes.',
+    label: 'Related Notes',
+    description: 'Show or hide the related notes popup.',
     group: 'workspace',
     defaultBinding: 'Meta+r'
   },

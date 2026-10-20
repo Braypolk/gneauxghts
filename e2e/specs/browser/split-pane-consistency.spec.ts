@@ -2,7 +2,7 @@ import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { samplePaneMotion, expectContinuousMotion, expectStableEntrance, expectDockMotion, type PaneMotionAction } from '../../support/paneMotion';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { dockClockProgress, dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
+import { clockProgress as dockClockProgress, containerMorphDuration as dockMorphDuration } from '../../../src/lib/ui/morphing-containers/motion';
 
 describe('consistent split entry', () => {
   for (const width of [1440, 390]) {

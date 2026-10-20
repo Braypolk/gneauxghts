@@ -190,7 +190,7 @@ export function createBlockHandleExtension(
           this.#pendingAnchor = null;
           this.#dropSlotsDirty = true;
         }
-        // Pane/Related transitions can move the centered text column without
+        // Pane transitions can move the centered text column without
         // changing the document or the visible range of document positions.
         if (update.geometryChanged || update.viewportChanged) {
           this.#laneDirty = true;

@@ -56,7 +56,6 @@ function editingServiceForState(
     isTitleEditing: () => false,
     resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(),
-    clearSelectedRelatedText: vi.fn(),
     scheduleAutosave: vi.fn(),
     scheduleSearch: vi.fn(),
     scheduleRelated: vi.fn(),

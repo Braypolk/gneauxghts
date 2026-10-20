@@ -107,8 +107,6 @@
    * up with note prose, not the wider cm-content box.
    */
   --content-readable-width: 100%;
-  --related-transition-duration: 300ms;
-  --related-transition-ease: cubic-bezier(0, 0, 0.2, 1);
   --selection-background: color-mix(in oklab, var(--foreground) 15%, var(--background));
   --selection-color: var(--foreground);
   /* Editor typography (medium preset defaults; overridden by editorTextSize.ts) */
@@ -208,7 +206,6 @@
 
 @media (prefers-reduced-motion: reduce) {
   :root {
-    --related-transition-duration: 0ms;
   }
 
   /* Cover shared controls, disclosures, search, map fades and loading icons as
@@ -279,20 +276,6 @@ body {
 ::-moz-selection {
   background: var(--selection-background);
   color: var(--selection-color);
-}
-
-/* Related changes resize both the workspace card and its History overlay. */
-.workspace-card-motion {
-  transition: margin-left var(--related-transition-duration) var(--related-transition-ease),
-    margin-right var(--related-transition-duration) var(--related-transition-ease),
-    width var(--related-transition-duration) var(--related-transition-ease);
-}
-.related-drawer-motion {
-  transition: left var(--related-transition-duration) var(--related-transition-ease);
-}
-.related-panel-motion {
-  transition: opacity var(--related-transition-duration) var(--related-transition-ease),
-    transform var(--related-transition-duration) var(--related-transition-ease);
 }
 
 /* Portalled dialogs share the shell's visible viewport and cutout bounds. */

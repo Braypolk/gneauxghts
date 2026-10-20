@@ -1,7 +1,11 @@
 <script lang="ts">
+  import RelatedResults from '../related/RelatedResults.svelte';
   import WorkspaceInputDock from './WorkspaceInputDock.svelte';
-  import { searchResultsReveal } from './searchResultsReveal';
-  import { dockRamp, type DockActionPresentation } from './workspaceDockMachine';
+  import SearchResultsPanel from './SearchResultsPanel.svelte';
+  import SearchResultsHeading from '$lib/ui/search/SearchResultsHeading.svelte';
+  import SearchNoteResult from '$lib/ui/search/SearchNoteResult.svelte';
+  import type { DockActionPresentation } from './workspaceDockPresentation';
+  import { ramp as dockRamp } from '$lib/ui/morphing-containers/motion';
   import { onDestroy, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { rankMediaResults } from '../search/mediaRanking';
@@ -28,7 +32,8 @@
   import type {
     NotepadCommandBarForgetProps,
     NotepadCommandBarRememberProps,
-    NotepadCommandBarSearchProps
+    NotepadCommandBarSearchProps,
+    NotepadCommandBarRelatedProps
   } from '$lib/features/notepad/ui/notepadCommandBarProps';
   import SearchBar, {
     type SearchBarHandle,
@@ -42,6 +47,7 @@
     forget: NotepadCommandBarForgetProps;
     remember: NotepadCommandBarRememberProps;
     search: NotepadCommandBarSearchProps;
+    related?: NotepadCommandBarRelatedProps;
     chatAvailable?: boolean;
     dockMode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
@@ -53,12 +59,69 @@
     forget,
     remember,
     search,
+    related,
     chatAvailable = false,
     dockMode = 'search',
     chatSlot = $bindable(null),
     onDockModeChange,
     onExpandChat
   }: Props = $props();
+
+  const relatedPopupId = $props.id();
+  let relatedMode = $state(false);
+  let panelOpen = $state(false);
+  let relatedIndex = $state(0);
+  let relatedHeader = $state<HTMLButtonElement | null>(null);
+  let openedRelatedKey: string | null = null;
+
+  function closeRelated(restore = false) {
+    if (restore) onSearchDismiss?.();
+    searchBar?.closeSearch();
+  }
+  function showSearch() {
+    if (relatedMode) { relatedMode = false; related?.onClose(); }
+  }
+  export function toggleRelated() {
+    if (!related?.contextKey) return;
+    if (relatedMode) { closeRelated(true); return; }
+    openedRelatedKey = related.contextKey;
+    relatedMode = true;
+    relatedIndex = 0;
+    related.onOpen();
+    searchBar?.openPanel();
+    void tick().then(() => relatedHeader?.focus({ preventScroll: true }));
+  }
+  $effect(() => {
+    const key = related?.contextKey;
+    if (relatedMode && key !== openedRelatedKey) closeRelated();
+  });
+  function handleRelatedKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') {
+      event.preventDefault(); event.stopPropagation(); closeRelated(true);
+    } else if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      const count = related?.result?.items.length ?? 0;
+      if (count) {
+        relatedIndex = (relatedIndex + (event.key === 'ArrowDown' ? 1 : -1) + count) % count;
+        const moveFocus = event.target !== relatedHeader;
+        void tick().then(() => {
+          const row = relatedHeader?.closest('.workspace-input-dock')
+            ?.querySelector<HTMLElement>('[data-search-result-active="true"]');
+          if (moveFocus) row?.focus({ preventScroll: true });
+          row?.scrollIntoView({ block: 'nearest' });
+        });
+      }
+    } else if (event.key === 'Enter' && event.target === relatedHeader) {
+      event.preventDefault();
+      const item = related?.result?.items[relatedIndex];
+      if (item) selectRelated(item);
+    }
+  }
+  function selectRelated(item: import('$lib/types/semantic').RelatedNoteItem) {
+    onSearchCommit?.();
+    searchBar?.closeSearch();
+    related?.onSelect(item);
+  }
 
   const canUnforget = $derived(forget.canUnforget);
   const canForget = $derived(forget.canForget ?? true);
@@ -299,10 +362,6 @@
       return `chat-${item.location.conversationId ?? 'slot'}`;
     }
     return `note-${item.location.notePath ?? item.location.noteId ?? 'current'}-${index}`;
-  }
-
-  function getRecentNoteItemClass() {
-    return 'search-result-item flex h-[2.75rem] w-full items-center gap-2 rounded-[1.1rem] px-4 py-1.5 text-left transition-colors';
   }
 
   function getSearchResultItemClass(mode: 'current' | 'all') {
@@ -590,13 +649,22 @@
       {/if}
     </div>
 
+    {#snippet relatedInput()}
+      <div class="related-search-heading flex w-full min-w-0 items-center" role="group" aria-label="Related note controls">
+        <button bind:this={relatedHeader} onkeydown={handleRelatedKeydown} type="button" class="min-w-0 flex-1 truncate rounded py-1.5 text-left text-base text-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring min-[700px]:text-sm sm:py-2" aria-label={`Related to ${related?.title || 'this note'}`}>
+          Related to {related?.title || 'this note'}
+        </button>
+      </div>
+    {/snippet}
+
     {#snippet searchPanel()}
-      {#key isSearching}
-        <div
-          class="search-results-panel absolute bottom-[calc(var(--search-results-anchor-height,100%)+0.5rem)] left-0 right-0 z-30 rounded-[1.2rem] border p-2 shadow-xl backdrop-blur-md sm:bottom-[calc(var(--search-results-anchor-height,100%)+0.85rem)] sm:rounded-[1.5rem]"
-          data-search-navigation-mode={commandBarState.searchNavigationMode}
-          transition:searchResultsReveal|global
-        >
+      {#key relatedMode ? false : isSearching}
+        <SearchResultsPanel navigationMode={commandBarState.searchNavigationMode}>
+          {#if relatedMode}
+            <div id={relatedPopupId} class="max-h-80 overflow-y-auto" onkeydown={handleRelatedKeydown} role="dialog" tabindex="-1" aria-label="Related notes">
+              <RelatedResults result={related?.result ?? null} activeIndex={relatedIndex} onSelect={selectRelated} onPoint={(index) => relatedIndex = index} onRefresh={() => related?.onRefresh()} />
+            </div>
+          {:else}
           {#if search.mediaError}<p class="px-3 py-2 text-xs text-muted-foreground" role="status">{search.mediaError}</p>{/if}
           {#if isSearching && (searchQuery.trim() !== '' || imageQueryUrl)}
             <div class="px-4 py-3 text-sm text-muted-foreground">Searching notes…</div>
@@ -623,26 +691,16 @@
                       : ''
                   }`}
                 >
-                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                    Pinned
-                  </div>
+                  <SearchResultsHeading title="Pinned" />
                   <div class={getRecentNotesViewportClass()}>
                     {#each pinnedNotes as item, index (`pinned-${item.noteId ?? item.notePath}-${index}`)}
                       <div class="group flex items-center gap-1">
-                        <button
-                          type="button"
-                          data-search-result-active={index === commandBarState.activeIndex ? 'true' : 'false'}
-                          class={getRecentNoteItemClass()}
-                          class:bg-accent={index === commandBarState.activeIndex}
-                          aria-label={`Open pinned note: ${item.fileName}`}
-                          title={item.fileName}
-                          onmousedown={(event) => event.preventDefault()}
-                          onpointerenter={() => commandBarState.handleSearchItemPointerEnter(index)}
-                          onclick={() => commandBarState.selectItem({ kind: 'pinned', item })}
-                        >
-                          <Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span class="truncate text-sm font-semibold text-popover-foreground">{item.fileName}</span>
-                        </button>
+                        <SearchNoteResult title={item.fileName} label={`Open pinned note: ${item.fileName}`}
+                          active={index === commandBarState.activeIndex}
+                          onPoint={() => commandBarState.handleSearchItemPointerEnter(index)}
+                          onSelect={() => commandBarState.selectItem({ kind: 'pinned', item })}>
+                          {#snippet icon()}<Pin class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{/snippet}
+                        </SearchNoteResult>
                         <button
                           type="button"
                           class="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted-foreground opacity-70 transition hover:bg-accent hover:text-foreground sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
@@ -662,28 +720,17 @@
 
               {#if recentLocations.length > 0}
                 <section class="min-w-0 flex-1 lg:order-1 lg:pr-3">
-                  <div class="px-4 pb-2 pt-3 text-[11px] font-semibold uppercase tracking-[0.2em] text-muted-foreground">
-                    Recent
-                  </div>
+                  <SearchResultsHeading title="Recent" />
                   <div class={getRecentNotesViewportClass()}>
                     {#each recentLocations as item, index (locationHistoryKey(item, index))}
                       {@const globalIndex = pinnedNotes.length + index}
-                      <button
-                        type="button"
-                        data-search-result-active={globalIndex === commandBarState.activeIndex ? 'true' : 'false'}
-                        class={getRecentNoteItemClass()}
-                        class:bg-accent={globalIndex === commandBarState.activeIndex}
-                        aria-label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
-                        title={item.label}
-                        onmousedown={(event) => event.preventDefault()}
-                        onpointerenter={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
-                        onclick={() => commandBarState.selectItem({ kind: 'location', item })}
-                      >
-                        {#if item.location.kind === 'chat'}
-                          <MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        {/if}
-                        <span class="truncate text-sm font-semibold text-popover-foreground">{item.label}</span>
-                      </button>
+                      <SearchNoteResult title={item.label}
+                        label={`Open recent ${item.location.kind === 'chat' ? 'thought partner' : 'note'}: ${item.label}`}
+                        active={globalIndex === commandBarState.activeIndex}
+                        onPoint={() => commandBarState.handleSearchItemPointerEnter(globalIndex)}
+                        onSelect={() => commandBarState.selectItem({ kind: 'location', item })}>
+                        {#snippet icon()}{#if item.location.kind === 'chat'}<MessagesSquare class="h-3.5 w-3.5 shrink-0 text-muted-foreground" />{/if}{/snippet}
+                      </SearchNoteResult>
                     {/each}
                   </div>
                 </section>
@@ -760,7 +807,8 @@
               {/each}
             </div>
           {/if}
-        </div>
+          {/if}
+        </SearchResultsPanel>
       {/key}
     {/snippet}
 
@@ -769,22 +817,33 @@
         class="h-8 w-10 shrink-0 rounded-md border border-border/60 bg-card object-cover" />
     {/snippet}
 
+    {#snippet dockPopup()}{#if panelOpen}{@render searchPanel()}{/if}{/snippet}
+
+    <div class="notepad-discovery-dock flex min-w-0 flex-1 items-end gap-2 sm:gap-3">
     <WorkspaceInputDock
       hasChat={chatAvailable}
+      related={related?.contextKey || related?.pendingNoteReturn ? {
+        active: relatedMode, available: !!related.contextKey, popupId: relatedPopupId,
+        onOpen: toggleRelated, onDismiss: () => closeRelated(true), onBlur: () => closeRelated()
+      } : undefined}
+      relatedContent={relatedInput}
+      overlay={dockPopup}
       mode={dockMode}
       bind:chatSlot
       bind:actionPresentation
       onSearch={() => searchBar?.focusSearch()}
       onChat={() => onExpandChat?.()}
     >
-      {#snippet search(presentation)}
+      {#snippet search(presentation, focusBoundary)}
         <SearchBar
           class="notepad-search-bar"
+          {focusBoundary}
           bind:this={searchBar}
           value={searchQuery}
-          expanded={chatAvailable ? dockMode === 'search' : undefined}
+          expanded={chatAvailable && dockMode === 'search' ? true : undefined}
           presentationActive={presentation.active}
           presentationExpanded={presentation.expanded}
+          presentationInputOpacity={presentation.inputOpacity}
           hasQuery={imageQueryUrl !== null}
           placeholder={imageQueryUrl ? 'Add text to refine this image' : searchMode === 'current' ? 'Search this note' : 'Search all notes'}
           ariaLabel={`${searchScopeTitle}. ${searchMode === 'current' ? 'Search this note' : 'Search the selected scope'}`}
@@ -801,6 +860,7 @@
           onValueChange={onSearchInput}
           onClear={onSearchClear}
           onOpen={handleSharedSearchOpen}
+          onOpenChange={(open) => panelOpen = open}
           onScopeChange={handleSharedSearchModeChange}
           onMatchCaseChange={onMatchCaseChange}
           onMatchWholeWordChange={onMatchWholeWordChange}
@@ -808,10 +868,12 @@
           onInputKeydown={commandBarState.handleSearchKeydown}
           onImageFile={searchMode === 'all' ? chooseImage : undefined}
           queryPreview={imageQueryUrl ? imageQueryPreview : undefined}
-          panel={searchPanel}
+          onSearchIntent={showSearch}
+          onClose={() => { if (relatedMode) { relatedMode = false; related?.onClose(); } }}
         />
       {/snippet}
     </WorkspaceInputDock>
+    </div>
 
 
     <div
@@ -841,6 +903,11 @@
 </div>
 
 <style>
+  .notepad-discovery-dock { --discovery-gap: 0.5rem; }
+  .related-search-heading { padding-right: var(--search-bar-height); }
+  @media (min-width: 640px) {
+    .notepad-discovery-dock { --discovery-gap: 0.75rem; }
+  }
   [data-notepad-command-bar] {
     container: note-toolbar / inline-size;
   }
@@ -866,8 +933,8 @@
   @container note-toolbar (max-width: 56rem) {
     .notepad-command-action {
       /* Release the label's space continuously below the icon breakpoint.
-       * Related animates this container's width; an immediate 82px collapse
-       * on each side would make expanded search reverse mid-transition. */
+       * An abrupt label collapse would make expanded search reverse during
+       * pane transitions. */
       --command-action-extra: clamp(0px, calc((100cqw - 45.75rem) / 2), 5.125rem);
       width: calc(2.75rem + var(--command-action-extra));
       min-width: 2.75rem;
@@ -881,30 +948,6 @@
     .notepad-command-action :global(svg) {
       display: block;
     }
-  }
-
-  .notepad-command-bar-content :global(.workspace-input-dock) {
-    /* The card reserves unequal space for Related. Balance that difference
-     * inside the toolbar so search stays centered in the full workspace.
-     * Margins participate in flex sizing, keeping expanded search clear of
-     * the buttons even when the Related drawer narrows the card. */
-    margin-left: max(0px, calc(var(--dock-layout-balance, var(--related-balance-width, 0px)) - var(--dock-layout-reserved, var(--related-reserved-width, 0px))));
-    margin-right: max(0px, calc(var(--dock-layout-reserved, var(--related-reserved-width, 0px)) - var(--dock-layout-balance, var(--related-balance-width, 0px))));
-    --search-layout-duration: var(--related-transition-duration);
-    --search-layout-ease: var(--related-transition-ease);
-    transition: margin-left var(--search-layout-duration) var(--search-layout-ease),
-      margin-right var(--search-layout-duration) var(--search-layout-ease);
-  }
-
-  .notepad-command-bar-content :global(.workspace-input-dock:not([data-dock-state='editor-search'])) {
-    /* Chat uses the card's available space; only standalone search balances
-     * the Related reservation to stay centered in the full workspace. */
-    margin-inline: 0;
-  }
-
-  :global([data-window-resizing]) .notepad-command-bar-content :global(.workspace-input-dock),
-  :global([data-pane-motion]) .notepad-command-bar-content :global(.workspace-input-dock) {
-    --search-layout-duration: 0ms;
   }
 
   @keyframes forget-hold-pulse {
@@ -925,33 +968,11 @@
     animation: forget-hold-pulse 0.95s ease-in-out infinite alternate;
   }
 
-  .search-results-panel {
-    /* The dock publishes its destination width before its visible bar expands.
-       Reveal a fixed layout from the existing base rather than resizing text. */
-    width: var(--dock-search-results-width, 100%);
-    left: 50%;
-    right: auto;
-    transform: translateX(-50%);
-    background: var(--search-scope-results-bg);
-    border-color: var(--search-scope-results-border);
-    transition:
-      background-color 160ms ease,
-      border-color 160ms ease;
-  }
-
   @media (max-height: 559px) {
     .notepad-command-bar-content {
       gap: 0.375rem;
       padding-inline: 0.625rem;
     }
-  }
-
-  .search-result-item[data-search-result-active='true'] {
-    background: var(--accent);
-  }
-
-  .search-results-panel[data-search-navigation-mode='pointer'] .search-result-item:hover {
-    background: var(--accent);
   }
 
   @media (prefers-reduced-motion: reduce) {

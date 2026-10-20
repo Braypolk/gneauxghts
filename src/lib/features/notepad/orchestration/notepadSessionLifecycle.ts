@@ -25,10 +25,8 @@ export interface NotepadSessionLifecycleDeps {
   registerWindowCloseHandler: () => () => void;
   registerPendingSaveHandler: () => () => void;
   registerTransientMenuListeners: () => () => void;
-  getWorkspaceShell: () => HTMLDivElement | null;
   ensurePaneEditors: () => Promise<void>;
   refreshCurrentNote: () => Promise<void>;
-  updateRelatedLayout: () => void;
   scheduleRelated: (options: { immediate: true }) => void;
   openNote: (
     notePath: string | null,
@@ -64,17 +62,6 @@ export function createNotepadSessionLifecycle(
     const unregisterWindowClose = deps.registerWindowCloseHandler();
     const unregisterPendingSave = deps.registerPendingSaveHandler();
     const unregisterTransientMenus = deps.registerTransientMenuListeners();
-    const resizeObserver =
-      typeof ResizeObserver === 'undefined'
-        ? null
-        : new ResizeObserver(deps.updateRelatedLayout);
-    const shell = deps.getWorkspaceShell();
-    if (shell) {
-      // Route entry must establish card geometry before async editor/session work
-      // or the first ResizeObserver delivery can expose the default side layout.
-      deps.updateRelatedLayout();
-      resizeObserver?.observe(shell);
-    }
     let unsubscribeVault: (() => void) | null = null;
 
     const ready = (async () => {
@@ -101,7 +88,6 @@ export function createNotepadSessionLifecycle(
         if (!current()) return;
         await deps.refreshCurrentNote();
         if (!current()) return;
-        deps.updateRelatedLayout();
         deps.scheduleRelated({ immediate: true });
         let skipDefaultFocus = false;
 
@@ -154,7 +140,6 @@ export function createNotepadSessionLifecycle(
       unregisterPendingSave();
       unregisterTransientMenus();
       unsubscribeVault?.();
-      resizeObserver?.disconnect();
       if (revision === mountRevision) deps.dispose();
     }, { ready });
   }

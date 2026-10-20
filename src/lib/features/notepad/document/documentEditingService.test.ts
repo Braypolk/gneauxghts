@@ -31,7 +31,6 @@ function createHarness(
     isTitleEditing: () => false,
     resetPaneCommandAfterBodyInput: vi.fn(),
     clearRecentlyForgotten: vi.fn(),
-    clearSelectedRelatedText: vi.fn(),
     scheduleAutosave,
     scheduleSearch,
     scheduleRelated

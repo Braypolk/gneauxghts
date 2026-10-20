@@ -65,7 +65,7 @@ describe('search scope label animation', () => {
       await waitForWorkspaceAnimationSettled();
       const result = await browser.executeAsync((done: (result: { widths: number[]; frames: number[][] }) => void) => {
         const shell = document.querySelector('.notepad-search-bar')!;
-        const layer = shell.querySelector('.shared-search-input-layer')!;
+        const layer = shell.closest('[data-container-surface="search"]')!;
         const labels = Array.from(shell.querySelectorAll<HTMLElement>('.shared-search-mode-label'));
         const widths = labels.map(label => label.getBoundingClientRect().width);
         const frames: number[][] = [], started = performance.now();

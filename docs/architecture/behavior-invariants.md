@@ -217,8 +217,8 @@ and pending work survive. Collapsed frames are inert and their transients close.
 The rail supports pointer and keyboard activation, reserves space alongside
 content, and exposes the pane title and pending/error state. The shared dock's
 actions follow the expanded pane. The shared dock retains full workspace width
-and the rail's hit target stops above it. Related stays within the expanded pane's
-horizontal space. Rails sit below the maximum measured retained-header extent
+and the rail's hit target stops above it. Changing the active rail dismisses
+the Related popup; collapsed editors do not drive Related retrieval. Rails sit below the maximum measured retained-header extent
 and above the dock, with matching top/bottom fades; shared clearance stays
 stable while exchanging panes. Pointer and keyboard activation wait for settled presentation
 before focusing and yield to newer user input. Pane and dock transitions use the
@@ -245,9 +245,7 @@ Every split-opening choice (options, current location, previous location, and
 new chat) uses that coordinator and the existing 380ms editor easing at wide and
 compact widths. The destination kind is selected before the new pane becomes
 visible; duplicating or restoring chat cannot introduce a temporary editor.
-Related's bottom-sheet insets and width share the same geometry clock, including
-interrupted switches. Note-to-note
-rail exchanges use the dock's morph duration and editor curve even when the
+Note-to-note rail exchanges use the dock's morph duration and editor curve even when the
 dock itself remains settled. Closing from rail layout retains that same duration
 and curve after the surviving pane returns to solo layout. While a chat remains
 open, its editor/chat handoff reuses the ordinary `chat-search`/`chat-input` dock
@@ -947,6 +945,49 @@ is discovered and validated rather than guessed from model names. The compatible
 transport maps supported reasoning options; unavailable metadata sends no invented
 override. Switching conversations or deriving titles does not trigger inference.
 
+### Related notes do not resize authored content
+
+Notes expose Related through a floating button beside Search. The button opens
+the existing search popup in Related mode, even with no query or Recent notes.
+It retains ordinary search
+query/scope state. Related is absent from chat and History; changing the active
+pane or document dismisses its popup. Escape restores the captured editor/title
+focus, and pointer/keyboard selection uses ordinary passage navigation.
+Related replaces its floating icon with a floating Search control on the left;
+the Related icon is absorbed into the bar through the same dock exchange as Chat.
+Its idle icon stays adjacent to the painted Search bar. The active bar keeps
+Search's width and height, including its compact two-row sizing, and returning
+to Search preserves query/scope and input focus. The existing chat return control
+and composer remain available independently.
+Opening from idle and dismissing back to idle animate the painted width and
+circles together, without applying a new width cap ahead of the exchange or
+starting another expansion after settling. Both input presentations remain
+mounted through their outgoing fade; an interrupted exchange starts from the
+displayed geometry.
+Related opening, dismissal and Search/Related exchanges use the same reusable
+container component and original Chat/Search pinch timing (380ms). The component
+accepts arbitrary keyed items in caller order with icon, compact or expanded
+presentation, configured widths and configured or measured heights. Feature
+contents and activation remain caller-owned. Reversals continue from the painted
+pose with proportional remaining travel; simultaneous pane changes retain their
+coordinated clock. The Related glyph remains visible throughout that exchange.
+Outgoing Search scope labels retain their layout until their fade completes.
+Search and Related share the popup shell, heading and note-row components;
+Related supplies its heading, notes and extra row detail. Its heading is Related.
+The popup begins revealing while the bar expands, and switching an already-open
+Search/Related popup replaces its content without remounting the panel.
+
+Opening the popup preserves editor width, wrapping, selection and Markdown.
+Related adds no content at the end of the note. Retrieval belongs to the open
+popup and is scoped by document lifetime. A closed popup initiates no assessment
+loop.
+Draft changes reject old responses and mark visible matches stale without
+reordering them. Refresh/Retry retains the previous rows until a new assessment
+finishes. Vault target changes remove affected rows; final release/teardown
+retires the result entry. Loading, insufficient content, empty and unavailable
+states remain explicit and never substitute Recent notes. Saved-source native
+shortcuts must match both the requested draft and indexed bytes.
+
 ### Search and chat share a dock without replacing their drafts
 
 When a chat pane is open, search and the selected chat composer share the bottom
@@ -964,9 +1005,9 @@ Switching modes keeps the mounted search and composer, preserving the search
 query, unsent text, attachments, and
 configuration without creating or sending a conversation. Search shortcuts can
 expand hidden search, and returning focus to chat expands its composer.
-The presentation machine has three settled states: editor search, chat search,
-and chat input. Both inputs remain mounted while one main bar morphs between
-them. Chat/search exchange keeps that bar's width constant: the composer compresses
+The shared presentation component knows keyed containers and their icon, compact
+or expanded states. The workspace adapter maps Search, Related and Chat to those
+items. Inputs remain mounted while one main bar morphs between them. Chat/search exchange keeps that bar's width constant: the composer compresses
 with its contents hidden, controls fade, the magnifier enters the bar,
 and send becomes the detached chat circle. The reverse uses the same geometry.
 Opening chat splits the magnifier from editor search and finishes with chat input
@@ -982,8 +1023,7 @@ navigation takes over, matching solo header actions.
 Bar, circles, and controls share one correlated frame clock through
 compression, exchange, and settling. A separate material layer joins the shapes;
 its filter never applies to text or controls. Entry begins at the visible editor
-geometry even when the Related drawer changes the available space. Those
-layout changes also project the adjacent actions on that clock so the dock never
+geometry. Pane layout changes project the adjacent actions on that clock so the dock never
 passes through Forget or New Chat/New Idea. Mounted input contents fade out
 over 100ms as motion starts and stay hidden through the exchange. At 90% geometry
 progress, the selected surface begins a 280ms fade-in that continues after the
@@ -1010,9 +1050,7 @@ During search/chat exchange the main bar and foreground glyph paths are monotoni
 both background circle shells stay full-size and opaque. Editor/chat paths use
 measured endpoints rather than recomputing against the moving flex width, so the
 first painted frame retains the displayed origin and width-cap changes do not hitch.
-Standalone editor search balances Related’s reservation using the drawer’s
-existing layout curve. Settled search geometry stays relative to its available
-flex space; resizing that space does not restart search expansion. Chat input
+Settled search geometry stays relative to its available flex space; resizing that space does not restart search expansion. Chat input
 and chat search use the card’s available space with balanced gaps beside the
 adjacent actions.
 Ordinary editor-search CSS transitions resume only after projected margins are

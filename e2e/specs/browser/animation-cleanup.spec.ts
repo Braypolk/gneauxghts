@@ -9,26 +9,20 @@ async function ready(width = 1440) {
 }
 
 describe('animation interruptions and controls', () => {
-  it('keeps faded-out Related and split controls out of keyboard focus', async () => {
+  it('unmounts closed Related results and keeps hidden split controls out of keyboard focus', async () => {
     await ready();
-    const result = await browser.execute(() => {
-      const panel = document.querySelector<HTMLElement>('#related-drawer-panel')!;
-      panel.querySelector<HTMLButtonElement>('button:not(:disabled)')!.focus();
-      const relatedFocused = panel.contains(document.activeElement);
-      document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!.focus();
+    await expect($('[role="dialog"][aria-label="Related notes"]')).not.toExist();
+    expect(await browser.execute(() => {
       const hiddenSplit = document.querySelector<HTMLButtonElement>('.split-pane-option--current')!;
-      hiddenSplit.focus();
-      return { relatedFocused, splitFocused: document.activeElement === hiddenSplit };
-    });
-    expect(result).toEqual({ relatedFocused: false, splitFocused: false });
-    await $('button[aria-label="Expand related notes"]').click();
-    const close = await $('button[aria-label="Close related panel"]');
-    await close.waitForClickable();
-    await close.click();
-    await expect($('button[aria-label="Expand related notes"]')).toBeFocused();
+      hiddenSplit.focus(); return document.activeElement === hiddenSplit;
+    })).toBe(false);
+    await $('button[aria-label="Related notes"]').click();
+    await $('[role="dialog"][aria-label="Related notes"]').waitForDisplayed();
+    await browser.keys('Escape');
+    await expect($('button[aria-label="Related notes"]')).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('waits for a retargeted pane collapse before unmounting the editor', async () => {
+  it('waits for a pane collapse with Related opening before unmounting the editor', async () => {
     await ready();
     await $('button[aria-label="Open split pane options"]').click();
     await $('#pane-command-current').waitForExist();
@@ -49,7 +43,7 @@ describe('animation interruptions and controls', () => {
         done({ toggled, widths, settled: !pane.isConnected && !document.querySelector('[data-pane-motion]'),
           ...(error ? { error } : {}) });
       };
-      const deadline = setTimeout(() => finish('Retargeted pane collapse did not settle'), 3000);
+      const deadline = setTimeout(() => finish('Pane collapse did not settle'), 3000);
       pane.querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
       const sample = () => {
         if (finished) return;
@@ -62,7 +56,7 @@ describe('animation interruptions and controls', () => {
         if (toggled) widths.push(width);
         else if (width > 1 && width < startWidth * 0.7) {
           toggled = true;
-          document.querySelector<HTMLElement>('button[aria-label="Expand related notes"]')!.click();
+          document.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
         }
         frameId = requestAnimationFrame(sample);
       };
@@ -76,86 +70,25 @@ describe('animation interruptions and controls', () => {
     expect(await $$('[data-testid="workspace-pane"]')).toHaveLength(1);
   });
 
-  it('retargets pane entrance when Related changes without snapping to the endpoint', async () => {
+  it('leaves pane entrance animation untouched when Related opens', async () => {
     await ready();
-    const result = await browser.executeAsync((done: (result: {
-      before: number; after: number; from: number; to: number; moving: boolean; replaced: boolean; error?: string
-    }) => void) => {
-      let frameId = 0;
-      let finished = false;
-      const finish = (result: {
-        before: number; after: number; from: number; to: number; moving: boolean; replaced: boolean; error?: string
-      }) => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(deadline);
-        cancelAnimationFrame(frameId);
-        done(result);
-      };
-      const deadline = setTimeout(() => finish({ before: 0, after: 0, from: 0, to: 0, moving: false, replaced: false,
-        error: 'Required entrance interruption frame was not observed' }), 3000);
-      document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
-      const interrupt = () => {
-        if (finished) return;
+    await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter')));
+    await $('button[aria-label="Split with current location"]').waitForClickable();
+    const sameAnimation = await browser.executeAsync((done: (same: boolean) => void) => {
+      document.querySelector<HTMLElement>('button[aria-label="Split with current location"]')!.click();
+      const started = performance.now();
+      const sample = () => {
         const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
-        const animation = pane?.getAnimations().find(item => item.playState === 'running' &&
-          (item.effect as KeyframeEffect).getKeyframes().some(frame => frame.flexBasis !== undefined));
-        if (!pane || !animation) { frameId = requestAnimationFrame(interrupt); return; }
-        // Control the interrupted width, not the duration of a browser frame.
-        // The replacement still runs and paints normally after the real click.
-        animation.pause();
-        animation.currentTime = Number(animation.effect!.getTiming().duration) / 2;
-        const before = pane.getBoundingClientRect().width;
-        document.querySelector<HTMLElement>('button[aria-label="Expand related notes"]')!.click();
-        const observeReplacement = () => {
-          if (finished) return;
-          const replacement = pane.getAnimations().find(item =>
-            (item.effect as KeyframeEffect).getKeyframes().some(frame => frame.flexBasis !== undefined));
-          // The first frame can install the replacement at time zero. Observe
-          // its actual progression, rather than treating that start as a snap.
-          if (!replacement || replacement === animation || Number(replacement.currentTime) === 0) {
-            frameId = requestAnimationFrame(observeReplacement);
-            return;
-          }
-          const keyframes = (replacement.effect as KeyframeEffect).getKeyframes();
-          finish({ before, after: pane.getBoundingClientRect().width,
-            from: Number.parseFloat(String(keyframes[0].flexBasis)),
-            to: Number.parseFloat(String(keyframes.at(-1)?.flexBasis)),
-            replaced: true,
-            moving: !!document.querySelector('[data-pane-motion]') });
-        };
-        frameId = requestAnimationFrame(observeReplacement);
+        const animation = pane?.getAnimations().find(a => a.playState === 'running');
+        if (!animation || !pane) { if (performance.now() - started > 3000) done(false); else requestAnimationFrame(sample); return; }
+        document.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
+        requestAnimationFrame(() => done(pane.getAnimations().includes(animation)));
       };
-      frameId = requestAnimationFrame(interrupt);
+      requestAnimationFrame(sample);
     });
-    if (result.error) throw new Error(result.error);
-    expect(result.replaced).toBe(true);
-    expect(result.moving).toBe(true);
-    expect(Math.abs(result.from - result.before)).toBeLessThanOrEqual(1);
-    // Ensure this fixture would catch an endpoint snap, then observe real paint
-    // progressing between the retained starting width and the new destination.
-    expect(Math.abs(result.to - result.before)).toBeGreaterThan(35);
-    expect(result.after).toBeGreaterThan(Math.min(result.before, result.to));
-    expect(result.after).toBeLessThan(Math.max(result.before, result.to));
+    expect(sameAnimation).toBe(true);
     await waitForWorkspaceAnimationSettled();
   });
-
-  for (const width of [1280, 2400]) {
-    it(`renders the same Related width it reserves at ${width}px`, async () => {
-      await ready(width);
-      await $('button[aria-label="Expand related notes"]').click();
-      await waitForWorkspaceAnimationSettled();
-      const result = await browser.execute(() => {
-        const drawer = document.querySelector<HTMLElement>('.related-drawer')!;
-        const card = document.querySelector<HTMLElement>('.notepad-workspace-card')!;
-        return { width: drawer.getBoundingClientRect().width,
-          expected: Math.round(Math.max(288, Math.min(window.innerWidth * 0.24, 352))),
-          gap: card.getBoundingClientRect().left - drawer.getBoundingClientRect().right };
-      });
-      expect(result.width).toBe(result.expected);
-      expect(Math.abs(result.gap - 8)).toBeLessThanOrEqual(1);
-    });
-  }
 
   it('keeps the forget fill aligned with frame-driven progress', async () => {
     await ready();

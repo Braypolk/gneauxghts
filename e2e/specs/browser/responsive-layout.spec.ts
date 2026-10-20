@@ -9,9 +9,8 @@ async function viewport(width: number, height: number) {
 async function replaceBody(text: string) {
   const content = await $('[data-testid="note-editor"] .cm-content');
   await content.click();
-  await browser.execute((el: HTMLElement, value: string) => {
-    el.focus(); document.execCommand('selectAll'); document.execCommand('insertText', false, value);
-  }, content, text);
+  await browser.keys(['Meta', 'a']);
+  await browser.execute((value: string) => document.execCommand('insertText', false, value), text);
 }
 async function expectInViewport(selector: string) {
   await browser.waitUntil(async () => browser.execute((selector) => {
@@ -35,11 +34,11 @@ describe('responsive layout interactions', () => {
   });
   afterEach(async () => { await browser.sendCommand('Emulation.clearDeviceMetricsOverride', {}); });
 
-  it('closes Related with its close button below phone navigation', async () => {
+  it('toggles Related below phone navigation', async () => {
     await viewport(390, 844);
-    await $('button[aria-label="Expand related notes"]').click();
-    await $('button[aria-label="Close related panel"]').click();
-    await expect($('button[aria-label="Expand related notes"]')).toHaveAttribute('aria-expanded', 'false');
+    await $('button[aria-label="Related notes"]').click();
+    await $('button[aria-label="Search notes"]').click();
+    await expect($('button[aria-label="Related notes"]')).toHaveAttribute('aria-expanded', 'false');
     expect(new URL(await browser.getUrl()).pathname).toBe('/');
   });
 

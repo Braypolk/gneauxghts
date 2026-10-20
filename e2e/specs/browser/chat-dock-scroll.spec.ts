@@ -2,7 +2,7 @@ import { browser, expect, $ } from '@wdio/globals';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 import { seedPiHistory, openBrowserPiPane, selectPiConversation } from '../../support/browserPi';
-import { dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
+import { containerMorphDuration as dockMorphDuration } from '../../../src/lib/ui/morphing-containers/motion';
 
 describe('chat reading position across input modes', () => {
   beforeEach(async () => {
@@ -95,30 +95,13 @@ describe('chat reading position across input modes', () => {
     expect(hit.reachesChat).toBe(true);
   });
 
-  it('keeps the latest message at the bottom while Related changes the available width', async () => {
-    // Solo chat at this width crosses a Markdown wrapping boundary when Related opens.
+  it('does not offer Related for solo chat or alter its scroll geometry', async () => {
     await $('[data-pane-kind="editor"] button[aria-label="Close pane"]').click();
     await waitForWorkspaceAnimationSettled();
+    await expect($('button[aria-label="Related notes"]')).not.toExist();
     await browser.waitUntil(() => browser.execute(() => {
       const log = document.querySelector<HTMLElement>('[role="log"]')!;
-      return log.scrollHeight - log.clientHeight - log.scrollTop <= 1;
+      return log.scrollHeight - log.clientHeight - log.scrollTop <= 2;
     }));
-    for (const label of ['Expand related notes', 'Collapse related notes']) {
-      const result = await browser.executeAsync((label: string, done: (value: { gaps: number[]; heights: number[] }) => void) => {
-        const log = document.querySelector<HTMLElement>('[role="log"]')!;
-        const gaps: number[] = [], heights: number[] = [];
-        document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
-        const started = performance.now();
-        const sample = () => setTimeout(() => {
-          gaps.push(log.scrollHeight - log.clientHeight - log.scrollTop);
-          heights.push(log.scrollHeight);
-          if (performance.now() - started < 1000) requestAnimationFrame(sample);
-          else done({ gaps, heights });
-        }, 0);
-        requestAnimationFrame(sample);
-      }, label);
-      expect(Math.max(...result.heights) - Math.min(...result.heights)).toBeGreaterThan(20);
-      expect(Math.max(...result.gaps)).toBeLessThanOrEqual(2);
-    }
   });
 });

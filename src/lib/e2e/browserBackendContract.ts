@@ -18,6 +18,7 @@ declare global {
       invocations: InvokeRecord[];
       /** Reattach this fixture after the WDIO service installs its own interceptor. */
       restoreIpc(): void;
+      setRelatedResponse(response: import('../types/semantic').RelatedNotesResponse | null, delayMillis?: number): void;
       setAtlas(response: import('../types/atlas').VaultAtlasResponse): void;
       holdSave(fail?: boolean): void;
       releaseSave(): void;

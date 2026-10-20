@@ -39,6 +39,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Related notes redesign](archive/related-notes-redesign.md): a floating button and shared popup replace the drawer/sheet. Search, Related and Chat use the reusable container renderer with ordered items, explicit presentation states and the original pinch animation. Results are demand-driven and saved-source shortcuts respect drafts. Validation and backend scope limits are recorded with the outcome.
+
 - [ChatGPT registration reuse](archive/chatgpt-registration-reuse.md): reconnect and disconnect retain the issued app client ID on the same host; a pinned Pi patch reauthorizes it instead of registering another app. Connected Settings hides sign-in; confirmed terminal refresh failures restore it while temporary failures preserve the connection. Source/bundled helper and Settings browser regressions pass. Existing ChatGPT-side entries require separate cleanup.
 
 - [Chat context visibility](archive/chat-context-usage.md): composer ring and percentage with accessible token details, using Bits UI and Pi's active-context estimate. Last-known local capacity persists per server/model through unload and restart, with loaded-response refresh; SQLite retention and native unload/reload/compaction journeys pass.

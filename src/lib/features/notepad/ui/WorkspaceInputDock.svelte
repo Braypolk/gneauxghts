@@ -1,19 +1,19 @@
 <script lang="ts">
-  import { onDestroy, tick, untrack, type Snippet } from 'svelte';
-  import { ArrowUp, MessagesSquare, Search, Square } from '@lucide/svelte';
-  import WorkspaceDockSurface from './WorkspaceDockSurface.svelte';
-  import WorkspaceDockMaterial from './WorkspaceDockMaterial.svelte';
-  import {
-    createWorkspaceDockMotion, transitionWorkspaceDock, workspaceDockGeometry,
-    workspaceDockPhase, workspaceDockPresentation, type DockMeasure, type WorkspaceDockState,
-    type DockSearchPresentation, type DockActionPresentation
-  } from './workspaceDockMachine';
+  import { tick, untrack, type Snippet } from 'svelte';
+  import { ArrowUp, MessagesSquare, Network, Search, Square } from '@lucide/svelte';
+  import MorphingContainers, { type ContainerGroupPresentation, type ContainerPresentation, type MorphingContainerItem } from '$lib/ui/morphing-containers/MorphingContainers.svelte';
+  import { ramp } from '$lib/ui/morphing-containers/motion';
+  import type { DockSearchPresentation, DockActionPresentation } from './workspaceDockPresentation';
+  import { searchExpansionStyles } from '$lib/ui/search/searchMotion';
   import './workspaceDockMotion.css';
 
-  let { search, hasChat = false, mode = 'search', chatSlot = $bindable(null),
-    actionPresentation = $bindable({ running: false, progress: 1 }), onSearch, onChat }: {
-    search: Snippet<[DockSearchPresentation]>;
+  let { search, relatedContent, overlay, hasChat = false, mode = 'search', chatSlot = $bindable(null),
+    actionPresentation = $bindable({ running: false, progress: 1 }), related, onSearch, onChat }: {
+    search: Snippet<[DockSearchPresentation, HTMLElement | null]>;
+    relatedContent: Snippet;
+    overlay?: Snippet;
     hasChat?: boolean;
+    related?: { active: boolean; available: boolean; popupId: string; onOpen: () => void; onDismiss: () => void; onBlur: () => void };
     mode?: 'search' | 'chat';
     chatSlot?: HTMLDivElement | null;
     actionPresentation?: DockActionPresentation;
@@ -21,301 +21,140 @@
     onChat: () => void;
   } = $props();
 
-  const componentId = $props.id();
-  const filterId = `${componentId}-dock-morph`;
-  const target = $derived<WorkspaceDockState>(!hasChat ? 'editor-search' : mode === 'chat' ? 'chat-input' : 'chat-search');
-  let motion = $state.raw(untrack(() => createWorkspaceDockMotion(target)));
   let node = $state<HTMLDivElement | null>(null);
-  let searchHeight = $state(0);
-  let chatHeight = $state(0);
-  let measure = $state.raw<DockMeasure>({ width: 384, editorWidth: 384, searchHeight: 40, chatHeight: 76, gap: 12, sendSize: 29.6, sendInset: 8.2 });
-  let paneLayoutActive = $state(false);
-  let layoutLeft = $state(0);
-  let actions = $state.raw<Array<{ left: number; width: number }>>([]);
-  let layoutOrigin = $state.raw<{ measure: DockMeasure; left: number; actions: Array<{ left: number; width: number }> } | null>(null);
-  type Geometry = ReturnType<typeof workspaceDockGeometry>;
-  let geometryOrigin = $state.raw<Geometry | null>(null);
-  let layoutDestination = $state.raw<{ id: number; left: number; width: number } | null>(null);
-  let originSearchActive = $state(false);
-  let originSearchExpanded = $state(false);
-  let lastSearchActive = false;
+  let presentation = $state<ContainerGroupPresentation | null>(null);
+  let layoutEndpoint = $state<{ id: number; left: number; width: number } | null>(null);
+  let circle = $state(40);
+  let fontSize = $state(16);
+  let controlSize = $state(32);
+  let width = $state(384);
+  let gap = $state(12);
+  let searchOpen = $state(false);
+  let searchExpanded = $state(false);
+  let sendSize = $state(29.6);
+  let sendInset = $state(8.2);
+  let searchIconInset = $state(28);
   let isStopAction = $state(false);
   let sendOpacity = $state(0.4);
-  let frame: number | undefined;
-  let settling = $state<number | undefined>();
-  let media: MediaQueryList | undefined;
-  let readLayout: (() => void) | undefined;
-  const progress = $derived(motion.transition?.progress ?? 1);
-  const coordinatedLayout = $derived(!!motion.transition &&
-    (paneLayoutActive || motion.transition.from === 'editor-search' || motion.transition.to === 'editor-search'));
-  const renderMeasure = $derived.by(() => {
-    const destination = { ...measure, searchBodyHeight: searchHeight || measure.searchHeight, chatHeight: chatHeight || measure.chatHeight };
-    if (!motion.transition || !layoutOrigin || coordinatedLayout) return destination;
-    const origin = layoutOrigin.measure;
-    // Related/pane layout can change the dock's available width during entry.
-    // Blend the measured coordinate spaces on the same animation clock.
-    return { ...destination,
-      width: origin.width + (destination.width - origin.width) * progress,
-      editorWidth: origin.editorWidth + (destination.editorWidth - origin.editorWidth) * progress,
-      chatHeight: origin.chatHeight + (destination.chatHeight - origin.chatHeight) * progress
-    };
+  let capturedSearchActive = false;
+  let capturedSearchExpanded = false;
+  let previousTarget = '';
+  const target = $derived(related?.active ? 'related' : hasChat && mode === 'chat' ? 'chat' : 'search');
+  const running = $derived(!!presentation?.transition);
+  const progress = $derived(presentation?.transition?.progress ?? 1);
+  const searchHeight = $derived(presentation?.contentHeights.search ?? circle);
+  const chatHeight = $derived(presentation?.contentHeights.chat ?? 76);
+  const barWidth = $derived(hasChat ? undefined : (target === 'related' || searchExpanded ? 42 : 24) * fontSize);
+  const compactHeight = $derived(width <= 28 * fontSize ? circle + controlSize + 0.25 * fontSize : circle);
+  const searchPresentation = $derived<DockSearchPresentation>({
+    active: running && target !== 'search' ? capturedSearchActive : undefined,
+    expanded: running && target !== 'search' ? capturedSearchExpanded : hasChat && mode === 'search' ? true : undefined
   });
-  const virtualLeft = $derived(layoutLeft + (layoutOrigin && !coordinatedLayout ? (layoutOrigin.left - layoutLeft) * (1 - progress) : 0));
-  const geometry = $derived.by(() => {
-    const pose = workspaceDockGeometry(motion.pose, renderMeasure);
-    if (coordinatedLayout && geometryOrigin) {
-      // Follow measured world-space endpoints directly. Recomputing a pose
-      // against the animated flex width would apply the motion twice and kink
-      // when the dock crosses its max-width cap. A correlated pane event supplies
-      // the final bounds before paint; until then keep the displayed origin.
-      const endpoint = layoutDestination?.id === motion.transition?.id ? layoutDestination : null;
-      const destination = endpoint ? workspaceDockGeometry(createWorkspaceDockMotion(target).pose,
-        { ...renderMeasure, width: endpoint.width }) : geometryOrigin;
-      const destinationLeft = endpoint?.left ?? 0;
-      const interpolate = (field: 'bodyX' | 'searchCircleX' | 'rightShellX') =>
-        geometryOrigin![field] + (destination[field] + destinationLeft - geometryOrigin![field]) * progress - layoutLeft;
-      const originCenter = geometryOrigin.chatCircleX + geometryOrigin.rightSize / 2;
-      const destinationCenter = destination.chatCircleX + destination.rightSize / 2 + destinationLeft;
-      return { ...pose, bodyX: interpolate('bodyX'), searchCircleX: interpolate('searchCircleX'),
-        rightShellX: interpolate('rightShellX'),
-        bodyWidth: geometryOrigin.bodyWidth + (destination.bodyWidth - geometryOrigin.bodyWidth) * progress,
-        chatCircleX: originCenter + (destinationCenter - originCenter) * progress - pose.rightSize / 2 - layoutLeft };
-    }
-    const offset = virtualLeft - layoutLeft;
-    return { ...pose, bodyX: pose.bodyX + offset,
-      searchCircleX: pose.searchCircleX + offset, chatCircleX: pose.chatCircleX + offset,
-      rightShellX: pose.rightShellX + offset };
-  });
-  const phase = $derived(workspaceDockPhase(motion));
-  const running = $derived(motion.transition !== null);
-  const presentation = $derived(workspaceDockPresentation(motion));
-  const bodyRadius = $derived(measure.searchHeight / 2 + (19.2 - measure.searchHeight / 2) * motion.pose.input);
-  const searchPresentation = $derived<DockSearchPresentation>(running ? {
-    // Preserve outgoing controls through their fade. Incoming search follows
-    // its own focus state, so pane activation cannot flash idle controls.
-    active: target === 'chat-input' ? originSearchActive : undefined,
-    // Retain outgoing search widths through the fade. Incoming editor search
-    // derives its width from focus and query state rather than forcing it open.
-    expanded: target === 'editor-search' ? undefined : target === 'chat-input' ? originSearchExpanded : true
-  } : { expanded: hasChat ? mode === 'search' : undefined });
-  const styles = $derived([
-    `--dock-editor-width:${renderMeasure.editorWidth}px`, `--dock-body-x:${geometry.bodyX}px`, `--dock-body-width:${geometry.bodyWidth}px`,
-    `--dock-search-results-width:${hasChat ? `${geometry.bodyWidth}px` : `min(${renderMeasure.width}px, 42rem)`}`,
-    `--dock-body-height:${geometry.bodyHeight}px`, `--dock-body-radius:${bodyRadius}px`,
-    `--dock-search-x:${geometry.searchCircleX}px`, `--dock-search-glyph:16px`, `--dock-search-glyph-shift:${geometry.searchGlyphShift}px`, `--dock-search-size:${geometry.searchSize}px`,
-    `--dock-chat-x:${geometry.chatCircleX}px`, `--dock-chat-size:${geometry.rightSize}px`,
-    `--dock-search-opacity:1`, `--dock-chat-opacity:${presentation.rightVisibility}`,
-    `--dock-inner-search-icon:0`, `--dock-search-text:${presentation.searchText}`,
-    `--dock-chat-text:${presentation.chatText}`, `--dock-search-controls:${geometry.searchControls}`,
-    `--dock-chat-controls:${geometry.chatControls}`, `--dock-text-shift:${geometry.textShift}px`, `--dock-text-push:${geometry.textPush}px`,
-    `--dock-send-color:${geometry.sendAppearance * sendOpacity * 100}%`,
-    `--dock-chat-glyph:${presentation.chatGlyph}`, `--dock-send-glyph:${presentation.sendGlyph}`,
-    `--dock-send-opacity:${sendOpacity}`
-  ].join(';'));
+  const items = $derived<MorphingContainerItem[]>([
+    { id: 'search', label: related ? 'Search notes' : 'Expand search', state: target === 'search' ? searchOpen ? 'expanded' : 'compact' : 'icon',
+      width: target === 'search' ? barWidth : undefined, height: searchHeight, iconInset: searchIconInset,
+      icon: searchIcon, content: searchContent, class: 'dock-search-layer', toggleClass: 'dock-search-toggle', onActivate: onSearch },
+    ...(related ? [{ id: 'related', label: 'Related notes', state: target === 'related' ? 'expanded' : 'icon',
+      width: hasChat ? undefined : 42 * fontSize, height: target === 'related' ? compactHeight : circle,
+      iconEdge: 'end', icon: relatedIcon, content: relatedSurface, class: 'dock-related-layer', toggleClass: 'dock-related-toggle',
+      disabled: !related.available, controls: related.popupId, onActivate: related.onOpen } satisfies MorphingContainerItem] : []),
+    ...(hasChat ? [{ id: 'chat', label: 'Expand chat input', state: target === 'chat' ? 'expanded' : 'icon',
+      height: chatHeight, radius: 19.2, iconEdge: 'end', iconInset: sendInset + sendSize / 2, expandedIconSize: sendSize,
+      icon: chatIcon, content: chatContent, class: 'dock-chat-layer', toggleClass: 'dock-chat-toggle', onActivate: onChat } satisfies MorphingContainerItem] : [])
+  ]);
+  const availableBarWidth = $derived(Math.max(circle, width - (items.length - 1) * (circle + gap)));
+  const collapsedBarWidth = $derived(Math.min(24 * fontSize, availableBarWidth));
+  const expandedBarWidth = $derived(Math.min(42 * fontSize, availableBarWidth));
+  const searchWidthMotion = $derived(!hasChat && target === 'search' && presentation?.transition?.fromId === 'search'
+    && Math.abs(presentation.transition.origin.bodyWidth - Math.min(barWidth ?? availableBarWidth, availableBarWidth)) > 1);
+  const searchWidthFraction = $derived(Math.max(0, Math.min(1,
+    ((presentation?.geometry.bodyWidth ?? collapsedBarWidth) - collapsedBarWidth) / Math.max(1, expandedBarWidth - collapsedBarWidth))));
+  const styles = $derived(`${searchExpansionStyles};--dock-search-width-fraction:${searchWidthFraction}fr;--morph-bottom-inset:var(--dock-circle-inset);--dock-gap:${gap}px;
+    --dock-search-results-width:${hasChat ? Math.max(circle, width - (items.length - 1) * (circle + gap)) + 'px' : `min(42rem, ${Math.max(circle, width - (items.length - 1) * (circle + gap))}px)`};
+    --dock-search-text:${presentation?.textVisible && target === 'search' ? 1 : 0};--dock-chat-text:${presentation?.textVisible && target === 'chat' ? 1 : 0};
+    --search-results-anchor-height:${compactHeight}px;--dock-composer-height:${chatHeight}px;--dock-send-opacity:${hasChat ? sendOpacity : 1};--dock-chat-glyph:${1 - ramp(0.3, 0.48, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};
+    --dock-send-glyph:${ramp(0.52, 0.7, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};`);
 
-  // The sibling actions share the dock's coordinate interpolation. Pane and
-  // Related layout can otherwise finish before the bar and intersect it.
-  function projectedActions() {
-    if (coordinatedLayout) return actions;
-    return actions.map((action, index) => ({ ...action, left: action.left +
-      ((layoutOrigin?.actions[index]?.left ?? action.left) - action.left) * (1 - progress) }));
-  }
-  $effect(() => {
-    actionPresentation = { running, progress };
-    const row = node?.parentElement;
-    row?.style.setProperty('--dock-layout-body-height', `${geometry.bodyHeight}px`);
-    if (!coordinatedLayout) {
-      row?.style.removeProperty('--dock-layout-reserved');
-      row?.style.removeProperty('--dock-layout-balance');
-    }
-    const projected = projectedActions();
-    projected.forEach((action, index) => row?.style.setProperty(
-      `--dock-action-${index}-shift`, `${action.left - actions[index].left}px`));
-  });
-
-  function cancelFrame() { if (frame !== undefined) cancelAnimationFrame(frame); frame = undefined; }
-  function runFrames() {
-    cancelFrame();
-    const id = motion.transition?.id;
-    if (id === undefined) return;
-    const advance = (now: number) => {
-      readLayout?.();
-      motion = transitionWorkspaceDock(motion, { type: 'frame', id, now });
-      if (motion.transition?.id === id) frame = requestAnimationFrame(advance);
-      else {
-        frame = undefined;
-        settling = id;
-        // Keep ordinary search CSS transitions suppressed while releasing the
-        // projected margins. Otherwise the parent reaches its final position
-        // while its children start a second transition from stale local bounds.
-        void tick().then(async () => {
-          if (motion.transition || settling !== id || !node?.isConnected) return;
-          readLayout?.();
-          await tick();
-          node?.getBoundingClientRect();
-          if (settling === id) settling = undefined;
-        });
-      }
-    };
-    frame = requestAnimationFrame(advance);
-  }
   $effect.pre(() => {
     const next = target;
     untrack(() => {
-      if (next !== motion.target) {
-        const previous = geometry;
-        geometryOrigin = { ...previous, bodyX: previous.bodyX + layoutLeft,
-          searchCircleX: previous.searchCircleX + layoutLeft, chatCircleX: previous.chatCircleX + layoutLeft,
-          rightShellX: previous.rightShellX + layoutLeft };
-        layoutDestination = null;
-        layoutOrigin = { measure: renderMeasure, left: virtualLeft, actions: projectedActions() };
-        originSearchActive = lastSearchActive;
-        originSearchExpanded = node?.querySelector<HTMLElement>('.shared-search-bar-shell')?.dataset.searchExpanded === 'true';
+      if (next !== previousTarget) {
+        const shell = node?.querySelector<HTMLElement>('.shared-search-bar-shell');
+        capturedSearchActive = shell?.dataset.searchActive === 'true';
+        capturedSearchExpanded = shell?.dataset.searchExpanded === 'true';
+        previousTarget = next;
       }
-      settling = undefined;
-      motion = transitionWorkspaceDock(motion, { type: 'request', target: next, now: performance.now(),
-        easing: node?.closest('[data-pane-layout-change]') ? 'editor' : undefined,
-        immediate: media?.matches || (next === 'editor-search' || motion.target === 'editor-search') &&
-          !!node?.closest('[data-window-resizing]') });
-      runFrames();
     });
   });
-
-  function observeDock(element: HTMLDivElement) {
-    media = window.matchMedia('(prefers-reduced-motion: reduce)');
+  $effect(() => {
+    actionPresentation = { running, progress };
+    const row = node?.closest<HTMLElement>('.search-dock-row');
+    row?.style.setProperty('--dock-layout-body-height', `${presentation?.geometry.bodyHeight ?? circle}px`);
+  });
+  $effect(() => {
+    const element = node;
+    if (!element) return;
     const read = () => {
-      const row = element.parentElement;
-      const card = element.closest<HTMLElement>('.notepad-workspace-card');
-      if (coordinatedLayout && card) {
-        const cardStyle = getComputedStyle(card);
-        row?.style.setProperty('--dock-layout-reserved', cardStyle.marginLeft);
-        row?.style.setProperty('--dock-layout-balance', cardStyle.marginRight);
-      } else {
-        row?.style.removeProperty('--dock-layout-reserved');
-        row?.style.removeProperty('--dock-layout-balance');
-      }
-      const root = getComputedStyle(element);
-      layoutLeft = element.getBoundingClientRect().left;
-      const siblings = [element.previousElementSibling, element.nextElementSibling];
-      actions = siblings.filter((sibling): sibling is HTMLElement => sibling instanceof HTMLElement).map(sibling => {
-        const rect = sibling.getBoundingClientRect();
-        const transform = getComputedStyle(sibling).transform;
-        return { left: rect.left - (transform === 'none' ? 0 : new DOMMatrixReadOnly(transform).m41), width: rect.width };
-      });
+      const css = getComputedStyle(element);
       const shell = element.querySelector<HTMLElement>('.shared-search-bar-shell');
-      const searchInput = shell?.querySelector<HTMLInputElement>('input');
-      const searchIcon = shell?.querySelector<SVGElement>('.shared-search-input-layer > svg');
-      if (!motion.transition) lastSearchActive = shell?.dataset.searchActive === 'true';
       const send = element.querySelector<HTMLButtonElement>('.chat-send-button');
-      const textarea = element.querySelector<HTMLTextAreaElement>('textarea');
       const composer = send?.closest<HTMLElement>('.chat-composer-surface');
-      const textStyle = textarea ? getComputedStyle(textarea) : null;
-      const textTranslation = textStyle?.transform && textStyle.transform !== 'none'
-        ? new DOMMatrixReadOnly(textStyle.transform).m41 : 0;
-      // The resolved minimum supplies the circle diameter. Wrapped content
-      // belongs to the bar height and must not resize the detached buttons.
-      const circle = shell ? parseFloat(getComputedStyle(shell).minHeight) || 40 : 40;
-      const searchIconInset = searchIcon && shell ? searchIcon.getBoundingClientRect().left - shell.getBoundingClientRect().left + searchIcon.getBoundingClientRect().width / 2 : 28;
-      const next: DockMeasure = {
-        width: element.clientWidth,
-        editorWidth: hasChat ? measure.editorWidth : (shell?.dataset.searchLayoutExpanded === 'true' ? 42 : 24) * parseFloat(getComputedStyle(document.documentElement).fontSize),
-        searchHeight: circle,
-        searchBodyHeight: searchHeight || shell?.getBoundingClientRect().height || circle,
-        chatHeight: chatHeight || 76,
-        gap: parseFloat(root.getPropertyValue('--dock-gap')) * parseFloat(getComputedStyle(document.documentElement).fontSize),
-        sendSize: send?.getBoundingClientRect().width || measure.sendSize,
-        sendInset: send && composer ? composer.getBoundingClientRect().right - send.getBoundingClientRect().right : measure.sendInset,
-        searchIconInset,
-        textPush: textarea && composer && searchInput && shell ? Math.max(0,
-          searchInput.getBoundingClientRect().left - shell.getBoundingClientRect().left -
-          (textarea.getBoundingClientRect().left - textTranslation - composer.getBoundingClientRect().left + parseFloat(textStyle!.paddingLeft))) : measure.textPush
-      };
-      if (JSON.stringify(next) !== JSON.stringify(measure)) measure = next;
+      fontSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const control = css.getPropertyValue('--search-control-size').trim();
+      controlSize = parseFloat(control) * (control.endsWith('rem') ? fontSize : 1) || 32;
+      width = element.clientWidth;
+      circle = shell ? parseFloat(getComputedStyle(shell).minHeight) || 40 : 40;
+      gap = parseFloat(css.getPropertyValue('--discovery-gap')) * fontSize || (width < 640 ? 6 : 12);
+      searchOpen = shell?.dataset.searchOpen === 'true';
+      // Related uses the same popup lifetime but must retain Search's outgoing layout.
+      if (!related?.active) searchExpanded = shell?.dataset.searchLayoutExpanded === 'true';
+      sendSize = send?.getBoundingClientRect().width || 29.6;
+      sendInset = send && composer ? composer.getBoundingClientRect().right - send.getBoundingClientRect().right : 8.2;
       isStopAction = send?.dataset.chatAction === 'stop';
       sendOpacity = send && !send.disabled ? 1 : 0.4;
+      const icon = shell?.querySelector('.shared-search-input-layer > svg')?.getBoundingClientRect();
+      if (icon && shell) searchIconInset = icon.left + icon.width / 2 - shell.getBoundingClientRect().left;
     };
-    readLayout = read;
-    read();
-    // Pane motion briefly measures the destination before installing WAAPI.
-    // Read its displayed starting bounds before the next paint, so that temporary
-    // destination measurement can never become the first dock frame.
+    untrack(read);
+    const mutations = new MutationObserver(read);
+    mutations.observe(element, { childList: true, subtree: true, attributes: true,
+      attributeFilter: ['data-search-expanded', 'data-search-layout-expanded', 'data-search-open', 'disabled', 'data-chat-action'] });
+    const size = new ResizeObserver(read); size.observe(element);
     const workspace = element.closest('.notepad-shell');
     const layoutReady = (event: Event) => {
-      paneLayoutActive = !!workspace?.hasAttribute('data-pane-motion');
-      const destination = (event as CustomEvent<{ id: number; left: number; width: number } | null>).detail;
-      if (destination?.id === motion.transition?.id) layoutDestination = destination;
+      layoutEndpoint = (event as CustomEvent<{ id: number; left: number; width: number } | null>).detail;
       read();
     };
     workspace?.addEventListener('workspace-pane-layout-ready', layoutReady);
-    const paneLayout = new MutationObserver(() => {
-      paneLayoutActive = !!workspace?.hasAttribute('data-pane-motion');
-      read();
-    });
-    if (workspace) paneLayout.observe(workspace, { attributes: true, attributeFilter: ['data-pane-motion'] });
-    let previousWidth = element.clientWidth;
-    const size = new ResizeObserver(() => {
-      if (element.clientWidth === previousWidth) return;
-      previousWidth = element.clientWidth;
-      read();
-    });
-    const content = new MutationObserver(read);
-    size.observe(element);
-    content.observe(element, { childList: true, subtree: true, attributes: true,
-      attributeFilter: ['data-search-expanded', 'data-search-layout-expanded', 'data-search-active', 'disabled', 'data-chat-action'] });
-    const finish = () => {
-      cancelFrame();
-      settling = undefined;
-      motion = transitionWorkspaceDock(motion, { type: 'finish' });
-      read();
-    };
-    media.addEventListener('change', finish);
-    window.addEventListener('resize', finish);
-    return { destroy() {
-      size.disconnect(); content.disconnect(); paneLayout.disconnect(); media?.removeEventListener('change', finish);
-      window.removeEventListener('resize', finish); readLayout = undefined;
-      workspace?.removeEventListener('workspace-pane-layout-ready', layoutReady);
-      for (const property of ['--dock-layout-body-height', '--dock-layout-reserved', '--dock-layout-balance', '--dock-action-0-shift', '--dock-action-1-shift']) {
-        element.parentElement?.style.removeProperty(property);
-      }
-    } };
-  }
-  $effect(() => {
-    searchHeight; chatHeight;
-    untrack(() => readLayout?.());
+    return () => { mutations.disconnect(); size.disconnect(); workspace?.removeEventListener('workspace-pane-layout-ready', layoutReady);
+      element.closest<HTMLElement>('.search-dock-row')?.style.removeProperty('--dock-layout-body-height'); };
   });
-  onDestroy(cancelFrame);
 </script>
 
-<div bind:this={node} use:observeDock class="workspace-input-dock" style={styles}
-  data-input-dock-mode={hasChat ? mode : 'search'} data-dock-state={target}
-  data-dock-results-ready-at={motion.transition ? motion.transition.startedAt + motion.transition.duration : undefined}
-  data-dock-started-at={motion.transition?.startedAt}
-  data-dock-duration={motion.transition?.duration}
-  data-dock-easing={motion.transition?.easing}
-  data-dock-reading-clearance={hasChat ? Math.max(renderMeasure.chatHeight, renderMeasure.searchBodyHeight ?? measure.searchHeight) : undefined}
-  data-dock-clearance={running ? (motion.transition?.from === 'chat-input' || target === 'chat-input'
-    ? Math.max(renderMeasure.chatHeight, layoutOrigin?.measure.chatHeight ?? 0, renderMeasure.searchBodyHeight ?? measure.searchHeight)
-    : renderMeasure.searchBodyHeight ?? measure.searchHeight) : undefined}
-  data-dock-phase={phase} data-dock-text-reveal={presentation.textRevealing || undefined}
-  data-dock-motion={running ? motion.transition?.id : settling}>
-  <WorkspaceDockMaterial {filterId} {geometry} circle={measure.searchHeight} radius={bodyRadius} />
-  <div class="dock-body">
-    <WorkspaceDockSurface kind="search" active={target !== 'chat-input'} bind:contentHeight={searchHeight}>
-      {#snippet content()}{@render search(searchPresentation)}{/snippet}
-    </WorkspaceDockSurface>
-    <WorkspaceDockSurface kind="chat" active={target === 'chat-input'} bind:contentHeight={chatHeight}>
-      {#snippet content()}<div bind:this={chatSlot} class="workspace-chat-slot"></div>{/snippet}
-    </WorkspaceDockSurface>
-  </div>
-  <button class="workspace-input-toggle dock-search-toggle" type="button" aria-label="Expand search" title="Search notes"
-    aria-hidden={target !== 'chat-input' || undefined} tabindex={target === 'chat-input' ? 0 : -1} onclick={onSearch}
-    style="--dock-icon-x:var(--dock-search-x);--dock-icon-size:var(--dock-search-size);--dock-icon-opacity:var(--dock-search-opacity);">
-    <Search style="width:var(--dock-search-glyph);height:var(--dock-search-glyph);transform:translateX(var(--dock-search-glyph-shift));" />
-  </button>
-  <button class="workspace-input-toggle dock-chat-toggle" type="button" aria-label="Expand chat input" title="Return to chat"
-    aria-hidden={target !== 'chat-search' || undefined} tabindex={target === 'chat-search' ? 0 : -1} onclick={onChat}
-    style="--dock-icon-x:var(--dock-chat-x);--dock-icon-size:var(--dock-chat-size);--dock-icon-opacity:var(--dock-chat-opacity);">
-    <MessagesSquare class="dock-chat-icon h-5 w-5" />
-    {#if isStopAction}<Square class="dock-send-icon h-3.5 w-3.5 fill-current" />{:else}<ArrowUp class="dock-send-icon h-4 w-4" />{/if}
-  </button>
-</div>
+{#snippet searchIcon()}<Search class="h-4 w-4" />{/snippet}
+{#snippet relatedIcon()}<Network class="dock-related-icon h-4 w-4" />{/snippet}
+{#snippet chatIcon(view: ContainerPresentation)}
+  <MessagesSquare class="dock-chat-icon h-5 w-5" style={`opacity:${1 - ramp(0.3, 0.48, view.selection)}`} />
+  {#if isStopAction}<Square class="dock-send-icon h-3.5 w-3.5 fill-current" style={`opacity:${ramp(0.52, 0.7, view.selection) * sendOpacity}`} />
+  {:else}<ArrowUp class="dock-send-icon h-4 w-4" style={`opacity:${ramp(0.52, 0.7, view.selection) * sendOpacity}`} />{/if}
+{/snippet}
+{#snippet searchContent()}{@render search(searchPresentation, node)}{/snippet}
+{#snippet relatedSurface()}<div class="related-dock-content" style:min-height={`${compactHeight}px`}>{@render relatedContent()}</div>{/snippet}
+{#snippet chatContent()}<div bind:this={chatSlot} class="workspace-chat-slot"></div>{/snippet}
+
+<MorphingContainers {items} circleSize={circle} {gap} bind:element={node} bind:presentation {layoutEndpoint} {overlay}
+  class="workspace-input-dock" style={styles} data-secondary={target === 'related' || !hasChat ? 'related' : 'chat'}
+  data-input-dock-mode={target} data-dock-state={target === 'related' ? 'related-input' : target === 'chat' ? 'chat-input' : hasChat ? 'chat-search' : related ? 'related-search' : 'editor-search'}
+  data-search-width-motion={searchWidthMotion || undefined}
+  data-popup-delay={presentation?.transition?.fromId === 'chat' || undefined}
+  data-dock-phase={running ? 'exchange' : 'settled'}
+  data-dock-reading-clearance={hasChat ? Math.max(chatHeight, searchHeight) : undefined}
+  data-dock-clearance={running ? Math.max(hasChat || presentation?.transition?.origin.icons.some(icon => icon.id === 'chat') ? chatHeight : 0, searchHeight, presentation?.geometry.bodyHeight ?? 0, presentation?.transition?.origin.bodyHeight ?? 0) : undefined}
+  transitionContext={() => ({ coordinated: !!node?.closest('[data-pane-layout-change]'),
+    easing: node?.closest('[data-pane-layout-change]') ? 'editor' : 'pinch', immediate: !!node?.closest('[data-window-resizing]') })}
+  onfocusout={(event) => {
+    if (!related?.active || event.relatedTarget instanceof Node && node?.contains(event.relatedTarget)) return;
+    void tick().then(() => { if (related?.active && !node?.contains(document.activeElement)) related.onBlur(); });
+  }}
+  onkeydown={(event) => { if (related?.active && event.key === 'Escape') { event.preventDefault(); related.onDismiss(); } }}
+/>

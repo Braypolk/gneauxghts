@@ -21,7 +21,6 @@ export interface VaultNoteChangeEvent {
 interface NotepadRefreshControllerParams {
   getDocumentSession: () => NoteDraftState;
   refreshDerivedViews: () => void | Promise<void>;
-  updateRelatedDrawerLayout: () => void;
   refreshDocumentFromDisk: (
     document: NoteDraftState,
     options: { source: ExternalRefreshSource }
@@ -59,10 +58,6 @@ export function createNotepadRefreshController(
 
   function handleWindowFocus() {
     void refreshCurrentNoteAndDerivedViews('windowFocus');
-  }
-
-  function handleWindowResize() {
-    params.updateRelatedDrawerLayout();
   }
 
   function handleVisibilityChange() {
@@ -148,7 +143,6 @@ export function createNotepadRefreshController(
   return {
     refreshCurrentNoteAndDerivedViews,
     handleWindowFocus,
-    handleWindowResize,
     handleVisibilityChange,
     handleVaultNoteChanged
   };

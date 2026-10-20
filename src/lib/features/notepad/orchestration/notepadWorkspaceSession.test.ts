@@ -237,7 +237,6 @@ describe('picker and activation', () => {
     vi.clearAllMocks();
     f.commands.activatePane(f.first);
     expect(f.workspace.activePaneId).toBe(f.first);
-    expect(f.deps.presentation.updateSelectedRelatedText).toHaveBeenCalledWith(f.first);
     expect(f.deps.derivedViews.scheduleSearchIfNeeded).toHaveBeenCalledOnce();
     expect(f.deps.derivedViews.scheduleRelatedIfNeeded).toHaveBeenCalledWith({ immediate: true });
   });

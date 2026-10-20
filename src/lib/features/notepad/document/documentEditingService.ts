@@ -71,7 +71,6 @@ export interface DocumentEditingServiceDeps<TPaneId extends string> {
     nextMarkdown: string
   ) => void;
   clearRecentlyForgotten: () => void;
-  clearSelectedRelatedText: () => void;
   scheduleAutosave: (document: NoteDraftState) => void;
   scheduleSearch: () => void;
   scheduleRelated: (options?: { immediate?: boolean }) => void;
@@ -281,7 +280,6 @@ export function createDocumentEditingService<TPaneId extends string>(
     // properties changed and the rendered body is byte-identical.
     resetCommittedRuntime(document, committed.markdown);
     deps.clearRecentlyForgotten();
-    deps.clearSelectedRelatedText();
     refreshDerivedViews();
     return { kind: 'adopted', document };
   }
@@ -300,7 +298,6 @@ export function createDocumentEditingService<TPaneId extends string>(
       );
     }
     deps.clearRecentlyForgotten();
-    deps.clearSelectedRelatedText();
     refreshDerivedViews();
     return document;
   }
@@ -323,7 +320,6 @@ export function createDocumentEditingService<TPaneId extends string>(
     restoreTransientRuntime(document, document.working.markdown);
     deps.scheduleAutosave(document);
     deps.clearRecentlyForgotten();
-    deps.clearSelectedRelatedText();
     refreshDerivedViews();
     return result;
   }

@@ -87,7 +87,7 @@ describe('window resize layout', () => {
       await browser.setWindowSize(1440, 1000);
       await browser.url('/');
       await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
-      if (expanded) await $('button[aria-label="Expand related notes"]').click();
+      if (expanded) await $('button[aria-label="Related notes"]').click();
       await waitForWorkspaceAnimationSettled();
       await resizeAndSample(900);
       await resizeAndSample(1440);

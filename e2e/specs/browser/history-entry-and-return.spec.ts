@@ -49,8 +49,8 @@ describe('History entry, layout and workspace return', () => {
       try {
         await browser.setWindowSize(layout.width, 844);
         if (layout.expandRelated) {
-          await $('button[aria-label="Expand related notes"]').click();
-          await $('button[aria-label="Close related panel"]').waitForClickable();
+          await $('button[aria-label="Related notes"]').click();
+          await $('button[aria-label="Search notes"]').waitForClickable();
         }
         const card = await $('[data-testid="workspace-card"]');
         await browser.waitUntil(async () => browser.execute(
@@ -66,13 +66,13 @@ describe('History entry, layout and workspace return', () => {
         expect((await history.getLocation()).x).toBeCloseTo(position.x, 0);
         expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
 
-        expect(await $('button[aria-controls="related-drawer-panel"]').isExisting()).toBe(false);
+        expect(await $('button[aria-label="Related notes"]').isExisting()).toBe(false);
 
         await $('button[aria-label="Back to workspace"]').click();
         await history.waitForExist({ reverse: true });
-        const relatedToggle = await $('button[aria-controls="related-drawer-panel"]');
+        const relatedToggle = await $('button[aria-label="Related notes"]');
         await relatedToggle.waitForExist();
-        expect(await relatedToggle.getAttribute('aria-expanded')).toBe(String(layout.expandRelated));
+        expect(await relatedToggle.getAttribute('aria-expanded')).toBe('false');
         expect((await card.getSize()).width).toBeCloseTo(before.width, 0);
         expect((await card.getLocation()).x).toBeCloseTo(position.x, 0);
       } finally {

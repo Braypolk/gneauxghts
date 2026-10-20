@@ -2,7 +2,7 @@ import { readPiFixture } from '../../support/browserPi';
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { resetBrowserWorkspace, openHistoryShortcut } from '../../support/browserWorkspace';
 import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
-import { dockMorphDuration } from '../../../src/lib/features/notepad/ui/workspaceDockMachine';
+import { containerMorphDuration as dockMorphDuration } from '../../../src/lib/ui/morphing-containers/motion';
 
 const editor = '[data-pane-kind="editor"] .cm-content';
 const composer = '[data-notepad-command-bar] textarea';
@@ -94,7 +94,7 @@ describe('persistent collapsed pane rail', () => {
     await expandRail();
     expect(await $('.pane-rail').getAttribute('aria-label')).toContain('History is unavailable');
     await expandRail();
-    await expect($(editor)).toHaveText('Retain this failed edit');
+    await expect($(editor).$('.cm-line')).toHaveText('Retain this failed edit');
     await browser.keys(['Meta', 'z', '\uE000']);
     await browser.waitUntil(async () => browser.execute(expected =>
       (window as typeof window & { __GNEAUXGHTS_NATIVE_E2E__: {
@@ -263,19 +263,12 @@ describe('persistent collapsed pane rail', () => {
     await assertGeometry();
   });
 
-  it('keeps both rail sides reachable while Related is expanded', async () => {
-    // Related belongs to notes; it is intentionally hidden over chat.
+  it('dismisses Related when switching rails without moving either pane', async () => {
     await openNoteSplit(); await viewport(390);
-    await $('button[aria-label="Expand related notes"]').click();
-    await $('#related-drawer-panel').waitForDisplayed();
-    const sheetClearsRail = () => browser.execute(() => {
-      const rail = document.querySelector('.pane-rail')!.getBoundingClientRect();
-      const sheet = document.querySelector('#related-drawer-panel')!.getBoundingClientRect();
-      return rail.right <= sheet.left + 1 || sheet.right <= rail.left + 1;
-    });
-    expect(await sheetClearsRail()).toBe(true);
+    await $('button[aria-label="Related notes"]').click();
+    await $('[role="dialog"][aria-label="Related notes"]').waitForDisplayed();
     await expandRail();
-    expect(await sheetClearsRail()).toBe(true);
+    await expect($('[role="dialog"][aria-label="Related notes"]')).not.toExist();
     await expandRail();
     await assertGeometry();
   });
@@ -375,7 +368,7 @@ describe('persistent collapsed pane rail', () => {
     await expect($(composer)).toBeFocused();
   });
 
-  it('moves one opaque rail and Related continuously while preserving the header blur', async () => {
+  it('moves one opaque rail while Related stays fixed and the header keeps its blur', async () => {
     await openNoteSplit();
     for (const width of [390, 640]) {
       await viewport(width);
@@ -387,7 +380,7 @@ describe('persistent collapsed pane rail', () => {
             const visible = [...document.querySelectorAll<HTMLElement>('.pane-rail-surface')].filter(node => Number(getComputedStyle(node).opacity) > 0.01);
             const frame = document.querySelector<HTMLElement>('[data-pane-compact]:not([data-pane-collapsed]) [data-pane-frame]')!;
             return { rails: visible.length, opacity: Number(getComputedStyle(visible[0]).opacity), left: visible[0].getBoundingClientRect().left,
-              related: document.querySelector('.related-bottom-sheet button')!.getBoundingClientRect().right,
+              related: document.querySelector('button[aria-label="Related notes"]')!.getBoundingClientRect().right,
               hit: !!document.elementFromPoint(visible[0].getBoundingClientRect().left + 24, visible[0].getBoundingClientRect().top + 200)?.closest('.pane-rail-surface'),
               frameOpacityEffects: [frame, frame.closest('.notepad-pane')!].flatMap(node => node.getAnimations()).filter(animation => animation.effect instanceof KeyframeEffect && animation.effect.getKeyframes().some(keyframe => 'opacity' in keyframe)).length,
               frameOpacity: Number(getComputedStyle(frame).opacity), blur: getComputedStyle(frame.querySelector('.pane-header')!, '::before').backdropFilter };
@@ -406,12 +399,8 @@ describe('persistent collapsed pane rail', () => {
         expect(samples.every(sample => sample.frameOpacity === 1 && sample.frameOpacityEffects === 0 && sample.blur.includes('blur('))).toBe(true);
         const from = samples[0], to = samples.at(-1)!;
         expect(Math.abs(to.left - from.left)).toBeGreaterThan(width - 150);
-        expect(Math.max(...samples.map(sample => Math.abs(
-          (sample.left - from.left) / (to.left - from.left) -
-          (sample.related - from.related) / (to.related - from.related)
-        )))).toBeLessThanOrEqual(0.04);
-        expect(samples.some(sample => Math.abs(sample.related - from.related) > 5 && Math.abs(sample.related - to.related) > 5)).toBe(true);
-        for (const field of ['left', 'related'] as const) {
+        expect(Math.max(...samples.map(sample => sample.related)) - Math.min(...samples.map(sample => sample.related))).toBeLessThanOrEqual(1);
+        for (const field of ['left'] as const) {
           const direction = Math.sign(to[field] - from[field]);
           for (let index = 1; index < samples.length; index++) {
             expect((samples[index][field] - samples[index - 1][field]) * direction).toBeGreaterThanOrEqual(-0.75);

@@ -5,8 +5,6 @@
 :root {
   --search-bar-height: 2.5rem;
   --search-control-size: 2rem;
-  --search-expansion-duration: 460ms;
-  --search-expansion-ease: cubic-bezier(0.32, 0, 0.2, 1);
 }
 
 @media (min-width: 640px) and (max-width: 699px) {

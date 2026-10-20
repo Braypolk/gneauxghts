@@ -56,7 +56,7 @@ export function createNotepadComposition(initial: SessionSnapshot = createSessio
   const editing = createDocumentEditingService<NotepadPaneId>({
     state, isApplyingProgrammaticUpdate: () => false,
     isTitleEditing: () => false, resetPaneCommandAfterBodyInput: () => {},
-    clearRecentlyForgotten: () => { state.recentlyForgotten = null; }, clearSelectedRelatedText: () => {},
+    clearRecentlyForgotten: () => { state.recentlyForgotten = null; },
     scheduleAutosave: document => persistence.scheduleAutosave(document), scheduleSearch: vi.fn(), scheduleRelated: vi.fn()
   });
   const save = vi.fn(async (title: string, markdown: string, path: string | null): Promise<NoteSession> => ({
@@ -71,13 +71,11 @@ export function createNotepadComposition(initial: SessionSnapshot = createSessio
       getPaneTitleInput: () => null, closeTransientUiExcept: vi.fn(), waitForPaneMotion: async () => {},
       focusPaneEditor: vi.fn(() => true), focusPaneEditorAtEnd: vi.fn(() => true), focusPaneChat: vi.fn(() => true),
       createPane: () => `notepad-pane-${++nextPane}` as NotepadPaneId,
-      disposePaneRuntime: async id => { await paneLifecycle.disposePane(id); runtimes.delete(id); },
-      updateSelectedRelatedText: vi.fn(), closeWikilinkAutocomplete: vi.fn()
+      disposePaneRuntime: async id => { await paneLifecycle.disposePane(id); runtimes.delete(id); }, closeWikilinkAutocomplete: vi.fn()
     },
     persistence, documents, documentEditing: editing, paneLifecycle,
     derivedViews: {
-      clearSearch: vi.fn(), scheduleSearchIfNeeded: vi.fn(), scheduleRelatedIfNeeded: vi.fn(),
-      clearSelectedRelatedText: vi.fn(), loadRecentNotes: vi.fn(async () => []),
+      clearSearch: vi.fn(), scheduleSearchIfNeeded: vi.fn(), scheduleRelatedIfNeeded: vi.fn(), loadRecentNotes: vi.fn(async () => []),
     },
     forgottenNoteRetentionPreference: () => 7
   };
