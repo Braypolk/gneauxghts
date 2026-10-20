@@ -34,7 +34,7 @@ test('focus-dependent specs and measurements fail before launch without explicit
   for (const key of ['GNEAUXGHTS_E2E_SUSTAINED_MEASUREMENT', 'GNEAUXGHTS_RELEASE_SCALE_RUN']) {
     assert.throws(() => admitNativePresentation([], {[key]: '1'}), /requires actual OS focus/);
   }
-  for (const spec of ['./specs/native/**/*.spec.ts', 'editing-window-native-scale.spec.ts']) {
+  for (const spec of ['./specs/native/**/*.spec.ts', 'editing-window-native-scale.spec.ts', 'markdown-marker-merge.spec.ts']) {
     assert.throws(() => admitNativePresentation([spec], {}), /requires actual OS focus/);
   }
 });

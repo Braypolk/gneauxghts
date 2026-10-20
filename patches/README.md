@@ -35,3 +35,23 @@ Token request errors also retain the provider's structured OAuth error code as
 `oauthError`. The native-only helper forwards a curated reauthorization code for
 terminal refresh failures, allowing native credential retirement after confirmed
 revocation without treating temporary failures as a request for another login.
+
+## `@lezer/markdown@1.6.4`
+
+`injectMarks()` merges blockquote/list markers into inline syntax. Repeated
+insertion into a growing sibling array shifts the remaining elements for every
+marker, making a long quoted paragraph with emphasis expensive to edit.
+
+The patch appends merged siblings to an output array in both distributed module
+formats. It preserves marker nesting, element order, ranges, opaque trees and
+existing recursive behavior. It does not split paragraphs or change the dialect.
+Large inline containers with many nested markers can still require repeated
+recursive copying; this patch addresses the measured sibling insertion cost.
+
+`e2e/support/markdownParserPatch.test.mjs` checks frozen unmodified-parser trees,
+opaque-tree properties, incremental edits and a deterministic array-work bound
+through both ESM and CommonJS. Before removing or replacing the patch, run those
+checks, `e2e/specs/native/markdown-marker-merge.spec.ts`, the visible-Markdown and
+foreground cursor suites, and the full-app quote benchmark. Upstream 1.8.1 keeps
+this insertion loop; its grouping-node reuse improvement addresses other shapes
+of document. See [the investigation](../docs/research/markdown-giant-quote-parsing.md).

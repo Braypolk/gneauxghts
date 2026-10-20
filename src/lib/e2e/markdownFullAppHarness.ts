@@ -98,3 +98,58 @@ export async function verifyFullAppRemount() {
     window.cancelIdleCallback = originalCancel;
   }
 }
+
+// Runs after timing: validate every quote/emphasis span in the full native app,
+// then change syntax from either pane while preserving the sibling viewport.
+export async function verifyFullAppGiantQuote(lines: number) {
+  const editors = views();
+  function checkTrees(expectedEmphasis: number) {
+    const body = editors[0].state.doc.toString();
+    for (const view of editors) {
+      if (view.state.doc.toString() !== body) throw new Error('Giant quote sibling text diverged');
+      const tree = ensureSyntaxTree(view.state, view.state.doc.length, 60_000);
+      if (!tree) throw new Error('Giant quote tree incomplete');
+      let quotes = 0, emphasis = 0;
+      tree.iterate({ enter(node) {
+        if (node.name === 'QuoteMark') {
+          if (body.slice(node.from, node.to) !== '>') throw new Error('Misplaced quote marker');
+          quotes++;
+        } else if (node.name === 'StrongEmphasis') {
+          if (body.slice(node.from, node.from + 2) !== '**' || body.slice(node.to - 2, node.to) !== '**') {
+            throw new Error('Misplaced emphasis markers');
+          }
+          emphasis++;
+        }
+      } });
+      if (quotes !== 2 * lines || emphasis !== expectedEmphasis) {
+        throw new Error(`Giant quote counts: ${quotes} markers, ${emphasis} emphasis`);
+      }
+    }
+  }
+  checkTrees(lines);
+  const source = editors[editors.length - 1];
+  const sibling = editors.length > 1 ? editors[0] : null;
+  const selection = sibling?.state.selection.toJSON();
+  const scrollTop = sibling?.scrollDOM.scrollTop;
+  const line = source.state.doc.lineAt(source.viewport.from);
+  const index = line.text.indexOf('**bold**');
+  if (index < 0) throw new Error('Expected bold text in giant quote viewport');
+  const from = line.from + index;
+  for (const insert of ['  ', '**']) {
+    source.dispatch({ changes: [
+      { from, to: from + 2, insert },
+      { from: from + 6, to: from + 8, insert }
+    ] });
+    checkTrees(insert === '**' ? lines : lines - 1);
+    function checkSibling() {
+      if (sibling && (JSON.stringify(sibling.state.selection.toJSON()) !== JSON.stringify(selection) ||
+        Math.abs(sibling.scrollDOM.scrollTop - scrollTop!) > 1)) {
+        throw new Error('Giant quote syntax edit moved the sibling selection or viewport');
+      }
+    }
+    checkSibling();
+    await frame(); await frame();
+    checkSibling();
+  }
+  return { panes: editors.length, quoteMarkers: lines * 2, strongEmphasis: lines };
+}

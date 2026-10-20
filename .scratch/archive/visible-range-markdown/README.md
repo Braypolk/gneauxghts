@@ -9,7 +9,9 @@ preserved. The immutable draft/full-Markdown callback redesign is deferred.
 On 2026-10-20, the viewport changes were committed on top of main's image-inventory
 fix. [Combined-main verification](main-integration.md) records faster giant-quote
 edits and the remaining live-parser cost. Earlier measurements below precede that
-image-inventory fix. Generated raw samples/profiles stay local.
+image-inventory fix. The later [marker-merge integration](marker-merge-integration.md)
+records the pinned parser patch, native verification and further giant-quote
+improvement. Generated raw samples/profiles stay local.
 
 ## Implementation
 

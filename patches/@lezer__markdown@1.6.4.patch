@@ -1,0 +1,66 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index 4de1c17683cceb7e17939def41254b9b4d2c9cff..fec5838e29cca2dd3db3084491ba4bff59e9a920 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -1825,20 +1825,24 @@ function injectMarks(elements, marks) {
+         return elements;
+     if (!elements.length)
+         return marks;
+-    let elts = elements.slice(), eI = 0;
++    // Append merged siblings instead of repeatedly shifting the remaining
++    // inline elements for every quote or list marker. Preserve nested trees.
++    let elts = elements.slice(), result = [], eI = 0;
+     for (let mark of marks) {
+         while (eI < elts.length && elts[eI].to < mark.to)
+-            eI++;
++            result.push(elts[eI++]);
+         if (eI < elts.length && elts[eI].from < mark.from) {
+             let e = elts[eI];
+             if (e instanceof Element)
+                 elts[eI] = new Element(e.type, e.from, e.to, injectMarks(e.children, [mark]));
+         }
+         else {
+-            elts.splice(eI++, 0, mark);
++            result.push(mark);
+         }
+     }
+-    return elts;
++    while (eI < elts.length)
++        result.push(elts[eI++]);
++    return result;
+ }
+ // These are blocks that can span blank lines, and should thus only be
+ // reused if their next sibling is also being reused.
+diff --git a/dist/index.js b/dist/index.js
+index 69b51a5d70112ccf18f596578fe899ddefc478cb..fa38df4fb9c83d510ae50bda3896242548f6c798 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -1823,20 +1823,24 @@ function injectMarks(elements, marks) {
+         return elements;
+     if (!elements.length)
+         return marks;
+-    let elts = elements.slice(), eI = 0;
++    // Append merged siblings instead of repeatedly shifting the remaining
++    // inline elements for every quote or list marker. Preserve nested trees.
++    let elts = elements.slice(), result = [], eI = 0;
+     for (let mark of marks) {
+         while (eI < elts.length && elts[eI].to < mark.to)
+-            eI++;
++            result.push(elts[eI++]);
+         if (eI < elts.length && elts[eI].from < mark.from) {
+             let e = elts[eI];
+             if (e instanceof Element)
+                 elts[eI] = new Element(e.type, e.from, e.to, injectMarks(e.children, [mark]));
+         }
+         else {
+-            elts.splice(eI++, 0, mark);
++            result.push(mark);
+         }
+     }
+-    return elts;
++    while (eI < elts.length)
++        result.push(elts[eI++]);
++    return result;
+ }
+ // These are blocks that can span blank lines, and should thus only be
+ // reused if their next sibling is also being reused.

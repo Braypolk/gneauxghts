@@ -1,0 +1,32 @@
+[
+  {
+    "name": "nested quote with adjacent emphasis",
+    "doc": "> > **one** *two* ~~three~~\n> > **four** five\n",
+    "tree": "Document[0,46](Blockquote[0,45](QuoteMark[0,1]()Blockquote[2,45](QuoteMark[2,3]()Paragraph[4,45](StrongEmphasis[4,11](EmphasisMark[4,6]()EmphasisMark[9,11]())Emphasis[12,17](EmphasisMark[12,13]()EmphasisMark[16,17]())Strikethrough[18,27](StrikethroughMark[18,20]()StrikethroughMark[25,27]())QuoteMark[28,29]()QuoteMark[30,31]()StrongEmphasis[32,40](EmphasisMark[32,34]()EmphasisMark[38,40]())))))"
+  },
+  {
+    "name": "multiline emphasis and nested markers",
+    "doc": "> **first\n> *second\n> third*\n> fourth**\n",
+    "tree": "Document[0,40](Blockquote[0,39](QuoteMark[0,1]()Paragraph[2,39](StrongEmphasis[2,39](EmphasisMark[2,4]()QuoteMark[10,11]()Emphasis[12,28](EmphasisMark[12,13]()QuoteMark[20,21]()EmphasisMark[27,28]())QuoteMark[29,30]()EmphasisMark[37,39]()))))"
+  },
+  {
+    "name": "multiline link and code span",
+    "doc": "> [first\n> second](target) and `code\n> span`\n",
+    "tree": "Document[0,45](Blockquote[0,44](QuoteMark[0,1]()Paragraph[2,44](Link[2,26](LinkMark[2,3]()QuoteMark[9,10]()LinkMark[17,18]()LinkMark[18,19]()URL[19,25]()LinkMark[25,26]())InlineCode[31,44](CodeMark[31,32]()QuoteMark[37,38]()CodeMark[43,44]()))))"
+  },
+  {
+    "name": "list markers inside quotes",
+    "doc": "> - **one\n>   two**\n>   - [x] nested *three*\n>     continued\n",
+    "tree": "Document[0,61](Blockquote[0,60](QuoteMark[0,1]()BulletList[2,60](ListItem[2,60](ListMark[2,3]()Paragraph[4,19](StrongEmphasis[4,19](EmphasisMark[4,6]()QuoteMark[10,11]()EmphasisMark[17,19]()))QuoteMark[20,21]()BulletList[24,60](ListItem[24,60](ListMark[24,25]()Task[26,60](TaskMarker[26,29]()Emphasis[37,44](EmphasisMark[37,38]()EmphasisMark[43,44]())QuoteMark[45,46]())))))))"
+  },
+  {
+    "name": "inline and reference images",
+    "doc": "> ![first\n> second](a.png) ![ref][]\n> more\n\n[ref]: b.png\n",
+    "tree": "Document[0,57](Blockquote[0,42](QuoteMark[0,1]()Paragraph[2,42](Image[2,26](LinkMark[2,4]()QuoteMark[10,11]()LinkMark[18,19]()LinkMark[19,20]()URL[20,25]()LinkMark[25,26]())Image[27,35](LinkMark[27,29]()LinkMark[32,33]()LinkLabel[33,35]())QuoteMark[36,37]()))LinkReference[44,56](LinkLabel[44,49]()LinkMark[49,50]()URL[51,56]()))"
+  },
+  {
+    "name": "blank lines lazy continuation and fences",
+    "doc": "> first **bold**\nlazy *line*\n>\n> > nested\n> > ```js\n> > const a = 1;\n> > ```\n\noutside\n",
+    "tree": "Document[0,86](Blockquote[0,76](QuoteMark[0,1]()Paragraph[2,28](StrongEmphasis[8,16](EmphasisMark[8,10]()EmphasisMark[14,16]())Emphasis[22,28](EmphasisMark[22,23]()EmphasisMark[27,28]()))QuoteMark[29,30]()QuoteMark[31,32]()Blockquote[33,76](QuoteMark[33,34]()Paragraph[35,41]()QuoteMark[42,43]()QuoteMark[44,45]()FencedCode[46,76](CodeMark[46,49]()CodeInfo[49,51]()QuoteMark[52,53]()QuoteMark[54,55]()CodeText[56,68]()QuoteMark[69,70]()QuoteMark[71,72]()CodeMark[73,76]())))Paragraph[78,85]())"
+  }
+]

@@ -67,6 +67,23 @@ The native command first runs the shared TypeScript and Rust timeline-contract f
 
 Keep this suite focused. Add native cases only for behavior that depends on real window state, filesystem persistence, OS events, restart durability, or Tauri plugins.
 
+### Giant quoted paragraphs
+
+After building the native artifact, run the parser-patch regression against
+50,000 nested quote lines in actual production panes:
+
+```sh
+GNEAUXGHTS_E2E_FOREGROUND=1 pnpm exec wdio run e2e/wdio.native.conf.ts --spec e2e/specs/native/markdown-marker-merge.spec.ts
+```
+
+This measurement requires the authorized foreground lane so animation frames
+advance. It checks all quote/emphasis ranges, syntax-changing edits from both
+pane positions, and sibling selection/scroll preservation. Optional
+`MARKDOWN_NATIVE_OUTPUT` saves ten timed edits after five warmups, without a
+machine-dependent latency gate. Run sequentially with other native checks and
+benchmarks. The visible-Markdown and foreground cursor suites cover appearance,
+concealment, remount, caret geometry and WebKit selection separately.
+
 ### First-visible window bounds
 
 Build with `node e2e/support/buildNative.mjs`, then run a native Vite server in
