@@ -1,6 +1,9 @@
 # Native verification, full-app measurements and giant-quote profiling
 
-Completed 2026-10-20, America/Denver. This follow-up verifies the viewport-bounded
+Completed 2026-10-20, America/Denver.
+
+These measurements precede main's image-inventory fix; see the later
+[combined-main result](main-integration.md) for current giant-quote timings. This follow-up verifies the viewport-bounded
 implementation; it does not change production state ownership or redesign the
 parser, image inventory or Markdown callbacks.
 

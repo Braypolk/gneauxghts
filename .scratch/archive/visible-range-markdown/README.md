@@ -4,6 +4,13 @@ Completed 2026-10-19 (America/Denver). Scope: presentation work in the productio
 Markdown ViewPlugin. Inherited worktree changes, including table removal, are
 preserved. The immutable draft/full-Markdown callback redesign is deferred.
 
+## Integration with main
+
+On 2026-10-20, the viewport changes were committed on top of main's image-inventory
+fix. [Combined-main verification](main-integration.md) records faster giant-quote
+edits and the remaining live-parser cost. Earlier measurements below precede that
+image-inventory fix. Generated raw samples/profiles stay local.
+
 ## Implementation
 
 - Merge overlapping `EditorView.visibleRanges`, seek into each interval, and stop
