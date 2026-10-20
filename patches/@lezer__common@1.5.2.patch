@@ -1,0 +1,30 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index e9a36ce6254bda9de2311ee582d53370c7afc879..892360086bd7ed95d7e0f842a0b46ccadaa2a4a7 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -2043,6 +2043,10 @@ class StructureCursor {
+         }
+     }
+     hasNode(cursor) {
++        // Buffered nodes have no standalone tree to match by identity. Avoid
++        // seeking the old structure for a comparison that cannot succeed.
++        if (!cursor.tree)
++            return false;
+         this.moveTo(cursor.from);
+         if (!this.done && this.cursor.from + this.offset == cursor.from && this.cursor.tree) {
+             for (let tree = this.cursor.tree;;) {
+diff --git a/dist/index.js b/dist/index.js
+index 8b29bb351cae09b8f8a594858e4ed12f877fd4f3..9ef735607608335c3e9a216876ead7a091875495 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -2041,6 +2041,10 @@ class StructureCursor {
+         }
+     }
+     hasNode(cursor) {
++        // Buffered nodes have no standalone tree to match by identity. Avoid
++        // seeking the old structure for a comparison that cannot succeed.
++        if (!cursor.tree)
++            return false;
+         this.moveTo(cursor.from);
+         if (!this.done && this.cursor.from + this.offset == cursor.from && this.cursor.tree) {
+             for (let tree = this.cursor.tree;;) {

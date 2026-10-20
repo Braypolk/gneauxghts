@@ -1,0 +1,72 @@
+[
+  {
+    "name": "escapes",
+    "doc": "escaped \\*star\\* and \\[link\\] \\\\ \\a\n",
+    "tree": "Document[0,36](Paragraph[0,35](Escape[8,10]()Escape[14,16]()Escape[21,23]()Escape[27,29]()Escape[30,32]()))"
+  },
+  {
+    "name": "entities",
+    "doc": "&amp; &#123; &#x1F642; &INVALID; &no ; é &copy;\n",
+    "tree": "Document[0,48](Paragraph[0,47](Entity[0,5]()Entity[6,12]()Entity[13,22]()Entity[23,32]()Entity[41,47]()))"
+  },
+  {
+    "name": "code",
+    "doc": "`one` ``two ` ticks`` `multi\nline` unmatched ` and **bold**\n",
+    "tree": "Document[0,60](Paragraph[0,59](InlineCode[0,5](CodeMark[0,1]()CodeMark[4,5]())InlineCode[6,21](CodeMark[6,8]()CodeMark[19,21]())InlineCode[22,34](CodeMark[22,23]()CodeMark[33,34]())StrongEmphasis[51,59](EmphasisMark[51,53]()EmphasisMark[57,59]())))"
+  },
+  {
+    "name": "html",
+    "doc": "before <b a=\"x\">**bold**</b> <!--comment--> <?x?> <![CDATA[a]]> after\n",
+    "tree": "Document[0,70](Paragraph[0,69](HTMLTag[7,16]()StrongEmphasis[16,24](EmphasisMark[16,18]()EmphasisMark[22,24]())HTMLTag[24,28]()Comment[29,43]()ProcessingInstruction[44,49]()HTMLTag[50,63]()))"
+  },
+  {
+    "name": "angle-links",
+    "doc": "<https://example.org/a> <a+b@example.org> <bad link>\n",
+    "tree": "Document[0,53](Paragraph[0,52](Autolink[0,23](LinkMark[0,1]()URL[1,22]()LinkMark[22,23]())Autolink[24,41](LinkMark[24,25]()URL[25,40]()LinkMark[40,41]())HTMLTag[42,52]()))"
+  },
+  {
+    "name": "emphasis",
+    "doc": "é*one*—**two** a_b_c foo__bar__baz ***nested*** _under_\n",
+    "tree": "Document[0,56](Paragraph[0,55](Emphasis[1,6](EmphasisMark[1,2]()EmphasisMark[5,6]())StrongEmphasis[7,14](EmphasisMark[7,9]()EmphasisMark[12,14]())Emphasis[35,47](EmphasisMark[35,36]()StrongEmphasis[36,46](EmphasisMark[36,38]()EmphasisMark[44,46]())EmphasisMark[46,47]())Emphasis[48,55](EmphasisMark[48,49]()EmphasisMark[54,55]())))"
+  },
+  {
+    "name": "hard-breaks",
+    "doc": "one  \ntwo\\\nthree \nfour\t\nfive   \nend\n",
+    "tree": "Document[0,36](Paragraph[0,35](HardBreak[3,6]()HardBreak[9,11]()HardBreak[28,32]()))"
+  },
+  {
+    "name": "links-images",
+    "doc": "[a *bold*](target \"title\") ![alt **b**](image.png) [reference][r]\n\n[r]: /dest\n",
+    "tree": "Document[0,78](Paragraph[0,65](Link[0,26](LinkMark[0,1]()Emphasis[3,9](EmphasisMark[3,4]()EmphasisMark[8,9]())LinkMark[9,10]()LinkMark[10,11]()URL[11,17]()LinkTitle[18,25]()LinkMark[25,26]())Image[27,50](LinkMark[27,29]()StrongEmphasis[33,38](EmphasisMark[33,35]()EmphasisMark[36,38]())LinkMark[38,39]()LinkMark[39,40]()URL[40,49]()LinkMark[49,50]())Link[51,65](LinkMark[51,52]()LinkMark[61,62]()LinkLabel[62,65]()))LinkReference[67,77](LinkLabel[67,70]()LinkMark[70,71]()URL[72,77]()))"
+  },
+  {
+    "name": "quote-multiline",
+    "doc": "> > **one\n> > two** [a\n> > b](url) `code\n> > span`\n",
+    "tree": "Document[0,51](Blockquote[0,50](QuoteMark[0,1]()Blockquote[2,50](QuoteMark[2,3]()Paragraph[4,50](StrongEmphasis[4,19](EmphasisMark[4,6]()QuoteMark[10,11]()QuoteMark[12,13]()EmphasisMark[17,19]())Link[20,34](LinkMark[20,21]()QuoteMark[23,24]()QuoteMark[25,26]()LinkMark[28,29]()LinkMark[29,30]()URL[30,33]()LinkMark[33,34]())InlineCode[35,50](CodeMark[35,36]()QuoteMark[41,42]()QuoteMark[43,44]()CodeMark[49,50]())))))"
+  },
+  {
+    "name": "gfm",
+    "doc": "- [x] done\n- [ ] ~~pending~~\n\nwww.example.org https://example.org/a(b). a+b@example.org mailto:a@b.org xmpp:a@b.org/r\n",
+    "tree": "Document[0,118](BulletList[0,28](ListItem[0,10](ListMark[0,1]()Task[2,10](TaskMarker[2,5]()))ListItem[11,28](ListMark[11,12]()Task[13,28](TaskMarker[13,16]()Strikethrough[17,28](StrikethroughMark[17,19]()StrikethroughMark[26,28]()))))Paragraph[30,117](URL[30,45]()URL[46,70]()URL[72,87]()URL[88,102]()URL[103,117]()))"
+  },
+  {
+    "name": "extensions",
+    "doc": "~sub~ ^super^ :smile: ~~strike~~ :bad-emoji:\n",
+    "tree": "Document[0,45](Paragraph[0,44](Subscript[0,5](SubscriptMark[0,1]()SubscriptMark[4,5]())Superscript[6,13](SuperscriptMark[6,7]()SuperscriptMark[12,13]())Emoji[14,21]()Strikethrough[22,32](StrikethroughMark[22,24]()StrikethroughMark[30,32]())))"
+  },
+  {
+    "name": "disabled",
+    "doc": "**bold** &amp; [label](url) ![alt](image) `code`\n",
+    "tree": "Document[0,49](Paragraph[0,48]())"
+  },
+  {
+    "name": "unicode",
+    "doc": "🙂 é漢字 𝒜 _é_ **🙂** é [漢字](https://例え.example)\n",
+    "tree": "Document[0,49](Paragraph[0,48](Emphasis[10,13](EmphasisMark[10,11]()EmphasisMark[12,13]())StrongEmphasis[14,20](EmphasisMark[14,16]()EmphasisMark[18,20]())Link[24,48](LinkMark[24,25]()LinkMark[27,28]()LinkMark[28,29]()URL[29,47]()LinkMark[47,48]())))"
+  },
+  {
+    "name": "table",
+    "doc": "| one | two |\n| --- | --- |\n| **a** | `b` |\n",
+    "tree": "Document[0,44](Table[0,43](TableHeader[0,13](TableDelimiter[0,1]()TableCell[2,5]()TableDelimiter[6,7]()TableCell[8,11]()TableDelimiter[12,13]())TableDelimiter[14,27]()TableRow[28,43](TableDelimiter[28,29]()TableCell[30,35](StrongEmphasis[30,35](EmphasisMark[30,32]()EmphasisMark[33,35]()))TableDelimiter[36,37]()TableCell[38,41](InlineCode[38,41](CodeMark[38,39]()CodeMark[40,41]()))TableDelimiter[42,43]())))"
+  }
+]

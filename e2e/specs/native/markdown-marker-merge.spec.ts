@@ -33,9 +33,17 @@ describe('giant quote marker merge in native WebKit', () => {
         const path = '/src/lib/e2e/markdownFullAppHarness.ts';
         const harness = await import(/* @vite-ignore */ path);
         const environment = await harness.prepareFullAppMarkdown('quote', 50_000, panes);
-        if (!document.hasFocus() || document.visibilityState !== 'visible') throw new Error('Native quote measurement lost focus');
+        // Admit foreground input after fixture/split setup, outside timing.
+        // Do not reacquire focus during timing; an interruption still rejects it.
+        await window.__TAURI_INTERNALS__!.invoke('plugin:window|set_focus', { label: 'main' });
+        document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!.focus();
+        await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+        const focusError = (phase: string) => new Error(`Native quote measurement lost focus ${phase}: ${JSON.stringify({
+          focused: document.hasFocus(), visibility: document.visibilityState, active: document.activeElement?.className
+        })}`);
+        if (!document.hasFocus() || document.visibilityState !== 'visible') throw focusError('before timing');
         const measurements = await harness.measureFullAppMarkdown('document', 15);
-        if (!document.hasFocus() || document.visibilityState !== 'visible') throw new Error('Native quote measurement lost focus');
+        if (!document.hasFocus() || document.visibilityState !== 'visible') throw focusError('after timing');
         const verified = await harness.verifyFullAppGiantQuote(50_000);
         done({ environment, measurements, verified });
       } catch (error) { done({ error: `${String(error)}\n${(error as Error).stack}` }); }

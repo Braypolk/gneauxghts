@@ -13,7 +13,10 @@ image-inventory fix. The later [marker-merge integration](marker-merge-integrati
 records the pinned parser patch, native verification and further giant-quote
 improvement. The subsequent [history-root parser removal](root-parser-removal.md)
 removes unused root parsing and records a fresh before/after comparison, native
-verification and the remaining paragraph cost. Generated raw samples/profiles stay local.
+verification and the remaining paragraph cost. The [paragraph/inline follow-up](paragraph-inline-optimization.md)
+skips impossible inline recognizers and mixed-tree identity searches, records
+further giant-quote gains, and identifies repeated background paragraph passes.
+Generated raw samples/profiles stay local.
 
 ## Implementation
 

@@ -1,0 +1,150 @@
+[
+  {
+    "name": "HTML inline and nested quote",
+    "doc": "before\n\n> **a** <b class=\"x\">text</b>\n> tail\n\nafter",
+    "edits": [
+      [
+        "before",
+        "before extended"
+      ],
+      [
+        "class=\"x\"",
+        "id=\"new\""
+      ],
+      [
+        "text",
+        "<i>nested</i>"
+      ],
+      [
+        "> tail",
+        "> **tail**"
+      ]
+    ],
+    "tree": "Document[0,51](Paragraph[0,6]()Blockquote[8,44](QuoteMark[8,9]()Paragraph[10,44](StrongEmphasis[10,15](EmphasisMark[10,12]()EmphasisMark[13,15]())HTMLTag[16,29]()HTMLTag[33,37]()QuoteMark[38,39]()))Paragraph[46,51]())",
+    "mounts": [
+      {
+        "from": 16,
+        "to": 29,
+        "tree": "Document[0,13](Element[0,13](OpenTag[0,13](StartTag[0,1]()TagName[1,2]()Attribute[3,12](AttributeName[3,8]()Is[8,9]()AttributeValue[9,12]())EndTag[12,13]())))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 13
+          }
+        ]
+      },
+      {
+        "from": 33,
+        "to": 37,
+        "tree": "Document[0,4](MismatchedCloseTag[0,4](StartCloseTag[0,2]()TagName[2,3]()EndTag[3,4]()))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 4
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "fenced and indented HTML code",
+    "doc": "intro\n\n```html\n<div>a</div>\n```\n\n    <b>indented</b>\n\noutside",
+    "edits": [
+      [
+        "intro",
+        "intro extra"
+      ],
+      [
+        "<div>a</div>",
+        "<p>longer</p>"
+      ],
+      [
+        "```html",
+        "~~~html"
+      ],
+      [
+        "```\n\n",
+        "~~~\n\n"
+      ]
+    ],
+    "tree": "Document[0,61](Paragraph[0,5]()FencedCode[7,31](CodeMark[7,10]()CodeInfo[10,14]()CodeText[15,27]()CodeMark[28,31]())CodeBlock[37,52](CodeText[37,52]())Paragraph[54,61]())",
+    "mounts": [
+      {
+        "from": 7,
+        "to": 31,
+        "tree": "Document[0,12](Element[0,12](OpenTag[0,5](StartTag[0,1]()TagName[1,4]()EndTag[4,5]())Text[5,6]()CloseTag[6,12](StartCloseTag[6,8]()TagName[8,11]()EndTag[11,12]())))",
+        "overlay": [
+          {
+            "from": 8,
+            "to": 20
+          }
+        ]
+      },
+      {
+        "from": 37,
+        "to": 52,
+        "tree": "Document[0,15](Element[0,15](OpenTag[0,3](StartTag[0,1]()TagName[1,2]()EndTag[2,3]())Text[3,11]()CloseTag[11,15](StartCloseTag[11,13]()TagName[13,14]()EndTag[14,15]())))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 15
+          }
+        ]
+      }
+    ]
+  },
+  {
+    "name": "HTML blocks and multiple fragments",
+    "doc": "<div>\n<b>block</b>\n</div>\n\n> a\n> <em>inline</em>\n\nlast",
+    "edits": [
+      [
+        "<b>block</b>",
+        "<i>changed</i>"
+      ],
+      [
+        "> a",
+        "> **longer**"
+      ],
+      [
+        "last",
+        "<u>end</u>"
+      ]
+    ],
+    "tree": "Document[0,54](HTMLBlock[0,25]()Blockquote[27,48](QuoteMark[27,28]()Paragraph[29,48](QuoteMark[31,32]()HTMLTag[33,37]()HTMLTag[43,48]()))Paragraph[50,54]())",
+    "mounts": [
+      {
+        "from": 0,
+        "to": 25,
+        "tree": "Document[0,25](Element[0,25](OpenTag[0,5](StartTag[0,1]()TagName[1,4]()EndTag[4,5]())Text[5,6]()Element[6,18](OpenTag[6,9](StartTag[6,7]()TagName[7,8]()EndTag[8,9]())Text[9,14]()CloseTag[14,18](StartCloseTag[14,16]()TagName[16,17]()EndTag[17,18]()))Text[18,19]()CloseTag[19,25](StartCloseTag[19,21]()TagName[21,24]()EndTag[24,25]())))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 25
+          }
+        ]
+      },
+      {
+        "from": 33,
+        "to": 37,
+        "tree": "Document[0,4](Element[0,4](OpenTag[0,4](StartTag[0,1]()TagName[1,3]()EndTag[3,4]())))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 4
+          }
+        ]
+      },
+      {
+        "from": 43,
+        "to": 48,
+        "tree": "Document[0,5](MismatchedCloseTag[0,5](StartCloseTag[0,2]()TagName[2,4]()EndTag[4,5]()))",
+        "overlay": [
+          {
+            "from": 0,
+            "to": 5
+          }
+        ]
+      }
+    ]
+  }
+]

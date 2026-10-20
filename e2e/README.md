@@ -80,7 +80,9 @@ This measurement requires the authorized foreground lane so animation frames
 advance. It checks all quote/emphasis ranges, syntax-changing edits from both
 pane positions, and sibling selection/scroll preservation. Optional
 `MARKDOWN_NATIVE_OUTPUT` saves ten timed edits after five warmups, without a
-machine-dependent latency gate. Run sequentially with other native checks and
+machine-dependent latency gate. Foreground/window and source-editor focus are
+admitted after fixture preparation, outside timing; a focus loss during timing
+still rejects the samples. Run sequentially with other native checks and
 benchmarks. The visible-Markdown and foreground cursor suites cover appearance,
 concealment, remount, caret geometry and WebKit selection separately.
 

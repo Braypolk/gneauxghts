@@ -2,6 +2,8 @@
 
 Initially investigated 2026-10-20 on main `9aad697f`, with production code, installed packages and the lockfile unchanged during that investigation. Parser candidates were loaded in a temporary application copy. The marker merge was subsequently integrated as a pinned dependency patch; [integration, regression coverage and native verification](../../.scratch/archive/visible-range-markdown/marker-merge-integration.md) record the shipping change. The subsequent [history-root parser removal](../../.scratch/archive/visible-range-markdown/root-parser-removal.md) eliminates unused root parsing with fresh full-app benchmarks and native verification. Prototype results below remain historical.
 
+The [paragraph/inline follow-up](../../.scratch/archive/visible-range-markdown/paragraph-inline-optimization.md) now skips impossible builtin recognizers and buffered-tree identity searches. Fresh giant-quote dispatch improves another 30% with one or two panes. A retained probe identifies repeated same-revision background paragraph passes as remaining work.
+
 ## Diagnosis
 
 The previous full-app profiles attribute 92–93% of sampled CPU to live language parsing, including 50–57% self time in `injectMarks`. Viewport decoration building accounts for under 0.1%; main's image inventory fix has removed the former image reparses from this fixture. See [the main integration measurements](../../.scratch/archive/visible-range-markdown/main-integration.md).
