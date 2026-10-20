@@ -86,6 +86,20 @@ still rejects the samples. Run sequentially with other native checks and
 benchmarks. The visible-Markdown and foreground cursor suites cover appearance,
 concealment, remount, caret geometry and WebKit selection separately.
 
+### Synchronous paragraph diagnostics
+
+`markdown-synchronous-paragraph.spec.ts` is an opt-in foreground comparison of the
+unchanged GFM autolink recognizer and its installed ASCII boundary guard. Set
+`MARKDOWN_SYNCHRONOUS_NATIVE_OUTPUT=/tmp/synchronous-native.json` and use the owned
+`runNativeSpecs` runner with `GNEAUXGHTS_E2E_FOREGROUND=1`. It checks actual app-dialect
+syntax and embedded mounts, then requests baseline/candidate/baseline giant edits
+and queued typing at 200ms/80ms intervals for one and two panes. Each independent
+phase validates focus/visibility before and after timing, full quote/emphasis
+ranges, sibling selection/scroll and typed text. Focus interruptions reject the
+phase; other failures stop the invocation to avoid overlapping async work. These
+are dispatch/RAF observations without machine-dependent time gates, not physical
+key-to-display measurements. Run sequentially with builds, checks and other timing.
+
 ### First-visible window bounds
 
 Build with `node e2e/support/buildNative.mjs`, then run a native Vite server in

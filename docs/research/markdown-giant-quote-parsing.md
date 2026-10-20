@@ -6,6 +6,8 @@ The [paragraph/inline follow-up](../../.scratch/archive/visible-range-markdown/p
 
 The later [bounded reuse prototype](../../.scratch/archive/visible-range-markdown/paragraph-reuse-prototype.md) safely reuses selected same-revision inline results. Chrome gains do not establish a consistent native WebKit improvement, and the prototype adds cold cost and retained memory. It is preserved on `codex/paragraph-reuse-prototype` and was not integrated.
 
+The [first synchronous paragraph follow-up](../../.scratch/archive/visible-range-markdown/synchronous-paragraph-optimization.md) replaces per-character autolink boundary regex checks with equivalent ASCII comparisons. Syntax parity passes; accepted native pairs show modest dispatch gains. Return baselines lose focus, and rapid typing remains slow.
+
 ## Diagnosis
 
 The previous full-app profiles attribute 92–93% of sampled CPU to live language parsing, including 50–57% self time in `injectMarks`. Viewport decoration building accounts for under 0.1%; main's image inventory fix has removed the former image reparses from this fixture. See [the main integration measurements](../../.scratch/archive/visible-range-markdown/main-integration.md).

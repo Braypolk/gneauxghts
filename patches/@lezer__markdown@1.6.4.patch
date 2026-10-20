@@ -1,5 +1,5 @@
 diff --git a/dist/index.cjs b/dist/index.cjs
-index 4de1c17683cceb7e17939def41254b9b4d2c9cff..db13d3fb6843228c1bee95e58c466c00954a111a 100644
+index 4de1c17683cceb7e17939def41254b9b4d2c9cff..2f12e5da472d043172031c4c49bf21013f114da0 100644
 --- a/dist/index.cjs
 +++ b/dist/index.cjs
 @@ -1109,6 +1109,7 @@ class MarkdownParser extends common.Parser {
@@ -89,8 +89,22 @@ index 4de1c17683cceb7e17939def41254b9b4d2c9cff..db13d3fb6843228c1bee95e58c466c00
  }
  // These are blocks that can span blank lines, and should thus only be
  // reused if their next sibling is also being reused.
+@@ -2232,7 +2258,12 @@ const Autolink = {
+             name: "Autolink",
+             parse(cx, next, absPos) {
+                 let pos = absPos - cx.offset;
+-                if (pos && /\w/.test(cx.text[pos - 1]))
++                // JavaScript's non-Unicode \w is exactly ASCII letters, digits
++                // and underscore. Avoid a regex call and one-character string
++                // at every ordinary text position. At pos == 0, prev is NaN.
++                let prev = cx.text.charCodeAt(pos - 1);
++                if (prev >= 48 && prev <= 57 || prev >= 65 && prev <= 90 ||
++                    prev >= 97 && prev <= 122 || prev == 95)
+                     return -1;
+                 autolinkRE.lastIndex = pos;
+                 let m = autolinkRE.exec(cx.text), end = -1;
 diff --git a/dist/index.js b/dist/index.js
-index 69b51a5d70112ccf18f596578fe899ddefc478cb..fd37ec5ea1275289c30e10c899fddbddf74fccfd 100644
+index 69b51a5d70112ccf18f596578fe899ddefc478cb..16afa2ea7e083dd25b483ced8cb32137f270551c 100644
 --- a/dist/index.js
 +++ b/dist/index.js
 @@ -1107,6 +1107,7 @@ class MarkdownParser extends Parser {
@@ -180,3 +194,17 @@ index 69b51a5d70112ccf18f596578fe899ddefc478cb..fd37ec5ea1275289c30e10c899fddbdd
  }
  // These are blocks that can span blank lines, and should thus only be
  // reused if their next sibling is also being reused.
+@@ -2230,7 +2256,12 @@ const Autolink = {
+             name: "Autolink",
+             parse(cx, next, absPos) {
+                 let pos = absPos - cx.offset;
+-                if (pos && /\w/.test(cx.text[pos - 1]))
++                // JavaScript's non-Unicode \w is exactly ASCII letters, digits
++                // and underscore. Avoid a regex call and one-character string
++                // at every ordinary text position. At pos == 0, prev is NaN.
++                let prev = cx.text.charCodeAt(pos - 1);
++                if (prev >= 48 && prev <= 57 || prev >= 65 && prev <= 90 ||
++                    prev >= 97 && prev <= 122 || prev == 95)
+                     return -1;
+                 autolinkRE.lastIndex = pos;
+                 let m = autolinkRE.exec(cx.text), end = -1;

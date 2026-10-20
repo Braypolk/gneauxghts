@@ -19,7 +19,10 @@ further giant-quote gains, and identifies repeated background paragraph passes.
 The bounded [paragraph-reuse prototype](paragraph-reuse-prototype.md) preserves
 correctness and shows Chrome gains, but its native A/B/A does not establish a
 consistent latency benefit. It remains on a separate branch, with no production
-cache integrated. Generated raw samples/profiles stay local.
+cache integrated. The [first synchronous parse follow-up](synchronous-paragraph-optimization.md)
+removes per-character autolink regex checks, with syntax parity and modest native
+paired gains; focus interruptions limit the return comparisons and rapid typing
+remains slow. Generated raw samples/profiles stay local.
 
 ## Implementation
 

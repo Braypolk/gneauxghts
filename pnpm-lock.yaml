@@ -8,7 +8,7 @@ patchedDependencies:
   '@codemirror/view@6.43.1': a0e764bb85b11b8d28cc59bdca1417272938937b177c36bfec182cfe05d9d3d8
   '@earendil-works/pi-ai@1.3.0': 8fa65c39fec1867706bc6d3060fa5b0931c8ac3774ded5c3d57565a9ebedf9ab
   '@lezer/common@1.5.2': 0d8b1547cae8d65b1aa17107785e55a2516545ff13e51dc018a82d8a4ba1be52
-  '@lezer/markdown@1.6.4': c7dd992d6093c1514e09c7155255c7caf5c6279f41b024a97e56d588b862c8cb
+  '@lezer/markdown@1.6.4': b2e4456e82d2ba29cf20be1709d17a84225845366de14d8e430fc76ed902ea5b
 
 importers:
 
@@ -3922,7 +3922,7 @@ snapshots:
       '@codemirror/state': 6.6.0
       '@codemirror/view': 6.43.1(patch_hash=a0e764bb85b11b8d28cc59bdca1417272938937b177c36bfec182cfe05d9d3d8)
       '@lezer/common': 1.5.2(patch_hash=0d8b1547cae8d65b1aa17107785e55a2516545ff13e51dc018a82d8a4ba1be52)
-      '@lezer/markdown': 1.6.4(patch_hash=c7dd992d6093c1514e09c7155255c7caf5c6279f41b024a97e56d588b862c8cb)
+      '@lezer/markdown': 1.6.4(patch_hash=b2e4456e82d2ba29cf20be1709d17a84225845366de14d8e430fc76ed902ea5b)
 
   '@codemirror/lang-php@6.0.2':
     dependencies:
@@ -4529,7 +4529,7 @@ snapshots:
     dependencies:
       '@lezer/common': 1.5.2(patch_hash=0d8b1547cae8d65b1aa17107785e55a2516545ff13e51dc018a82d8a4ba1be52)
 
-  '@lezer/markdown@1.6.4(patch_hash=c7dd992d6093c1514e09c7155255c7caf5c6279f41b024a97e56d588b862c8cb)':
+  '@lezer/markdown@1.6.4(patch_hash=b2e4456e82d2ba29cf20be1709d17a84225845366de14d8e430fc76ed902ea5b)':
     dependencies:
       '@lezer/common': 1.5.2(patch_hash=0d8b1547cae8d65b1aa17107785e55a2516545ff13e51dc018a82d8a4ba1be52)
       '@lezer/highlight': 1.2.3
