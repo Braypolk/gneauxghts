@@ -10,8 +10,9 @@ const doc = Array.from({ length: 500 }, (_, i) => `## Heading ${i}\n\nProse **bo
 let state = EditorState.create({ doc, extensions: [createMarkdownLanguage()] });
 ensureSyntaxTree(state, doc.length, 5000);
 state = state.update({}).state;
-const a = { state } as EditorView;
-const b = { state: state.update({ selection: { anchor: doc.length } }).state } as EditorView;
+const visibleRanges = [{ from: 0, to: doc.length }];
+const a = { state, visibleRanges } as unknown as EditorView;
+const b = { state: state.update({ selection: { anchor: doc.length } }).state, visibleRanges } as unknown as EditorView;
 
 describe(`full-document decoration work (${doc.length} UTF-16 units, 500 sections)`, () => {
   bench('one pane selection rebuild', () => { buildMarkdownDecorations(a); }, { time: 150, iterations: 10 });

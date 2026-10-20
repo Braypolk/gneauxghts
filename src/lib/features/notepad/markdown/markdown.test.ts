@@ -317,7 +317,7 @@ describe('link decorator', () => {
   });
 });
 
-it('does not rebuild document-wide decorations for viewport-only movement', () => {
+it('rebuilds visible decorations for viewport-only movement', () => {
   const state = EditorState.create({ doc: '# heading' });
-  expect(markdownDecorationsNeedRebuild({ startState: state, state, docChanged: false, selectionSet: false, viewportChanged: true })).toBe(false);
+  expect(markdownDecorationsNeedRebuild({ startState: state, state, docChanged: false, selectionSet: false, viewportChanged: true })).toBe(true);
 });

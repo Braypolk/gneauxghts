@@ -118,6 +118,13 @@ export const decorateLink: MarkdownNodeDecorator = (ctx, node) => {
   }
 
   const { view, decorations } = ctx;
+  // View-plugin replacements cannot remove line breaks: their decorations are
+  // read after CodeMirror computes the viewport. Keep multiline links in their
+  // editable styled form, retaining line structure and avoiding a layout cycle.
+  if (view.state.doc.lineAt(node.from).to < node.to) {
+    decorateRawLink(node.node, view, decorations);
+    return;
+  }
   const parsed = parseLinkMarkdown(view.state.sliceDoc(node.from, node.to));
   if (!parsed) {
     return;

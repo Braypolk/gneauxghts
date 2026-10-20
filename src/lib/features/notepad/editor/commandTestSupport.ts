@@ -8,6 +8,7 @@ export function createCommandView(config: EditorStateConfig | EditorState) {
   const transactions: Transaction[] = [];
   const view = {
     get state() { return state; },
+    get visibleRanges() { return [{ from: 0, to: state.doc.length }]; },
     composing: false,
     dom: { isConnected: true },
     focus: vi.fn(),

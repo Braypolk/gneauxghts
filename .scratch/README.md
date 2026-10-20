@@ -39,6 +39,8 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
+- [Visible-range Markdown formatting](archive/visible-range-markdown/README.md): bounded presentation traversal/emission, pane-local formatting and atomic ranges, pure/mounted/full-app before-and-after measurements, browser and native WebKit verification, and giant-quote parser profiling. Native timing remains unmeasured.
+
 - [Markdown image inventory](archive/markdown-image-inventory.md): conservative syntax-absence gating, complete incremental parsing and shared split-pane computation remove ordinary-edit cold reparses. Matched benchmarks, correctness coverage and the unrelated search-preview browser failure are recorded with the outcome.
 
 - [Related notes redesign](archive/related-notes-redesign.md): a floating button and shared popup replace the drawer/sheet. Search, Related and Chat use the reusable container renderer with ordered items, explicit presentation states and the original pinch animation. Results are demand-driven and saved-source shortcuts respect drafts. Validation and backend scope limits are recorded with the outcome.

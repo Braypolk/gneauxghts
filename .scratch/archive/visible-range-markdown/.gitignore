@@ -1,0 +1,5 @@
+# Regenerable measurement evidence stays local; retain the exact baseline source.
+*.json
+!before-source.json
+*.cpuprofile
+*.log

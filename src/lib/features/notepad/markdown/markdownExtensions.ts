@@ -3,6 +3,7 @@ import type { Extension, Range } from '@codemirror/state';
 import { RangeSetBuilder } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin } from '@codemirror/view';
 import type { DecorationSet, ViewUpdate } from '@codemirror/view';
+import type { SyntaxNode } from '@lezer/common';
 
 import { selectionOverlaps } from './conceal';
 import { createMarkdownHighlight } from './markdownHighlight';
@@ -17,9 +18,9 @@ import { decorateList } from './decorations/lists';
 import { decorateWikilink } from './decorations/wikilinks';
 import type { MarkdownDecorationContext, MarkdownNodeDecorator } from './decorations/types';
 
-// Ordered list of per-concern decorators. The view plugin walks the syntax tree
-// once and hands every node to each decorator; matching on node name is each
-// decorator's own responsibility. Order here only affects the sequence in which
+// Ordered list of per-concern decorators. The view plugin visits visible syntax
+// and its enclosing context; each decorator matches its own node names.
+// Order here only affects the sequence in which
 // ranges are pushed — final ordering is resolved by the position sort below, so
 // overlapping decorations remain stable.
 const DECORATORS: readonly MarkdownNodeDecorator[] = [
@@ -47,27 +48,61 @@ export function markdownDecorationsNeedRebuild(
   return (
     update.docChanged ||
     update.selectionSet ||
+    update.viewportChanged ||
     syntaxTree(update.startState) !== syntaxTree(update.state)
   );
 }
 
 export function buildMarkdownDecorations(view: EditorView): BuiltMarkdownDecorations {
-  const decorations: Range<Decoration>[] = [];
+  const ranges: { from: number; to: number }[] = [];
+  for (const range of [...view.visibleRanges].sort((a, b) => a.from - b.from)) {
+    const previous = ranges.at(-1);
+    if (previous && range.from <= previous.to) previous.to = Math.max(previous.to, range.to);
+    else ranges.push({ ...range });
+  }
+  const candidates: Range<Decoration>[] = [];
   const ctx: MarkdownDecorationContext = {
     view,
-    decorations,
+    visibleRanges: ranges,
+    decorations: candidates,
     selectionOverlaps: (from, to) => selectionOverlaps(view, from, to)
   };
 
   const tree = syntaxTree(view.state);
-  tree.iterate({
-    enter: (node) => {
-      // Ignore only structurally invalid offsets from an incomplete publication.
-      // Unexpected decorator failures must remain observable.
-      if (node.from < 0 || node.to > view.state.doc.length) return false;
-      for (const decorate of DECORATORS) decorate(ctx, node);
+  const visited = new Set<string>();
+  for (const range of ranges) {
+    function visit(node: SyntaxNode) {
+      if (node.from < 0 || node.to > view.state.doc.length) return;
+      const key = `${node.name}:${node.type.id}:${node.from}:${node.to}`;
+      if (!visited.has(key)) {
+        visited.add(key);
+        for (const decorate of DECORATORS) decorate(ctx, node);
+      }
+      // Seek past earlier siblings and stop at the window's end. Tree.iterate
+      // with from/to still steps over all later siblings. Always descend shared
+      // ancestors in subsequent windows, even when already decorated.
+      for (let child = node.childAfter(range.from); child && child.from <= range.to; child = child.nextSibling) {
+        visit(child);
+      }
     }
-  });
+    visit(tree.topNode);
+  }
+
+  // Context nodes can extend far beyond the viewport. Bound emitted marks too;
+  // keep inline replacements whole so widgets/atomic ranges retain their source
+  // identity. Line decorations belong at the start of a touching visible line.
+  const decorations: Range<Decoration>[] = [];
+  for (const candidate of candidates) for (const range of ranges) {
+    const beforeWindow = candidate.to < range.from &&
+      (candidate.from !== candidate.to || view.state.doc.lineAt(candidate.from).to < range.from);
+    if (candidate.from > range.to || beforeWindow) continue;
+    if (candidate.value.point) {
+      decorations.push(candidate);
+      break;
+    }
+    const from = Math.max(candidate.from, range.from), to = Math.min(candidate.to, range.to);
+    if (from < to) decorations.push(candidate.value.range(from, to));
+  }
 
   decorations.sort((a, b) => a.from - b.from || a.value.startSide - b.value.startSide);
 

@@ -206,14 +206,37 @@ describe('editor cursor geometry', () => {
     for (const [selector, text] of [['.cm-gn-code-block-line', 'Selected code'], ['.cm-line', 'Column']]) {
       const anchor = markdown.indexOf(text);
       await placeCursor(anchor);
-      // Real keyboard selection exercises CodeMirror input and native range
-      // painting; geometry setup above does not stand in for this contract.
-      await browser.keys(['Shift', ...Array.from({ length: text.length }, () => 'ArrowRight'), '\uE000']);
+      // Exercise keyboard handling and inspect WebKit/Chromium's resulting
+      // native range; cursor geometry setup alone does not establish selection.
+      if (browser.isChromium) {
+        await browser.keys(['Shift', ...Array.from({ length: text.length }, () => 'ArrowRight'), '\uE000']);
+      } else {
+        // Embedded driver 1.3.0 dispatch_key_event omits modifier flags for
+        // special keys. Deliver Shift+Right to the real CodeMirror handler;
+        // assert WebKit's resulting native range rather than setting a range.
+        await browser.execute((length: number) => {
+          const target = document.activeElement!;
+          for (let i = 0; i < length; i++) {
+            const init = { key: 'ArrowRight', code: 'ArrowRight', keyCode: 39,
+              which: 39, shiftKey: true, bubbles: true, cancelable: true };
+            target.dispatchEvent(new KeyboardEvent('keydown', init));
+            target.dispatchEvent(new KeyboardEvent('keyup', init));
+          }
+        }, text.length);
+      }
       await browser.waitUntil(() => browser.execute((expected: string, anchor: number) => {
         const editor = (window as CursorTestWindow).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor;
         return window.getSelection()?.toString() === expected && editor?.ownsWebviewFocus === true &&
           editor.selection.anchor === anchor && editor.selection.head === anchor + expected.length;
-      }, text, anchor), { timeout: 2_000, timeoutMsg: 'Native and editor range selection did not agree' });
+      }, text, anchor), { timeout: 2_000, timeoutMsg: 'Native and editor range selection did not agree' }).catch(async error => {
+        const actual = await browser.execute(() => ({
+          nativeText: window.getSelection()?.toString(),
+          editor: (window as CursorTestWindow).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor,
+          active: document.activeElement?.className,
+          focused: document.hasFocus()
+        }));
+        throw new Error(`${String(error)}; expected ${JSON.stringify({ text, anchor })}; actual ${JSON.stringify(actual)}`);
+      });
       const background = await browser.execute((selector: string, text: string) => {
         const line = [...document.querySelectorAll<HTMLElement>(selector)].find(line => line.textContent?.includes(text))!;
         return getComputedStyle(line, '::selection').backgroundColor;

@@ -1,0 +1,871 @@
+[
+  {
+    "selection": {
+      "anchor": 273
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"point\":true}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":13,\"point\":true}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":114,\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":17,\"to\":19,\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":42,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight\",\"point\":false}",
+      "{\"from\":51,\"to\":53,\"point\":true}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 273
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 273
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 273
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 273
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 4
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"class\":\"cm-gn-header-mark\",\"point\":false}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":13,\"point\":true}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":114,\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":17,\"to\":19,\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":42,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight\",\"point\":false}",
+      "{\"from\":51,\"to\":53,\"point\":true}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 4
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 4
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 4
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 4
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 17
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"point\":true}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":114,\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":42,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight\",\"point\":false}",
+      "{\"from\":51,\"to\":53,\"point\":true}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 17
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 17
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 17
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 17
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 93
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"point\":true}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":13,\"point\":true}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":114,\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":17,\"to\":19,\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":42,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight\",\"point\":false}",
+      "{\"from\":51,\"to\":53,\"point\":true}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":75,\"to\":78,\"class\":\"cm-gn-task-marker\",\"point\":false}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 93
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":75,\"to\":78,\"class\":\"cm-gn-task-marker\",\"point\":false}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 93
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 93
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 93
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 136
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"point\":true}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":13,\"point\":true}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":17,\"to\":19,\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":42,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight\",\"point\":false}",
+      "{\"from\":51,\"to\":53,\"point\":true}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 136
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 136
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 136
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 136
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 0,
+      "head": 273
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"class\":\"cm-gn-header-mark\",\"point\":false}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"class\":\"cm-gn-code-fence\",\"point\":false}",
+      "{\"from\":177,\"to\":179,\"class\":\"cm-gn-code-fence\",\"point\":false}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"class\":\"cm-gn-code-fence\",\"point\":false}",
+      "{\"from\":207,\"to\":208,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":208,\"to\":213,\"class\":\"cm-gn-link-text\",\"point\":false}",
+      "{\"from\":213,\"to\":215,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":215,\"to\":234,\"class\":\"cm-gn-link-url\",\"point\":false}",
+      "{\"from\":242,\"to\":243,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight cm-gn-selection-overlap\",\"point\":false}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":75,\"to\":78,\"class\":\"cm-gn-task-marker\",\"point\":false}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 0,
+      "head": 273
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"class\":\"cm-gn-list-mark-ul cm-gn-active\",\"point\":false}",
+      "{\"from\":75,\"to\":78,\"class\":\"cm-gn-task-marker\",\"point\":false}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 0,
+      "head": 273
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 0,
+      "head": 273
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 0,
+      "head": 273
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":208,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":208,\"to\":213,\"class\":\"cm-gn-link-text\",\"point\":false}",
+      "{\"from\":213,\"to\":215,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":215,\"to\":234,\"class\":\"cm-gn-link-url\",\"point\":false}",
+      "{\"from\":242,\"to\":243,\"class\":\"cm-gn-link-marker\",\"point\":false}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 42,
+      "head": 45
+    },
+    "first": 1,
+    "last": 24,
+    "ranges": [
+      "{\"from\":0,\"to\":0,\"class\":\"cm-gn-line-h1\",\"point\":true}",
+      "{\"from\":0,\"to\":2,\"point\":true}",
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":11,\"to\":13,\"point\":true}",
+      "{\"from\":11,\"to\":19,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":112,\"to\":112,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":112,\"to\":114,\"point\":true}",
+      "{\"from\":112,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":172,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":166,\"to\":166,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":17,\"to\":19,\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":174,\"to\":174,\"class\":\"cm-gn-code-block-line-start\",\"point\":true}",
+      "{\"from\":174,\"to\":177,\"point\":true}",
+      "{\"from\":177,\"to\":179,\"point\":true}",
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":191,\"to\":191,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":20,\"to\":21,\"point\":true}",
+      "{\"from\":20,\"to\":28,\"class\":\"cm-gn-emphasis\",\"point\":false}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line\",\"point\":true}",
+      "{\"from\":202,\"to\":202,\"class\":\"cm-gn-code-block-line-end\",\"point\":true}",
+      "{\"from\":202,\"to\":205,\"point\":true}",
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}",
+      "{\"from\":27,\"to\":28,\"point\":true}",
+      "{\"from\":29,\"to\":31,\"point\":true}",
+      "{\"from\":29,\"to\":39,\"class\":\"cm-gn-strikethrough\",\"point\":false}",
+      "{\"from\":37,\"to\":39,\"point\":true}",
+      "{\"from\":40,\"to\":53,\"class\":\"cm-gn-highlight cm-gn-selection-overlap\",\"point\":false}",
+      "{\"from\":54,\"to\":55,\"point\":true}",
+      "{\"from\":54,\"to\":60,\"class\":\"cm-gn-code-inline\",\"point\":false}",
+      "{\"from\":59,\"to\":60,\"point\":true}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 42,
+      "head": 45
+    },
+    "first": 5,
+    "last": 7,
+    "ranges": [
+      "{\"from\":101,\"to\":101,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":101,\"to\":103,\"atomic\":true,\"point\":true}",
+      "{\"from\":103,\"to\":105,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":62,\"to\":62,\"class\":\"cm-gn-list-line-ul\",\"attributes\":{\"style\":\"--gn-depth: 0\"},\"point\":true}",
+      "{\"from\":62,\"to\":64,\"class\":\"cm-gn-list-mark-ul\",\"point\":false}",
+      "{\"from\":71,\"to\":71,\"class\":\"cm-gn-task-line\",\"attributes\":{\"style\":\"--gn-depth: 1\"},\"point\":true}",
+      "{\"from\":71,\"to\":73,\"atomic\":true,\"point\":true}",
+      "{\"from\":73,\"to\":75,\"point\":true}",
+      "{\"from\":75,\"to\":78,\"point\":true,\"widget\":{\"checked\":false}}",
+      "{\"from\":84,\"to\":100,\"class\":\"gn-wikilink\",\"attributes\":{\"data-wikilink-target\":\"Target|alias\"},\"point\":false}",
+      "{\"from\":86,\"to\":93,\"atomic\":true,\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 42,
+      "head": 45
+    },
+    "first": 10,
+    "last": 12,
+    "ranges": [
+      "{\"from\":120,\"to\":120,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":120,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":132,\"to\":132,\"class\":\"cm-gn-quote-line\",\"point\":true}",
+      "{\"from\":132,\"to\":134,\"point\":true}",
+      "{\"from\":134,\"to\":136,\"point\":true}",
+      "{\"from\":134,\"to\":165,\"class\":\"cm-gn-quote-content\",\"point\":false}",
+      "{\"from\":143,\"to\":145,\"point\":true}",
+      "{\"from\":143,\"to\":151,\"class\":\"cm-gn-strong\",\"point\":false}",
+      "{\"from\":149,\"to\":151,\"point\":true}",
+      "{\"from\":152,\"to\":152,\"class\":\"cm-gn-quote-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 42,
+      "head": 45
+    },
+    "first": 16,
+    "last": 16,
+    "ranges": [
+      "{\"from\":180,\"to\":180,\"class\":\"cm-gn-code-block-line\",\"point\":true}"
+    ]
+  },
+  {
+    "selection": {
+      "anchor": 42,
+      "head": 45
+    },
+    "first": 20,
+    "last": 22,
+    "ranges": [
+      "{\"from\":207,\"to\":243,\"point\":true,\"widget\":{\"text\":\"label\",\"url\":\"https://example.com\",\"from\":207,\"to\":243,\"title\":\"title\"}}",
+      "{\"from\":248,\"to\":249,\"point\":true}",
+      "{\"from\":257,\"to\":258,\"point\":true}",
+      "{\"from\":261,\"to\":261,\"class\":\"cm-gn-hr-line\",\"point\":true}",
+      "{\"from\":261,\"to\":264,\"point\":true}"
+    ]
+  }
+]

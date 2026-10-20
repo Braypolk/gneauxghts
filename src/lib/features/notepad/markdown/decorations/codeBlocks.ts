@@ -1,6 +1,7 @@
 import { Decoration } from '@codemirror/view';
 import { getWrapFormatSpec } from '../inlineFormatSpec';
 import type { MarkdownNodeDecorator } from './types';
+import { forEachVisibleLine } from './types';
 
 // Inline code (`code`) and fenced code blocks. Syntax highlighting of the
 // fenced body is handled by lang-markdown's nested parsing + markdownHighlight;
@@ -47,16 +48,15 @@ const decorateFenced: MarkdownNodeDecorator = (ctx, node) => {
   const endLine = view.state.doc.lineAt(node.to);
   const active = ctx.selectionOverlaps(startLine.from, endLine.to);
 
-  for (let lineNumber = startLine.number; lineNumber <= endLine.number; lineNumber++) {
-    const line = view.state.doc.line(lineNumber);
+  forEachVisibleLine(ctx, node.from, node.to, (line) => {
     decorations.push(codeBlockLine.range(line.from));
-    if (lineNumber === startLine.number) {
+    if (line.number === startLine.number) {
       decorations.push(codeBlockLineStart.range(line.from));
     }
-    if (lineNumber === endLine.number) {
+    if (line.number === endLine.number) {
       decorations.push(codeBlockLineEnd.range(line.from));
     }
-  }
+  });
 
   // Conceal the opening/closing fences and the info string unless editing.
   for (let child = node.node.firstChild; child; child = child.nextSibling) {
