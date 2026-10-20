@@ -11,7 +11,9 @@ fix. [Combined-main verification](main-integration.md) records faster giant-quot
 edits and the remaining live-parser cost. Earlier measurements below precede that
 image-inventory fix. The later [marker-merge integration](marker-merge-integration.md)
 records the pinned parser patch, native verification and further giant-quote
-improvement. Generated raw samples/profiles stay local.
+improvement. The subsequent [history-root parser removal](root-parser-removal.md)
+removes unused root parsing and records a fresh before/after comparison, native
+verification and the remaining paragraph cost. Generated raw samples/profiles stay local.
 
 ## Implementation
 

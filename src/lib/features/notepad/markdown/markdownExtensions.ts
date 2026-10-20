@@ -151,8 +151,8 @@ const markdownEditorClass = EditorView.editorAttributes.of({ class: 'cm-gn' });
 
 // The single seam that replaces draftly. Returns the markdown language support,
 // the in-place decoration plugin, and syntax highlighting for fenced code. Line
-// wrapping and history are owned by the editor module, not here, so this bundle
-// can be dropped into both the root state and each pane view.
+// wrapping and history are owned by the editor module, not here. This bundle
+// belongs to pane views; the headless document root has no syntax/presentation.
 export function createMarkdownExtensions(): Extension[] {
   return [
     markdownEditorClass,

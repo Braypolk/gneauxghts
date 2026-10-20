@@ -22,8 +22,8 @@ export const VISUAL_TAB_WIDTH = 4;
 export const INDENT_UNIT_STRING = ' '.repeat(INDENT_SPACES);
 
 // CodeMirror extensions that pin the logical indent unit and the visual tab
-// width. Bundled into the shared markdown baseline so both the root state and
-// every pane agree on indentation.
+// width. Bundled into each pane's Markdown editing baseline; the headless root
+// records the resulting changes without executing indentation commands.
 export function createIndentExtensions(): Extension[] {
   return [indentUnit.of(INDENT_UNIT_STRING), EditorState.tabSize.of(VISUAL_TAB_WIDTH)];
 }

@@ -4,24 +4,21 @@ import {
   Transaction,
   type EditorSelection as CmEditorSelection,
 } from '@codemirror/state';
-import { EditorView, keymap } from '@codemirror/view';
-import { history, historyKeymap, isolateHistory, redo, undo } from '@codemirror/commands';
+import type { EditorView } from '@codemirror/view';
+import { history, isolateHistory, redo, undo } from '@codemirror/commands';
 import type {
   EditorController,
   EditorSelection,
   EditorSnapshot
 } from './types';
-import { createMarkdownBaseExtensions } from './editorShortcuts';
 import { imageResizeHistory } from '../images/imageResizeHistory';
+
+// The headless root owns text and shared undo, not syntax or input handling.
+// Pane states install their own Markdown language and presentation extensions.
 function documentRoot(markdown: string) {
   return EditorState.create({
     doc: markdown,
-    extensions: [
-      history(),
-      imageResizeHistory,
-      keymap.of(historyKeymap),
-      createMarkdownBaseExtensions()
-    ]
+    extensions: [history(), imageResizeHistory]
   });
 }
 

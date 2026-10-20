@@ -39,7 +39,7 @@ and reproducible fixtures belong in Git.
 
 ## Completed work and local tools
 
-- [Visible-range Markdown formatting](archive/visible-range-markdown/README.md): bounded presentation traversal/emission, pane-local formatting and atomic ranges, pure/mounted/full-app before-and-after measurements, browser and native WebKit verification, and giant-quote parser profiling. The [marker-merge follow-up](archive/visible-range-markdown/marker-merge-integration.md) records parser regression coverage, focused native timing and approximately halved giant-quote edit dispatch.
+- [Visible-range Markdown formatting](archive/visible-range-markdown/README.md): bounded presentation traversal/emission, pane-local formatting and atomic ranges, pure/mounted/full-app before-and-after measurements, browser and native WebKit verification, and giant-quote parser profiling. The [marker-merge follow-up](archive/visible-range-markdown/marker-merge-integration.md) records parser regression coverage, focused native timing and approximately halved giant-quote edit dispatch. The [history-root follow-up](archive/visible-range-markdown/root-parser-removal.md) removes the unused root parser, with a fresh 50%/32% dispatch improvement for one/two panes and 22 native checks passing; paragraph parsing and the split-pane frame tail remain expensive.
 
 - [Markdown image inventory](archive/markdown-image-inventory.md): conservative syntax-absence gating, complete incremental parsing and shared split-pane computation remove ordinary-edit cold reparses. Matched benchmarks, correctness coverage and the unrelated search-preview browser failure are recorded with the outcome.
 

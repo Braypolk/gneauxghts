@@ -80,6 +80,13 @@ collision admits aliases to the established document; a path-only collision
 retains the established path binding without stealing either distinct identity
 alias.
 
+`EditorDocumentRuntime` retains one headless CodeMirror state for canonical live
+text and shared undo/redo, including image-resize history grouping. That root
+installs no language parser, input handlers or presentation extensions. Commands
+and syntax consumers use each pane's independently configured state; forwarding
+an already authored change to the root records history without parsing it again.
+Selections, viewports, syntax publication and decorations remain pane-owned.
+
 `NotepadWorkspaceSession` exposes named user operations and consumes the real
 WorkspaceStore and document owners. It privately owns per-pane supersession,
 serialized departure, destination application, and location bookkeeping. A
