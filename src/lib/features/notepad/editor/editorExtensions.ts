@@ -28,7 +28,6 @@ import {
   createLayoutTheme,
   createOverlayScrollMargins
 } from './editorTheme';
-import { createPassiveTableExtension } from './passiveTableExtension';
 import { createExternalLinkClickExtension } from './externalLinkExtension';
 import { createExternalSearchHighlightExtension } from './searchHighlightExtension';
 import { createBlockHandleExtension } from './blockHandleExtension';
@@ -96,7 +95,6 @@ export function createPaneExtensions(
     createOverlayScrollMargins(editorRoot),
     editorScrollExtension,
     placeholder('Start typing here.'),
-    createPassiveTableExtension(),
     ...createWikilinkExtensions(sharedResources),
     createExternalLinkClickExtension((view) => sharedResources?.resolveViewCallbacks(view) ?? null),
     createImageEmbedsExtension(imagesConfig, (view) => sharedResources?.resolveViewCallbacks(view) ?? null),

@@ -185,15 +185,6 @@ function listKind(text: string): BlockTypeId {
   return 'bulletList';
 }
 
-function isTableLine(text: string) {
-  const trimmed = text.trim();
-  return trimmed.includes('|') && trimmed !== '|';
-}
-
-function isTableDelimiterLine(text: string) {
-  return /^\s*\|?(?:\s*:?-+:?\s*\|)+\s*:?-+:?\s*\|?\s*$/.test(text);
-}
-
 function stripListMarker(text: string) {
   return text.replace(/^(\s*)(?:[-+*]|\d+\.)\s+(?:\[[ xX]\]\s+)?/, '$1');
 }

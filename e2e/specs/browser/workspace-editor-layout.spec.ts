@@ -52,30 +52,21 @@ describe('editor geometry and Markdown fidelity', () => {
       false
     );
 
-    const tableRows = await $$('.gn-markdown-table-line');
-    expect(tableRows).toHaveLength(3);
     const tableLayout = await browser.execute(() => {
-      const rows = [
-        ...document.querySelectorAll<HTMLElement>(
-          '.gn-markdown-table-line'
-        )
-      ];
-      rows[0]!.scrollLeft = 72;
-      rows[0]!.dispatchEvent(new Event('scroll', { bubbles: false }));
+      const rows = [...document.querySelectorAll<HTMLElement>('[data-testid="note-editor"] .cm-line')]
+        .filter(row => row.textContent?.startsWith('|'));
       return {
-        widths: rows.map((row) => ({
-          client: row.clientWidth,
-          scroll: row.scrollWidth
-        })),
-        scrollLefts: rows.map((row) => row.scrollLeft),
-        groups: rows.map((row) => row.dataset.gnTableGroup)
+        text: rows.map(row => row.textContent),
+        wraps: rows.map(row => getComputedStyle(row).whiteSpace),
+        overflows: rows.map(row => row.scrollWidth > row.clientWidth + 1),
+        decoratedRows: document.querySelectorAll('.gn-markdown-table-line').length
       };
     });
-    expect(new Set(tableLayout.groups)).toEqual(new Set(['0']));
-    expect(tableLayout.widths.some((width) => width.scroll > width.client)).toBe(
-      true
-    );
-    expect(new Set(tableLayout.scrollLefts).size).toBe(1);
+    expect(tableLayout.text).toHaveLength(3);
+    expect(tableLayout.text.slice(0, 2)).toEqual(['| Column A | Column B |', '| --- | --- |']);
+    expect(tableLayout.wraps).toEqual(['pre-wrap', 'pre-wrap', 'pre-wrap']);
+    expect(tableLayout.overflows).toEqual([false, false, false]);
+    expect(tableLayout.decoratedRows).toBe(0);
 
     const content = await $('[data-testid="note-editor"] .cm-content');
     await content.click();

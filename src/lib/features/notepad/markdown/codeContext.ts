@@ -3,7 +3,7 @@ import type { EditorState, Text } from '@codemirror/state';
 import { ensureSyntaxTree } from '@codemirror/language';
 import type { Tree } from '@lezer/common';
 
-// Text is immutable. Share the grammar result across command/table callers and
+// Text is immutable. Share the grammar result across callers and
 // across selection-only transactions without retaining retired documents.
 const codeRanges = new WeakMap<Text, readonly { from: number; to: number }[]>();
 export function markdownCodeRanges(doc: Text, publishedTree?: Tree): readonly { from: number; to: number }[] {

@@ -6,8 +6,9 @@ import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsid
 // CodeMirror markdown language support, configured to mirror the behaviour the
 // editor relied on from draftly:
 //  - `base: markdownLanguage` selects the GFM-enabled dialect (strikethrough,
-//    task lists, tables, autolinks) rather than plain CommonMark.
-//  - `extensions` adds Obsidian-style wikilink, highlight, and comment parsing.
+//    task lists, autolinks) rather than plain CommonMark.
+//  - `extensions` adds Obsidian-style wikilink, highlight, and comment parsing
+//    and disables tables so their Markdown remains ordinary paragraph text.
 //  - `codeLanguages` drives fenced-code-block syntax highlighting via lazily
 //    loaded language parsers (see codemirrorLanguageData for the curated list).
 //  - `pasteURLAsLink` keeps the "paste a URL over a selection → link" affordance.
@@ -21,7 +22,7 @@ import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsid
 export function createMarkdownLanguage(): Extension {
   return markdown({
     base: markdownLanguage,
-    extensions: obsidianMarkdownExtensions,
+    extensions: [obsidianMarkdownExtensions, { remove: ['Table'] }],
     codeLanguages: [...languages],
     completeHTMLTags: true,
     pasteURLAsLink: true,

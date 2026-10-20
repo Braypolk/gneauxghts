@@ -78,62 +78,7 @@ export function createLayoutTheme() {
       {
         paddingLeft:
           'calc(var(--gn-editor-side-inset-left) + 1.2rem * (var(--gn-depth, 0) + 1)) !important'
-      },
-    '&.cm-editor.cm-gn .gn-markdown-table-line': {
-      boxSizing: 'border-box',
-      width:
-        'calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right))',
-      maxWidth:
-        'calc(100% - var(--gn-editor-side-inset-left) - var(--gn-editor-side-inset-right))',
-      minWidth: '0',
-      marginLeft: 'var(--gn-editor-side-inset-left)',
-      marginRight: 'var(--gn-editor-side-inset-right)',
-      paddingLeft: '0.75rem !important',
-      paddingRight: '0.75rem !important',
-      overflowX: 'auto',
-      overflowY: 'hidden',
-      whiteSpace: 'pre',
-      wordBreak: 'normal',
-      overflowWrap: 'normal',
-      fontFamily:
-        'var(--font-jetbrains-mono, ui-monospace, SFMono-Regular, Menlo, monospace)',
-      fontSize: '0.92em',
-      lineHeight: '1.7',
-      color: 'var(--foreground)',
-      backgroundColor:
-        'color-mix(in oklab, var(--card) 76%, var(--background))',
-      boxShadow:
-        'inset 0 -1px 0 color-mix(in oklab, var(--border) 72%, transparent)',
-      scrollbarWidth: 'none'
-    },
-    '&.cm-editor.cm-gn .gn-markdown-table-line::-webkit-scrollbar': {
-      height: '0'
-    },
-    '&.cm-editor.cm-gn .gn-markdown-table-line-end': {
-      scrollbarWidth: 'thin'
-    },
-    '&.cm-editor.cm-gn .gn-markdown-table-line-end::-webkit-scrollbar': {
-      height: '6px'
-    },
-    '&.cm-editor.cm-gn .gn-markdown-table-line-end::-webkit-scrollbar-thumb':
-      {
-        background:
-          'color-mix(in oklab, var(--muted-foreground) 42%, transparent)',
-        borderRadius: '999px'
-      },
-    '&.cm-editor.cm-gn .gn-markdown-table-header': {
-      fontWeight: '650',
-      color: 'var(--foreground)',
-      backgroundColor:
-        'color-mix(in oklab, var(--card) 88%, var(--foreground) 4%)',
-      boxShadow:
-        'inset 0 1px 0 color-mix(in oklab, var(--border) 76%, transparent), inset 0 -1px 0 color-mix(in oklab, var(--border) 82%, transparent)'
-    },
-    '&.cm-editor.cm-gn .gn-markdown-table-delimiter': {
-      color: 'var(--muted-foreground)',
-      backgroundColor:
-        'color-mix(in oklab, var(--muted) 28%, var(--background))'
-    }
+      }
   });
 }
 

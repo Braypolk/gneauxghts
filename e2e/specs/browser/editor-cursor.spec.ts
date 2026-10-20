@@ -198,13 +198,12 @@ describe('editor cursor geometry', () => {
     }
   });
 
-  it('preserves native range selection over code and table backgrounds', async () => {
+  it('preserves native range selection over code and plain table Markdown', async () => {
     const markdown = '```\nSelected code\n```\n\n| Column | Other |\n| --- | --- |\n| Value | Cell |';
     await insertFixture(markdown);
     await $('.cm-gn-code-block-line').waitForExist();
-    await $('.gn-markdown-table-line').waitForExist();
-    for (const selector of ['.cm-gn-code-block-line', '.gn-markdown-table-line']) {
-      const text = selector.includes('code') ? 'Selected code' : 'Column';
+    expect(await browser.execute(() => document.querySelectorAll('.gn-markdown-table-line').length)).toBe(0);
+    for (const [selector, text] of [['.cm-gn-code-block-line', 'Selected code'], ['.cm-line', 'Column']]) {
       const anchor = markdown.indexOf(text);
       await placeCursor(anchor);
       // Real keyboard selection exercises CodeMirror input and native range

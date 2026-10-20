@@ -16,6 +16,7 @@ import { decorateList, toggleTaskMarker } from './decorations/lists';
 import type { MarkdownNodeDecorator } from './decorations/types';
 import { markdownDecorationsNeedRebuild } from './markdownExtensions';
 import { obsidianMarkdownExtensions } from './obsidianMarkdownExtensions';
+import { createMarkdownLanguage } from './markdownLanguage';
 
 // These tests exercise the decoration builders directly against a real Lezer
 // markdown syntax tree, without mounting an EditorView (the test environment is
@@ -93,6 +94,17 @@ function classes(specs: DecorationSpec[]): (string | undefined)[] {
 }
 
 describe('markdown decoration lifecycle', () => {
+  it('keeps table Markdown as paragraph text while retaining inline formatting', () => {
+    const doc = '| Column | Other |\n| --- | :---: |\n| **Value** | Cell |';
+    const state = EditorState.create({ doc, extensions: [createMarkdownLanguage()] });
+    const tree = ensureSyntaxTree(state, doc.length, 5000)!;
+
+    expect(state.doc.toString()).toBe(doc);
+    expect(tree.topNode.firstChild?.name).toBe('Paragraph');
+    expect(tree.toString()).not.toContain('Table');
+    expect(tree.toString()).toContain('StrongEmphasis');
+  });
+
   it('rebuilds when background parsing publishes a more complete syntax tree', () => {
     const doc = Array.from(
       { length: 2_000 },
