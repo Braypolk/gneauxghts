@@ -28,6 +28,8 @@ and reproducible fixtures belong in Git.
 
 ## Deferred or awaiting fresh triage
 
+- [Markdown parsing delays](markdown-parsing-delays/spec.md): parked at main `4d3d1d5e`; current state and four `needs-triage` follow-ups for the synchronous paragraph step, repeated background work, split-pane typing/frame delays and native focus/measurement reliability. No further implementation is underway.
+
 - [Pi Durable native prototype](archive/pi-durable-native-prototype.md): completed isolated experiment. Its adoption verdict belongs to that historical pin; the ordinary Pi rebuild is now implemented and supersedes the executable evaluation route.
 
 - [Architecture cleanup](architecture-cleanup/spec.md): mixed resolved and deferred tickets; older source locations and proposed designs require revalidation. This is not an automatically approved execution queue.

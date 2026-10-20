@@ -4,7 +4,9 @@ Completed 2026-10-20 on primary main, starting at `71c77cdf`. Retain the focused
 GFM autolink guard optimization. It removes demonstrated per-character regex work
 without changing the grammar or adding retention. Native measurements suggest a
 small dispatch gain; interrupted return baselines prevent a complete A/B/A claim.
-Rapid typing in a giant paragraph remains slow.
+Rapid typing in a giant paragraph remains slow. Work is now parked; the
+[current checkpoint and potential future issues](../../markdown-parsing-delays/spec.md)
+record the remaining concerns for fresh triage.
 
 ## Diagnosis and change
 
@@ -103,9 +105,11 @@ Both pane counts remain unable to keep up with 12.5 edits/sec in this giant leaf
 
 ### Focus interruptions and limits
 
-The first combined attempt stalled before completing a timing case and was
-cancelled through its owned runner. The harness now admits focus before fixture
-frames and bounds fixture setup. Subsequent runs retain pre/post visible/focused
+The first combined attempt appeared stalled and was cancelled through its owned
+runner. A cleanup audit found its partial output contained completed one-pane
+baseline/candidate rows; those rows are excluded in favor of the explicit retry
+below. The timing tables are unchanged. The harness now admits focus before
+fixture frames and bounds fixture setup. Subsequent runs retain pre/post visible/focused
 assertions and never reacquire focus inside timed work. Independent shorter
 phases preserve a valid metric when another phase is interrupted. Non-focus
 failures stop the invocation to avoid pending async work contaminating another

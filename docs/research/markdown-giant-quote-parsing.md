@@ -8,6 +8,8 @@ The later [bounded reuse prototype](../../.scratch/archive/visible-range-markdow
 
 The [first synchronous paragraph follow-up](../../.scratch/archive/visible-range-markdown/synchronous-paragraph-optimization.md) replaces per-character autolink boundary regex checks with equivalent ASCII comparisons. Syntax parity passes; accepted native pairs show modest dispatch gains. Return baselines lose focus, and rapid typing remains slow.
 
+Work is parked at the [current checkpoint and future-issue list](../../.scratch/markdown-parsing-delays/spec.md). Completed investigations below are historical; none is an active implementation queue.
+
 ## Diagnosis
 
 The previous full-app profiles attribute 92–93% of sampled CPU to live language parsing, including 50–57% self time in `injectMarks`. Viewport decoration building accounts for under 0.1%; main's image inventory fix has removed the former image reparses from this fixture. See [the main integration measurements](../../.scratch/archive/visible-range-markdown/main-integration.md).

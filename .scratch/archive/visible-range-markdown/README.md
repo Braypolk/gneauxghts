@@ -24,6 +24,12 @@ removes per-character autolink regex checks, with syntax parity and modest nativ
 paired gains; focus interruptions limit the return comparisons and rapid typing
 remains slow. Generated raw samples/profiles stay local.
 
+## Parked follow-ups
+
+The [current checkpoint and potential future issues](../../markdown-parsing-delays/spec.md)
+record the integrated state, preserved off-main prototype and remaining delays.
+All follow-ups require fresh triage; the completed investigations below are historical.
+
 ## Implementation
 
 - Merge overlapping `EditorView.visibleRanges`, seek into each interval, and stop
