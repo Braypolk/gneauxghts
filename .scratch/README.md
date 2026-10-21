@@ -7,6 +7,8 @@ Current architecture lives in [ARCHITECTURE.md](../ARCHITECTURE.md), the
 
 ## Current investigations and supporting records
 
+- [Bottom bar animation inventory](workspace-dock-motion/animation-inventory.md): current surface variants, editor/chat journeys, local exchanges, split layouts, display-size rules, timing, and the acceptance checklist for animation cleanup. The [existing motion spec](workspace-dock-motion/spec.md) supplies implementation context.
+
 - [T3 Code provider authentication research](t3-provider-auth/research.md): completed source comparison of managed ChatGPT OAuth, existing CLI accounts and sensitive API-key storage, with a proposed Pi-backed connection experience. Research only; no authentication changes are implemented by this record.
 
 - [Historical Pi vault editing assessment](pi-vault-editing-assessment/assessment.md): public API comparison and six-case staging probe. Its recommendation is now implemented and verified by the [Pi note editing slice](archive/pi-note-editing.md).
@@ -36,7 +38,7 @@ and reproducible fixtures belong in Git.
 - [Ambient agent](ambient-agent-foundation/astra-planning-brief.md): broader foundation remains discovery only; the narrower [chat-to-note flow](archive/chat-to-note.md) is historical and its UI is retired by the Pi rebuild.
 - [Settings checkpoint](settings-redesign/README.md): further design deferred.
 - [Pane animation](pane-animation/validation.md#remaining-profiling): completed corrections with explicitly limited native verification and remaining profiling suggestions.
-- [Workspace dock motion](workspace-dock-motion/spec.md), [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
+- [Atlas research](atlas-research/report.md) and [embedding alternatives](embedding-model-alternatives/research.md): retained planning/research; verify current implementation before reuse.
 - [Browser harness results](headless-browser-tests/results.md) and [earlier embedding evaluation](embeddinggemma-2-evaluation/research.md): bounded historical evidence awaiting any further use, not current acceptance gates.
 
 ## Completed work and local tools

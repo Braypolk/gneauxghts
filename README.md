@@ -164,6 +164,12 @@ The ownership map, canonical write paths, and runtime seams are documented in
 [ARCHITECTURE.md](ARCHITECTURE.md). The Pi runtime ownership decision is recorded in
 [ADR 0012](docs/adr/0012-found-ordinary-chat-on-pi.md).
 
+### Animation iteration
+
+Run `pnpm animation:lab` and open <http://127.0.0.1:1423/__animation-lab/> for
+inventory-based Search/Related/Chat and pane animation previews, frame scrubbing,
+A/B comparisons, and editable motion values. See [the animation lab guide](docs/features/animation-lab.md).
+
 ### Prerequisites
 
 - Node.js

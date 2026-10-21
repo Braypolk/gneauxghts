@@ -20,7 +20,7 @@ function expectSharedClock(frames: number[][]) {
   // endpoint together, including the first frame and the CSS settling tail.
   for (const column of [1, 2, 3, 4]) {
     const errors = moving.map(frame => {
-      const progress = dockClockProgress((frame[0] - frame[5]) / frame[6], 'pinch');
+      const progress = dockClockProgress((frame[0] - frame[5]) / frame[6], 'editor');
       return Math.abs(frame[column] - (origin[column] + (destination[column] - origin[column]) * progress));
     });
     expect(Math.max(...errors)).toBeLessThanOrEqual(1);
@@ -127,7 +127,7 @@ describe('Related discovery without moving note content', () => {
           const related = dock.querySelector('.dock-related-toggle')!.getBoundingClientRect();
           frames.push([now, body.left, body.width, search.left, related.left,
             Number(dock.dataset.dockStartedAt ?? -1), Number(dock.dataset.dockDuration ?? 0), body.height,
-            dock.dataset.dockEasing === 'pinch' ? 1 : 0]);
+            dock.dataset.dockEasing === 'editor' ? 1 : 0]);
         };
         read(started);
         const control = document.querySelector<HTMLElement>(selector)!;
@@ -158,7 +158,7 @@ describe('Related discovery without moving note content', () => {
           dock.querySelector('.dock-search-toggle')!.getBoundingClientRect().left,
           dock.querySelector('.dock-related-toggle')!.getBoundingClientRect().left,
           Number(dock.dataset.dockStartedAt ?? -1), Number(dock.dataset.dockDuration ?? 0), body.height,
-          dock.dataset.dockEasing === 'pinch' ? 1 : 0]);
+          dock.dataset.dockEasing === 'editor' ? 1 : 0]);
       };
       dock.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
       const sample = (now: number) => setTimeout(() => {

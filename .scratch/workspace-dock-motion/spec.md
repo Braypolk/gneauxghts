@@ -1,5 +1,8 @@
 # Shared workspace dock motion
 
+See the [full animation inventory](animation-inventory.md) for surface variants,
+editor/chat journeys, split layouts, display sizes, and interruption cases.
+
 The dock morphs one bar using Spotlight-style pinching and absorption. SearchBar
 and the selected ChatComposer stay mounted in their existing owners. The motion
 machine controls presentation and never owns drafts, attachments, configuration,
@@ -24,11 +27,10 @@ different chat expands that pane's own composer.
 
 One frame clock drives compression, exchange, and settling. Requests during a
 morph start from its current pose; obsolete frame IDs cannot complete newer work.
-The morph retains its 300ms travel pacing with 80ms added around the connected
-pinch for search/chat input exchanges. Editor/chat edges keep the same total
-duration but use `cubic-bezier(0.65, 0, 0.35, 1)` for a gentler departure and arrival.
+All container morphs use the editor/chat `cubic-bezier(0.65, 0, 0.35, 1)` curve
+for a gentler departure and arrival, retaining the existing 380ms total duration.
 Pane and dock sample the same selected curve. Ordinary editor search expansion
-remains 300ms.
+uses its separate 460ms Search expansion curve.
 
 Measured layout spaces blend on this clock so Related/pane changes do not move
 the bar abruptly. The bottom baseline remains anchored. Resize and reduced
@@ -63,8 +65,10 @@ bounds after installing its animation effects. The dock follows a direct path
 between its displayed origin and that measured endpoint, avoiding first-frame
 destination flashes and width-cap kinks. Related balancing follows the displayed
 card margins, keeping both outer actions inside the card throughout closing.
-Search/chat exchange anchors both full-size opaque background circles while the
-bar slides between them. Foreground send size and glyph position animate
+Search/chat exchange retains full-size opaque background circles. With capped
+centered inputs, both circles translate together on the exchange clock; narrow
+layouts keep their fixed endpoints while the bar slides between them.
+Foreground send size and glyph position animate
 independently, so overlapping translucent contours cannot leave top-edge artifacts
 and neither end of the material reverses direction during the exchange.
 The joined background is drawn in a single SVG group with its local filter
@@ -80,6 +84,6 @@ Machine tests cover all directed transitions, constant exchange width, stale
 frames, rapid retargeting, and immediate settling. Browser tests cover mounted
 input identity, draft/query/attachment/configuration retention, editor entry and
 exit, focus, fixed baseline, narrow viewports, scroll clearance, joining geometry,
-rapid reversals, reduced motion, monotonic bar/glyph paths, fixed opaque circle
+rapid reversals, reduced motion, monotonic bar/glyph paths, fixed-size opaque circle
 shells, and the first frame of a wide split-chat return to the editor. A native
 WebKit check samples the outline during both exchanges and editor return.

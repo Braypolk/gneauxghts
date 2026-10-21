@@ -106,6 +106,14 @@ export class WorkspaceStore {
     return index < 0 ? this.paneOrder[0] : this.paneOrder[(index + direction + this.paneOrder.length) % this.paneOrder.length];
   }
 
+  /** Preview the close destination without retiring or activating either pane. */
+  getActivePaneIdAfterClose(paneId: NotepadPaneId): NotepadPaneId {
+    if (this.activePaneId !== paneId) return this.activePaneId;
+    const index = this.paneOrder.indexOf(paneId);
+    if (index < 0) return this.activePaneId;
+    return this.paneOrder[index + 1] ?? this.paneOrder[index - 1] ?? this.activePaneId;
+  }
+
   getPaneMembership(
     paneId: NotepadPaneId
   ): PaneMembershipState {
@@ -221,10 +229,7 @@ export class WorkspaceStore {
     }
 
     const pane = this.getPaneState(paneId);
-    const index = this.paneOrder.indexOf(paneId);
-    const adjacentPaneId =
-      this.paneOrder[index + 1] ??
-      this.paneOrder[index - 1];
+    const nextActivePaneId = this.getActivePaneIdAfterClose(paneId);
     this.paneOrder = this.paneOrder.filter(
       (candidate) => candidate !== paneId
     );
@@ -232,9 +237,7 @@ export class WorkspaceStore {
       type: 'retirementStarted',
       operationId
     });
-    if (this.activePaneId === paneId && adjacentPaneId) {
-      this.activePaneId = adjacentPaneId;
-    }
+    this.activePaneId = nextActivePaneId;
     this.assertInvariants();
     return pane;
   }

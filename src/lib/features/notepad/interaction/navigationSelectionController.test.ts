@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type {
   NavigationContext,
+  NavigationContextSource,
   OpenContext
 } from '$lib/features/notepad/navigation/openFlow';
 import type { SearchMode } from '$lib/features/notepad/search/search';
@@ -8,7 +9,7 @@ import type {
   RelatedNoteItem,
   SearchItem
 } from '$lib/types/semantic';
-import { createNavigationSelectionController } from './navigationSelectionController';
+import { createNavigationSelectionController, type NavigationSelectionControllerDeps } from './navigationSelectionController';
 
 const paneId = 'pane-1';
 
@@ -35,25 +36,29 @@ function searchResult(
 
 function setup() {
   let searchMode: SearchMode = 'all';
+  let activePaneId = paneId;
   const clearSearch = vi.fn();
   const resetPaneCommand = vi.fn();
   const activatePane = vi.fn();
   const focusSearchRange = vi.fn();
   const saveCursorPosition = vi.fn();
-  const openSearchResult = vi.fn(async () => undefined);
-  const openRecentTask = vi.fn(async () => undefined);
+  const openSearchResult = vi.fn<NavigationSelectionControllerDeps<string>['openSearchResult']>(async () => undefined);
+  const openRecentTask = vi.fn<NavigationSelectionControllerDeps<string>['openRecentTask']>(async () => undefined);
   const afterRender = vi.fn(async () => undefined);
   const openContext = { clearSearch } as unknown as OpenContext;
   const navigationContext = {} as NavigationContext;
+  const getOpenContext = vi.fn(() => openContext);
+  const getNavigationContext = vi.fn(() => navigationContext);
   const controller = createNavigationSelectionController({
     getSearchMode: () => searchMode,
+    getActivePaneId: () => activePaneId,
     resetPaneCommand,
     getNavigationPaneId: () => paneId,
     activatePane,
     focusSearchRange,
     saveCursorPosition,
-    getOpenContext: () => openContext,
-    getNavigationContext: () => navigationContext,
+    getOpenContext,
+    getNavigationContext,
     openSearchResult,
     openRecentTask,
     afterRender
@@ -70,6 +75,9 @@ function setup() {
     afterRender,
     openContext,
     navigationContext,
+    getOpenContext,
+    getNavigationContext,
+    setActivePane: (value: string) => { activePaneId = value; },
     setSearchMode: (value: SearchMode) => {
       searchMode = value;
     }
@@ -77,6 +85,20 @@ function setup() {
 }
 
 describe('navigation selection controller', () => {
+  it.each(['search', 'related', 'task'])('binds a %s selection to the active pane throughout navigation', async kind => {
+    const harness = setup();
+    harness.setActivePane('chat-pane');
+    if (kind === 'related') {
+      await harness.controller.handleRelatedItemSelect({ noteId: 'note-1', notePath: '/vault/Note.md', noteTitle: 'Note' } as RelatedNoteItem);
+    } else if (kind === 'task') {
+      await harness.controller.handleRecentTaskSelect({ noteId: 'note-1', notePath: '/vault/Note.md', text: 'task' } as Parameters<typeof harness.controller.handleRecentTaskSelect>[0]);
+    } else await harness.controller.handleSearchResultSelect(searchResult());
+    expect(harness.getOpenContext).toHaveBeenCalledWith('chat-pane');
+    const navigation = (kind === 'task' ? harness.openRecentTask : harness.openSearchResult).mock.calls[0][1] as NavigationContextSource;
+    harness.setActivePane('other-pane');
+    navigation();
+    expect(harness.getNavigationContext).toHaveBeenCalledWith('chat-pane');
+  });
   it('opens authored Chats files as ordinary search results', async () => {
     const harness = setup();
     const result = searchResult({ documentKind: 'note', notePath: 'Chats/Ideas/Part 001.md', blockAnchor: 'reply' });

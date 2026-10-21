@@ -28,6 +28,8 @@
   interface Props extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
     items: MorphingContainerItem[];
     circleSize?: number;
+    /** Center the group, or its content when sibling icons leave enough room. */
+    alignment?: 'group' | 'body';
     gap?: number;
     radius?: number;
     borderWidth?: number;
@@ -46,13 +48,13 @@
     interpolateContainers } from './motion';
   import MorphingMaterial from './MorphingMaterial.svelte';
 
-  let { items, circleSize = 40, gap = 12, radius, borderWidth = 1, element = $bindable(null), presentation = $bindable(null), overlay,
+  let { items, circleSize = 40, gap = 12, alignment = 'group', radius, borderWidth = 1, element = $bindable(null), presentation = $bindable(null), overlay,
     transitionContext, layoutEndpoint, class: className = '', style = '', ...attributes }: Props = $props();
   const componentId = $props.id();
   const filterId = `${componentId}-morph`;
   let heights = $state<Record<string, number>>({});
   let availableWidth = $state(384);
-  const measure = $derived({ width: availableWidth, circle: circleSize, gap });
+  const measure = $derived({ width: availableWidth, circle: circleSize, gap, alignment });
   let motion = $state.raw(untrack(() => createContainerMotion(containerGeometry(items, measure))));
   let worldOrigin = $state<number | null>(null);
   let coordinated = $state(false);

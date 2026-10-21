@@ -12,7 +12,7 @@ export interface ContainerSpec {
   iconInset?: number;
   expandedIconSize?: number;
 }
-export interface ContainerMeasure { width: number; circle: number; gap: number }
+export interface ContainerMeasure { width: number; circle: number; gap: number; alignment?: 'group' | 'body' }
 export interface ContainerIconPose {
   id: string; shellX: number; x: number; size: number; selection: number; visibility: number; glyphOffset: number;
 }
@@ -32,7 +32,7 @@ export function ramp(start: number, end: number, value: number) {
   const t = clamp((value - start) / (end - start));
   return t * t * (3 - 2 * t);
 }
-export function clockProgress(elapsed: number, easing: ContainerEasing = 'pinch') {
+export function clockProgress(elapsed: number, easing: ContainerEasing = 'editor') {
   if (easing === 'editor') {
     const [x1, y1, x2, y2] = [0.65, 0, 0.35, 1];
     if (elapsed <= 0) return 0;
@@ -72,6 +72,12 @@ export function containerGeometry(items: readonly ContainerSpec[], measure: Cont
   const bodyHeight = main ? Math.max(circle, main.height ?? circle) : circle;
   const total = main ? bodyWidth + (items.length - 1) * (circle + gap) : Math.max(0, items.length * (circle + gap) - gap);
   let x = (measure.width - total) / 2;
+  if (main && measure.alignment === 'body') {
+    // Center the content when there is spare room, then clamp the whole group
+    // inside its host so narrow layouts keep their full usable input width.
+    const before = items.indexOf(main) * (circle + gap);
+    x = Math.max(0, Math.min(Math.max(0, measure.width - total), (measure.width - bodyWidth) / 2 - before));
+  }
   let bodyX = x;
   const icons = items.map(item => {
     const selected = item === main;
@@ -110,7 +116,7 @@ export function requestContainerMotion(state: ContainerMotion, destination: Cont
   const distance = Math.max(0, ...current.geometry.icons.map(icon => Math.abs(icon.selection - (destinationSelection.get(icon.id) ?? 0))));
   return { geometry: current.geometry, revision: id, transition: {
     id, startedAt: now, duration: containerMorphDuration * (distance > 0 ? Math.max(0.25, distance) : 1),
-    easing: options.easing ?? 'pinch', origin: current.geometry, fromId: current.geometry.mainId, progress: 0
+    easing: options.easing ?? 'editor', origin: current.geometry, fromId: current.geometry.mainId, progress: 0
   } };
 }
 /** Geometry and glyphs share one clock. Stale frames cannot overwrite a newer request. */

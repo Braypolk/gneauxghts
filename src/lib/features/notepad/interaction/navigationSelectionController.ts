@@ -16,6 +16,7 @@ export interface NavigationSelectionControllerDeps<
 > {
   getSearchMode: () => SearchMode;
   resetPaneCommand: () => void;
+  getActivePaneId: () => TPaneId;
   getNavigationPaneId: () => TPaneId;
   activatePane: (paneId: TPaneId) => void;
   focusSearchRange: (
@@ -24,7 +25,7 @@ export interface NavigationSelectionControllerDeps<
     options?: { focus?: boolean }
   ) => void;
   saveCursorPosition: () => void;
-  getOpenContext: () => OpenContext;
+  getOpenContext: (paneId?: TPaneId) => OpenContext;
   getNavigationContext: (paneId?: TPaneId) => NavigationContext;
   openSearchResult: (
     openContext: OpenContext,
@@ -47,18 +48,23 @@ export function createNavigationSelectionController<
   TPaneId extends string
 >(deps: NavigationSelectionControllerDeps<TPaneId>) {
   const afterRender = deps.afterRender ?? tick;
-  function navigationContextForSelection(): NavigationContextSource {
-    const paneId = deps.getNavigationPaneId();
-    return () => deps.getNavigationContext(paneId);
+  function contextForSelection() {
+    const paneId = deps.getActivePaneId();
+    return {
+      paneId,
+      open: deps.getOpenContext(paneId),
+      navigation: () => deps.getNavigationContext(paneId)
+    };
   }
 
   async function handleSearchResultSelect(result: SearchItem) {
     deps.resetPaneCommand();
+    const context = contextForSelection();
     if (
       deps.getSearchMode() === 'current' &&
-      result.currentMatchRange
+      result.currentMatchRange && context.open.isEditorVisible !== false
     ) {
-      const paneId = deps.getNavigationPaneId();
+      const paneId = context.paneId;
       deps.activatePane(paneId);
       await afterRender();
       deps.focusSearchRange(
@@ -71,8 +77,8 @@ export function createNavigationSelectionController<
 
     await deps.openSearchResult(
       // Choosing a search result keeps the query available for further matches.
-      { ...deps.getOpenContext(), clearSearch: () => {} },
-      navigationContextForSelection(),
+      { ...context.open, clearSearch: () => {} },
+      context.navigation,
       result
     );
     deps.saveCursorPosition();
@@ -105,9 +111,10 @@ export function createNavigationSelectionController<
     task: RecentTaskItem
   ) {
     deps.resetPaneCommand();
+    const context = contextForSelection();
     await deps.openRecentTask(
-      deps.getOpenContext(),
-      navigationContextForSelection(),
+      context.open,
+      context.navigation,
       task
     );
     deps.saveCursorPosition();
@@ -117,9 +124,10 @@ export function createNavigationSelectionController<
     item: RelatedNoteItem
   ) {
     deps.resetPaneCommand();
+    const context = contextForSelection();
     await deps.openSearchResult(
-      deps.getOpenContext(),
-      navigationContextForSelection(),
+      context.open,
+      context.navigation,
       {
         noteId: item.noteId,
         notePath: item.notePath,

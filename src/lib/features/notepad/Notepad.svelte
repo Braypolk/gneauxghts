@@ -203,13 +203,15 @@
   let previousDockActiveTarget: string | null = null;
   const dockChatPaneIds = $derived(paneOrder.filter(id =>
     id !== collapsingPaneId && getPaneKind(id) === 'chat'));
+  const dockActivePaneId = $derived(collapsingPaneId
+    ? workspaceStore.getActivePaneIdAfterClose(collapsingPaneId) : activePaneId);
   const dockChatPaneId = $derived(
     preferredDockChatPaneId && dockChatPaneIds.includes(preferredDockChatPaneId)
       ? preferredDockChatPaneId : dockChatPaneIds[0] ?? null
   );
   $effect.pre(() => {
     const available = dockChatPaneIds;
-    const paneId = activePaneId;
+    const paneId = dockActivePaneId;
     const activeChat = available.includes(paneId) ? paneId : null;
     const compact = compactPanes;
     untrack(() => {
@@ -271,7 +273,7 @@
     openRecentTask: (task) =>
       handleRecentTaskSelect(task),
     openNote: async (noteId, notePath) =>
-      commands.openNotePath(notePath, { noteId }),
+      commands.openNotePath(notePath, { noteId, paneId: workspaceStore.activePaneId }),
     onSearchHighlightsChange: ({
       searchMode,
       searchQuery,
@@ -290,12 +292,12 @@
   let imageNavigation = 0;
   async function openSearchedImage(item: ImageSearchItem) {
     const request = ++imageNavigation;
+    const paneId = workspaceStore.activePaneId;
     try {
-      await commands.openNotePath(item.notePath, { noteId: item.noteId || null });
+      await commands.openNotePath(item.notePath, { noteId: item.noteId || null, paneId });
       await tick();
       if (request !== imageNavigation || getDocumentPath(getDocumentSession()) !== item.notePath) return;
       const currentMarkdown = getCurrentMarkdown();
-      const paneId = getNavigationPaneId();
       const valid = await invoke<boolean>('validate_image_search_result', { item, currentMarkdown });
       if (request !== imageNavigation || getDocumentPath(getDocumentSession()) !== item.notePath) return;
       if (getCurrentMarkdown() !== currentMarkdown || getNavigationPaneId() !== paneId) return;
@@ -527,15 +529,16 @@
     };
   }
 
-  function getOpenContext(): OpenContext {
-    const currentDoc = getDocumentSession();
+  function getOpenContext(paneId: PaneId = getNavigationPaneId()): OpenContext {
+    const currentDoc = getPaneDocumentSession(paneId);
     return {
       currentNoteId: getDocumentNoteId(currentDoc),
       currentNotePath: getDocumentPath(currentDoc),
-      stopPendingAutosave: cancelPendingAutosave,
+      isEditorVisible: getPaneKind(paneId) === "editor",
+      stopPendingAutosave: () => cancelPendingAutosave(currentDoc),
       clearSearch,
       openNotePath: async (noteId, notePath, options) =>
-        commands.openNotePath(notePath, { noteId, ...options }),
+        commands.openNotePath(notePath, { noteId, ...options, paneId }),
     };
   }
 
@@ -1182,6 +1185,7 @@
     handleRelatedItemSelect,
   } = createNavigationSelectionController<PaneId>({
       getSearchMode: () => searchState.searchMode,
+      getActivePaneId: () => activePaneId,
       resetPaneCommand: workspaceStore.resetPaneCommand,
       getNavigationPaneId,
       activatePane: activatePaneSession,

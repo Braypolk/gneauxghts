@@ -44,7 +44,8 @@
   const progress = $derived(presentation?.transition?.progress ?? 1);
   const searchHeight = $derived(presentation?.contentHeights.search ?? circle);
   const chatHeight = $derived(presentation?.contentHeights.chat ?? 76);
-  const barWidth = $derived(hasChat ? undefined : (target === 'related' || searchExpanded ? 42 : 24) * fontSize);
+  const maxBodyWidth = $derived(52 * fontSize - ((related ? 1 : 0) + (hasChat ? 1 : 0)) * (circle + gap));
+  const barWidth = $derived(hasChat ? maxBodyWidth : (target === 'related' || searchExpanded ? 42 : 24) * fontSize);
   const compactHeight = $derived(width <= 28 * fontSize ? circle + controlSize + 0.25 * fontSize : circle);
   const searchPresentation = $derived<DockSearchPresentation>({
     active: running && target !== 'search' ? capturedSearchActive : undefined,
@@ -55,14 +56,14 @@
       width: target === 'search' ? barWidth : undefined, height: searchHeight, iconInset: searchIconInset,
       icon: searchIcon, content: searchContent, class: 'dock-search-layer', toggleClass: 'dock-search-toggle', onActivate: onSearch },
     ...(related ? [{ id: 'related', label: 'Related notes', state: target === 'related' ? 'expanded' : 'icon',
-      width: hasChat ? undefined : 42 * fontSize, height: target === 'related' ? compactHeight : circle,
+      width: hasChat ? maxBodyWidth : 42 * fontSize, height: target === 'related' ? compactHeight : circle,
       iconEdge: 'end', icon: relatedIcon, content: relatedSurface, class: 'dock-related-layer', toggleClass: 'dock-related-toggle',
       disabled: !related.available, controls: related.popupId, onActivate: related.onOpen } satisfies MorphingContainerItem] : []),
     ...(hasChat ? [{ id: 'chat', label: 'Expand chat input', state: target === 'chat' ? 'expanded' : 'icon',
-      height: chatHeight, radius: 19.2, iconEdge: 'end', iconInset: sendInset + sendSize / 2, expandedIconSize: sendSize,
+      width: maxBodyWidth, height: chatHeight, radius: 19.2, iconEdge: 'end', iconInset: sendInset + sendSize / 2, expandedIconSize: sendSize,
       icon: chatIcon, content: chatContent, class: 'dock-chat-layer', toggleClass: 'dock-chat-toggle', onActivate: onChat } satisfies MorphingContainerItem] : [])
   ]);
-  const availableBarWidth = $derived(Math.max(circle, width - (items.length - 1) * (circle + gap)));
+  const availableBarWidth = $derived(Math.max(circle, Math.min(width, 52 * fontSize) - (items.length - 1) * (circle + gap)));
   const collapsedBarWidth = $derived(Math.min(24 * fontSize, availableBarWidth));
   const expandedBarWidth = $derived(Math.min(42 * fontSize, availableBarWidth));
   const searchWidthMotion = $derived(!hasChat && target === 'search' && presentation?.transition?.fromId === 'search'
@@ -70,7 +71,7 @@
   const searchWidthFraction = $derived(Math.max(0, Math.min(1,
     ((presentation?.geometry.bodyWidth ?? collapsedBarWidth) - collapsedBarWidth) / Math.max(1, expandedBarWidth - collapsedBarWidth))));
   const styles = $derived(`${searchExpansionStyles};--dock-search-width-fraction:${searchWidthFraction}fr;--morph-bottom-inset:var(--dock-circle-inset);--dock-gap:${gap}px;
-    --dock-search-results-width:${hasChat ? Math.max(circle, width - (items.length - 1) * (circle + gap)) + 'px' : `min(42rem, ${Math.max(circle, width - (items.length - 1) * (circle + gap))}px)`};
+    --dock-search-results-width:${hasChat ? availableBarWidth + 'px' : `min(42rem, ${availableBarWidth}px)`};
     --dock-search-text:${presentation?.textVisible && target === 'search' ? 1 : 0};--dock-chat-text:${presentation?.textVisible && target === 'chat' ? 1 : 0};
     --search-results-anchor-height:${compactHeight}px;--dock-composer-height:${chatHeight}px;--dock-send-opacity:${hasChat ? sendOpacity : 1};--dock-chat-glyph:${1 - ramp(0.3, 0.48, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};
     --dock-send-glyph:${ramp(0.52, 0.7, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};`);
@@ -142,7 +143,7 @@
 {#snippet relatedSurface()}<div class="related-dock-content" style:min-height={`${compactHeight}px`}>{@render relatedContent()}</div>{/snippet}
 {#snippet chatContent()}<div bind:this={chatSlot} class="workspace-chat-slot"></div>{/snippet}
 
-<MorphingContainers {items} circleSize={circle} {gap} bind:element={node} bind:presentation {layoutEndpoint} {overlay}
+<MorphingContainers {items} circleSize={circle} {gap} alignment="body" bind:element={node} bind:presentation {layoutEndpoint} {overlay}
   class="workspace-input-dock" style={styles} data-secondary={target === 'related' || !hasChat ? 'related' : 'chat'}
   data-input-dock-mode={target} data-dock-state={target === 'related' ? 'related-input' : target === 'chat' ? 'chat-input' : hasChat ? 'chat-search' : related ? 'related-search' : 'editor-search'}
   data-search-width-motion={searchWidthMotion || undefined}
@@ -151,7 +152,7 @@
   data-dock-reading-clearance={hasChat ? Math.max(chatHeight, searchHeight) : undefined}
   data-dock-clearance={running ? Math.max(hasChat || presentation?.transition?.origin.icons.some(icon => icon.id === 'chat') ? chatHeight : 0, searchHeight, presentation?.geometry.bodyHeight ?? 0, presentation?.transition?.origin.bodyHeight ?? 0) : undefined}
   transitionContext={() => ({ coordinated: !!node?.closest('[data-pane-layout-change]'),
-    easing: node?.closest('[data-pane-layout-change]') ? 'editor' : 'pinch', immediate: !!node?.closest('[data-window-resizing]') })}
+    immediate: !!node?.closest('[data-window-resizing]') })}
   onfocusout={(event) => {
     if (!related?.active || event.relatedTarget instanceof Node && node?.contains(event.relatedTarget)) return;
     void tick().then(() => { if (related?.active && !node?.contains(document.activeElement)) related.onBlur(); });

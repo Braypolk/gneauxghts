@@ -62,6 +62,7 @@ function matchesTarget(ctx: NavigationContext, noteId: string | null, path: stri
 export interface OpenContext {
   currentNoteId: string | null;
   currentNotePath: string | null;
+  isEditorVisible?: boolean;
   stopPendingAutosave: () => void;
   clearSearch: () => void;
   openNotePath: (
@@ -72,16 +73,17 @@ export interface OpenContext {
 }
 
 async function ensureNoteContext(
-  { currentNoteId, currentNotePath, stopPendingAutosave, openNotePath }: OpenContext,
+  { currentNoteId, currentNotePath, isEditorVisible, stopPendingAutosave, openNotePath }: OpenContext,
   nextNoteId: string | null,
   nextNotePath: string | null,
   options: { focusEditorAfterOpen?: boolean } = {}
 ) {
-  const shouldOpenDifferentNote =
+  const shouldOpen =
+    isEditorVisible === false ||
     (!!nextNoteId && nextNoteId !== currentNoteId) ||
     (!!nextNotePath && nextNotePath !== currentNotePath);
 
-  if (!shouldOpenDifferentNote || (!nextNoteId && !nextNotePath)) {
+  if (!shouldOpen || (!nextNoteId && !nextNotePath)) {
     return false;
   }
 

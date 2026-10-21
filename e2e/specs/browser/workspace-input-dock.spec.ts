@@ -76,6 +76,25 @@ describe('shared workspace input dock', () => {
     }
   });
 
+  it('centers the capped input across split workspace width in either mode', async () => {
+    await openChat();
+    for (const width of [1440, 1920]) {
+      await browser.setWindowSize(width, 950);
+      await waitForWorkspaceAnimationSettled();
+      for (const mode of ['search', 'chat'] as const) {
+        await $(`button[aria-label="${mode === 'search' ? 'Expand search' : 'Expand chat input'}"]`).click();
+        await expectMode(mode);
+        const centers = await browser.execute(() => {
+          const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
+          const row = dock.closest('.search-dock-row')!.getBoundingClientRect();
+          const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
+          return [body.x + body.width / 2, row.x + row.width / 2];
+        });
+        expect(Math.abs(centers[0] - centers[1])).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+
   it('keeps settled shells separate and send controls circular at desktop and narrow widths', async () => {
     await openChat();
     for (const width of [638, 1440, 390]) {
@@ -280,6 +299,32 @@ describe('shared workspace input dock', () => {
     }
   });
 
+  for (const close of ['editor', 'chat'] as const) it(`hands the dock directly to surviving Chat when closing ${close}`, async () => {
+    await openChat();
+    await $(composerSelector).setValue('Retained conversation draft');
+    await $('[data-pane-kind="editor"] .pane-header-title-wrap').click();
+    await expectMode('search');
+    if (close === 'chat') {
+      await $('[data-pane-kind="editor"] button[aria-label="Open thought partner"]').click();
+      await expectMode('chat');
+    }
+    const states = await browser.executeAsync((kind: string, done: (states: string[]) => void) => {
+      const states: string[] = [], started = performance.now();
+      let closing = false;
+      document.querySelector<HTMLElement>(`[data-pane-kind="${kind}"] button[aria-label="Close pane"]`)!.click();
+      const sample = () => {
+        closing ||= !!document.querySelector('.notepad-pane--collapsing');
+        if (closing) states.push(document.querySelector('[data-input-dock-mode]')!.getAttribute('data-input-dock-mode')!);
+        if (performance.now() - started < 1000) requestAnimationFrame(sample); else done(states);
+      };
+      requestAnimationFrame(sample);
+    }, close);
+    expect(states.length).toBeGreaterThan(5);
+    expect(new Set(states)).toEqual(new Set(['chat']));
+    await expectMode('chat');
+    await expect($(composerSelector)).toHaveValue('Retained conversation draft');
+  });
+
   it('returns to ordinary search when the last chat closes', async () => {
     await openChat();
     await $('[data-pane-kind="chat"] button[aria-label="Close pane"]').click();
@@ -432,7 +477,7 @@ describe('shared workspace input dock', () => {
       };
       requestAnimationFrame(sample);
     }, motionCaptureDuration);
-    expect(motion.frames.filter(frame => frame[0] > motion.before[0] + 3 && frame[0] < motion.after[0] - 3).length).toBeGreaterThan(4);
+    expect(motion.frames.filter(frame => frame[2] > motion.before[2] + 3 && frame[2] < motion.after[2] - 3).length).toBeGreaterThan(2);
     expect(Math.max(...motion.frames.map(frame => Math.abs(frame[1] - motion.before[1])))).toBeLessThanOrEqual(1);
     expect(Math.max(...motion.frames.map(frame => Math.abs(frame[3] - motion.before[3])))).toBeLessThanOrEqual(1);
     expect(Math.max(...motion.frames.flatMap(frame => [Math.abs(frame[0] - frame[4]), Math.abs(frame[1] - frame[5]), Math.abs(frame[2] - frame[6])]))).toBeLessThanOrEqual(1);
@@ -454,7 +499,7 @@ describe('shared workspace input dock', () => {
     await expect($(composerSelector)).toHaveValue('Keep this draft\nAnd its second line');
   });
 
-  it('moves the bar and glyphs continuously with fixed opaque shells, including a wide chat-to-editor return', async () => {
+  it('moves the bar and glyphs continuously with full-size opaque shells, including a wide chat-to-editor return', async () => {
     await openChat();
     await browser.setWindowSize(2400, 1000);
     await waitForWorkspaceAnimationSettled();
@@ -462,21 +507,23 @@ describe('shared workspace input dock', () => {
       '[data-pane-kind="chat"] button[aria-label="Close pane"]']) {
       const capture = await browser.executeAsync((button: string, duration: number, done: (frames: number[][]) => void) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
-        const read = () => {
+        const read = (frameTime = performance.now()) => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
           const left = dock.querySelector('[data-container-shell="search"]')!, right = dock.querySelector('[data-container-shell="chat"], [data-container-shell="related"]')!;
           const leftRect = left.getBoundingClientRect(), rightRect = right.getBoundingClientRect();
           const glyph = dock.querySelector('.dock-chat-toggle, .dock-related-toggle')!.getBoundingClientRect();
           return [body.left, body.width, leftRect.left, rightRect.right, glyph.left + glyph.width / 2,
-            leftRect.height, rightRect.height, Number(getComputedStyle(left).opacity), Number(getComputedStyle(right).opacity), performance.now()];
+            leftRect.height, rightRect.height, Number(getComputedStyle(left).opacity), Number(getComputedStyle(right).opacity), frameTime];
         };
         const frames = [read()], started = performance.now();
         document.querySelector<HTMLElement>(button)!.click();
         // Sample the committed frame after both pane WAAPI and dock rAF updates.
         // A callback registered before Svelte starts the dock reads a mixture
         // of this frame's pane bounds and the previous frame's dock offsets.
-        const sample = () => setTimeout(() => {
-          frames.push(read());
+        const sample = (frameTime: number) => setTimeout(() => {
+          // Geometry belongs to this RAF, even if this timer runs late. Wall
+          // time here can compress the next interval and report a false jump.
+          frames.push(read(frameTime));
           if (performance.now() - started < duration) requestAnimationFrame(sample);
           else done(frames);
         }, 0);
@@ -497,20 +544,29 @@ describe('shared workspace input dock', () => {
         // rather than a pixel cap that only makes sense in slow playback.
         steps.forEach((step, i) => {
           const elapsed = capture[i + 1][9] - capture[i][9];
-          const maximumSpeed = selector.includes('Close pane') ? 3 : 2;
+          // The Bézier reaches 2.86x average speed. The foreground glyph
+          // additionally uses smoothstep over progress 0.4–0.86, whose maximum
+          // derivative is 1.5 / 0.46; its composed bound is below 10x.
+          const maximumSpeed = column === 4 ? 10 : 3;
           const limit = 1 + travel * maximumSpeed * elapsed / dockMorphDuration;
-          expect(Math.abs(step)).toBeLessThanOrEqual(limit);
+          if (Math.abs(step) > limit) throw new Error(`Dock jump ${JSON.stringify({
+            selector, column, frame: i, step, limit, elapsed, travel
+          })}`);
         });
-        // Smoothstep starts quadratically. A first-paint width/position flash
+        // The Bézier starts quadratically. A first-paint width/position flash
         // remains a failure even when the normal-speed first frame moves.
         const firstElapsed = capture[1][9] - capture[0][9];
         expect(Math.abs(steps[0])).toBeLessThanOrEqual(1 + travel * 3 * (firstElapsed / 300) ** 2);
       }
       expect(capture.every(frame => Math.abs(frame[5] - 40) < 0.01 && Math.abs(frame[6] - 40) < 0.01 && frame[7] === 1 && frame[8] === 1)).toBe(true);
       if (!selector.includes('Close pane')) {
-        for (const column of [1, 2, 3]) {
+        // Capped inputs stay centered while both sibling shells translate
+        // together. Their separation and size stay constant through exchange.
+        for (const column of [0, 1]) {
           expect(Math.max(...capture.map(frame => frame[column])) - Math.min(...capture.map(frame => frame[column]))).toBeLessThanOrEqual(1);
         }
+        const span = capture.map(frame => frame[3] - frame[2]);
+        expect(Math.max(...span) - Math.min(...span)).toBeLessThanOrEqual(1);
       }
       await waitForWorkspaceAnimationSettled();
     }

@@ -140,6 +140,12 @@ it reuses the active retained-context pane and reveals its editor. Navigation
 always passes through the editor lifecycle before content synchronization is
 considered complete.
 
+Committed selections in the shared discovery popup (Search, Related, pinned
+notes, images and Recent) open in the active pane, replacing its chat view when
+necessary. The selected pane is captured before asynchronous navigation; other
+split panes retain their locations. Selecting the retained note still reveals
+the editor. Current-note match previews retain their existing editor target.
+
 App-directed editor destinations, including current-note and all-notes search,
 share one minimal-scroll policy: leave an in-band result still, otherwise reveal
 it at the nearest edge of the 20–60% height band, subject to chrome and document
@@ -973,7 +979,7 @@ starting another expansion after settling. Both input presentations remain
 mounted through their outgoing fade; an interrupted exchange starts from the
 displayed geometry.
 Related opening, dismissal and Search/Related exchanges use the same reusable
-container component and original Chat/Search pinch timing (380ms). The component
+container component and shared 380ms exchange duration. The component
 accepts arbitrary keyed items in caller order with icon, compact or expanded
 presentation, configured widths and configured or measured heights. Feature
 contents and activation remain caller-owned. Reversals continue from the painted
@@ -999,11 +1005,17 @@ shortcuts must match both the requested draft and indexed bytes.
 ### Search and chat share a dock without replacing their drafts
 
 When a chat pane is open, search and the selected chat composer share the bottom
-dock. Expanding one collapses the other to an icon. Explicit mode selection
+dock. The capped input centers across the workspace when there is room for its
+sibling icons; narrow layouts use the available input width and keep those icons
+inside the dock. Expanding one collapses the other to an icon. Explicit mode selection
 survives repeated activation within the same pane. Switching the active pane
 shows search for an editor and the selected composer for chat, at every width.
 Replacing the active pane’s kind applies the same selection even when its ID
 is unchanged and another chat remains open.
+During pane collapse, dock presentation uses the workspace's same right-then-left
+close destination before retirement; it does not take an intermediate Search
+step on the way to a surviving chat. Canonical activation still changes only
+when retirement commits.
 While any chat pane remains open, the dock retains its chat/search presentation
 and chat button, including when that pane is collapsed to a rail. Clicking the
 chat button activates its pane and focuses its retained composer. Incoming
@@ -1055,7 +1067,9 @@ reversals begin at the current pose, obsolete frames are ignored, and resize or
 reduced motion settles the current target immediately. Programmatic input focus
 does not scroll the workspace, and the dock's bottom baseline stays anchored.
 During search/chat exchange the main bar and foreground glyph paths are monotonic;
-both background circle shells stay full-size and opaque. Editor/chat paths use
+both background circle shells stay full-size and opaque. Capped centered inputs
+translate both shells together; narrow exchanges retain fixed shell endpoints.
+Editor/chat paths use
 measured endpoints rather than recomputing against the moving flex width, so the
 first painted frame retains the displayed origin and width-cap changes do not hitch.
 Settled search geometry stays relative to its available flex space; resizing that space does not restart search expansion. Chat input
@@ -1064,10 +1078,11 @@ adjacent actions.
 Ordinary editor-search CSS transitions resume only after projected margins are
 released and the settled local coordinates have flushed, avoiding a second
 transition from stale bounds at the end of the shared morph.
-All pane entry and departure use a shared cubic Bézier easing for the pane and dock: gentle
+All container morphs and pane entry and departure use a shared
+`cubic-bezier(0.65, 0, 0.35, 1)` easing for the pane and dock: gentle
 departure and arrival with a faster middle. Measured dock bounds travel directly
-between endpoints even when its input mode stays unchanged. Input switching retains its pinch
-pacing, and the selected curve follows the remaining clock when interrupted.
+between endpoints even when its input mode stays unchanged. Input switching uses
+the same curve, which follows the remaining clock when interrupted.
 Content scrolls beneath the shared dock fade. With a chat open, end padding
 reserves the measured expanded composer height in both chat input and search.
 The outer dock frame reserves the larger input height while its bottom-aligned

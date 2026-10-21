@@ -115,7 +115,7 @@ describe('native dock outline', () => {
       await waitForWorkspaceAnimationSettled();
     }
   });
-  it('matches Chat/Search pinch pacing and keeps the Related popup steady in visible WebKit', async () => {
+  it('matches Chat/Search Bézier pacing and keeps the Related popup steady in visible WebKit', async () => {
     type Frame = {
       time: number; clock: { started: number; duration: number; easing: string } | null;
       body: number[]; icons: Record<string, number[]>; blur: number; glyph: number | null;
@@ -194,7 +194,7 @@ describe('native dock outline', () => {
     const expectPinch = (frames: Frame[]) => {
       const moving = frames.filter(frame => frame.clock);
       expect(moving.length).toBeGreaterThan(5);
-      expect(moving.every(frame => frame.clock!.duration === dockMorphDuration && frame.clock!.easing === 'pinch')).toBe(true);
+      expect(moving.every(frame => frame.clock!.duration === dockMorphDuration && frame.clock!.easing === 'editor')).toBe(true);
       expect(Math.max(...moving.map(frame => frame.blur))).toBeGreaterThan(2);
       const origin = frames[0], end = frames.at(-1)!;
       for (const column of [0, 1]) {

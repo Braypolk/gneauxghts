@@ -10,13 +10,36 @@ function items(ids: string[], selected: string | null, state: 'compact' | 'expan
 }
 
 describe('content-agnostic morphing containers', () => {
+  it('centers capped content without centering its unequal sibling icons', () => {
+    for (const order of [['search', 'chat'], ['search', 'related', 'chat']]) {
+      for (const selected of order) {
+        const specs = items(order, selected);
+        specs.find(item => item.id === selected)!.width = 832 - (order.length - 1) * 52;
+        const geometry = containerGeometry(specs, { width: 1054, circle: 40, gap: 12, alignment: 'body' });
+        expect(geometry.bodyX + geometry.bodyWidth / 2).toBe(527);
+        expect(geometry.icons[0].shellX).toBeGreaterThanOrEqual(0);
+        expect(geometry.icons.at(-1)!.shellX + 40).toBeLessThanOrEqual(1054);
+      }
+    }
+  });
+  it('uses the full narrow width when centered content would push icons outside', () => {
+    for (const selected of ['search', 'chat']) {
+      const specs = items(['search', 'chat'], selected);
+      specs.find(item => item.id === selected)!.width = 780;
+      const geometry = containerGeometry(specs, { width: 240, circle: 40, gap: 12, alignment: 'body' });
+      expect(geometry.bodyWidth).toBe(188);
+      expect(geometry.icons[0].shellX).toBe(0);
+      expect(Math.max(geometry.bodyX + geometry.bodyWidth, ...geometry.icons.map(icon => icon.shellX + 40))).toBe(240);
+    }
+  });
+
   for (const order of [['a', 'b'], ['x', 'tall', 'z'], ['last', 'z', 'first', 'tall', 'other']]) {
     for (const from of order) for (const to of order.filter(id => id !== from)) {
       it(`exchanges ${from} → ${to} in caller order ${order.join(',')}`, () => {
         const origin = containerGeometry(items(order, from), measure);
         const destination = containerGeometry(items(order, to), measure);
         const moving = requestContainerMotion(createContainerMotion(origin), destination, 10);
-        expect(moving.transition?.easing).toBe('pinch');
+        expect(moving.transition?.easing).toBe('editor');
         expect(moving.transition?.duration).toBe(containerMorphDuration);
         expect(origin.icons.map(icon => icon.id)).toEqual(order);
         const snapshots = [0, 0.1, 0.3, 0.5, 0.7, 0.9].map(t =>
@@ -73,12 +96,12 @@ describe('content-agnostic morphing containers', () => {
     const middle = interpolateContainers(containerGeometry(first, measure), containerGeometry(second, measure), 0.5);
     expect(middle.bodyHeight).toBe(40);
   });
-  it('uses the existing pinch pacing and a separate coordinated layout clock', () => {
-    expect(clockProgress(60 / containerMorphDuration)).toBeCloseTo(0.104, 5);
-    expect(clockProgress(1 - 60 / containerMorphDuration)).toBeCloseTo(0.896, 5);
+  it('uses the editor/chat Bézier curve by default and retains explicit pinch pacing', () => {
+    expect(clockProgress(60 / containerMorphDuration, 'pinch')).toBeCloseTo(0.104, 5);
+    expect(clockProgress(1 - 60 / containerMorphDuration, 'pinch')).toBeCloseTo(0.896, 5);
     expect(clockProgress(0.5)).toBeCloseTo(0.5, 5);
-    expect(clockProgress(0.1, 'editor')).toBeLessThan(0.02);
-    expect(clockProgress(0.9, 'editor')).toBeGreaterThan(0.98);
+    expect(clockProgress(0.1)).toBeLessThan(0.02);
+    expect(clockProgress(0.9)).toBeGreaterThan(0.98);
     expect(clockProgress(0)).toBeCloseTo(0, 5); expect(clockProgress(1)).toBeCloseTo(1, 5);
   });
   it('retargets a third item from the current pose and ignores obsolete frames', () => {

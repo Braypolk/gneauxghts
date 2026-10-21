@@ -267,6 +267,19 @@ it('selects the nearest editor for navigation and cycles real workspace panes', 
   });
 });
 
+it('opens an explicit note selection in the chosen chat pane and retains its previous location', async () => {
+  const f = setup();
+  await f.commands.splitWorkspace('thoughtPartner');
+  const chat = f.workspace.activePaneId;
+  f.workspace.setPaneConversationId(chat, 'retained-conversation');
+  await f.commands.openNotePath('/vault/b.md', { noteId: 'b', paneId: chat });
+  expect(f.workspace.activePaneId).toBe(chat);
+  expect(f.workspace.getPaneState(chat)).toMatchObject({ kind: 'editor' });
+  expect(f.getPaneDocument(chat).identity).toMatchObject({ noteId: 'b' });
+  expect(f.getPaneDocument(f.first)).toBe(f.initialDocument);
+  expect(notepadLocationMru.list(chat)).toContainEqual(expect.objectContaining({ kind: 'chat', conversationId: 'retained-conversation' }));
+});
+
 it('waits for pane presentation and rejects stale keyboard focus after a newer activation', async () => {
   const f = setup();
   await f.commands.splitWorkspace('thoughtPartner');

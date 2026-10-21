@@ -70,6 +70,8 @@ import type { createNotepadPersistenceController } from './persistenceController
 export type { LocationHistoryEntry, NavLocation } from '../navigation/locationMru';
 export interface OpenNoteOptions {
   noteId?: string | null;
+  /** Explicit selections can replace a pane even when it currently hosts chat. */
+  paneId?: NotepadPaneId;
   focusEditorAfterOpen?: boolean;
   /** Reveal a retained chat's editor only after the note is loaded. */
   revealEditorAfterOpen?: boolean;
@@ -607,7 +609,8 @@ export function createNotepadWorkspaceSession(options: NotepadWorkspaceSessionOp
   }
 
   async function openNotePath(notePath: string | null, open: OpenNoteOptions = {}) {
-    const paneId = workspace.getNavigationPaneId();
+    const paneId = open.paneId ?? workspace.getNavigationPaneId();
+    if (!workspace.paneOrder.includes(paneId)) return;
     blurFocusedPaneTitle(paneId);
     await navigate(paneId, false, operation => {
       activatePaneSession(paneId);

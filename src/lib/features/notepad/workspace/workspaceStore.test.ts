@@ -111,3 +111,40 @@ describe('WorkspaceStore invariants', () => {
     });
   });
 });
+
+describe('WorkspaceStore close destination', () => {
+  it('selects the surviving chat before an active editor retires', () => {
+    const workspace = store();
+    createReadyPaneForTest(workspace, second, 'document:workspace-2', 'chat');
+    workspace.setActivePaneId(first);
+    workspace.beginPaneCollapse(first);
+    expect(workspace.getActivePaneIdAfterClose(first)).toBe(second);
+    expect(workspace.activePaneId).toBe(first);
+    retirePaneForTest(workspace, first);
+    expect(workspace.activePaneId).toBe(second);
+  });
+
+  it('uses the same right-then-left destination before and after retirement', () => {
+    const workspace = store();
+    createReadyPaneForTest(workspace, second, 'document:workspace-2', 'chat');
+    createReadyPaneForTest(workspace, third, 'document:workspace-3', 'chat');
+    workspace.setActivePaneId(second);
+    expect(workspace.getActivePaneIdAfterClose(second)).toBe(third);
+    retirePaneForTest(workspace, second);
+    expect(workspace.activePaneId).toBe(third);
+    expect(workspace.getActivePaneIdAfterClose(third)).toBe(first);
+    retirePaneForTest(workspace, third);
+    expect(workspace.activePaneId).toBe(first);
+  });
+
+  it('retains the active pane when an inactive pane closes or closing is cancelled', () => {
+    const workspace = store();
+    createReadyPaneForTest(workspace, second, 'document:workspace-2', 'chat');
+    expect(workspace.getActivePaneIdAfterClose(second)).toBe(first);
+    workspace.beginPaneCollapse(first);
+    expect(workspace.getActivePaneIdAfterClose(first)).toBe(second);
+    workspace.endPaneCollapse(first);
+    expect(workspace.collapsingPaneId).toBeNull();
+    expect(workspace.activePaneId).toBe(first);
+  });
+});

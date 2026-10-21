@@ -170,7 +170,7 @@ describe('persistent collapsed pane rail', () => {
     const toEditor = await sampleSwitch();
     expectRevealMotion(toEditor);
     expect(toEditor.every(sample => sample.state === 'chat-search')).toBe(true);
-    expect(toEditor.some(sample => sample.paneMoving && sample.easing === 'pinch' &&
+    expect(toEditor.some(sample => sample.paneMoving && sample.easing === 'editor' &&
       sample.opacity > 0.05 && sample.opacity < 0.95 && sample.railOpacity === 1)).toBe(true);
     await waitForWorkspaceAnimationSettled();
     await expect($(editor)).toBeFocused();
@@ -182,7 +182,7 @@ describe('persistent collapsed pane rail', () => {
     const toChat = await sampleSwitch();
     expectRevealMotion(toChat);
     expect(toChat.every(sample => sample.state === 'chat-input')).toBe(true);
-    expect(toChat.some(sample => sample.paneMoving && sample.easing === 'pinch' && sample.opacity > 0.05 && sample.opacity < 0.95)).toBe(true);
+    expect(toChat.some(sample => sample.paneMoving && sample.easing === 'editor' && sample.opacity > 0.05 && sample.opacity < 0.95)).toBe(true);
     await waitForWorkspaceAnimationSettled();
     await expect($(composer)).toBeFocused();
     await expect($(composer)).toHaveValue('Retain through the editor transition');
@@ -348,7 +348,7 @@ describe('persistent collapsed pane rail', () => {
       const rail = document.querySelector<HTMLButtonElement>('.pane-rail')!;
       const railWidth = rail.getBoundingClientRect().width;
       const circle = dock.querySelector('.dock-search-toggle')!.getBoundingClientRect().width;
-      const gap = parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap')) * parseFloat(getComputedStyle(document.documentElement).fontSize);
+      const gap = parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap'));
       const samples: number[][] = [];
       rail.focus(); rail.click();
       const until = performance.now() + 500;

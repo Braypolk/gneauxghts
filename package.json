@@ -35,7 +35,8 @@
     "test:timeline:native:build": "node e2e/support/buildNative.mjs --release",
     "test:timeline:native": "python3 scripts/timeline_fixture.py native",
     "test:e2e:native:list": "node e2e/support/nativeSuite.mjs smoke --list",
-    "test:e2e:native:measurement": "node e2e/support/nativeSuite.mjs measurement"
+    "test:e2e:native:measurement": "node e2e/support/nativeSuite.mjs measurement",
+    "animation:lab": "node scripts/animationLab.mjs"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.3",

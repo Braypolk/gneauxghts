@@ -19,6 +19,13 @@ beforeEach(() => { vi.clearAllMocks(); vi.mocked(waitForEditorPaint).mockResolve
 afterEach(() => vi.unstubAllGlobals());
 
 describe('post-open navigation admission', () => {
+  it('reveals the retained note when a search selection starts from chat', async () => {
+    const f = fixture();
+    await openSearchResult({ ...f.openContext, isEditorVisible: false }, f.getContext, {
+      noteId: 'a', notePath: '/vault/a.md', sectionLabel: 'Title', matchText: 'A', reasonLabels: ['keyword']
+    } as SearchItem);
+    expect(f.openContext.openNotePath).toHaveBeenCalledWith('a', '/vault/a.md', { focusEditorAfterOpen: true });
+  });
   it('opens a cited note normally and selects only its exact passage', async () => {
     const f = fixture();
     expect(await openNoteCitation(f.openContext, f.getContext, { noteId: 'b', path: '/vault/b.md', location: { quote: 'exact quote' } })).toBe(true);
