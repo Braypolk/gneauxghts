@@ -11,12 +11,17 @@ describe('navigation motion ownership', () => {
     await ready();
     const target = 'Offscreen task destination canary';
     const markdown = Array.from({ length: 350 }, (_, i) => `Paragraph ${i} fills the long note.`).join('\n\n') + `\n\n- [ ] ${target}`;
-    await browser.executeAsync(async (body: string, done: (error: string | null) => void) => {
-      try {
-        await window.__TAURI_INTERNALS__.invoke('save_note', { currentPath: '/e2e/alpha.md', title: 'Alpha note', markdown: body });
-        done(null);
-      } catch (error) { done(String(error)); }
-    }, markdown).then(error => expect(error).toBeNull());
+    await browser.execute((body: string) => new Promise<string | null>((done, reject) => {
+      void (async () => {
+        try {
+          await window.__TAURI_INTERNALS__.invoke('save_note', { currentPath: '/e2e/alpha.md', title: 'Alpha note', markdown: body });
+          done(null);
+        }
+        catch (error) {
+          done(String(error));
+        }
+      })().catch(reject);
+    }), markdown).then(error => expect(error).toBeNull());
     await openRecentNote('Beta note');
     await openRecentNote('Alpha note');
     expect(await browser.execute((text: string) => document.querySelector('[data-testid="note-editor"] .cm-content')!.textContent!.includes(text), target)).toBe(false);

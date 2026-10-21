@@ -63,7 +63,10 @@ describe('search scope label animation', () => {
     it(`fades ${query ? 'populated' : 'idle'} editor search into chat without changing the outgoing scope-label widths`, async () => {
         if (query) await $('[data-testid="note-search-input"]').setValue(query);
       await waitForWorkspaceAnimationSettled();
-      const result = await browser.executeAsync((done: (result: { widths: number[]; frames: number[][] }) => void) => {
+      const result = await browser.execute(() => new Promise<{
+        widths: number[];
+        frames: number[][];
+      }>((done) => {
         const shell = document.querySelector('.notepad-search-bar')!;
         const layer = shell.closest('[data-container-surface="search"]')!;
         const labels = Array.from(shell.querySelectorAll<HTMLElement>('.shared-search-mode-label'));
@@ -75,11 +78,13 @@ describe('search scope label animation', () => {
             frames.push([label.getBoundingClientRect().width, Number(getComputedStyle(layer).opacity),
               Number(getComputedStyle(label.querySelector('.shared-search-mode-label-text')!).opacity)]);
           }
-          if (performance.now() - started < 850) requestAnimationFrame(sample);
-          else done({ widths, frames });
+          if (performance.now() - started < 850)
+            requestAnimationFrame(sample);
+          else
+            done({ widths, frames });
         };
         requestAnimationFrame(sample);
-      });
+      }));
       expect(result.frames.some(frame => frame[1] > 0 && frame[1] < 1)).toBe(true);
       for (let label = 0; label < 2; label++) {
         const visible = result.frames.filter((frame, index) => index % 2 === label && frame[1] > 0.001);
@@ -97,7 +102,7 @@ describe('search scope label animation', () => {
       await browser.execute(() => document.querySelector<HTMLElement>('[data-pane-kind="editor"] button[aria-label="Open thought partner"]')!.click());
       await $('[data-notepad-command-bar] textarea').waitForEnabled();
       await waitForWorkspaceAnimationSettled();
-      const frames = await browser.executeAsync((done: (frames: number[][]) => void) => {
+      const frames = await browser.execute(() => new Promise<number[][]>((done) => {
         const shell = document.querySelector('.notepad-search-bar')!;
         const labels = Array.from(shell.querySelectorAll<HTMLElement>('.shared-search-mode-label'));
         const frames: number[][] = [], started = performance.now();
@@ -113,11 +118,13 @@ describe('search scope label animation', () => {
             range.selectNodeContents(text);
             frames.push([label.getBoundingClientRect().width, opacity, range.getBoundingClientRect().width]);
           }
-          if (performance.now() - started < 850) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < 850)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         };
         requestAnimationFrame(sample);
-      });
+      }));
       expect(frames.length).toBeGreaterThan(10);
       if (!query) {
         expect(Math.max(...frames.map(frame => frame[0]))).toBeLessThanOrEqual(1);
@@ -138,13 +145,15 @@ describe('search scope label animation', () => {
   it('fades complete scope labels in and out without revealing clipped text', async () => {
     await waitForWorkspaceAnimationSettled();
     for (const expand of [true, false]) {
-      const frames = await browser.executeAsync((expand: boolean, done: (frames: number[][]) => void) => {
+      const frames = await browser.execute((expand: boolean) => new Promise<number[][]>((done) => {
         const shell = document.querySelector('.notepad-search-bar')!;
         const input = shell.querySelector<HTMLInputElement>('input')!;
         const labels = Array.from(shell.querySelectorAll<HTMLElement>('.shared-search-mode-label'));
         const frames: number[][] = [], started = performance.now();
-        if (expand) input.focus({ preventScroll: true });
-        else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        if (expand)
+          input.focus({ preventScroll: true });
+        else
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         const sample = () => {
           for (const label of labels) {
             const text = label.querySelector('.shared-search-mode-label-text')!;
@@ -158,11 +167,13 @@ describe('search scope label animation', () => {
               labelStyle.overflowX === 'visible' ? 1 : 0,
               shell.getBoundingClientRect().width]);
           }
-          if (performance.now() - started < 700) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < 700)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         };
         requestAnimationFrame(sample);
-      }, expand);
+      }), expand);
       expect(frames.some(([opacity]) => opacity > 0 && opacity < 1)).toBe(true);
       const visible = frames.filter(([opacity]) => opacity > 0);
       expect(visible.length).toBeGreaterThan(4);
@@ -187,7 +198,7 @@ describe('search scope label animation', () => {
       await browser.setWindowSize(width, 1000);
       await browser.execute(() => document.querySelector<HTMLInputElement>('.notepad-search-bar input')!.focus({ preventScroll: true }));
       await waitForWorkspaceAnimationSettled();
-      const positions = await browser.executeAsync((done: (positions: number[]) => void) => {
+      const positions = await browser.execute(() => new Promise<number[]>((done) => {
         const shell = document.querySelector('.notepad-search-bar')!;
         const input = shell.querySelector<HTMLInputElement>('input')!;
         const control = shell.querySelector('button[aria-label="Search this note only"]')!;
@@ -196,11 +207,13 @@ describe('search scope label animation', () => {
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         const sample = () => {
           positions.push(icon.getBoundingClientRect().left);
-          if (performance.now() - started < 700) requestAnimationFrame(sample);
-          else done(positions);
+          if (performance.now() - started < 700)
+            requestAnimationFrame(sample);
+          else
+            done(positions);
         };
         requestAnimationFrame(sample);
-      });
+      }));
       const start = positions[0], end = positions.at(-1)!;
       const excursion = Math.max(...positions) - Math.min(...positions);
       expect(excursion).toBeLessThanOrEqual(Math.abs(end - start) + 1);
@@ -211,14 +224,17 @@ describe('search scope label animation', () => {
   it('reveals the labels immediately with reduced motion', async () => {
     try {
       await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-      const result = await browser.executeAsync((done: (result: { opacity: number[]; moving: number }) => void) => {
+      const result = await browser.execute(() => new Promise<{
+        opacity: number[];
+        moving: number;
+      }>((done) => {
         const shell = document.querySelector('.notepad-search-bar')!;
         shell.querySelector<HTMLInputElement>('input')!.focus({ preventScroll: true });
         requestAnimationFrame(() => requestAnimationFrame(() => done({
           opacity: Array.from(shell.querySelectorAll('.shared-search-mode-label-text')).map(text => Number(getComputedStyle(text).opacity)),
           moving: shell.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running' || animation.pending).length
         })));
-      });
+      }));
       expect(result.opacity).toEqual([1, 1]);
       expect(result.moving).toBe(0);
     } finally {
@@ -228,7 +244,7 @@ describe('search scope label animation', () => {
 
   it('keeps fading from the current appearance when focus reverses mid-animation', async () => {
     await waitForWorkspaceAnimationSettled();
-    const frames = await browser.executeAsync((done: (frames: number[][]) => void) => {
+    const frames = await browser.execute(() => new Promise<number[][]>((done) => {
       const shell = document.querySelector('.notepad-search-bar')!;
       const input = shell.querySelector<HTMLInputElement>('input')!;
       const text = shell.querySelector('.shared-search-mode-label-text')!;
@@ -238,11 +254,13 @@ describe('search scope label animation', () => {
       setTimeout(() => input.focus({ preventScroll: true }), 400);
       const sample = () => {
         frames.push([performance.now() - started, Number(getComputedStyle(text).opacity)]);
-        if (performance.now() - started < 1100) requestAnimationFrame(sample);
-        else done(frames);
+        if (performance.now() - started < 1100)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       };
       requestAnimationFrame(sample);
-    });
+    }));
     expect(frames.some(([time, opacity]) => time > 280 && time < 400 && opacity > 0 && opacity < 1)).toBe(true);
     for (let index = 1; index < frames.length; index++) {
       const [time, opacity] = frames[index], [previousTime, previousOpacity] = frames[index - 1];

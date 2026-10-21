@@ -8,7 +8,9 @@ const editor = '[data-pane-kind="editor"] .cm-content';
 const composer = '[data-notepad-command-bar] textarea';
 async function viewport(width: number, height = 844) {
   await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: false });
-  await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+  await browser.execute(() => new Promise<void>((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done()));
+  }));
   await waitForWorkspaceAnimationSettled();
 }
 async function openChat() {
@@ -342,7 +344,7 @@ describe('persistent collapsed pane rail', () => {
     await waitForWorkspaceAnimationSettled(); await viewport(640);
     await $('button[aria-label="Expand search"]').click();
     await waitForWorkspaceAnimationSettled();
-    const samples = await browser.executeAsync((done: (samples: number[][]) => void) => {
+    const samples = await browser.execute(() => new Promise<number[][]>((done) => {
       const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
       const rowWidth = document.querySelector<HTMLElement>('[data-compact-panes]')!.clientWidth;
       const rail = document.querySelector<HTMLButtonElement>('.pane-rail')!;
@@ -350,18 +352,21 @@ describe('persistent collapsed pane rail', () => {
       const circle = dock.querySelector('.dock-search-toggle')!.getBoundingClientRect().width;
       const gap = parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap'));
       const samples: number[][] = [];
-      rail.focus(); rail.click();
+      rail.focus();
+      rail.click();
       const until = performance.now() + 500;
       const sample = () => setTimeout(() => {
         const expanded = document.querySelector<HTMLElement>('[data-pane-compact]:not([data-pane-collapsed])')!;
         const paneProgress = (expanded.getBoundingClientRect().width - railWidth) / (rowWidth - railWidth * 2);
         const dockProgress = (dock.querySelector(':scope > .dock-body')!.getBoundingClientRect().left - dock.getBoundingClientRect().left) / (circle + gap);
         samples.push([paneProgress, dockProgress]);
-        if (performance.now() < until) requestAnimationFrame(sample);
-        else done(samples);
+        if (performance.now() < until)
+          requestAnimationFrame(sample);
+        else
+          done(samples);
       }, 0);
       requestAnimationFrame(sample);
-    });
+    }));
     expect(samples.some(([pane]) => pane > 0.2 && pane < 0.8)).toBe(true);
     expect(Math.max(...samples.map(([pane, dock]) => Math.abs(pane - dock)))).toBeLessThanOrEqual(0.04);
     await waitForWorkspaceAnimationSettled();
@@ -373,8 +378,26 @@ describe('persistent collapsed pane rail', () => {
     for (const width of [390, 640]) {
       await viewport(width);
       for (let direction = 0; direction < 2; direction++) {
-        const samples = await browser.executeAsync((done: (samples: Array<{ rails: number; opacity: number; left: number; related: number; frameOpacity: number; blur: string; hit: boolean; frameOpacityEffects: number }>) => void) => {
-          const samples: Array<{ rails: number; opacity: number; left: number; related: number; frameOpacity: number; blur: string; hit: boolean; frameOpacityEffects: number }> = [];
+        const samples = await browser.execute(() => new Promise<{
+          rails: number;
+          opacity: number;
+          left: number;
+          related: number;
+          frameOpacity: number;
+          blur: string;
+          hit: boolean;
+          frameOpacityEffects: number;
+        }[]>((done) => {
+          const samples: Array<{
+            rails: number;
+            opacity: number;
+            left: number;
+            related: number;
+            frameOpacity: number;
+            blur: string;
+            hit: boolean;
+            frameOpacityEffects: number;
+          }> = [];
           const rail = document.querySelector<HTMLButtonElement>('.pane-rail')!;
           const read = () => {
             const visible = [...document.querySelectorAll<HTMLElement>('.pane-rail-surface')].filter(node => Number(getComputedStyle(node).opacity) > 0.01);
@@ -386,15 +409,18 @@ describe('persistent collapsed pane rail', () => {
               frameOpacity: Number(getComputedStyle(frame).opacity), blur: getComputedStyle(frame.querySelector('.pane-header')!, '::before').backdropFilter };
           };
           samples.push(read());
-          rail.focus(); rail.click();
+          rail.focus();
+          rail.click();
           const until = performance.now() + 500;
           const sample = () => setTimeout(() => {
             samples.push(read());
-            if (performance.now() < until) requestAnimationFrame(sample);
-            else done(samples);
+            if (performance.now() < until)
+              requestAnimationFrame(sample);
+            else
+              done(samples);
           }, 0);
           requestAnimationFrame(sample);
-        });
+        }));
         expect(samples.every(sample => sample.rails === 1 && sample.opacity === 1 && sample.hit)).toBe(true);
         expect(samples.every(sample => sample.frameOpacity === 1 && sample.frameOpacityEffects === 0 && sample.blur.includes('blur('))).toBe(true);
         const from = samples[0], to = samples.at(-1)!;
@@ -416,10 +442,23 @@ describe('persistent collapsed pane rail', () => {
     for (const width of [390, 640]) {
       await viewport(width);
       for (let direction = 0; direction < 2; direction++) {
-        const samples = await browser.executeAsync((done: (samples: Array<{ spill: number; titles: Array<{ text: string; opacity: number }> }>) => void) => {
-          const samples: Array<{ spill: number; titles: Array<{ text: string; opacity: number }> }> = [];
+        const samples = await browser.execute(() => new Promise<{
+          spill: number;
+          titles: Array<{
+            text: string;
+            opacity: number;
+          }>;
+        }[]>((done) => {
+          const samples: Array<{
+            spill: number;
+            titles: Array<{
+              text: string;
+              opacity: number;
+            }>;
+          }> = [];
           const rail = document.querySelector<HTMLButtonElement>('.pane-rail')!;
-          rail.focus(); rail.click();
+          rail.focus();
+          rail.click();
           const until = performance.now() + 500;
           const sample = () => setTimeout(() => {
             const movingRail = document.querySelector<HTMLElement>('.pane-rail')!;
@@ -429,11 +468,13 @@ describe('persistent collapsed pane rail', () => {
               titles: [...movingRail.querySelectorAll<HTMLElement>('.pane-rail-label')].map(label => ({
                 text: label.querySelector('.pane-rail-title')!.textContent!, opacity: Number(getComputedStyle(label).opacity)
               })) });
-            if (performance.now() < until) requestAnimationFrame(sample);
-            else done(samples);
+            if (performance.now() < until)
+              requestAnimationFrame(sample);
+            else
+              done(samples);
           }, 0);
           requestAnimationFrame(sample);
-        });
+        }));
         expect(Math.max(...samples.map(sample => sample.spill))).toBeLessThanOrEqual(0.75);
         expect(samples.some(sample => sample.titles.length === 2 && sample.titles.every(title => title.opacity > 0.05 && title.opacity < 0.95))).toBe(true);
         expect(samples.at(-1)!.titles).toEqual([{ text: direction === 0 ? 'Thought partner' : 'Alpha note', opacity: 1 }]);
@@ -446,10 +487,10 @@ describe('persistent collapsed pane rail', () => {
     await openChat();
     for (const interruption of ['resize', 'reduced-motion']) {
       await viewport(390);
-      await browser.executeAsync((done: () => void) => {
+      await browser.execute(() => new Promise<void>((done) => {
         document.querySelector<HTMLButtonElement>('.pane-rail')!.click();
         requestAnimationFrame(() => requestAnimationFrame(() => done()));
-      });
+      }));
       expect(await browser.execute(() => document.querySelectorAll('[data-rail-label-snapshot]').length)).toBeGreaterThan(0);
       if (interruption === 'resize') await viewport(1024);
       else await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
@@ -465,18 +506,37 @@ describe('persistent collapsed pane rail', () => {
         await resetBrowserWorkspace();
         await viewport(width);
         await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-window-resizing]')));
-        const samples = await browser.executeAsync((choice: string, done: (samples: Array<{ rail: number; width: number; opacity: number; spill: number; frameLeft: number; frameWidth: number; oldWidth: number; duration?: number }>) => void) => {
+        const samples = await browser.execute((choice: string) => new Promise<{
+          rail: number;
+          width: number;
+          opacity: number;
+          spill: number;
+          frameLeft: number;
+          frameWidth: number;
+          oldWidth: number;
+          duration?: number;
+        }[]>((done) => {
           const shell = document.querySelector('.notepad-shell')!;
           const row = document.querySelector('[data-compact-panes]') ?? document.querySelector('.notepad-pane')!.parentElement!;
           const edge = row.getBoundingClientRect().right;
           const old = document.querySelector<HTMLElement>('[data-pane-frame]')!;
           const oldWidth = old.getBoundingClientRect().width;
-          const samples: Array<{ rail: number; width: number; opacity: number; spill: number; frameLeft: number; frameWidth: number; oldWidth: number; duration?: number }> = [];
+          const samples: Array<{
+            rail: number;
+            width: number;
+            opacity: number;
+            spill: number;
+            frameLeft: number;
+            frameWidth: number;
+            oldWidth: number;
+            duration?: number;
+          }> = [];
           // A mutation observer samples before the first paint of the new rail.
           const read = () => {
             const rail = document.querySelector<HTMLElement>('.pane-rail');
             const frames = [...document.querySelectorAll<HTMLElement>('[data-pane-frame]')];
-            if (!rail || frames.length !== 2) return;
+            if (!rail || frames.length !== 2)
+              return;
             const rect = rail.getBoundingClientRect(), frame = frames[1].getBoundingClientRect();
             samples.push({ rail: rect.left - edge, width: rect.width, opacity: Number(getComputedStyle(rail).opacity),
               spill: old.parentElement!.getBoundingClientRect().right - rect.left,
@@ -489,15 +549,21 @@ describe('persistent collapsed pane rail', () => {
           if (choice !== 'blank') {
             document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter'));
             document.querySelector<HTMLButtonElement>(`button[aria-label="${choice === 'chat' ? 'Split with thought partner' : 'Split with current location'}"]`)!.click();
-          } else document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click();
+          }
+          else
+            document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click();
           const until = performance.now() + 550;
           const sample = () => setTimeout(() => {
             read();
-            if (performance.now() < until) requestAnimationFrame(sample);
-            else { observer.disconnect(); done(samples); }
+            if (performance.now() < until)
+              requestAnimationFrame(sample);
+            else {
+              observer.disconnect();
+              done(samples);
+            }
           }, 0);
           requestAnimationFrame(sample);
-        }, choice);
+        }), choice);
         const moving = samples.filter(sample => typeof sample.duration === 'number');
         expect(moving.length).toBeGreaterThan(3);
         expect(moving[0].rail).toBeGreaterThanOrEqual(-1);
@@ -521,14 +587,16 @@ describe('persistent collapsed pane rail', () => {
     for (const interruption of ['reverse', 'resize', 'reduce', 'close']) {
       await resetBrowserWorkspace(); await viewport(640);
       await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-window-resizing]')));
-      await browser.executeAsync((done: () => void) => {
+      await browser.execute(() => new Promise<void>((done) => {
         document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click();
         const observe = () => {
-          if (!document.querySelector('.pane-rail')?.getAnimations().length) requestAnimationFrame(observe);
-          else requestAnimationFrame(() => done());
+          if (!document.querySelector('.pane-rail')?.getAnimations().length)
+            requestAnimationFrame(observe);
+          else
+            requestAnimationFrame(() => done());
         };
         requestAnimationFrame(observe);
-      });
+      }));
       if (interruption === 'resize') await viewport(390);
       else if (interruption === 'reduce') await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
       else await browser.execute((interruption: string) => {
@@ -553,8 +621,16 @@ describe('persistent collapsed pane rail', () => {
     for (const width of [390, 640]) {
       await viewport(width);
       for (let direction = 0; direction < 2; direction++) {
-        const samples = await browser.executeAsync((done: (samples: Array<{ gap: number; mask: string; padding: boolean }>) => void) => {
-          const samples: Array<{ gap: number; mask: string; padding: boolean }> = [];
+        const samples = await browser.execute(() => new Promise<{
+          gap: number;
+          mask: string;
+          padding: boolean;
+        }[]>((done) => {
+          const samples: Array<{
+            gap: number;
+            mask: string;
+            padding: boolean;
+          }> = [];
           const read = () => {
             const rail = document.querySelector<HTMLElement>('.pane-rail')!;
             const headers = [...document.querySelectorAll('.pane-header')].map(header => header.getBoundingClientRect().bottom);
@@ -562,15 +638,18 @@ describe('persistent collapsed pane rail', () => {
             samples.push({ gap: rail.getBoundingClientRect().top - Math.max(...headers),
               mask: getComputedStyle(rail, '::before').maskImage, padding: style.paddingTop === style.paddingBottom });
           };
-          read(); document.querySelector<HTMLButtonElement>('.pane-rail')!.click();
+          read();
+          document.querySelector<HTMLButtonElement>('.pane-rail')!.click();
           const until = performance.now() + 500;
           const sample = () => setTimeout(() => {
             read();
-            if (performance.now() < until) requestAnimationFrame(sample);
-            else done(samples);
+            if (performance.now() < until)
+              requestAnimationFrame(sample);
+            else
+              done(samples);
           }, 0);
           requestAnimationFrame(sample);
-        });
+        }));
         expect(samples.every(sample => Math.abs(sample.gap) <= 1 && sample.padding)).toBe(true);
         expect(samples.every(sample => (sample.mask.match(/rgba\(0, 0, 0, 0\)/g) ?? []).length === 2)).toBe(true);
         await waitForWorkspaceAnimationSettled();
@@ -591,20 +670,29 @@ describe('persistent collapsed pane rail', () => {
         await waitForWorkspaceAnimationSettled();
         await viewport(width);
         if (side === 'left') await expandRail();
-        const samples = await browser.executeAsync((done: (samples: Array<{ width: number; duration: number }>) => void) => {
+        const samples = await browser.execute(() => new Promise<{
+          width: number;
+          duration: number;
+        }[]>((done) => {
           const pane = document.querySelector<HTMLElement>('[data-pane-compact]:not([data-pane-collapsed])')!;
-          const samples: Array<{ width: number; duration: number }> = [];
+          const samples: Array<{
+            width: number;
+            duration: number;
+          }> = [];
           pane.querySelector<HTMLButtonElement>('button[aria-label="Close pane"]')!.click();
           const until = performance.now() + 550;
           const sample = () => setTimeout(() => {
             const effect = pane.getAnimations()[0]?.effect;
-            if (effect) samples.push({ width: pane.getBoundingClientRect().width,
-              duration: Number(effect.getTiming().duration) });
-            if (performance.now() < until) requestAnimationFrame(sample);
-            else done(samples);
+            if (effect)
+              samples.push({ width: pane.getBoundingClientRect().width,
+                duration: Number(effect.getTiming().duration) });
+            if (performance.now() < until)
+              requestAnimationFrame(sample);
+            else
+              done(samples);
           }, 0);
           requestAnimationFrame(sample);
-        });
+        }));
         expect(samples.length).toBeGreaterThan(3);
         expect([...new Set(samples.map(sample => sample.duration))]).toEqual([dockMorphDuration]);
         for (let index = 1; index < samples.length; index++) {
@@ -634,11 +722,22 @@ describe('persistent collapsed pane rail', () => {
           }
           await viewport(width);
           if (side === 'left') await expandRail();
-          const result = await browser.executeAsync((side: string, done: (result: { before: number[]; edge: number; samples: Array<{ pose: number[]; rails: number; opacity: number; rail: number; spill: number }> }) => void) => {
+          const result = await browser.execute((side: string) => new Promise<{
+            before: number[];
+            edge: number;
+            samples: Array<{
+              pose: number[];
+              rails: number;
+              opacity: number;
+              rail: number;
+              spill: number;
+            }>;
+          }>((done) => {
             const pane = document.querySelector<HTMLElement>('[data-pane-compact]:not([data-pane-collapsed])')!;
             const frame = pane.querySelector<HTMLElement>('[data-pane-frame]')!;
             const text = frame.querySelector<HTMLElement>('.cm-line, [role="log"] p')!;
-            const range = document.createRange(); range.selectNodeContents(text);
+            const range = document.createRange();
+            range.selectNodeContents(text);
             const readPose = () => {
               const rect = frame.getBoundingClientRect(), textRect = range.getBoundingClientRect();
               return [rect.left, rect.width, textRect.left, textRect.top, textRect.width, textRect.height];
@@ -646,7 +745,13 @@ describe('persistent collapsed pane rail', () => {
             const before = readPose();
             const row = pane.parentElement!.getBoundingClientRect();
             const edge = side === 'left' ? row.left - 48 : row.right;
-            const samples: Array<{ pose: number[]; rails: number; opacity: number; rail: number; spill: number }> = [];
+            const samples: Array<{
+              pose: number[];
+              rails: number;
+              opacity: number;
+              rail: number;
+              spill: number;
+            }> = [];
             pane.querySelector<HTMLButtonElement>('button[aria-label="Close pane"]')!.click();
             const until = performance.now() + 600;
             const sample = () => setTimeout(() => {
@@ -660,11 +765,13 @@ describe('persistent collapsed pane rail', () => {
                   rail: rail?.left ?? 0,
                   spill: !rail ? Infinity : clip.width < 0.1 ? 0 : side === 'left' ? clip.right - rail.left : rail.right - clip.left });
               }
-              if (performance.now() < until) requestAnimationFrame(sample);
-              else done({ before, edge, samples });
+              if (performance.now() < until)
+                requestAnimationFrame(sample);
+              else
+                done({ before, edge, samples });
             }, 0);
             requestAnimationFrame(sample);
-          }, side);
+          }), side);
           expect(result.samples.length).toBeGreaterThan(3);
           expect(result.samples.every(sample => sample.rails === 1 && sample.opacity === 1)).toBe(true);
           expect(Math.max(...result.samples.flatMap(sample => sample.pose.map((value, index) => Math.abs(value - result.before[index]))))).toBeLessThanOrEqual(0.75);
@@ -688,15 +795,17 @@ describe('persistent collapsed pane rail', () => {
       await browser.execute(() => document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click());
       await waitForWorkspaceAnimationSettled();
       if (side === 'left') await expandRail();
-      await browser.executeAsync((done: () => void) => {
+      await browser.execute(() => new Promise<void>((done) => {
         const pane = document.querySelector<HTMLElement>('[data-pane-compact]:not([data-pane-collapsed])')!;
         pane.querySelector<HTMLButtonElement>('button[aria-label="Close pane"]')!.click();
         const sample = () => {
-          if (!pane.getAnimations().length) requestAnimationFrame(sample);
-          else requestAnimationFrame(() => done());
+          if (!pane.getAnimations().length)
+            requestAnimationFrame(sample);
+          else
+            requestAnimationFrame(() => done());
         };
         requestAnimationFrame(sample);
-      });
+      }));
       if (interruption === 'resize') await viewport(1024);
       else await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
       await waitForWorkspaceAnimationSettled();

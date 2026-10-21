@@ -38,7 +38,7 @@
     overlay?: Snippet;
     /** Optional synchronization with a caller's surrounding layout animation. */
     transitionContext?: () => { coordinated?: boolean; easing?: ContainerEasing; immediate?: boolean };
-    layoutEndpoint?: { id: number; left: number; width: number } | null;
+    layoutEndpoint?: { id: number; left: number; width: number; startedAt?: number } | null;
   }
 </script>
 
@@ -58,6 +58,7 @@
   let motion = $state.raw(untrack(() => createContainerMotion(containerGeometry(items, measure))));
   let worldOrigin = $state<number | null>(null);
   let coordinated = $state(false);
+  let layoutClockPending = $state(false);
   let reduced = false;
   let frame: number | undefined;
   let readMeasure: (() => void) | undefined;
@@ -91,51 +92,71 @@
     const id = motion.transition?.id;
     if (id === undefined) return;
     const advance = (now: number) => {
+      // A fresh layout-only motion starts when its surrounding pane effects
+      // do. Consume the matching timestamp once; exchanges keep their clock.
+      if (layoutClockPending && motion.transition?.id === id && layoutEndpoint?.id === id &&
+        Number.isFinite(layoutEndpoint.startedAt)) {
+        motion = { ...motion, transition: { ...motion.transition, startedAt: layoutEndpoint.startedAt! } };
+        layoutClockPending = false;
+      }
       readMeasure?.();
       motion = sampleContainerMotion(motion, destination, now, id);
       if (motion.transition?.id === id) frame = requestAnimationFrame(advance);
-      else frame = undefined;
+      else { frame = undefined; layoutClockPending = false; }
     };
     frame = requestAnimationFrame(advance);
   }
   let previousSignature: string | undefined;
+  let layoutPrepared = false;
   let paintedGeometry = untrack(() => motion.geometry);
+  function startMotion(layout = false) {
+    const context = { ...transitionContext?.(), ...(layout ? { coordinated: true } : {}) };
+    // Capture the painted geometry before new size constraints reach the DOM.
+    const body = element?.querySelector<HTMLElement>(':scope > .morph-body');
+    const bounds = body?.getBoundingClientRect();
+    const left = element?.getBoundingClientRect().left ?? 0;
+    const origin = { ...paintedGeometry, bodyX: bounds ? bounds.left - left : geometry.bodyX,
+      bodyWidth: bounds?.width ?? geometry.bodyWidth, bodyHeight: bounds?.height ?? geometry.bodyHeight };
+    coordinated = !!context?.coordinated;
+    worldOrigin = left;
+    motion = requestContainerMotion({ ...motion, geometry: origin, transition: null }, destination, performance.now(),
+      { easing: context?.easing, immediate: reduced || context?.immediate });
+    layoutClockPending = layout && !!motion.transition;
+    animate();
+  }
+  // Pane layout can move the group without changing an item's state. Capture
+  // its displayed pose before flex changes and run the existing shared clock.
+  export function prepareLayout() { startMotion(true); layoutPrepared = true; }
   $effect.pre(() => {
     const next = signature;
     untrack(() => {
       if (previousSignature === undefined) { previousSignature = next; return; }
       if (next === previousSignature) return;
       previousSignature = next;
-      const context = transitionContext?.();
-      // Capture the painted geometry before new size constraints reach the DOM.
-      const body = element?.querySelector<HTMLElement>(':scope > .morph-body');
-      const bounds = body?.getBoundingClientRect();
-      const left = element?.getBoundingClientRect().left ?? 0;
-      const origin = { ...paintedGeometry, bodyX: bounds ? bounds.left - left : geometry.bodyX,
-        bodyWidth: bounds?.width ?? geometry.bodyWidth, bodyHeight: bounds?.height ?? geometry.bodyHeight };
-      coordinated = !!context?.coordinated;
-      worldOrigin = left;
-      motion = requestContainerMotion({ ...motion, geometry: origin, transition: null }, destination, performance.now(),
-        { easing: context?.easing, immediate: reduced || context?.immediate });
-      animate();
+      // A pane operation already captured the pre-cancellation pose. New item
+      // states update its destination without recapturing cancelled DOM bounds.
+      if (!layoutPrepared) startMotion();
+      else layoutClockPending = false;
     });
   });
   $effect(() => {
     paintedGeometry = geometry;
+    layoutPrepared = false;
     presentation = { geometry, transition: motion.transition, textVisible, contentHeights: heights };
   });
   function observe(node: HTMLDivElement) {
     const media = matchMedia('(prefers-reduced-motion: reduce)');
     reduced = media.matches;
     const read = () => {
-      availableWidth = node.clientWidth;
+      // Preserve subpixel layout during pane animation; clientWidth rounds.
+      availableWidth = node.getBoundingClientRect().width;
     };
     readMeasure = read;
     read();
     const observer = new ResizeObserver(read);
     observer.observe(node);
     const finish = () => {
-      cancel(); reduced = media.matches;
+      cancel(); layoutClockPending = false; reduced = media.matches;
       read(); motion = { ...motion, geometry: destination, transition: null };
     };
     window.addEventListener('resize', finish);
@@ -157,6 +178,7 @@
 
 <div bind:this={element} use:observe class={`morphing-containers ${className}`} style={styles} {...attributes}
   data-dock-motion={motion.transition?.id} data-dock-started-at={motion.transition?.startedAt}
+  data-dock-clock-pending={motion.transition && layoutClockPending || undefined}
   data-dock-duration={motion.transition?.duration} data-dock-easing={motion.transition?.easing}
   data-dock-results-ready-at={motion.transition ? motion.transition.startedAt + motion.transition.duration : undefined}
   data-dock-text-reveal={textVisible || undefined} data-container-count={items.length}>
@@ -169,7 +191,7 @@
         type="button" aria-label={item.label} title={item.label} aria-expanded={item.state === 'expanded'}
         aria-controls={item.controls} aria-hidden={selected || item.disabled || undefined} tabindex={selected || item.disabled ? -1 : 0}
         disabled={item.disabled} onmousedown={event => event.preventDefault()} onclick={item.onActivate}
-        style={`left:${icon.x}px;width:${icon.size}px;height:${icon.size}px;opacity:${icon.visibility};--morph-glyph-offset:${icon.glyphOffset}px`}>
+        style={`left:${icon.x}px;width:${icon.size}px;height:${icon.size}px;--morph-icon-opacity:${icon.visibility};--morph-glyph-offset:${icon.glyphOffset}px`}>
         {@render item.icon(itemPresentation(item))}
       </button>
     {/if}
@@ -205,7 +227,7 @@
     position: absolute; bottom: calc(var(--morph-bottom-inset) + var(--morph-circle) / 2);
     transform: translateY(50%); min-width: 0; min-height: 0; display: inline-flex;
     align-items: center; justify-content: center; border-radius: 9999px; color: var(--muted-foreground);
-    background: transparent; box-shadow: none;
+    background: transparent; box-shadow: none; opacity: var(--morph-icon-opacity, 1);
   }
   .morph-toggle :global(svg) { transform: translateX(var(--morph-glyph-offset, 0px)); }
   .morph-toggle[aria-hidden='true'] { pointer-events: none; }

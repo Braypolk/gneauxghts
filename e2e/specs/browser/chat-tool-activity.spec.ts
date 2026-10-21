@@ -6,20 +6,20 @@ describe('chat tool activity', () => {
   beforeEach(resetBrowserWorkspace);
 
   it('collapses tool rounds, exposes readable paired rows, and scrolls inside a bounded container', async () => {
-    const seeded = await browser.executeAsync((done: (result: string) => void) => {
+    const seeded = await browser.execute(() => new Promise<string>((done) => {
       void window.__GNEAUXGHTS_E2E__!.seedPiChat({ title: 'Tool activity fixture', toolCalls: 24 }).then(done);
-    });
+    }));
     expect(seeded).toBeTruthy();
     await openBrowserPiPane();
     await selectPiConversation('Tool activity fixture');
     const activity = await $('[data-testid="pi-tool-activity"]');
     await expect(activity).toHaveAttribute('data-state', 'closed');
-    await expect(activity.$('[data-slot="trace-collapsible-trigger"]')).toHaveText(expect.stringContaining('Read notes'));
-    await expect(activity.$('[data-slot="trace-collapsible-trigger"]')).toHaveText(expect.stringContaining('1 failed'));
+    await expect(activity.$(':scope > [data-slot="trace-collapsible-trigger"]')).toHaveText(expect.stringContaining('Read notes'));
+    await expect(activity.$(':scope > [data-slot="trace-collapsible-trigger"]')).toHaveText(expect.stringContaining('1 failed'));
     await expect($('[data-testid="pi-assistant-message"] .pi-assistant-body')).toHaveText('Your notes explore creative projects and useful everyday tools.');
     const scroll = await $('[data-testid="pi-tool-activity-scroll"]');
     await expect(scroll).not.toBeDisplayed();
-    await activity.$('[data-slot="trace-collapsible-trigger"]').click();
+    await activity.$(':scope > [data-slot="trace-collapsible-trigger"]').click();
     await expect(scroll).toBeDisplayed();
     const rows = await activity.$$('[data-testid="pi-tool-result"]');
     expect(rows.length).toBe(24);
@@ -50,7 +50,7 @@ describe('chat tool activity', () => {
     expect(geometry.height).toBeLessThanOrEqual(Math.min(352, geometry.viewport * .45));
     expect(geometry.innerTop).toBeGreaterThan(0);
     expect(geometry.outerAfter).toBe(geometry.outerTop);
-    await activity.$('[data-slot="trace-collapsible-trigger"]').click();
+    await activity.$(':scope > [data-slot="trace-collapsible-trigger"]').click();
     await expect(scroll).not.toBeDisplayed();
     await browser.keys('Enter');
     await expect(scroll).toBeDisplayed();

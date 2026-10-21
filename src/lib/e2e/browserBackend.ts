@@ -632,6 +632,8 @@ function historicalDiff(
       return null;
     }
     if (command === 'plugin:window|theme') return 'light';
+    // Browser tests exercise the DOM preference; there is no native app theme.
+    if (command === 'plugin:app|set_app_theme') return null;
     if (command === 'load_note_session') return session(activeNote);
     if (command === 'open_note' || command === 'read_note') {
       const note = findNote(args);
@@ -900,10 +902,7 @@ function historicalDiff(
       return id;
     }
     if (command === 'plugin:event|unlisten') {
-      const id = Number(args.eventId);
-      const listener = listeners.get(id);
-      if (listener) callbacks.delete(listener.handler);
-      listeners.delete(id);
+      eventInternals.unregisterListener(String(args.event), Number(args.eventId));
       return null;
     }
     if (['chat_list_note_policies', 'chat_list_openai_models'].includes(command)) return [];
@@ -961,11 +960,22 @@ function historicalDiff(
     }
   };
 
+  // Tauri's public unlisten calls this registry before invoking the backend.
+  // Own both halves so plain-browser sessions need no service-injected globals.
+  const eventInternals = {
+    unregisterListener(_event: string, id: number) {
+      const listener = listeners.get(id);
+      if (listener) callbacks.delete(listener.handler);
+      listeners.delete(id);
+    }
+  };
+
   const bridge = {
     invocations,
     restoreIpc() {
       internals.invoke = invoke;
       window.__TAURI_INTERNALS__ = internals;
+      window.__TAURI_EVENT_PLUGIN_INTERNALS__ = eventInternals;
     },
     setRelatedResponse(response: RelatedNotesResponse | null, delayMillis = 0) { relatedResponse = response; relatedDelayMillis = delayMillis; },
     setAtlas(response: VaultAtlasResponse) { atlasOverride = response; },
@@ -1011,11 +1021,14 @@ function historicalDiff(
 export function installBrowserE2eBackend() {
   if (!import.meta.env.DEV || import.meta.env.VITE_E2E_BROWSER !== 'true' || window.__GNEAUXGHTS_E2E__) return;
   const backend = createBrowserE2eBackend(window.__GNEAUXGHTS_E2E_COMMANDS__ ??= {});
-  window.__TAURI_INTERNALS__ = backend.internals;
+  backend.bridge.restoreIpc();
   window.__GNEAUXGHTS_E2E__ = backend.bridge;
 }
 
 
 declare global {
-  interface Window { __TAURI_INTERNALS__: Record<string, unknown>; }
+  interface Window {
+    __TAURI_INTERNALS__: Record<string, unknown>;
+    __TAURI_EVENT_PLUGIN_INTERNALS__: { unregisterListener(event: string, id: number): void };
+  }
 }

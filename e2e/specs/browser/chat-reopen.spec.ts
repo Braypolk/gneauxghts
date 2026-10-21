@@ -22,7 +22,7 @@ describe('opening the most recently viewed chat', () => {
     expect(await readPiFixture()).toEqual(before);
 
     await $('button[aria-label="Conversations"]').click();
-    await $('button[role="menuitem"]').click();
+    await $('button[data-new-conversation]').click();
     await expect($('input[aria-label="Conversation title"]')).toHaveValue('');
     await expect($('[data-testid="pi-assistant-message"]')).not.toBeExisting();
     expect(await readPiFixture()).toEqual(before);

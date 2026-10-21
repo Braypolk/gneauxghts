@@ -63,9 +63,12 @@ async function resizeAndSample(width: number) {
   let result: { frames: ResizeFrame[]; error?: string };
   try {
     await browser.setWindowSize(width, 1000);
-    result = await browser.executeAsync((done: (result: { frames: ResizeFrame[]; error?: string }) => void) => {
+    result = await browser.execute(() => new Promise<{
+      frames: ResizeFrame[];
+      error?: string;
+    }>((done) => {
       void window.__workspaceResizeSamples.then(done);
-    });
+    }));
   } finally {
     await browser.execute(() => window.__cancelWorkspaceResizeSamples?.());
   }

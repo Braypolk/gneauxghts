@@ -100,7 +100,7 @@ describe('Pi note creation through ordinary chat', function () {
     const reopen = async () => {
       await restartPiFixture();
       if ((await paneState()).conversationId !== id) {
-        await $('[aria-label="Conversations"]').click(); await $(`button[data-conversation-id="${id}"]`).click();
+        await $('button[aria-label="Conversations"]').click(); await $(`button[data-conversation-id="${id}"]`).click();
       }
     };
     await reopen();

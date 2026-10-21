@@ -8,11 +8,12 @@ describe('forgetting chats from the conversation list', () => {
   beforeEach(resetBrowserWorkspace);
 
   it('forgets consecutive unopened chats while keeping the list, scroll position and current draft', async () => {
-    await browser.executeAsync((done: (error: string | null) => void) => {
+    await browser.execute(() => new Promise<string | null>((done) => {
       void (async () => {
-        for (let index = 0; index < 18; index++) await window.__GNEAUXGHTS_E2E__!.seedPiChat({ title: `Cleanup ${index}`, count: 1 });
+        for (let index = 0; index < 18; index++)
+          await window.__GNEAUXGHTS_E2E__!.seedPiChat({ title: `Cleanup ${index}`, count: 1 });
       })().then(() => done(null), cause => done(String(cause)));
-    });
+    }));
     await seedPiHistory('Keep open', 1);
     await openBrowserPiPane(); await selectPiConversation('Keep open');
     const composer = await $('textarea[aria-label="Message"]');

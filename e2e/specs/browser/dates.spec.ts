@@ -101,7 +101,7 @@ describe('date commands and chip pickers', () => {
     const original = `Email sent ${dates[0]} and ${dates[1]}\nOther notes`;
     await editorText(original);
     await waitForSaved(original);
-    const chip = await $('button[aria-label^="Edit date:"]');
+    const chip = await browser.$$('button[aria-label^="Edit date:"]')[0];
     await chip.click();
     await $('dialog.date-time-picker').waitForDisplayed();
     expect(await $('[aria-label="Date or shortcut"]').isExisting()).toBe(false);
@@ -145,7 +145,7 @@ describe('date commands and chip pickers', () => {
     await chip.click();
     await $('dialog.date-time-picker').waitForDisplayed();
     await $('[aria-label="Time"]').setValue('00:01');
-    await $('.cm-line').click();
+    await $('.cm-line=Target line').click();
     await $('dialog.date-time-picker').waitForExist({ reverse: true });
     await browser.keys('!');
     await waitForSaved(`Target line!\nMeeting ${time}\nTail`);
@@ -213,7 +213,7 @@ describe('date commands and chip pickers', () => {
     await $('[aria-label="Date or shortcut"]').setValue('Friday');
     await $('p*=Selected:').waitForDisplayed();
     await $('[data-testid="date-picker-next-month"]').click();
-    const day = await $('dialog [data-bits-day]:not([data-outside-month])');
+    const day = await browser.$$('dialog [data-bits-day]:not([data-outside-month])')[0];
     await day.click();
     await $('button=Apply').click();
     await waitForSaved('@due(');
@@ -274,16 +274,16 @@ describe('date commands and chip pickers', () => {
     await navigateAppTab('List');
     await $('[aria-label="Due date filter"]').waitForDisplayed();
     await $('[aria-label="Due date filter"]').selectByAttribute('value', 'overdue');
+    await expect(browser.$$('.task-row')).toBeElementsArrayOfSize(1);
     await expect($('.task-row')).toHaveText(expect.stringContaining('Late'));
-    expect(await browser.$$('.task-row')).toHaveLength(1);
     await $('button[aria-label="Edit due date: 2000-01-01"]').click();
     await $('[aria-label="Date or shortcut"]').setValue('2099-01-01');
     await $('button=Apply').click();
     await $('dialog.date-time-picker').waitForExist({ reverse: true });
     await $('[aria-label="Due date filter"]').selectByAttribute('value', 'upcoming');
-    await expect($('.task-row')).toHaveText(expect.stringContaining('Late'));
+    await expect($('.task-row*=Late')).toHaveText(expect.stringContaining('Late'));
     await $('[aria-label="Due date filter"]').selectByAttribute('value', 'undated');
-    await expect($('.task-row')).toHaveText(expect.stringContaining('Undated'));
+    await expect($('.task-row*=Undated')).toHaveText(expect.stringContaining('Undated'));
   });
   it('preserves inline surroundings and block commands, dismisses slash text and excludes code/URLs', async () => {
     await navigateAppTab('Gneauxght');

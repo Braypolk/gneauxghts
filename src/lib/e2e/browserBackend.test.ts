@@ -1,7 +1,26 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createBrowserE2eBackend } from './browserBackend';
+import { listen } from '@tauri-apps/api/event';
 
 describe('browser fixture command ownership', () => {
+  it('supports public Tauri listener cleanup without a WebDriver service', async () => {
+    const backend = createBrowserE2eBackend();
+    vi.stubGlobal('window', {});
+    try {
+      backend.bridge.restoreIpc();
+      const first = vi.fn(), second = vi.fn();
+      const unlisten = await listen('saved', first);
+      await listen('saved', second);
+      backend.bridge.emit('saved', 'before');
+      await unlisten();
+      await unlisten(); // Cleanup is idempotent across the JS and IPC registries.
+      backend.bridge.emit('saved', 'after');
+      expect(first).toHaveBeenCalledTimes(1);
+      expect(second).toHaveBeenCalledTimes(2);
+      expect(second.mock.calls[1][0]).toMatchObject({ payload: 'after' });
+    } finally { vi.unstubAllGlobals(); }
+  });
+
   it('reattaches its IPC after service injection without losing fixture state', async () => {
     const backend = createBrowserE2eBackend();
     await backend.invoke('save_note', { currentPath: '/e2e/alpha.md', title: 'Alpha', markdown: 'Retained fixture edit' });

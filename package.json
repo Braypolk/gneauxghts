@@ -4,9 +4,12 @@
   "description": "",
   "type": "module",
   "engines": {
-    "node": ">=22.17.0"
+    "node": ">=22.19.0"
   },
   "scripts": {
+    "agent:serve": "node e2e/agent/serve.mjs",
+    "agent:session": "pnpm --dir e2e/agent exec wdio session",
+    "agent:test": "pnpm --dir e2e/agent exec wdio run ./wdio.conf.js",
     "dev": "vite dev",
     "atlas:lab": "VITE_E2E_BROWSER=true node scripts/atlasPrototype.mjs",
     "build": "vite build",
@@ -77,20 +80,20 @@
     "@tauri-apps/cli": "2.12.4",
     "@types/mocha": "10.0.10",
     "@types/node": "24.19.2",
-    "@wdio/cli": "9.32.0",
-    "@wdio/globals": "9.31.3",
-    "@wdio/local-runner": "9.32.0",
-    "@wdio/mocha-framework": "9.32.0",
-    "@wdio/spec-reporter": "9.32.0",
-    "@wdio/tauri-plugin": "1.5.0",
-    "@wdio/tauri-service": "1.5.0",
-    "@wdio/types": "9.32.0",
+    "@wdio/cli": "10.1.0",
+    "@wdio/globals": "10.1.0",
+    "@wdio/local-runner": "10.1.0",
+    "@wdio/mocha-framework": "10.1.0",
+    "@wdio/spec-reporter": "10.1.0",
+    "@wdio/types": "10.1.0",
     "esbuild": "0.28.2",
+    "expect-webdriverio": "8.0.0",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.7",
     "typescript": "~6.0.3",
     "vite": "^8.3.5",
-    "vitest": "^4.1.12"
+    "vitest": "^4.1.12",
+    "webdriverio": "10.1.0"
   },
   "imports": {
     "#lib/*": "./src/lib/*"

@@ -1,5 +1,6 @@
 import { navigateAppTab } from '../../support/appNavigation';
-import { browser, expect, $ } from '@wdio/globals';
+import { browser, expect, $, $$ } from '@wdio/globals';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 import { openBrowserPiPane, readPiFixture, seedPiHistory, selectPiConversation } from '../../support/browserPi';
 
@@ -8,7 +9,9 @@ describe('ordinary Pi chat mounted controls', () => {
 
   it('paints Stop in the dock while Pi is running and returns to Send after cancelling', async () => {
     await openBrowserPiPane();
-    await browser.executeAsync((done: () => void) => { void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done); });
+    await browser.execute(() => new Promise<void>((done) => {
+      void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done);
+    }));
     const composer = await $('textarea[aria-label="Message"]');
     await composer.setValue('Wait for Stop');
     await $('[data-testid="pi-send"]').click();
@@ -43,7 +46,7 @@ describe('ordinary Pi chat mounted controls', () => {
     await $('[data-testid="pi-reasoning"] [data-slot="trace-collapsible-trigger"]').click();
     await expect($('[data-testid="pi-reasoning"] pre')).toHaveText('Fixture reasoning.');
     await $('button[aria-label="Conversations"]').click();
-    await $('button[role="menuitem"]').click();
+    await $('button[data-new-conversation]').click();
     await selectPiConversation(conversations[0].title);
     await expect($('[data-testid="pi-assistant-message"]')).toHaveText(expect.stringContaining('Fixture ordinary answer.'));
     expect((await readPiFixture())[0].messages).toEqual(conversations[0].messages);
@@ -61,13 +64,47 @@ describe('ordinary Pi chat mounted controls', () => {
     await $('[role="menuitemradio"]=No notes').click();
     await expect($('button[aria-label="Vault access"]')).toHaveText('No notes');
     await $('button[aria-label="AI model"]').click();
-    await $('[role="menu"][aria-label="Server models"] [role="menuitem"]').click();
+    await (await $$('[role="menu"][aria-label="Server models"] [role="menuitem"]'))[0].click();
     await $('button[aria-label="Reasoning effort"]').click();
     await $('[role="menu"][aria-label="Reasoning effort choices"]').$('button=Off').click();
     await expect($('button[aria-label="Reasoning effort"]')).toHaveText(expect.stringContaining('Off'));
     await expect(composer).toHaveValue('Keep this thought');
     expect(await readPiFixture()).toHaveLength(0);
   });
+
+  for (const width of [1440, 393]) {
+    it(`keeps every access-menu choice clickable after a dock exchange at ${width}px`, async () => {
+      await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+      try {
+        if (width >= 640) await openBrowserPiPane();
+        else {
+          await $('button[aria-label="Open thought partner"]').click();
+          await $('textarea[aria-label="Message"]').waitForEnabled();
+        }
+        await waitForWorkspaceAnimationSettled();
+        await $('.dock-search-toggle').click();
+        await waitForWorkspaceAnimationSettled();
+        await $('.dock-chat-toggle').click();
+        await waitForWorkspaceAnimationSettled();
+        const access = $('button[aria-label="Vault access"]');
+        const menu = $('[role="menu"][aria-label="Vault access choices"]');
+        for (const label of ['No notes', 'Full vault', 'Allow edits in this chat', 'Always allow edits', 'Editing off']) {
+          await access.click();
+          await menu.$(`[role="menuitemradio"]=${label}`).click();
+          await expect(menu).not.toBeExisting();
+          await access.click();
+          await expect(menu.$(`[role="menuitemradio"]=${label}`)).toHaveAttribute('aria-checked', 'true');
+          await browser.keys('Escape');
+          await expect(menu).not.toBeExisting();
+        }
+        await access.click();
+        await $('input[aria-label="Conversation title"]').click();
+        await expect(menu).not.toBeExisting();
+      } finally {
+        await browser.sendCommand('Emulation.clearDeviceMetricsOverride', {});
+      }
+    });
+  }
 
   it('forgets the selected chat, hides it from history, and unForgets the same messages', async () => {
     await seedPiHistory('Forget test chat', 2);

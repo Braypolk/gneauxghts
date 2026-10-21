@@ -4,9 +4,12 @@ async function key(key: string, meta = false) {
   await browser.execute((key, meta) => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key, metaKey: meta, bubbles: true, cancelable: true })), key, meta);
 }
 async function invoke(command: string, args: Record<string, unknown>) {
-  const result = await browser.executeAsync((command, args, done) => {
+  const result = await browser.execute((command, args) => new Promise<{
+    value?: any;
+    error?: string;
+  } | undefined>((done) => {
     (window as any).__TAURI_INTERNALS__.invoke(command, args).then((value: unknown) => done({ value }), (error: unknown) => done({ error: String(error) }));
-  }, command, args) as { value?: any; error?: string };
+  }), command, args) as { value?: any; error?: string };
   if (result.error) throw new Error(result.error); return result.value;
 }
 describe('native image interaction lifecycle', () => {

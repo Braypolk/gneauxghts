@@ -5,6 +5,34 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 import { clockProgress as dockClockProgress, containerMorphDuration as dockMorphDuration } from '../../../src/lib/ui/morphing-containers/motion';
 
 describe('consistent split entry', () => {
+  it('keeps the centered dock stationary when split entry is reversed mid-flight', async () => {
+    await resetBrowserWorkspace();
+    await browser.setWindowSize(1440, 1000);
+    await waitForWorkspaceAnimationSettled();
+    const result = await browser.execute(() => new Promise<{ left: number[]; reversed: boolean }>(resolve => {
+      const body = document.querySelector('.workspace-input-dock > .dock-body')!;
+      const left = [body.getBoundingClientRect().left];
+      const started = performance.now();
+      let reversed = false;
+      const sample = () => {
+        left.push(body.getBoundingClientRect().left);
+        const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
+        if (!reversed && pane && document.querySelector('[data-pane-motion]') && performance.now() - started >= 140) {
+          reversed = true;
+          pane.querySelector<HTMLButtonElement>('button[aria-label="Close pane"]')!.click();
+        }
+        if (performance.now() - started >= 1000) resolve({ left, reversed });
+        else setTimeout(() => requestAnimationFrame(sample), 0);
+      };
+      document.querySelector<HTMLButtonElement>('button[aria-label="Open split pane options"]')!.click();
+      setTimeout(() => requestAnimationFrame(sample), 0);
+    }));
+    expect(result.reversed).toBe(true);
+    expect(Math.max(...result.left) - Math.min(...result.left)).toBeLessThanOrEqual(1);
+    await waitForWorkspaceAnimationSettled();
+    expect(await browser.execute(() => document.querySelectorAll('[data-testid="workspace-pane"]').length)).toBe(1);
+  });
+
   for (const width of [1440, 390]) {
     for (const source of ['editor', 'chat']) {
       const actions: PaneMotionAction[] = source === 'editor'

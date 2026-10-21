@@ -6,9 +6,9 @@ describe('Pi note source navigation', () => {
   beforeEach(resetBrowserWorkspace);
 
   it('opens and selects the cited passage in the note instead of revision history', async () => {
-    await browser.executeAsync((done: (error: string | null) => void) => {
+    await browser.execute(() => new Promise<string | null>((done) => {
       void window.__GNEAUXGHTS_E2E__!.seedPiChat({ title: 'Note sources', count: 2, revisionSource: true }).then(() => done(null), error => done(String(error)));
-    }).then(error => { expect(error).toBe(null); });
+    })).then(error => { expect(error).toBe(null); });
     await openBrowserPiPane();
     await selectPiConversation('Note sources');
     const citation = await $('[data-pi-source]');

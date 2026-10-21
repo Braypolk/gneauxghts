@@ -17,13 +17,13 @@ it('updates complete image inventories from either mounted pane with distant ref
     const data = new DataTransfer(); data.setData('text/plain', value);
     content.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   }, markdown);
-  await browser.executeAsync((done: () => void) => {
+  await browser.execute(() => new Promise<void>((done) => {
     const module = '/node_modules/@codemirror/view/dist/index.js';
     import(module).then(cm => {
       cm.EditorView.findFromDOM(document.querySelector('.cm-content')).dispatch({ selection: { anchor: 0 }, scrollIntoView: true });
       done();
     });
-  });
+  }));
   await $('.gn-image-embed img').waitForDisplayed();
   await $('button[aria-label="Open split pane options"]').click();
   await $('#pane-command-current').waitForExist(); await $('#pane-command-current').click();
@@ -31,7 +31,7 @@ it('updates complete image inventories from either mounted pane with distant ref
   await browser.waitUntil(() => browser.execute(() =>
     document.querySelectorAll('[data-testid="note-editor"] .cm-content').length === 2));
 
-  const result = await browser.executeAsync((done: (value: any) => void) => {
+  const result = await browser.execute(() => new Promise<any>((done) => {
     const viewModule = '/node_modules/@codemirror/view/dist/index.js';
     const stateModule = '/src/lib/features/notepad/images/imageState.ts';
     const parserModule = '/src/lib/features/notepad/images/imageEmbedParser.ts';
@@ -41,7 +41,8 @@ it('updates complete image inventories from either mounted pane with distant ref
       views[0].dispatch({ selection: { anchor: 0 }, scrollIntoView: true });
       views[1].dispatch({ selection: { anchor: views[1].state.doc.toString().indexOf('![ref|') }, scrollIntoView: true });
       // Settle CodeMirror's measured image heights before capturing scroll.
-      for (let i = 0; i < 8; i++) await frame();
+      for (let i = 0; i < 8; i++)
+        await frame();
       const reports = [];
       for (const source of [0, 1]) {
         const view = views[source], sibling = views[1 - source];
@@ -60,7 +61,7 @@ it('updates complete image inventories from either mounted pane with distant ref
       }
       done({ reports, widgets: views.map(view => view.dom.querySelectorAll('.gn-image-embed').length) });
     }).catch(error => done({ error: String(error) }));
-  });
+  }));
   expect(result.error).toBeUndefined();
   for (const report of result.reports) {
     expect(report.consistent).toBe(true);

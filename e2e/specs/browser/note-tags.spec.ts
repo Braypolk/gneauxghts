@@ -1,19 +1,14 @@
 import { browser, expect, $, $$ } from '@wdio/globals';
+import { resetBrowserWorkspace } from '../../support/browserWorkspace';
 
 async function toggleTags() {
-  await $('button[aria-label="Note options"]').click();
+  await browser.$$('button[aria-label="Note options"]')[0].click();
   const item = await $('[role="menuitem"]*=tags');
   await item.click();
 }
 
 describe('optional inline note tags', () => {
-  beforeEach(async () => {
-    await browser.url('/');
-    await browser.execute(() => localStorage.removeItem('gneauxghts.tags-visible'));
-    await browser.refresh();
-    await $('[data-testid="note-title"]').waitForDisplayed({ timeout: 30_000 });
-    await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
-  });
+  beforeEach(resetBrowserWorkspace);
 
   it('reveals tags without saving, edits through autosave, and keeps the body intact', async () => {
     const row = () => $('[data-testid="note-tags"]');
@@ -92,9 +87,9 @@ describe('optional inline note tags', () => {
     await browser.execute(() => {
       document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-scroller')!.scrollTop = 0;
     });
-    await $('button[aria-label="Open split pane options"]').moveTo();
-    await $('button[aria-label="Split with current location"]').waitForClickable();
-    await $('button[aria-label="Split with current location"]').click();
+    await $('button[aria-label="Open split pane options"]').click();
+    await $('#pane-command-current').waitForClickable();
+    await $('#pane-command-current').click();
     await browser.waitUntil(async () => (await $$('[data-testid="note-tags"]').length) === 2);
     await toggleTags();
     await browser.waitUntil(async () => (await $$('[data-testid="note-tags"]').length) === 0);
@@ -113,7 +108,9 @@ describe('optional inline note tags', () => {
 
   it('sends both tag aliases from All notes search with the open note tags', async () => {
     await toggleTags();
-    await $('input[aria-label="Add tag"]').setValue('renovation');
+    const input = $('input[aria-label="Add tag"]');
+    await input.waitForClickable();
+    await input.setValue('renovation');
     await browser.keys('Enter');
     await $('button[aria-label="Edit tag renovation"]').waitForExist();
     const search = await $('[data-testid="note-search-input"]');

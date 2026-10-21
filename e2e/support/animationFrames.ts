@@ -1,7 +1,8 @@
 import { browser } from '@wdio/globals';
 
 /** Serialized by WebDriver: deliberately captures no Node/module state. */
-function sampleTwoAnimationFrames(done: (error: string | null) => void) {
+function sampleTwoAnimationFrames() {
+ return new Promise<string | null>(done => {
   let frameId = 0;
   let finished = false;
   const finish = (error: string | null) => {
@@ -18,9 +19,10 @@ function sampleTwoAnimationFrames(done: (error: string | null) => void) {
     if (finished) return;
     frameId = requestAnimationFrame(() => finish(null));
   });
+ });
 }
 
 export async function waitForTwoAnimationFrames() {
-  const error = await browser.executeAsync(sampleTwoAnimationFrames);
+  const error = await browser.execute(sampleTwoAnimationFrames);
   if (error) throw new Error(error);
 }

@@ -9,14 +9,16 @@ async function setViewportWidth(width: number) {
   expect(await browser.execute(() => innerWidth)).toBe(width);
   // Resize/media events arrive at rendering boundaries; the suppression marker
   // may not be set yet when the emulation command first returns.
-  await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+  await browser.execute(() => new Promise<void>((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done()));
+  }));
   await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-window-resizing]')));
 }
 
 type Frame = { height: number; controls: number[][]; optionsWidth: number; optionsLeft: number; bodyHeight: number; glyphInset: number; glyphOpacity: number; shellWidth: number; circle: number };
 
 async function captureSearchMotion(open: boolean, reverse = false) {
-  return browser.executeAsync((open: boolean, reverse: boolean, done: (frames: Frame[]) => void) => {
+  return browser.execute((open: boolean, reverse: boolean) => new Promise<Frame[]>((done) => {
     const shell = document.querySelector<HTMLElement>('.notepad-search-bar')!;
     const input = shell.querySelector<HTMLInputElement>('input')!;
     const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
@@ -45,11 +47,13 @@ async function captureSearchMotion(open: boolean, reverse = false) {
         reversed = true;
         focus(!open);
       }
-      if (performance.now() - started < 800) requestAnimationFrame(sample);
-      else done(frames);
+      if (performance.now() - started < 800)
+        requestAnimationFrame(sample);
+      else
+        done(frames);
     };
     requestAnimationFrame(sample);
-  }, open, reverse);
+  }), open, reverse);
 }
 
 function expectAnchoredControls(frames: Frame[]) {
@@ -125,8 +129,12 @@ describe('compact search row motion', () => {
     await input.setValue('Alpha');
     await waitForWorkspaceAnimationSettled();
     await $('button[aria-label="Next match"]').waitForExist();
+    // The populated compact toolbar scrolls horizontally. Bring the option
+    // into its visible strip before using the real pointer path.
+    await $('button[aria-label="Enable match whole word"]').scrollIntoView({ block: 'nearest', inline: 'nearest' });
     await $('button[aria-label="Enable match whole word"]').click();
     await expect($('button[aria-label="Disable match whole word"]')).toHaveAttribute('aria-pressed', 'true');
+    await $('button[aria-label="Search all notes"]').scrollIntoView({ block: 'nearest', inline: 'nearest' });
     const geometry = () => browser.execute(() => {
       const shell = document.querySelector('.notepad-search-bar')!.getBoundingClientRect();
       const field = document.querySelector('[data-testid="note-search-input"]')!.getBoundingClientRect();

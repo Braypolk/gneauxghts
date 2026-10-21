@@ -708,8 +708,13 @@ copying its text, attachments, configuration, or draft persistence into workspac
 state. `MorphingContainers` owns presentation geometry and the correlated frame
 clock. The workspace adapter publishes that clock to `paneLayoutMotion`, which
 coordinates split entry and departure regardless of pane kind or viewport width.
-The coordinator supplies the dock's final world-space bounds after installing
-pane effects, avoiding double interpolation against a moving flex width.
+The coordinator captures the dock before cancelling prior pane effects, even
+when the input mode is unchanged. Item changes in that flush reuse the captured
+origin. It supplies the dock's final world-space bounds after installing pane
+effects, avoiding double interpolation against a moving flex width. Fractional
+measurements preserve centered geometry during resizing. Fresh layout-only
+motions adopt the pane effects' start time once, keyed to the live transition;
+item exchanges retain their existing clock.
 Mounted input contents fade out over 100ms; the selected surface starts its
 280ms reveal at 90% geometry progress and finishes after settling. Interruptions
 continue from the displayed geometry and opacity. Reduced motion settles the

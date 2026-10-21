@@ -14,31 +14,40 @@ describe('background saving through mounted owners', () => {
 
   for (const signal of ['hidden', 'pagehide', 'native']) {
     it(`saves the latest note on ${signal} before its debounce timer`, async () => {
-      const saved = await browser.executeAsync((signal: string, done: (result: { markdown: unknown; calls: number }) => void) => {
+      const saved = await browser.execute((signal: string) => new Promise<{
+        markdown: unknown;
+        calls: number;
+      }>((done) => {
         const original = window.setTimeout;
         const deferred: number[] = [];
         // Freeze only the save debounce; lifecycle flush must dispatch anyway.
         window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
-          const id = original(callback, delay === 1000 ? 60_000 : delay, ...args);
-          if (delay === 1000) deferred.push(id);
+          const id = original(callback, delay === 1000 ? 60000 : delay, ...args);
+          if (delay === 1000)
+            deferred.push(id);
           return id;
         }) as typeof window.setTimeout;
         const bridge = window.__GNEAUXGHTS_E2E__!;
         const before = bridge.invocations.length;
         const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
-        editor.focus(); document.execCommand('selectAll'); document.execCommand('insertText', false, 'Latest text before background');
+        editor.focus();
+        document.execCommand('selectAll');
+        document.execCommand('insertText', false, 'Latest text before background');
         if (signal === 'hidden') {
           Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
           document.dispatchEvent(new Event('visibilitychange'));
-        } else if (signal === 'pagehide') window.dispatchEvent(new Event('pagehide'));
-        else bridge.emit('app://backgrounding', null);
+        }
+        else if (signal === 'pagehide')
+          window.dispatchEvent(new Event('pagehide'));
+        else
+          bridge.emit('app://backgrounding', null);
         window.setTimeout = original;
         original(() => {
           deferred.forEach(id => clearTimeout(id));
           const calls = bridge.invocations.slice(before).filter(call => call.command === 'save_note');
           done({ markdown: calls.at(-1)?.args.markdown, calls: calls.length });
         }, 100);
-      }, signal);
+      }), signal);
       expect(saved).toEqual({ markdown: 'Latest text before background', calls: 1 });
       expect(await $('[data-testid="note-editor"] .cm-line').getText()).toBe('Latest text before background');
     });
@@ -51,18 +60,22 @@ describe('background saving through mounted owners', () => {
     await $('button[aria-label="Split with thought partner"]').click();
     await $('[data-notepad-command-bar] textarea').waitForEnabled();
     await waitForWorkspaceAnimationSettled();
-    const result = await browser.executeAsync((done: (result: { bodies: unknown[] }) => void) => {
+    const result = await browser.execute(() => new Promise<{
+      bodies: unknown[];
+    }>((done) => {
       const original = window.setTimeout;
       const deferred: number[] = [];
       window.setTimeout = ((callback: TimerHandler, delay?: number, ...args: unknown[]) => {
-        const id = original(callback, delay === 400 ? 60_000 : delay, ...args);
-        if (delay === 400) deferred.push(id);
+        const id = original(callback, delay === 400 ? 60000 : delay, ...args);
+        if (delay === 400)
+          deferred.push(id);
         return id;
       }) as typeof window.setTimeout;
       const bridge = window.__GNEAUXGHTS_E2E__!;
       const before = bridge.invocations.length;
       const input = document.querySelector<HTMLTextAreaElement>('[data-notepad-command-bar] textarea')!;
-      input.value = 'Unsent thought before locking'; input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.value = 'Unsent thought before locking';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
       Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' });
       document.dispatchEvent(new Event('visibilitychange'));
       window.setTimeout = original;
@@ -71,7 +84,7 @@ describe('background saving through mounted owners', () => {
         const calls = bridge.invocations.slice(before);
         done({ bodies: calls.filter(call => call.command === 'chat_set_composer_draft').map(call => call.args.body) });
       }, 100);
-    });
+    }));
     expect(result.bodies).toContain('Unsent thought before locking');
     expect(await readPiFixture()).toHaveLength(0);
     await expect($('[data-notepad-command-bar] textarea')).toHaveValue('Unsent thought before locking');

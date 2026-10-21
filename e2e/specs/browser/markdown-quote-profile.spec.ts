@@ -45,26 +45,36 @@ describe('giant quote CPU profile', () => {
       await browser.waitUntil(() => browser.execute(() => document.querySelectorAll('[data-testid="note-editor"][aria-busy="false"]').length === 2));
       await browser.waitUntil(() => browser.execute(() => !document.querySelector('[data-pane-motion]')));
     }
-    const prepared = await browser.executeAsync(async (panes: number, done: (result: any) => void) => {
-      try {
-        const path = '/src/lib/e2e/markdownFullAppHarness.ts';
-        const harness = await import(/* @vite-ignore */ path);
-        done(await harness.prepareFullAppMarkdown('quote', 50_000, panes));
-      } catch (error) { done({ error: String(error) }); }
-    }, panes);
+    const prepared = await browser.execute((panes: number) => new Promise<any>((done, reject) => {
+      void (async () => {
+        try {
+          const path = '/src/lib/e2e/markdownFullAppHarness.ts';
+          const harness = await import(/* @vite-ignore */ path);
+          done(await harness.prepareFullAppMarkdown('quote', 50000, panes));
+        }
+        catch (error) {
+          done({ error: String(error) });
+        }
+      })().catch(reject);
+    }), panes);
     if (prepared.error) throw new Error(prepared.error);
     const client = await profileClient();
     await client.send('Profiler.enable');
     await client.send('Profiler.setSamplingInterval', { interval: 1000 });
     await client.send('Profiler.start');
     try {
-      const result = await browser.executeAsync(async (done: (result: any) => void) => {
-        try {
-          const path = '/src/lib/e2e/markdownFullAppHarness.ts';
-          const harness = await import(/* @vite-ignore */ path);
-          done(await harness.measureFullAppMarkdown('document', 15));
-        } catch (error) { done({ error: String(error) }); }
-      });
+      const result = await browser.execute(() => new Promise<any>((done, reject) => {
+        void (async () => {
+          try {
+            const path = '/src/lib/e2e/markdownFullAppHarness.ts';
+            const harness = await import(/* @vite-ignore */ path);
+            done(await harness.measureFullAppMarkdown('document', 15));
+          }
+          catch (error) {
+            done({ error: String(error) });
+          }
+        })().catch(reject);
+      }));
       if (result.error) throw new Error(result.error);
       writeFileSync(`${process.env.MARKDOWN_PROFILE_PREFIX}-${panes}-measurements.json`, JSON.stringify({ environment: prepared, profiledEdits: 15, reportedSamples: 10, ...result }, null, 2) + '\n');
     } finally {

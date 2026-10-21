@@ -1,6 +1,15 @@
 # End-to-end testing
 
-The end-to-end gate has two intentionally different test layers without changing the application state-machine boundaries.
+The end-to-end gate has browser and native test layers without changing the application state-machine boundaries.
+
+## Interactive agent verification
+
+Use `pnpm agent:serve` and `pnpm agent:session` for persistent headless Chrome
+sessions, snapshots, assertion evidence, traces and test export. Follow the
+[agent verification workflow](../docs/agents/ui-verification.md) for setup,
+replay with `pnpm agent:test`, and cleanup. Every suite uses WDIO 10; the
+`e2e/agent` workspace organizes the interactive workflow. Both browser paths
+use the same in-memory app fixture.
 
 ## Fast browser layer
 
@@ -10,7 +19,7 @@ Run:
 pnpm test:e2e:browser
 ```
 
-This starts an owned Vite server on port 1421 (override with `GNEAUXGHTS_E2E_BROWSER_PORT`) with `VITE_E2E_BROWSER=true`, installs a deterministic in-browser implementation of Tauri IPC, and lets `@wdio/tauri-service` drive the real Svelte application in Chrome. The fixture is development-only and is inert in normal development and release builds.
+This starts an owned Vite server on port 1421 (override with `GNEAUXGHTS_E2E_BROWSER_PORT`) with `VITE_E2E_BROWSER=true`, installs a deterministic in-browser implementation of Tauri IPC, and drives the real Svelte application in Chrome through ordinary WebDriver. The fixture is development-only and is inert in normal development and release builds.
 
 Chrome runs headless by default with a 1440×1000 initial window size, so browser
 tests do not open desktop windows or take focus. Specs can still resize the window
@@ -52,13 +61,15 @@ Run:
 pnpm test:e2e:native
 ```
 
-The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The deterministic background smoke specs (lifecycle, command/event transport, images and Pi native/publication/compaction/adapters) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins, frontend bridge, and permissions are excluded from ordinary builds without `e2e-wdio`. Native focus IPC is denied by default; its permission is added only when the E2E process starts with explicit foreground opt-in. The lifecycle spec verifies that denial, and background scenarios check native focus after each test.
+The command builds the debug binary with the `e2e-wdio` Cargo feature, immediately copies it into `src-tauri/target/e2e/debug/` with a hash/profile manifest, starts Vite at `http://127.0.0.1:1430` with `VITE_E2E_NATIVE=true`, and drives the real macOS Tauri window through the embedded WebDriver provider. The deterministic background smoke specs (lifecycle, command/event transport, images and Pi native/publication/compaction/adapters) run as separate WebDriver invocations so restart/window-state mutations cannot leak between them. Each invocation gets a temporary app-data directory, documents directory, vault, and Keychain service namespace, then removes its filesystem fixture. The E2E app uses a separate bundle identifier, and the WebDriver Rust plugins and permissions are excluded from ordinary builds without `e2e-wdio`. Native focus IPC is denied by default; its permission is added only when the E2E process starts with explicit foreground opt-in. The lifecycle spec verifies that denial, and background scenarios check native focus after each test.
+
+The local `nativeTauriService.mjs` launcher owns the pinned process, admits only its embedded driver listener, and cleans up the process and fixture. It replaces `@wdio/tauri-service`; tests use standard promise-returning `browser.execute` and the app’s real IPC, without service-side mocking or command overrides. Native backend logs are retained when `outputDir` is configured.
 
 Native coverage across the background and explicit foreground lanes:
 
 - Real application startup through the embedded driver.
 - Stable window geometry across embedded WebDriver reconnection (this does not restart the native process).
-- Availability of the debug-only Tauri automation bridge.
+- Promise resolution/rejection through the embedded WebDriver and real native IPC.
 - Real note edits through capture, paged History Mode, deterministic diff, complete Version Restore, and exact editor scroll/selection restoration.
 - Real external file deletion through the watcher adapter, Missing Note discovery, incremental retained-history loading, collision-safe recovery, and continued editing.
 - Corrupt-store reset, forgotten-note recovery, restart, and selection, diff, and restore of the recovered timeline.

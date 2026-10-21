@@ -7,11 +7,12 @@ declare global {
 }
 
 export async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result = await browser.executeAsync((command, args, done: (result: { value?: T; error?: string }) => void) => {
-    void window.__TAURI_INTERNALS__.invoke<T>(command, args).then(
-      value => done({ value }), error => done({ error: JSON.stringify(error) })
-    );
-  }, command, args);
+  const result = await browser.execute((command, args) => new Promise<{
+    value?: T;
+    error?: string;
+  }>((done) => {
+    void window.__TAURI_INTERNALS__.invoke<T>(command, args).then(value => done({ value }), error => done({ error: JSON.stringify(error) }));
+  }), command, args);
   if (result.error) throw new Error(result.error);
   return result.value as T;
 }
@@ -22,20 +23,27 @@ export async function interaction(action: 'entry' | 'page' | 'diff', revisionId 
   await invoke('plugin:window|show', { label: 'main' });
   await invoke('plugin:window|set_focus', { label: 'main' });
   await browser.waitUntil(() => browser.execute(() => document.visibilityState === 'visible'), { timeout: 10_000, timeoutMsg: 'Native paint measurement requires an unlocked, visible webview' });
-  const result = await browser.executeAsync((action, revisionId, done: (value: { elapsed?: number; error?: string }) => void) => {
+  const result = await browser.execute((action, revisionId) => new Promise<{
+    elapsed?: number;
+    error?: string;
+  }>((done) => {
     let stage = 'mutation';
     let finished = false;
     let frameId = 0;
     let observer: MutationObserver | undefined;
-    const finish = (value: { elapsed?: number; error?: string }) => {
-      if (finished) return;
+    const finish = (value: {
+      elapsed?: number;
+      error?: string;
+    }) => {
+      if (finished)
+        return;
       finished = true;
       observer?.disconnect();
       clearTimeout(timeout);
       cancelAnimationFrame(frameId);
       done(value);
     };
-    const timeout = setTimeout(() => finish({ error: `${action} stalled at ${stage}; visibility=${document.visibilityState}; history=${!!document.querySelector('[data-testid=history-mode]')}; rows=${document.querySelectorAll('[data-diff-kind]').length}: ${document.body.innerText.slice(-600)}` }), 15_000);
+    const timeout = setTimeout(() => finish({ error: `${action} stalled at ${stage}; visibility=${document.visibilityState}; history=${!!document.querySelector('[data-testid=history-mode]')}; rows=${document.querySelectorAll('[data-diff-kind]').length}: ${document.body.innerText.slice(-600)}` }), 15000);
     const beforeCount = Number(document.querySelector<HTMLElement>('aside[aria-label="Note timeline"]')?.dataset.historyRecordCount ?? 0);
     const button = action === 'entry'
       ? document.querySelector<HTMLButtonElement>('button[aria-label="Open note history"]')
@@ -49,27 +57,33 @@ export async function interaction(action: 'entry' | 'page' | 'diff', revisionId 
     }
     const started = performance.now();
     observer = new MutationObserver(() => {
-      if (finished) return;
+      if (finished)
+        return;
       const timeline = document.querySelector<HTMLElement>('aside[aria-label="Note timeline"]');
       const ready = action === 'page'
         ? Number(timeline?.dataset.historyRecordCount ?? 0) > beforeCount && timeline?.getAttribute('aria-busy') === 'false'
         : !!document.querySelector('[data-testid="history-mode"] [data-testid="historical-revision-diff"] [data-diff-kind]') &&
           (action === 'entry' || (button.getAttribute('aria-pressed') === 'true' && !button.disabled));
-      if (!ready) return;
+      if (!ready)
+        return;
       observer?.disconnect();
       stage = 'paint';
       frameId = requestAnimationFrame(() => {
-        if (finished) return;
+        if (finished)
+          return;
         frameId = requestAnimationFrame(() => {
-          if (finished) return;
-          if (document.visibilityState !== 'visible' || !document.hasFocus()) finish({ error: 'Native paint measurement lost visibility/focus' });
-          else finish({ elapsed: performance.now() - started });
+          if (finished)
+            return;
+          if (document.visibilityState !== 'visible' || !document.hasFocus())
+            finish({ error: 'Native paint measurement lost visibility/focus' });
+          else
+            finish({ elapsed: performance.now() - started });
         });
       });
     });
     observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
     button.click();
-  }, action, revisionId);
+  }), action, revisionId);
   if (result.error) throw new Error(result.error);
   return result.elapsed!;
 }

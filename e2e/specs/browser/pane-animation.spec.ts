@@ -27,7 +27,12 @@ describe('coordinated pane layout motion', () => {
 
   it('keeps the active border attached when focus changes during entrance', async () => {
     await ready();
-    const result = await browser.executeAsync((done: (result: { activated: boolean; errors: number[]; active?: string; error?: string }) => void) => {
+    const result = await browser.execute(() => new Promise<{
+      activated: boolean;
+      errors: number[];
+      active?: string;
+      error?: string;
+    }>((done) => {
       const start = performance.now();
       let activated = false;
       const errors: number[] = [];
@@ -35,7 +40,8 @@ describe('coordinated pane layout motion', () => {
       let finished = false;
       let settledSince: number | null = null;
       const finish = (error?: string) => {
-        if (finished) return;
+        if (finished)
+          return;
         finished = true;
         clearTimeout(deadline);
         cancelAnimationFrame(frameId);
@@ -44,7 +50,8 @@ describe('coordinated pane layout motion', () => {
       };
       const deadline = setTimeout(() => finish('Border entrance sampling did not settle'), 5000);
       const sample = () => {
-        if (finished) return;
+        if (finished)
+          return;
         const border = document.querySelector<HTMLElement>('[data-pane-border]');
         if (border && activated) {
           const pane = document.querySelector<HTMLElement>(`[data-pane-id="${border.dataset.paneBorder}"]`)!;
@@ -58,21 +65,22 @@ describe('coordinated pane layout motion', () => {
             .dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
         }
         const settled = activated && !document.querySelector('[data-pane-motion]') &&
-          !document.querySelector('.notepad-shell')!.getAnimations({ subtree: true }).some(animation =>
-            (animation.playState === 'running' || animation.pending) &&
+          !document.querySelector('.notepad-shell')!.getAnimations({ subtree: true }).some(animation => (animation.playState === 'running' || animation.pending) &&
             animation.effect?.getTiming().iterations !== Infinity);
         settledSince = settled ? settledSince ?? performance.now() : null;
-        if (errors.length > 3 && settledSince !== null && performance.now() - settledSince >= 80) finish();
-        else frameId = requestAnimationFrame(sample);
+        if (errors.length > 3 && settledSince !== null && performance.now() - settledSince >= 80)
+          finish();
+        else
+          frameId = requestAnimationFrame(sample);
       };
       frameId = requestAnimationFrame(sample);
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
-    });
+    }));
     if (result.error) throw new Error(result.error);
     expect(result.activated).toBe(true);
     expect(result.errors.length).toBeGreaterThan(3);
     expect(Math.max(...result.errors)).toBeLessThanOrEqual(1);
-    expect(result.active).toBe(await $('[data-testid="workspace-pane"]').getAttribute('data-pane-id'));
+    expect(result.active).toBe(await browser.$$('[data-testid="workspace-pane"]')[0].getAttribute('data-pane-id'));
   });
 
   for (const width of [900, 2400]) {
@@ -124,12 +132,13 @@ describe('coordinated pane layout motion', () => {
 
   it('settles resize and close during entrance without stale animation work', async () => {
     await ready();
-    const interruption = await browser.executeAsync((done: (error: string | null) => void) => {
+    const interruption = await browser.execute(() => new Promise<string | null>((done) => {
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.click();
       let frameId = 0;
       let finished = false;
       const finish = (error: string | null) => {
-        if (finished) return;
+        if (finished)
+          return;
         finished = true;
         clearTimeout(deadline);
         cancelAnimationFrame(frameId);
@@ -137,7 +146,8 @@ describe('coordinated pane layout motion', () => {
       };
       const deadline = setTimeout(() => finish('Required interruption frame was not observed'), 5000);
       const closeOnFirstMotion = () => {
-        if (finished) return;
+        if (finished)
+          return;
         const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
         if (!pane || !document.querySelector('[data-pane-motion]')) {
           frameId = requestAnimationFrame(closeOnFirstMotion);
@@ -147,7 +157,7 @@ describe('coordinated pane layout motion', () => {
         finish(null);
       };
       frameId = requestAnimationFrame(closeOnFirstMotion);
-    });
+    }));
     expect(interruption).toBeNull();
     await browser.waitUntil(async () => browser.execute(() =>
       document.querySelectorAll('[data-testid="workspace-pane"]').length === 1 &&

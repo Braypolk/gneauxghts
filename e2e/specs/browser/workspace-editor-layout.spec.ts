@@ -46,7 +46,7 @@ describe('editor geometry and Markdown fidelity', () => {
   it('keeps Markdown fidelity stable in the real editor DOM', async () => {
     await openRecentNote('Beta note');
 
-    const taskCheckbox = await $('.cm-gn-task-checkbox input');
+    const taskCheckbox = await browser.$$('.cm-gn-task-checkbox input')[0];
     await taskCheckbox.waitForExist();
     expect(await $('.cm-gn-task-line .cm-gn-list-mark-ul').isExisting()).toBe(
       false

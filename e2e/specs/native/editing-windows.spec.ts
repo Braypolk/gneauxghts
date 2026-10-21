@@ -9,12 +9,14 @@ type NativeInvocationResult =
   | { ok: false; error: string };
 
 async function invoke<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
-  const result: NativeInvocationResult = await browser.executeAsync((cmd, input, done) => {
-    const native = window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, input: Record<string, unknown>) => Promise<unknown> } };
-    void native.__TAURI_INTERNALS__.invoke(cmd, input).then(
-      value => done({ ok: true, value }), error => done({ ok: false, error: JSON.stringify(error) })
-    );
-  }, command, args);
+  const result: NativeInvocationResult = await browser.execute((cmd, input) => new Promise<NativeInvocationResult>((done) => {
+    const native = window as typeof window & {
+      __TAURI_INTERNALS__: {
+        invoke: (cmd: string, input: Record<string, unknown>) => Promise<unknown>;
+      };
+    };
+    void native.__TAURI_INTERNALS__.invoke(cmd, input).then(value => done({ ok: true, value }), error => done({ ok: false, error: JSON.stringify(error) }));
+  }), command, args);
   if (!result.ok) throw new Error(result.error);
   return result.value as T;
 }
@@ -181,44 +183,73 @@ describe('native finalized Editing Windows', () => {
         const start = Date.now();
         console.log('WINDOW_NATIVE_PROGRESS', index, 'input');
         // Native editor event, one changed first line; actual one-second autosave.
-        const inputResult = await browser.executeAsync((index, done: (value: { elapsed?: number; error?: string }) => void) => {
+        const inputResult = await browser.execute((index) => new Promise<{
+          elapsed?: number;
+          error?: string;
+        }>((done) => {
           let finished = false;
           let frameId = 0;
-          const finish = (result: { elapsed?: number; error?: string }) => {
-            if (finished) return;
+          const finish = (result: {
+            elapsed?: number;
+            error?: string;
+          }) => {
+            if (finished)
+              return;
             finished = true;
             clearTimeout(timeout);
             cancelAnimationFrame(frameId);
             done(result);
           };
-          const timeout = setTimeout(() => finish({ error: `input frame timeout; visibility=${document.visibilityState}; focus=${document.hasFocus()}; frames=${(window as unknown as { __windowFrames: { gaps: number[] } }).__windowFrames.gaps.length}` }), 5000);
+          const timeout = setTimeout(() => finish({ error: `input frame timeout; visibility=${document.visibilityState}; focus=${document.hasFocus()}; frames=${(window as unknown as {
+              __windowFrames: {
+                gaps: number[];
+              };
+            }).__windowFrames.gaps.length}` }), 5000);
           try {
-          const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
-          editor.focus();
-          const selection = window.getSelection()!;
-          const range = document.createRange();
-          range.selectNodeContents(editor.firstElementChild!);
-          selection.removeAllRanges(); selection.addRange(range);
-          const started = performance.now();
-          const samples = (window as unknown as { __windowFrames: { events: { kind: string; at: number }[] } }).__windowFrames;
-          samples.events.push({ kind: `input_${index}`, at: started });
-          // Advance while native input and the continuous frame sampler run.
-          const deadline = index === 7
-            ? (window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown> } }).__TAURI_INTERNALS__.invoke('e2e_advance_window_clock', { millis: 300000 }).then(() => { if (!finished) samples.events.push({ kind: 'deadline_advanced', at: performance.now() }); })
-            : Promise.resolve();
-          document.execCommand('insertText', false, String(index).padStart(8, '0'));
-          // Attach rejection handling immediately, even when paint is throttled.
-          void deadline.catch(error => finish({ error: String(error) }));
-          frameId = requestAnimationFrame(() => {
-            if (finished) return;
+            const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content')!;
+            editor.focus();
+            const selection = window.getSelection()!;
+            const range = document.createRange();
+            range.selectNodeContents(editor.firstElementChild!);
+            selection.removeAllRanges();
+            selection.addRange(range);
+            const started = performance.now();
+            const samples = (window as unknown as {
+              __windowFrames: {
+                events: {
+                  kind: string;
+                  at: number;
+                }[];
+              };
+            }).__windowFrames;
+            samples.events.push({ kind: `input_${index}`, at: started });
+            // Advance while native input and the continuous frame sampler run.
+            const deadline = index === 7
+              ? (window as typeof window & {
+                __TAURI_INTERNALS__: {
+                  invoke: (cmd: string, args: Record<string, unknown>) => Promise<unknown>;
+                };
+              }).__TAURI_INTERNALS__.invoke('e2e_advance_window_clock', { millis: 300000 }).then(() => { if (!finished)
+                samples.events.push({ kind: 'deadline_advanced', at: performance.now() }); })
+              : Promise.resolve();
+            document.execCommand('insertText', false, String(index).padStart(8, '0'));
+            // Attach rejection handling immediately, even when paint is throttled.
+            void deadline.catch(error => finish({ error: String(error) }));
             frameId = requestAnimationFrame(() => {
-              if (finished) return;
-              const elapsed = performance.now() - started;
-              void deadline.then(() => finish({ elapsed }), error => finish({ error: String(error) }));
+              if (finished)
+                return;
+              frameId = requestAnimationFrame(() => {
+                if (finished)
+                  return;
+                const elapsed = performance.now() - started;
+                void deadline.then(() => finish({ elapsed }), error => finish({ error: String(error) }));
+              });
             });
-          });
-          } catch (error) { finish({ error: String(error) }); }
-        }, index);
+          }
+          catch (error) {
+            finish({ error: String(error) });
+          }
+        }), index);
         if (inputResult.error) throw new Error(inputResult.error);
         const elapsed = inputResult.elapsed!;
         paints.push(elapsed);

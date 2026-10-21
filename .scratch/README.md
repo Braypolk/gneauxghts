@@ -131,6 +131,8 @@ and reproducible fixtures belong in Git.
 - [Continuous research compaction](archive/continuous-research-compaction.md): running agents compact context and continue productive tool use without default cumulative quotas; original requirements, tool pairs, usage and freshness checks survive. Actual `research_notes` completed two live GSQ-RCO runs, each with 73 reads, four worker compactions and six validated cited facts, including parent handoff continuation. Native development acceptance completed six conversation turns covering research, fresh reads, reviewed edits, citations, restart and Stop/Retry recovery; two slow attempts required cancellation.
 - [Adaptive evidence allowance](archive/adaptive-evidence-allowance.md): historical context-scaled quota, superseded by continuous research compaction.
 
+- [Browser dock regressions and WDIO 10](archive/browser-dock-wdio10.md): stationary popup placement, compact search controls, coordinated split capture and interruption continuity, and unclipped chat menus with real desktop/phone pointer coverage.
+
 - [Split pane motion consistency](archive/split-pane-motion-consistency.md): all split choices share the existing pane/dock clock; current and previous chat destinations mount directly, and measured dock bounds avoid reversals at width caps.
 
 - [Accepted proposal conflict prompt](archive/proposal-self-change-conflict.md): canonical commit receipts prevent normalized chat edits from being mistaken for external changes; later typing and genuine conflicts remain protected.

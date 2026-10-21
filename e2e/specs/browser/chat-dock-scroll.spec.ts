@@ -45,8 +45,12 @@ describe('chat reading position across input modes', () => {
           }, atBottom);
           await browser.pause(100);
           for (const label of ['Expand search', 'Expand chat input', 'Expand search', 'Expand chat input']) {
-            const positions = await browser.executeAsync((buttonLabel: string, duration: number,
-              done: (result: { scroll: number[]; message: number[]; heights: number[]; frameHeights: number[] }) => void) => {
+            const positions = await browser.execute((buttonLabel: string, duration: number) => new Promise<{
+              scroll: number[];
+              message: number[];
+              heights: number[];
+              frameHeights: number[];
+            }>((done) => {
               const log = document.querySelector<HTMLElement>('[role="log"]')!;
               const message = log.querySelector<HTMLElement>('[data-testid="pi-assistant-message"]:last-child')!;
               const dock = document.querySelector('[data-input-dock-mode] > .dock-body')!;
@@ -63,11 +67,13 @@ describe('chat reading position across input modes', () => {
               const started = performance.now();
               const frame = () => {
                 read();
-                if (performance.now() - started < duration) requestAnimationFrame(frame);
-                else done({ scroll, message: messagePositions, heights, frameHeights });
+                if (performance.now() - started < duration)
+                  requestAnimationFrame(frame);
+                else
+                  done({ scroll, message: messagePositions, heights, frameHeights });
               };
               requestAnimationFrame(frame);
-            }, label, dockMorphDuration + 350);
+            }), label, dockMorphDuration + 350);
             expect(Math.max(...positions.heights) - Math.min(...positions.heights)).toBeGreaterThan(20);
             expect(Math.max(...positions.frameHeights) - Math.min(...positions.frameHeights)).toBeLessThanOrEqual(1);
             expect(Math.max(...positions.scroll) - Math.min(...positions.scroll)).toBeLessThanOrEqual(1);

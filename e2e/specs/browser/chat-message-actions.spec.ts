@@ -37,9 +37,9 @@ describe('chat message copy and time', () => {
     const question = 'Copy my **whole** question.\nSecond line.';
     const answer = `## Answer\n\n${'A useful answer. '.repeat(35)}\n\n\`\`\`ts\nconst value = 42;\n\`\`\``;
     const started = await browser.execute(() => Date.now());
-    await browser.executeAsync((answer: string, done: () => void) => {
+    await browser.execute((answer: string) => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse(answer, 'Separate reasoning. '.repeat(15)).then(done);
-    }, answer);
+    }), answer);
     await browser.execute(question => {
       const input = document.querySelector<HTMLTextAreaElement>('textarea[aria-label="Message"]')!;
       input.value = question; input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -86,7 +86,7 @@ describe('chat message copy and time', () => {
     await $('input[aria-label="Conversation title"]').setValue(title);
     await $('textarea[aria-label="Message"]').click();
     await $('button[aria-label="Conversations"]').click();
-    await $('button[role="menuitem"]').click();
+    await $('button[data-new-conversation]').click();
     await selectPiConversation(title);
     expect(await $('[data-testid="pi-assistant-message"] time').getAttribute('datetime')).toBe(finishedAt);
   });

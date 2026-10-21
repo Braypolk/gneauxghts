@@ -38,7 +38,7 @@ describe('Related discovery without moving note content', () => {
   for (const width of [1440, 390]) it(`keeps the Related glyph visible and reveals results during expansion at ${width}px`, async () => {
     await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: false });
     await waitForWorkspaceAnimationSettled();
-    const frames = await browser.executeAsync((done: (frames: number[][]) => void) => {
+    const frames = await browser.execute(() => new Promise<number[][]>((done) => {
       const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
       const frames: number[][] = [], started = performance.now();
       const read = () => {
@@ -52,12 +52,14 @@ describe('Related discovery without moving note content', () => {
       read();
       const sample = () => setTimeout(() => {
         read();
-        if (performance.now() - started < 850) requestAnimationFrame(sample);
-        else done(frames);
+        if (performance.now() - started < 850)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       }, 0);
       dock.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
       requestAnimationFrame(sample);
-    });
+    }));
     const moving = frames.filter(frame => frame[0] === 1);
     expect(Math.min(...frames.map(frame => frame[1]))).toBeGreaterThanOrEqual(0.99);
     expect(moving.some(frame => frame[2] < 90)).toBe(true);
@@ -92,7 +94,7 @@ describe('Related discovery without moving note content', () => {
     await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 390, height: 844, deviceScaleFactor: 1, mobile: false });
     await $('[data-testid="note-search-input"]').click();
     await waitForWorkspaceAnimationSettled();
-    const frames = await browser.executeAsync((done: (frames: number[][]) => void) => {
+    const frames = await browser.execute(() => new Promise<number[][]>((done) => {
       const dock = document.querySelector('.workspace-input-dock')!;
       const panel = dock.querySelector('.search-results-panel')!;
       const frames: number[][] = [], started = performance.now();
@@ -100,13 +102,17 @@ describe('Related discovery without moving note content', () => {
         const rect = panel.getBoundingClientRect(), body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
         frames.push([rect.bottom, rect.width, body.height, panel.isConnected ? 1 : 0]);
       };
-      read(); dock.querySelector<HTMLElement>('[data-container-toggle="related"]')!.click();
+      read();
+      dock.querySelector<HTMLElement>('[data-container-toggle="related"]')!.click();
       const sample = () => setTimeout(() => {
         read();
-        if (performance.now() - started < 800) requestAnimationFrame(sample); else done(frames);
+        if (performance.now() - started < 800)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       }, 0);
       requestAnimationFrame(sample);
-    });
+    }));
     expect(frames.every(frame => frame[3] === 1)).toBe(true);
     expect(Math.max(...frames.map(frame => frame[0])) - Math.min(...frames.map(frame => frame[0]))).toBeLessThanOrEqual(1);
     expect(Math.max(...frames.map(frame => frame[1])) - Math.min(...frames.map(frame => frame[1]))).toBeLessThanOrEqual(1);
@@ -117,7 +123,7 @@ describe('Related discovery without moving note content', () => {
     await waitForWorkspaceAnimationSettled();
     const searchDuration = dockMorphDuration;
     for (const selector of [toggle, '.cm-content']) {
-      const frames = await browser.executeAsync((selector: string, done: (frames: number[][]) => void) => {
+      const frames = await browser.execute((selector: string) => new Promise<number[][]>((done) => {
         const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
         const frames: number[][] = [];
         const started = performance.now();
@@ -131,15 +137,19 @@ describe('Related discovery without moving note content', () => {
         };
         read(started);
         const control = document.querySelector<HTMLElement>(selector)!;
-        if (selector === '.cm-content') control.focus();
-        else control.click();
+        if (selector === '.cm-content')
+          control.focus();
+        else
+          control.click();
         const sample = (now: number) => setTimeout(() => {
           read(now);
-          if (performance.now() - started < 850) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < 850)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         }, 0);
         requestAnimationFrame(sample);
-      }, selector);
+      }), selector);
       expect(frames.find(frame => frame[5] !== -1)![6]).toBe(searchDuration);
       expectSharedClock(frames);
       await waitForWorkspaceAnimationSettled();
@@ -147,7 +157,7 @@ describe('Related discovery without moving note content', () => {
   });
   it('reverses an unfinished Related exchange from the painted size', async () => {
     await waitForWorkspaceAnimationSettled();
-    const frames = await browser.executeAsync((done: (frames: number[][]) => void) => {
+    const frames = await browser.execute(() => new Promise<number[][]>((done) => {
       const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
       const frames: number[][] = [];
       const started = performance.now();
@@ -162,17 +172,20 @@ describe('Related discovery without moving note content', () => {
       };
       dock.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
       const sample = (now: number) => setTimeout(() => {
-        if (reversing) read(now);
+        if (reversing)
+          read(now);
         else if (performance.now() - started >= 130) {
           read(now);
           reversing = true;
           dock.querySelector<HTMLElement>('button[aria-label="Search notes"]')!.click();
         }
-        if (performance.now() - started < 850) requestAnimationFrame(sample);
-        else done(frames);
+        if (performance.now() - started < 850)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       }, 0);
       requestAnimationFrame(sample);
-    });
+    }));
     expectSharedClock(frames);
     await expect($('[data-testid="note-search-input"]')).toBeFocused();
     await expect($(popup)).not.toExist();
@@ -181,7 +194,7 @@ describe('Related discovery without moving note content', () => {
     await $('[data-testid="note-search-input"]').click();
     await waitForWorkspaceAnimationSettled();
     for (const [selector, incoming] of [[toggle, 2], ['button[aria-label="Search notes"]', 1]] as const) {
-      const frames = await browser.executeAsync((selector: string, done: (frames: number[][]) => void) => {
+      const frames = await browser.execute((selector: string) => new Promise<number[][]>((done) => {
         const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
         const search = dock.querySelector<HTMLElement>('[data-container-surface="search"]')!;
         const related = dock.querySelector<HTMLElement>('[data-container-surface="related"]')!;
@@ -191,11 +204,13 @@ describe('Related discovery without moving note content', () => {
           const opacity = (element: HTMLElement) => getComputedStyle(element).visibility === 'hidden' ? 0 : Number(getComputedStyle(element).opacity);
           frames.push([dock.hasAttribute('data-dock-motion') ? 1 : 0, opacity(search), opacity(related),
             search.isConnected && related.isConnected ? 1 : 0]);
-          if (performance.now() - started < 850) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < 850)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         }, 0);
         requestAnimationFrame(sample);
-      }, selector);
+      }), selector);
       const moving = frames.filter(frame => frame[0] === 1), settled = frames.filter(frame => frame[0] === 0);
       const outgoing = incoming === 1 ? 2 : 1;
       expect(moving.some(frame => frame[outgoing] > 0 && frame[outgoing] < 1)).toBe(true);

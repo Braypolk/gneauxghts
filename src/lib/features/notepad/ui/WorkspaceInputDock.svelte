@@ -2,7 +2,7 @@
   import { tick, untrack, type Snippet } from 'svelte';
   import { ArrowUp, MessagesSquare, Network, Search, Square } from '@lucide/svelte';
   import MorphingContainers, { type ContainerGroupPresentation, type ContainerPresentation, type MorphingContainerItem } from '#lib/ui/morphing-containers/MorphingContainers.svelte';
-  import { ramp } from '#lib/ui/morphing-containers/motion.js';
+  import { containerGeometry, ramp } from '#lib/ui/morphing-containers/motion.js';
   import type { DockSearchPresentation, DockActionPresentation } from './workspaceDockPresentation';
   import { searchExpansionStyles } from '#lib/ui/search/searchMotion.js';
   import './workspaceDockMotion.css';
@@ -21,9 +21,10 @@
     onChat: () => void;
   } = $props();
 
+  let containers = $state<{ prepareLayout: () => void }>();
   let node = $state<HTMLDivElement | null>(null);
   let presentation = $state<ContainerGroupPresentation | null>(null);
-  let layoutEndpoint = $state<{ id: number; left: number; width: number } | null>(null);
+  let layoutEndpoint = $state<{ id: number; left: number; width: number; startedAt?: number } | null>(null);
   let circle = $state(40);
   let fontSize = $state(16);
   let controlSize = $state(32);
@@ -70,8 +71,13 @@
     && Math.abs(presentation.transition.origin.bodyWidth - Math.min(barWidth ?? availableBarWidth, availableBarWidth)) > 1);
   const searchWidthFraction = $derived(Math.max(0, Math.min(1,
     ((presentation?.geometry.bodyWidth ?? collapsedBarWidth) - collapsedBarWidth) / Math.max(1, expandedBarWidth - collapsedBarWidth))));
+  // Popups keep the expanded destination center even while the bar beneath
+  // them contracts or reaches the clamp imposed by neighboring actions.
+  const popupGeometry = $derived(containerGeometry(items.map(item =>
+    item.id === 'search' && target === 'search' ? { ...item, width: hasChat ? maxBodyWidth : 42 * fontSize } : item),
+    { width, circle, gap, alignment: 'body' }));
   const styles = $derived(`${searchExpansionStyles};--dock-search-width-fraction:${searchWidthFraction}fr;--morph-bottom-inset:var(--dock-circle-inset);--dock-gap:${gap}px;
-    --dock-search-results-width:${hasChat ? availableBarWidth + 'px' : `min(42rem, ${availableBarWidth}px)`};
+    --dock-search-results-center:${popupGeometry.bodyX + popupGeometry.bodyWidth / 2 - (presentation?.geometry.bodyX ?? popupGeometry.bodyX)}px;--dock-search-results-width:${hasChat ? availableBarWidth + 'px' : `min(42rem, ${availableBarWidth}px)`};
     --dock-search-text:${presentation?.textVisible && target === 'search' ? 1 : 0};--dock-chat-text:${presentation?.textVisible && target === 'chat' ? 1 : 0};
     --search-results-anchor-height:${compactHeight}px;--dock-composer-height:${chatHeight}px;--dock-send-opacity:${hasChat ? sendOpacity : 1};--dock-chat-glyph:${1 - ramp(0.3, 0.48, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};
     --dock-send-glyph:${ramp(0.52, 0.7, presentation?.geometry.icons.find(icon => icon.id === 'chat')?.selection ?? 0)};`);
@@ -103,7 +109,8 @@
       fontSize = parseFloat(getComputedStyle(document.documentElement).fontSize);
       const control = css.getPropertyValue('--search-control-size').trim();
       controlSize = parseFloat(control) * (control.endsWith('rem') ? fontSize : 1) || 32;
-      width = element.clientWidth;
+      // Preserve subpixel layout during pane animation; clientWidth rounds.
+      width = element.getBoundingClientRect().width;
       circle = shell ? parseFloat(getComputedStyle(shell).minHeight) || 40 : 40;
       gap = parseFloat(css.getPropertyValue('--discovery-gap')) * fontSize || (width < 640 ? 6 : 12);
       searchOpen = shell?.dataset.searchOpen === 'true';
@@ -122,12 +129,15 @@
       attributeFilter: ['data-search-expanded', 'data-search-layout-expanded', 'data-search-open', 'disabled', 'data-chat-action'] });
     const size = new ResizeObserver(read); size.observe(element);
     const workspace = element.closest('.notepad-shell');
+    const layoutStart = () => { layoutEndpoint = null; containers?.prepareLayout(); };
     const layoutReady = (event: Event) => {
-      layoutEndpoint = (event as CustomEvent<{ id: number; left: number; width: number } | null>).detail;
+      layoutEndpoint = (event as CustomEvent<{ id: number; left: number; width: number; startedAt?: number } | null>).detail;
       read();
     };
+    workspace?.addEventListener('workspace-pane-layout-start', layoutStart);
     workspace?.addEventListener('workspace-pane-layout-ready', layoutReady);
     return () => { mutations.disconnect(); size.disconnect(); workspace?.removeEventListener('workspace-pane-layout-ready', layoutReady);
+      workspace?.removeEventListener('workspace-pane-layout-start', layoutStart);
       element.closest<HTMLElement>('.search-dock-row')?.style.removeProperty('--dock-layout-body-height'); };
   });
 </script>
@@ -143,7 +153,7 @@
 {#snippet relatedSurface()}<div class="related-dock-content" style:min-height={`${compactHeight}px`}>{@render relatedContent()}</div>{/snippet}
 {#snippet chatContent()}<div bind:this={chatSlot} class="workspace-chat-slot"></div>{/snippet}
 
-<MorphingContainers {items} circleSize={circle} {gap} alignment="body" bind:element={node} bind:presentation {layoutEndpoint} {overlay}
+<MorphingContainers bind:this={containers} {items} circleSize={circle} {gap} alignment="body" bind:element={node} bind:presentation {layoutEndpoint} {overlay}
   class="workspace-input-dock" style={styles} data-secondary={target === 'related' || !hasChat ? 'related' : 'chat'}
   data-input-dock-mode={target} data-dock-state={target === 'related' ? 'related-input' : target === 'chat' ? 'chat-input' : hasChat ? 'chat-search' : related ? 'related-search' : 'editor-search'}
   data-search-width-motion={searchWidthMotion || undefined}

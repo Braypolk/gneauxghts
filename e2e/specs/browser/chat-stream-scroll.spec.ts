@@ -6,18 +6,25 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 const logSelector = '[role="log"]';
 
 async function sampleScroll(duration: number) {
-  return browser.executeAsync((duration: number, done: (value: { tops: number[]; heights: number[]; gaps: number[] }) => void) => {
+  return browser.execute((duration: number) => new Promise<{
+    tops: number[];
+    heights: number[];
+    gaps: number[];
+  }>((done) => {
     const log = document.querySelector<HTMLElement>('[role="log"]')!;
     const tops: number[] = [], heights: number[] = [], gaps: number[] = [];
     const start = performance.now();
     const frame = () => {
-      tops.push(log.scrollTop); heights.push(log.scrollHeight);
+      tops.push(log.scrollTop);
+      heights.push(log.scrollHeight);
       gaps.push(log.scrollHeight - log.clientHeight - log.scrollTop);
-      if (performance.now() - start < duration) requestAnimationFrame(frame);
-      else done({ tops, heights, gaps });
+      if (performance.now() - start < duration)
+        requestAnimationFrame(frame);
+      else
+        done({ tops, heights, gaps });
     };
     requestAnimationFrame(frame);
-  }, duration);
+  }), duration);
 }
 
 describe('streaming chat viewport', () => {
@@ -38,9 +45,9 @@ describe('streaming chat viewport', () => {
   it('survives scroll clamping while a long streamed markdown block is replaced', async () => {
     await $('button[aria-label="Conversations"]').click();
     await $('[role="menuitem"]=New conversation').click();
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse('## A growing section\n\nA paragraph of streamed text to keep the response growing.\n\n'.repeat(100)).then(done);
-    });
+    }));
     await $('textarea[aria-label="Message"]').setValue('Explain this in detail');
     await $('[data-testid="pi-send"]').click();
     await browser.waitUntil(() => browser.execute(() => {
@@ -81,9 +88,9 @@ describe('streaming chat viewport', () => {
   });
 
   it('holds a reading position during streaming and follows again after returning to the bottom', async () => {
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse('A paragraph arriving from the model.\n\n'.repeat(120)).then(done);
-    });
+    }));
     await $('textarea[aria-label="Message"]').setValue('Stream a long answer');
     await $('[data-testid="pi-send"]').click();
     await $('[data-testid="pi-assistant-message"][data-streaming="true"]').waitForExist();

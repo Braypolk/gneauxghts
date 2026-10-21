@@ -28,9 +28,17 @@ describe('compact split control continuity', () => {
       });
       const solo = await measureActions();
       expect(solo.fits).toBe(true);
-      const sample = (action: 'open' | 'exchange' | 'close') => browser.executeAsync((action: string, done: (frames: Array<{ x: number; moving: boolean; animated: boolean }>) => void) => {
+      const sample = (action: 'open' | 'exchange' | 'close') => browser.execute((action: string) => new Promise<{
+        x: number;
+        moving: boolean;
+        animated: boolean;
+      }[]>((done) => {
         const nav = document.querySelector<HTMLElement>('.app-navigation-header--compact')!;
-        const frames: Array<{ x: number; moving: boolean; animated: boolean }> = [];
+        const frames: Array<{
+          x: number;
+          moving: boolean;
+          animated: boolean;
+        }> = [];
         const read = () => frames.push({ x: nav.querySelector('button')!.getBoundingClientRect().left,
           moving: !!document.querySelector('[data-pane-motion]'), animated: nav.getAnimations().some(animation => animation.playState === 'running') });
         read();
@@ -40,11 +48,13 @@ describe('compact split control continuity', () => {
         const until = performance.now() + 650;
         const next = () => {
           read();
-          if (performance.now() < until) requestAnimationFrame(next);
-          else done(frames);
+          if (performance.now() < until)
+            requestAnimationFrame(next);
+          else
+            done(frames);
         };
         requestAnimationFrame(next);
-      }, action);
+      }), action);
       const opening = await sample('open');
       await $('#pane-command-current').waitForDisplayed();
       await waitForWorkspaceAnimationSettled();

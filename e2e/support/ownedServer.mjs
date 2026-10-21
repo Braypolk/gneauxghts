@@ -50,6 +50,9 @@ export async function startOwnedServer({ command, args, port, env = {}, cwd = pr
     stopPromise ??= stopOwned();
     return stopPromise;
   }
+  // WDIO's signal handler can exit synchronously before its hooks finish.
+  const emergencyStop = () => signal('SIGKILL');
+  process.once('exit', emergencyStop);
   async function stopOwned() {
     abortSignal?.removeEventListener('abort', onAbort);
     signal('SIGTERM');
@@ -63,7 +66,10 @@ export async function startOwnedServer({ command, args, port, env = {}, cwd = pr
       await Promise.race([exit, delay(2_000, undefined, { signal: killedTimer.signal }).then(() => {
         throw new Error('Owned server failed to exit after SIGKILL');
       })]);
-    } finally { killedTimer.abort(); }
+    } finally {
+      killedTimer.abort();
+      process.removeListener('exit', emergencyStop);
+    }
   }
   function onAbort() { void stop(); }
   abortSignal?.addEventListener('abort', onAbort, { once: true });

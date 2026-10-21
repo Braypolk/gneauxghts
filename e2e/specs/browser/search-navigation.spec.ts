@@ -18,7 +18,7 @@ async function openCurrentSearch(markdown = text) {
   await input.click();
   await $('button[aria-label="Search this note only"]').click();
   await input.setValue('beacon');
-  await $('button.search-result-item').waitForDisplayed();
+  await browser.$$('button.search-result-item')[0].waitForDisplayed();
   await waitForWorkspaceAnimationSettled();
 }
 

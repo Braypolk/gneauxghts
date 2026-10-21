@@ -29,7 +29,7 @@ describe('chat context visibility', () => {
     await browser.saveScreenshot('/private/tmp/gneauxghts-chat-context.png');
     await browser.keys('Escape');
     await $('button[aria-label="Conversations"]').click();
-    await $('button[role="menuitem"]').click();
+    await $('button[data-new-conversation]').click();
     await expect(usage).toHaveAttribute('aria-label', expect.stringContaining('after you send a message'));
   });
 });

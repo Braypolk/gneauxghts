@@ -1,5 +1,7 @@
 .DS_Store
 node_modules
+**/.wdio/session/
+**/.wdio/failures/
 /build
 /.svelte-kit
 /package

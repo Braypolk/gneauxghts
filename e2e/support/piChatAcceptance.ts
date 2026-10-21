@@ -95,8 +95,8 @@ export async function activatePiEditor() {
   });
 }
 export async function newPiConversation() {
-  await $('[aria-label="Conversations"]').click();
-  await $('button[role="menuitem"]').click();
+  await $('button[aria-label="Conversations"]').click();
+  await $('button[data-new-conversation]').click();
   await browser.waitUntil(async () => (await paneState()).conversationId === null);
 }
 export async function sendPiMessage(text: string) {
@@ -120,50 +120,89 @@ export async function waitPiIdle(timeout = 180_000) {
 
 /** Observe Pi commits and actual DOM deliveries; never retain provider bodies, headers or reasoning text. */
 export async function observePi() {
-  await browser.executeAsync((done: (error: string | null) => void) => {
+  await browser.execute(() => new Promise<string | null>((done) => {
     void (async () => {
       const host = window as Host, bridge = host.__GNEAUXGHTS_NATIVE_E2E__;
-      if (!bridge?.piChat || !bridge.piContext) throw new Error('Actual Pi runtime and Context hooks required');
+      if (!bridge?.piChat || !bridge.piContext)
+        throw new Error('Actual Pi runtime and Context hooks required');
       host.__PI_CHAT_ACCEPTANCE__?.stop();
       const native = (await bridge.piNativeInvokeProbe()).installPiNativeInvokeProbe();
       const runtime = await bridge.piChat(), context = await bridge.piContext();
-      const stats: Probe = { native, observerErrors: 0, startedAt: performance.now(), conversations: {}, stop() {} };
+      const stats: Probe = { native, observerErrors: 0, startedAt: performance.now(), conversations: {}, stop() { } };
       const watches = new Map<number, WatchHandle<ConversationView>>(), attaching = new Set<number>();
       const progress = (id: number) => stats.conversations[id] ??= { observations: 0, textWhileBusy: false, reasoningWhileBusy: false, uiTextWhileBusy: false, uiReasoningWhileBusy: false, compactionObserved: false };
       const sample = (id: number, view: ConversationView) => {
-        const record = progress(id), state = view.docs['pi.live'] as { run?: unknown; generation?: { message?: { content: Array<{type: string; text?: string; thinking?: string}> } }; compactions?: unknown[] } | undefined;
-        record.observations++; record.compactionObserved ||= Boolean(state?.compactions?.length);
-        if (state?.run) for (const block of state.generation?.message?.content ?? []) {
-          if (block.type === 'text' && block.text) { record.textWhileBusy = true; record.firstTextAt ??= performance.now(); }
-          if (block.type === 'thinking' && block.thinking) { record.reasoningWhileBusy = true; record.firstReasoningAt ??= performance.now(); }
-        }
-        if (!state?.run && view.entries.some(entry => entry.model?.some(message => message.role === 'assistant'))) record.firstTerminalAt ??= performance.now();
+        const record = progress(id), state = view.docs['pi.live'] as {
+          run?: unknown;
+          generation?: {
+            message?: {
+              content: Array<{
+                type: string;
+                text?: string;
+                thinking?: string;
+              }>;
+            };
+          };
+          compactions?: unknown[];
+        } | undefined;
+        record.observations++;
+        record.compactionObserved ||= Boolean(state?.compactions?.length);
+        if (state?.run)
+          for (const block of state.generation?.message?.content ?? []) {
+            if (block.type === 'text' && block.text) {
+              record.textWhileBusy = true;
+              record.firstTextAt ??= performance.now();
+            }
+            if (block.type === 'thinking' && block.thinking) {
+              record.reasoningWhileBusy = true;
+              record.firstReasoningAt ??= performance.now();
+            }
+          }
+        if (!state?.run && view.entries.some(entry => entry.model?.some(message => message.role === 'assistant')))
+          record.firstTerminalAt ??= performance.now();
       };
       let disposed = false;
-      const attach = () => { for (const pane of bridge.readPiChatState()) {
-        const id = pane.conversationId;
-        if (!id || watches.has(id) || attaching.has(id)) continue;
-        attaching.add(id);
-        void runtime.harness.conversation(id as ConversationId, context).then(async conversation => {
-          if (!conversation) return;
-          const watch = await conversation.watch(context);
-          if (disposed) { await watch.stop(); return; }
-          watches.set(id, watch); sample(id, watch.value); watch.start(async view => { sample(id, view); });
-        }).catch(() => { stats.observerErrors++; }).finally(() => attaching.delete(id));
-      } };
+      const attach = () => {
+        for (const pane of bridge.readPiChatState()) {
+          const id = pane.conversationId;
+          if (!id || watches.has(id) || attaching.has(id))
+            continue;
+          attaching.add(id);
+          void runtime.harness.conversation(id as ConversationId, context).then(async (conversation) => {
+            if (!conversation)
+              return;
+            const watch = await conversation.watch(context);
+            if (disposed) {
+              await watch.stop();
+              return;
+            }
+            watches.set(id, watch);
+            sample(id, watch.value);
+            watch.start(async (view) => { sample(id, view); });
+          }).catch(() => { stats.observerErrors++; }).finally(() => attaching.delete(id));
+        }
+      };
       const unsubscribe = runtime.harness.subscribeCommits(() => queueMicrotask(attach));
-      const observer = new MutationObserver(() => { attach(); for (const pane of bridge.readPiChatState()) {
-        if (!pane.conversationId) continue;
-        const record = progress(pane.conversationId);
-        const article = document.querySelector('[data-testid="pi-assistant-message"][data-streaming="true"]');
-        if (article?.querySelector('.gn-markdown-surface')?.textContent?.trim()) record.uiTextWhileBusy = true;
-        if (document.querySelector('[data-testid="pi-reasoning"][data-streaming="true"] pre')?.textContent?.trim()) record.uiReasoningWhileBusy = true;
-      } });
+      const observer = new MutationObserver(() => {
+        attach();
+        for (const pane of bridge.readPiChatState()) {
+          if (!pane.conversationId)
+            continue;
+          const record = progress(pane.conversationId);
+          const article = document.querySelector('[data-testid="pi-assistant-message"][data-streaming="true"]');
+          if (article?.querySelector('.gn-markdown-surface')?.textContent?.trim())
+            record.uiTextWhileBusy = true;
+          if (document.querySelector('[data-testid="pi-reasoning"][data-streaming="true"] pre')?.textContent?.trim())
+            record.uiReasoningWhileBusy = true;
+        }
+      });
       observer.observe(document.body, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ['data-streaming'] });
-      stats.stop = () => { disposed = true; unsubscribe(); observer.disconnect(); for (const watch of watches.values()) void watch.stop(); native.stop(); };
-      host.__PI_CHAT_ACCEPTANCE__ = stats; attach();
+      stats.stop = () => { disposed = true; unsubscribe(); observer.disconnect(); for (const watch of watches.values())
+        void watch.stop(); native.stop(); };
+      host.__PI_CHAT_ACCEPTANCE__ = stats;
+      attach();
     })().then(() => done(null), error => done(String(error)));
-  }).then(error => { assert.equal(error, null); });
+  })).then(error => { assert.equal(error, null); });
 }
 export async function piDiagnostics() {
   const progress = await browser.execute(() => {
@@ -202,47 +241,65 @@ export async function publishPiIntent(intent: import('../../src/lib/features/cha
   type Settled = { id: number; state: { status: string; outcome?: { status: string; result?: import('../../src/lib/features/chat/pi/publication').PublicationTaskResult; error?: unknown } } };
   let created: CreatedPublicationTask | undefined, latest: Settled | undefined;
   try {
-    const result = await browser.executeAsync((intent: import('../../src/lib/features/chat/pi/publication').PublicationIntent, body: string | null, done: (result: { value?: unknown; error?: string }) => void) => {
-    void (async () => {
-      const host = window as Host, bridge = host.__GNEAUXGHTS_NATIVE_E2E__!;
-      const progress = host.__PI_PUBLICATION_ACCEPTANCE__ = { stage: 'opening-runtime', intentId: intent.intentId } as NonNullable<Host['__PI_PUBLICATION_ACCEPTANCE__']>;
-      const runtime = await bridge.piChat(), context = await bridge.piContext(), task = await bridge.piPublicationTask();
-      const pane = bridge.readPiChatState()[0];
-      if (!pane?.conversationId) throw new Error('Select an actual conversation before synthetic publication');
-      const conversation = await runtime.harness.conversation(pane.conversationId as ConversationId, context);
-      if (!conversation) throw new Error('Actual Pi conversation unavailable');
-      let editorAtTaskCreation: { noteId: string | null; editor: { markdown: string } | null } | undefined;
-      if (body !== null) {
-        progress.stage = 'editor-input';
-        const editor = document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content');
-        if (!editor) throw new Error('Mounted real editor required for dirty publication acceptance');
-        editor.focus();
-        const before = bridge.readEditorState();
-        if (!before.editor || !bridge.setEditorSelection(0, before.editor.markdown.length) || !document.execCommand('insertText', false, body)) throw new Error('Real editor input failed');
-        // CodeMirror accepts desktop DOM mutations in its MutationObserver.
-        // Let that callback and the owner update settle without depending on
-        // animation frames, which stop in a background native WebView.
-        await Promise.resolve();
-        await Promise.resolve();
-        editorAtTaskCreation = bridge.readEditorState();
-        if (editorAtTaskCreation.editor?.markdown !== body) throw new Error('DOM input was not accepted by the real editor owner');
-        progress.inputAccepted = true;
-      }
-      const beforeInvokes = (window as Host).__PI_CHAT_ACCEPTANCE__?.native.read().bridge.pi_chat_publish_mutation?.calls ?? 0;
-      progress.stage = 'creating-task'; progress.publicationInvokesBefore = beforeInvokes;
-      const id = await conversation.commit(tx => tx.createTask(task, intent, { ownership: { kind: 'conversation' } }), context);
-      progress.stage = 'task-created'; progress.taskId = id;
-      return { id, editorAtTaskCreation, beforeInvokes };
-    })().then(value => done({ value }), error => done({ error: String(error) }));
-    }, intent, body);
+    const result = await browser.execute((intent: import('../../src/lib/features/chat/pi/publication').PublicationIntent, body: string | null) => new Promise<{
+      value?: unknown;
+      error?: string;
+    }>((done) => {
+      void (async () => {
+        const host = window as Host, bridge = host.__GNEAUXGHTS_NATIVE_E2E__!;
+        const progress = host.__PI_PUBLICATION_ACCEPTANCE__ = { stage: 'opening-runtime', intentId: intent.intentId } as NonNullable<Host['__PI_PUBLICATION_ACCEPTANCE__']>;
+        const runtime = await bridge.piChat(), context = await bridge.piContext(), task = await bridge.piPublicationTask();
+        const pane = bridge.readPiChatState()[0];
+        if (!pane?.conversationId)
+          throw new Error('Select an actual conversation before synthetic publication');
+        const conversation = await runtime.harness.conversation(pane.conversationId as ConversationId, context);
+        if (!conversation)
+          throw new Error('Actual Pi conversation unavailable');
+        let editorAtTaskCreation: {
+          noteId: string | null;
+          editor: {
+            markdown: string;
+          } | null;
+        } | undefined;
+        if (body !== null) {
+          progress.stage = 'editor-input';
+          const editor = document.querySelector<HTMLElement>('[data-pane-kind="editor"] [data-testid="note-editor"] .cm-content');
+          if (!editor)
+            throw new Error('Mounted real editor required for dirty publication acceptance');
+          editor.focus();
+          const before = bridge.readEditorState();
+          if (!before.editor || !bridge.setEditorSelection(0, before.editor.markdown.length) || !document.execCommand('insertText', false, body))
+            throw new Error('Real editor input failed');
+          // CodeMirror accepts desktop DOM mutations in its MutationObserver.
+          // Let that callback and the owner update settle without depending on
+          // animation frames, which stop in a background native WebView.
+          await Promise.resolve();
+          await Promise.resolve();
+          editorAtTaskCreation = bridge.readEditorState();
+          if (editorAtTaskCreation.editor?.markdown !== body)
+            throw new Error('DOM input was not accepted by the real editor owner');
+          progress.inputAccepted = true;
+        }
+        const beforeInvokes = (window as Host).__PI_CHAT_ACCEPTANCE__?.native.read().bridge.pi_chat_publish_mutation?.calls ?? 0;
+        progress.stage = 'creating-task';
+        progress.publicationInvokesBefore = beforeInvokes;
+        const id = await conversation.commit(tx => tx.createTask(task, intent, { ownership: { kind: 'conversation' } }), context);
+        progress.stage = 'task-created';
+        progress.taskId = id;
+        return { id, editorAtTaskCreation, beforeInvokes };
+      })().then(value => done({ value }), error => done({ error: String(error) }));
+    }), intent, body);
     assert(!result.error, result.error); created = result.value as CreatedPublicationTask;
     // Lifecycle acceptance may hold a real native acknowledgement and exercise
     // ordinary navigation before joining this same production Pi task.
     await afterTaskCreated?.(created);
     await browser.waitUntil(async () => {
-      const read = await browser.executeAsync((taskId: number, done: (result: { value?: unknown; error?: string }) => void) => {
+      const read = await browser.execute((taskId: number) => new Promise<{
+        value?: unknown;
+        error?: string;
+      }>((done) => {
         void (async () => { const bridge = (window as Host).__GNEAUXGHTS_NATIVE_E2E__!; const runtime = await bridge.piChat(), context = await bridge.piContext(); return runtime.harness.getTask(taskId as import('@earendil-works/pi-durable').TaskId, context); })().then(value => done({ value }), error => done({ error: String(error) }));
-      }, created!.id);
+      }), created!.id);
       assert(!read.error, read.error); latest = read.value as Settled | undefined;
       return latest?.state.status === 'terminal';
     }, { timeout: 30_000, interval: 200, timeoutMsg: 'Actual Pi publication task did not become terminal' });
@@ -291,12 +348,18 @@ export async function restartPiFixture() {
 }
 
 export async function seedPiSyntheticHistory(blocks: string[]) {
-  const result = await browser.executeAsync((blocks: string[], done: (result: { value?: unknown; error?: string }) => void) => {
+  const result = await browser.execute((blocks: string[]) => new Promise<{
+    value?: unknown;
+    error?: string;
+  }>((done) => {
     void (async () => {
       const bridge = (window as Host).__GNEAUXGHTS_NATIVE_E2E__!, runtime = await bridge.piChat(), context = await bridge.piContext();
       const id = bridge.readPiChatState()[0]?.conversationId;
-      if (!id) throw new Error('A real selected conversation is required');
-      const conversation = await runtime.harness.conversation(id as ConversationId, context); if (!conversation) throw new Error('Unknown conversation');
+      if (!id)
+        throw new Error('A real selected conversation is required');
+      const conversation = await runtime.harness.conversation(id as ConversationId, context);
+      if (!conversation)
+        throw new Error('Unknown conversation');
       for (const content of blocks) {
         const submission = await conversation.submit({ type: 'write', entry: { kind: 'acceptance.synthetic-history', data: { generated: true }, model: [{ role: 'user', content, timestamp: Date.now() }] } }, context);
         await submission.wait(context);
@@ -304,16 +367,23 @@ export async function seedPiSyntheticHistory(blocks: string[]) {
       const view = await conversation.context(context);
       return { conversationId: id, entries: view.entries.length, characters: JSON.stringify(view.messages).length };
     })().then(value => done({ value }), error => done({ error: String(error) }));
-  }, blocks);
+  }), blocks);
   assert(!result.error, result.error);
   return result.value as { conversationId: number; entries: number; characters: number };
 }
 export async function inspectPiContext() {
-  const result = await browser.executeAsync((done: (result: { value?: unknown; error?: string }) => void) => {
+  const result = await browser.execute(() => new Promise<{
+    value?: unknown;
+    error?: string;
+  }>((done) => {
     void (async () => {
       const bridge = (window as Host).__GNEAUXGHTS_NATIVE_E2E__!, runtime = await bridge.piChat(), context = await bridge.piContext();
-      const id = bridge.readPiChatState()[0]?.conversationId; if (!id) throw new Error('No selected conversation');
-      const conversation = await runtime.harness.conversation(id as ConversationId, context); if (!conversation) throw new Error('Unknown conversation');
+      const id = bridge.readPiChatState()[0]?.conversationId;
+      if (!id)
+        throw new Error('No selected conversation');
+      const conversation = await runtime.harness.conversation(id as ConversationId, context);
+      if (!conversation)
+        throw new Error('Unknown conversation');
       const current = await conversation.context(context);
       const history = await conversation.entries({ order: 'ascending' }, 100, undefined, context);
       const usage = await runtime.harness.usage(context);
@@ -322,15 +392,18 @@ export async function inspectPiContext() {
       const model = resolved ? { provider: resolved.provider, id: resolved.id, contextWindow: resolved.contextWindow, maxTokens: resolved.maxTokens } : undefined;
       return { model, head: current.head, contextCharacters: JSON.stringify(current.messages).length, historyKinds: history.items.map(entry => ({ id: entry.id, kind: entry.kind, data: entry.data })), historyNext: history.next, usage };
     })().then(value => done({ value }), error => done({ error: String(error) }));
-  });
+  }));
   assert(!result.error, result.error);
   return result.value as { model?: { provider: string; id: string; contextWindow: number; maxTokens: number }; head?: { id: number; kind: string }; contextCharacters: number; historyKinds: Array<{ id: number; kind: string; data?: unknown }>; usage: unknown; historyNext?: unknown };
 }
 
 export async function waitPiTask(taskId: number) {
-  const result = await browser.executeAsync((taskId: number, done: (result: { value?: unknown; error?: string }) => void) => {
+  const result = await browser.execute((taskId: number) => new Promise<{
+    value?: unknown;
+    error?: string;
+  }>((done) => {
     void (async () => { const bridge = (window as Host).__GNEAUXGHTS_NATIVE_E2E__!; const runtime = await bridge.piChat(), context = await bridge.piContext(); return runtime.harness.waitForTask(taskId as import('@earendil-works/pi-durable').TaskId, context); })().then(value => done({ value }), error => done({ error: String(error) }));
-  }, taskId);
+  }), taskId);
   assert(!result.error, result.error);
   return result.value as { state: { outcome: { status: string } } };
 }

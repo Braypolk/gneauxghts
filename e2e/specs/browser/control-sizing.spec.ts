@@ -5,7 +5,9 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 
 async function viewport(width: number) {
   await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 950, deviceScaleFactor: 1, mobile: false });
-  await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+  await browser.execute(() => new Promise<void>((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done()));
+  }));
 }
 
 async function dimensions(selector: string) {
@@ -103,7 +105,7 @@ describe('mobile control sizing', () => {
     await viewport(1280);
     await openHistoryShortcut();
     const rename = 'button[aria-label="Rename revision"]';
-    await $(rename).waitForExist();
+    await browser.$$(rename)[0].waitForExist();
     const desktop = await dimensions(rename);
     for (const width of [639, 390, 320, 640, 1280]) {
       await viewport(width);

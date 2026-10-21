@@ -7,14 +7,28 @@ import { assertDisposable, configurePi, live, messages, newPiConversation, obser
 
 /** Fixed synthetic inputs stay inside the instrumented WebView. Only observations leave it. */
 async function diagnosticEvidence(scenario: 'observe' | 'reports' | 'terminal-notification') {
-  return browser.executeAsync((mode: 'observe' | 'reports' | 'terminal-notification', done: (value: {
-    state: string; noticeCount: number; codes: string[]; repeatCount: number; gettersRead: number;
-    sinkSafe: boolean; domSafe: boolean; noInventedActivity: boolean; reportVisible: boolean; failureVisible: boolean;
-    evidenceKind: string; errorCode?: string;
-  }) => void) => {
+  return browser.execute((mode: 'observe' | 'reports' | 'terminal-notification') => new Promise<{
+    state: string;
+    noticeCount: number;
+    codes: string[];
+    repeatCount: number;
+    gettersRead: number;
+    sinkSafe: boolean;
+    domSafe: boolean;
+    noInventedActivity: boolean;
+    reportVisible: boolean;
+    failureVisible: boolean;
+    evidenceKind: string;
+    errorCode?: string;
+  }>((done) => {
     void (async () => {
-      const bridge = (window as Window & { __GNEAUXGHTS_NATIVE_E2E__?: { piChat(): Promise<PiChat> } }).__GNEAUXGHTS_NATIVE_E2E__;
-      if (!bridge) throw new Error('Instrumented bridge required');
+      const bridge = (window as Window & {
+        __GNEAUXGHTS_NATIVE_E2E__?: {
+          piChat(): Promise<PiChat>;
+        };
+      }).__GNEAUXGHTS_NATIVE_E2E__;
+      if (!bridge)
+        throw new Error('Instrumented bridge required');
       const runtime = await bridge.piChat();
       const canary = 'PI_ADAPTER_SYNTHETIC_PRIVATE_CANARY_742';
       let gettersRead = 0;
@@ -24,16 +38,19 @@ async function diagnosticEvidence(scenario: 'observe' | 'reports' | 'terminal-no
           message: { get() { gettersRead++; return canary; } },
         });
         runtime.diagnostics.report(hostile);
-        for (let index = 0; index < 1024; index++) runtime.diagnostics.report(new Error(canary));
+        for (let index = 0; index < 1024; index++)
+          runtime.diagnostics.report(new Error(canary));
         runtime.diagnostics.report({ code: 'credential', message: canary, stack: canary, headers: { authorization: canary }, body: canary });
-      } else if (mode === 'terminal-notification') {
+      }
+      else if (mode === 'terminal-notification') {
         // Presentation notification only: this does not fail Harness or corrupt storage.
         runtime.diagnostics.end({ reason: 'failed', error: new Error(canary) });
       }
       if (mode !== 'observe') {
         const selector = mode === 'reports' ? '[data-diagnostic-code="runtime_report"]' : '[data-diagnostic-code="runtime_failed"]';
         const deadline = Date.now() + 5000;
-        while (!document.querySelector(selector) && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+        while (!document.querySelector(selector) && Date.now() < deadline)
+          await new Promise(resolve => setTimeout(resolve, 50));
       }
       let snapshot: PiDiagnosticSnapshot = { state: 'open', notices: [] };
       runtime.diagnostics.subscribe(value => { snapshot = value; })();
@@ -49,7 +66,7 @@ async function diagnosticEvidence(scenario: 'observe' | 'reports' | 'terminal-no
     })().catch(() => done({ state: 'unavailable', noticeCount: 0, codes: [], repeatCount: 0, gettersRead: 0,
       sinkSafe: false, domSafe: false, noInventedActivity: false, reportVisible: false, failureVisible: false,
       evidenceKind: 'diagnostic-observation', errorCode: 'acceptance_diagnostic_failed' }));
-  }, scenario);
+  }), scenario);
 }
 
 describe('ordinary Pi adapter diagnostic acceptance', function () {

@@ -1,6 +1,7 @@
 import { browser, expect, $, $$ } from '@wdio/globals';
 import { waitForTwoAnimationFrames } from '../../support/animationFrames';
 import { resetBrowserWorkspace } from '../../support/browserWorkspace';
+import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimation';
 async function insertMarkdown(markdown: string) {
   const content = await $('[data-testid="note-editor"] .cm-content');
   await browser.execute((element: HTMLElement, value: string) => {
@@ -24,7 +25,7 @@ async function pasteSearchImage() {
   }, input);
 }
 async function selectImage() {
-  await $('.gn-image-embed button[aria-label="Zoom image"]').click();
+  await $('[data-testid="workspace-pane"]:first-child .gn-image-embed button[aria-label="Zoom image"]').click();
   await $('dialog.gn-image-viewer').waitForDisplayed();
   await browser.keys('Escape');
   await $('dialog.gn-image-viewer').waitForExist({ reverse: true });
@@ -316,10 +317,12 @@ describe('image interactions', () => {
         && field.width > 100 && image.left >= shell.left && image.right <= shell.right
         && image.top >= shell.top && image.bottom <= shell.bottom;
     });
+    await waitForWorkspaceAnimationSettled();
     expect(await previewIsInsideBar()).toBe(true);
     await browser.saveScreenshot('/private/tmp/gemma-image-query-inline-desktop.png');
     await browser.setWindowSize(420, 900);
     await waitForTwoAnimationFrames();
+    await waitForWorkspaceAnimationSettled();
     expect(await previewIsInsideBar()).toBe(true);
     await browser.saveScreenshot('/private/tmp/gemma-image-query-inline-mobile.png');
     await browser.setWindowSize(1440, 1000);

@@ -28,7 +28,12 @@ describe('animation interruptions and controls', () => {
     await $('#pane-command-current').waitForExist();
     await browser.execute(() => document.querySelector<HTMLElement>('#pane-command-current')!.click());
     await browser.waitUntil(async () => browser.execute(() => !document.querySelector('[data-pane-motion]')));
-    const result = await browser.executeAsync((done: (result: { toggled: boolean; widths: number[]; settled: boolean; error?: string }) => void) => {
+    const result = await browser.execute(() => new Promise<{
+      toggled: boolean;
+      widths: number[];
+      settled: boolean;
+      error?: string;
+    }>((done) => {
       const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]')!;
       const startWidth = pane.getBoundingClientRect().width;
       let toggled = false;
@@ -36,7 +41,8 @@ describe('animation interruptions and controls', () => {
       let frameId = 0;
       let finished = false;
       const finish = (error?: string) => {
-        if (finished) return;
+        if (finished)
+          return;
         finished = true;
         clearTimeout(deadline);
         cancelAnimationFrame(frameId);
@@ -46,14 +52,18 @@ describe('animation interruptions and controls', () => {
       const deadline = setTimeout(() => finish('Pane collapse did not settle'), 3000);
       pane.querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
       const sample = () => {
-        if (finished) return;
+        if (finished)
+          return;
         if (!pane.isConnected) {
-          if (!document.querySelector('[data-pane-motion]')) finish();
-          else frameId = requestAnimationFrame(sample);
+          if (!document.querySelector('[data-pane-motion]'))
+            finish();
+          else
+            frameId = requestAnimationFrame(sample);
           return;
         }
         const width = pane.getBoundingClientRect().width;
-        if (toggled) widths.push(width);
+        if (toggled)
+          widths.push(width);
         else if (width > 1 && width < startWidth * 0.7) {
           toggled = true;
           document.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
@@ -61,7 +71,7 @@ describe('animation interruptions and controls', () => {
         frameId = requestAnimationFrame(sample);
       };
       frameId = requestAnimationFrame(sample);
-    });
+    }));
     if (result.error) throw new Error(result.error);
     expect(result.toggled).toBe(true);
     expect(result.settled).toBe(true);
@@ -74,25 +84,34 @@ describe('animation interruptions and controls', () => {
     await ready();
     await browser.execute(() => document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!.dispatchEvent(new PointerEvent('pointerenter')));
     await $('button[aria-label="Split with current location"]').waitForClickable();
-    const sameAnimation = await browser.executeAsync((done: (same: boolean) => void) => {
+    const sameAnimation = await browser.execute(() => new Promise<boolean>((done) => {
       document.querySelector<HTMLElement>('button[aria-label="Split with current location"]')!.click();
       const started = performance.now();
       const sample = () => {
         const pane = document.querySelector<HTMLElement>('[aria-label="Pane 2"]');
         const animation = pane?.getAnimations().find(a => a.playState === 'running');
-        if (!animation || !pane) { if (performance.now() - started > 3000) done(false); else requestAnimationFrame(sample); return; }
+        if (!animation || !pane) {
+          if (performance.now() - started > 3000)
+            done(false);
+          else
+            requestAnimationFrame(sample);
+          return;
+        }
         document.querySelector<HTMLElement>('button[aria-label="Related notes"]')!.click();
         requestAnimationFrame(() => done(pane.getAnimations().includes(animation)));
       };
       requestAnimationFrame(sample);
-    });
+    }));
     expect(sameAnimation).toBe(true);
     await waitForWorkspaceAnimationSettled();
   });
 
   it('keeps the forget fill aligned with frame-driven progress', async () => {
     await ready();
-    const result = await browser.executeAsync((done: (result: { progress: number; displayed: number }) => void) => {
+    const result = await browser.execute(() => new Promise<{
+      progress: number;
+      displayed: number;
+    }>((done) => {
       const button = document.querySelector<HTMLElement>('button[aria-label^="Forget this note."]')!;
       button.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }));
       setTimeout(() => {
@@ -102,7 +121,7 @@ describe('animation interruptions and controls', () => {
         button.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
         done({ progress, displayed });
       }, 500);
-    });
+    }));
     expect(result.progress).toBeGreaterThan(0.2);
     expect(Math.abs(result.displayed - result.progress)).toBeLessThan(0.025);
     expect(await browser.execute(() => window.__GNEAUXGHTS_E2E__!.invocations

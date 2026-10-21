@@ -12,13 +12,14 @@ describe('native ordinary Pi chat motion', () => {
     const fixture = await startPiProviderFixture();
     try {
       await configurePi(fixture.endpoint, fixture.model);
-      await browser.executeAsync((done: (error: string | null) => void) => {
+      await browser.execute(() => new Promise<string | null>((done) => {
         void (async () => {
           const bridge = (window as unknown as Host).__GNEAUXGHTS_NATIVE_E2E__, chat = await bridge.piChat(), context = await bridge.piContext();
           const conversation = await chat.createConversation({ title: 'Populated motion fixture' });
-          for (let index = 0; index < 40; index++) await conversation.submit({ type: 'write', entry: { kind: 'acceptance.motion', model: [{ role: 'user', content: `Past ${index}: ${'Synthetic retained history. '.repeat(40)}`, timestamp: index }] } }, context);
+          for (let index = 0; index < 40; index++)
+            await conversation.submit({ type: 'write', entry: { kind: 'acceptance.motion', model: [{ role: 'user', content: `Past ${index}: ${'Synthetic retained history. '.repeat(40)}`, timestamp: index }] } }, context);
         })().then(() => done(null), error => done(String(error)));
-      }).then(error => { expect(error).toBe(null); });
+      })).then(error => { expect(error).toBe(null); });
       await invokeNative('plugin:window|show', { label: 'main' });
       await invokeNative('plugin:window|set_focus', { label: 'main' });
       for (let round = 0; round < 2; round++) {

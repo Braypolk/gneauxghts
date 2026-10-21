@@ -27,36 +27,52 @@ describe('native immutable draft body latency', function () {
       await browser.waitUntil(() => browser.execute(() => document.querySelectorAll('[data-testid="note-editor"][aria-busy="false"]').length === 2));
       await browser.waitUntil(() => browser.execute(() => !document.querySelector('[data-pane-motion]')));
     }
-    const setup = await browser.executeAsync(async (fixture: typeof cases[number], done: (value: any) => void) => {
-      try {
-        const path = '/src/lib/e2e/draftBodyLatencyHarness.ts';
-        const h = await import(/* @vite-ignore */ path);
-        const environment = await h.prepare(fixture.kind, fixture.panes, fixture.sourceIndex);
-        h.armNative(); done({ environment });
-      } catch (error) { done({ measurementFailure: String(error) }); }
-    }, fixture);
-    expect(setup.measurementFailure).toBeUndefined();
-    for (let i = 0; i < 25; i++) {
-      const sample = await browser.executeAsync(async (done: (value: any) => void) => {
+    const setup = await browser.execute((fixture: typeof cases[number]) => new Promise<any>((done, reject) => {
+      void (async () => {
         try {
           const path = '/src/lib/e2e/draftBodyLatencyHarness.ts';
           const h = await import(/* @vite-ignore */ path);
-          h.typeCharacter();
-          done({ count: await h.waitNative() });
-        } catch (error) { done({ measurementFailure: String(error) }); }
-      });
+          const environment = await h.prepare(fixture.kind, fixture.panes, fixture.sourceIndex);
+          h.armNative();
+          done({ environment });
+        }
+        catch (error) {
+          done({ measurementFailure: String(error) });
+        }
+      })().catch(reject);
+    }), fixture);
+    expect(setup.measurementFailure).toBeUndefined();
+    for (let i = 0; i < 25; i++) {
+      const sample = await browser.execute(() => new Promise<any>((done, reject) => {
+        void (async () => {
+          try {
+            const path = '/src/lib/e2e/draftBodyLatencyHarness.ts';
+            const h = await import(/* @vite-ignore */ path);
+            h.typeCharacter();
+            done({ count: await h.waitNative() });
+          }
+          catch (error) {
+            done({ measurementFailure: String(error) });
+          }
+        })().catch(reject);
+      }));
       expect(sample.measurementFailure).toBeUndefined();
       expect(sample.count).toBe(i + 1);
     }
-    const result = await browser.executeAsync(async (done: (value: any) => void) => {
-      try {
-        const path = '/src/lib/e2e/draftBodyLatencyHarness.ts';
-        const h = await import(/* @vite-ignore */ path);
-        const native = h.finishNative();
-        const queued = await h.queuedTyping(80);
-        done({ native, queued });
-      } catch (error) { done({ measurementFailure: String(error) }); }
-    });
+    const result = await browser.execute(() => new Promise<any>((done, reject) => {
+      void (async () => {
+        try {
+          const path = '/src/lib/e2e/draftBodyLatencyHarness.ts';
+          const h = await import(/* @vite-ignore */ path);
+          const native = h.finishNative();
+          const queued = await h.queuedTyping(80);
+          done({ native, queued });
+        }
+        catch (error) {
+          done({ measurementFailure: String(error) });
+        }
+      })().catch(reject);
+    }));
     expect(result.measurementFailure).toBeUndefined();
     rows.push({ ...fixture, ...setup, ...result });
     writeFileSync(process.env.DRAFT_BODY_NATIVE_OUTPUT!, JSON.stringify({ variant: process.env.DRAFT_BODY_VARIANT,

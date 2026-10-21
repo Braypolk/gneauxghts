@@ -1,3 +1,6 @@
+packages:
+  - e2e/agent
+
 allowBuilds:
   '@google/genai': false
   edgedriver: false

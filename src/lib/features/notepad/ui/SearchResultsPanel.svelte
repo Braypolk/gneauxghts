@@ -18,7 +18,7 @@
     /* The dock publishes its destination width before its visible bar expands.
        Reveal a fixed layout from the existing base rather than resizing text. */
     width: var(--dock-search-results-width, 100%);
-    left: 50%;
+    left: var(--dock-search-results-center, 50%);
     right: auto;
     transform: translateX(-50%);
     background: var(--search-scope-results-bg, var(--popover));

@@ -15,14 +15,14 @@
 }
 .workspace-input-dock .notepad-search-bar { width: 100%; max-width: none !important; margin-inline: 0 !important; }
 .workspace-input-dock .shared-search-input-layer > svg { display: block; opacity: 0; }
-.workspace-input-dock[data-search-width-motion] .shared-search-mode-label,
-.workspace-input-dock[data-search-width-motion] .shared-search-match-options {
+.workspace-input-dock[data-search-width-motion] .shared-search-bar-shell .shared-search-mode-label,
+.workspace-input-dock[data-search-width-motion] .shared-search-bar-shell .shared-search-match-options {
   /* Follow painted container width, including reversals, without a second clock. */
   grid-template-columns: var(--dock-search-width-fraction);
   transition-property: opacity;
 }
 .workspace-input-dock .workspace-chat-slot { min-width: 0; }
-.workspace-input-dock .dock-chat-layer { clip-path: inset(max(0px, calc(100% - var(--morph-body-height))) 0 0); }
+.workspace-input-dock[data-dock-motion] .dock-chat-layer { clip-path: inset(max(0px, calc(100% - var(--morph-body-height))) 0 0); }
 .workspace-input-dock .chat-send-button { opacity: 0 !important; transition: none !important; }
 .workspace-input-dock .dock-chat-toggle svg { position: absolute; }
 .workspace-input-dock .dock-chat-toggle {
@@ -32,3 +32,10 @@
 .workspace-input-dock .related-dock-content { display: flex; align-items: center; padding-inline: 1.25rem 0.25rem; }
 
 .workspace-input-dock .chat-composer-input { transform: translateY(max(0px, calc(var(--dock-composer-height) - var(--morph-body-height)))); }
+
+.workspace-input-dock .dock-search-toggle {
+  transition: opacity var(--dock-search-opacity-duration, 320ms) var(--search-expansion-ease);
+}
+@media (prefers-reduced-motion: reduce) {
+  .workspace-input-dock .dock-search-toggle { transition: none; }
+}

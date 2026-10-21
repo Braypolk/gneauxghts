@@ -15,16 +15,21 @@ describe('paragraph work placement diagnostic', () => {
       await browser.waitUntil(() => browser.execute(() => document.querySelectorAll('[data-testid="note-editor"][aria-busy="false"]').length === 2));
       await browser.waitUntil(() => browser.execute(() => !document.querySelector('[data-pane-motion]')));
     }
-    const result = await browser.executeAsync(async (panes: number, done: (result: any) => void) => {
-      try {
-        const harnessPath = '/src/lib/e2e/markdownFullAppHarness.ts';
-        const harness = await import(/* @vite-ignore */ harnessPath);
-        const environment = await harness.prepareFullAppMarkdown('quote', 50_000, panes);
-        const probePath = '/src/lib/e2e/markdownParagraphProbe.ts';
-        const probe = await import(/* @vite-ignore */ probePath);
-        done({ environment, ...await probe.inspectParagraphWork() });
-      } catch (error) { done({ error: String(error), stack: (error as Error).stack }); }
-    }, panes);
+    const result = await browser.execute((panes: number) => new Promise<any>((done, reject) => {
+      void (async () => {
+        try {
+          const harnessPath = '/src/lib/e2e/markdownFullAppHarness.ts';
+          const harness = await import(/* @vite-ignore */ harnessPath);
+          const environment = await harness.prepareFullAppMarkdown('quote', 50000, panes);
+          const probePath = '/src/lib/e2e/markdownParagraphProbe.ts';
+          const probe = await import(/* @vite-ignore */ probePath);
+          done({ environment, ...await probe.inspectParagraphWork() });
+        }
+        catch (error) {
+          done({ error: String(error), stack: (error as Error).stack });
+        }
+      })().catch(reject);
+    }), panes);
     if (result.error) throw new Error(JSON.stringify(result));
     writeFileSync(`${process.env.MARKDOWN_PARAGRAPH_OUTPUT}-${panes}.json`, JSON.stringify(result, null, 2) + '\n');
   });

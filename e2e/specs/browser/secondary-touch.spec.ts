@@ -24,8 +24,9 @@ async function authoredText() {
   return browser.execute(() => (window as EditorWindow).__GNEAUXGHTS_NATIVE_E2E__.readEditorState().editor.markdown);
 }
 async function targetSize(selector: string, minimum = 44, painted = true) {
-  await $(selector).waitForExist();
-  if (painted) await $(selector).waitForDisplayed();
+  // Sample the first control, matching the geometry query below (e.g. calendar days).
+  await browser.$$(selector)[0].waitForExist();
+  if (painted) await browser.$$(selector)[0].waitForDisplayed();
   const size = await browser.execute(selector => {
     const box = document.querySelector(selector)!.getBoundingClientRect();
     return { width: box.width, height: box.height };
@@ -91,7 +92,7 @@ describe('secondary touch controls and image gestures', () => {
     await $('button[aria-label="Search notes"]').click();
     await openHistoryShortcut();
     await targetSize('button[aria-label="Rename revision"]');
-    expect((await $('button[aria-label="Rename revision"] svg').getSize()).width).toBe(12);
+    expect((await browser.$$('button[aria-label="Rename revision"] svg')[0].getSize()).width).toBe(12);
     await browser.keys('Escape');
     await navigateAppTab('Settings');
     await $('[data-settings-section="ai"]').click();
@@ -123,8 +124,8 @@ describe('secondary touch controls and image gestures', () => {
     await browser.execute(() => { window.__GNEAUXGHTS_E2E__!.seedImageAsset('first.png'); window.__GNEAUXGHTS_E2E__!.seedImageAsset('second.png'); });
     await insert(markdown);
     await browser.execute(() => { document.querySelector<HTMLElement>('.cm-content')!.blur(); document.querySelector('.cm-scroller')!.scrollTop = 0; });
-    await $('.gn-image-embed img').click();
-    await $('.gn-image-embed button[aria-label="Zoom image"]').click();
+    await browser.$$('.gn-image-embed img')[0].click();
+    await browser.$$('.gn-image-embed button[aria-label="Zoom image"]')[0].click();
     await $('.gn-image-viewer img').waitForDisplayed();
     const point = await stageCenter();
     const fit = (await transform()).scale;
@@ -151,7 +152,7 @@ describe('secondary touch controls and image gestures', () => {
     for (const selector of ['button[aria-label="Close image viewer"]', 'button[aria-label="Next image"]']) await targetSize(selector);
     await $('button[aria-label="Close image viewer"]').click();
     await expect($('.gn-image-viewer')).not.toExist();
-    await $('.gn-image-embed button[aria-label="Zoom image"]').click();
+    await browser.$$('.gn-image-embed button[aria-label="Zoom image"]')[0].click();
     await $('.gn-image-viewer img').waitForDisplayed();
     const backdrop = await browser.execute(() => {
       const rect = document.querySelector('.gn-image-viewer .stage')!.getBoundingClientRect();
@@ -166,12 +167,14 @@ describe('secondary touch controls and image gestures', () => {
     await browser.execute(() => window.__GNEAUXGHTS_E2E__!.seedImageAsset('scroll.png'));
     const markdown = `![[scroll.png|200]]\n\n${'Scrolling text\n\n'.repeat(50)}`;
     await insert(markdown);
-    await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => {
-      document.querySelector<HTMLElement>('.cm-content')!.blur();
-      document.querySelector('.cm-scroller')!.scrollTop = 0;
-      done();
-    })));
-    await $('.gn-image-embed img').click();
+    await browser.execute(() => new Promise<void>((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        document.querySelector<HTMLElement>('.cm-content')!.blur();
+        document.querySelector('.cm-scroller')!.scrollTop = 0;
+        done();
+      }));
+    }));
+    await browser.$$('.gn-image-embed img')[0].click();
     await targetSize('.gn-image-embed button[aria-label="Zoom image"]');
     await targetSize('.gn-image-embed button[aria-label="Increase image size"]');
     await targetSize('.gn-image-embed button[aria-label="Resize image se"]');

@@ -8,6 +8,7 @@ import { createNativeFixture } from './support/nativeFixture.mjs';
 import { startVite, stopVite } from './support/viteServer';
 import { nativeE2EBinary, nativeE2EPorts } from './support/nativeE2EBinary.mjs';
 import { admitNativePresentation } from './support/nativePresentation.mjs';
+import { waitUntil } from './support/nativeTransport.mjs';
 
 type TestrunnerConfig = Options.Testrunner & Capabilities.WithRequestedTestrunnerCapabilities;
 
@@ -51,24 +52,32 @@ export const config: TestrunnerConfig = {
           nativeE2EBinary(profile, application);
           await startVite(optimized ? 'native-preview' : 'native', ports.dev);
         },
+        async stopRestartedApp() {
+          const receipt = join(fixtureRoot, 'restarted-app.pid');
+          if (!ownedFixture || !existsSync(receipt)) return;
+          const pid = Number(readFileSync(receipt, 'utf8'));
+          const isOwned = () => {
+            const command = execFileSync('ps', ['-axo', 'pid=,command='], {encoding: 'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[0]) === pid);
+            return !!command?.includes(application) && command.includes(`--e2e-app-data-root ${appDataRoot}`) &&
+              command.includes(`--e2e-documents-root ${documentsRoot}`) && command.includes(`--e2e-vault-root ${vaultRoot}`);
+          };
+          const signalOwned = (signal: NodeJS.Signals) => {
+            if (!isOwned()) return;
+            try { process.kill(pid, signal); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
+          };
+          signalOwned('SIGTERM');
+          try { await waitUntil(() => !isOwned(), 'restarted fixture app exit', 3000); }
+          catch {
+            signalOwned('SIGKILL');
+            await waitUntil(() => !isOwned(), 'restarted fixture app termination', 3000);
+          }
+        },
         async cleanup() {
           try { await stopVite(); }
-          finally {
-            const receipt = join(fixtureRoot, 'restarted-app.pid');
-            if (ownedFixture && existsSync(receipt)) {
-              const pid = Number(readFileSync(receipt, 'utf8'));
-              const command = execFileSync('ps', ['-axo', 'pid=,command='], {encoding: 'utf8'}).split('\n').find(line => Number(line.trim().split(/\s+/)[0]) === pid);
-              if (command?.includes(basename(fixtureRoot)) && command.includes('--e2e-vault-root') && command.includes('gneauxghts')) {
-                try { process.kill(pid, 'SIGTERM'); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ESRCH') throw error; }
-              }
-            }
-            ownedFixture?.cleanup();
-          }
+          finally { ownedFixture?.cleanup(); }
         }
       },
-      driverProvider: 'embedded',
       captureBackendLogs: captureLogs,
-      captureFrontendLogs: captureLogs,
       embeddedPort: ports.driver,
       appArgs: [
         '--e2e-app-data-root',

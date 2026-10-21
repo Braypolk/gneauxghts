@@ -10,13 +10,17 @@ interface FrameSample {
 }
 
 async function samplePresentation(actionSelector: string) {
-  const result = await browser.executeAsync((selector: string, done: (result: { samples: FrameSample[]; error?: string }) => void) => {
+  const result = await browser.execute((selector: string) => new Promise<{
+    samples: FrameSample[];
+    error?: string;
+  }>((done) => {
     const samples: FrameSample[] = [];
     const started = performance.now();
     let frame = 0;
     let finished = false;
     const finish = (error?: string) => {
-      if (finished) return;
+      if (finished)
+        return;
       finished = true;
       cancelAnimationFrame(frame);
       clearTimeout(deadline);
@@ -27,30 +31,39 @@ async function samplePresentation(actionSelector: string) {
     const deadline = window.setTimeout(() => finish('Formatting observation did not receive animation frames within5s'), 5000);
     function sample() {
       try {
-      const scroller = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-scroller');
-      if (scroller) {
-        const rect = scroller.getBoundingClientRect();
-        const headings = [...scroller.querySelectorAll<HTMLElement>('.cm-line')].filter(line => {
-          const r = line.getBoundingClientRect();
-          return line.textContent?.includes('Diagnostic heading') && r.bottom > rect.top && r.top < rect.bottom;
-        });
-        if (headings.length) samples.push({
-          loadingIndicatorVisible: [...document.querySelectorAll<HTMLElement>('span')].some(span =>
-            span.textContent?.trim() === 'Loading editor' && getComputedStyle(span).visibility === 'visible'),
-          raw: headings.filter(line => !line.classList.contains('cm-gn-line-h2')).map(line => line.textContent),
-          headings: headings.map(line => ({ text: line.textContent!, top: line.getBoundingClientRect().top })),
-          scrollTop: scroller.scrollTop,
-          visible: getComputedStyle(scroller).visibility === 'visible'
-        });
+        const scroller = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-scroller');
+        if (scroller) {
+          const rect = scroller.getBoundingClientRect();
+          const headings = [...scroller.querySelectorAll<HTMLElement>('.cm-line')].filter(line => {
+            const r = line.getBoundingClientRect();
+            return line.textContent?.includes('Diagnostic heading') && r.bottom > rect.top && r.top < rect.bottom;
+          });
+          if (headings.length)
+            samples.push({
+              loadingIndicatorVisible: [...document.querySelectorAll<HTMLElement>('span')].some(span => span.textContent?.trim() === 'Loading editor' && getComputedStyle(span).visibility === 'visible'),
+              raw: headings.filter(line => !line.classList.contains('cm-gn-line-h2')).map(line => line.textContent),
+              headings: headings.map(line => ({ text: line.textContent!, top: line.getBoundingClientRect().top })),
+              scrollTop: scroller.scrollTop,
+              visible: getComputedStyle(scroller).visibility === 'visible'
+            });
+        }
+        if (performance.now() - started < 1200)
+          frame = requestAnimationFrame(sample);
+        else
+          finish();
       }
-      if (performance.now() - started < 1200) frame = requestAnimationFrame(sample);
-      else finish();
-      } catch (error) { finish(String(error)); }
+      catch (error) {
+        finish(String(error));
+      }
     }
     frame = requestAnimationFrame(sample);
-    try { document.querySelector<HTMLButtonElement>(selector)!.click(); }
-    catch (error) { finish(String(error)); }
-  }, actionSelector);
+    try {
+      document.querySelector<HTMLButtonElement>(selector)!.click();
+    }
+    catch (error) {
+      finish(String(error));
+    }
+  }), actionSelector);
   expect(result.error).toBeUndefined();
   return result.samples;
 }
@@ -77,14 +90,16 @@ async function seedLongNoteAndOpenBeta(sections = 220) {
     `## Diagnostic heading ${i}`, '',
     `Paragraph ${i} with **bold text**, *italic text*, ~~struck text~~, and ***nested emphasis*** with a [link](https://example.com).`
   ].join('\n')).join('\n\n');
-  await browser.executeAsync((markdown: string, done: () => void) => {
+  await browser.execute((markdown: string) => new Promise<void>((done) => {
     const w = window as typeof window & {
-      __TAURI_INTERNALS__: { invoke: (command: string, args: object) => Promise<unknown> }
+      __TAURI_INTERNALS__: {
+        invoke: (command: string, args: object) => Promise<unknown>;
+      };
     };
     w.__TAURI_INTERNALS__.invoke('save_note', {
       title: 'Alpha note', markdown, currentPath: '/e2e/alpha.md'
     }).then(() => done());
-  }, body);
+  }), body);
   const search = await $('[data-testid="note-search-input"]');
   await search.click();
   await $('button[aria-label="Search all notes"]').click();

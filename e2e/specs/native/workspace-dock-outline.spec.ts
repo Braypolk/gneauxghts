@@ -23,12 +23,16 @@ describe('native dock outline', () => {
     await $('[data-testid="note-editor"] .cm-content').waitForExist({ timeout: 30_000 });
     const scale = await browser.execute(() => devicePixelRatio);
     await browser.setWindowRect(60, 80, 1440 * scale, 900 * scale);
-    const focusError = await browser.executeAsync((done: (error: string | null) => void) => {
-      const native = window as typeof window & { __TAURI_INTERNALS__: { invoke: (cmd: string, args: object) => Promise<unknown> } };
+    const focusError = await browser.execute(() => new Promise<string | null>((done) => {
+      const native = window as typeof window & {
+        __TAURI_INTERNALS__: {
+          invoke: (cmd: string, args: object) => Promise<unknown>;
+        };
+      };
       native.__TAURI_INTERNALS__.invoke('plugin:window|show', { label: 'main' })
         .then(() => native.__TAURI_INTERNALS__.invoke('plugin:window|set_focus', { label: 'main' }))
         .then(() => done(null)).catch(error => done(String(error)));
-    });
+    }));
     expect(focusError).toBeNull();
     try {
       await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.visibilityState === 'visible'),
@@ -48,7 +52,10 @@ describe('native dock outline', () => {
     // Sample committed frames inside WebKit so driver round trips cannot skip
     // the middle of a normal-speed transition.
     const captureTransition = async (selector: string) => {
-      const result = await browser.executeAsync((selector: string, duration: number, done: (result: { samples: number[][]; failure?: string }) => void) => {
+      const result = await browser.execute((selector: string, duration: number) => new Promise<{
+        samples: number[][];
+        failure?: string;
+      }>((done) => {
         const dock = document.querySelector('.workspace-input-dock')!;
         const samples: number[][] = [], started = performance.now();
         const watchdog = setTimeout(() => done({ samples, failure: `Frame sampling stalled: visibility=${document.visibilityState}, focus=${document.hasFocus()}` }), 2500);
@@ -63,14 +70,22 @@ describe('native dock outline', () => {
               send ? Number(getComputedStyle(send).opacity) : 0,
               dock.hasAttribute('data-dock-motion') ? 1 : 0,
               Number(getComputedStyle(dock.querySelector('[data-container-surface="search"]')!).opacity) +
-              Number(dock.querySelector('.dock-chat-layer') ? getComputedStyle(dock.querySelector('.dock-chat-layer')!).opacity : 0),
+                Number(dock.querySelector('.dock-chat-layer') ? getComputedStyle(dock.querySelector('.dock-chat-layer')!).opacity : 0),
               dock.hasAttribute('data-dock-text-reveal') ? 1 : 0]);
-            if (performance.now() - started < duration) requestAnimationFrame(sample);
-            else { clearTimeout(watchdog); done({ samples }); }
-          } catch (error) { clearTimeout(watchdog); done({ samples, failure: String(error) }); }
+            if (performance.now() - started < duration)
+              requestAnimationFrame(sample);
+            else {
+              clearTimeout(watchdog);
+              done({ samples });
+            }
+          }
+          catch (error) {
+            clearTimeout(watchdog);
+            done({ samples, failure: String(error) });
+          }
         }, 0);
         requestAnimationFrame(sample);
-      }, selector, dockMorphDuration + 320);
+      }), selector, dockMorphDuration + 320);
       expect(result.failure).toBeUndefined();
       const samples = result.samples;
       expect(samples.length).toBeGreaterThan(10);
@@ -97,20 +112,24 @@ describe('native dock outline', () => {
     });
     expect(Math.max(...iconAlignment)).toBeLessThanOrEqual(1);
     for (const expand of [true, false]) {
-      const offsets = await browser.executeAsync((expand: boolean, duration: number, done: (offsets: number[]) => void) => {
+      const offsets = await browser.execute((expand: boolean, duration: number) => new Promise<number[]>((done) => {
         const dock = document.querySelector('.workspace-input-dock')!, input = dock.querySelector<HTMLInputElement>('input')!;
         const offsets: number[] = [], started = performance.now();
-        if (expand) input.focus({ preventScroll: true });
-        else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        if (expand)
+          input.focus({ preventScroll: true });
+        else
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         const sample = () => setTimeout(() => {
           const glyph = dock.querySelector('.dock-search-toggle > svg')!.getBoundingClientRect();
           const inputGlyph = dock.querySelector('.shared-search-input-layer > svg')!.getBoundingClientRect();
           offsets.push(Math.abs(glyph.left + glyph.width / 2 - inputGlyph.left - inputGlyph.width / 2));
-          if (performance.now() - started < duration) requestAnimationFrame(sample);
-          else done(offsets);
+          if (performance.now() - started < duration)
+            requestAnimationFrame(sample);
+          else
+            done(offsets);
         }, 0);
         requestAnimationFrame(sample);
-      }, expand, Math.max(800, dockMorphDuration + 200));
+      }), expand, Math.max(800, dockMorphDuration + 200));
       expect(Math.max(...offsets)).toBeLessThanOrEqual(1);
       await waitForWorkspaceAnimationSettled();
     }
@@ -128,14 +147,21 @@ describe('native dock outline', () => {
       await invokeNative('plugin:window|set_focus', { label: 'main' });
       await browser.waitUntil(() => browser.execute(() => document.hasFocus() && document.visibilityState === 'visible'));
       expect(await invokeNative<boolean>('plugin:window|is_focused', { label: 'main' })).toBe(true);
-      const result = await browser.executeAsync((selector: string, reverse: boolean, done: (result: { frames: Frame[]; failure?: string }) => void) => {
+      const result = await browser.execute((selector: string, reverse: boolean) => new Promise<{
+        frames: Frame[];
+        failure?: string;
+      }>((done) => {
         const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
         const initialPanel = dock.querySelector('.search-results-panel');
         const frames: Frame[] = [], started = performance.now();
         let finished = false, reversed = false, frameId = 0;
         const finish = (failure?: string) => {
-          if (finished) return;
-          finished = true; clearTimeout(watchdog); cancelAnimationFrame(frameId); done({ frames, failure });
+          if (finished)
+            return;
+          finished = true;
+          clearTimeout(watchdog);
+          cancelAnimationFrame(frameId);
+          done({ frames, failure });
         };
         const watchdog = setTimeout(() => finish(`Native frame sampling stalled: ${document.visibilityState}, focus=${document.hasFocus()}`), 2500);
         const read = (time: number) => {
@@ -150,31 +176,46 @@ describe('native dock outline', () => {
             return [button.dataset.containerToggle!, [bounds.left, bounds.width]];
           }));
           frames.push({ time, clock: dock.hasAttribute('data-dock-motion') ? {
-            started: Number(dock.dataset.dockStartedAt), duration: Number(dock.dataset.dockDuration), easing: dock.dataset.dockEasing!
-          } : null, body: [body.left, body.width, body.height], icons,
-          blur: Number(dock.querySelector('feGaussianBlur')!.getAttribute('stdDeviation')),
-          glyph: toggle && icon ? Number(getComputedStyle(toggle).opacity) * Number(getComputedStyle(icon).opacity) : null,
-          popup: rect && panel ? [rect.width, rect.bottom, parseFloat(getComputedStyle(panel).clipPath.match(/[-\d.]+/)?.[0] ?? '0')] : null,
-          retained: !initialPanel || initialPanel.isConnected && initialPanel === panel,
-          focused: document.hasFocus(), visible: document.visibilityState === 'visible', editor: line ? [line.left, line.width] : null });
+              started: Number(dock.dataset.dockStartedAt), duration: Number(dock.dataset.dockDuration), easing: dock.dataset.dockEasing!
+            } : null, body: [body.left, body.width, body.height], icons,
+            blur: Number(dock.querySelector('feGaussianBlur')!.getAttribute('stdDeviation')),
+            glyph: toggle && icon ? Number(getComputedStyle(toggle).opacity) * Number(getComputedStyle(icon).opacity) : null,
+            popup: rect && panel ? [rect.width, rect.bottom, parseFloat(getComputedStyle(panel).clipPath.match(/[-\d.]+/)?.[0] ?? '0')] : null,
+            retained: !initialPanel || initialPanel.isConnected && initialPanel === panel,
+            focused: document.hasFocus(), visible: document.visibilityState === 'visible', editor: line ? [line.left, line.width] : null });
         };
         const action = () => {
-          if (selector === 'editor') document.querySelector<HTMLElement>('[data-pane-kind="editor"] .cm-content')!.focus();
-          else document.querySelector<HTMLElement>(selector)!.click();
+          if (selector === 'editor')
+            document.querySelector<HTMLElement>('[data-pane-kind="editor"] .cm-content')!.focus();
+          else
+            document.querySelector<HTMLElement>(selector)!.click();
         };
-        try { read(started); action(); }
-        catch (error) { finish(String(error)); return; }
+        try {
+          read(started);
+          action();
+        }
+        catch (error) {
+          finish(String(error));
+          return;
+        }
         const sample = (time: number) => setTimeout(() => {
           try {
             read(time);
             if (reverse && !reversed && time - started >= 120) {
-              reversed = true; dock.querySelector<HTMLElement>('[data-container-toggle="search"]')!.click();
+              reversed = true;
+              dock.querySelector<HTMLElement>('[data-container-toggle="search"]')!.click();
             }
-            if (time - started < 850) frameId = requestAnimationFrame(sample); else finish();
-          } catch (error) { finish(String(error)); }
+            if (time - started < 850)
+              frameId = requestAnimationFrame(sample);
+            else
+              finish();
+          }
+          catch (error) {
+            finish(String(error));
+          }
         }, 0);
         frameId = requestAnimationFrame(sample);
-      }, selector, reverse);
+      }), selector, reverse);
       expect(result.failure).toBeUndefined();
       expect(result.frames.length).toBeGreaterThan(15);
       // WebKit can drop document focus while an outgoing input becomes inert.
@@ -257,10 +298,10 @@ describe('native dock outline', () => {
       writeFileSync(join(artifacts, `${width}-frames.json`), JSON.stringify({ baseline, related, repeated, dismissed, reversal }));
       console.log('NATIVE_RELATED_MOTION', JSON.stringify({ width, actualWidth: await browser.execute(() => innerWidth), baseline: baselineMetrics, related: relatedMetrics, artifacts }));
       // Capture paint separately so screenshot work cannot distort frame pacing.
-      await browser.executeAsync((done: () => void) => {
+      await browser.execute(() => new Promise<void>((done) => {
         document.querySelector<HTMLElement>('[data-container-toggle="related"]')!.click();
         setTimeout(done, 150);
-      });
+      }));
       await browser.saveScreenshot(join(artifacts, `${width}-pinch.png`));
       await waitForWorkspaceAnimationSettled();
       await browser.saveScreenshot(join(artifacts, `${width}-related.png`));

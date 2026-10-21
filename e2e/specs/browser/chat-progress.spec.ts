@@ -7,9 +7,9 @@ describe('visible chat generation progress', () => {
 
   it('shows thinking while reasoning streams, then paints the answer before completion', async () => {
     const answer = 'Your notes explore creative projects. '.repeat(40);
-    await browser.executeAsync((answer: string, done: () => void) => {
+    await browser.execute((answer: string) => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse(answer, 'Compare the themes across the notes. '.repeat(25)).then(done);
-    }, answer);
+    }), answer);
     await $('textarea[aria-label="Message"]').setValue('Explain the themes');
     await $('[data-testid="pi-send"]').click();
     const reasoning = await $('[data-testid="pi-reasoning"][data-streaming="true"]');
@@ -32,7 +32,9 @@ describe('visible chat generation progress', () => {
   });
 
   it('shows waiting without claiming to be writing when the model has emitted no content', async () => {
-    await browser.executeAsync((done: () => void) => { void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done); });
+    await browser.execute(() => new Promise<void>((done) => {
+      void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done);
+    }));
     await $('textarea[aria-label="Message"]').setValue('Wait for the model');
     await $('[data-testid="pi-send"]').click();
     const activity = await $('[data-testid="pi-activity"]');
@@ -44,9 +46,9 @@ describe('visible chat generation progress', () => {
   });
 
   it('bounds and scrolls expanded reasoning without any tool calls', async () => {
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse('A concise answer.', 'A short thought.\n'.repeat(250)).then(done);
-    });
+    }));
     await $('textarea[aria-label="Message"]').setValue('Reason without tools');
     await $('[data-testid="pi-send"]').click();
     const reasoning = await $('[data-testid="pi-reasoning"]');
@@ -84,7 +86,9 @@ describe('visible chat generation progress', () => {
   it('keeps shimmer readable and disables status motion when reduced motion is requested', async () => {
     await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'no-preference' }] });
     try {
-      await browser.executeAsync((done: () => void) => { void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done); });
+      await browser.execute(() => new Promise<void>((done) => {
+        void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done);
+      }));
       await $('textarea[aria-label="Message"]').setValue('Check status motion');
       await $('[data-testid="pi-send"]').click();
       const status = await $('[data-testid="pi-activity"] .shimmer');

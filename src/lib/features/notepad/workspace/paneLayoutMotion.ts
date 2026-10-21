@@ -113,6 +113,8 @@ export function createPaneLayoutMotion(deps: {
     const labelsBefore = [...(displayedRailEntry?.[0].querySelectorAll<HTMLElement>(LABEL) ?? [])]
       .map(label => ({ node: label.cloneNode(true) as HTMLElement, opacity: Number(getComputedStyle(label).opacity) }))
       .filter(label => label.opacity > 0.01);
+    // Capture the dock while the previous pane effects still paint its pose.
+    shell.dispatchEvent(new CustomEvent('workspace-pane-layout-start'));
     // Capture interrupted motion's displayed dimensions before cancelling it.
     cancel();
     const animations: Animation[] = [];
@@ -153,10 +155,11 @@ export function createPaneLayoutMotion(deps: {
       const dockStartedAt = Number(dock?.dataset.dockStartedAt);
       const dockDuration = Number(dock?.dataset.dockDuration);
       const coordinatedDock = !!dock && Number.isFinite(dockStartedAt) && dockDuration > 0 && !reducedMotion.matches;
+      const freshLayoutClock = coordinatedDock && dock!.hasAttribute('data-dock-clock-pending');
       // Every split entry/departure uses the same layout clock. Retained rail
       // focus exchanges can still share an in-flight dock clock.
       const capturedAt = performance.now();
-      const elapsed = coordinatedDock ? Math.min(1, Math.max(0, (capturedAt - dockStartedAt) / dockDuration)) : 0;
+      const elapsed = coordinatedDock && !freshLayoutClock ? Math.min(1, Math.max(0, (capturedAt - dockStartedAt) / dockDuration)) : 0;
       const dockEasing: DockMotionEasing = layoutChanged || !coordinatedDock || dock?.dataset.dockEasing === 'editor' ? 'editor'
         : 'pinch';
       const originProgress = dockClockProgress(elapsed, dockEasing);
@@ -321,7 +324,8 @@ export function createPaneLayoutMotion(deps: {
         animation.startTime = capturedAt;
       }
       shell.dispatchEvent(new CustomEvent('workspace-pane-layout-ready', { detail: dockDestination ? {
-        id: Number(dock?.dataset.dockMotion), left: dockDestination.x, width: dockDestination.width
+        id: Number(dock?.dataset.dockMotion), left: dockDestination.x, width: dockDestination.width,
+        ...(freshLayoutClock ? { startedAt: capturedAt } : {})
       } : null }));
       timeout = setTimeout(operation.finish, duration + 100);
       await Promise.allSettled(animations.map(animation => animation.finished));

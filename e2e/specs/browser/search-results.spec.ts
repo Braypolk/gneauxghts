@@ -13,7 +13,7 @@ async function openChat() {
 }
 
 async function capturePanelReveal(query?: string) {
-  return browser.executeAsync((query: string | null, done: (frames: number[][]) => void) => {
+  return browser.execute((query: string | null) => new Promise<number[][]>((done) => {
     const input = document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!;
     const frames: number[][] = [], started = performance.now();
     input.focus({ preventScroll: true });
@@ -34,11 +34,13 @@ async function capturePanelReveal(query?: string) {
           rect.width, rect.bottom, textRect.left, textRect.top, textRect.width, textRect.height,
           input.closest('.shared-search-bar-shell')!.getBoundingClientRect().width]);
       }
-      if (performance.now() - started < 1100) requestAnimationFrame(sample);
-      else done(frames);
+      if (performance.now() - started < 1100)
+        requestAnimationFrame(sample);
+      else
+        done(frames);
     };
     requestAnimationFrame(sample);
-  }, query ?? null);
+  }), query ?? null);
 }
 
 function expectStationaryReveal(frames: number[][]) {
@@ -58,7 +60,10 @@ describe('search result layout', () => {
   it('uses the same stationary reveal and collapse when switching between chat and search', async () => {
     await openChat();
     for (const opening of [true, false]) {
-      const result = await browser.executeAsync((opening: boolean, done: (result: { frames: number[][]; removed: boolean }) => void) => {
+      const result = await browser.execute((opening: boolean) => new Promise<{
+        frames: number[][];
+        removed: boolean;
+      }>((done) => {
         const frames: number[][] = [], started = performance.now();
         let panel = document.querySelector<HTMLElement>('.search-results-panel');
         const sample = () => {
@@ -76,12 +81,14 @@ describe('search result layout', () => {
               parseFloat(getComputedStyle(panel).clipPath.match(/inset\((?:calc\()?([-\d.]+)/)?.[1] ?? '0'),
               alpha, rect.width, rect.bottom, textRect.left, textRect.top, textRect.width, textRect.height]);
           }
-          if (performance.now() - started < 1100) requestAnimationFrame(sample);
-          else done({ frames, removed: !panel?.isConnected });
+          if (performance.now() - started < 1100)
+            requestAnimationFrame(sample);
+          else
+            done({ frames, removed: !panel?.isConnected });
         };
         sample();
         document.querySelector<HTMLElement>(`button[aria-label="${opening ? 'Expand search' : 'Expand chat input'}"]`)!.click();
-      }, opening);
+      }), opening);
       const visible = result.frames.filter(frame => frame[1] < 98);
       expect(visible.length).toBeGreaterThan(5);
       expect(visible.every(frame => frame[2] === 1)).toBe(true);
@@ -110,7 +117,9 @@ describe('search result layout', () => {
     for (const width of [1440, 500]) {
       await browser.setWindowSize(width, 900);
       // Let responsive layout and ResizeObservers commit before capturing motion.
-      await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+      await browser.execute(() => new Promise<void>((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done()));
+      }));
       await waitForWorkspaceAnimationSettled();
       const frames = await capturePanelReveal();
       expectStationaryReveal(frames);
@@ -151,14 +160,19 @@ describe('search result layout', () => {
       await browser.setWindowSize(width, 900);
       await $('[data-testid="note-search-input"]').click();
       await waitForWorkspaceAnimationSettled();
-      const result = await browser.executeAsync((done: (result: { frames: number[][]; removed: boolean; inert: boolean }) => void) => {
+      const result = await browser.execute(() => new Promise<{
+        frames: number[][];
+        removed: boolean;
+        inert: boolean;
+      }>((done) => {
         const input = document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!;
         const panel = document.querySelector<HTMLElement>('.search-results-panel')!;
         const text = panel.querySelector('.search-result-item span.font-semibold')!;
         const frames: number[][] = [], started = performance.now();
         let inert = false;
         const samplePanel = () => {
-          if (!panel.isConnected) return;
+          if (!panel.isConnected)
+            return;
           const rect = panel.getBoundingClientRect(), range = document.createRange();
           range.selectNodeContents(text);
           const textRect = range.getBoundingClientRect();
@@ -170,11 +184,13 @@ describe('search result layout', () => {
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         const sample = () => {
           samplePanel();
-          if (performance.now() - started < 750) requestAnimationFrame(sample);
-          else done({ frames, removed: !panel.isConnected, inert });
+          if (performance.now() - started < 750)
+            requestAnimationFrame(sample);
+          else
+            done({ frames, removed: !panel.isConnected, inert });
         };
         requestAnimationFrame(sample);
-      });
+      }));
       expect(result.frames.length).toBeGreaterThan(5);
       expect(result.frames.some(([clip]) => clip > 1 && clip < 99)).toBe(true);
       expect(result.frames.at(-1)![0]).toBeGreaterThan(95);
@@ -190,16 +206,16 @@ describe('search result layout', () => {
   it('shows the complete panel immediately with reduced motion', async () => {
     try {
       await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-      const clip = await browser.executeAsync((done: (clip: string) => void) => {
+      const clip = await browser.execute(() => new Promise<string>((done) => {
         document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!.focus({ preventScroll: true });
         requestAnimationFrame(() => requestAnimationFrame(() => done(getComputedStyle(document.querySelector('.search-results-panel')!).clipPath)));
-      });
+      }));
       expect(clip).toBe('none');
-      const removed = await browser.executeAsync((done: (removed: boolean) => void) => {
+      const removed = await browser.execute(() => new Promise<boolean>((done) => {
         document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!
           .dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         requestAnimationFrame(() => requestAnimationFrame(() => done(!document.querySelector('.search-results-panel'))));
-      });
+      }));
       expect(removed).toBe(true);
     } finally {
       await browser.sendCommand('Emulation.setEmulatedMedia', { features: [] });
@@ -213,14 +229,19 @@ describe('search result layout', () => {
         await $('button[aria-label="Expand search"]').click();
       } else await $('[data-testid="note-search-input"]').click();
       await waitForWorkspaceAnimationSettled();
-      const result = await browser.executeAsync((chat: boolean, done: (result: { frames: number[][]; reused: boolean }) => void) => {
+      const result = await browser.execute((chat: boolean) => new Promise<{
+        frames: number[][];
+        reused: boolean;
+      }>((done) => {
         const input = document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!;
         const panel = document.querySelector('.search-results-panel')!;
         const frames: number[][] = [], started = performance.now();
         input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         setTimeout(() => {
-          if (chat) document.querySelector<HTMLElement>('button[aria-label="Expand search"]')!.click();
-          else input.focus({ preventScroll: true });
+          if (chat)
+            document.querySelector<HTMLElement>('button[aria-label="Expand search"]')!.click();
+          else
+            input.focus({ preventScroll: true });
         }, 200);
         const sample = () => {
           const current = document.querySelector('.search-results-panel');
@@ -228,11 +249,13 @@ describe('search result layout', () => {
           frames.push([performance.now() - started,
             current ? parseFloat(getComputedStyle(current).clipPath.match(/inset\((?:calc\()?([-\d.]+)/)?.[1] ?? '0') : 100,
             document.querySelectorAll('.search-results-panel').length, rect?.left ?? 0, rect?.bottom ?? 0]);
-          if (performance.now() - started < 1000) requestAnimationFrame(sample);
-          else done({ frames, reused: panel === document.querySelector('.search-results-panel') });
+          if (performance.now() - started < 1000)
+            requestAnimationFrame(sample);
+          else
+            done({ frames, reused: panel === document.querySelector('.search-results-panel') });
         };
         requestAnimationFrame(sample);
-      }, chat);
+      }), chat);
       expect(result.frames.some(([, clip]) => clip > 10 && clip < 99)).toBe(true);
       expect(result.frames.every(([, , count]) => count === 1)).toBe(true);
       for (let index = 1; index < result.frames.length; index++) {

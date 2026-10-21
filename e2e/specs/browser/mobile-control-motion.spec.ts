@@ -48,12 +48,12 @@ describe('mobile control presentation during transitions', () => {
         });
       });
       await $('[data-pane-kind="editor"]:not([data-pane-collapsed]) button[aria-label="Open thought partner"]').click();
-      const result = await browser.executeAsync((done: (result: SearchCapture) => void) => {
+      const result = await browser.execute(() => new Promise<SearchCapture>((done) => {
         (window as CaptureWindow).__searchMotionCapture!.then(result => {
           delete (window as CaptureWindow).__searchMotionCapture;
           done(result);
         });
-      });
+      }));
       expect(result.before).toBeGreaterThan(20);
       const fading = result.frames.filter(([opacity]) => opacity > .01 && opacity < .99);
       expect(fading.length).toBeGreaterThan(1);

@@ -8,13 +8,17 @@ interface CardFrame {
 
 async function returnToEditor() {
   await openAppNavigation();
-  const result = await browser.executeAsync((done: (result: { frames: CardFrame[]; error?: string }) => void) => {
+  const result = await browser.execute(() => new Promise<{
+    frames: CardFrame[];
+    error?: string;
+  }>((done) => {
     const frames: CardFrame[] = [];
     let settledSince: number | null = null;
     let frameId = 0;
     let finished = false;
     const finish = (error?: string) => {
-      if (finished) return;
+      if (finished)
+        return;
       finished = true;
       clearTimeout(deadline);
       cancelAnimationFrame(frameId);
@@ -22,7 +26,8 @@ async function returnToEditor() {
     };
     const deadline = setTimeout(() => finish('Editor route layout did not settle'), 5000);
     const sample = (now: number) => {
-      if (finished) return;
+      if (finished)
+        return;
       const card = document.querySelector('[data-testid="workspace-card"]');
       const editor = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-content');
       if (card) {
@@ -32,16 +37,17 @@ async function returnToEditor() {
       const settled = !!card && !!editor && editor.getClientRects().length > 0 &&
         getComputedStyle(editor).visibility !== 'hidden' &&
         !document.querySelector('[data-pane-motion]') &&
-        !card.getAnimations({ subtree: true }).some(animation =>
-          (animation.playState === 'running' || animation.pending) &&
+        !card.getAnimations({ subtree: true }).some(animation => (animation.playState === 'running' || animation.pending) &&
           animation.effect?.getTiming().iterations !== Infinity);
       settledSince = settled ? settledSince ?? now : null;
-      if (frames.length > 3 && settledSince !== null && now - settledSince >= 100) finish();
-      else frameId = requestAnimationFrame(sample);
+      if (frames.length > 3 && settledSince !== null && now - settledSince >= 100)
+        finish();
+      else
+        frameId = requestAnimationFrame(sample);
     };
     frameId = requestAnimationFrame(sample);
     document.querySelector<HTMLAnchorElement>('a[href="/"]')!.click();
-  });
+  }));
   if (result.error) throw new Error(result.error);
   return result.frames;
 }

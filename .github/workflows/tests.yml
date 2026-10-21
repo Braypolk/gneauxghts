@@ -28,6 +28,16 @@ jobs:
       - run: pnpm check
       - run: pnpm test
       - run: pnpm build
+      - name: Replay agent verification regressions
+        run: pnpm agent:test
+      - name: Upload agent replay failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: agent-verification-failures
+          path: e2e/agent/.wdio/failures/
+          include-hidden-files: true
+          if-no-files-found: ignore
       - run: python3 -W error::ResourceWarning -m unittest discover -s scripts/tests -p 'test_*.py' -v
   rust:
     runs-on: macos-latest

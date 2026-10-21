@@ -23,9 +23,6 @@
 
   installBrowserE2eBackend();
   installStartupMetrics();
-  if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true') {
-    void import('@wdio/tauri-plugin');
-  }
 
   let { children } = $props();
   let shellViewKey = $derived(`${page.url.pathname}::${getAppShellViewGeneration()}`);

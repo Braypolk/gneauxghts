@@ -52,9 +52,9 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     await $('[aria-label="Conversation title"]').setValue('Pi idle title/list observation');
     await $('textarea[aria-label="Message"]').click();
     await browser.waitUntil(async () => (await paneState()).title === 'Pi idle title/list observation');
-    await $('[aria-label="Conversations"]').click();
+    await $('button[aria-label="Conversations"]').click();
     await $('button[role="menuitem"]*=Pi idle title/list observation').waitForExist();
-    await $('[aria-label="Conversations"]').click();
+    await $('button[aria-label="Conversations"]').click();
     assert.equal(provider.requests, count, 'Idle title/list updates must not trigger inference');
   });
 
@@ -97,7 +97,7 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     assert(!messages(stopped).some(message => message.role === 'user' && typeof message.content === 'string' && message.content.includes('Withdraw this exact')));
     assert(messages(stopped).some(message => message.role === 'assistant' && message.stopReason === 'aborted'));
     await newPiConversation(); await sendPiMessage('second independent fixture conversation'); await waitPiIdle();
-    await $('[aria-label="Conversations"]').click();
+    await $('button[aria-label="Conversations"]').click();
     await $('button[role="menuitem"]*=fixture-hold').click();
     await browser.waitUntil(async () => (await paneState()).conversationId === id);
     assert(assistantText(await paneState()).includes('Fixture ordinary answer.'));
@@ -109,7 +109,7 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     await newPiConversation(); await sendPiMessage('second composer fixture'); await waitPiIdle();
     await $('textarea[aria-label="Message"]').setValue('Unsent second conversation draft');
     const count = provider.requests;
-    await $('[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=first composer fixture').click();
+    await $('button[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=first composer fixture').click();
     await browser.waitUntil(async () => (await paneState()).conversationId === firstId);
     await browser.waitUntil(async () => await $('textarea[aria-label="Message"]').getValue() === 'Unsent first conversation draft');
     assert.equal(provider.requests, count, 'Composer switching must not trigger inference');
@@ -160,7 +160,7 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     await newPiConversation(); const secondId = await sendPiMessage('foreground independent fixture answer');
     await waitPiIdle(); assert.notEqual(secondId, runningId);
     assert.equal((await paneState()).conversationId, secondId);
-    await $('[aria-label="Conversations"]').click();
+    await $('button[aria-label="Conversations"]').click();
     await $('button[role="menuitem"]*=fixture-hold independent background chat').click();
     await browser.waitUntil(async () => (await paneState()).conversationId === runningId);
     await waitPiIdle();
@@ -204,7 +204,7 @@ describe('ordinary Pi native integration with deterministic provider faults', fu
     const restart = await restartPiFixture(); assert.notEqual(restart.beforePid, restart.afterPid);
     originalProcessDiagnostics = restart.beforeDiagnostics;
     if ((await paneState()).conversationId !== id) {
-      await $('[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=fixture restart persisted conversation').click();
+      await $('button[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=fixture restart persisted conversation').click();
     }
     await browser.waitUntil(async () => (await paneState()).conversationId === id);
     await browser.waitUntil(async () => await $('textarea[aria-label="Message"]').getValue() === 'Persistent unsent Pi restart draft');

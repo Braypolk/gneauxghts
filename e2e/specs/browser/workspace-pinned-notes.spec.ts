@@ -41,7 +41,7 @@ describe('pinned notes and search shortcuts', () => {
     const search = await $('[data-testid="note-search-input"]');
     await search.click();
     await $('button[aria-label="Open pinned note: Alpha note.md"]').waitForExist();
-    expect(await $('//*[normalize-space()="Pinned"]')).toExist();
+    await expect($('//span[normalize-space()="Pinned"]')).toExist();
     expect(await $('//*[normalize-space()="Recent Tasks"]')).not.toExist();
 
     const currentScope = await $('button[aria-label="Search this note only"]');

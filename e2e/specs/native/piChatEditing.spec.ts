@@ -210,7 +210,7 @@ describe('Pi note editing through the ordinary chat UI', function () {
     assert((await $('[data-testid="pi-edit-after"]').getText()).includes('Beta native editing slice.'));
     await restartPiFixture();
     if ((await paneState()).conversationId !== id) {
-      await $('[aria-label="Conversations"]').click(); await $(`button[data-conversation-id="${id}"]`).click();
+      await $('button[aria-label="Conversations"]').click(); await $(`button[data-conversation-id="${id}"]`).click();
     }
     await $('[data-testid="pi-edit-review"]').waitForDisplayed({ timeout: 30_000 });
     assert.equal(await $('[aria-label="Proposed changes"]').getAttribute('data-layout'), 'side-by-side');

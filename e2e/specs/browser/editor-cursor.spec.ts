@@ -80,14 +80,16 @@ describe('editor cursor geometry', () => {
     await $('[data-testid="note-editor"] .cm-content').waitForDisplayed({ timeout: 30_000 });
     await $('[data-testid="note-editor"][aria-busy="false"]').waitForExist();
     if (!browser.isChromium) {
-      await browser.executeAsync((done: (error: string | null) => void) => {
+      await browser.execute(() => new Promise<string | null>((done) => {
         const native = window as typeof window & {
-          __TAURI_INTERNALS__: { invoke: (command: string, args: object) => Promise<void> };
+          __TAURI_INTERNALS__: {
+            invoke: (command: string, args: object) => Promise<void>;
+          };
         };
         native.__TAURI_INTERNALS__.invoke('plugin:window|show', { label: 'main' })
           .then(() => native.__TAURI_INTERNALS__.invoke('plugin:window|set_focus', { label: 'main' }))
           .then(() => done(null), error => done(String(error)));
-      }).then(error => { if (error) throw new Error(error); });
+      })).then(error => { if (error) throw new Error(error); });
     }
     if (browser.isChromium) {
       await $('[data-testid="note-editor"] .cm-content').click();
@@ -201,7 +203,7 @@ describe('editor cursor geometry', () => {
   it('preserves native range selection over code and plain table Markdown', async () => {
     const markdown = '```\nSelected code\n```\n\n| Column | Other |\n| --- | --- |\n| Value | Cell |';
     await insertFixture(markdown);
-    await $('.cm-gn-code-block-line').waitForExist();
+    await browser.$$('.cm-gn-code-block-line')[0].waitForExist();
     expect(await browser.execute(() => document.querySelectorAll('.gn-markdown-table-line').length)).toBe(0);
     for (const [selector, text] of [['.cm-gn-code-block-line', 'Selected code'], ['.cm-line', 'Column']]) {
       const anchor = markdown.indexOf(text);
@@ -257,7 +259,7 @@ describe('editor cursor geometry', () => {
         `\`\`\`js\nconst block${block} = 0;\nconst target${block} = 1;\nconst end${block} = 2;\n\`\`\`\n\nParagraph after block ${block}.`)
     ].join('\n\n');
     await insertFixture(markdown);
-    await $('.cm-gn-code-block-line').waitForExist();
+    await browser.$$('.cm-gn-code-block-line')[0].waitForExist();
 
     for (let block = 0; block < 5; block++) {
       // Leave the target block inactive so its fences are concealed on click.

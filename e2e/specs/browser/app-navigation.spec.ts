@@ -86,7 +86,9 @@ describe('compact app navigation', () => {
     for (const width of [638, 320, 640, 1440]) {
       await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 950, deviceScaleFactor: 1, mobile: false });
       // Let media queries and the resize observer apply before taking a baseline.
-      await browser.executeAsync(done => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+      await browser.execute(() => new Promise<void>((done) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => done()));
+      }));
       const baseline = await measure(0);
       const native = await measure(32);
       const offset = 0;
@@ -109,6 +111,7 @@ describe('compact app navigation', () => {
       }
     }
     await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width: 320, height: 950, deviceScaleFactor: 1, mobile: false });
+    await $(trigger).waitForDisplayed();
     await navigateAppTab('Settings');
     await expect($('input[aria-label="Search settings"]')).toBeDisplayed();
     expect(await browser.execute(() => document.querySelector('.app-navigation-header')!.getBoundingClientRect().top)).toBe(32);

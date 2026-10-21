@@ -8,8 +8,9 @@ async function waitForChat(title: string) {
     (await $('input[aria-label="Conversation title"]').getValue()) === title);
   await waitForWorkspaceAnimationSettled();
   // Include the correction frame after batched message rendering.
-  await browser.executeAsync((done: () => void) =>
-    requestAnimationFrame(() => requestAnimationFrame(() => done())));
+  await browser.execute(() => new Promise<void>((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done()));
+  }));
 }
 
 async function openConversation(title: string) {

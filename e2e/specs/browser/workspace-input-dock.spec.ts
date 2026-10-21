@@ -38,7 +38,7 @@ describe('shared workspace input dock', () => {
       const selector = split ? '.pane-rail' : mode === 'chat'
         ? '[data-pane-kind="editor"] button[aria-label="Open thought partner"]'
         : '[data-pane-kind="chat"] button[aria-label="Open previous location"]';
-      const frames = await browser.executeAsync((selector: string, duration: number, done: (frames: number[][]) => void) => {
+      const frames = await browser.execute((selector: string, duration: number) => new Promise<number[][]>((done) => {
         const bar = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!;
         const backdrop = bar.firstElementChild!;
         const dock = bar.querySelector<HTMLElement>('.workspace-input-dock')!;
@@ -49,8 +49,7 @@ describe('shared workspace input dock', () => {
           // Pane motion positions the dock absolutely inside its discovery
           // group. Include its painted height even when that group has no
           // intrinsic height in the row during the handoff.
-          const contentHeight = Math.max(dock.getBoundingClientRect().height,
-            ...[...row.children].map(child => child.getBoundingClientRect().height));
+          const contentHeight = Math.max(dock.getBoundingClientRect().height, ...[...row.children].map(child => child.getBoundingClientRect().height));
           const actionHeight = parseFloat(style.getPropertyValue('--workspace-dock-action-height')) *
             parseFloat(getComputedStyle(document.documentElement).fontSize);
           const expectedHeight = Math.max(actionHeight, contentHeight) +
@@ -63,11 +62,13 @@ describe('shared workspace input dock', () => {
         document.querySelector<HTMLButtonElement>(selector)!.click();
         const sample = () => setTimeout(() => {
           read();
-          if (performance.now() - started < duration) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < duration)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         }, 0);
         requestAnimationFrame(sample);
-      }, selector, motionCaptureDuration);
+      }), selector, motionCaptureDuration);
       const heights = frames.map(frame => frame[0]);
       expect(Math.max(...frames.map(frame => Math.abs(frame[0] - frame[1])))).toBeLessThanOrEqual(1);
       expect(heights.some(height => height > Math.min(...heights) + 2 && height < Math.max(...heights) - 2)).toBe(true);
@@ -160,7 +161,10 @@ describe('shared workspace input dock', () => {
       await $(composerSelector).setValue('Retain my draft');
       type Frame = { state: string; placeholder: string; active: string; matchOpacity: number;
         left: number; width: number; time: number };
-      const capture = await browser.executeAsync((done: (capture: { before: number[]; frames: Frame[] }) => void) => {
+      const capture = await browser.execute(() => new Promise<{
+        before: number[];
+        frames: Frame[];
+      }>((done) => {
         const dock = document.querySelector<HTMLElement>('.workspace-input-dock')!;
         const shell = dock.querySelector<HTMLElement>('.shared-search-bar-shell')!;
         const input = shell.querySelector<HTMLInputElement>('input')!;
@@ -172,7 +176,8 @@ describe('shared workspace input dock', () => {
         const started = performance.now();
         const editor = document.querySelector<HTMLElement>('[data-pane-kind="editor"] .cm-content')!;
         const rail = document.querySelector<HTMLElement>('[data-pane-kind="editor"] .pane-rail');
-        if (rail) rail.click();
+        if (rail)
+          rail.click();
         else {
           editor.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }));
           editor.focus({ preventScroll: true });
@@ -186,11 +191,13 @@ describe('shared workspace input dock', () => {
           frames.push({ state: dock.dataset.dockState!, placeholder: input.placeholder,
             active: shell.dataset.searchActive!, matchOpacity: opacity,
             left: rect.left, width: rect.width, time: performance.now() });
-          if (performance.now() - started < 850) requestAnimationFrame(sample);
-          else done({ before, frames });
+          if (performance.now() - started < 850)
+            requestAnimationFrame(sample);
+          else
+            done({ before, frames });
         }, 0);
         requestAnimationFrame(sample);
-      });
+      }));
       const { before, frames } = capture;
       expect(frames.length).toBeGreaterThan(10);
       expect([...new Set(frames.map(frame => frame.state))]).toEqual(['chat-search']);
@@ -274,7 +281,9 @@ describe('shared workspace input dock', () => {
         await browser.sendCommand('Emulation.setDeviceMetricsOverride', { width, height: 844, deviceScaleFactor: 1, mobile: false });
         // Device emulation dispatches resize asynchronously; let its layout
         // and ResizeObservers commit before waiting for finite motion.
-        await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+        await browser.execute(() => new Promise<void>((done) => {
+          requestAnimationFrame(() => requestAnimationFrame(() => done()));
+        }));
         await waitForWorkspaceAnimationSettled();
         await browser.waitUntil(async () => {
           const layout = await geometry();
@@ -308,17 +317,21 @@ describe('shared workspace input dock', () => {
       await $('[data-pane-kind="editor"] button[aria-label="Open thought partner"]').click();
       await expectMode('chat');
     }
-    const states = await browser.executeAsync((kind: string, done: (states: string[]) => void) => {
+    const states = await browser.execute((kind: string) => new Promise<string[]>((done) => {
       const states: string[] = [], started = performance.now();
       let closing = false;
       document.querySelector<HTMLElement>(`[data-pane-kind="${kind}"] button[aria-label="Close pane"]`)!.click();
       const sample = () => {
         closing ||= !!document.querySelector('.notepad-pane--collapsing');
-        if (closing) states.push(document.querySelector('[data-input-dock-mode]')!.getAttribute('data-input-dock-mode')!);
-        if (performance.now() - started < 1000) requestAnimationFrame(sample); else done(states);
+        if (closing)
+          states.push(document.querySelector('[data-input-dock-mode]')!.getAttribute('data-input-dock-mode')!);
+        if (performance.now() - started < 1000)
+          requestAnimationFrame(sample);
+        else
+          done(states);
       };
       requestAnimationFrame(sample);
-    }, close);
+    }), close);
     expect(states.length).toBeGreaterThan(5);
     expect(new Set(states)).toEqual(new Set(['chat']));
     await expectMode('chat');
@@ -343,7 +356,10 @@ describe('shared workspace input dock', () => {
         document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
           .dispatchEvent(new PointerEvent('pointerenter'));
       });
-      const opening = await browser.executeAsync((captureDuration: number, done: (result: { before: number[]; frames: number[][] }) => void) => {
+      const opening = await browser.execute((captureDuration: number) => new Promise<{
+        before: number[];
+        frames: number[][];
+      }>((done) => {
         const dock = document.querySelector('[data-input-dock-mode]')!;
         const read = () => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
@@ -355,11 +371,13 @@ describe('shared workspace input dock', () => {
         document.querySelector<HTMLElement>('button[aria-label="Split with thought partner"]')!.click();
         const sample = () => setTimeout(() => {
           frames.push(read());
-          if (performance.now() - started < captureDuration) requestAnimationFrame(sample);
-          else done({ before, frames });
+          if (performance.now() - started < captureDuration)
+            requestAnimationFrame(sample);
+          else
+            done({ before, frames });
         }, 0);
         requestAnimationFrame(sample);
-      }, motionCaptureDuration);
+      }), motionCaptureDuration);
       // A populated editor search must start from its expanded width.
       expect(opening.before[1]).toBeGreaterThan(500);
       expect(Math.abs(opening.frames[0][1] - opening.before[1])).toBeLessThan(3);
@@ -384,7 +402,10 @@ describe('shared workspace input dock', () => {
         await $('button[aria-label="Expand search"]').click();
         await expectMode('search');
       } else await $(composerSelector).setValue('Keep this thought');
-      const closing = await browser.executeAsync((captureDuration: number, done: (result: { frames: number[][]; states: string[] }) => void) => {
+      const closing = await browser.execute((captureDuration: number) => new Promise<{
+        frames: number[][];
+        states: string[];
+      }>((done) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
         const frames: number[][] = [], states: string[] = [];
         const started = performance.now();
@@ -404,11 +425,13 @@ describe('shared workspace input dock', () => {
             Number(getComputedStyle(dock.querySelector('.dock-related-icon, .dock-chat-icon')!).opacity),
             leftAction.left - card.left, card.right - rightAction.right]);
           states.push(dock.dataset.dockPhase!);
-          if (performance.now() - started < captureDuration) requestAnimationFrame(sample);
-          else done({ frames, states });
+          if (performance.now() - started < captureDuration)
+            requestAnimationFrame(sample);
+          else
+            done({ frames, states });
         }, 0);
         requestAnimationFrame(sample);
-      }, motionCaptureDuration);
+      }), motionCaptureDuration);
       expect(closing.states).toContain('exchange');
       expect(closing.states.at(-1)).toBe('settled');
       expect(Math.max(...closing.frames.map(frame => Math.abs(frame[2] - closing.frames[0][2])))).toBeLessThanOrEqual(1);
@@ -454,9 +477,13 @@ describe('shared workspace input dock', () => {
     });
     await $('button[aria-label="Expand search"]').click();
     await expectMode('search');
-    const motion = await browser.executeAsync((captureDuration: number, done: (result: {
-      before: number[]; frames: number[][]; after: number[]; sameComposer: boolean; focused: boolean;
-    }) => void) => {
+    const motion = await browser.execute((captureDuration: number) => new Promise<{
+      before: number[];
+      frames: number[][];
+      after: number[];
+      sameComposer: boolean;
+      focused: boolean;
+    }>((done) => {
       const dock = document.querySelector('[data-input-dock-mode]')!;
       const composer = document.querySelector('[data-notepad-command-bar] textarea');
       const body = dock.querySelector<HTMLElement>(':scope > .dock-body')!;
@@ -471,12 +498,14 @@ describe('shared workspace input dock', () => {
       dock.querySelector<HTMLElement>('button[aria-label="Expand chat input"]')!.click();
       const sample = () => {
         frames.push(read());
-        if (performance.now() - started < captureDuration) requestAnimationFrame(sample);
-        else done({ before, frames, after: read(), sameComposer: composer === document.querySelector('[data-notepad-command-bar] textarea'),
-          focused: document.activeElement === composer });
+        if (performance.now() - started < captureDuration)
+          requestAnimationFrame(sample);
+        else
+          done({ before, frames, after: read(), sameComposer: composer === document.querySelector('[data-notepad-command-bar] textarea'),
+            focused: document.activeElement === composer });
       };
       requestAnimationFrame(sample);
-    }, motionCaptureDuration);
+    }), motionCaptureDuration);
     expect(motion.frames.filter(frame => frame[2] > motion.before[2] + 3 && frame[2] < motion.after[2] - 3).length).toBeGreaterThan(2);
     expect(Math.max(...motion.frames.map(frame => Math.abs(frame[1] - motion.before[1])))).toBeLessThanOrEqual(1);
     expect(Math.max(...motion.frames.map(frame => Math.abs(frame[3] - motion.before[3])))).toBeLessThanOrEqual(1);
@@ -485,13 +514,13 @@ describe('shared workspace input dock', () => {
     expect(motion.after[7]).toBeLessThan(motion.before[7] - 30);
     expect(motion.sameComposer).toBe(true);
     expect(motion.focused).toBe(true);
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       const toggle = (label: string) => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
       toggle('Expand search');
       setTimeout(() => toggle('Expand chat input'), 80);
       setTimeout(() => toggle('Expand search'), 160);
       setTimeout(done, 900);
-    });
+    }));
     await expectMode('search');
     await expect($('[data-testid="note-search-input"]')).toBeFocused();
     await $('button[aria-label="Expand chat input"]').click();
@@ -505,7 +534,7 @@ describe('shared workspace input dock', () => {
     await waitForWorkspaceAnimationSettled();
     for (const selector of ['button[aria-label="Expand search"]', 'button[aria-label="Expand chat input"]',
       '[data-pane-kind="chat"] button[aria-label="Close pane"]']) {
-      const capture = await browser.executeAsync((button: string, duration: number, done: (frames: number[][]) => void) => {
+      const capture = await browser.execute((button: string, duration: number) => new Promise<number[][]>((done) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
         const read = (frameTime = performance.now()) => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
@@ -524,11 +553,13 @@ describe('shared workspace input dock', () => {
           // Geometry belongs to this RAF, even if this timer runs late. Wall
           // time here can compress the next interval and report a false jump.
           frames.push(read(frameTime));
-          if (performance.now() - started < duration) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < duration)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         }, 0);
         requestAnimationFrame(sample);
-      }, selector, motionCaptureDuration);
+      }), selector, motionCaptureDuration);
       for (const column of [0, 1, 2, 3, 4]) {
         const values = capture.map(frame => frame[column]);
         const direction = Math.sign(values.at(-1)! - values[0]);
@@ -578,10 +609,15 @@ describe('shared workspace input dock', () => {
       document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!
         .dispatchEvent(new PointerEvent('pointerenter'));
     });
-    const opening = await browser.executeAsync((captureDuration: number, done: (result: { bottom: number[]; scroll: number[]; heights: number[] }) => void) => {
+    const opening = await browser.execute((captureDuration: number) => new Promise<{
+      bottom: number[];
+      scroll: number[];
+      heights: number[];
+    }>((done) => {
       const bar = document.querySelector<HTMLElement>('[data-notepad-command-bar]')!;
       const ancestors: HTMLElement[] = [];
-      for (let node = bar.parentElement; node; node = node.parentElement) ancestors.push(node);
+      for (let node = bar.parentElement; node; node = node.parentElement)
+        ancestors.push(node);
       const bottom: number[] = [], scroll: number[] = [], heights: number[] = [];
       const started = performance.now();
       document.querySelector<HTMLElement>('button[aria-label="Split with thought partner"]')!.click();
@@ -589,12 +625,15 @@ describe('shared workspace input dock', () => {
         bottom.push(bar.getBoundingClientRect().bottom);
         scroll.push(window.scrollY, ...ancestors.map(node => node.scrollTop));
         const composer = bar.querySelector<HTMLElement>('.chat-composer-surface');
-        if (composer) heights.push(bar.querySelector('[data-input-dock-mode] > .dock-body')!.getBoundingClientRect().height);
-        if (performance.now() - started < captureDuration) requestAnimationFrame(sample);
-        else done({ bottom, scroll, heights });
+        if (composer)
+          heights.push(bar.querySelector('[data-input-dock-mode] > .dock-body')!.getBoundingClientRect().height);
+        if (performance.now() - started < captureDuration)
+          requestAnimationFrame(sample);
+        else
+          done({ bottom, scroll, heights });
       };
       requestAnimationFrame(sample);
-    }, motionCaptureDuration);
+    }), motionCaptureDuration);
     expect(Math.max(...opening.bottom) - Math.min(...opening.bottom)).toBeLessThanOrEqual(1);
     expect(Math.max(...opening.scroll.map(Math.abs))).toBe(0);
     expect(Math.max(...opening.heights) - Math.min(...opening.heights)).toBeGreaterThan(20);
@@ -613,7 +652,12 @@ describe('shared workspace input dock', () => {
 
   it('joins the moving material while leaving text and controls unfiltered', async () => {
     await openChat();
-    const result = await browser.executeAsync((delay: number, done: (result: { filter: string; textFilters: string[]; neckHeight: number; offsets: number[] }) => void) => {
+    const result = await browser.execute((delay: number) => new Promise<{
+      filter: string;
+      textFilters: string[];
+      neckHeight: number;
+      offsets: number[];
+    }>((done) => {
       const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
       dock.querySelector<HTMLElement>('button[aria-label="Expand search"]')!.click();
       setTimeout(() => {
@@ -623,7 +667,8 @@ describe('shared workspace input dock', () => {
         const shapes = [material.querySelector('.dock-body')!, material.querySelector('[data-container-shell="search"]')!];
         const surfaces = [dock.querySelector(':scope > .dock-body')!, dock.querySelector('.dock-search-toggle')!];
         const textFilters: string[] = [];
-        for (let node = dock.querySelector<HTMLTextAreaElement>('textarea') as HTMLElement | null; node && node !== dock.parentElement; node = node.parentElement) textFilters.push(getComputedStyle(node).filter);
+        for (let node = dock.querySelector<HTMLTextAreaElement>('textarea') as HTMLElement | null; node && node !== dock.parentElement; node = node.parentElement)
+          textFilters.push(getComputedStyle(node).filter);
         const offsets = surfaces.flatMap((surface, i) => {
           const shell = surface.getBoundingClientRect(), shape = shapes[i].getBoundingClientRect();
           return [shell.left - shape.left, shell.width - shape.width, shell.height - shape.height, shell.bottom - shape.bottom];
@@ -631,7 +676,7 @@ describe('shared workspace input dock', () => {
         done({ filter: getComputedStyle(material.querySelector('[data-dock-joined-shapes]')!).filter, textFilters,
           neckHeight: material.querySelector('[data-container-neck="search"]')!.getBoundingClientRect().height, offsets });
       }, delay);
-    }, dockMorphDuration / 2);
+    }), dockMorphDuration / 2);
     expect(result.filter).toContain('url(');
     expect(result.neckHeight).toBeGreaterThan(5);
     expect(result.textFilters.every(value => value === 'none')).toBe(true);
@@ -641,11 +686,13 @@ describe('shared workspace input dock', () => {
 
   it('keeps the search outline absorbed and Related adjacent throughout ordinary search expansion', async () => {
     for (const expand of [true, false]) {
-      const offsets = await browser.executeAsync((expand: boolean, duration: number, done: (errors: number[]) => void) => {
+      const offsets = await browser.execute((expand: boolean, duration: number) => new Promise<number[]>((done) => {
         const dock = document.querySelector('.workspace-input-dock')!, input = dock.querySelector<HTMLInputElement>('input')!;
         const errors: number[] = [], started = performance.now();
-        if (expand) input.focus({ preventScroll: true });
-        else input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        if (expand)
+          input.focus({ preventScroll: true });
+        else
+          input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         const sample = () => setTimeout(() => {
           const body = dock.querySelector(':scope > .dock-body')!.getBoundingClientRect();
           const material = dock.querySelector('.dock-material-body')!.getBoundingClientRect();
@@ -653,14 +700,14 @@ describe('shared workspace input dock', () => {
           const right = dock.querySelector('[data-container-shell="chat"], [data-container-shell="related"]')!.getBoundingClientRect();
           const glyph = dock.querySelector('.dock-search-toggle > svg')!.getBoundingClientRect();
           const inputGlyph = dock.querySelector('.shared-search-input-layer > svg')!.getBoundingClientRect();
-          errors.push(Math.abs(body.left - material.left), Math.abs(body.width - material.width),
-            Math.max(0, body.left - left.left), Math.abs(right.left - body.right - parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap'))),
-            Math.abs(glyph.left + glyph.width / 2 - inputGlyph.left - inputGlyph.width / 2));
-          if (performance.now() - started < duration) requestAnimationFrame(sample);
-          else done(errors);
+          errors.push(Math.abs(body.left - material.left), Math.abs(body.width - material.width), Math.max(0, body.left - left.left), Math.abs(right.left - body.right - parseFloat(getComputedStyle(dock).getPropertyValue('--dock-gap'))), Math.abs(glyph.left + glyph.width / 2 - inputGlyph.left - inputGlyph.width / 2));
+          if (performance.now() - started < duration)
+            requestAnimationFrame(sample);
+          else
+            done(errors);
         }, 0);
         requestAnimationFrame(sample);
-      }, expand, motionCaptureDuration);
+      }), expand, motionCaptureDuration);
       expect(Math.max(...offsets)).toBeLessThanOrEqual(1);
       await waitForWorkspaceAnimationSettled();
     }
@@ -673,7 +720,7 @@ describe('shared workspace input dock', () => {
     await expectMode('search');
     await $('[data-testid="note-search-input"]').setValue('Alpha');
     for (const [label, visible] of [['Expand chat input', 2], ['Expand search', 1]] as const) {
-      const frames = await browser.executeAsync((label: string, duration: number, done: (frames: number[][]) => void) => {
+      const frames = await browser.execute((label: string, duration: number) => new Promise<number[][]>((done) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
         const frames: number[][] = [], started = performance.now();
         dock.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
@@ -687,11 +734,13 @@ describe('shared workspace input dock', () => {
             dock.hasAttribute('data-dock-text-reveal') ? 1 : 0,
             selected.getAnimations().some(animation => animation.effect?.getTiming().duration === 280
               && (animation.pending || animation.playState === 'running')) ? 1 : 0]);
-          if (performance.now() - started < duration) requestAnimationFrame(sample);
-          else done(frames);
+          if (performance.now() - started < duration)
+            requestAnimationFrame(sample);
+          else
+            done(frames);
         }, 0);
         requestAnimationFrame(sample);
-      }, label, motionCaptureDuration);
+      }), label, motionCaptureDuration);
       const moving = frames.filter(frame => frame[0] === 1), settled = frames.filter(frame => frame[0] === 0);
       expect(moving.length).toBeGreaterThan(4);
       const outgoing = visible === 1 ? 2 : 1;
@@ -723,7 +772,7 @@ describe('shared workspace input dock', () => {
     await expectMode('search');
     await browser.execute(() => document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!.blur());
     await expect($('[data-testid="note-search-input"]')).toHaveAttribute('placeholder', '');
-    const result = await browser.executeAsync((duration: number, done: (frames: number[][]) => void) => {
+    const result = await browser.execute((duration: number) => new Promise<number[][]>((done) => {
       const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
       const frames: number[][] = [];
       const started = performance.now();
@@ -738,11 +787,13 @@ describe('shared workspace input dock', () => {
           search.querySelector<HTMLInputElement>('input')!.placeholder.length,
           search.querySelector('[title="Match case"]') ? 1 : 0,
           dock.hasAttribute('data-dock-motion') ? 1 : 0]);
-        if (performance.now() - started < duration) requestAnimationFrame(sample);
-        else done(frames);
+        if (performance.now() - started < duration)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       };
       requestAnimationFrame(sample);
-    }, motionCaptureDuration);
+    }), motionCaptureDuration);
     for (const frame of result) {
       expect(Math.min(frame[0], frame[1])).toBe(0);
       expect(Math.min(frame[2], frame[3])).toBe(0);
@@ -753,7 +804,11 @@ describe('shared workspace input dock', () => {
 
   it('returns from disabled Send to enabled Related while keeping reading clearance steady', async () => {
     await openChat();
-    const result = await browser.executeAsync((duration: number, done: (result: { opacity: number[]; clearance: number[]; glyph: number[] }) => void) => {
+    const result = await browser.execute((duration: number) => new Promise<{
+      opacity: number[];
+      clearance: number[];
+      glyph: number[];
+    }>((done) => {
       const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
       const workspace = dock.closest<HTMLElement>('.notepad-shell')!;
       const opacity: number[] = [Number(getComputedStyle(dock).getPropertyValue('--dock-send-opacity'))], clearance: number[] = [], glyph: number[] = [];
@@ -763,12 +818,15 @@ describe('shared workspace input dock', () => {
         const style = getComputedStyle(dock);
         opacity.push(Number(style.getPropertyValue('--dock-send-opacity')));
         glyph.push(Number(style.getPropertyValue('--dock-chat-glyph')));
-        if (dock.dataset.dockMotion) clearance.push(parseFloat(getComputedStyle(workspace).getPropertyValue('--workspace-dock-height')));
-        if (performance.now() - started < duration) requestAnimationFrame(sample);
-        else done({ opacity, clearance, glyph });
+        if (dock.dataset.dockMotion)
+          clearance.push(parseFloat(getComputedStyle(workspace).getPropertyValue('--workspace-dock-height')));
+        if (performance.now() - started < duration)
+          requestAnimationFrame(sample);
+        else
+          done({ opacity, clearance, glyph });
       };
       requestAnimationFrame(sample);
-    }, motionCaptureDuration);
+    }), motionCaptureDuration);
     expect(result.opacity[0]).toBe(0.4);
     expect(result.opacity.at(-1)).toBe(1);
     expect(result.opacity.every(value => value >= 0.4 && value <= 1)).toBe(true);
@@ -784,17 +842,19 @@ describe('shared workspace input dock', () => {
       if (draft) await expect(send).toBeEnabled();
       else await expect(send).toBeDisabled();
       for (const label of ['Expand search', 'Expand chat input']) {
-        const opacity = await browser.executeAsync((label: string, duration: number, done: (opacity: number[]) => void) => {
+        const opacity = await browser.execute((label: string, duration: number) => new Promise<number[]>((done) => {
           const send = document.querySelector('.workspace-input-dock .chat-send-button')!;
           const opacity = [Number(getComputedStyle(send).opacity)], started = performance.now();
           document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click();
           const sample = () => setTimeout(() => {
             opacity.push(Number(getComputedStyle(send).opacity));
-            if (performance.now() - started < duration) requestAnimationFrame(sample);
-            else done(opacity);
+            if (performance.now() - started < duration)
+              requestAnimationFrame(sample);
+            else
+              done(opacity);
           }, 0);
           requestAnimationFrame(sample);
-        }, label, motionCaptureDuration);
+        }), label, motionCaptureDuration);
         expect(Math.max(...opacity)).toBe(0);
         await waitForWorkspaceAnimationSettled();
       }
@@ -807,7 +867,7 @@ describe('shared workspace input dock', () => {
   it('coordinates editor/chat replacement in one pane and releases temporary layout projections', async () => {
     await $('[data-testid="note-search-input"]').setValue('Alpha');
     await waitForWorkspaceAnimationSettled();
-    const capture = (selector: string) => browser.executeAsync((button: string, duration: number, done: (frames: number[][]) => void) => {
+    const capture = (selector: string) => browser.execute((button: string, duration: number) => new Promise<number[][]>((done) => {
       const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
       const frames: number[][] = [];
       const started = performance.now();
@@ -822,7 +882,8 @@ describe('shared workspace input dock', () => {
         const words = document.createTreeWalker(label, NodeFilter.SHOW_TEXT);
         let newOpacity = 0;
         while (words.nextNode()) {
-          if (!words.currentNode.textContent?.trim().startsWith('New')) continue;
+          if (!words.currentNode.textContent?.trim().startsWith('New'))
+            continue;
           let opacity = 1;
           for (let element = words.currentNode.parentElement; element; element = element.parentElement) {
             opacity *= Number(getComputedStyle(element).opacity);
@@ -832,11 +893,13 @@ describe('shared workspace input dock', () => {
         frames.push([left.left - card.left, card.right - right.right,
           body.left - left.right, right.left - body.right,
           Number(getComputedStyle(dock).getPropertyValue('--dock-chat-glyph')), Math.min(1, newOpacity)]);
-        if (performance.now() - started < duration) requestAnimationFrame(sample);
-        else done(frames);
+        if (performance.now() - started < duration)
+          requestAnimationFrame(sample);
+        else
+          done(frames);
       };
       requestAnimationFrame(sample);
-    }, selector, motionCaptureDuration);
+    }), selector, motionCaptureDuration);
     for (const selector of ['[data-pane-kind="editor"] button[aria-label="Open thought partner"]',
       '[data-pane-kind="chat"] button[aria-label="Open previous location"]']) {
       const frames = await capture(selector);
@@ -858,7 +921,11 @@ describe('shared workspace input dock', () => {
     await openChat();
     try {
       await browser.sendCommand('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-reduced-motion', value: 'reduce' }] });
-      const result = await browser.executeAsync((done: (result: { mode: string | undefined; running: number; widths: number[] }) => void) => {
+      const result = await browser.execute(() => new Promise<{
+        mode: string | undefined;
+        running: number;
+        widths: number[];
+      }>((done) => {
         const dock = document.querySelector<HTMLElement>('[data-input-dock-mode]')!;
         dock.querySelector<HTMLElement>('button[aria-label="Expand search"]')!.click();
         requestAnimationFrame(() => requestAnimationFrame(() => done({
@@ -866,7 +933,7 @@ describe('shared workspace input dock', () => {
           running: dock.getAnimations({ subtree: true }).filter(animation => animation.playState === 'running').length,
           widths: [dock.querySelector(':scope > .dock-body')!, dock.querySelector('.dock-chat-toggle')!].map(surface => surface.getBoundingClientRect().width)
         })));
-      });
+      }));
       expect(result.mode).toBe('search');
       expect(result.running).toBe(0);
       expect(result.widths[0]).toBeGreaterThan(result.widths[1] * 3);
@@ -879,10 +946,10 @@ describe('shared workspace input dock', () => {
   it('settles the selected input when resizing during a morph', async () => {
     await openChat();
     await $(composerSelector).setValue('Keep this on resize');
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       document.querySelector<HTMLElement>('button[aria-label="Expand search"]')!.click();
       setTimeout(() => { window.dispatchEvent(new Event('resize')); done(); }, 120);
-    });
+    }));
     await expectMode('search');
     await expect($('[data-input-dock-mode]')).toHaveAttribute('data-dock-phase', 'settled');
     await $('button[aria-label="Expand chat input"]').click();

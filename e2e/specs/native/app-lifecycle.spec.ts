@@ -30,9 +30,11 @@ describe('native Tauri lifecycle', () => {
     expect(Math.abs(settled.y - initial.y)).toBeLessThanOrEqual(2);
   });
 
-  it('exposes the debug-only Tauri automation bridge', async () => {
-    await browser.waitUntil(async () => {
-      return browser.execute(() => 'wdioTauri' in window);
-    }, { timeout: 10_000, timeoutMsg: 'Expected @wdio/tauri-plugin to initialize' });
+  it('awaits promises through the embedded WebDriver and reaches real native IPC', async () => {
+    const value = await browser.execute(async () => {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      return window.__TAURI_INTERNALS__!.invoke<boolean>('plugin:window|is_focused', { label: 'main' });
+    });
+    expect(typeof value).toBe('boolean');
   });
 });

@@ -111,7 +111,7 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     const prepared = await prepare(await update('Pi temporary reopened update', 'Temporary authority survives only its original conversation.'));
     const restart = await restartPiFixture();
     if ((await paneState()).conversationId !== conversationId) {
-      await $('[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=Pi temporary grant reopen proof').click();
+      await $('button[aria-label="Conversations"]').click(); await $('button[role="menuitem"]*=Pi temporary grant reopen proof').click();
     }
     await browser.waitUntil(async () => (await paneState()).conversationId === conversationId);
     const reopened = await authority(); assert.deepEqual(reopened.write, original.write); assert.equal(reopened.authorityId, original.authorityId);
@@ -160,13 +160,14 @@ describe('synthetic actual Pi publication tasks through the real document owner'
     const history = () => invokeNative<HistoryModePage>('get_note_history_page', { noteId: note.noteId, cursor: null, limit: 30 });
     const beforeHistory = await history();
     const before = await browser.execute(() => (window as RemountHost).__PI_CHAT_ACCEPTANCE__!.native.read());
-    const armed = await browser.executeAsync((intentId: string, done: (error: string | null) => void) => {
+    const armed = await browser.execute((intentId: string) => new Promise<string | null>((done) => {
       void (async () => {
         const host = window as RemountHost, predecessor = host.__GNEAUXGHTS_NATIVE_E2E__!;
         let release!: () => void;
         const acknowledgement = new Promise<void>(resolve => { release = resolve; });
         const observer = new MutationObserver(() => {
-          if (state.held && document.querySelector('[data-pane-kind="editor"] .cm-content')) state.prematureEditorMounts++;
+          if (state.held && document.querySelector('[data-pane-kind="editor"] .cm-content'))
+            state.prematureEditorMounts++;
         });
         const state: NonNullable<RemountHost['__PI_PUBLICATION_REMOUNT__']> = host.__PI_PUBLICATION_REMOUNT__ = {
           predecessor, held: true, prematureEditorMounts: 0,
@@ -176,12 +177,12 @@ describe('synthetic actual Pi publication tasks through the real document owner'
         };
         // The existing observer parks only after the actual native write returns
         // committed; no writer, document owner or native outcome is substituted.
-        const disarm = (await predecessor.piNativeInvokeProbe()).parkNextPublicationAcknowledgement(intentId, async receipt => {
+        const disarm = (await predecessor.piNativeInvokeProbe()).parkNextPublicationAcknowledgement(intentId, async (receipt) => {
           state.receipt = receipt;
           await acknowledgement;
         });
       })().then(() => done(null), error => done(String(error)));
-    }, prepared.intentId);
+    }), prepared.intentId);
     assert.equal(armed, null);
     try {
       const settled = await publishPiIntent({ authorityId: (await authority()).authorityId, intentId: prepared.intentId, target: prepared.target }, null, async () => {

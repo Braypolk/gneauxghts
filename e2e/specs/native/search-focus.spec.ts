@@ -6,28 +6,42 @@ import { waitForWorkspaceAnimationSettled } from '../../support/workspaceAnimati
 // wrapping geometry and deferred measurement. A synthetic focus flag misses the
 // WebKit selection API's implicit focus transfer.
 async function focusWrappedCursor(transferToSearch = true) {
-  return browser.executeAsync(async (transferToSearch: boolean, done: (result: { wrap: number; error?: string }) => void) => {
-    try {
-      const moduleUrl = '/node_modules/@codemirror/view/dist/index.js';
-      const { EditorView } = await import(/* @vite-ignore */ moduleUrl);
-      const view = EditorView.findFromDOM(document.querySelector('.cm-content'));
-      if (!view) throw new Error('Mounted editor is required');
-      let wrap = 0;
-      const line = view.state.doc.line(1);
-      for (let pos = line.from + 1; pos < line.to; pos++) {
-        const before = view.coordsAtPos(pos, -1), after = view.coordsAtPos(pos, 1);
-        if (before && after && before.bottom <= after.top) { wrap = pos; break; }
+  return browser.execute((transferToSearch: boolean) => new Promise<{
+    wrap: number;
+    error?: string;
+  }>((done, reject) => {
+    void (async () => {
+      try {
+        const moduleUrl = '/node_modules/@codemirror/view/dist/index.js';
+        const { EditorView } = await import(/* @vite-ignore */ moduleUrl);
+        const view = EditorView.findFromDOM(document.querySelector('.cm-content'));
+        if (!view)
+          throw new Error('Mounted editor is required');
+        let wrap = 0;
+        const line = view.state.doc.line(1);
+        for (let pos = line.from + 1; pos < line.to; pos++) {
+          const before = view.coordsAtPos(pos, -1), after = view.coordsAtPos(pos, 1);
+          if (before && after && before.bottom <= after.top) {
+            wrap = pos;
+            break;
+          }
+        }
+        if (!wrap)
+          throw new Error('Fixture must have a soft-wrapped cursor boundary');
+        view.focus();
+        const selection = view.state.selection.constructor;
+        view.dispatch({ selection: selection.create([selection.cursor(wrap, 1)]) });
+        // Transfer focus before the queued cursor-association measure runs, as
+        // happens when opening the narrow dock after clicking a wrapped line.
+        if (transferToSearch)
+          document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!.focus();
+        done({ wrap });
       }
-      if (!wrap) throw new Error('Fixture must have a soft-wrapped cursor boundary');
-      view.focus();
-      const selection = view.state.selection.constructor;
-      view.dispatch({ selection: selection.create([selection.cursor(wrap, 1)]) });
-      // Transfer focus before the queued cursor-association measure runs, as
-      // happens when opening the narrow dock after clicking a wrapped line.
-      if (transferToSearch) document.querySelector<HTMLInputElement>('[data-testid="note-search-input"]')!.focus();
-      done({ wrap });
-    } catch (error) { done({ wrap: 0, error: String(error) }); }
-  }, transferToSearch);
+      catch (error) {
+        done({ wrap: 0, error: String(error) });
+      }
+    })().catch(reject);
+  }), transferToSearch);
 }
 
 describe('native search focus at wrapped cursor boundaries', () => {

@@ -64,8 +64,8 @@ describe('vault write defaults in Settings', () => {
     await expect($('[role="menuitemcheckbox"]*=Review before applying edits')).toHaveAttribute('aria-checked', 'true');
     await expect($('[role="menuitemcheckbox"]*=Allow creating new notes')).toHaveAttribute('aria-checked', 'true');
     await $('[aria-label="Vault access"]').click();
-    await $('[aria-label="Conversations"]').click();
-    await $('button[role="menuitem"]').click();
+    await $('button[aria-label="Conversations"]').click();
+    await $('button[data-new-conversation]').click();
     await send('A new chat needs its own permission');
     await $('[aria-label="Vault access"]').click();
     await expect($('[role="menuitemradio"]*=Editing off')).toHaveAttribute('aria-checked', 'true');

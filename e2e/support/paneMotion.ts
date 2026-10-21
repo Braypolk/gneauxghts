@@ -41,7 +41,7 @@ export function expectDockMotion(frames: MotionFrame['dock'][], label: string) {
 
 /** Real workspace operation, sampled in the renderer with no per-frame IPC. */
 export async function samplePaneMotion(action: PaneMotionAction): Promise<MotionResult> {
-  const result = await browser.executeAsync((action: PaneMotionAction, done: (result: MotionResult) => void) => {
+  const result = await browser.execute((action: PaneMotionAction) => new Promise<MotionResult>((done) => {
     const paneSelector = '[data-testid="workspace-pane"]';
     const originalEditors = new Map([...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => [
       pane.dataset.paneId!, pane.querySelector('.cm-editor')
@@ -55,7 +55,8 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       chatBusy: document.querySelector('[role="log"]')?.getAttribute('aria-busy') === 'true',
       border: (() => {
         const border = document.querySelector<HTMLElement>('[data-pane-border]');
-        if (!border || getComputedStyle(border).display === 'none') return null;
+        if (!border || getComputedStyle(border).display === 'none')
+          return null;
         const rect = border.getBoundingClientRect();
         return { id: border.dataset.paneBorder!, left: rect.left, width: rect.width,
           opacity: Number(getComputedStyle(border).opacity) };
@@ -71,7 +72,8 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
       panes: [...document.querySelectorAll<HTMLElement>(paneSelector)].map(pane => ({
         motion: (() => {
           const animation = pane.getAnimations().find(animation => animation.effect instanceof KeyframeEffect && animation.effect.target === pane);
-          if (!animation) return null;
+          if (!animation)
+            return null;
           return { duration: Number(animation.effect!.getTiming().duration), elapsed: Number(animation.currentTime) };
         })(),
         id: pane.dataset.paneId!, left: pane.getBoundingClientRect().left, width: pane.getBoundingClientRect().width,
@@ -82,21 +84,21 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
           '.pane-header', '.pane-header-title-wrap', '[data-pane-command]'
         ].flatMap(selector => {
           const element = pane.querySelector<HTMLElement>(selector);
-          if (!element) return [];
+          if (!element)
+            return [];
           const rect = element.getBoundingClientRect();
           const parent = pane.getBoundingClientRect();
           return [[selector, {
-            left: rect.left - parent.left, top: rect.top - parent.top,
-            width: rect.width, height: rect.height
-          }]];
+                left: rect.left - parent.left, top: rect.top - parent.top,
+                width: rect.width, height: rect.height
+              }]];
         })),
-        controlsOpacity: [...pane.querySelectorAll<HTMLElement>(
-          '.notepad-editor-top-overlay, .pane-header, .chat-panel-bottom, [data-pane-command]'
-        )].map(control => {
+        controlsOpacity: [...pane.querySelectorAll<HTMLElement>('.notepad-editor-top-overlay, .pane-header, .chat-panel-bottom, [data-pane-command]')].map(control => {
           let opacity = 1;
           for (let element: HTMLElement | null = control; element; element = element.parentElement) {
             opacity *= Number(getComputedStyle(element).opacity);
-            if (element === pane) break;
+            if (element === pane)
+              break;
           }
           return opacity;
         }),
@@ -118,33 +120,44 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
     let settledSince: number | null = null;
     let finished = false;
     let frameId = 0;
+    let sampleTimer: ReturnType<typeof setTimeout> | undefined;
     const expectedPanes = before.panes.length + (action.startsWith('open') ? 1 : -1);
     const finish = (error?: string) => {
-      if (finished) return;
+      if (finished)
+        return;
       finished = true;
       clearTimeout(deadline);
       cancelAnimationFrame(frameId);
+      clearTimeout(sampleTimer);
       done({ before, frames, maxGap: gaps.length ? Math.max(...gaps) : 0, ...(error ? { error } : {}) });
     };
     const deadline = setTimeout(() => finish(`Pane motion did not settle: ${action}`), 5000);
+    // Enqueue after the app has registered its next rAF. WAAPI advances before
+    // rAF, while the dock commits its JS pose in rAF/Svelte's microtask; sampling
+    // after that callback observes one frame rather than two adjacent frames.
+    const scheduleSample = () => {
+      sampleTimer = setTimeout(() => { frameId = requestAnimationFrame(sample); }, 0);
+    };
     const sample = () => {
-      if (finished) return;
+      if (finished)
+        return;
       const frame = read();
       gaps.push(frame.time - last);
       last = frame.time;
       frames.push(frame);
       const finiteAnimationRunning = document.querySelector('.notepad-shell')!
-        .getAnimations({ subtree: true }).some(animation =>
-          (animation.playState === 'running' || animation.pending) &&
-          animation.effect?.getTiming().iterations !== Infinity);
+        .getAnimations({ subtree: true }).some(animation => (animation.playState === 'running' || animation.pending) &&
+        animation.effect?.getTiming().iterations !== Infinity);
       const settled = frame.panes.length === expectedPanes && !frame.moving && !frame.chatBusy && !finiteAnimationRunning;
       settledSince = settled ? settledSince ?? frame.time : null;
       // Continuity checks inspect the final 100ms for settled geometry. Keep a
       // full settled tail so those checks cannot include the easing's arrival.
-      if (settledSince !== null && frame.time - settledSince >= 120 && frame.time - before.time >= 100) finish();
-      else frameId = requestAnimationFrame(sample);
+      if (settledSince !== null && frame.time - settledSince >= 120 && frame.time - before.time >= 100)
+        finish();
+      else
+        scheduleSample();
     };
-    frameId = requestAnimationFrame(sample);
+    scheduleSample();
     if (action === 'open' || action === 'open-chat' || action === 'open-current' || action === 'open-previous') {
       // Use the real split command. Quick choices are enabled by pointer entry.
       const button = document.querySelector<HTMLElement>('button[aria-label="Open split pane options"]')!;
@@ -152,13 +165,16 @@ export async function samplePaneMotion(action: PaneMotionAction): Promise<Motion
         button.dispatchEvent(new PointerEvent('pointerenter'));
         const label = action === 'open-chat' ? 'Split with thought partner' : action === 'open-current' ? 'Split with current location' : 'Split with previous location';
         queueMicrotask(() => document.querySelector<HTMLElement>(`button[aria-label="${label}"]`)!.click());
-      } else button.click();
-    } else {
+      }
+      else
+        button.click();
+    }
+    else {
       const panes = [...document.querySelectorAll<HTMLElement>(paneSelector)];
       panes[action === 'close-left' ? 0 : panes.length - 1]
         .querySelector<HTMLElement>('button[aria-label="Close pane"]')!.click();
     }
-  }, action);
+  }), action);
   if (result.error) throw new Error(result.error);
   return result;
 }

@@ -20,16 +20,26 @@ describe('full-app Markdown measurements', () => {
         await browser.waitUntil(() => browser.execute(() => document.querySelectorAll('[data-testid="note-editor"][aria-busy="false"]').length === 2));
         await browser.waitUntil(() => browser.execute(() => !document.querySelector('[data-pane-motion]')));
       }
-      const result = await browser.executeAsync(async (fixture: { kind: typeof kind; lines: number; panes: number }, done: (result: any) => void) => {
-        try {
-          const path = '/src/lib/e2e/markdownFullAppHarness.ts';
-          const harness = await import(/* @vite-ignore */ path);
-          const environment = await harness.prepareFullAppMarkdown(fixture.kind, fixture.lines, fixture.panes);
-          const measurements = [];
-          for (const operation of ['selection', 'document']) measurements.push({ ...fixture, ...await harness.measureFullAppMarkdown(operation) });
-          done({ environment, measurements });
-        } catch (error) { done({ error: `${String(error)}\n${(error as Error).stack}` }); }
-      }, { kind, lines, panes });
+      const result = await browser.execute((fixture: {
+        kind: typeof kind;
+        lines: number;
+        panes: number;
+      }) => new Promise<any>((done, reject) => {
+        void (async () => {
+          try {
+            const path = '/src/lib/e2e/markdownFullAppHarness.ts';
+            const harness = await import(/* @vite-ignore */ path);
+            const environment = await harness.prepareFullAppMarkdown(fixture.kind, fixture.lines, fixture.panes);
+            const measurements = [];
+            for (const operation of ['selection', 'document'])
+              measurements.push({ ...fixture, ...await harness.measureFullAppMarkdown(operation) });
+            done({ environment, measurements });
+          }
+          catch (error) {
+            done({ error: `${String(error)}\n${(error as Error).stack}` });
+          }
+        })().catch(reject);
+      }), { kind, lines, panes });
       if (result.error) throw new Error(result.error);
       rows.push({ environment: result.environment, ...result.measurements[0] }, { environment: result.environment, ...result.measurements[1] });
       writeFileSync(process.env.MARKDOWN_FULL_APP_OUTPUT!, JSON.stringify({ warmups: 5, samples: 20,

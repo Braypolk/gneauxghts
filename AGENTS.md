@@ -15,3 +15,7 @@ This repository uses a single-context domain-doc layout. See `docs/agents/domain
 ### Architecture docs
 
 Before changing state ownership, cross-module write paths, persistence consistency, state-machine coordination, or the agent runtime seam, read `ARCHITECTURE.md` and follow its links to the applicable behavior invariants and ADRs.
+
+### UI verification
+
+When verifying UI changes interactively or exporting a browser regression test, follow `docs/agents/ui-verification.md` for the WDIO session loop, evidence, replay and cleanup.

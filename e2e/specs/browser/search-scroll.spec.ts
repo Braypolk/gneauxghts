@@ -34,20 +34,22 @@ async function geometry() {
 async function positionDestination(fraction: number | 'above' | 'below') {
   // Render the destination through the public navigation path before positioning
   // the viewport. Tests then click the real search UI, including virtualized targets.
-  await browser.executeAsync((done: () => void) => {
+  await browser.execute(() => new Promise<void>((done) => {
     const modulePath = '/src/lib/features/notepad/navigation/navigation.ts';
     import(modulePath).then(module => {
       module.focusEditorAtDocumentLine(document.querySelector('[data-testid="note-editor"]'), 101);
       requestAnimationFrame(() => requestAnimationFrame(() => done()));
     });
-  });
+  }));
   const measured = await geometry();
   await browser.execute((offset: number) => {
     const scroller = document.querySelector<HTMLElement>('[data-testid="note-editor"] .cm-scroller')!;
     scroller.scrollTop += offset;
     (window as any).__GNEAUXGHTS_NATIVE_E2E__.setEditorSelection(0, 0);
   }, (measured.top! - (fraction === 'above' ? -2 : fraction === 'below' ? 3 : fraction)) * measured.height);
-  await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+  await browser.execute(() => new Promise<void>((done) => {
+    requestAnimationFrame(() => requestAnimationFrame(() => done()));
+  }));
   return geometry();
 }
 
@@ -140,7 +142,9 @@ describe('search destination scrolling', () => {
       (window as any).__GNEAUXGHTS_NATIVE_E2E__.setEditorSelection(0, 0);
       scroller.scrollTop = 0;
     });
-    await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+    await browser.execute(() => new Promise<void>((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => done()));
+    }));
     expect(await browser.execute(() => document.querySelector<HTMLElement>('.cm-scroller')!.scrollTop)).toBe(0);
     await browser.execute(() => document.querySelector<HTMLButtonElement>('button.search-result-item')!.click());
     await browser.waitUntil(() => browser.execute(() => {
@@ -163,13 +167,18 @@ describe('search destination scrolling', () => {
     await browser.execute(() => document.querySelector<HTMLButtonElement>('button.search-result-item')!.click());
     await browser.waitUntil(() => browser.execute(() => document.querySelector<HTMLElement>('.cm-scroller')!.scrollTop === 0));
     await browser.execute(() => { document.querySelector<HTMLElement>('.cm-scroller')!.scrollTop = 200; });
-    await browser.executeAsync((done: () => void) => requestAnimationFrame(() => requestAnimationFrame(() => done())));
+    await browser.execute(() => new Promise<void>((done) => {
+      requestAnimationFrame(() => requestAnimationFrame(() => done()));
+    }));
     expect(await browser.execute(() => document.querySelector<HTMLElement>('.cm-scroller')!.scrollTop)).toBe(200);
   });
 
   it('lets a newer native cursor action supersede a queued app destination', async () => {
     await writeLongNote();
-    const result = await browser.executeAsync((done: (result: { expected: number; actual: number }) => void) => {
+    const result = await browser.execute(() => new Promise<{
+      expected: number;
+      actual: number;
+    }>((done) => {
       const viewModule = '/node_modules/@codemirror/view/dist/index.js';
       const scrollModule = '/src/lib/features/notepad/editor/editorScroll.ts';
       Promise.all([import(viewModule), import(scrollModule)]).then(async ([cm, scroll]) => {
@@ -186,7 +195,7 @@ describe('search destination scrolling', () => {
         await frame();
         done({ expected, actual: view.scrollDOM.scrollTop });
       });
-    });
+    }));
     expect(result.actual).toBe(result.expected);
   });
 });

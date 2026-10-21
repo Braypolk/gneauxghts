@@ -11,7 +11,9 @@ describe('Pi queued-message presentation', () => {
   }
 
   it('counts real inbox submissions, preserves the remaining item on withdrawal, and clears on Stop', async () => {
-    await browser.executeAsync((done: () => void) => { void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done); });
+    await browser.execute(() => new Promise<void>((done) => {
+      void window.__GNEAUXGHTS_E2E__!.holdNextPiResponse().then(done);
+    }));
     await send('Hold this response');
     await $('[data-testid="pi-stop"]').waitForEnabled();
     await send('Same follow-up');
@@ -28,7 +30,7 @@ describe('Pi queued-message presentation', () => {
     await expect(queue.$('ul')).not.toBeDisplayed();
     await browser.keys('Enter');
     await expect(queue.$('ul')).toBeDisplayed();
-    await queue.$('button[aria-label="Withdraw queued message"]').click();
+    await items[0].$('button[aria-label="Withdraw queued message"]').click();
     await expect(trigger).toHaveText('1 queued message');
     await expect(queue.$('li')).toHaveAttribute('data-submission-id', retainedId);
     await expect(queue.$('li')).toHaveText('Same follow-up');
@@ -40,9 +42,9 @@ describe('Pi queued-message presentation', () => {
   });
 
   it('lets Pi dispatch a queued prompt after the active response completes', async () => {
-    await browser.executeAsync((done: () => void) => {
+    await browser.execute(() => new Promise<void>((done) => {
       void window.__GNEAUXGHTS_E2E__!.setNextPiResponse('A response long enough to queue a follow-up. '.repeat(50)).then(done);
-    });
+    }));
     await send('First question');
     await $('[data-testid="pi-stop"]').waitForEnabled();
     await send('Queued question');

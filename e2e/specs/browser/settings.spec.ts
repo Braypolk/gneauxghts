@@ -279,7 +279,7 @@ describe('searchable settings workspace', () => {
     await expectDestination('shortcut-editorRedo');
     const shortcut = await $('[data-settings-anchor="shortcut-editorRedo"]');
     await shortcut.$('button=Clear').click();
-    await shortcut.$('span=Disabled').waitForDisplayed();
+    await shortcut.$('span.rounded-full=Disabled').waitForDisplayed();
     await shortcut.$('button=Reset').click();
     expect(await shortcut.$('button=Clear').isDisplayed()).toBe(true);
     expect(await shortcut.$('button=Reset').isExisting()).toBe(false);

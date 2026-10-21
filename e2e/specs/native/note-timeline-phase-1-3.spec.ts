@@ -46,15 +46,17 @@ async function invokeNative<T>(
   command: string,
   args: Record<string, unknown> = {}
 ): Promise<T> {
-  const outcome = await browser.executeAsync<
+  const outcome = await browser.execute<
     NativeInvocationOutcome,
     [string, Record<string, unknown>]
   >(
-    (
-      innerCommand: string,
-      innerArgs: Record<string, unknown>,
-      done: (result: { ok: true; value: unknown } | { ok: false; error: string }) => void
-    ) => {
+    (innerCommand: string, innerArgs: Record<string, unknown>) => new Promise<{
+      ok: true;
+      value: unknown;
+    } | {
+      ok: false;
+      error: string;
+    }>((done) => {
       const tauri = window as typeof window & {
         __TAURI_INTERNALS__?: {
           invoke: (command: string, args: Record<string, unknown>) => Promise<unknown>;
@@ -64,11 +66,8 @@ async function invokeNative<T>(
         done({ ok: false, error: 'Native Tauri internals are unavailable' });
         return;
       }
-      void tauri.__TAURI_INTERNALS__.invoke(innerCommand, innerArgs).then(
-        (value) => done({ ok: true, value }),
-        (error) => done({ ok: false, error: String(error) })
-      );
-    },
+      void tauri.__TAURI_INTERNALS__.invoke(innerCommand, innerArgs).then((value) => done({ ok: true, value }), (error) => done({ ok: false, error: String(error) }));
+    }),
     command,
     args
   );
