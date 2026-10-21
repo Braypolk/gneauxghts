@@ -1,19 +1,19 @@
 import type {
   PaneEditorLifecycle,
   PaneEditorOperationResult
-} from '$lib/features/notepad/pane/paneEditorLifecycle';
-import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import { cleanupNoteRuntime } from '$lib/features/notepad/session/noteRuntime';
+} from '#lib/features/notepad/pane/paneEditorLifecycle.js';
+import type { PaneRuntime } from '#lib/features/notepad/pane/paneRuntime.svelte.js';
+import { cleanupNoteRuntime } from '#lib/features/notepad/session/noteRuntime.js';
 import type {
   NoteDraftState,
   DocumentHandle
-} from '$lib/features/notepad/state/noteStore';
-import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
+} from '#lib/features/notepad/state/noteStore.js';
+import type { EditorViewState } from '#lib/features/notepad/editor/editorViewState.js';
 import {
   getPaneIdsWithCapability,
   paneHasCapability
-} from '$lib/features/notepad/workspace/paneCapabilities';
-import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+} from '#lib/features/notepad/workspace/paneCapabilities.js';
+import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
 
 export interface DocumentPaneCoordinatorDeps<
   TPaneId extends string

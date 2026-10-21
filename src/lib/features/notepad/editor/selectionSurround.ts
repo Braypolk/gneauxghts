@@ -1,6 +1,6 @@
 import { isMarkdownCode } from '../markdown/codeContext';
 import { EditorView } from '@codemirror/view';
-import { dispatchEditorChange } from '$lib/features/notepad/editor/editorDispatch';
+import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
 
 interface SurroundSpec {
   before: string;

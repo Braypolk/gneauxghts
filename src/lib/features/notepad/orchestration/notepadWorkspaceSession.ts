@@ -1,7 +1,7 @@
 import { tick } from 'svelte';
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
-import type { ForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
-import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
+import type { ForgottenNoteRetentionPreference } from '#lib/appSettings.svelte.js';
+import { finalizeNoteEditingWindow } from '#lib/features/history/historyApi.js';
 import { focusInputAtEnd } from '../navigation/navigation';
 import { captureFocusIntent } from '../navigation/focusIntent';
 import {
@@ -65,7 +65,7 @@ import {
   getPaneCommandForShortcut,
   type PaneCommandChoice
 } from '../paneCommandPicker';
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 import type { createNotepadPersistenceController } from './persistenceController';
 export type { LocationHistoryEntry, NavLocation } from '../navigation/locationMru';
 export interface OpenNoteOptions {

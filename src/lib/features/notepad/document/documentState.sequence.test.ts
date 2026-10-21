@@ -19,7 +19,7 @@ import {
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 
 const path = '/vault/Sequence.md';
 

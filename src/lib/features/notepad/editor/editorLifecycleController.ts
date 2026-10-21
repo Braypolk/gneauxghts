@@ -3,11 +3,11 @@ import { tick } from 'svelte';
 import type {
   CursorPosition,
   EditorViewState
-} from '$lib/features/notepad/editor/editorViewState';
+} from '#lib/features/notepad/editor/editorViewState.js';
 import {
   loadEditorViewState,
   saveEditorViewState
-} from '$lib/features/notepad/editor/editorViewState';
+} from '#lib/features/notepad/editor/editorViewState.js';
 import {
   createEditor as createEditorInstance,
   destroyEditor as destroyEditorInstance,
@@ -20,21 +20,21 @@ import {
   type EditorController,
   type EditorViewCallbacks,
   type SharedEditorResources
-} from '$lib/features/notepad/editor/editor';
+} from '#lib/features/notepad/editor/editor.js';
 import {
   bindSlashMenuViewToPane,
   unbindSlashMenuView
-} from '$lib/features/notepad/editor/slashMenuBridge';
+} from '#lib/features/notepad/editor/slashMenuBridge.js';
 import {
   bindSelectionMenuViewToPane,
   unbindSelectionMenuView
-} from '$lib/features/notepad/editor/selectionMenuBridge';
-import { waitForEditorPaint } from '$lib/features/notepad/navigation/navigation';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/editor/selectionMenuBridge.js';
+import { waitForEditorPaint } from '#lib/features/notepad/navigation/navigation.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 import {
   getDocumentNoteId,
   getDocumentPath
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import {
   nextEditorFrame as nextAnimationFrame,
   settleEditorPresentation

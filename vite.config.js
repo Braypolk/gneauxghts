@@ -1,4 +1,12 @@
 /// <reference types="vitest/config" />
+// Tauri doesn't have a Node.js server to do proper SSR
+// so we use adapter-static with a fallback to index.html to put the site in SPA mode
+// See: https://svelte.dev/docs/kit/single-page-apps
+// See: https://v2.tauri.app/start/frontend/sveltekit/ for more info
+import adapter from "@sveltejs/adapter-static";
+
+import { vitePreprocess } from "@sveltejs/vite-plugin-svelte";
+
 import { defineConfig } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { sveltekit } from "@sveltejs/kit/vite";
@@ -57,39 +65,30 @@ function curatedLanguageData() {
 export default defineConfig(async () => ({
   cacheDir: process.env.VITE_E2E_BROWSER === 'true' ? 'node_modules/.vite-e2e-browser'
     : process.env.VITE_E2E_NATIVE === 'true' ? 'node_modules/.vite-e2e-native' : undefined,
-  plugins: [e2eServerIdentity(), curatedLanguageData(), sveltekit(), tailwindcss()],
+
+  plugins: [
+    e2eServerIdentity(),
+    curatedLanguageData(),
+    sveltekit({
+      preprocess: vitePreprocess(),
+      adapter: adapter({ fallback: "index.html" }),
+      // Desktop assets change with app updates, so keep deployment polling disabled.
+      version: { pollInterval: 0 }
+    }),
+    tailwindcss()
+  ],
   build: {
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        /** @param {string} id */
-        manualChunks(id) {
-          if (!id.includes("node_modules")) {
-            return;
-          }
-
-          if (id.includes("node_modules/@codemirror/view")) {
-            return "codemirror-vendor";
-          }
-
-          if (
-            id.includes("node_modules/@codemirror/commands") ||
-            id.includes("node_modules/@codemirror/state")
-          ) {
-            return "codemirror-vendor";
-          }
-
-          if (
-            id.includes("node_modules/@codemirror/language") ||
-            id.includes("node_modules/@codemirror/lang-") ||
-            id.includes("node_modules/@codemirror/legacy-modes") ||
-            id.includes("node_modules/@lezer/")
-          ) {
-            return "codemirror-vendor";
-          }
-
-          if (id.includes("node_modules/d3")) {
-            return "graph-vendor";
-          }
+        // Kit 3 supplies codeSplitting groups, which take precedence over manualChunks.
+        codeSplitting: {
+          groups: [
+            {
+              name: "codemirror-vendor",
+              test: /node_modules\/(?:@codemirror\/(?:view|commands|state|language|lang-|legacy-modes)|@lezer\/)/,
+            },
+            { name: "graph-vendor", test: /node_modules\/d3/ },
+          ],
         },
       },
     },

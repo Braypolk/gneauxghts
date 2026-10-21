@@ -1,11 +1,11 @@
-import type { ImageSearchItem, MediaSearchItem, SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, MediaSearchItem, SearchItem } from '#lib/types/semantic.js';
 import { invoke } from '@tauri-apps/api/core';
 import {
   getIndexedRecentItem,
   loadLatestCollection,
   openRecentNoteItem as openRecentNoteListItem,
   runRecentSelection
-} from '$lib/features/notepad/search/recent';
+} from '#lib/features/notepad/search/recent.js';
 import {
   listRecentFocus,
   listRecentNotes,
@@ -13,9 +13,9 @@ import {
   searchNotes,
   setNotePinned,
   type SearchMode
-} from '$lib/features/notepad/search/search';
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-import { buildCurrentNoteSearchResults } from '$lib/features/notepad/search/currentNoteSearch';
+} from '#lib/features/notepad/search/search.js';
+import type { RecentTaskItem } from '#lib/features/notepad/model/types.js';
+import { buildCurrentNoteSearchResults } from '#lib/features/notepad/search/currentNoteSearch.js';
 
 export interface NotepadSearchState {
   searchMode: SearchMode;

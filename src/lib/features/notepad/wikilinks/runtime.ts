@@ -1,4 +1,4 @@
-import { openResolvedNoteLink, type NavigationContext } from '$lib/features/notepad/navigation/openFlow';
+import { openResolvedNoteLink, type NavigationContext } from '#lib/features/notepad/navigation/openFlow.js';
 import {
   autocompleteNoteLinks,
   beginWikilinkSuggestionRequest,
@@ -11,9 +11,9 @@ import {
   resolveNoteLink,
   setActiveWikilink,
   type WikilinkAutocompleteState
-} from '$lib/features/notepad/wikilinks/state';
-import { insertWikilinkSuggestion, type EditorController } from '$lib/features/notepad/editor/editor';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+} from '#lib/features/notepad/wikilinks/state.js';
+import { insertWikilinkSuggestion, type EditorController } from '#lib/features/notepad/editor/editor.js';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
 
 interface WikilinkRuntimeDeps {
   getState: () => WikilinkAutocompleteState;

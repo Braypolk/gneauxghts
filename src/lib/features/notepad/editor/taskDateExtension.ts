@@ -2,8 +2,8 @@ import { isolateHistory } from '@codemirror/commands';
 import { syntaxTree } from '@codemirror/language';
 import { StateEffect } from '@codemirror/state';
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet, type ViewUpdate } from '@codemirror/view';
-import { isDateTimePickerOpen, openDateTimePicker, type DateTimePickerClose } from '$lib/features/tasks/dateTimePicker';
-import { dueAnnotations, formatDueDate, setTaskLineDueDate, subscribeCalendarDay, taskDueDate } from '$lib/features/tasks/taskDates';
+import { isDateTimePickerOpen, openDateTimePicker, type DateTimePickerClose } from '#lib/features/tasks/dateTimePicker.js';
+import { dueAnnotations, formatDueDate, setTaskLineDueDate, subscribeCalendarDay, taskDueDate } from '#lib/features/tasks/taskDates.js';
 import { formatPickedDateTime, inlineDateTexts, isExcludedDateContext, taskMarkerPattern, type InlineDateText } from './dateCommands';
 import { editorFloatingReference } from './editorFloatingReference';
 

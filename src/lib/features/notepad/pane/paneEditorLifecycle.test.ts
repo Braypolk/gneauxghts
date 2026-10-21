@@ -1,8 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { createPaneEditorLifecycle } from './paneEditorLifecycle';
-import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createNoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 
 describe('paneEditorLifecycle', () => {
   for (const transition of ['mount', 'bind'] as const) {

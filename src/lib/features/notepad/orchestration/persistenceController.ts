@@ -1,8 +1,8 @@
 import type { TagEdit } from "../session/session";
-import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
-import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
-import type { NoteSession } from "$lib/features/notepad/model/types";
-import type { DocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
+import type { HistoryReadiness } from "#lib/contracts/historyReadiness.js";
+import { documentRegistry } from "#lib/features/notepad/document/documentRegistry.js";
+import type { NoteSession } from "#lib/features/notepad/model/types.js";
+import type { DocumentEditingService } from "#lib/features/notepad/document/documentEditingService.js";
 import {
   dispatchDocumentOperation,
   documentHasCleanBuffer,
@@ -12,7 +12,7 @@ import {
   isDocumentOperationCurrent,
   type NoteDraftState,
   type DocumentHandle,
-} from "$lib/features/notepad/document/documentState";
+} from "#lib/features/notepad/document/documentState.js";
 
 export interface PersistenceControllerParams {
   getDocumentSession: () => NoteDraftState;

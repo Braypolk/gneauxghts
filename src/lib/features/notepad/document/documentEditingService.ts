@@ -17,16 +17,16 @@ import {
   dispatchDocumentExternalSync,
   type NoteDraftState
 } from './documentState';
-import type { ForgottenNote, TagEdit } from '$lib/features/notepad/session/session';
-import type { NoteSession } from '$lib/features/notepad/model/types';
+import type { ForgottenNote, TagEdit } from '#lib/features/notepad/session/session.js';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
 import {
   adoptCommittedDocument,
   findOpenDocument,
   synchronizeDocumentCanonicalLookup,
   type NotepadState
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 import { documentRegistry } from './documentRegistry';
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
 import { readNoteSession } from '../session/session';
 import {
   acquireDocumentPublicationAdmission,

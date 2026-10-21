@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { EditReview } from '../pi/publication';
-  import { editDiffLayout } from '$lib/editDiffLayout.svelte';
+  import { editDiffLayout } from '#lib/editDiffLayout.svelte.js';
   import { editReviewChanges } from './editReviewChanges';
   let { review, disabled = false, onDecision }: { review: EditReview; disabled?: boolean; onDecision: (decision: 'approved' | 'rejected') => Promise<unknown> } = $props();
   let deciding = $state(false);

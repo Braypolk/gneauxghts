@@ -1,4 +1,4 @@
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 import type {
   PaneKind,
   PaneSelectionState

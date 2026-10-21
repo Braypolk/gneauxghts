@@ -6,13 +6,13 @@
   import ChatWriteDefaultsPanel from './ChatWriteDefaultsPanel.svelte';
   import ChatGptSettings from './ChatGptSettings.svelte';
   import { onMount } from 'svelte';
-  import { chatSettings } from '$lib/features/chat/pi/settings';
-  import type { ChatProvider, ChatSettings } from '$lib/features/chat/types';
+  import { chatSettings } from '#lib/features/chat/pi/settings.js';
+  import type { ChatProvider, ChatSettings } from '#lib/features/chat/types.js';
   import {
     chatReasoningChoices,
     normalizeChatReasoningEffort,
     OPENAI_CHAT_MODELS
-  } from '$lib/features/chat/chatConfiguration';
+  } from '#lib/features/chat/chatConfiguration.js';
 
   const api = chatSettings;
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
-import { awaitPendingNoteSave, registerPendingNoteSaveHandler } from '$lib/features/notepad/navigation/pendingNoteSave';
+import { createNavigationCoordinator } from '#lib/ui/navigationCoordinator.js';
+import { awaitPendingNoteSave, registerPendingNoteSaveHandler } from '#lib/features/notepad/navigation/pendingNoteSave.js';
 import { HistoryModeSession } from './historyModeSession.svelte';
 import type {
   HistoricalDiff,

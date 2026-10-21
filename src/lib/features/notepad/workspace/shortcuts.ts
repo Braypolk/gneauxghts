@@ -1,7 +1,7 @@
 import type { UnlistenFn } from '@tauri-apps/api/event';
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
-import { isTauriRuntime } from '$lib/tauriRuntime';
+import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+import { isTauriRuntime } from '#lib/tauriRuntime.js';
 
 export interface WorkspaceShortcutDeps<TPaneId extends string> {
   getPaneOrder: () => TPaneId[];

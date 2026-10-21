@@ -1,6 +1,6 @@
 import type { EditorView } from '@codemirror/view';
 import { describe, expect, it, vi } from 'vitest';
-import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
+import type { EditorCapabilityAdapter } from '#lib/features/notepad/editor/editorCapabilities.js';
 import type { PaneRuntime } from './paneRuntime.svelte';
 import { PaneTransientUiController } from './paneTransientUiController.svelte';
 import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';

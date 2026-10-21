@@ -1,24 +1,24 @@
 import { isolateHistory } from '@codemirror/commands';
 import { dateInsertGroups, dueMenuGroup, formatDateInsertion, slashTokenAtSelection, taskMarkerPattern } from './dateCommands';
 import { openTaskDueDatePicker } from './taskDateExtension';
-import { isDateTimePickerOpen } from '$lib/features/tasks/dateTimePicker';
+import { isDateTimePickerOpen } from '#lib/features/tasks/dateTimePicker.js';
 import { EditorView } from '@codemirror/view';
 import {
   applyBlockTypeSelection,
   slashMenuGroups,
   slashMenuOptionIds
-} from '$lib/features/notepad/editor/blockTypes';
+} from '#lib/features/notepad/editor/blockTypes.js';
 import {
   buildEditorMenuModel,
   type EditorMenuGroupWithItems,
   type EditorMenuItemWithIndex
-} from '$lib/features/notepad/editor/editorMenuModel';
+} from '#lib/features/notepad/editor/editorMenuModel.js';
 import {
   consumeMenuKeyEvent,
   stepMenuHoverGroup,
   stepMenuHoverIndex
-} from '$lib/features/notepad/editor/editorMenuKeyboard';
-import { emitSlashMenuUpdate } from '$lib/features/notepad/editor/slashMenuBridge';
+} from '#lib/features/notepad/editor/editorMenuKeyboard.js';
+import { emitSlashMenuUpdate } from '#lib/features/notepad/editor/slashMenuBridge.js';
 
 const slashMenuFloatingReferenceByView = new WeakMap<EditorView, HTMLElement>();
 

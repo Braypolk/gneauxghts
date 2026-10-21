@@ -1,4 +1,4 @@
-import { calendarDateForFormatting, validCalendarDate as validInlineDate } from '$lib/features/tasks/taskDates';
+import { calendarDateForFormatting, validCalendarDate as validInlineDate } from '#lib/features/tasks/taskDates.js';
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorMenuGroup } from './blockTypes';

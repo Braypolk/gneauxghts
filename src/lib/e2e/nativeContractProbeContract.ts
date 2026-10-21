@@ -1,4 +1,4 @@
-import type { VaultInfo } from '$lib/types/vault';
+import type { VaultInfo } from '#lib/types/vault.js';
 
 export interface NativeContractSnapshot {
   ready: boolean;

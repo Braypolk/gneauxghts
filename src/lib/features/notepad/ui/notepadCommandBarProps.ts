@@ -1,6 +1,6 @@
-import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
-import type { SearchMode } from '$lib/features/notepad/search/search';
+import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
+import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
+import type { SearchMode } from '#lib/features/notepad/search/search.js';
 
 /**
  * Forget/unforget bundle: the chrome on the left of the command bar.
@@ -67,5 +67,5 @@ export interface NotepadCommandBarRelatedProps {
   onOpen: () => void;
   onClose: () => void;
   onRefresh: () => void;
-  onSelect: (item: import('$lib/types/semantic').RelatedNoteItem) => void;
+  onSelect: (item: import('#lib/types/semantic.js').RelatedNoteItem) => void;
 }

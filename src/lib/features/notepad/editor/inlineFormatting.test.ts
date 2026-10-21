@@ -4,7 +4,7 @@ import { history, undo } from '@codemirror/commands';
 import { EditorState } from '@codemirror/state';
 
 import { applyInlineFormat, getActiveInlineFormats, type InlineFormatId } from './inlineFormatting';
-import { createMarkdownLanguage } from '$lib/features/notepad/markdown/markdownLanguage';
+import { createMarkdownLanguage } from '#lib/features/notepad/markdown/markdownLanguage.js';
 
 function runFormat(doc: string, from: number, to: number, id: InlineFormatId) {
   const { view, transactions: dispatched } = createCommandView({

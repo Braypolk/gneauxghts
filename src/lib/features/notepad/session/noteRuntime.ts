@@ -1,11 +1,11 @@
-import type { SharedEditorResources } from '$lib/features/notepad/editor/editor';
-import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
-import { notepadRuntimeState } from '$lib/features/notepad/session/runtimeStore.svelte';
-import { storePastedImageAsset } from '$lib/features/notepad/session/session';
+import type { SharedEditorResources } from '#lib/features/notepad/editor/editor.js';
+import { documentRegistry } from '#lib/features/notepad/document/documentRegistry.js';
+import { notepadRuntimeState } from '#lib/features/notepad/session/runtimeStore.svelte.js';
+import { storePastedImageAsset } from '#lib/features/notepad/session/session.js';
 import type {
   NoteDraftState,
   DocumentHandle
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 
 /** Typed access to editor resources keyed by immutable open-document handle. */
 export function getSharedEditorResources(

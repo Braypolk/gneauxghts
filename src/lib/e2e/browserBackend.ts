@@ -1,6 +1,6 @@
-import { taskDueDate, setTaskLineDueDate } from '$lib/features/tasks/taskDates';
-import type { RelatedNotesResponse } from '$lib/types/semantic';
-import type { VaultAtlasResponse } from '$lib/types/atlas';
+import { taskDueDate, setTaskLineDueDate } from '#lib/features/tasks/taskDates.js';
+import type { RelatedNotesResponse } from '#lib/types/semantic.js';
+import type { VaultAtlasResponse } from '#lib/types/atlas.js';
 
 import type { NoteFixture, InvokeRecord, TauriCallback, BrowserCommandOverrides } from './browserBackendContract';
 
@@ -922,15 +922,15 @@ function historicalDiff(
       if (args.sourceId !== 'a'.repeat(48) || !String(args.authorityId).startsWith('browser-authority-')) throw new Error('Unknown browser source');
       return { kind: 'note', noteId: 'note-beta', path: '/e2e/beta.md', title: 'Beta note', location: { quote: 'Beta body is independent from Alpha.' } };
     }
-    if (command === 'pi_chat_set_read_policy') return (await import('./piBrowserFixture')).changeBrowserPiRead(String(args.authorityId), Number(args.expectedRevision), args.read as import('$lib/features/chat/pi/authority').ReadPolicy);
+    if (command === 'pi_chat_set_read_policy') return (await import('./piBrowserFixture')).changeBrowserPiRead(String(args.authorityId), Number(args.expectedRevision), args.read as import('#lib/features/chat/pi/authority.js').ReadPolicy);
     if (command === 'pi_chat_set_write_policy') {
-      const result = (await import('./piBrowserFixture')).changeBrowserPiWrite(String(args.authorityId), Number(args.expectedRevision), args.write as import('$lib/features/chat/pi/authority').WritePolicy);
+      const result = (await import('./piBrowserFixture')).changeBrowserPiWrite(String(args.authorityId), Number(args.expectedRevision), args.write as import('#lib/features/chat/pi/authority.js').WritePolicy);
       bridge.emit('pi-chat-authority-changed', { retiredAuthorityIds: [], writePolicyChanged: true });
       return result;
     }
     if (command === 'pi_chat_get_write_defaults') return (await import('./piBrowserFixture')).browserPiWriteDefaults();
     if (command === 'pi_chat_set_write_defaults') {
-      const result = (await import('./piBrowserFixture')).changeBrowserPiWriteDefaults(args.write as import('$lib/features/chat/pi/authority').VaultWritePolicy);
+      const result = (await import('./piBrowserFixture')).changeBrowserPiWriteDefaults(args.write as import('#lib/features/chat/pi/authority.js').VaultWritePolicy);
       bridge.emit('pi-chat-authority-changed', { retiredAuthorityIds: [], writePolicyChanged: true });
       return result;
     }

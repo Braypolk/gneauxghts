@@ -1,6 +1,6 @@
 // Opt-in native measurement only. Observes the real IPC; never grants admission.
 import { invoke } from '@tauri-apps/api/core';
-import type { HistoryReadiness } from '$lib/contracts/historyReadiness';
+import type { HistoryReadiness } from '#lib/contracts/historyReadiness.js';
 
 type Sample = { at: number; name: string; detail?: unknown };
 declare global {

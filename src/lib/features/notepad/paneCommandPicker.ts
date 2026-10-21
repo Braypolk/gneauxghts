@@ -1,4 +1,4 @@
-import { getNextListSelectionIndex } from '$lib/ui/listSelection';
+import { getNextListSelectionIndex } from '#lib/ui/listSelection.js';
 
 export type PaneCommandChoice = 'typing' | 'current' | 'previous' | 'thoughtPartner';
 export type PaneCommandMode = 'split' | 'start';

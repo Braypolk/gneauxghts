@@ -3,10 +3,10 @@
   import { Calendar } from 'bits-ui';
   import { parseDate, type DateValue } from '@internationalized/date';
   import { ChevronDown, ChevronLeft, ChevronRight } from '@lucide/svelte';
-  import { Button } from '$lib/components/ui/button';
+  import { Button } from '#lib/components/ui/button/index.js';
   import { localCalendarDate, resolveDateShortcut, validCalendarDate } from './taskDates';
   import type { DateTimePickerOptions, PickerValue } from './dateTimePicker';
-  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
 
   let { options, close }: { options: DateTimePickerOptions; close: (restoreFocus?: boolean) => void } = $props();
   const id = $props.id();

@@ -1,4 +1,4 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
 import {
@@ -6,8 +6,8 @@ import {
   createNotepadState,
   bindNotepadStateToVault,
   findOpenDocument
-} from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/state/noteStore.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import {
   dispatchDocumentOperation,
   updateDocumentMarkdown,

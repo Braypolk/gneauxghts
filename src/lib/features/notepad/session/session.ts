@@ -1,15 +1,15 @@
-import { startupMark } from '$lib/e2e/startupMetrics';
-import type { HistoryReadiness } from "$lib/contracts/historyReadiness";
+import { startupMark } from '#lib/e2e/startupMetrics.js';
+import type { HistoryReadiness } from "#lib/contracts/historyReadiness.js";
 import { invoke } from "@tauri-apps/api/core";
-import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
+import type { CommittedMutationWarning } from "#lib/contracts/committedMutation.js";
 import type {
   NoteSession,
   StoredImageAsset,
-} from "$lib/features/notepad/model/types";
+} from "#lib/features/notepad/model/types.js";
 import type {
   ForgottenNoteSummary,
   RestoredForgottenNote,
-} from "$lib/types/forgottenNotes";
+} from "#lib/types/forgottenNotes.js";
 
 export interface TagEdit {
   previous: string[];

@@ -1,4 +1,4 @@
-import type { AtlasLink, VaultAtlasResponse } from '$lib/types/atlas';
+import type { AtlasLink, VaultAtlasResponse } from '#lib/types/atlas.js';
 
 const MIN_SEMANTIC_STRENGTH = 0.7;
 const RELATIVE_STRENGTH_FLOOR = 0.9;

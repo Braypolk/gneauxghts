@@ -1,11 +1,11 @@
 import { beforeEach, expect, it, vi } from 'vitest';
 import { bootstrapFixture, settingsViewFixture } from './testFixtures';
 import { AppStore } from './appStore.svelte';
-import type { BootstrapAppResult } from '$lib/features/notepad/session/bootstrap';
+import type { BootstrapAppResult } from '#lib/features/notepad/session/bootstrap.js';
 const mocks = vi.hoisted(() => ({ bootstrap: vi.fn(), listen: vi.fn(), invoke: vi.fn() }));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: mocks.invoke }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
-vi.mock('$lib/features/notepad/session/bootstrap', () => ({ loadBootstrapPayload: mocks.bootstrap }));
+vi.mock('#lib/features/notepad/session/bootstrap.js', () => ({ loadBootstrapPayload: mocks.bootstrap }));
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;

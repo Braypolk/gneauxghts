@@ -2,10 +2,10 @@ import { getNavigationPaneId as selectNavigationPaneId } from './paneRoles';
 import {
   INITIAL_PANE_ID,
   type NotepadPaneId
-} from '$lib/features/notepad/session/runtimeStore.svelte';
-import { initialNotepadDocumentHandle } from '$lib/features/notepad/state/noteState.svelte';
-import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
-import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
+} from '#lib/features/notepad/session/runtimeStore.svelte.js';
+import { initialNotepadDocumentHandle } from '#lib/features/notepad/state/noteState.svelte.js';
+import type { DocumentHandle } from '#lib/features/notepad/state/noteStore.js';
+import type { PaneCommandMode } from '#lib/features/notepad/paneCommandPicker.js';
 import {
   canRemovePane as policyCanRemovePane,
   canSetPaneKind,
@@ -20,7 +20,7 @@ import {
   transitionPaneMembership,
   type PaneMembershipEvent,
   type PaneMembershipState
-} from '$lib/features/notepad/pane/paneLifecycleMachine';
+} from '#lib/features/notepad/pane/paneLifecycleMachine.js';
 
 /**
  * Pane command UI state. The pane command overlay is shown while the user

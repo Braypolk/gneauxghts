@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadSearchStore } from './store.svelte';
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 
 function deferred<T>() {
   let resolve!: (value: T) => void;
@@ -30,7 +30,7 @@ const { invokeMock, searchNotesMock, listRecentFocusMock, listRecentNotesMock, l
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
-vi.mock('$lib/features/notepad/search/search', () => ({
+vi.mock('#lib/features/notepad/search/search.js', () => ({
   searchNotes: searchNotesMock,
   listRecentFocus: listRecentFocusMock,
   listRecentNotes: listRecentNotesMock,

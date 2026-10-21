@@ -1,8 +1,8 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
-import type { NoteLinkSuggestion, ResolvedNoteLink } from '$lib/features/notepad/model/types';
-import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
-import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
+import type { NoteLinkSuggestion, ResolvedNoteLink } from '#lib/features/notepad/model/types.js';
+import { parseWikilink } from '#lib/features/notepad/wikilinks/parse.js';
+import { callWithDraft, computeDraftHash } from '#lib/features/notepad/search/draftRef.js';
 
 export interface WikilinkAutocompleteState {
   active: boolean;

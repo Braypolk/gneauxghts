@@ -7,7 +7,7 @@ import { createMarkdownLanguage } from '../markdown/markdownLanguage';
 import { formatDateInsertion, formatPickedDateTime, inlineDateTexts, slashTokenAtSelection } from './dateCommands';
 import { getSlashMenuState, runSlashMenuSelection } from './slashMenu';
 
-vi.mock('$lib/features/tasks/dateTimePicker', () => ({ openDateTimePicker: vi.fn(), isDateTimePickerOpen: () => false }));
+vi.mock('#lib/features/tasks/dateTimePicker.js', () => ({ openDateTimePicker: vi.fn(), isDateTimePickerOpen: () => false }));
 function state(doc: string, pos = doc.length) { return EditorState.create({ doc, selection: { anchor: pos }, extensions: [createMarkdownLanguage(), history()] }); }
 
 describe('inline date commands', () => {

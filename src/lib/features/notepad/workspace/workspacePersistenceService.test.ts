@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
+import { createNoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 import {
   applySessionSnapshotToDocument,
   updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
-import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/document/documentState.js';
+import { captureExternalSnapshotForTest } from '#lib/features/notepad/document/documentExternalSyncTestSupport.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import { createWorkspacePersistenceService } from './workspacePersistenceService';
 
 describe('workspacePersistenceService', () => {

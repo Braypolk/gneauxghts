@@ -1,4 +1,4 @@
-import type { DocumentHandle } from '$lib/features/notepad/document/documentState';
+import type { DocumentHandle } from '#lib/features/notepad/document/documentState.js';
 import type { PaneKind } from './paneTypes';
 import {
   WorkspaceStore,

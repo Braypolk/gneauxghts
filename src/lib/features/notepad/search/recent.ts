@@ -1,4 +1,4 @@
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 
 export async function loadLatestCollection<T>(
   isLatest: () => boolean,

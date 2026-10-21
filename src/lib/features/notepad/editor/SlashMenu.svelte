@@ -1,9 +1,9 @@
 <script lang="ts">
   import { CalendarDays, CalendarCheck, Clock, CalendarClock, CalendarRange } from '@lucide/svelte';
-  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
   import { editorFloatingReference } from './editorFloatingReference';
-  import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
-  import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/slashMenu';
+  import { blockTypeIcons } from '#lib/features/notepad/editor/blockTypes.js';
+  import type { PaneSlashMenuModel } from '#lib/features/notepad/editor/slashMenu.js';
   import {
     getSlashMenuFloatingReference,
     slashMenuActivateGroupFromUi,
@@ -11,7 +11,7 @@
     slashMenuHideFromUi,
     slashMenuPickFromUi,
     slashMenuSetHoverFromUi
-  } from '$lib/features/notepad/editor/slashMenu';
+  } from '#lib/features/notepad/editor/slashMenu.js';
 
   const insertCommandIcons: Record<string, typeof CalendarDays> = {
     date: CalendarDays,

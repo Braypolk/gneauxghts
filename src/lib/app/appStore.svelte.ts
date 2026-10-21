@@ -1,15 +1,15 @@
-import { startupMark, observeStartupReadiness } from '$lib/e2e/startupMetrics';
+import { startupMark, observeStartupReadiness } from '#lib/e2e/startupMetrics.js';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import { ListenerScope } from './listenerScope';
-import type { HistoryHealthReport } from '$lib/types/history';
-import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
-import type { VaultInfo } from '$lib/types/vault';
+import type { HistoryHealthReport } from '#lib/types/history.js';
+import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '#lib/types/semantic.js';
+import type { VaultInfo } from '#lib/types/vault.js';
 import {
   loadBootstrapPayload,
   type BootstrapAppResult
-} from '$lib/features/notepad/session/bootstrap';
-import { logDevError } from '$lib/logDevError';
+} from '#lib/features/notepad/session/bootstrap.js';
+import { logDevError } from '#lib/logDevError.js';
 
 /**
  * Unified frontend `AppStore`, bootstrapped once at app startup.

@@ -6,7 +6,7 @@ import {
   getPaneCommandChoiceByIndex,
   getPaneCommandForShortcut,
   getPaneCommandShortcutLabel
-} from '$lib/features/notepad/paneCommandPicker';
+} from '#lib/features/notepad/paneCommandPicker.js';
 
 describe('paneCommandPicker', () => {
   it('defines the shared split choices in their numbered order', () => {

@@ -1,7 +1,7 @@
 import { DocumentBody } from '../document/documentBody';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { createRelatedNotesStore, type RelatedContext } from './store.svelte';
-import type { RelatedNotesResponse } from '$lib/types/semantic';
+import type { RelatedNotesResponse } from '#lib/types/semantic.js';
 const { retrieve } = vi.hoisted(() => ({ retrieve: vi.fn() }));
 vi.mock('../search/search', () => ({ getRelatedNotes: retrieve }));
 const context: RelatedContext = { documentHandle: 'draft-a', currentPath: null, currentTitle: 'Draft', body: DocumentBody.fromMarkdown('A note about connected ideas.') };

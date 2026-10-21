@@ -1,12 +1,12 @@
 import { localCalendarDate, matchesTaskDateFilter, taskDueDate, subscribeCalendarDay, type TaskDateFilter } from './taskDates';
 import { goto } from '$app/navigation';
 import { invoke } from '@tauri-apps/api/core';
-import { storePendingTaskTarget } from '$lib/taskNavigation';
-import { appStore } from '$lib/app/appStore.svelte';
+import { storePendingTaskTarget } from '#lib/taskNavigation.js';
+import { appStore } from '#lib/app/appStore.svelte.js';
 import {
   routeTaskDocumentMutation
 } from './taskMutationGateway';
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
 
 export interface TaskItem {
   noteId: string;

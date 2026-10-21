@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ForgottenNoteSummary } from '$lib/types/forgottenNotes';
+  import type { ForgottenNoteSummary } from '#lib/types/forgottenNotes.js';
   import SettingsRefreshButton from './SettingsRefreshButton.svelte';
 
   type ForgottenAction = 'restore_forgotten_notes' | 'delete_forgotten_notes';

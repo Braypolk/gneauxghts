@@ -1,4 +1,4 @@
-import type { AtlasLink, AtlasNode } from '$lib/types/atlas';
+import type { AtlasLink, AtlasNode } from '#lib/types/atlas.js';
 import { pointSegmentDistance, polygonProximity, preparePolygonCoverage } from './atlasGeometry';
 import { labelWorldSize, nodeWorldRadius, noteTitle, titleWidth, type Point } from './atlasLayout';
 

@@ -1,11 +1,11 @@
 import { beforeEach, afterEach, expect, it, vi } from 'vitest';
 import { createNotepadSessionLifecycle, type NotepadSessionLifecycleDeps } from './notepadSessionLifecycle';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 
 const mocks = vi.hoisted(() => ({ bootstrap: vi.fn(), subscribe: vi.fn(), vaultInfo: null as { runningPath: string; selectedPath?: string } | null, noteTarget: vi.fn(), taskTarget: vi.fn() }));
-vi.mock('$lib/app/appStore.svelte', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeVaultNoteChanged: mocks.subscribe, get vaultInfo() { return mocks.vaultInfo; } } }));
-vi.mock('$lib/noteNavigation', () => ({ consumePendingNoteTarget: mocks.noteTarget }));
-vi.mock('$lib/taskNavigation', () => ({ consumePendingTaskTarget: mocks.taskTarget }));
+vi.mock('#lib/app/appStore.svelte.js', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeVaultNoteChanged: mocks.subscribe, get vaultInfo() { return mocks.vaultInfo; } } }));
+vi.mock('#lib/noteNavigation.js', () => ({ consumePendingNoteTarget: mocks.noteTarget }));
+vi.mock('#lib/taskNavigation.js', () => ({ consumePendingTaskTarget: mocks.taskTarget }));
 function deferred<T>() {
   let resolve!: (value: T) => void;
   let reject!: (error: Error) => void;

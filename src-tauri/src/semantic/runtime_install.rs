@@ -188,7 +188,7 @@ fn save_verified_archive_with_limit(
             .map_err(|err| err.to_string())?;
     }
     file.sync_all().map_err(|err| err.to_string())?;
-    let actual = format!("{:x}", hash.finalize());
+    let actual = hex::encode(hash.finalize());
     if actual != expected {
         return Err(
             "Local search download could not be verified. Try Set up local search again."
@@ -345,7 +345,7 @@ mod tests {
         }
         let root = temp_root();
         let path = root.0.join("download");
-        let digest = format!("{:x}", Sha256::digest(b"1234"));
+        let digest = hex::encode(Sha256::digest(b"1234"));
         save_verified_archive_with_limit(io::Cursor::new(b"1234"), &path, &digest, 4).unwrap();
         assert_eq!(fs::read(&path).unwrap(), b"1234");
         assert!(

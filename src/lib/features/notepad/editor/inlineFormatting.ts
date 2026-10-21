@@ -1,18 +1,18 @@
 import { syntaxTree } from '@codemirror/language';
 import type { EditorState } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
-import { dispatchEditorChange } from '$lib/features/notepad/editor/editorDispatch';
+import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
 import {
   defaultWrapById,
   syntaxNodesById,
   wrapSpecsById,
   type WrapFormatId
-} from '$lib/features/notepad/markdown/inlineFormatSpec';
+} from '#lib/features/notepad/markdown/inlineFormatSpec.js';
 import {
   formatShortcutBinding,
   getEffectiveKeyboardShortcutBinding,
   type KeyboardShortcutId
-} from '$lib/keyboardShortcuts.svelte';
+} from '#lib/keyboardShortcuts.svelte.js';
 
 export type InlineFormatId =
   | 'bold'

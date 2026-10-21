@@ -4,9 +4,9 @@ import type {
   AtlasNode,
   AtlasSearchMatch,
   VaultAtlasResponse
-} from '$lib/types/atlas';
-import { vaultFixture } from '$lib/app/testFixtures';
-import type { VaultInfo } from '$lib/types/vault';
+} from '#lib/types/atlas.js';
+import { vaultFixture } from '#lib/app/testFixtures.js';
+import type { VaultInfo } from '#lib/types/vault.js';
 
 const appStoreMock = vi.hoisted(() => ({
   bootstrap: vi.fn(async () => undefined),
@@ -21,7 +21,7 @@ const appStoreMock = vi.hoisted(() => ({
 const invokeMock = vi.hoisted(() => vi.fn(async () => undefined));
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 
-vi.mock('$lib/app/appStore.svelte', () => ({ appStore: appStoreMock }));
+vi.mock('#lib/app/appStore.svelte.js', () => ({ appStore: appStoreMock }));
 
 function node(id: string, x: number, y: number): AtlasNode {
   return {
@@ -252,7 +252,7 @@ describe('AtlasStore asynchronous admission', () => {
   });
 
   it.each(['query', 'clear', 'cache', 'dispose'] as const)('invalidates a pending search immediately on %s', async (change) => {
-    const result = deferred<import('$lib/types/atlas').AtlasSearchResponse>();
+    const result = deferred<import('#lib/types/atlas.js').AtlasSearchResponse>();
     const store = new AtlasStore(async () => atlasResponse(1), () => result.promise);
     store.setSearchQuery('old');
     const searching = store.runSearch();

@@ -4,9 +4,9 @@ import { EditorState, type Range } from '@codemirror/state';
 import type { Decoration, EditorView } from '@codemirror/view';
 import { describe, expect, it } from 'vitest';
 
-import { decorateWikilink } from '$lib/features/notepad/markdown/decorations/wikilinks';
-import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsidianMarkdownExtensions';
-import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
+import { decorateWikilink } from '#lib/features/notepad/markdown/decorations/wikilinks.js';
+import { obsidianMarkdownExtensions } from '#lib/features/notepad/markdown/obsidianMarkdownExtensions.js';
+import { parseWikilink } from '#lib/features/notepad/wikilinks/parse.js';
 import { getWikilinkAtPosition } from './wikilinks';
 
 function createState(doc: string, anchor = 0) {

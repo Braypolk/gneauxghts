@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { rankMediaResults } from './mediaRanking';
-import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
 const passage = (name: string): SearchItem => ({ noteId: name, notePath: `/vault/${name}.md`, fileName: name, sectionLabel: '', excerpt: 'Canonical text', matchText: 'Canonical text', highlightRanges: [], reasonLabels: [], lexicalScore: null, semanticScore: null, startLine: 1, endLine: 1 });
 const image = (name: string, score: number): ImageSearchItem => ({ kind: 'image', noteId: name, notePath: `/vault/${name}.md`, noteTitle: name, noteHash: 'note', assetName: `${name}.png`, assetHash: name, sourceStart: 0, sourceEnd: 12, score });
 describe('independent media channel ranks', () => {

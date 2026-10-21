@@ -1,4 +1,4 @@
-import type { AtlasNode, VaultAtlasResponse } from '$lib/types/atlas';
+import type { AtlasNode, VaultAtlasResponse } from '#lib/types/atlas.js';
 import { polygonProximity, preparePolygonContainment, type Point } from './atlasGeometry';
 export type { Point } from './atlasGeometry';
 export const labelWorldSize = 6.5;

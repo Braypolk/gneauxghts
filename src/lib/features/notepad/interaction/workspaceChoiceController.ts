@@ -1,5 +1,5 @@
-import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
-import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+import type { PaneCommandChoice } from '#lib/features/notepad/paneCommandPicker.js';
+import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
 
 export interface WorkspaceChoiceControllerDeps<
   TPaneId extends string

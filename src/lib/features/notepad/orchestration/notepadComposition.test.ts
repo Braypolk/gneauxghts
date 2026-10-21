@@ -1,8 +1,8 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadComposition, deferred, persistedSession } from './notepadCompositionTestSupport';
 import { createEmptySessionSnapshot, createSessionSnapshot, openNoteSession, readNoteSession, forgetNoteSession, restoreForgottenNotes } from '../session/session';
-import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import { finalizeNoteEditingWindow } from '#lib/features/history/historyApi.js';
 import { notepadLocationMru } from '../navigation/locationMru';
 import { documentRegistry } from '../document/documentRegistry';
 import { updateDocumentMarkdown, updateDocumentTitle } from '../document/documentState';
@@ -12,7 +12,7 @@ vi.mock('../session/session', async importOriginal => ({
   ...await importOriginal<typeof import('../session/session')>(),
   openNoteSession: vi.fn(), readNoteSession: vi.fn(), forgetNoteSession: vi.fn(), restoreForgottenNotes: vi.fn(), clearLastOpenedNote: vi.fn(async () => {})
 }));
-vi.mock('$lib/features/history/historyApi', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
+vi.mock('#lib/features/history/historyApi.js', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
 const fixtures: ReturnType<typeof createNotepadComposition>[] = [];
 function setup(initial?: Parameters<typeof createNotepadComposition>[0]) { const f = createNotepadComposition(initial); fixtures.push(f); return f; }
 beforeEach(() => {

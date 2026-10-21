@@ -1,13 +1,13 @@
 import {
   createOpenDocumentTaskMutationHandler,
   type OpenDocumentTaskMutationDeps
-} from '$lib/features/tasks/openDocumentTaskMutation';
+} from '#lib/features/tasks/openDocumentTaskMutation.js';
 import {
   getDocumentNoteId,
   getDocumentPath,
   type NoteDraftState,
   type DocumentHandle
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 export interface NotepadTaskMutationAdapterDeps {
   listReferencedDocumentHandles: () => DocumentHandle[];

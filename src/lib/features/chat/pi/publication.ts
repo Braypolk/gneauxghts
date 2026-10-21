@@ -2,9 +2,9 @@ import { invoke } from './nativeInvoke';
 import { defineDoc, defineExtension, defineTask, type Harness, type ConversationId, type TaskId, type TaskRecord } from '@earendil-works/pi-durable';
 import type { JsonValue } from '@earendil-works/chord';
 import { BACKGROUND_CONTEXT } from '@earendil-works/chord/context';
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
-import type { AgentPublicationTarget, DocumentEditingService } from '$lib/features/notepad/document/documentEditingService';
-import { DocumentPublicationBlocked } from '$lib/features/notepad/document/documentPublicationAdmission';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
+import type { AgentPublicationTarget, DocumentEditingService } from '#lib/features/notepad/document/documentEditingService.js';
+import { DocumentPublicationBlocked } from '#lib/features/notepad/document/documentPublicationAdmission.js';
 import type { AuthoritySnapshot, WritePolicy } from './authority';
 
 export type Mutation = { operation: 'create'; folder: string; title: string; markdown: string } | { operation: 'update'; noteId: string; expectedReadSourceId: string; markdown: string };

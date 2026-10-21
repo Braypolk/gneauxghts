@@ -1,6 +1,6 @@
 import { listen } from '@tauri-apps/api/event';
-import { isTauriRuntime } from '$lib/tauriRuntime';
-import { logDevError } from '$lib/logDevError';
+import { isTauriRuntime } from '#lib/tauriRuntime.js';
+import { logDevError } from '#lib/logDevError.js';
 import { ListenerScope } from './listenerScope';
 
 type BackgroundSave = () => Promise<void>;

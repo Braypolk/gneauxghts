@@ -11,7 +11,7 @@ vi.mock('./editorPresentation', async (importOriginal) => ({
   settleEditorPresentation: vi.fn(async () => true)
 }));
 
-vi.mock('$lib/features/notepad/editor/editor', () => ({
+vi.mock('#lib/features/notepad/editor/editor.js', () => ({
   createEditor: vi.fn(async ({ onBodyChange }) => {
     capturedOnBodyChange = onBodyChange;
     return { view: {} };
@@ -27,34 +27,34 @@ vi.mock('$lib/features/notepad/editor/editor', () => ({
   swapEditorRuntime: vi.fn(() => true)
 }));
 
-vi.mock('$lib/features/notepad/editor/slashMenuBridge', () => ({
+vi.mock('#lib/features/notepad/editor/slashMenuBridge.js', () => ({
   bindSlashMenuViewToPane: vi.fn(),
   unbindSlashMenuView: vi.fn()
 }));
 
-vi.mock('$lib/features/notepad/editor/selectionMenuBridge', () => ({
+vi.mock('#lib/features/notepad/editor/selectionMenuBridge.js', () => ({
   bindSelectionMenuViewToPane: vi.fn(),
   unbindSelectionMenuView: vi.fn()
 }));
 
-vi.mock('$lib/features/notepad/navigation/navigation', () => ({
+vi.mock('#lib/features/notepad/navigation/navigation.js', () => ({
   waitForEditorPaint: vi.fn(async () => {})
 }));
 
 import { createEditorLifecycleController } from './editorLifecycleController';
 import { settleEditorPresentation } from './editorPresentation';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 import {
   createEditor,
   readCursorPosition,
   replaceEditorContent,
   restoreCursorPosition
-} from '$lib/features/notepad/editor/editor';
+} from '#lib/features/notepad/editor/editor.js';
 import { loadEditorViewState, saveEditorViewState } from './editorViewState';
 import {
   createNoteDraftState,
   type NoteDraftState
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 
 describe('editorLifecycleController onBodyChange routing', () => {
   beforeEach(() => {

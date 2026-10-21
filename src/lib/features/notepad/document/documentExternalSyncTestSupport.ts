@@ -4,7 +4,7 @@ import {
   type ExternalRefreshSource,
   type NoteDraftState
 } from './documentState';
-import type { SessionSnapshot } from '$lib/features/notepad/session/session';
+import type { SessionSnapshot } from '#lib/features/notepad/session/session.js';
 
 export function captureExternalSnapshotForTest(
   document: NoteDraftState,

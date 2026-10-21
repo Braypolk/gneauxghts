@@ -1,6 +1,6 @@
 import { render } from 'svelte/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { HistoryHealthReport } from '$lib/types/history';
+import type { HistoryHealthReport } from '#lib/types/history.js';
 import HistorySettingsPanel from './HistorySettingsPanel.svelte';
 
 function report(overrides: Partial<HistoryHealthReport> = {}): HistoryHealthReport {

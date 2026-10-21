@@ -1,6 +1,6 @@
 import type { EditorView } from '@codemirror/view';
-import { createEditorMenuBridge } from '$lib/features/notepad/editor/editorMenuBridge';
-import type { SelectionMenuSnapshot } from '$lib/features/notepad/editor/selectionMenu';
+import { createEditorMenuBridge } from '#lib/features/notepad/editor/editorMenuBridge.js';
+import type { SelectionMenuSnapshot } from '#lib/features/notepad/editor/selectionMenu.js';
 
 const bridge = createEditorMenuBridge<SelectionMenuSnapshot>();
 

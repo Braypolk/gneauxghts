@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { PI_CONTEXT } from '$lib/features/chat/pi/runtime';
+import { PI_CONTEXT } from '#lib/features/chat/pi/runtime.js';
 import { openBrowserPiChat, seedBrowserPiChat, readBrowserPiChat, changeBrowserPiRead } from './piBrowserFixture';
 
 afterEach(async () => { await (await openBrowserPiChat()).close(); });

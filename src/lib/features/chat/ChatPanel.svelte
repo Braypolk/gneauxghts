@@ -6,9 +6,9 @@
   import { PI_CONTEXT } from './pi/runtime';
   import { invoke } from '@tauri-apps/api/core';
   import { History, ArrowUp, Square, X, ShieldCheck, ShieldOff, ChevronDown, Check } from '@lucide/svelte';
-  import PaneHeader from '$lib/ui/PaneHeader.svelte';
-  import { mountInSlot } from '$lib/ui/mountInSlot';
-  import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
+  import PaneHeader from '#lib/ui/PaneHeader.svelte';
+  import { mountInSlot } from '#lib/ui/mountInSlot.js';
+  import { registerBackgroundSave } from '#lib/app/backgroundPersistence.js';
   import { createComposerDraftPersistence } from './ui/composerDraftPersistence';
   import { chatScrollPositionsFor, createChatMessageScroll } from './ui/chatMessageScroll';
   import { latestFailure, viewInbox, viewLive, type PiConversationBinding } from './ui/piConversationView';

@@ -11,9 +11,9 @@
   function cycle(direction: number) {
     const index = variants.findIndex(item => item.key === current);
     const next = variants[(index + direction + variants.length) % variants.length];
-    const url = new URL(page.url);
+    const url = new URL(page.url.href);
     url.searchParams.set('variant', next.key);
-    void goto(url, { replaceState: true, noScroll: true, keepFocus: true });
+    void goto(url, { replace: true, reset: false });
   }
   function keydown(event: KeyboardEvent) {
     if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable]')) return;

@@ -1,4 +1,4 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDocumentState,
@@ -12,10 +12,10 @@ import {
 import { createDocumentConflictController } from './documentConflictController';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import type {
   PaneEditorOperationResult
-} from '$lib/features/notepad/pane/paneEditorLifecycle';
+} from '#lib/features/notepad/pane/paneEditorLifecycle.js';
 
 const path = '/vault/Note.md';
 

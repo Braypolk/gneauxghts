@@ -1,13 +1,13 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import {
   createNoteDraftState
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 import {
   updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import { createNotepadRefreshController } from './notepadRefreshController';
 
 const path = '/vault/note.md';

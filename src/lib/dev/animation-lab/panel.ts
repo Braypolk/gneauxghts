@@ -217,7 +217,7 @@ window.addEventListener('message', event => {
     $<HTMLInputElement>('width').value = Number($<HTMLInputElement>('width').value) > 700 ? '390' : '1440'; size();
   }
 });
-$('focus-preview').onclick = () => setPanel($('inspector').hidden);
+$('focus-preview').onclick = () => setPanel(Boolean($('inspector').hidden));
 $('inventory-text').textContent = state.inventory;
 $('inventory').onclick = () => $<HTMLDialogElement>('inventory-dialog').showModal(); $('close-inventory').onclick = () => $<HTMLDialogElement>('inventory-dialog').close();
 if (selected.id === 'composer-stop') $<HTMLSelectElement>('composer').value = 'running';

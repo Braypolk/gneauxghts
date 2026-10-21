@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { getShortcutBindingParts } from '$lib/keyboardShortcuts.svelte';
+  import { getShortcutBindingParts } from '#lib/keyboardShortcuts.svelte.js';
 
   let { binding }: { binding: string } = $props();
 

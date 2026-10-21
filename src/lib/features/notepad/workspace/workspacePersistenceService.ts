@@ -1,9 +1,9 @@
-import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
+import { documentRegistry } from '#lib/features/notepad/document/documentRegistry.js';
 import {
   documentHasCleanBuffer,
   documentHasUnresolvedConflict
-} from '$lib/features/notepad/document/documentState';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/document/documentState.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 
 export interface WorkspacePersistenceServiceDeps {
   flushAllPaneCursorSaves: () => void;

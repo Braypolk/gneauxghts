@@ -4,7 +4,7 @@ import {
   getSelectableListIndexes,
   moveListSelection,
   pointListSelection
-} from '$lib/ui/listSelection';
+} from '#lib/ui/listSelection.js';
 
 describe('listSelection', () => {
   it('wraps through selectable indexes', () => {

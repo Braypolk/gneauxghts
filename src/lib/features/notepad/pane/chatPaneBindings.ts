@@ -1,5 +1,5 @@
-import type { PiConversationBinding } from '$lib/features/chat/ui/piConversationView';
-import type { ChatSurfaceHandle } from '$lib/features/chat/types';
+import type { PiConversationBinding } from '#lib/features/chat/ui/piConversationView.js';
+import type { ChatSurfaceHandle } from '#lib/features/chat/types.js';
 
 export interface ChatPaneBindings {
   session: {

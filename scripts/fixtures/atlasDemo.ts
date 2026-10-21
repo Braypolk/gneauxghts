@@ -1,4 +1,4 @@
-import type { AtlasNode, AtlasCloud, AtlasLink, VaultAtlasResponse } from '$lib/types/atlas';
+import type { AtlasNode, AtlasCloud, AtlasLink, VaultAtlasResponse } from '#lib/types/atlas.js';
 
 // Fictional, deterministic corpus for testing the interaction without a vault.
 export function createDemoAtlas(): VaultAtlasResponse {

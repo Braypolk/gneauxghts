@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { ImageSearchItem } from '$lib/types/semantic';
+  import type { ImageSearchItem } from '#lib/types/semantic.js';
   let { item, load, onSelect, active = false, onPointerEnter }: { item: ImageSearchItem; load: (item: ImageSearchItem) => Promise<string>; onSelect: () => void; active?: boolean; onPointerEnter?: () => void } = $props();
   let thumbnail = $state<string | null>(null);
   $effect(() => {

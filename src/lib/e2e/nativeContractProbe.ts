@@ -1,6 +1,6 @@
 import type { NativeContractProbe } from './nativeContractProbeContract';
 export type { NativeContractProbe } from './nativeContractProbeContract';
-import { appStore } from '$lib/app/appStore.svelte';
+import { appStore } from '#lib/app/appStore.svelte.js';
 
 type SavedEvent = Parameters<Parameters<typeof appStore.subscribeNoteSaved>[0]>[0];
 type ChangedEvent = Parameters<Parameters<typeof appStore.subscribeVaultNoteChanged>[0]>[0];

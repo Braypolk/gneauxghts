@@ -1,4 +1,4 @@
-import { logDevError } from '$lib/logDevError';
+import { logDevError } from '#lib/logDevError.js';
 
 export interface CursorPosition {
   anchor: number;

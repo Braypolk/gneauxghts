@@ -1,16 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createNotepadComposition, deferred, persistedSession } from './notepadCompositionTestSupport';
 import { createEmptySessionSnapshot, createSessionSnapshot, openNoteSession, readNoteSession, clearLastOpenedNote } from '../session/session';
-import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import { finalizeNoteEditingWindow } from '#lib/features/history/historyApi.js';
 import { notepadLocationMru, type NavLocation } from '../navigation/locationMru';
 import { updateDocumentMarkdown, dispatchDocumentExternalSync, externalDocumentSnapshotFromCommittedNote } from '../document/documentState';
 import { saveEditorViewState, loadEditorViewState } from '../editor/editorViewState';
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 vi.mock('../session/session', async importOriginal => ({
   ...await importOriginal<typeof import('../session/session')>(),
   openNoteSession: vi.fn(), readNoteSession: vi.fn(), clearLastOpenedNote: vi.fn(async () => {})
 }));
-vi.mock('$lib/features/history/historyApi', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
+vi.mock('#lib/features/history/historyApi.js', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
 const fixtures: ReturnType<typeof createNotepadComposition>[] = [];
 function setup(initial?: Parameters<typeof createNotepadComposition>[0]) {
   const fixture = createNotepadComposition(initial);

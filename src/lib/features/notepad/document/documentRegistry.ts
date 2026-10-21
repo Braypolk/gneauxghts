@@ -1,5 +1,5 @@
-import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
-import { DocumentRuntime } from '$lib/features/notepad/document/documentRuntime';
+import type { DocumentHandle } from '#lib/features/notepad/state/noteStore.js';
+import { DocumentRuntime } from '#lib/features/notepad/document/documentRuntime.js';
 
 /**
  * DocumentRegistry is a single per-note runtime map. It replaces the

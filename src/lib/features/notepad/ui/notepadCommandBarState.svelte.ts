@@ -4,15 +4,15 @@ import {
   getKeyboardShortcutBinding,
   keyboardShortcutMatchesEvent,
   type KeyboardShortcutId
-} from '$lib/keyboardShortcuts.svelte';
+} from '#lib/keyboardShortcuts.svelte.js';
 import {
   moveListSelection,
   pointListSelection,
   type ListNavigationMode
-} from '$lib/ui/listSelection';
-import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
-import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-import type { SearchMode } from '$lib/features/notepad/search/search';
+} from '#lib/ui/listSelection.js';
+import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
+import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
+import type { SearchMode } from '#lib/features/notepad/search/search.js';
 
 export type NotepadCommandBarVisibleItem =
   | { kind: 'search'; item: SearchItem }

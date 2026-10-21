@@ -1,26 +1,26 @@
 import type { EditorView } from '@codemirror/view';
 import type { ImageViewerSession } from '../images/imageViewerModel';
 import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
-import type { EditorCapabilityAdapter } from '$lib/features/notepad/editor/editorCapabilities';
+import type { EditorCapabilityAdapter } from '#lib/features/notepad/editor/editorCapabilities.js';
 import {
   slashMenuHideFromUi,
   type SlashMenuSnapshot
-} from '$lib/features/notepad/editor/slashMenu';
+} from '#lib/features/notepad/editor/slashMenu.js';
 import {
   selectionMenuHideFromUi,
   type SelectionMenuSnapshot
-} from '$lib/features/notepad/editor/selectionMenu';
+} from '#lib/features/notepad/editor/selectionMenu.js';
 import type { PaneRuntime } from './paneRuntime.svelte';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
-import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
+import type { WikilinkAutocompleteState } from '#lib/features/notepad/wikilinks/state.js';
 import {
   getPaneIdForSlashMenuView,
   setSlashMenuListener
-} from '$lib/features/notepad/editor/slashMenuBridge';
+} from '#lib/features/notepad/editor/slashMenuBridge.js';
 import {
   getPaneIdForSelectionMenuView,
   setSelectionMenuListener
-} from '$lib/features/notepad/editor/selectionMenuBridge';
+} from '#lib/features/notepad/editor/selectionMenuBridge.js';
 import {
   transitionPaneTransientUi,
   type PaneTransientUiAction,

@@ -5,7 +5,7 @@ import {
 } from './workspaceStore.svelte';
 import type {
   DocumentHandle
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import {
   createReadyPaneForTest,
   retirePaneForTest

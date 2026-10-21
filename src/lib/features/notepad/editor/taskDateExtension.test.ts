@@ -1,11 +1,11 @@
 import { createCommandView } from './commandTestSupport';
 import { history, redo, undo } from '@codemirror/commands';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { openDateTimePicker } from '$lib/features/tasks/dateTimePicker';
+import { openDateTimePicker } from '#lib/features/tasks/dateTimePicker.js';
 import { createMarkdownLanguage } from '../markdown/markdownLanguage';
 import { openTaskDueDatePicker } from './taskDateExtension';
 
-vi.mock('$lib/features/tasks/dateTimePicker', () => ({
+vi.mock('#lib/features/tasks/dateTimePicker.js', () => ({
   openDateTimePicker: vi.fn(() => vi.fn()),
   isDateTimePickerOpen: () => false
 }));

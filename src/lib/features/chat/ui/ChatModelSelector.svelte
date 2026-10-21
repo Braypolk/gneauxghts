@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Check, ChevronDown, LoaderCircle, RefreshCw } from '@lucide/svelte';
-  import type { ChatProvider, ChatReasoningEffort } from '$lib/features/chat/types';
-  import type { ChatModelChoice, ChatReasoningChoice } from '$lib/features/chat/chatConfiguration';
+  import type { ChatProvider, ChatReasoningEffort } from '#lib/features/chat/types.js';
+  import type { ChatModelChoice, ChatReasoningChoice } from '#lib/features/chat/chatConfiguration.js';
 
   const providers: { value: ChatProvider; label: string }[] = [
     { value: 'openai', label: 'ChatGPT' },

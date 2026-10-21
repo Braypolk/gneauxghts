@@ -4,12 +4,12 @@ import {
   getDocumentNoteId,
   getDocumentPath,
   type ExternalRefreshSource
-} from '$lib/features/notepad/document/documentState';
-import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
+} from '#lib/features/notepad/document/documentState.js';
+import type { NotepadPaneId } from '#lib/features/notepad/session/runtimeStore.svelte.js';
 import type {
   NoteDraftState,
   DocumentHandle
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 
 export interface VaultNoteChangeEvent {
   notePath: string;

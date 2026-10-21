@@ -5,11 +5,11 @@ import { fauxProvider } from '@earendil-works/pi-ai/providers/faux';
 import { BACKGROUND_CONTEXT as context } from '@earendil-works/chord/context';
 import type { invoke } from '@tauri-apps/api/core';
 import { bindPublicationDocumentOwner, mountPublicationDocumentOwner, publishPreparedMutation, publicationExtension, PublicationTask, EditReviewDoc, type PublicationResult } from './publication';
-import { createDocumentEditingService } from '$lib/features/notepad/document/documentEditingService';
-import { adoptCommittedDocument, createNoteDraftState, createNotepadState } from '$lib/features/notepad/state/noteStore';
-import { getDocumentMarkdown, updateDocumentMarkdown } from '$lib/features/notepad/document/documentState';
-import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
-import type { NoteSession } from '$lib/features/notepad/model/types';
+import { createDocumentEditingService } from '#lib/features/notepad/document/documentEditingService.js';
+import { adoptCommittedDocument, createNoteDraftState, createNotepadState } from '#lib/features/notepad/state/noteStore.js';
+import { getDocumentMarkdown, updateDocumentMarkdown } from '#lib/features/notepad/document/documentState.js';
+import { documentRegistry } from '#lib/features/notepad/document/documentRegistry.js';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
 
 const original: NoteSession = { noteId: 'note-1', path: '/vault/Note.md', title: 'Note', markdown: 'Original', tags: [] };
 const target = { noteId: original.noteId, path: original.path! };

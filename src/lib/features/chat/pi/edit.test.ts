@@ -8,7 +8,7 @@ import { EditReviewDoc, bindPublicationDocumentOwner, decideEditReview, publicat
 import { render } from 'svelte/server';
 import { activityTranscript, toolFailed, toolStatus, type ToolActivity } from '../ui/piActivity';
 import PiActivityGroup from '../ui/PiActivityGroup.svelte';
-import { DocumentPublicationBlocked } from '$lib/features/notepad/document/documentPublicationAdmission';
+import { DocumentPublicationBlocked } from '#lib/features/notepad/document/documentPublicationAdmission.js';
 import { ChatDoc, initializeChatDocuments, type PiChat } from './runtime';
 import { createPiConversationView } from '../ui/piConversationView';
 import { fixtureSettings } from '../ui/piViewTestSupport';

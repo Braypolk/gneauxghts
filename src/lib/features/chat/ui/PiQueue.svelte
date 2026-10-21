@@ -1,7 +1,7 @@
 <script lang="ts">
   import { Circle, ListTodo, X } from '@lucide/svelte';
-  import * as Trace from '$lib/components/ui/trace';
-  import { Button } from '$lib/components/ui/button';
+  import * as Trace from '#lib/components/ui/trace/index.js';
+  import { Button } from '#lib/components/ui/button/index.js';
   import type { InboxState, SubmissionId } from '@earendil-works/pi-durable';
 
   let { inbox, disabled = false, onWithdraw }: { inbox: InboxState; disabled?: boolean; onWithdraw: (id: SubmissionId) => void } = $props();

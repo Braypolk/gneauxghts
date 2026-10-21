@@ -1,4 +1,4 @@
-import { logDevError } from '$lib/logDevError';
+import { logDevError } from '#lib/logDevError.js';
 
 export const COMPOSER_DRAFT_SAVE_DELAY_MS = 400;
 

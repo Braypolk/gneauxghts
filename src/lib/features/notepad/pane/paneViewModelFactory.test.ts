@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import {
   createDocumentState,
   updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
-import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
+} from '#lib/features/notepad/document/documentState.js';
+import { captureExternalSnapshotForTest } from '#lib/features/notepad/document/documentExternalSyncTestSupport.js';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import {
   INITIAL_PANE_ID
-} from '$lib/features/notepad/session/runtimeStore.svelte';
+} from '#lib/features/notepad/session/runtimeStore.svelte.js';
 import { createPaneViewModelFactory, paneCommandNoteLabel } from './paneViewModelFactory';
 
 describe('pane view model document status', () => {

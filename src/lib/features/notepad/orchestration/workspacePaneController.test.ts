@@ -3,11 +3,11 @@ import { createNoteDraftState, findOpenDocument, upsertNote } from '../state/not
 import { createSessionSnapshot } from '../session/session';
 import { updateDocumentMarkdown } from '../document/documentState';
 import { documentRegistry } from '../document/documentRegistry';
-import { finalizeNoteEditingWindow } from '$lib/features/history/historyApi';
+import { finalizeNoteEditingWindow } from '#lib/features/history/historyApi.js';
 import { notepadLocationMru } from '../navigation/locationMru';
 import { createNotepadComposition, deferred, persistedSession } from './notepadCompositionTestSupport';
 
-vi.mock('$lib/features/history/historyApi', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
+vi.mock('#lib/features/history/historyApi.js', () => ({ finalizeNoteEditingWindow: vi.fn(async () => {}) }));
 const fixtures: ReturnType<typeof createNotepadComposition>[] = [];
 function setup(initial?: Parameters<typeof createNotepadComposition>[0]) {
   const fixture = createNotepadComposition(initial);

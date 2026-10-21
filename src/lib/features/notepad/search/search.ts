@@ -1,11 +1,11 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { RelatedNotesResponse, SearchItem } from '$lib/types/semantic';
+import type { RelatedNotesResponse, SearchItem } from '#lib/types/semantic.js';
 import type {
   RetrievalContextResponse,
   RetrievalContextScope
-} from '$lib/types/semantic';
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
-import { callWithDraft, computeDraftHash } from '$lib/features/notepad/search/draftRef';
+} from '#lib/types/semantic.js';
+import type { RecentTaskItem } from '#lib/features/notepad/model/types.js';
+import { callWithDraft, computeDraftHash } from '#lib/features/notepad/search/draftRef.js';
 
 export type SearchMode = 'current' | 'all';
 const RECENT_ITEMS_LIMIT = 20;

@@ -4,27 +4,27 @@ import {
   documentHasCleanBuffer,
   updateDocumentMarkdown,
   type DocumentHandle
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import {
   bindNotepadStateToVault,
   createNotepadState
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import {
   createNotepadTaskMutationHandler,
   findReferencedDocumentByIdentity
 } from './notepadTaskMutationAdapter';
 import {
   createDocumentEditingService
-} from '$lib/features/notepad/document/documentEditingService';
+} from '#lib/features/notepad/document/documentEditingService.js';
 import {
   createNotepadPersistenceController
 } from './persistenceController';
 import {
   documentRegistry
-} from '$lib/features/notepad/document/documentRegistry';
+} from '#lib/features/notepad/document/documentRegistry.js';
 
 function document(
   noteId: string,

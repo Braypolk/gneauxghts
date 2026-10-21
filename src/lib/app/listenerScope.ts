@@ -1,4 +1,4 @@
-import { logDevError } from '$lib/logDevError';
+import { logDevError } from '#lib/logDevError.js';
 
 /** Own subscriptions as they arrive, including those acquired after retirement. */
 export class ListenerScope {

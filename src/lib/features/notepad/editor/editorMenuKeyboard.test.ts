@@ -4,8 +4,8 @@ import {
   clampMenuHoverIndex,
   stepMenuHoverGroup,
   stepMenuHoverIndex
-} from '$lib/features/notepad/editor/editorMenuKeyboard';
-import type { EditorMenuGroupWithItems } from '$lib/features/notepad/editor/editorMenuModel';
+} from '#lib/features/notepad/editor/editorMenuKeyboard.js';
+import type { EditorMenuGroupWithItems } from '#lib/features/notepad/editor/editorMenuModel.js';
 
 const groups: EditorMenuGroupWithItems[] = [
   {

@@ -1,6 +1,6 @@
 <script lang="ts">
-  import Notepad from '$lib/features/notepad/Notepad.svelte';
-  import { workspaceStore } from '$lib/features/notepad/workspace/workspaceStore.svelte';
+  import Notepad from '#lib/features/notepad/Notepad.svelte';
+  import { workspaceStore } from '#lib/features/notepad/workspace/workspaceStore.svelte.js';
 
   // When the workspace is split into two panes, let the editor area grow up to
   // double its normal max width so each pane can occupy roughly a full normal

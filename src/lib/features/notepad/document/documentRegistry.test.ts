@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { DocumentRegistry } from './documentRegistry';
-import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
+import type { DocumentHandle } from '#lib/features/notepad/state/noteStore.js';
 
 describe('DocumentRegistry stable handles', () => {
   it('returns one runtime for one immutable open-document handle', () => {

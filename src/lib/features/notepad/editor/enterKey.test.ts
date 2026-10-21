@@ -3,7 +3,7 @@ import { EditorState, Transaction } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 
 import { markdownEnter } from './editor';
-import { createMarkdownLanguage } from '$lib/features/notepad/markdown/markdownLanguage';
+import { createMarkdownLanguage } from '#lib/features/notepad/markdown/markdownLanguage.js';
 
 // Regression for the reported bug: pressing Enter on a normal line with text
 // inserted MORE THAN ONE newline.

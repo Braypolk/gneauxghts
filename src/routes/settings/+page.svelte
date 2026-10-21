@@ -1,41 +1,41 @@
 <script lang="ts">
   import { Monitor, Moon, RefreshCcw, Sun, FolderOpen, Search, X, ArrowUpRight, Palette, Keyboard, Timer, Sparkles, ScanSearch, History, ArchiveRestore } from '@lucide/svelte';
   import { onDestroy, onMount, tick } from 'svelte';
-  import ForgottenNotesPanel from '$lib/features/settings/ForgottenNotesPanel.svelte';
-  import MissingNotesPanel from '$lib/features/settings/MissingNotesPanel.svelte';
-  import KeyboardShortcutsPanel from '$lib/features/settings/KeyboardShortcutsPanel.svelte';
-  import SemanticSettingsPanel from '$lib/features/settings/SemanticSettingsPanel.svelte';
-  import ChatSettingsPanel from '$lib/features/settings/ChatSettingsPanel.svelte';
-  import EditorTextSizePanel from '$lib/features/settings/EditorTextSizePanel.svelte';
-  import EditDiffLayoutPanel from '$lib/features/settings/EditDiffLayoutPanel.svelte';
-  import HistorySettingsPanel from '$lib/features/settings/HistorySettingsPanel.svelte';
-  import SettingsCard from '$lib/features/settings/SettingsCard.svelte';
-  import SettingsLabel from '$lib/features/settings/SettingsLabel.svelte';
+  import ForgottenNotesPanel from '#lib/features/settings/ForgottenNotesPanel.svelte';
+  import MissingNotesPanel from '#lib/features/settings/MissingNotesPanel.svelte';
+  import KeyboardShortcutsPanel from '#lib/features/settings/KeyboardShortcutsPanel.svelte';
+  import SemanticSettingsPanel from '#lib/features/settings/SemanticSettingsPanel.svelte';
+  import ChatSettingsPanel from '#lib/features/settings/ChatSettingsPanel.svelte';
+  import EditorTextSizePanel from '#lib/features/settings/EditorTextSizePanel.svelte';
+  import EditDiffLayoutPanel from '#lib/features/settings/EditDiffLayoutPanel.svelte';
+  import HistorySettingsPanel from '#lib/features/settings/HistorySettingsPanel.svelte';
+  import SettingsCard from '#lib/features/settings/SettingsCard.svelte';
+  import SettingsLabel from '#lib/features/settings/SettingsLabel.svelte';
   import {
     averageDuration,
     formatMillis,
     formatForgottenRetention,
     formatTimestamp
-  } from '$lib/features/settings/formatters';
+  } from '#lib/features/settings/formatters.js';
   import {
     appSettings,
     forgetButtonDurationOptions,
     forgottenNoteRetentionOptions,
     setForgottenNoteRetentionPreference,
     setForgetButtonDurationPreference
-  } from '$lib/appSettings.svelte';
+  } from '#lib/appSettings.svelte.js';
   import {
     setThemePreference,
     themeOptions,
     themeStore,
     type ThemePreference
-  } from '$lib/theme.svelte';
-  import { createSettingsStore } from '$lib/features/settings/store.svelte';
-  import { logDevError } from '$lib/logDevError';
+  } from '#lib/theme.svelte.js';
+  import { createSettingsStore } from '#lib/features/settings/store.svelte.js';
+  import { logDevError } from '#lib/logDevError.js';
 
-  import { settingsCategories, settingsSearchEntries, searchSettings, type SettingsCategory, type SettingsSearchEntry } from '$lib/features/settings/settingsCatalog';
-  import { keyboardShortcutDefinitions } from '$lib/keyboardShortcuts.svelte';
-  import '$lib/features/settings/settings.css';
+  import { settingsCategories, settingsSearchEntries, searchSettings, type SettingsCategory, type SettingsSearchEntry } from '#lib/features/settings/settingsCatalog.js';
+  import { keyboardShortcutDefinitions } from '#lib/keyboardShortcuts.svelte.js';
+  import '#lib/features/settings/settings.css';
 
   const categoryIcons = { appearance: Palette, shortcuts: Keyboard, forgetting: Timer, ai: Sparkles, search: ScanSearch, vault: FolderOpen, history: History, forgotten: ArchiveRestore };
   const categoryGroups = [...new Set(settingsCategories.map((item) => item.group))];

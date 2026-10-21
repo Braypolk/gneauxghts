@@ -1,5 +1,5 @@
 import { flushSync, mount, unmount } from 'svelte';
-import BlockHandle from '$lib/features/notepad/editor/BlockHandle.svelte';
+import BlockHandle from '#lib/features/notepad/editor/BlockHandle.svelte';
 
 export interface BlockHandleRefs {
   content: HTMLDivElement;

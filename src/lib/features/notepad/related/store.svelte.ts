@@ -1,7 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { getRelatedNotes } from '../search/search';
 import type { DocumentBody } from '../document/documentBody';
-import type { RelatedNoteItem, RelatedNotesResponse } from '$lib/types/semantic';
+import type { RelatedNoteItem, RelatedNotesResponse } from '#lib/types/semantic.js';
 
 export interface RelatedContext {
   documentHandle: string;

@@ -1,6 +1,6 @@
 import type { DocumentBody } from '../document/documentBody';
 import type { EditorView } from '@codemirror/view';
-import type { StoredImageAsset } from '$lib/features/notepad/model/types';
+import type { StoredImageAsset } from '#lib/features/notepad/model/types.js';
 import type {
   EditorViewCallbacks,
   SharedEditorResources

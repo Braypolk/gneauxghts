@@ -1,12 +1,12 @@
-import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
+import { createWorkspacePersistenceService } from "#lib/features/notepad/workspace/workspacePersistenceService.js";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createNotepadPersistenceController, type PersistenceControllerParams } from "./persistenceController";
 import {
   createNoteDraftState,
   type NoteDraftState,
-} from "$lib/features/notepad/state/noteStore";
-import { createSessionSnapshot, type SessionSnapshot } from "$lib/features/notepad/session/session";
-import type { NoteSession } from "$lib/features/notepad/model/types";
+} from "#lib/features/notepad/state/noteStore.js";
+import { createSessionSnapshot, type SessionSnapshot } from "#lib/features/notepad/session/session.js";
+import type { NoteSession } from "#lib/features/notepad/model/types.js";
 import {
   getDocumentMarkdown,
   getDocumentNoteId,
@@ -14,15 +14,15 @@ import {
   getDocumentStatusViewModel,
   getDocumentTitle,
   updateDocumentMarkdown,
-} from "$lib/features/notepad/document/documentState";
-import { captureExternalSnapshotForTest } from "$lib/features/notepad/document/documentExternalSyncTestSupport";
-import { documentRegistry } from "$lib/features/notepad/document/documentRegistry";
-import { createDocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
+} from "#lib/features/notepad/document/documentState.js";
+import { captureExternalSnapshotForTest } from "#lib/features/notepad/document/documentExternalSyncTestSupport.js";
+import { documentRegistry } from "#lib/features/notepad/document/documentRegistry.js";
+import { createDocumentEditingService } from "#lib/features/notepad/document/documentEditingService.js";
 import {
   bindNotepadStateToVault,
   createFreshDraftNote,
   createNotepadState
-} from "$lib/features/notepad/state/noteStore";
+} from "#lib/features/notepad/state/noteStore.js";
 
 function snapshot(overrides: Partial<SessionSnapshot> = {}): SessionSnapshot {
   return { ...createSessionSnapshot(committed()), ...overrides };
@@ -468,7 +468,7 @@ describe("persistenceController", () => {
   it("starts the one real save before delayed serial observations and preserves a newer draft", async () => {
     const note = dirtyNote();
     let resolveSave!: (snapshot: NoteSession) => void;
-    let resolveObservation!: (value: import('$lib/contracts/historyReadiness').HistoryReadiness) => void;
+    let resolveObservation!: (value: import('#lib/contracts/historyReadiness.js').HistoryReadiness) => void;
     const saveNoteSession = vi.fn().mockImplementation(() => new Promise<NoteSession>((resolve) => { resolveSave = resolve; }));
     const loadHistoryReadiness = vi.fn().mockImplementation(() => new Promise((resolve) => { resolveObservation = resolve; }));
     const controller = controllerFor(note, { saveNoteSession, loadHistoryReadiness,

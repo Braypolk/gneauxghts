@@ -1,9 +1,9 @@
-import type { SettingsViewPayload } from '$lib/app/appStore.svelte';
-import type { MissingNoteSummary } from '$lib/types/missingNotes';
-import type { HistoryModePage } from '$lib/features/history/historyModeMachine';
-import type { VaultInfo } from '$lib/types/vault';
-import { AppStore } from '$lib/app/appStore.svelte';
-import { bootstrapFixture, settingsViewFixture, semanticStatusFixture, vaultFixture } from '$lib/app/testFixtures';
+import type { SettingsViewPayload } from '#lib/app/appStore.svelte.js';
+import type { MissingNoteSummary } from '#lib/types/missingNotes.js';
+import type { HistoryModePage } from '#lib/features/history/historyModeMachine.js';
+import type { VaultInfo } from '#lib/types/vault.js';
+import { AppStore } from '#lib/app/appStore.svelte.js';
+import { bootstrapFixture, settingsViewFixture, semanticStatusFixture, vaultFixture } from '#lib/app/testFixtures.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeMock = vi.hoisted(() => vi.fn());
@@ -22,7 +22,7 @@ let appStoreMock: AppStore;
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-dialog', () => ({ open: vi.fn() }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: vi.fn() }));
-vi.mock('$lib/features/atlas/atlasStore.svelte', () => ({
+vi.mock('#lib/features/atlas/atlasStore.svelte.js', () => ({
   atlasStore: { clearCache: vi.fn() }
 }));
 beforeEach(() => {
@@ -55,7 +55,7 @@ function missingNote(timeline: HistoryModePage = { records: [], nextCursor: 'pag
 describe('SettingsStore actions', () => {
   it('keeps iOS vault selection usable without preparing an automatic restart', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const { restartLifecycle } = await import('$lib/app/restartLifecycle.svelte');
+    const { restartLifecycle } = await import('#lib/app/restartLifecycle.svelte.js');
     const restart = vi.spyOn(restartLifecycle, 'restart').mockResolvedValue();
     const store = createSettingsStore(appStoreMock);
     responses.set_vault_directory = {
@@ -649,7 +649,7 @@ describe('SettingsStore mutation/read conflicts', () => {
 
   it('refetches after a forgotten mutation instead of joining a pre-mutation read', async () => {
     const { createSettingsStore } = await import('./store.svelte');
-    const prior = deferred<import('$lib/types/forgottenNotes').ForgottenNoteSummary[]>();
+    const prior = deferred<import('#lib/types/forgottenNotes.js').ForgottenNoteSummary[]>();
     responses.list_forgotten_notes = prior.promise;
     const store = createSettingsStore(appStoreMock); const reading = store.loadForgottenNotes();
     responses.list_forgotten_notes = [];

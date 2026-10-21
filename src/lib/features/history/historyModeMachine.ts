@@ -1,6 +1,6 @@
-import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
-import type { NoteSession } from '$lib/features/notepad/model/types';
-import type { EditorViewState } from '$lib/features/notepad/editor/editorViewState';
+import type { HistoryStorageUsage, NoteHistoryHealth } from '#lib/types/history.js';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
+import type { EditorViewState } from '#lib/features/notepad/editor/editorViewState.js';
 
 export type HistoryMutationSource =
   | 'editor'
@@ -30,7 +30,7 @@ export interface HistoryRevisionRecord {
   occurredAtMillis: number;
   timelineOrdinal: number;
   timeKind: 'knownSince' | 'committed' | 'observed' | 'editingWindow';
-  timeEvidence?: import('$lib/types/history').RevisionTimeEvidence;
+  timeEvidence?: import('#lib/types/history.js').RevisionTimeEvidence;
   modifiedAtMillis: number | null;
   revisionLabel: string | null;
   lineCount: number;

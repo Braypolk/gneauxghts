@@ -1,13 +1,13 @@
-import type { EditorSnapshot } from '$lib/features/notepad/editor/editor';
+import type { EditorSnapshot } from '#lib/features/notepad/editor/editor.js';
 import type {
   EditorCapabilityAdapter,
   EditorMarkdownInsertOptions,
   EditorMarkdownInsertResult
-} from '$lib/features/notepad/editor/editorCapabilities';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/editor/editorCapabilities.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 import {
   documentToSessionSnapshot
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 export interface NotepadDocumentSnapshot {
   documentHandle: string;

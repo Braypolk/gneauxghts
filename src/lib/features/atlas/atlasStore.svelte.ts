@@ -1,13 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { SvelteMap } from 'svelte/reactivity';
-import { appStore } from '$lib/app/appStore.svelte';
+import { appStore } from '#lib/app/appStore.svelte.js';
 import type {
   AtlasCloudName,
   AtlasNode,
   AtlasSearchMatch,
   AtlasSearchResponse,
   VaultAtlasResponse
-} from '$lib/types/atlas';
+} from '#lib/types/atlas.js';
 
 const ATLAS_SEARCH_HIT_MIN_SCORE = 0.32;
 const ATLAS_SEARCH_HIT_MIN_SEMANTIC = 0.5;

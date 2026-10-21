@@ -3,7 +3,7 @@ import { defineExtension, defineTool, type PromptInput, type ToolExecutionApi } 
 import { Type } from '@earendil-works/pi-ai';
 import type { JsonValue } from '@earendil-works/chord';
 import type { Context } from '@earendil-works/chord/context';
-import type { RevisionCitation } from '$lib/types/history';
+import type { RevisionCitation } from '#lib/types/history.js';
 import type { ReadPolicy } from './authority';
 
 export type ReadState =

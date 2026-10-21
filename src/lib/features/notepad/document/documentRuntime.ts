@@ -1,8 +1,8 @@
 import type { DocumentBody } from './documentBody';
-import { createSharedEditorResources } from '$lib/features/notepad/editor/editorDocumentResources';
-import type { SharedEditorResources } from '$lib/features/notepad/editor/types';
-import type { StoredImageAsset } from '$lib/features/notepad/model/types';
-import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
+import { createSharedEditorResources } from '#lib/features/notepad/editor/editorDocumentResources.js';
+import type { SharedEditorResources } from '#lib/features/notepad/editor/types.js';
+import type { StoredImageAsset } from '#lib/features/notepad/model/types.js';
+import type { DocumentHandle } from '#lib/features/notepad/state/noteStore.js';
 
 /**
  * Narrow per-note registry entry. Live document state, history, revision and

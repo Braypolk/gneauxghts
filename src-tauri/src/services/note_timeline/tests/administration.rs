@@ -485,7 +485,7 @@ fn storage_usage_distinguishes_immediate_logical_deletion_from_bounded_reclamati
     // making hundreds of changed lines or many publications part of this test.
     for revision in 0..4 {
         let body = (0..512)
-            .map(|block| format!("{:x}", Sha256::digest(format!("{revision}:{block}"))))
+            .map(|block| hex::encode(Sha256::digest(format!("{revision}:{block}"))))
             .collect::<String>();
         save_retained_state(&state, "Storage".to_string(), body, Some(path.clone())).unwrap();
     }

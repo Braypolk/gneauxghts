@@ -3,7 +3,7 @@
   import { onMount, untrack, type Snippet } from 'svelte';
   import { interpolateAtlas, atlasGeometryMoved, type AtlasGeometry } from './atlasMotion';
   import { ChevronDown } from '@lucide/svelte';
-  import type { AtlasNode, AtlasLink, VaultAtlasResponse } from '$lib/types/atlas';
+  import type { AtlasNode, AtlasLink, VaultAtlasResponse } from '#lib/types/atlas.js';
   import { daysAgo } from './atlasActivity';
   import { createAtlasLayout, noteTitle, labelWorldSize, nodeWorldRadius, nodeConnectedness, type Point } from './atlasLayout';
   import { createAtlasConnections } from './atlasConnections';

@@ -1,8 +1,8 @@
 import { SvelteMap } from 'svelte/reactivity';
-import { canForgetConversation, createPiConversationView, type PiConversationBinding, type PiViewSnapshot } from '$lib/features/chat/ui/piConversationView';
-import type { ChatSurfaceHandle } from '$lib/features/chat/types';
-import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
-import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
+import { canForgetConversation, createPiConversationView, type PiConversationBinding, type PiViewSnapshot } from '#lib/features/chat/ui/piConversationView.js';
+import type { ChatSurfaceHandle } from '#lib/features/chat/types.js';
+import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
+import { paneHasCapability } from '#lib/features/notepad/workspace/paneCapabilities.js';
 
 export interface NotepadChatCoordinatorDeps<TPaneId extends string> {
   getActivePaneId: () => TPaneId;

@@ -1,8 +1,8 @@
 <script lang="ts">
-  import SearchNoteResult from '$lib/ui/search/SearchNoteResult.svelte';
-  import SearchResultsHeading from '$lib/ui/search/SearchResultsHeading.svelte';
+  import SearchNoteResult from '#lib/ui/search/SearchNoteResult.svelte';
+  import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
   import type { RelatedResult } from './store.svelte';
-  import type { RelatedNoteItem } from '$lib/types/semantic';
+  import type { RelatedNoteItem } from '#lib/types/semantic.js';
   let { result, activeIndex = -1, onSelect, onPoint, onRefresh }: {
     result: RelatedResult | null;
     activeIndex?: number;

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { render } from 'svelte/server';
 import { describe, expect, it, vi } from 'vitest';
-import type { SemanticStatus, SemanticSetupProgress } from '$lib/types/semantic';
+import type { SemanticStatus, SemanticSetupProgress } from '#lib/types/semantic.js';
 import { searchReadiness } from './semanticStatus';
 import SemanticSettingsPanel from './SemanticSettingsPanel.svelte';
 

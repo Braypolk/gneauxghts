@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
+import { restartLifecycle } from '#lib/app/restartLifecycle.svelte.js';
 
 import {
   defaultKeyboardShortcutBindings,

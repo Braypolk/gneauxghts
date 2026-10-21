@@ -1,6 +1,6 @@
 import { buildHighlightedSegments } from '../ui/notepadCommandBarState.svelte';
 import { describe, expect, it } from 'vitest';
-import { buildCurrentNoteSearchResults } from '$lib/features/notepad/search/currentNoteSearch';
+import { buildCurrentNoteSearchResults } from '#lib/features/notepad/search/currentNoteSearch.js';
 
 function searchCurrent(query: string, markdown: string, options = {}) {
   return buildCurrentNoteSearchResults({

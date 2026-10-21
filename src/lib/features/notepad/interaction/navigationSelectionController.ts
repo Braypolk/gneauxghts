@@ -3,13 +3,13 @@ import type {
   NavigationContext,
   NavigationContextSource,
   OpenContext
-} from '$lib/features/notepad/navigation/openFlow';
-import type { SearchMode } from '$lib/features/notepad/search/search';
-import type { RecentTaskItem } from '$lib/features/notepad/model/types';
+} from '#lib/features/notepad/navigation/openFlow.js';
+import type { SearchMode } from '#lib/features/notepad/search/search.js';
+import type { RecentTaskItem } from '#lib/features/notepad/model/types.js';
 import type {
   RelatedNoteItem,
   SearchItem
-} from '$lib/types/semantic';
+} from '#lib/types/semantic.js';
 
 export interface NavigationSelectionControllerDeps<
   TPaneId extends string

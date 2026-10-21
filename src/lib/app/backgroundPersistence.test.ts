@@ -3,8 +3,8 @@ import { installBackgroundPersistence, registerBackgroundSave } from './backgrou
 
 const mocks = vi.hoisted(() => ({ listen: vi.fn(), native: vi.fn(), log: vi.fn() }));
 vi.mock('@tauri-apps/api/event', () => ({ listen: mocks.listen }));
-vi.mock('$lib/tauriRuntime', () => ({ isTauriRuntime: mocks.native }));
-vi.mock('$lib/logDevError', () => ({ logDevError: mocks.log }));
+vi.mock('#lib/tauriRuntime.js', () => ({ isTauriRuntime: mocks.native }));
+vi.mock('#lib/logDevError.js', () => ({ logDevError: mocks.log }));
 
 describe('background persistence signals', () => {
   let doc: EventTarget & { visibilityState: string };

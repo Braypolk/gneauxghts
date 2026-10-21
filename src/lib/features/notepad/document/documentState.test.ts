@@ -1,4 +1,4 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { describe, expect, it } from 'vitest';
 import {
   createDocumentState,
@@ -16,7 +16,7 @@ import {
 import {
   createEmptySessionSnapshot,
   type SessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 
 const path = '/vault/note.md';
 

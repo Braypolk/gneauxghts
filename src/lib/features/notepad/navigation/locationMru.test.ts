@@ -6,7 +6,7 @@ import {
   locationsEqual,
   persistChatLocation,
   type NavLocation
-} from '$lib/features/notepad/navigation/locationMru';
+} from '#lib/features/notepad/navigation/locationMru.js';
 
 const invokeMock = vi.fn();
 vi.mock('@tauri-apps/api/core', () => ({

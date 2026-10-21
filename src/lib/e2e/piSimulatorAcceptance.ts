@@ -1,22 +1,22 @@
 /** Instrumented ordinary WKWebView acceptance only. Never imported by an ordinary build. */
-import { invoke } from '$lib/features/chat/pi/nativeInvoke';
+import { invoke } from '#lib/features/chat/pi/nativeInvoke.js';
 import { ProviderDoc } from '@earendil-works/pi-durable';
 import { estimateTextTokens } from '@earendil-works/pi-ai/utils/estimate';
 import type { ConversationId, ConversationView, LiveState, TaskId, WatchHandle } from '@earendil-works/pi-durable';
-import type { PiChat, PI_CONTEXT } from '$lib/features/chat/pi/runtime';
-import type { AuthoritySnapshot, ReadMode, WritePolicy } from '$lib/features/chat/pi/authority';
-import type { PreparedMutation, PublicationIntent, ReconciliationResult } from '$lib/features/chat/pi/publication';
-import type { PiViewSnapshot } from '$lib/features/chat/ui/piConversationView';
-import type { NativeModelConfiguration } from '$lib/features/chat/pi/nativeProvider';
-import type { PiDiagnosticSnapshot } from '$lib/features/chat/pi/diagnostics';
+import type { PiChat, PI_CONTEXT } from '#lib/features/chat/pi/runtime.js';
+import type { AuthoritySnapshot, ReadMode, WritePolicy } from '#lib/features/chat/pi/authority.js';
+import type { PreparedMutation, PublicationIntent, ReconciliationResult } from '#lib/features/chat/pi/publication.js';
+import type { PiViewSnapshot } from '#lib/features/chat/ui/piConversationView.js';
+import type { NativeModelConfiguration } from '#lib/features/chat/pi/nativeProvider.js';
+import type { PiDiagnosticSnapshot } from '#lib/features/chat/pi/diagnostics.js';
 
 const SIMULATOR = 'FBAC4D90-9149-4B49-B40D-EA5B90B7069C';
 const ENDPOINT = 'http://100.117.20.29:1234/v1', MODEL = 'qwen3.8-27b-gsq-rco';
 type Pane = Pick<PiViewSnapshot, 'title' | 'view' | 'entries' | 'authority' | 'error' | 'read' | 'initialized' | 'loading'> & { conversationId: number | null };
 type Bridge = {
   piChat(): Promise<PiChat>; piContext(): Promise<typeof PI_CONTEXT> | typeof PI_CONTEXT;
-  piPublicationTask(): Promise<typeof import('$lib/features/chat/pi/publication').PublicationTask>;
-  piNativeInvokeProbe(): Promise<typeof import('$lib/e2e/piNativeInvokeProbe')>;
+  piPublicationTask(): Promise<typeof import('#lib/features/chat/pi/publication.js').PublicationTask>;
+  piNativeInvokeProbe(): Promise<typeof import('#lib/e2e/piNativeInvokeProbe.js')>;
   readPiChatState(): Pane[];
   readEditorState(): { noteId: string | null; editor: { markdown: string } | null };
 };
@@ -119,7 +119,7 @@ export async function runPiSimulatorAcceptance() {
   const stats = { observerErrors: 0, conversations: {} as Record<number, Progress> };
   const fixtures = new Map<string, Fixture>(), prepared = new Map<string, PreparedMutation>();
   let runtime: PiChat, context: typeof PI_CONTEXT, bridge: Bridge, vault: string;
-  let nativeProbe: typeof import('$lib/e2e/piNativeInvokeProbe'), nativeObservation: ReturnType<typeof import('$lib/e2e/piNativeInvokeProbe').installPiNativeInvokeProbe> | undefined;
+  let nativeProbe: typeof import('#lib/e2e/piNativeInvokeProbe.js'), nativeObservation: ReturnType<typeof import('#lib/e2e/piNativeInvokeProbe.js').installPiNativeInvokeProbe> | undefined;
   let cancelPark = () => {};
   const fetchControl = async (path: string, value?: unknown) => {
     const response = await fetch(`${origin.origin}${path}`, { method: value === undefined ? 'GET' : 'POST',

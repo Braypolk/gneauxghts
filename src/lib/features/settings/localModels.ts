@@ -1,4 +1,4 @@
-import type { LocalModel } from '$lib/features/chat/types';
+import type { LocalModel } from '#lib/features/chat/types.js';
 
 export function mergeLocalModels(
   discovered: LocalModel[],

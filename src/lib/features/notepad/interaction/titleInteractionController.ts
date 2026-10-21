@@ -1,7 +1,7 @@
 import {
   type NoteDraftState
-} from '$lib/features/notepad/document/documentState';
-import { formatNoteTitle } from '$lib/features/notepad/model/document';
+} from '#lib/features/notepad/document/documentState.js';
+import { formatNoteTitle } from '#lib/features/notepad/model/document.js';
 
 export interface TitleInteractionControllerDeps<
   TPaneId extends string

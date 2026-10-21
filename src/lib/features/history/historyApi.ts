@@ -1,5 +1,5 @@
-import { invokeHistoryCommand } from '$lib/contracts/historyCommand';
-import type { HistoryStorageUsage, NoteHistoryHealth } from '$lib/types/history';
+import { invokeHistoryCommand } from '#lib/contracts/historyCommand.js';
+import type { HistoryStorageUsage, NoteHistoryHealth } from '#lib/types/history.js';
 import type {
   HistoricalDiff,
   HistoricalRevision,

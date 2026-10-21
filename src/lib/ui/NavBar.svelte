@@ -7,11 +7,11 @@
   import { page } from '$app/state';
   import { Check, ChevronDown, House, ListTodo, Network, Settings } from '@lucide/svelte';
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
-  import { keyboardShortcutMatchesEvent } from '$lib/keyboardShortcuts.svelte';
-  import { isTauriRuntime } from '$lib/tauriRuntime';
-  import { bumpAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
-  import { createNavigationCoordinator } from '$lib/ui/navigationCoordinator';
+  import { awaitPendingNoteSave } from '#lib/features/notepad/navigation/pendingNoteSave.js';
+  import { keyboardShortcutMatchesEvent } from '#lib/keyboardShortcuts.svelte.js';
+  import { isTauriRuntime } from '#lib/tauriRuntime.js';
+  import { bumpAppShellViewGeneration } from '#lib/ui/appShellNavigation.svelte.js';
+  import { createNavigationCoordinator } from '#lib/ui/navigationCoordinator.js';
 
   const navLinks = [
     { href: '/map', label: 'Map', icon: Network },
@@ -209,7 +209,7 @@
               {#snippet child({ props })}
                 <a {...props}
                   href={resolve(href)}
-                  data-sveltekit-preload-data="off"
+                  data-sveltekit-preload-data="false"
                   data-app-nav-href={href}
                   class="app-navigation-item"
                   class:app-navigation-item--touch={pointerSelection === href}
@@ -240,7 +240,7 @@
           {@const Icon = icon}
           <a
             href={resolve(href)}
-            data-sveltekit-preload-data="off"
+            data-sveltekit-preload-data="false"
             class={linkClass(href)}
             aria-label={label}
             aria-current={isActive(href, currentPathname) ? 'page' : undefined}
@@ -256,7 +256,7 @@
     <div class="relative z-10 flex min-w-0 justify-end">
       <a
         href={resolve(settingsHref)}
-        data-sveltekit-preload-data="off"
+        data-sveltekit-preload-data="false"
         class={settingsButtonClass()}
         aria-label="Settings"
         aria-current={isActive(settingsHref, currentPathname) ? 'page' : undefined}

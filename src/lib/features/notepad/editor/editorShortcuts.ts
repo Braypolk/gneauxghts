@@ -28,13 +28,13 @@ import {
   indentEditorSelection,
   outdentEditorSelection
 } from './structuralIndentation';
-import { createMarkdownExtensions } from '$lib/features/notepad/markdown/markdownExtensions';
+import { createMarkdownExtensions } from '#lib/features/notepad/markdown/markdownExtensions.js';
 import { applyInlineFormat } from './inlineFormatting';
 import { moveThroughLink } from './linkNavigation';
 import {
   keyboardShortcutMatchesEvent,
   usesNativeCutShortcut
-} from '$lib/keyboardShortcuts.svelte';
+} from '#lib/keyboardShortcuts.svelte.js';
 import type { EditorController } from './types';
 
 export function markdownEnter(view: EditorView): boolean {

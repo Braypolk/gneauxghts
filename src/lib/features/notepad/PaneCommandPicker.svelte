@@ -9,7 +9,7 @@
     PANE_COMMAND_START_INDEX,
     type PaneCommandChoice,
     type PaneCommandMode
-  } from '$lib/features/notepad/paneCommandPicker';
+  } from '#lib/features/notepad/paneCommandPicker.js';
 
   interface Props {
     highlightedIndex: number;

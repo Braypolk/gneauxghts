@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { chatSettings, type OpenAiAuthStatus } from '$lib/features/chat/pi/settings';
+  import { chatSettings, type OpenAiAuthStatus } from '#lib/features/chat/pi/settings.js';
 
   let { onMethod, onModels }: { onMethod: (method: OpenAiAuthStatus['method']) => void; onModels: (models: string[]) => void } = $props();
   let status = $state<OpenAiAuthStatus | null>(null);

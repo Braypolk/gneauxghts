@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   routeTaskDocumentMutation: vi.fn()
 }));
 
-vi.mock('$lib/app/appStore.svelte', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeNoteSaved: mocks.subscribe, subscribeVaultNoteChanged: mocks.subscribe, subscribeVaultChanged: mocks.subscribe } }));
+vi.mock('#lib/app/appStore.svelte.js', () => ({ appStore: { bootstrap: mocks.bootstrap, subscribeNoteSaved: mocks.subscribe, subscribeVaultNoteChanged: mocks.subscribe, subscribeVaultChanged: mocks.subscribe } }));
 afterEach(() => { vi.restoreAllMocks(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 vi.mock('@tauri-apps/api/core', () => ({

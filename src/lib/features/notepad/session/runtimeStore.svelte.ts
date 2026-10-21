@@ -1,5 +1,5 @@
-import { documentRegistry } from '$lib/features/notepad/document/documentRegistry';
-import type { StoredImageAsset } from '$lib/features/notepad/model/types';
+import { documentRegistry } from '#lib/features/notepad/document/documentRegistry.js';
+import type { StoredImageAsset } from '#lib/features/notepad/model/types.js';
 
 export type NotepadPaneId = `notepad-pane-${number}`;
 

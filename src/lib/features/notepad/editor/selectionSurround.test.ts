@@ -2,7 +2,7 @@ import { createCommandView } from './commandTestSupport';
 import { describe, expect, it } from 'vitest';
 
 import { surroundRange } from './selectionSurround';
-import { createMarkdownLanguage } from '$lib/features/notepad/markdown/markdownLanguage';
+import { createMarkdownLanguage } from '#lib/features/notepad/markdown/markdownLanguage.js';
 
 function runSurround(doc: string, from: number, to: number, trigger: string) {
   const { view, transactions: dispatched } = createCommandView({

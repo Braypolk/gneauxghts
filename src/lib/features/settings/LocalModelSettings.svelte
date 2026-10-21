@@ -13,15 +13,15 @@
     Wrench,
     X
   } from '@lucide/svelte';
-  import { chatSettings } from '$lib/features/chat/pi/settings';
+  import { chatSettings } from '#lib/features/chat/pi/settings.js';
   import type {
     ChatReasoningEffort,
     ChatModelCapabilities,
     LocalModel,
     LocalModelCapabilitySelection
-  } from '$lib/features/chat/types';
+  } from '#lib/features/chat/types.js';
   import { mergeLocalModels } from './localModels';
-  import { chatReasoningChoices } from '$lib/features/chat/chatConfiguration';
+  import { chatReasoningChoices } from '#lib/features/chat/chatConfiguration.js';
 
   interface Props {
     baseUrl: string;

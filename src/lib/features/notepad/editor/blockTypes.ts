@@ -1,6 +1,6 @@
 import type { EditorState, TransactionSpec } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
-import { dispatchEditorChange } from '$lib/features/notepad/editor/editorDispatch';
+import { dispatchEditorChange } from '#lib/features/notepad/editor/editorDispatch.js';
 
 export interface EditorMenuOption {
   id: string;

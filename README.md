@@ -150,7 +150,7 @@ retain selected text and offer Retry/Cancel; retry reuses files already saved.
 ## Stack
 
 - Tauri 2
-- SvelteKit 2 / Svelte 5
+- SvelteKit 3 / Svelte 5
 - TypeScript
 - Rust
 - CodeMirror 6 editor
@@ -172,7 +172,7 @@ A/B comparisons, and editable motion values. See [the animation lab guide](docs/
 
 ### Prerequisites
 
-- Node.js
+- Node.js 22.17 or newer (CI uses Node 24)
 - `pnpm`
 - Rust toolchain
 - Tauri system dependencies for your platform

@@ -1,6 +1,6 @@
 import { render } from 'svelte/server';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { editDiffLayout } from '$lib/editDiffLayout.svelte';
+import { editDiffLayout } from '#lib/editDiffLayout.svelte.js';
 import PiEditReview from './PiEditReview.svelte';
 import { editReviewChanges } from './editReviewChanges';
 import { stageNoteEdit } from '../pi/editStaging';

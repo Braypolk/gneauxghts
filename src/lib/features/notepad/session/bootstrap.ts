@@ -1,7 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
-import type { NoteSession } from '$lib/features/notepad/model/types';
-import type { SemanticStatus } from '$lib/types/semantic';
-import type { VaultInfo } from '$lib/types/vault';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
+import type { SemanticStatus } from '#lib/types/semantic.js';
+import type { VaultInfo } from '#lib/types/vault.js';
 import { createSessionSnapshot, type SessionSnapshot } from './session';
 
 export interface BootstrapAppPayload {

@@ -1,7 +1,7 @@
 import type {
   ChatNoteCandidate,
   ChatNotePolicy
-} from '$lib/features/chat/types';
+} from '#lib/features/chat/types.js';
 
 export function sortedExcludedPolicies(policies: ChatNotePolicy[]) {
   return policies

@@ -1,4 +1,3 @@
-/// <reference path="../../src/types/markdown-it.d.ts" />
 import assert from 'node:assert/strict';
 import { readdirSync, lstatSync, realpathSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';

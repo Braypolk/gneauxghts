@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { relaunch } from '@tauri-apps/plugin-process';
-import { awaitPendingNoteSave } from '$lib/features/notepad/navigation/pendingNoteSave';
+import { awaitPendingNoteSave } from '#lib/features/notepad/navigation/pendingNoteSave.js';
 
 export type RestartPhase = 'idle' | 'preparing' | 'readyToRestart' | 'failure';
 

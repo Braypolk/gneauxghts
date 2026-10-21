@@ -1,8 +1,8 @@
 import { tick } from 'svelte';
 import { EditorView } from '@codemirror/view';
 import type { Text } from '@codemirror/state';
-import { findCmContentElement } from '$lib/features/notepad/editor/editorDom';
-import { editorScrollEffect } from '$lib/features/notepad/editor/editorScroll';
+import { findCmContentElement } from '#lib/features/notepad/editor/editorDom.js';
+import { editorScrollEffect } from '#lib/features/notepad/editor/editorScroll.js';
 
 export function focusInputAtEnd(input: HTMLInputElement | null) {
   if (!input) return;

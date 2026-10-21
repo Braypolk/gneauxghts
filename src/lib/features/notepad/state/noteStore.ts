@@ -3,8 +3,8 @@ import {
   createEmptySessionSnapshot,
   type ForgottenNote,
   type SessionSnapshot
-} from '$lib/features/notepad/session/session';
-import type { NoteSession } from '$lib/features/notepad/model/types';
+} from '#lib/features/notepad/session/session.js';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
 import {
   applyCommittedNoteToDocument,
   applySessionSnapshotToDocument,
@@ -14,12 +14,12 @@ import {
   getDocumentPath,
   type DocumentHandle,
   type NoteDraftState
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 export type {
   DocumentHandle,
   NoteDraftState
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 export interface PaneDocumentReferences<TPaneId extends string> {
   getPaneState: (paneId: TPaneId) => { documentHandle: DocumentHandle };

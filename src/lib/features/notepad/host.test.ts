@@ -1,9 +1,9 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { describe, expect, it } from 'vitest';
 import { createNotepadFeatureHost, snapshotDocument } from './host';
 import {
   createNoteDraftState
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 
 describe('snapshotDocument', () => {
   it('returns a detached document snapshot for feature consumers', () => {

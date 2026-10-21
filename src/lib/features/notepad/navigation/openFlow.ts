@@ -1,14 +1,14 @@
 import { captureFocusIntent } from './focusIntent';
-import type { PendingTaskTarget } from '$lib/taskNavigation';
-import { navigationScrollBehavior } from '$lib/ui/motion';
-import type { SearchItem } from '$lib/types/semantic';
+import type { PendingTaskTarget } from '#lib/taskNavigation.js';
+import { navigationScrollBehavior } from '#lib/ui/motion.js';
+import type { SearchItem } from '#lib/types/semantic.js';
 import {
   revealEditorTextTarget,
   revealEditorCitationTarget,
   waitForEditorPaint
-} from '$lib/features/notepad/navigation/navigation';
-import { isSemanticOnlyResult } from '$lib/features/notepad/search/search';
-import type { RecentTaskItem, ResolvedNoteLink } from '$lib/features/notepad/model/types';
+} from '#lib/features/notepad/navigation/navigation.js';
+import { isSemanticOnlyResult } from '#lib/features/notepad/search/search.js';
+import type { RecentTaskItem, ResolvedNoteLink } from '#lib/features/notepad/model/types.js';
 
 export interface NavigationContext {
   signal?: AbortSignal;

@@ -3,29 +3,29 @@
   import {
     formatShortcutBinding,
     getEffectiveKeyboardShortcutBinding
-  } from '$lib/keyboardShortcuts.svelte';
+  } from '#lib/keyboardShortcuts.svelte.js';
   import { MediaQuery } from 'svelte/reactivity';
   import { DropdownMenu } from 'bits-ui';
-  import PaneHeader from '$lib/ui/PaneHeader.svelte';
+  import PaneHeader from '#lib/ui/PaneHeader.svelte';
   import ScrollingNoteTags from './ui/ScrollingNoteTags.svelte';
-  import { appSettings } from '$lib/appSettings.svelte';
-  import PaneCommandPicker from '$lib/features/notepad/PaneCommandPicker.svelte';
-  import SplitPaneButton from '$lib/features/notepad/SplitPaneButton.svelte';
-  import ChatPanel, { type ComposerDock } from '$lib/features/chat/ChatPanel.svelte';
-  import { editor as editorAction } from '$lib/features/notepad/editor/editorAction';
-  import { editorChromeInset } from '$lib/features/notepad/editor/editorChromeInset';
+  import { appSettings } from '#lib/appSettings.svelte.js';
+  import PaneCommandPicker from '#lib/features/notepad/PaneCommandPicker.svelte';
+  import SplitPaneButton from '#lib/features/notepad/SplitPaneButton.svelte';
+  import ChatPanel, { type ComposerDock } from '#lib/features/chat/ChatPanel.svelte';
+  import { editor as editorAction } from '#lib/features/notepad/editor/editorAction.js';
+  import { editorChromeInset } from '#lib/features/notepad/editor/editorChromeInset.js';
   import { paneRailChrome } from './workspace/paneRailChrome';
-  import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
+  import type { PaneRuntime } from '#lib/features/notepad/pane/paneRuntime.svelte.js';
   import type {
     PaneViewModel,
     PaneWorkspaceActions
-  } from '$lib/features/notepad/notepadPane.types';
-  import type { PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
-  import ExternalConflictResolver from '$lib/features/notepad/ui/ExternalConflictResolver.svelte';
+  } from '#lib/features/notepad/notepadPane.types.js';
+  import type { PaneCommandChoice } from '#lib/features/notepad/paneCommandPicker.js';
+  import ExternalConflictResolver from '#lib/features/notepad/ui/ExternalConflictResolver.svelte';
   import {
     getPaneTopActions,
     type SplitPaneTopAction
-  } from '$lib/features/notepad/workspace/paneTopActions';
+  } from '#lib/features/notepad/workspace/paneTopActions.js';
 
   interface Props {
     /** Live editor state and DOM refs; readiness must not be copied into the view model. */

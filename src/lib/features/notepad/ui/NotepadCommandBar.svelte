@@ -2,10 +2,10 @@
   import RelatedResults from '../related/RelatedResults.svelte';
   import WorkspaceInputDock from './WorkspaceInputDock.svelte';
   import SearchResultsPanel from './SearchResultsPanel.svelte';
-  import SearchResultsHeading from '$lib/ui/search/SearchResultsHeading.svelte';
-  import SearchNoteResult from '$lib/ui/search/SearchNoteResult.svelte';
+  import SearchResultsHeading from '#lib/ui/search/SearchResultsHeading.svelte';
+  import SearchNoteResult from '#lib/ui/search/SearchNoteResult.svelte';
   import type { DockActionPresentation } from './workspaceDockPresentation';
-  import { ramp as dockRamp } from '$lib/ui/morphing-containers/motion';
+  import { ramp as dockRamp } from '#lib/ui/morphing-containers/motion.js';
   import { onDestroy, tick, untrack } from 'svelte';
   import { invoke } from '@tauri-apps/api/core';
   import { rankMediaResults } from '../search/mediaRanking';
@@ -22,26 +22,26 @@
   import {
     appSettings,
     resolveForgetButtonDurationMs
-  } from '$lib/appSettings.svelte';
+  } from '#lib/appSettings.svelte.js';
   import {
     buildHighlightedSegments,
     createNotepadCommandBarState,
     deriveNotepadCommandBarVisibleItems,
     type NotepadCommandBarVisibleItem
-  } from '$lib/features/notepad/ui/notepadCommandBarState.svelte';
+  } from '#lib/features/notepad/ui/notepadCommandBarState.svelte.js';
   import type {
     NotepadCommandBarForgetProps,
     NotepadCommandBarRememberProps,
     NotepadCommandBarSearchProps,
     NotepadCommandBarRelatedProps
-  } from '$lib/features/notepad/ui/notepadCommandBarProps';
+  } from '#lib/features/notepad/ui/notepadCommandBarProps.js';
   import SearchBar, {
     type SearchBarHandle,
     type SearchChoice
-  } from '$lib/ui/search/SearchBar.svelte';
-  import '$lib/ui/search/searchDock.css';
-  import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
-  import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
+  } from '#lib/ui/search/SearchBar.svelte';
+  import '#lib/ui/search/searchDock.css';
+  import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
+  import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
 
   interface Props {
     forget: NotepadCommandBarForgetProps;
@@ -117,7 +117,7 @@
       if (item) selectRelated(item);
     }
   }
-  function selectRelated(item: import('$lib/types/semantic').RelatedNoteItem) {
+  function selectRelated(item: import('#lib/types/semantic.js').RelatedNoteItem) {
     onSearchCommit?.();
     searchBar?.closeSearch();
     related?.onSelect(item);

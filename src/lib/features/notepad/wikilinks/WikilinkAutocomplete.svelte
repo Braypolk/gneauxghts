@@ -2,8 +2,8 @@
   import * as floatingUi from '@floating-ui/dom';
   import type { VirtualElement } from '@floating-ui/dom';
   import { tick } from 'svelte';
-  import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
-  import type { NoteLinkSuggestion } from '$lib/features/notepad/model/types';
+  import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
+  import type { NoteLinkSuggestion } from '#lib/features/notepad/model/types.js';
 
   interface Props {
     active: boolean;

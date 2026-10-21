@@ -1,21 +1,21 @@
 import { EditorView } from '@codemirror/view';
 import { selectedImage } from '../images/imageState';
-import { isDateTimePickerOpen } from '$lib/features/tasks/dateTimePicker';
+import { isDateTimePickerOpen } from '#lib/features/tasks/dateTimePicker.js';
 import {
   applyBlockTypeSelection,
   blockTypeMenuGroups
-} from '$lib/features/notepad/editor/blockTypes';
+} from '#lib/features/notepad/editor/blockTypes.js';
 import {
   buildEditorMenuModel,
   type EditorMenuGroupWithItems
-} from '$lib/features/notepad/editor/editorMenuModel';
-import { applyInlineFormat, getActiveInlineFormats, type InlineFormatId } from '$lib/features/notepad/editor/inlineFormatting';
+} from '#lib/features/notepad/editor/editorMenuModel.js';
+import { applyInlineFormat, getActiveInlineFormats, type InlineFormatId } from '#lib/features/notepad/editor/inlineFormatting.js';
 import {
   consumeMenuKeyEvent,
   stepMenuHoverGroup,
   stepMenuHoverIndex
-} from '$lib/features/notepad/editor/editorMenuKeyboard';
-import { emitSelectionMenuUpdate } from '$lib/features/notepad/editor/selectionMenuBridge';
+} from '#lib/features/notepad/editor/editorMenuKeyboard.js';
+import { emitSelectionMenuUpdate } from '#lib/features/notepad/editor/selectionMenuBridge.js';
 
 export type { EditorMenuGroupWithItems as SelectionMenuGroupWithItems };
 

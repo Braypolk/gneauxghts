@@ -6,7 +6,7 @@ import {
   type EditorController,
   type EditorSnapshot,
   type SearchHighlightOptions
-} from '$lib/features/notepad/editor/editor';
+} from '#lib/features/notepad/editor/editor.js';
 import { slashMenuHideFromUi } from './slashMenu';
 import { selectionMenuHideFromUi } from './selectionMenu';
 import { Transaction } from '@codemirror/state';

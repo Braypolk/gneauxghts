@@ -1,16 +1,16 @@
 import { tick } from 'svelte';
-import { appStore } from '$lib/app/appStore.svelte';
+import { appStore } from '#lib/app/appStore.svelte.js';
 import {
   resolveAssetRootPath,
   storePastedImageAsset,
   type SessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import {
   consumePendingNoteTarget
-} from '$lib/noteNavigation';
+} from '#lib/noteNavigation.js';
 import {
   consumePendingTaskTarget
-} from '$lib/taskNavigation';
+} from '#lib/taskNavigation.js';
 
 export interface NotepadSessionLifecycleDeps {
   hasLoadedInitialSession: () => boolean;

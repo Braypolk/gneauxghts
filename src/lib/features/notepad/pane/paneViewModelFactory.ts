@@ -3,22 +3,22 @@ import type { PaneViewModel } from '../notepadPane.types';
 import type { ChatPaneBindings } from './chatPaneBindings';
 import type {
   NoteDraftState
-} from '$lib/features/notepad/state/noteStore';
-import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
-import type { PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
-import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+} from '#lib/features/notepad/state/noteStore.js';
+import type { NotepadPaneId } from '#lib/features/notepad/session/runtimeStore.svelte.js';
+import type { PaneCommandMode } from '#lib/features/notepad/paneCommandPicker.js';
+import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
 import {
   canRemovePane,
   getPaneCapabilityPolicy
-} from '$lib/features/notepad/workspace/paneCapabilities';
+} from '#lib/features/notepad/workspace/paneCapabilities.js';
 import {
   getDocumentNoteId,
   getDocumentPath,
   getDocumentStatusViewModel
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import type {
   PaneTransientUiState
-} from '$lib/features/notepad/pane/paneTransientUiState';
+} from '#lib/features/notepad/pane/paneTransientUiState.js';
 
 export interface PaneViewModelFactoryDeps {
   getPaneOrder: () => NotepadPaneId[];

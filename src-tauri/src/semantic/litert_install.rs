@@ -245,7 +245,7 @@ pub(super) fn save_verified_with_progress(
             progress(SetupPhase::Downloading, bytes, total);
         }
         progress(SetupPhase::Verifying, bytes, total);
-        if format!("{:x}", hash.finalize()) != sha {
+        if hex::encode(hash.finalize()) != sha {
             return Err(
                 "Local search download failed checksum verification. Try setup again.".into(),
             );
@@ -270,7 +270,7 @@ fn checksum(path: &Path) -> Result<String, String> {
         }
         hash.update(&buffer[..count]);
     }
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(hex::encode(hash.finalize()))
 }
 
 pub(super) fn matches_checksum(path: &Path, sha: &str) -> Result<bool, String> {
@@ -314,7 +314,7 @@ pub(crate) mod tests {
         }
         let temp = crate::test_support::TestDir::new("litert-progress");
         let path = temp.path().join("partial");
-        let sha = format!("{:x}", Sha256::digest(b"abc"));
+        let sha = hex::encode(Sha256::digest(b"abc"));
         let mut events = Vec::new();
         save_verified_with_progress(
             &b"abc"[..],
@@ -350,7 +350,7 @@ pub(crate) mod tests {
     fn failed_downloads_leave_no_partial_artifact() {
         let temp = crate::test_support::TestDir::new("litert-setup");
         let path = temp.path().join("partial");
-        let sha = format!("{:x}", Sha256::digest(b"valid"));
+        let sha = hex::encode(Sha256::digest(b"valid"));
         save_verified(&b"valid"[..], &path, &sha, 5).unwrap();
         assert!(matches_checksum(&path, &sha).unwrap());
         assert!(save_verified(&b"wrong"[..], &path, &sha, 5).is_err());

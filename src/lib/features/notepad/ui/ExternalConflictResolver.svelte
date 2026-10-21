@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { DocumentStatusViewModel } from '$lib/features/notepad/document/documentState';
+  import type { DocumentStatusViewModel } from '#lib/features/notepad/document/documentState.js';
 
   interface Props {
     status: DocumentStatusViewModel;

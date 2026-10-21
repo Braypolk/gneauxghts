@@ -2,7 +2,7 @@
   import type { Message } from '@earendil-works/pi-ai';
   import { onDestroy } from 'svelte';
   import { Copy, Check } from '@lucide/svelte';
-  import { Button } from '$lib/components/ui/button';
+  import { Button } from '#lib/components/ui/button/index.js';
   import PiMarkdown from './PiMarkdown.svelte';
   import { messageText } from './piConversationView';
   import { messageCopyText, messageTime } from './piMessage';

@@ -2,7 +2,7 @@
   export type TraceLineStatus = 'running' | 'error' | 'pending';
 </script>
 <script lang="ts">
-  import { cn, type WithElementRef } from '$lib/utils';
+  import { cn, type WithElementRef } from '#lib/utils.js';
   import type { HTMLAttributes } from 'svelte/elements';
 
   let { ref = $bindable(null), class: className, status, children, ...restProps }: WithElementRef<HTMLAttributes<HTMLSpanElement>> & { status?: TraceLineStatus } = $props();

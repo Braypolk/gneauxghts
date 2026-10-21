@@ -6,7 +6,7 @@ const pendingSaveMock = vi.fn();
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: invokeMock }));
 vi.mock('@tauri-apps/plugin-process', () => ({ relaunch: relaunchMock }));
-vi.mock('$lib/features/notepad/navigation/pendingNoteSave', () => ({
+vi.mock('#lib/features/notepad/navigation/pendingNoteSave.js', () => ({
   awaitPendingNoteSave: pendingSaveMock
 }));
 

@@ -1,4 +1,4 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { describe, expect, it } from 'vitest';
 import { createNoteDraftState } from '../state/noteStore';
 import { createEmptySessionSnapshot } from '../session/session';

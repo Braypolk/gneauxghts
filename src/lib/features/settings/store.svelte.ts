@@ -2,25 +2,25 @@ import { invoke } from '@tauri-apps/api/core';
 import {
   historyCommandMessage,
   invokeHistoryCommand
-} from '$lib/contracts/historyCommand';
+} from '#lib/contracts/historyCommand.js';
 import { open } from '@tauri-apps/plugin-dialog';
-import { appStore, type AppStore } from '$lib/app/appStore.svelte';
-import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
-import { atlasStore } from '$lib/features/atlas/atlasStore.svelte';
+import { appStore, type AppStore } from '#lib/app/appStore.svelte.js';
+import { restartLifecycle } from '#lib/app/restartLifecycle.svelte.js';
+import { atlasStore } from '#lib/features/atlas/atlasStore.svelte.js';
 import type {
   ForgottenNoteSummary,
   RestoredForgottenNote
-} from '$lib/types/forgottenNotes';
-import type { MissingNoteSummary, RecoveredMissingNote } from '$lib/types/missingNotes';
-import { compareHistoryRecordsNewestFirst, type HistoryModePage } from '$lib/features/history/historyModeMachine';
-import type { CreateVaultFolderResult, VaultFolderInfo, VaultInfo } from '$lib/types/vault';
-import type { HistoryHealthReport } from '$lib/types/history';
+} from '#lib/types/forgottenNotes.js';
+import type { MissingNoteSummary, RecoveredMissingNote } from '#lib/types/missingNotes.js';
+import { compareHistoryRecordsNewestFirst, type HistoryModePage } from '#lib/features/history/historyModeMachine.js';
+import type { CreateVaultFolderResult, VaultFolderInfo, VaultInfo } from '#lib/types/vault.js';
+import type { HistoryHealthReport } from '#lib/types/history.js';
 import type {
   SemanticDebugSnapshot,
   SemanticModelDownloadResult,
   SemanticSettings,
   SemanticStatus
-} from '$lib/types/semantic';
+} from '#lib/types/semantic.js';
 import {
   clearVaultHistory as requestVaultHistoryClear,
   loadHistoryHealthSlice,

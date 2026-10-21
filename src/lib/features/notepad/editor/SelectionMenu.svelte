@@ -2,14 +2,14 @@
   import * as floatingUi from '@floating-ui/dom';
   import type { VirtualElement } from '@floating-ui/dom';
   import type { EditorView } from '@codemirror/view';
-  import { blockTypeIcons } from '$lib/features/notepad/editor/blockTypes';
+  import { blockTypeIcons } from '#lib/features/notepad/editor/blockTypes.js';
   import {
     inlineFormatActions,
     inlineFormatIcons,
     getInlineFormatShortcutLabel,
     type InlineFormatId
-  } from '$lib/features/notepad/editor/inlineFormatting';
-  import type { PaneSelectionMenuModel } from '$lib/features/notepad/editor/selectionMenu';
+  } from '#lib/features/notepad/editor/inlineFormatting.js';
+  import type { PaneSelectionMenuModel } from '#lib/features/notepad/editor/selectionMenu.js';
   import {
     selectionMenuActivateGroupFromUi,
     selectionMenuApplyInlineFromUi,
@@ -17,7 +17,7 @@
     selectionMenuPickBlockFromUi,
     selectionMenuSetHoverFromUi,
     selectionMenuToggleBlockPanelFromUi
-  } from '$lib/features/notepad/editor/selectionMenu';
+  } from '#lib/features/notepad/editor/selectionMenu.js';
 
   interface Props {
     menu: PaneSelectionMenuModel;

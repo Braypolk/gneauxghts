@@ -1,25 +1,25 @@
 <script lang="ts">
   import { onMount, setContext } from 'svelte';
-  import { workspaceTitleSlotKey } from '$lib/ui/workspaceTitleSlot';
-  import { isTauriRuntime } from '$lib/tauriRuntime';
+  import { workspaceTitleSlotKey } from '#lib/ui/workspaceTitleSlot.js';
+  import { isTauriRuntime } from '#lib/tauriRuntime.js';
   import { listen, type UnlistenFn } from '@tauri-apps/api/event';
   import "../app.css";
-  import { initializeTheme } from '$lib/theme.svelte';
-  import '$lib/editorTextSize.svelte';
-  import { mobileViewport } from '$lib/ui/mobileViewport';
-  import { installBackgroundPersistence } from '$lib/app/backgroundPersistence';
-  import NavBar from '$lib/ui/NavBar.svelte';
-  import { appStore } from '$lib/app/appStore.svelte';
-  import { logDevError } from '$lib/logDevError';
+  import { initializeTheme } from '#lib/theme.svelte.js';
+  import '#lib/editorTextSize.svelte.js';
+  import { mobileViewport } from '#lib/ui/mobileViewport.js';
+  import { installBackgroundPersistence } from '#lib/app/backgroundPersistence.js';
+  import NavBar from '#lib/ui/NavBar.svelte';
+  import { appStore } from '#lib/app/appStore.svelte.js';
+  import { logDevError } from '#lib/logDevError.js';
   import { page } from '$app/state';
-  import { getAppShellViewGeneration } from '$lib/ui/appShellNavigation.svelte';
-  import { installStartupMetrics } from '$lib/e2e/startupMetrics';
-  import { installBrowserE2eBackend } from '$lib/e2e/browserBackend';
-  import { loadForgottenNoteRetentionPreference } from '$lib/appSettings.svelte';
+  import { getAppShellViewGeneration } from '#lib/ui/appShellNavigation.svelte.js';
+  import { installStartupMetrics } from '#lib/e2e/startupMetrics.js';
+  import { installBrowserE2eBackend } from '#lib/e2e/browserBackend.js';
+  import { loadForgottenNoteRetentionPreference } from '#lib/appSettings.svelte.js';
   import {
     restartLifecycle,
     type PrepareRestartReceipt
-  } from '$lib/app/restartLifecycle.svelte';
+  } from '#lib/app/restartLifecycle.svelte.js';
 
   installBrowserE2eBackend();
   installStartupMetrics();
@@ -68,7 +68,7 @@
       logDevError('[AppStore] bootstrap failed; retry is required before editing', error);
     });
     if (import.meta.env.DEV && import.meta.env.VITE_E2E_NATIVE === 'true' && import.meta.env.VITE_PI_SIMULATOR_ACCEPTANCE === 'true') {
-      void import('$lib/e2e/piSimulatorAcceptance').then(({ runPiSimulatorAcceptance }) => {
+      void import('#lib/e2e/piSimulatorAcceptance.js').then(({ runPiSimulatorAcceptance }) => {
         if (!disposed) return runPiSimulatorAcceptance();
       }).catch((error) => logDevError('[Pi simulator acceptance] probe failed', error));
     }

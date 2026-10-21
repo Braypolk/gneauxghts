@@ -7,7 +7,7 @@ import {
 import { isDocumentExternalConflictCurrent } from './documentExternalSyncMachine';
 import type {
   PaneEditorOperationResult
-} from '$lib/features/notepad/pane/paneEditorLifecycle';
+} from '#lib/features/notepad/pane/paneEditorLifecycle.js';
 
 export interface DocumentConflictControllerDeps {
   replaceDocumentContentInPlace: (

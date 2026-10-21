@@ -3,7 +3,7 @@ import { tick } from 'svelte';
 import { Transaction } from '@codemirror/state';
 import { EditorView } from '@codemirror/view';
 import type { CursorPosition } from './editorViewState';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
 import { EditorDocumentRuntime } from './editorDocumentRuntime';
 import {
   createPaneExtensions,

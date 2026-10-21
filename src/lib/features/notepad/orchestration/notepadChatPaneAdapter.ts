@@ -1,8 +1,8 @@
-import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { getChatContextPaneId } from '$lib/features/notepad/workspace/paneRoles';
-import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
-import { paneHasCapability } from '$lib/features/notepad/workspace/paneCapabilities';
+import type { ChatPaneBindings } from '#lib/features/notepad/pane/chatPaneBindings.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import { getChatContextPaneId } from '#lib/features/notepad/workspace/paneRoles.js';
+import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
+import { paneHasCapability } from '#lib/features/notepad/workspace/paneCapabilities.js';
 import type { NotepadChatCoordinator } from './notepadChatCoordinator.svelte';
 
 export interface NotepadChatPaneAdapterDeps<TPaneId extends string> {

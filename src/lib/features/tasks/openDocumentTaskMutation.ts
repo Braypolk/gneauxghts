@@ -5,7 +5,7 @@ import {
   getDocumentNoteId,
   getDocumentPath,
   type NoteDraftState
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import type {
   OpenTaskDocumentMutationHandler,
   TaskMutationPayload

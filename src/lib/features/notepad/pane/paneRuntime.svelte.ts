@@ -1,11 +1,11 @@
-import type { EditorController } from '$lib/features/notepad/editor/editor';
-import type { PaneSlashMenuModel } from '$lib/features/notepad/editor/slashMenu';
-import type { PaneSelectionMenuModel } from '$lib/features/notepad/editor/selectionMenu';
+import type { EditorController } from '#lib/features/notepad/editor/editor.js';
+import type { PaneSlashMenuModel } from '#lib/features/notepad/editor/slashMenu.js';
+import type { PaneSelectionMenuModel } from '#lib/features/notepad/editor/selectionMenu.js';
 import {
   createWikilinkAutocompleteState,
   type WikilinkAutocompleteState
-} from '$lib/features/notepad/wikilinks/state';
-import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
+} from '#lib/features/notepad/wikilinks/state.js';
+import type { NotepadPaneId } from '#lib/features/notepad/session/runtimeStore.svelte.js';
 
 /**
  * Pane-local UI state (not shared across panes).

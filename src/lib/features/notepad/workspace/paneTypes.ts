@@ -1,4 +1,4 @@
-import type { DocumentHandle } from '$lib/features/notepad/state/noteStore';
+import type { DocumentHandle } from '#lib/features/notepad/state/noteStore.js';
 
 export type PaneKind = 'editor' | 'chat';
 

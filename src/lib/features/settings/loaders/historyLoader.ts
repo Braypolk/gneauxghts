@@ -1,9 +1,9 @@
-import { invokeHistoryCommand } from '$lib/contracts/historyCommand';
+import { invokeHistoryCommand } from '#lib/contracts/historyCommand.js';
 import type {
   HistoryHealthReport,
   HistoryResetDiagnostic,
   NoteHistoryHealth
-} from '$lib/types/history';
+} from '#lib/types/history.js';
 
 export function loadHistoryHealthSlice() {
   return invokeHistoryCommand<HistoryHealthReport>('get_history_health');

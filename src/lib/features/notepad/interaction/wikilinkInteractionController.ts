@@ -1,5 +1,5 @@
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
-import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
+import type { WikilinkAutocompleteState } from '#lib/features/notepad/wikilinks/state.js';
 
 interface WikilinkControllerPort {
   handleAutocompleteKeydown: (event: KeyboardEvent) => boolean;

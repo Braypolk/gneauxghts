@@ -22,7 +22,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 split-debuginfo = "packed"
 
 [build-dependencies]
-tauri-build = { version = "2", features = [] }
+tauri-build = { version = "2.7.4", features = [] }
 
 [features]
 default = []
@@ -31,30 +31,31 @@ e2e-wdio = ["dep:tauri-plugin-wdio", "dep:tauri-plugin-wdio-webdriver"]
 e2e-chat-fixture = []
 
 [dependencies]
-tauri = { version = "2.11", features = [] }
-tauri-plugin-wdio = { version = "1.3.0", optional = true }
-tauri-plugin-wdio-webdriver = { version = "1.3.0", optional = true }
+tauri = { version = "2.12.5", features = [] }
+tauri-plugin-wdio = { version = "1.5.0", optional = true }
+tauri-plugin-wdio-webdriver = { version = "1.5.0", optional = true }
 tauri-plugin-dialog = "2"
 tauri-plugin-opener = "2"
 tauri-plugin-process = "2"
 tauri-plugin-keyring-store = { version = "=0.2.0", default-features = false }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-base64 = "0.22"
+base64 = "0.23.1"
 blake3 = "1.5"
-getrandom = "0.3"
-sha2 = "0.10"
-libloading = "0.7.4"
-image = { version = "=0.25.9", default-features = false, features = ["png", "jpeg", "webp"] }
+getrandom = "0.4.3"
+sha2 = "0.11.1"
+hex = "0.4.3"
+libloading = "0.9.0"
+image = { version = "=0.25.10", default-features = false, features = ["png", "jpeg", "webp"] }
 flate2 = "1"
 tar = "0.4"
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "9.0.5", default-features = false, features = ["deflate"] }
 hnswlib-rs = "0.10"
 leiden-rs = { version = "0.8.1", default-features = false, features = ["rayon"] }
 ndarray = "0.17"
 rayon = "1.10"
 umap-rs = "0.4.5"
-tantivy = "0.25"
+tantivy = "0.27"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls", "stream"] }
 futures-util = "0.3"
 tokio = { version = "1", features = ["sync", "time", "macros", "process", "io-util"] }
@@ -62,8 +63,8 @@ tokio-util = { version = "0.7", features = ["rt"] }
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 similar = { version = "3.2", default-features = false, features = ["bytes", "std"] }
 pulldown-cmark = { version = "0.13.4", default-features = false }
-zstd = "0.13"
-notify = "6.1"
+zstd = "0.14.3"
+notify = "8.2"
 thiserror = "2"
 url = "2"
 percent-encoding = "2"
@@ -84,7 +85,7 @@ tauri-plugin-window-state = "2"
 [dev-dependencies]
 syn = { version = "2", features = ["full", "visit"] }
 proc-macro2 = { version = "1", features = ["span-locations"] }
-tauri = { version = "2.11", features = ["test"] }
+tauri = { version = "2.12.5", features = ["test"] }
 
 [patch.crates-io]
 corenn-kernels = { path = "vendor/corenn-kernels" }

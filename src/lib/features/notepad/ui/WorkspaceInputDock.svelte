@@ -1,10 +1,10 @@
 <script lang="ts">
   import { tick, untrack, type Snippet } from 'svelte';
   import { ArrowUp, MessagesSquare, Network, Search, Square } from '@lucide/svelte';
-  import MorphingContainers, { type ContainerGroupPresentation, type ContainerPresentation, type MorphingContainerItem } from '$lib/ui/morphing-containers/MorphingContainers.svelte';
-  import { ramp } from '$lib/ui/morphing-containers/motion';
+  import MorphingContainers, { type ContainerGroupPresentation, type ContainerPresentation, type MorphingContainerItem } from '#lib/ui/morphing-containers/MorphingContainers.svelte';
+  import { ramp } from '#lib/ui/morphing-containers/motion.js';
   import type { DockSearchPresentation, DockActionPresentation } from './workspaceDockPresentation';
-  import { searchExpansionStyles } from '$lib/ui/search/searchMotion';
+  import { searchExpansionStyles } from '#lib/ui/search/searchMotion.js';
   import './workspaceDockMotion.css';
 
   let { search, relatedContent, overlay, hasChat = false, mode = 'search', chatSlot = $bindable(null),

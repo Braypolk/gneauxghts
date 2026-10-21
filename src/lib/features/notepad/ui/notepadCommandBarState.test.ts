@@ -3,8 +3,8 @@ import {
   createNotepadCommandBarState,
   deriveNotepadCommandBarVisibleItems
 } from './notepadCommandBarState.svelte';
-import type { LocationHistoryEntry } from '$lib/features/notepad/navigation/locationMru';
-import type { ImageSearchItem, SearchItem } from '$lib/types/semantic';
+import type { LocationHistoryEntry } from '#lib/features/notepad/navigation/locationMru.js';
+import type { ImageSearchItem, SearchItem } from '#lib/types/semantic.js';
 
 function searchItem(overrides: Partial<SearchItem> = {}): SearchItem {
   return {

@@ -1,8 +1,8 @@
-import type { NotepadPaneId } from '$lib/features/notepad/session/runtimeStore.svelte';
-import type { PaneCommandChoice, PaneCommandMode } from '$lib/features/notepad/paneCommandPicker';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type { ChatPaneBindings } from '$lib/features/notepad/pane/chatPaneBindings';
-import type { DocumentStatusViewModel } from '$lib/features/notepad/document/documentState';
+import type { NotepadPaneId } from '#lib/features/notepad/session/runtimeStore.svelte.js';
+import type { PaneCommandChoice, PaneCommandMode } from '#lib/features/notepad/paneCommandPicker.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import type { ChatPaneBindings } from '#lib/features/notepad/pane/chatPaneBindings.js';
+import type { DocumentStatusViewModel } from '#lib/features/notepad/document/documentState.js';
 
 /**
  * Stable fields shared by both pane kinds. Kind-specific capabilities live on

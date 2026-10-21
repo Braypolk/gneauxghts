@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { editDiffLayout, type EditDiffLayout } from '$lib/editDiffLayout.svelte';
+  import { editDiffLayout, type EditDiffLayout } from '#lib/editDiffLayout.svelte.js';
   const options = [
     { id: 'inline', label: 'Inline' },
     { id: 'side-by-side', label: 'Side by side' }

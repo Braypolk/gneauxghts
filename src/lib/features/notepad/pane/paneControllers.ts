@@ -1,21 +1,21 @@
 import type { DocumentBody } from '../document/documentBody';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
 import type { ImageViewerSession } from '../images/imageViewerModel';
 import type { ExternalLinkActionsSession } from '../editor/externalLinkExtension';
 import {
   createEditorLifecycleController
-} from '$lib/features/notepad/editor/editorLifecycleController';
-import { createWikilinkRuntime } from '$lib/features/notepad/wikilinks/runtime';
-import { getSharedEditorResources } from '$lib/features/notepad/session/noteRuntime';
-import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import type { SharedEditorResources } from '$lib/features/notepad/editor/editor';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
-import type { NavigationContext } from '$lib/features/notepad/navigation/openFlow';
-import type { WikilinkAutocompleteState } from '$lib/features/notepad/wikilinks/state';
+} from '#lib/features/notepad/editor/editorLifecycleController.js';
+import { createWikilinkRuntime } from '#lib/features/notepad/wikilinks/runtime.js';
+import { getSharedEditorResources } from '#lib/features/notepad/session/noteRuntime.js';
+import type { PaneRuntime } from '#lib/features/notepad/pane/paneRuntime.svelte.js';
+import type { SharedEditorResources } from '#lib/features/notepad/editor/editor.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import type { NavigationContext } from '#lib/features/notepad/navigation/openFlow.js';
+import type { WikilinkAutocompleteState } from '#lib/features/notepad/wikilinks/state.js';
 import {
   getDocumentNoteId,
   getDocumentPath
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 export interface PaneControllerSetupDeps<TPaneId extends string> {
   openExternalLinkActions?: (paneId: TPaneId, session: ExternalLinkActionsSession) => void;

@@ -1,6 +1,6 @@
 import { Decoration } from '@codemirror/view';
 
-import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
+import { parseWikilink } from '#lib/features/notepad/wikilinks/parse.js';
 import type { MarkdownDecorationContext, MarkdownNodeDecorator } from './types';
 
 const concealTargetAndSeparator = Decoration.replace({ gnAtomic: true });

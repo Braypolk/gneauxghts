@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { chatSettings } from '$lib/features/chat/pi/settings';
-  import { writeGrantForDuration, withCreationPermission, type VaultWritePolicy } from '$lib/features/chat/pi/authority';
+  import { chatSettings } from '#lib/features/chat/pi/settings.js';
+  import { writeGrantForDuration, withCreationPermission, type VaultWritePolicy } from '#lib/features/chat/pi/authority.js';
   import SettingsField from './SettingsField.svelte';
 
   let saved = $state<VaultWritePolicy | null>(null);

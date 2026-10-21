@@ -1,4 +1,4 @@
-import { DocumentBody } from '$lib/features/notepad/document/documentBody';
+import { DocumentBody } from '#lib/features/notepad/document/documentBody.js';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createDocumentEditingService } from './documentEditingService';
 import { createDocumentConflictController } from './documentConflictController';

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '$lib/ui/floatingPanel';
-  import { mountInSlot } from '$lib/ui/mountInSlot';
+  import { hiddenFloatingPanelStyle, positionFloatingPanel } from '#lib/ui/floatingPanel.js';
+  import { mountInSlot } from '#lib/ui/mountInSlot.js';
   import type { ExternalLinkActionsSession } from './externalLinkExtension';
 
   let { session, onClose }: { session: ExternalLinkActionsSession; onClose: () => void } = $props();

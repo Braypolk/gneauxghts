@@ -44,7 +44,7 @@ describe('Rust-owned IPC contract fixtures', () => {
 
   it('pins note save and session-clear argument names', async () => {
     const { clearLastOpenedNote, saveNoteSession, saveTaskNoteSession } = await import(
-      '$lib/features/notepad/session/session'
+      '#lib/features/notepad/session/session.js'
     );
     const save = commandFixture.commands.save_note;
     const taskSave = commandFixture.commands.save_task_note;
@@ -80,14 +80,14 @@ describe('Rust-owned IPC contract fixtures', () => {
       createDocumentState,
       updateDocumentMarkdown
     } = await import(
-      '$lib/features/notepad/document/documentState'
+      '#lib/features/notepad/document/documentState.js'
     );
     const { createEmptySessionSnapshot } = await import(
-      '$lib/features/notepad/session/session'
+      '#lib/features/notepad/session/session.js'
     );
     const { createOpenDocumentTaskMutationHandler } =
       await import(
-        '$lib/features/tasks/openDocumentTaskMutation'
+        '#lib/features/tasks/openDocumentTaskMutation.js'
     );
     const prepare =
       commandFixture.commands.prepare_task_document_mutation;
@@ -148,7 +148,7 @@ describe('Rust-owned IPC contract fixtures', () => {
   });
 
   it('links the semantic status command to the typed event payload fixture', async () => {
-    const { AppStore } = await import('$lib/app/appStore.svelte');
+    const { AppStore } = await import('#lib/app/appStore.svelte.js');
     const statusEvent = eventFixture.events.find(
       ({ channel }) => channel === 'semantic-status-changed'
     );

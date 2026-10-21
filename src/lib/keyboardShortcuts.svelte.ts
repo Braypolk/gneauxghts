@@ -1,5 +1,5 @@
-import { logDevError } from '$lib/logDevError';
-import { restartLifecycle } from '$lib/app/restartLifecycle.svelte';
+import { logDevError } from '#lib/logDevError.js';
+import { restartLifecycle } from '#lib/app/restartLifecycle.svelte.js';
 
 type ModifierToken = 'Meta' | 'Ctrl' | 'Alt' | 'Shift';
 type ShortcutGroupId = 'navigation' | 'workspace' | 'search' | 'editor';

@@ -1,4 +1,4 @@
-import type { ImageSearchItem, MediaSearchItem, SearchItem } from '$lib/types/semantic';
+import type { ImageSearchItem, MediaSearchItem, SearchItem } from '#lib/types/semantic.js';
 
 /** Channel ranks share one scale. Cosines from different modalities do not. */
 export function rankMediaResults(passages: SearchItem[], images: ImageSearchItem[]): MediaSearchItem[] {

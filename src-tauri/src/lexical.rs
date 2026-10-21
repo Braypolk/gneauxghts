@@ -311,7 +311,10 @@ impl LexicalIndex {
         let query = BooleanQuery::new(vec![(Occur::Must, text), (Occur::Must, Box::new(scope))]);
         let searcher = inner.reader.searcher();
         let (docs, count) = searcher
-            .search(&query, &(TopDocs::with_limit(limit.max(1)), Count))
+            .search(
+                &query,
+                &(TopDocs::with_limit(limit.max(1)).order_by_score(), Count),
+            )
             .map_err(|e| e.to_string())?;
         let mut results = Vec::new();
         for (score, address) in docs {
@@ -457,7 +460,10 @@ impl LexicalIndex {
         let query = BooleanQuery::new(clauses);
         let searcher = inner.reader.searcher();
         let top_docs = searcher
-            .search(&query, &TopDocs::with_limit(limit.max(1).saturating_mul(4)))
+            .search(
+                &query,
+                &TopDocs::with_limit(limit.max(1).saturating_mul(4)).order_by_score(),
+            )
             .map_err(|err| err.to_string())?;
         let mut results = Vec::new();
 

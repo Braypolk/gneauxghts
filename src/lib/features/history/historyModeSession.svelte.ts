@@ -12,7 +12,7 @@ import {
   type HistoryRestorePreview,
   type HistoryWorkspaceSnapshot
 } from './historyModeMachine';
-import type { NoteSession } from '$lib/features/notepad/model/types';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
 
 export interface HistoryModeSessionDeps {
   finalizeWindow: (noteId: string) => Promise<void>;

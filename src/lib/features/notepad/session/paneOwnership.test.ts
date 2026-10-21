@@ -9,19 +9,19 @@ import {
   listReferencedDocumentHandles,
   removeNoteIfUnreferenced,
   replacePaneReferenceWithFreshDraft
-} from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/state/noteStore.js';
 import {
   WorkspaceStore,
   type NotepadPaneId
-} from '$lib/features/notepad/workspace/workspaceStore.svelte';
+} from '#lib/features/notepad/workspace/workspaceStore.svelte.js';
 import {
   createReadyPaneForTest,
   retirePaneForTest
-} from '$lib/features/notepad/workspace/workspaceStoreTestSupport';
+} from '#lib/features/notepad/workspace/workspaceStoreTestSupport.js';
 import { notepadRuntimeState } from './runtimeStore.svelte';
 import {
   updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 
 const primary = 'notepad-pane-1' as NotepadPaneId;
 const secondary = 'notepad-pane-2' as NotepadPaneId;

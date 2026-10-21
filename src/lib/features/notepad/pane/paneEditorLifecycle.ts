@@ -1,10 +1,10 @@
 import type {
   CursorPosition,
   EditorViewState
-} from '$lib/features/notepad/editor/editorViewState';
-import type { createEditorLifecycleController } from '$lib/features/notepad/editor/editorLifecycleController';
-import type { PaneRuntime } from '$lib/features/notepad/pane/paneRuntime.svelte';
-import type { NoteDraftState } from '$lib/features/notepad/state/noteStore';
+} from '#lib/features/notepad/editor/editorViewState.js';
+import type { createEditorLifecycleController } from '#lib/features/notepad/editor/editorLifecycleController.js';
+import type { PaneRuntime } from '#lib/features/notepad/pane/paneRuntime.svelte.js';
+import type { NoteDraftState } from '#lib/features/notepad/state/noteStore.js';
 import {
   createPaneEditorRuntimeState,
   transitionPaneEditorRuntime,

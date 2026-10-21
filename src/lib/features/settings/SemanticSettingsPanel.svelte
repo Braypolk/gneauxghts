@@ -1,6 +1,6 @@
 <script lang="ts">
   import { invoke } from '@tauri-apps/api/core';
-  import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '$lib/types/semantic';
+  import type { SemanticDebugSnapshot, SemanticSettings, SemanticStatus } from '#lib/types/semantic.js';
   import { Check, ChevronRight, CircleAlert, Clock3, LoaderCircle, Pause, RefreshCcw, SearchCheck } from '@lucide/svelte';
   import { searchReadiness } from './semanticStatus';
 

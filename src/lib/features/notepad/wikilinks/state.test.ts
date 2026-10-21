@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 describe('wikilink IPC payloads', () => {
   beforeEach(async () => {
     invokeMock.mockReset();
-    const { forgetDraft } = await import('$lib/features/notepad/search/draftRef');
+    const { forgetDraft } = await import('#lib/features/notepad/search/draftRef.js');
     forgetDraft('/vault/current.md');
     forgetDraft(null);
   });
@@ -33,7 +33,7 @@ describe('wikilink IPC payloads', () => {
   it('sends current markdown for same-note section autocomplete on first call', async () => {
     invokeMock.mockResolvedValueOnce([]);
     const { autocompleteNoteLinks } = await import('./state');
-    const { computeDraftHash } = await import('$lib/features/notepad/search/draftRef');
+    const { computeDraftHash } = await import('#lib/features/notepad/search/draftRef.js');
     const body = 'large unsaved body';
 
     await autocompleteNoteLinks('#Heading', '/vault/current.md', 'Current', body);

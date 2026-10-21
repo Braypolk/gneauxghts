@@ -1,7 +1,7 @@
 import type { DocumentBody } from '../document/documentBody';
 import type { EditorView } from '@codemirror/view';
-import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
-import type { ActiveWikilink } from '$lib/features/notepad/wikilinks/wikilinks';
+import type { ImagesConfig } from '#lib/features/notepad/images/imageConfig.js';
+import type { ActiveWikilink } from '#lib/features/notepad/wikilinks/wikilinks.js';
 import type { EditorDocumentRuntime } from './editorDocumentRuntime';
 import type { ImageViewerSession } from '../images/imageViewerModel';
 import type { ExternalLinkActionsSession } from './externalLinkExtension';

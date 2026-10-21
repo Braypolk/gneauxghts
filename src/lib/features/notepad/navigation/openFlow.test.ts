@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { navigateToPendingTaskTarget, openRecentTask, openSearchResult, openResolvedNoteLink, openNoteCitation, type NavigationContext, type OpenContext } from './openFlow';
 import { revealEditorTextTarget, revealEditorCitationTarget, focusEditorAtDocumentLine, waitForEditorPaint } from './navigation';
 import { Text } from '@codemirror/state';
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 vi.mock('./navigation', () => ({ revealEditorTextTarget: vi.fn(() => true), revealEditorCitationTarget: vi.fn(() => true), focusEditorAtDocumentLine: vi.fn(() => true), waitForEditorPaint: vi.fn(async () => {}) }));
 function fixture() {
   let id = 'a';

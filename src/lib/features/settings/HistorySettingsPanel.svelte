@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { HistoryHealthReport, HistoryHealthState } from '$lib/types/history';
+  import type { HistoryHealthReport, HistoryHealthState } from '#lib/types/history.js';
   import SettingsCard from './SettingsCard.svelte';
 
   let {

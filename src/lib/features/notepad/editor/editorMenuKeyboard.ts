@@ -1,4 +1,4 @@
-import type { EditorMenuGroupWithItems } from '$lib/features/notepad/editor/editorMenuModel';
+import type { EditorMenuGroupWithItems } from '#lib/features/notepad/editor/editorMenuModel.js';
 
 export function consumeMenuKeyEvent(event: KeyboardEvent) {
   event.preventDefault();

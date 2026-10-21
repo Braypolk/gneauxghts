@@ -1,4 +1,4 @@
-import type { EditorMenuGroup, EditorMenuOption } from '$lib/features/notepad/editor/blockTypes';
+import type { EditorMenuGroup, EditorMenuOption } from '#lib/features/notepad/editor/blockTypes.js';
 
 export interface EditorMenuItemWithIndex extends EditorMenuOption {
   index: number;

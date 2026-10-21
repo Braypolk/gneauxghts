@@ -44,7 +44,7 @@ let current: Promise<PiChat> | undefined;
 /** One Running Vault lifetime. Pi owns all scheduling and durable chat progression. */
 export function openPiChat(): Promise<PiChat> {
   if (import.meta.env.DEV && import.meta.env.VITE_E2E_BROWSER === 'true') {
-    return import('$lib/e2e/piBrowserFixture').then(({ openBrowserPiChat }) => openBrowserPiChat());
+    return import('#lib/e2e/piBrowserFixture.js').then(({ openBrowserPiChat }) => openBrowserPiChat());
   }
   return current ??= compose().catch(error => { current = undefined; throw error; });
 }

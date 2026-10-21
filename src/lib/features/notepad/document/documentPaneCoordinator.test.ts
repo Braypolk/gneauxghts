@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createDocumentPaneCoordinator } from './documentPaneCoordinator';
-import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createNoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 
 function note(_label: string, bodyMarkdown: string) {
   return createNoteDraftState(

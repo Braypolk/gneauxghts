@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   createDocumentState
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
+} from '#lib/features/notepad/session/session.js';
 import { createTitleInteractionController } from './titleInteractionController';
 
 const paneId = 'pane-1';

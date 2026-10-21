@@ -1,4 +1,4 @@
-import type { CommittedMutationWarning } from "$lib/contracts/committedMutation";
+import type { CommittedMutationWarning } from "#lib/contracts/committedMutation.js";
 
 export interface NoteSession {
   noteId: string | null;

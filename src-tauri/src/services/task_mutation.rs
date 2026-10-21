@@ -85,7 +85,7 @@ pub(crate) fn transform_task_document(
 /// Cross-boundary body fingerprint: lowercase SHA-256 hex, matching
 /// `crypto.subtle.digest("SHA-256", ...)` over UTF-8 bytes in the frontend.
 pub(crate) fn task_document_hash(markdown: &str) -> String {
-    format!("{:x}", Sha256::digest(markdown.as_bytes()))
+    hex::encode(Sha256::digest(markdown.as_bytes()))
 }
 
 pub(crate) struct TaskMutationService<'a> {

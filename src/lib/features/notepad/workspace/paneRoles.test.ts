@@ -5,8 +5,8 @@ import {
   getNearestEditorPaneId
 } from './paneRoles';
 import type { PaneKind } from './paneTypes';
-import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
+import { createNoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
 
 type PaneId = 'left' | 'middle' | 'right';
 

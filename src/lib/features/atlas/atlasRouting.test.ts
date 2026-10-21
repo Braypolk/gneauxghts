@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import sidewaysGateway from './fixtures/sidewaysGateway.json';
-import type { AtlasLink } from '$lib/types/atlas';
+import type { AtlasLink } from '#lib/types/atlas.js';
 import { createDemoAtlas } from '../../../../scripts/fixtures/atlasDemo';
 import { createAtlasRouting } from './atlasRouting';
 import { createAtlasLayout, nodeWorldRadius, type Point } from './atlasLayout';

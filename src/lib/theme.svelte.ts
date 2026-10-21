@@ -1,5 +1,5 @@
 import { getCurrentWindow } from '@tauri-apps/api/window';
-import { isTauriRuntime } from '$lib/tauriRuntime';
+import { isTauriRuntime } from '#lib/tauriRuntime.js';
 
 export type ThemePreference = 'auto' | 'light' | 'dark';
 export type ResolvedTheme = 'light' | 'dark';

@@ -1,8 +1,8 @@
-import type { SettingsViewPayload } from '$lib/app/appStore.svelte';
-import type { BootstrapAppResult } from '$lib/features/notepad/session/bootstrap';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
-import type { SemanticStatus } from '$lib/types/semantic';
-import type { VaultInfo } from '$lib/types/vault';
+import type { SettingsViewPayload } from '#lib/app/appStore.svelte.js';
+import type { BootstrapAppResult } from '#lib/features/notepad/session/bootstrap.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
+import type { SemanticStatus } from '#lib/types/semantic.js';
+import type { VaultInfo } from '#lib/types/vault.js';
 
 export const semanticStatusFixture: SemanticStatus = {
   imageCoverage: { indexed: 0, failed: 0, unsupported: 0 },

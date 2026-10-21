@@ -1,9 +1,9 @@
 import { Harness, MemoryStorage, createRegistry, type ConversationId } from '@earendil-works/pi-durable';
 import { createModels } from '@earendil-works/pi-ai';
 import { fauxAssistantMessage, fauxProvider, fauxToolCall } from '@earendil-works/pi-ai/providers/faux';
-import { ChatDoc, PI_CONTEXT, initializeChatDocuments, type PiChat } from '$lib/features/chat/pi/runtime';
-import type { AuthoritySnapshot, ReadPolicy, WritePolicy, WriteGrant, VaultWritePolicy } from '$lib/features/chat/pi/authority';
-import { createPiDiagnostics } from '$lib/features/chat/pi/diagnostics';
+import { ChatDoc, PI_CONTEXT, initializeChatDocuments, type PiChat } from '#lib/features/chat/pi/runtime.js';
+import type { AuthoritySnapshot, ReadPolicy, WritePolicy, WriteGrant, VaultWritePolicy } from '#lib/features/chat/pi/authority.js';
+import { createPiDiagnostics } from '#lib/features/chat/pi/diagnostics.js';
 
 let current: Promise<PiChat> | undefined;
 const authorities = new Map<string, AuthoritySnapshot>();

@@ -1,5 +1,5 @@
 import { tags } from '@lezer/highlight';
-import { parseWikilink } from '$lib/features/notepad/wikilinks/parse';
+import { parseWikilink } from '#lib/features/notepad/wikilinks/parse.js';
 
 interface WikilinkElement {}
 

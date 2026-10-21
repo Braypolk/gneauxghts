@@ -1,6 +1,6 @@
 import { EditorState } from '@codemirror/state';
 import { SearchQuery } from '@codemirror/search';
-import type { SearchItem } from '$lib/types/semantic';
+import type { SearchItem } from '#lib/types/semantic.js';
 
 export interface CurrentNoteSearchOptions {
   title: string;

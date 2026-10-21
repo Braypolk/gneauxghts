@@ -1,6 +1,6 @@
 <script lang="ts">
   import { BookOpen, Search, Wrench, Brain } from '@lucide/svelte';
-  import * as Trace from '$lib/components/ui/trace';
+  import * as Trace from '#lib/components/ui/trace/index.js';
   import { activitySummary, formatToolValue, toolCommitWarning, toolFailed, toolLabel, toolOutput, toolStatus, toolSubject, type ActivityGroup } from './piActivity';
   let { group, generationStatus }: { group: ActivityGroup; generationStatus?: string } = $props();
   const tools = $derived(group.items.filter(item => item.kind === 'tool'));

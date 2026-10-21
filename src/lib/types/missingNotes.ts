@@ -1,5 +1,5 @@
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
-import type { HistoryModePage } from '$lib/features/history/historyModeMachine';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
+import type { HistoryModePage } from '#lib/features/history/historyModeMachine.js';
 
 export interface MissingNoteSummary {
   noteId: string;

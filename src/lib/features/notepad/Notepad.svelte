@@ -1,26 +1,26 @@
 <script lang="ts">
   import type { DocumentBody } from "./document/documentBody";
-  import { registerBackgroundSave } from '$lib/app/backgroundPersistence';
+  import { registerBackgroundSave } from '#lib/app/backgroundPersistence.js';
   import { assertWorkspaceMutationAdmitted } from './document/documentPublicationAdmission';
   import { nextEditorFrame } from './editor/editorPresentation';
   import { workspaceDockInset } from "./ui/workspaceDockInset";
   import { onMount, tick, untrack } from "svelte";
   import { invoke } from '@tauri-apps/api/core';
-  import type { ImageSearchItem } from '$lib/types/semantic';
-  import { createNativeContractProbe, type NativeContractProbe } from "$lib/e2e/nativeContractProbe";
+  import type { ImageSearchItem } from '#lib/types/semantic.js';
+  import { createNativeContractProbe, type NativeContractProbe } from "#lib/e2e/nativeContractProbe.js";
   import { revealItemInDir } from "@tauri-apps/plugin-opener";
   import ImageViewer from "./images/ImageViewer.svelte";
   import ExternalLinkActions from "./editor/ExternalLinkActions.svelte";
   import { createPaneLayoutMotion } from "./workspace/paneLayoutMotion";
   import { suppressResizeTransitions } from "./workspace/suppressResizeTransitions";
-  import { appSettings } from "$lib/appSettings.svelte";
-  import { createEditorCapabilityAdapter } from "$lib/features/notepad/editor/editorCapabilities";
+  import { appSettings } from "#lib/appSettings.svelte.js";
+  import { createEditorCapabilityAdapter } from "#lib/features/notepad/editor/editorCapabilities.js";
   import {
     createNotepadFeatureHost,
     type NotepadFeatureHost,
-  } from "$lib/features/notepad/host";
-  import { focusInputAtEnd } from "$lib/features/notepad/navigation/navigation";
-  import { registerPendingNoteSaveHandler } from "$lib/features/notepad/navigation/pendingNoteSave";
+  } from "#lib/features/notepad/host.js";
+  import { focusInputAtEnd } from "#lib/features/notepad/navigation/navigation.js";
+  import { registerPendingNoteSaveHandler } from "#lib/features/notepad/navigation/pendingNoteSave.js";
   import {
     navigateToPendingTaskTarget,
     openRecentTask,
@@ -28,39 +28,39 @@
     openNoteCitation,
     type NavigationContext,
     type OpenContext,
-  } from "$lib/features/notepad/navigation/openFlow";
-  import { type SearchMode } from "$lib/features/notepad/search/search";
+  } from "#lib/features/notepad/navigation/openFlow.js";
+  import { type SearchMode } from "#lib/features/notepad/search/search.js";
   import {
     markNoteOpened,
     saveNoteSession,
     saveTaskNoteSession,
     loadHistoryReadiness,
     type ForgottenNote,
-  } from "$lib/features/notepad/session/session";
-  import NotepadCommandBar from "$lib/features/notepad/ui/NotepadCommandBar.svelte";
-  import NotepadPane from "$lib/features/notepad/NotepadPane.svelte";
-  import type { PaneWorkspaceActions } from "$lib/features/notepad/notepadPane.types";
-  import SlashMenu from "$lib/features/notepad/editor/SlashMenu.svelte";
-  import SelectionMenu from "$lib/features/notepad/editor/SelectionMenu.svelte";
-  import WikilinkAutocomplete from "$lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte";
-  import { captureFocusIntent } from "$lib/features/notepad/navigation/focusIntent";
-  import { createNotepadRefreshController } from "$lib/features/notepad/orchestration/notepadRefreshController";
-  import { createNotepadSessionLifecycle } from "$lib/features/notepad/orchestration/notepadSessionLifecycle";
-  import { mountPublicationDocumentOwner } from "$lib/features/chat/pi/publication";
-  import { openPiSource } from "$lib/features/chat/pi/citations";
-  import { getNearestEditorPaneId } from "$lib/features/notepad/workspace/paneRoles";
-  import { NotepadChatCoordinator } from "$lib/features/notepad/orchestration/notepadChatCoordinator.svelte";
-  import { createNotepadChatPaneAdapter } from "$lib/features/notepad/orchestration/notepadChatPaneAdapter";
-  import { paneCommandNoteLabel } from "$lib/features/notepad/pane/paneViewModelFactory";
-  import { createNotepadPersistenceController } from "$lib/features/notepad/orchestration/persistenceController";
-  import { createNotepadWorkspaceSession, type LocationHistoryEntry } from "$lib/features/notepad/orchestration/notepadWorkspaceSession";
-  import { createRelatedNotesStore } from "$lib/features/notepad/related/store.svelte";
-  import { createNotepadSearchStore } from "$lib/features/notepad/search/store.svelte";
-  import { createSearchReturnFocus } from "$lib/features/notepad/search/searchReturnFocus";
+  } from "#lib/features/notepad/session/session.js";
+  import NotepadCommandBar from "#lib/features/notepad/ui/NotepadCommandBar.svelte";
+  import NotepadPane from "#lib/features/notepad/NotepadPane.svelte";
+  import type { PaneWorkspaceActions } from "#lib/features/notepad/notepadPane.types.js";
+  import SlashMenu from "#lib/features/notepad/editor/SlashMenu.svelte";
+  import SelectionMenu from "#lib/features/notepad/editor/SelectionMenu.svelte";
+  import WikilinkAutocomplete from "#lib/features/notepad/wikilinks/WikilinkAutocomplete.svelte";
+  import { captureFocusIntent } from "#lib/features/notepad/navigation/focusIntent.js";
+  import { createNotepadRefreshController } from "#lib/features/notepad/orchestration/notepadRefreshController.js";
+  import { createNotepadSessionLifecycle } from "#lib/features/notepad/orchestration/notepadSessionLifecycle.js";
+  import { mountPublicationDocumentOwner } from "#lib/features/chat/pi/publication.js";
+  import { openPiSource } from "#lib/features/chat/pi/citations.js";
+  import { getNearestEditorPaneId } from "#lib/features/notepad/workspace/paneRoles.js";
+  import { NotepadChatCoordinator } from "#lib/features/notepad/orchestration/notepadChatCoordinator.svelte.js";
+  import { createNotepadChatPaneAdapter } from "#lib/features/notepad/orchestration/notepadChatPaneAdapter.js";
+  import { paneCommandNoteLabel } from "#lib/features/notepad/pane/paneViewModelFactory.js";
+  import { createNotepadPersistenceController } from "#lib/features/notepad/orchestration/persistenceController.js";
+  import { createNotepadWorkspaceSession, type LocationHistoryEntry } from "#lib/features/notepad/orchestration/notepadWorkspaceSession.js";
+  import { createRelatedNotesStore } from "#lib/features/notepad/related/store.svelte.js";
+  import { createNotepadSearchStore } from "#lib/features/notepad/search/store.svelte.js";
+  import { createSearchReturnFocus } from "#lib/features/notepad/search/searchReturnFocus.js";
   import {
     createPaneControllers as createPaneControllersFn,
     type PaneControllerSetupDeps,
-  } from "$lib/features/notepad/pane/paneControllers";
+  } from "#lib/features/notepad/pane/paneControllers.js";
   import {
     adoptSnapshotForPane,
     bindNotepadStateToVault,
@@ -69,26 +69,26 @@
     replaceReferencedNoteWithFreshDraft,
     type NoteDraftState,
     type DocumentHandle,
-  } from "$lib/features/notepad/state/noteStore";
-  import { notepadState } from "$lib/features/notepad/state/noteState.svelte";
+  } from "#lib/features/notepad/state/noteStore.js";
+  import { notepadState } from "#lib/features/notepad/state/noteState.svelte.js";
   import {
     createNotepadPaneId,
     notepadRuntimeState,
     updateSharedEditorResourceConfig,
     type NotepadPaneId,
-  } from "$lib/features/notepad/session/runtimeStore.svelte";
+  } from "#lib/features/notepad/session/runtimeStore.svelte.js";
   import {
     cleanupNoteRuntime,
-  } from "$lib/features/notepad/session/noteRuntime";
-  import { createDocumentPaneCoordinator } from "$lib/features/notepad/document/documentPaneCoordinator";
-  import { createDocumentEditingService } from "$lib/features/notepad/document/documentEditingService";
-  import { createDocumentConflictController } from "$lib/features/notepad/document/documentConflictController";
-  import { createNotepadTaskMutationHandler } from "$lib/features/notepad/orchestration/notepadTaskMutationAdapter";
-  import { registerOpenTaskDocumentMutationHandler } from "$lib/features/tasks/taskMutationGateway";
-  import { createTitleInteractionController } from "$lib/features/notepad/interaction/titleInteractionController";
-  import { createWikilinkInteractionController } from "$lib/features/notepad/interaction/wikilinkInteractionController";
-  import { createNavigationSelectionController } from "$lib/features/notepad/interaction/navigationSelectionController";
-  import { createWorkspaceChoiceController } from "$lib/features/notepad/interaction/workspaceChoiceController";
+  } from "#lib/features/notepad/session/noteRuntime.js";
+  import { createDocumentPaneCoordinator } from "#lib/features/notepad/document/documentPaneCoordinator.js";
+  import { createDocumentEditingService } from "#lib/features/notepad/document/documentEditingService.js";
+  import { createDocumentConflictController } from "#lib/features/notepad/document/documentConflictController.js";
+  import { createNotepadTaskMutationHandler } from "#lib/features/notepad/orchestration/notepadTaskMutationAdapter.js";
+  import { registerOpenTaskDocumentMutationHandler } from "#lib/features/tasks/taskMutationGateway.js";
+  import { createTitleInteractionController } from "#lib/features/notepad/interaction/titleInteractionController.js";
+  import { createWikilinkInteractionController } from "#lib/features/notepad/interaction/wikilinkInteractionController.js";
+  import { createNavigationSelectionController } from "#lib/features/notepad/interaction/navigationSelectionController.js";
+  import { createWorkspaceChoiceController } from "#lib/features/notepad/interaction/workspaceChoiceController.js";
   import {
     documentCanLeaveWithoutCanonicalWrite,
     documentHasUnresolvedConflict,
@@ -96,11 +96,11 @@
     getDocumentNoteId,
     getDocumentPath,
     getDocumentTitle,
-  } from "$lib/features/notepad/document/documentState";
-  import { workspaceStore } from "$lib/features/notepad/workspace/workspaceStore.svelte";
-  import { paneHasCapability } from "$lib/features/notepad/workspace/paneCapabilities";
-  import { createWorkspacePersistenceService } from "$lib/features/notepad/workspace/workspacePersistenceService";
-  import HistoryMode from "$lib/features/history/HistoryMode.svelte";
+  } from "#lib/features/notepad/document/documentState.js";
+  import { workspaceStore } from "#lib/features/notepad/workspace/workspaceStore.svelte.js";
+  import { paneHasCapability } from "#lib/features/notepad/workspace/paneCapabilities.js";
+  import { createWorkspacePersistenceService } from "#lib/features/notepad/workspace/workspacePersistenceService.js";
+  import HistoryMode from "#lib/features/history/HistoryMode.svelte";
   import {
     clearNoteHistory,
     getHistoryModeDiff,
@@ -112,24 +112,24 @@
     removeHistoryRevisionName,
     restoreHistoryRevision,
     finalizeNoteEditingWindow,
-  } from "$lib/features/history/historyApi";
-  import { HistoryModeSession } from "$lib/features/history/historyModeSession.svelte";
-  import type { HistoryWorkspaceSnapshot } from "$lib/features/history/historyModeMachine";
+  } from "#lib/features/history/historyApi.js";
+  import { HistoryModeSession } from "#lib/features/history/historyModeSession.svelte.js";
+  import type { HistoryWorkspaceSnapshot } from "#lib/features/history/historyModeMachine.js";
   import {
     createWorkspaceShortcutHandler,
     registerWorkspaceWindowCloseHandler,
-  } from "$lib/features/notepad/workspace/shortcuts";
-  import { PaneRuntime } from "$lib/features/notepad/pane/paneRuntime.svelte";
-  import { PaneTransientUiController } from "$lib/features/notepad/pane/paneTransientUiController.svelte";
-  import { createPaneViewModelFactory } from "$lib/features/notepad/pane/paneViewModelFactory";
-  import { createPaneEditorLifecycle } from "$lib/features/notepad/pane/paneEditorLifecycle";
+  } from "#lib/features/notepad/workspace/shortcuts.js";
+  import { PaneRuntime } from "#lib/features/notepad/pane/paneRuntime.svelte.js";
+  import { PaneTransientUiController } from "#lib/features/notepad/pane/paneTransientUiController.svelte.js";
+  import { createPaneViewModelFactory } from "#lib/features/notepad/pane/paneViewModelFactory.js";
+  import { createPaneEditorLifecycle } from "#lib/features/notepad/pane/paneEditorLifecycle.js";
   import {
     formatShortcutBinding,
     keyboardShortcuts,
-  } from "$lib/keyboardShortcuts.svelte";
-  import "$lib/features/notepad/editor/editor.css";
-  import "$lib/features/notepad/editor/editorTypography.css";
-  import "$lib/features/notepad/markdown/inlineFormatting.css";
+  } from "#lib/keyboardShortcuts.svelte.js";
+  import "#lib/features/notepad/editor/editor.css";
+  import "#lib/features/notepad/editor/editorTypography.css";
+  import "#lib/features/notepad/markdown/inlineFormatting.css";
 
 
   type PaneId = NotepadPaneId;
@@ -147,14 +147,14 @@
   };
   type NativeE2EWindow = Window & {
     __GNEAUXGHTS_NATIVE_E2E__?: {
-      piNativeInvokeProbe: () => Promise<typeof import("$lib/e2e/piNativeInvokeProbe")>;
-      piChat: () => Promise<import("$lib/features/chat/pi/runtime").PiChat>;
-      piContext: () => Promise<typeof import("$lib/features/chat/pi/runtime").PI_CONTEXT>;
-      piPublicationTask: () => Promise<typeof import("$lib/features/chat/pi/publication").PublicationTask>;
-      readPiChatState: () => Array<Pick<import("$lib/features/chat/ui/piConversationView").PiViewSnapshot, "title" | "view" | "entries" | "authority" | "error" | "read" | "provider" | "model" | "initialized" | "loading"> & { paneId: PaneId; conversationId: number | null }>;
+      piNativeInvokeProbe: () => Promise<typeof import("#lib/e2e/piNativeInvokeProbe.js")>;
+      piChat: () => Promise<import("#lib/features/chat/pi/runtime.js").PiChat>;
+      piContext: () => Promise<typeof import("#lib/features/chat/pi/runtime.js").PI_CONTEXT>;
+      piPublicationTask: () => Promise<typeof import("#lib/features/chat/pi/publication.js").PublicationTask>;
+      readPiChatState: () => Array<Pick<import("#lib/features/chat/ui/piConversationView.js").PiViewSnapshot, "title" | "view" | "entries" | "authority" | "error" | "read" | "provider" | "model" | "initialized" | "loading"> & { paneId: PaneId; conversationId: number | null }>;
       readEditorState: () => NativeE2EEditorState;
       contractProbe: NativeContractProbe;
-      openRevisionCitation: (citation: { noteId: string; label: string; notePath: string; revision: import("$lib/types/history").RevisionCitation }) => Promise<void>;
+      openRevisionCitation: (citation: { noteId: string; label: string; notePath: string; revision: import("#lib/types/history.js").RevisionCitation }) => Promise<void>;
       setEditorSelection: (anchor: number, head: number) => boolean;
     };
   };
@@ -1440,10 +1440,10 @@
       const contractProbe = createNativeContractProbe();
       const nativeE2EBridge = {
         contractProbe,
-        piNativeInvokeProbe: () => import("$lib/e2e/piNativeInvokeProbe"),
-        piChat: () => import("$lib/features/chat/pi/runtime").then(module => module.openPiChat()),
-        piContext: () => import("$lib/features/chat/pi/runtime").then(module => module.PI_CONTEXT),
-        piPublicationTask: () => import("$lib/features/chat/pi/publication").then(module => module.PublicationTask),
+        piNativeInvokeProbe: () => import("#lib/e2e/piNativeInvokeProbe.js"),
+        piChat: () => import("#lib/features/chat/pi/runtime.js").then(module => module.openPiChat()),
+        piContext: () => import("#lib/features/chat/pi/runtime.js").then(module => module.PI_CONTEXT),
+        piPublicationTask: () => import("#lib/features/chat/pi/publication.js").then(module => module.PublicationTask),
         readPiChatState: () => paneOrder.filter(id => getPaneKind(id) === "chat").map(paneId => {
           const value = chatCoordinator.getBinding(paneId).getSnapshot();
           return { paneId, conversationId: value.conversation?.id ?? null, title: value.title, view: value.view, entries: value.entries, authority: value.authority, error: value.error, read: value.read, provider: value.provider, model: value.model, initialized: value.initialized, loading: value.loading };
@@ -1469,7 +1469,7 @@
               : null,
           };
         },
-        openRevisionCitation: async (citation: { noteId: string; label: string; notePath: string; revision: import("$lib/types/history").RevisionCitation }) =>
+        openRevisionCitation: async (citation: { noteId: string; label: string; notePath: string; revision: import("#lib/types/history.js").RevisionCitation }) =>
           historyMode.enterCitation(activePaneId, { noteId: citation.noteId, noteTitle: citation.label, notePath: citation.notePath }, citation.revision!.revisionId),
         setEditorSelection: (anchor: number, head: number) =>
           editorCapabilities.get(activePaneId)?.focusSelection(

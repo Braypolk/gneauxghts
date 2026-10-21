@@ -1,6 +1,6 @@
 <script lang="ts">
-  import type { HistoryModeRecord } from '$lib/features/history/historyModeMachine';
-  import type { MissingNoteSummary } from '$lib/types/missingNotes';
+  import type { HistoryModeRecord } from '#lib/features/history/historyModeMachine.js';
+  import type { MissingNoteSummary } from '#lib/types/missingNotes.js';
   import SettingsRefreshButton from './SettingsRefreshButton.svelte';
 
   let {

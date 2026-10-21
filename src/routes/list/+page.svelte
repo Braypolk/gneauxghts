@@ -24,12 +24,12 @@
     type TaskFilter,
     type TaskGroup,
     type TaskItem
-  } from '$lib/features/tasks/taskListStore.svelte';
-  import { taskDescription, taskDueDate, formatDueDate } from '$lib/features/tasks/taskDates';
-  import { openDateTimePicker } from '$lib/features/tasks/dateTimePicker';
-  import SearchBar from '$lib/ui/search/SearchBar.svelte';
-  import SearchDock from '$lib/ui/search/SearchDock.svelte';
-  import { textMatchesSearch } from '$lib/ui/search/searchMatch';
+  } from '#lib/features/tasks/taskListStore.svelte.js';
+  import { taskDescription, taskDueDate, formatDueDate } from '#lib/features/tasks/taskDates.js';
+  import { openDateTimePicker } from '#lib/features/tasks/dateTimePicker.js';
+  import SearchBar from '#lib/ui/search/SearchBar.svelte';
+  import SearchDock from '#lib/ui/search/SearchDock.svelte';
+  import { textMatchesSearch } from '#lib/ui/search/searchMatch.js';
 
   const filterOptions = [
     { id: 'all', label: 'All tasks', shortLabel: 'All' },
@@ -99,7 +99,7 @@
   }
 
   async function moveGroup(noteId: string, direction: 1 | -1) {
-    const visibleIndex = visibleTaskGroups.findIndex(group => group.noteId === noteId);
+    const visibleIndex = visibleTaskGroups.findIndex((group) => group.noteId === noteId);
     const neighbor = visibleTaskGroups[visibleIndex + direction];
     if (visibleIndex < 0 || !neighbor || taskList.mutatingNoteIds[noteId] || taskList.mutatingNoteIds[neighbor.noteId]) return;
     // Search/date filters are projections. Translate visible neighbors back to
@@ -143,18 +143,31 @@
     return taskList.initialize();
   });
 
-  afterNavigate(() => {
+  afterNavigate(({ shallow, type }) => {
+    if (shallow && type === 'goto') return;
+
     void taskList.load({ background: taskList.groups.length > 0 });
   });
 </script>
 
-<svelte:window onfocus={() => taskList.handleWindowFocus()} />
-<svelte:document onvisibilitychange={() => taskList.handleVisibilityChange()} />
+<svelte:window onfocus={() => taskList.handleWindowFocus()}></svelte:window>
 
-<div class="relative h-full w-full bg-background text-foreground flex flex-col overflow-hidden">
-  <main class="relative mx-auto flex w-full flex-1 flex-col justify-center overflow-hidden pb-0 sm:pb-4">
-    <section class="relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-4xl sm:border">
-      <div class="border-b border-border px-3 py-3 sm:px-8 sm:py-6">
+<svelte:document
+  onvisibilitychange={() => taskList.handleVisibilityChange()}
+></svelte:document>
+
+<div
+  class="relative h-full w-full bg-background text-foreground flex flex-col overflow-hidden"
+>
+  <main
+    class="relative mx-auto flex w-full flex-1 flex-col justify-center overflow-hidden pb-0 sm:pb-4"
+  >
+    <section
+      class="relative mx-auto flex h-full w-full max-w-5xl flex-col overflow-hidden border-y border-border bg-card shadow-sm sm:rounded-4xl sm:border"
+    >
+      <div
+        class="border-b border-border px-3 py-3 sm:px-8 sm:py-6"
+      >
         <div class="flex flex-col gap-3 sm:gap-5">
           <div class="space-y-2">
             <p class="text-sm text-muted-foreground">{taskCountLabel}</p>
@@ -270,7 +283,7 @@
                     return;
                   }
                   e.dataTransfer?.setData('text/plain', group.noteId);
-                  e.dataTransfer!.effectAllowed = 'move';
+                  (e.dataTransfer!).effectAllowed = 'move';
                   handleDragStart(group.noteId);
                 }}
                 ondragover={(e) => handleDragOver(e, group.noteId)}
@@ -305,10 +318,11 @@
                       <span
                         class={`block truncate text-sm font-semibold ${group.noteHidden ? 'text-muted-foreground' : 'text-foreground'}`}
                         title={group.noteTitle}
+                      >{group.noteTitle}</span>
+
+                      <span
+                        class="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:mt-1 sm:gap-x-3 sm:tracking-[0.18em]"
                       >
-                        {group.noteTitle}
-                      </span>
-                      <span class="mt-0.5 flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] font-medium uppercase tracking-[0.14em] text-muted-foreground sm:mt-1 sm:gap-x-3 sm:tracking-[0.18em]">
                         <span>{group.displayCount} shown</span>
                         {#if group.hiddenCount > 0}
                           <span>{group.hiddenCount} hidden</span>

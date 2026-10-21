@@ -3,11 +3,11 @@ import {
   createDocumentState,
   getDocumentMarkdown,
   updateDocumentMarkdown
-} from '$lib/features/notepad/document/documentState';
+} from '#lib/features/notepad/document/documentState.js';
 import {
   createEmptySessionSnapshot
-} from '$lib/features/notepad/session/session';
-import { captureExternalSnapshotForTest } from '$lib/features/notepad/document/documentExternalSyncTestSupport';
+} from '#lib/features/notepad/session/session.js';
+import { captureExternalSnapshotForTest } from '#lib/features/notepad/document/documentExternalSyncTestSupport.js';
 import {
   createOpenDocumentTaskMutationHandler,
   sha256Text

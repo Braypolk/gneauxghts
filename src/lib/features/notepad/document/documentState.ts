@@ -1,7 +1,7 @@
 import { DocumentBody } from './documentBody';
-import type { SessionSnapshot } from '$lib/features/notepad/session/session';
-import type { CommittedMutationWarning } from '$lib/contracts/committedMutation';
-import type { NoteSession } from '$lib/features/notepad/model/types';
+import type { SessionSnapshot } from '#lib/features/notepad/session/session.js';
+import type { CommittedMutationWarning } from '#lib/contracts/committedMutation.js';
+import type { NoteSession } from '#lib/features/notepad/model/types.js';
 import { assertDocumentMutationAdmitted } from './documentPublicationAdmission';
 import {
   createDocumentOperationState,

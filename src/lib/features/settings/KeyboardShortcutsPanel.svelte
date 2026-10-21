@@ -15,8 +15,8 @@
     setKeyboardShortcutBinding,
     type KeyboardShortcutDefinition,
     type KeyboardShortcutId
-  } from '$lib/keyboardShortcuts.svelte';
-  import ShortcutBinding from '$lib/ui/ShortcutBinding.svelte';
+  } from '#lib/keyboardShortcuts.svelte.js';
+  import ShortcutBinding from '#lib/ui/ShortcutBinding.svelte';
 
   const groupedDefinitions = keyboardShortcutGroups.map((group) => ({
     ...group,

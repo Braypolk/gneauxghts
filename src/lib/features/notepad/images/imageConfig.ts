@@ -1,4 +1,4 @@
-import type { StoredImageAsset } from '$lib/features/notepad/model/types';
+import type { StoredImageAsset } from '#lib/features/notepad/model/types.js';
 
 export interface ImagesConfig {
   assetRootPath: string | null;

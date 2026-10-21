@@ -7,12 +7,12 @@ import {
 import type {
   HistoryLifecycleEventKind,
   HistoryMutationSource
-} from '$lib/features/history/historyModeMachine';
+} from '#lib/features/history/historyModeMachine.js';
 import type {
   BaselineInitializationPhase,
   HistoryHealthState,
   HistoryIntegrityState
-} from '$lib/types/history';
+} from '#lib/types/history.js';
 
 // Array membership alone accepts incomplete vocabularies. This helper also
 // rejects a missing union member at the ordinary TypeScript check boundary.
@@ -29,11 +29,11 @@ const MUTATION_SOURCES = exhaustiveValues<HistoryMutationSource>()([
 const LIFECYCLE_KINDS = exhaustiveValues<HistoryLifecycleEventKind>()([
   'created', 'renamed', 'moved', 'forgotten', 'recovered', 'missing', 'reattached', 'purged'
 ]);
-const TIME_KINDS = exhaustiveValues<import('$lib/types/history').RevisionTimeEvidence['kind']>()(['knownSince', 'committed', 'observed', 'editingWindow']);
+const TIME_KINDS = exhaustiveValues<import('#lib/types/history.js').RevisionTimeEvidence['kind']>()(['knownSince', 'committed', 'observed', 'editingWindow']);
 const HEALTH_STATES = exhaustiveValues<HistoryHealthState>()([
   'healthy', 'initializing', 'degraded', 'warning', 'unavailable', 'corrupt'
 ]);
-const NOTE_HEALTH_STATES = exhaustiveValues<import('$lib/types/history').NoteHistoryHealth['state']>()([
+const NOTE_HEALTH_STATES = exhaustiveValues<import('#lib/types/history.js').NoteHistoryHealth['state']>()([
   'healthy', 'initializing', 'degraded', 'unavailable', 'corrupt'
 ]);
 const INTEGRITY_STATES = exhaustiveValues<HistoryIntegrityState>()([
@@ -95,7 +95,7 @@ const TIME_EVIDENCE = [
     minWallMillis: 1000, maxWallMillis: 1200, clockDiscontinuity: false },
   { kind: 'editingWindow', version: 1, firstWallMillis: 3000, lastWallMillis: 1000,
     minWallMillis: 1000, maxWallMillis: 3000, clockDiscontinuity: true }
-] as const satisfies readonly import('$lib/types/history').RevisionTimeEvidence[];
+] as const satisfies readonly import('#lib/types/history.js').RevisionTimeEvidence[];
 
 it('shares exact legacy and versioned interval evidence with Rust, including reversed raw clock times', () => {
   const timeFixture = JSON.parse(readFileSync(new URL(

@@ -5,10 +5,10 @@ import {
   placeholder
 } from '@codemirror/view';
 import { search } from '@codemirror/search';
-import type { ImagesConfig } from '$lib/features/notepad/images/imageConfig';
-import { createImageEmbedsExtension } from '$lib/features/notepad/images/imageEmbeds';
-import { createImagePasteExtension } from '$lib/features/notepad/images/imagePaste';
-import { createWikilinksExtension } from '$lib/features/notepad/wikilinks/wikilinks';
+import type { ImagesConfig } from '#lib/features/notepad/images/imageConfig.js';
+import { createImageEmbedsExtension } from '#lib/features/notepad/images/imageEmbeds.js';
+import { createImagePasteExtension } from '#lib/features/notepad/images/imagePaste.js';
+import { createWikilinksExtension } from '#lib/features/notepad/wikilinks/wikilinks.js';
 import {
   createSlashMenuPlugin,
   type SlashMenuAPI

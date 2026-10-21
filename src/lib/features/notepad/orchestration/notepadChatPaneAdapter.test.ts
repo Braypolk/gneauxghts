@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createNoteDraftState } from '$lib/features/notepad/state/noteStore';
-import { createEmptySessionSnapshot } from '$lib/features/notepad/session/session';
-import { createPiConversationView } from '$lib/features/chat/ui/piConversationView';
+import { createNoteDraftState } from '#lib/features/notepad/state/noteStore.js';
+import { createEmptySessionSnapshot } from '#lib/features/notepad/session/session.js';
+import { createPiConversationView } from '#lib/features/chat/ui/piConversationView.js';
 import { createNotepadChatPaneAdapter } from './notepadChatPaneAdapter';
 
 describe('Pi chat pane integration', () => {

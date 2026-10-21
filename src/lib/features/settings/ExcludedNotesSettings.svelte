@@ -1,11 +1,11 @@
 <script lang="ts">
   import { LoaderCircle, Search, ShieldOff, X } from '@lucide/svelte';
   import { onDestroy, onMount } from 'svelte';
-  import { chatSettings } from '$lib/features/chat/pi/settings';
+  import { chatSettings } from '#lib/features/chat/pi/settings.js';
   import type {
     ChatNoteCandidate,
     ChatNotePolicy
-  } from '$lib/features/chat/types';
+  } from '#lib/features/chat/types.js';
   import {
     availableExclusionCandidates,
     sortedExcludedPolicies

@@ -1,7 +1,7 @@
 import { markdown, markdownLanguage } from '@codemirror/lang-markdown';
 import type { Extension } from '@codemirror/state';
-import { languages } from '$lib/vendor/codemirrorLanguageData';
-import { obsidianMarkdownExtensions } from '$lib/features/notepad/markdown/obsidianMarkdownExtensions';
+import { languages } from '#lib/vendor/codemirrorLanguageData.js';
+import { obsidianMarkdownExtensions } from '#lib/features/notepad/markdown/obsidianMarkdownExtensions.js';
 
 // CodeMirror markdown language support, configured to mirror the behaviour the
 // editor relied on from draftly:

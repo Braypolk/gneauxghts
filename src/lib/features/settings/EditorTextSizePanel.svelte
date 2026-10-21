@@ -13,7 +13,7 @@
     resolveEditorTextSizes,
     setEditorTextSizeCustom,
     setEditorTextSizePreference
-  } from '$lib/editorTextSize.svelte';
+  } from '#lib/editorTextSize.svelte.js';
 
   const resolvedSizes = $derived(
     resolveEditorTextSizes(editorTextSize.preference, editorTextSize.custom)

@@ -1,11 +1,11 @@
 <script lang="ts">
   import { Columns2, CornerUpLeft, FileText, MessagesSquare } from '@lucide/svelte';
-  import { PANE_COMMAND_OPTIONS, type PaneCommandChoice } from '$lib/features/notepad/paneCommandPicker';
-  import type { PaneKind } from '$lib/features/notepad/workspace/paneTypes';
+  import { PANE_COMMAND_OPTIONS, type PaneCommandChoice } from '#lib/features/notepad/paneCommandPicker.js';
+  import type { PaneKind } from '#lib/features/notepad/workspace/paneTypes.js';
   import {
     getPaneTopActions,
     type PaneTopAction
-  } from '$lib/features/notepad/workspace/paneTopActions';
+  } from '#lib/features/notepad/workspace/paneTopActions.js';
 
   interface Props {
     paneKind: PaneKind;

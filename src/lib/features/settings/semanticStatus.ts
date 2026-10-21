@@ -1,4 +1,4 @@
-import type { SemanticSettings, SemanticStatus } from '$lib/types/semantic';
+import type { SemanticSettings, SemanticStatus } from '#lib/types/semantic.js';
 
 type SearchReadiness = {
   state: 'ready' | 'working' | 'waiting' | 'attention' | 'paused' | 'off' | 'unavailable';
