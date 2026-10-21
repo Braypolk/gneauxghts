@@ -1,4 +1,4 @@
-import { bench, describe } from 'vitest';
+import { describe, test } from 'vitest';
 import { EditorState } from '@codemirror/state';
 import { ensureSyntaxTree } from '@codemirror/language';
 import type { EditorView } from '@codemirror/view';
@@ -15,8 +15,25 @@ const a = { state, visibleRanges } as unknown as EditorView;
 const b = { state: state.update({ selection: { anchor: doc.length } }).state, visibleRanges } as unknown as EditorView;
 
 describe(`full-document decoration work (${doc.length} UTF-16 units, 500 sections)`, () => {
-  bench('one pane selection rebuild', () => { buildMarkdownDecorations(a); }, { time: 150, iterations: 10 });
-  bench('two pane selection rebuilds', () => { buildMarkdownDecorations(a); buildMarkdownDecorations(b); }, { time: 150, iterations: 10 });
-  bench('new document code context', () => { markdownCodeRanges(EditorState.create({ doc }).doc); }, { time: 150, iterations: 10 });
-  bench('shared code context cached selection query', () => { markdownCodeRanges(state.doc); }, { time: 150, iterations: 10 });
+  test('one pane selection rebuild', async ({ bench }) => {
+    await bench('one pane selection rebuild', () => {
+      buildMarkdownDecorations(a);
+    }).run({ time: 150, iterations: 10 });
+  });
+  test('two pane selection rebuilds', async ({ bench }) => {
+    await bench('two pane selection rebuilds', () => {
+      buildMarkdownDecorations(a);
+      buildMarkdownDecorations(b);
+    }).run({ time: 150, iterations: 10 });
+  });
+  test('new document code context', async ({ bench }) => {
+    await bench('new document code context', () => {
+      markdownCodeRanges(EditorState.create({ doc }).doc);
+    }).run({ time: 150, iterations: 10 });
+  });
+  test('shared code context cached selection query', async ({ bench }) => {
+    await bench('shared code context cached selection query', () => {
+      markdownCodeRanges(state.doc);
+    }).run({ time: 150, iterations: 10 });
+  });
 });

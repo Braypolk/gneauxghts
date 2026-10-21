@@ -30,6 +30,8 @@ The four npm patches and vendored `corenn-kernels` patch remain intact. Explicit
 
 ## Deliberately retained versions
 
+Follow-ups: [retained dependency review and Bits UI/Vitest migration](retained-dependency-review-2026-10-21.md) supersedes the Bits UI and Vitest retention below; the table records the initial refresh decision.
+
 | Dependency | Reason |
 | --- | --- |
 | Pi/Chord 1.3.0 | Already current; retain returning-client OAuth/error-code patch |

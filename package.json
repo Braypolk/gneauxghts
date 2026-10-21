@@ -16,6 +16,7 @@
     "preview": "vite preview",
     "test": "pnpm test:support && vitest run",
     "test:watch": "vitest",
+    "bench": "vitest bench --run --reporter=default",
     "test:support": "node --test e2e/support/*.test.mjs",
     "test:build:artifacts": "node --test scripts/tests/rustBuildArtifacts.test.mjs",
     "clean:rust:debug": "cargo clean --manifest-path src-tauri/Cargo.toml --profile dev",
@@ -65,7 +66,7 @@
     "@tauri-apps/plugin-dialog": "^2.8.3",
     "@tauri-apps/plugin-opener": "^2.7.2",
     "@tauri-apps/plugin-process": "^2.4.0",
-    "bits-ui": "^2.19.5",
+    "bits-ui": "^2.20.0",
     "clsx": "^2.1.1",
     "diff": "9.0.0",
     "markdown-it": "^15.0.3",
@@ -92,7 +93,7 @@
     "svelte-check": "^4.7.7",
     "typescript": "~6.0.3",
     "vite": "^8.3.5",
-    "vitest": "^4.1.12",
+    "vitest": "^5.0.5",
     "webdriverio": "10.1.0"
   },
   "imports": {
